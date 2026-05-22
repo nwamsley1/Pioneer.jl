@@ -80,7 +80,6 @@ function _score_precursor_isotope_traces_mbr(
     # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
     # out, so no quantile-binned features need pre-computing.
     features = copy(ADVANCED_FEATURE_SET)
-    apply_feature_blacklist!(features)
 
     # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
     # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
@@ -102,7 +101,7 @@ function _score_precursor_isotope_traces_mbr(
             for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
-            @user_info join(lines, "\n")
+            @debug_l1 join(lines, "\n")
         end
     end
 
@@ -117,15 +116,15 @@ function _score_precursor_isotope_traces_mbr(
     cf_partner_dict = Dict{UInt32, UInt32}()
 
     # 6. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
-    @user_info "MBR Batch F: building donor dict via sweep-1..."
+    @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
-    @user_info "  donor dict pids: $(length(donor_dict))"
+    @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
     # Parallelize the per-file MBR feature compute + sidecar write across
     # files. donor_dict and cf_partner_vec are read-only across this loop
     # (built before, not mutated by the per-file function), and each file
     # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
-    @user_info "MBR Batch F: writing per-file MBR sidecars..."
+    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
     parallel_foreach!(length(file_paths)) do chunk
         for f_idx in chunk
             compute_mbr_features_per_file_to_sidecar_with_pass1!(file_paths[f_idx], donor_dict, cf_partner_vec)
@@ -138,9 +137,9 @@ function _score_precursor_isotope_traces_mbr(
 
     # 7. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
     # only as wide as the FTR controller needs.
-    @user_info "MBR Batch F: loading slim FTR DataFrame..."
+    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
     psms = load_ftr_slim_dataframe(file_paths)
-    @user_info "  slim FTR rows: $(nrow(psms))"
+    @debug_l1 "  slim FTR rows: $(nrow(psms))"
 
     # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
     psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
@@ -150,11 +149,11 @@ function _score_precursor_isotope_traces_mbr(
 
     # 10. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
     # back into each main file in one pass.
-    @user_info "MBR Batch F: writing recovery sidecars..."
+    @debug_l1 "MBR Batch F: writing recovery sidecars..."
     write_recovery_sidecars(psms, file_paths)
     psms = DataFrame()
     GC.gc()
-    @user_info "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
+    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
     merge_mbr_sidecars_into_main!(file_paths)
 
     return nothing
@@ -172,7 +171,6 @@ function _score_precursor_isotope_traces_no_mbr(
     @debug_l1 "PSM scoring (no MBR): $n_psms PSMs loaded for in-memory LightGBM"
 
     features = copy(ADVANCED_FEATURE_SET)
-    apply_feature_blacklist!(features)
 
     best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid]
                                        for pid in best_psms[!, :precursor_idx]]
@@ -181,12 +179,12 @@ function _score_precursor_isotope_traces_no_mbr(
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
         compute_infold = false,
-        max_train = current_scoring_lgbm_max_train(),
+        max_train = SCORING_LGBM_MAX_TRAIN,
     )
     best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
     best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
     best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
-    @user_info "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
+    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
 
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
@@ -197,7 +195,7 @@ function _score_precursor_isotope_traces_no_mbr(
             for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
-            @user_info join(lines, "\n")
+            @debug_l1 join(lines, "\n")
         end
     end
 

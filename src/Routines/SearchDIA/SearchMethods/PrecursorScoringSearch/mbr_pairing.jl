@@ -244,14 +244,14 @@ function build_counterfactual_partner_map(
     pct_fbf   = round(100 * n_fb_fold   / max(n_precs, 1), digits = 3)
     pct_fbg   = round(100 * n_fb_global / max(n_precs, 1), digits = 3)
 
-    @user_info "MBR Batch F (iRT-NN) — counterfactual partner map:"
-    @user_info "  unique precursors: $n_precs"
-    @user_info "  partner = closest-pred-iRT opposite within (cv_fold × mz_decile)"
-    @user_info "  in stratum:                     $n_stratum ($pct_strat%)"
-    @user_info "  fallback (cv_fold, any mz):     $n_fb_fold ($pct_fbf%)"
-    @user_info "  fallback (experiment-global):   $n_fb_global ($pct_fbg%)"
-    @user_info "  total partnered: $(length(pid_to_partner)) / $n_precs"
-    @user_info "  build_counterfactual_partner_map elapsed: $(round(elapsed, digits = 2))s"
+    @debug_l1 "MBR Batch F (iRT-NN) — counterfactual partner map:"
+    @debug_l1 "  unique precursors: $n_precs"
+    @debug_l1 "  partner = closest-pred-iRT opposite within (cv_fold × mz_decile)"
+    @debug_l1 "  in stratum:                     $n_stratum ($pct_strat%)"
+    @debug_l1 "  fallback (cv_fold, any mz):     $n_fb_fold ($pct_fbf%)"
+    @debug_l1 "  fallback (experiment-global):   $n_fb_global ($pct_fbg%)"
+    @debug_l1 "  total partnered: $(length(pid_to_partner)) / $n_precs"
+    @debug_l1 "  build_counterfactual_partner_map elapsed: $(round(elapsed, digits = 2))s"
 
     @assert length(pid_to_partner) == n_precs "Counterfactual partner map missing $(n_precs - length(pid_to_partner)) precursors"
 

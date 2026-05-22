@@ -250,7 +250,8 @@ function importScripts()
             "types.jl",                    # All type definitions to avoid circular dependencies
             "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
             "utils.jl",                    # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
-            "fit_intensity_mass_error.jl"  # IntensityMassErrorModel fitting pipeline
+            "fit_intensity_mass_error.jl", # IntensityMassErrorModel fitting pipeline
+            "ms1_diagnostic.jl"            # MS1 ppm-residual diagnostic histogram
         ]
     )
     

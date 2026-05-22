@@ -177,7 +177,7 @@ function write_pass1_score_sidecars!(best_psms::DataFrame, file_paths::Vector{St
         "write_pass1_score_sidecars!: distributed $offset rows but best_psms has $n_total " *
         "(some file_paths missing from second_pass_folder?)"
     )
-    @user_info "  Wrote $n_written Pass-1 score sidecars (positional, no groupby)"
+    @debug_l1 "  Wrote $n_written Pass-1 score sidecars (positional, no groupby)"
     return n_written
 end
 
@@ -527,7 +527,7 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
             n_written += 1
         end
     end
-    @user_info "  Wrote $n_written recovery sidecars"
+    @debug_l1 "  Wrote $n_written recovery sidecars"
     return n_written
 end
 
@@ -582,7 +582,7 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         end
         n_merged += 1
     end
-    @user_info "  Wrote $n_merged consolidated mbr_outputs sidecars"
+    @debug_l1 "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
 

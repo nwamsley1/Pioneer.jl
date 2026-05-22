@@ -78,29 +78,4 @@ const ADVANCED_FEATURE_SET = [
     # along with their computation in select_best_per_precursor!.
 ]
 
-"""
-    apply_feature_blacklist!(features::Vector{Symbol})
-
-Remove features named in env var `PIONEER_FEATURE_BLACKLIST` (comma-separated
-list of symbols, with or without leading `:`). Used by the overnight ablation
-campaign to test feature minimization without recompiling.
-"""
-function apply_feature_blacklist!(features::Vector{Symbol})
-    bl_str = get(ENV, "PIONEER_FEATURE_BLACKLIST", "")
-    isempty(bl_str) && return features
-    blset = Set{Symbol}()
-    for raw in split(bl_str, ',')
-        s = strip(raw)
-        isempty(s) && continue
-        s = startswith(s, ":") ? s[2:end] : s
-        push!(blset, Symbol(s))
-    end
-    n_before = length(features)
-    filter!(f -> !(f in blset), features)
-    n_after = length(features)
-    if n_before != n_after
-        @user_info "  PIONEER_FEATURE_BLACKLIST removed $(n_before - n_after) features; $n_after remain"
-    end
-    return features
-end
 

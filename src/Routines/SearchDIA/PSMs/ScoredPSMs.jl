@@ -142,25 +142,12 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
     skipped = 0
     skipped_weight = 0
     skipped_frag_count = 0
-    # Env-var gate: if PIONEER_KEEP_ZERO_WEIGHT=1, retain PSMs with weight ≈ 0
-    # instead of dropping them. Replace 0-weight with 1e-6 to avoid NaN in log2().
-    keep_zero_weight = get(ENV, "PIONEER_KEEP_ZERO_WEIGHT", "0") == "1"
     for i in range(1, n_vals)
 
         precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
         scores_idx = IDtoCOL[precursor_idx]
 
-        # Diagnostic: record every candidate seen, plus those filtered for low weight
-        if DIAG_LOG_DROPPED[]
-            tid = Threads.threadid()
-            fid = DIAG_CURRENT_FILE_IDX[]
-            push!(get!(() -> Set{UInt32}(), DIAG_SEEN_PER_THREAD[tid], fid), precursor_idx)
-            if weight[scores_idx] < Float32(1e-6)
-                push!(get!(() -> Set{UInt32}(), DIAG_DROPPED_PER_THREAD[tid], fid), precursor_idx)
-            end
-        end
-
-        if !keep_zero_weight && weight[scores_idx] < Float32(1e-6)
+        if weight[scores_idx] < Float32(1e-6)
             skipped += 1
             skipped_weight += 1
             continue
@@ -278,12 +265,11 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
     start_idx = last_val
     skipped = 0
     skipped_weight = 0
-    keep_zero_weight = get(ENV, "PIONEER_KEEP_ZERO_WEIGHT", "0") == "1"
     for i in range(1, n_vals)
         precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
         scores_idx = IDtoCOL[precursor_idx]
 
-        if !keep_zero_weight && weight[scores_idx] < Float32(1e-6)
+        if weight[scores_idx] < Float32(1e-6)
             skipped += 1
             skipped_weight += 1
             continue

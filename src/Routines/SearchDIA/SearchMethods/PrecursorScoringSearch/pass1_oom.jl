@@ -22,13 +22,10 @@
 
 using Random
 
-# Per-fold sampling cap. Default matches MainSearch/scoring.jl's
-# SHARED_LGBM_MAX_TRAIN — the in-memory trainer already subsamples each
-# fold to this size before fitting, so the OOM reservoir is functionally
-# equivalent. Resolved at call time (SHARED_LGBM_MAX_TRAIN isn't bound at
-# parse time — MainSearch/scoring.jl loads AFTER this file in
+# Per-fold sampling cap. Resolved at call time (SCORING_LGBM_MAX_TRAIN isn't
+# bound at parse time — MainSearch/scoring.jl loads AFTER this file in
 # importScripts.jl).
-default_pass1_oom_k_per_fold() = current_scoring_lgbm_max_train()
+default_pass1_oom_k_per_fold() = SCORING_LGBM_MAX_TRAIN
 
 # Pass 1: count rows per cv_fold across all files. Returns (n_fold0, n_fold1).
 function _count_psm_rows_by_fold(file_paths::Vector{String})
@@ -274,7 +271,7 @@ function train_and_predict_pass1_oom!(
     file_paths::Vector{String};
     features::Vector{Symbol},
     compute_infold::Bool,
-    lgbm_hp::NamedTuple = current_shared_lgbm_hp(),
+    lgbm_hp::NamedTuple = SHARED_LGBM_HP,
     k_per_fold::Int = default_pass1_oom_k_per_fold(),
     rng::AbstractRNG = MersenneTwister(1776),
 )
@@ -295,10 +292,10 @@ function train_and_predict_pass1_oom!(
 
     k0 = min(n0, k_per_fold)
     k1 = min(n1, k_per_fold)
-    @user_info "Pass-1 OOM training:"
-    @user_info "  rows: total=$n_total  fold0=$n0  fold1=$n1"
-    @user_info "  sampling: k_per_fold=$k_per_fold → sample_fold0=$k0  sample_fold1=$k1"
-    @user_info "  features in use: $(length(available)) / $(length(features))"
+    @debug_l1 "Pass-1 OOM training:"
+    @debug_l1 "  rows: total=$n_total  fold0=$n0  fold1=$n1"
+    @debug_l1 "  sampling: k_per_fold=$k_per_fold → sample_fold0=$k0  sample_fold1=$k1"
+    @debug_l1 "  features in use: $(length(available)) / $(length(features))"
 
     # Pass 2: single-pass sampler walks each file once, routing rows to the
     # appropriate per-fold reservoir. Halves the file I/O of the previous
@@ -336,7 +333,7 @@ function train_and_predict_pass1_oom!(
     t_predict = time() - t_predict_start
 
     t_total = time() - t_total_start
-    @user_info "Pass-1 OOM elapsed: total=$(round(t_total, digits = 2))s " *
+    @debug_l1 "Pass-1 OOM elapsed: total=$(round(t_total, digits = 2))s " *
                "(sample=$(round(t_sample, digits = 2))s, fit=$(round(t_fit, digits = 2))s, " *
                "predict=$(round(t_predict, digits = 2))s)"
 

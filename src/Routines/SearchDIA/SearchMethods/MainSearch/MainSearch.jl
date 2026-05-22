@@ -25,6 +25,17 @@ Pipeline:
 2. process_search_results!: Compute prescore features, train LightGBM, select best scan per precursor
 3. summarize_results!: Global prescore aggregation, write fold-split second_pass_psms for ScoringSearch
 """
+# Per-file PEP threshold applied to best-per-precursor PSMs after pair
+# competition. Precursors with PEP > MAIN_PEP_FILTER_THR are dropped before
+# being written to the second-pass arrows ScoringSearch reads. Set ≥ 1.0 to
+# disable the filter entirely.
+const MAIN_PEP_FILTER_THR = 0.9f0
+
+# When true, MainSearch enforces the global prescore q-value passing set by
+# dropping PSMs of non-passing precursors before ScoringSearch reads them.
+# When false, the passing-set is computed and logged but not enforced.
+const ENFORCE_GLOBAL_PRESCORE_FILTER = false
+
 struct MainSearch <: SearchMethod end
 
 """
@@ -60,7 +71,7 @@ function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString
     n_t_pep05 = count((peps .<= 0.05f0) .& is_t)
     # Trailing "\n" pushes the next ProgressBar tick to a fresh line so this
     # message doesn't get overwritten when the per-file iteration advances.
-    @user_info "  [$stage_label] (file_idx=$ms_file_idx, $file_name): " *
+    @debug_l1 "  [$stage_label] (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(best_psms)) best-per-precursor PSMs; " *
                "targets q≤.001=$n_t_q001  q≤.01=$n_t_q01  PEP≤.01=$n_t_pep01  PEP≤.05=$n_t_pep05\n"
 end
@@ -204,16 +215,11 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    # Env gate PIONEER_NO_UPSTREAM_SORT=1 skips the sort for A/B testing.
-    t_sort = if get(ENV, "PIONEER_NO_UPSTREAM_SORT", "0") == "1"
-        0.0
-    else
-        @elapsed permute_psms_by_precursor_idx!(psms)
-    end
+    t_sort = @elapsed permute_psms_by_precursor_idx!(psms)
 
     results.psms[] = psms
 
-    @user_info "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
+    @debug_l1 "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
                "scan_comp=$(round(t_scan_comp * 1000, digits=0))ms  " *
                "ms1=$(round(t_ms1, digits=2))s  " *
@@ -271,41 +277,9 @@ function process_search_results!(
     # Only the precursor-grouped chromatogram features still run here.
     t_ms1 = @elapsed add_chromatogram_features!(psms)
 
-    # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
-    # PSMs *before* LGBM training so single-class runs (target-only or
-    # decoy-only) still produce usable PSM tables.
-    if get(ENV, "PIONEER_DUMP_PRE_LGBM", "0") == "1"
-        diag_dir = joinpath(getDataOutDir(search_context), "temp_data", "pre_lgbm_psms_diag")
-        isdir(diag_dir) || mkpath(diag_dir)
-        cols = [:precursor_idx, :scan_idx, :target, :weight, :gof, :fitted_manhattan_distance,
-                :fitted_hellinger, :max_matched_residual, :max_unmatched_residual,
-                :total_ions, :total_ions_iso, :y_count, :poisson, :err_norm,
-                :missed_cleavage, :Mox, :spectrum_peak_count, :sequence_length,
-                :weight_ratio_at_scan, :weight_rank_at_scan, :irt_error,
-                :irt_dist_to_weight_apex,
-                :ms1_m0_mass_err_ppm,
-                :ms1_corr_weight_m0, :ms1_corr_m0_m1,
-                :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
-                :ms1_m0_intensity, :ms1_m1_intensity,
-                :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
-                :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
-                :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
-                :frag_apex_dispersion_irt, :n_correlated_fragments,
-                :irt_obs, :rt]
-        keep = intersect(cols, propertynames(psms))
-        Arrow.write(joinpath(diag_dir, "$(ms_file_idx).arrow"), psms[!, keep])
-    end
-
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
-    # Diagnostic: dump pre-reduction PSMs (one row per (precursor_idx, scan_idx))
-    # Diagnostic: stash file_idx + dir so train_lgbm_and_select_best can dump pre-reduction
-    if get(ENV, "PIONEER_DUMP_ALL_PSMS", "0") == "1"
-        Pioneer.DIAG_DUMP_FILE_IDX[] = ms_file_idx
-        Pioneer.DIAG_DUMP_DIR[]      = joinpath(getDataOutDir(search_context), "temp_data", "all_psms_diag")
-    else
-        Pioneer.DIAG_DUMP_FILE_IDX[] = 0
-    end
+    Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
     best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
@@ -314,29 +288,25 @@ function process_search_results!(
     t_paircomp_start = t_lgbm_end
 
     # ============================================================
-    # PAIR COMPETITION (default ON; disable with PIONEER_PAIR_COMPETITION=0)
-    # See `apply_pair_competition!` in scoring.jl.
+    # PAIR COMPETITION. See `apply_pair_competition!` in scoring.jl.
     # ============================================================
-    if get(ENV, "PIONEER_PAIR_COMPETITION", "1") != "0"
-        n0 = nrow(best_psms)
-        n_pairs, n_dropped_t, n_dropped_d = apply_pair_competition!(best_psms, search_context)
-        @user_info "  Pair competition (file_idx=$ms_file_idx, $file_name): " *
-                   "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
-                   "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
-        _summarize_psm_counts(best_psms, "after paircomp", ms_file_idx, file_name)
-    end
+    n0 = nrow(best_psms)
+    n_pairs, n_dropped_t, n_dropped_d = apply_pair_competition!(best_psms, search_context)
+    @debug_l1 "  Pair competition (file_idx=$ms_file_idx, $file_name): " *
+               "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
+               "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
+    _summarize_psm_counts(best_psms, "after paircomp", ms_file_idx, file_name)
     t_paircomp_end = time()
     t_pep_start = t_paircomp_end
     # ============================================================
 
     # ============================================================
-    # PER-FILE PEP FILTER (default ON at PEP ≤ 0.9)
-    # PIONEER_MAIN_PEP_FILTER_THR sets the threshold; set ≥ 1.0 to disable.
+    # PER-FILE PEP FILTER (PEP ≤ MAIN_PEP_FILTER_THR).
     # Computed on best-per-precursor PSMs (post-paircomp) so each precursor
     # gets one PEP value. Precursors with PEP > threshold never enter the
     # second_pass arrow files and therefore can't reach ScoringSearch.
     # ============================================================
-    pep_filter_thr = parse(Float32, get(ENV, "PIONEER_MAIN_PEP_FILTER_THR", "0.9"))
+    pep_filter_thr = MAIN_PEP_FILTER_THR
     if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
@@ -347,7 +317,7 @@ function process_search_results!(
         n_drop_t = count(.!keep .& is_t_filt)
         n_drop_d = count(.!keep .& .!is_t_filt)
         deleteat!(best_psms, .!keep)
-        @user_info "  PEP filter (file_idx=$ms_file_idx, $file_name): PEP > $pep_filter_thr drops " *
+        @debug_l1 "  PEP filter (file_idx=$ms_file_idx, $file_name): PEP > $pep_filter_thr drops " *
                    "$n_drop_t targets + $n_drop_d decoys " *
                    "($n_before_pep → $(nrow(best_psms)) best-per-precursor PSMs)"
         _summarize_psm_counts(best_psms, "after PEP filter", ms_file_idx, file_name)
@@ -415,7 +385,7 @@ function process_search_results!(
                     dur_recal + dur_phase2 + dur_write
     dur_overhead  = t_total - dur_accounted
     r = s -> round(s, digits=2)
-    @user_info "  MainSearch process_search_results! (file_idx=$ms_file_idx, $file_name): " *
+    @debug_l1 "  MainSearch process_search_results! (file_idx=$ms_file_idx, $file_name): " *
                "$n_total_psms PSMs → $(nrow(best_psms)) precursors  total=$(r(t_total))s\n" *
                "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s]\n" *
                "    lgbm=$(r(dur_lgbm))s [train_cv=$(r(lgbm_timings.train_cv))s best_per_prec=$(r(lgbm_timings.best))s]  " *
@@ -480,12 +450,11 @@ function summarize_results!(
     n_targets_total = fold0_result.n_targets_pass + fold1_result.n_targets_pass
     n_decoys_total  = fold0_result.n_decoys_pass  + fold1_result.n_decoys_pass
     n_pass_total    = n_targets_total + n_decoys_total
-    # PIONEER_GLOBAL_PRESCORE_FILTER (default "0" = report only, no filter).
-    # When "1", the passing-set is enforced and PSMs of non-passing precursors are
-    # dropped before ScoringSearch reads them.
-    enforce_filter = get(ENV, "PIONEER_GLOBAL_PRESCORE_FILTER", "0") == "1"
+    # ENFORCE_GLOBAL_PRESCORE_FILTER=false → report only; =true → drop PSMs of
+    # non-passing precursors before ScoringSearch reads them.
+    enforce_filter = ENFORCE_GLOBAL_PRESCORE_FILTER
     @user_info "  Global prescore: $n_pass_total precursors pass q≤$(fold0_result.qvalue_threshold) ($n_targets_total targets + $n_decoys_total decoys)" *
-               (enforce_filter ? " [FILTER ENFORCED]" : " [report only, no filter — set PIONEER_GLOBAL_PRESCORE_FILTER=1 to enforce]")
+               (enforce_filter ? " [FILTER ENFORCED]" : " [report only, no filter]")
     t1 = time() - t1_start
 
     store_results!(search_context, MainSearch, (passing_precs=passing_precs,))

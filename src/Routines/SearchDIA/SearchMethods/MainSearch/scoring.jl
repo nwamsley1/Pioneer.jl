@@ -29,40 +29,19 @@
 # IDs neutral-to-positive on all three datasets; ScoringSearch's 200/0.10
 # recovers any quality lost in MainSearch (the per-file LGBM's job is just
 # best-scan selection + the PEP > 0.9 gate, not final scoring).
-const _SHARED_LGBM_HP_BASE = (num_iterations=50, learning_rate=0.10, max_depth=8,
-                              num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
-                              bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
-                              max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
-
-# Env overrides for HP sweep without recompile:
-#   PIONEER_LGBM_ITERS, PIONEER_LGBM_LR, PIONEER_LGBM_MIN_DATA, PIONEER_LGBM_LEAVES
-# Default (no env set) preserves the baked-in values above. Evaluated at
-# call time (not module-load) so env changes between Julia sessions pick up
-# without invalidating the precompile cache.
-function current_shared_lgbm_hp()
-    hp = _SHARED_LGBM_HP_BASE
-    haskey(ENV, "PIONEER_LGBM_ITERS")    && (hp = merge(hp, (num_iterations    = parse(Int, ENV["PIONEER_LGBM_ITERS"]),)))
-    haskey(ENV, "PIONEER_LGBM_LR")       && (hp = merge(hp, (learning_rate     = parse(Float64, ENV["PIONEER_LGBM_LR"]),)))
-    haskey(ENV, "PIONEER_LGBM_MIN_DATA") && (hp = merge(hp, (min_data_in_leaf  = parse(Int, ENV["PIONEER_LGBM_MIN_DATA"]),)))
-    haskey(ENV, "PIONEER_LGBM_LEAVES")   && (hp = merge(hp, (num_leaves        = parse(Int, ENV["PIONEER_LGBM_LEAVES"]),)))
-    return hp
-end
-# Kept for back-compat — anything still referencing the const sees the base value.
-const SHARED_LGBM_HP = _SHARED_LGBM_HP_BASE
+const SHARED_LGBM_HP = (num_iterations=50, learning_rate=0.20, max_depth=8,
+                        num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
+                        bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
+                        max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
 
 # Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
 # Same shape as SHARED_LGBM_HP but lower learning rate × more iterations:
-# lr_total stays in the lr_total≈20 sweet-spot identified for the per-file HP,
-# while the slower lr lets boosting refine more decision boundaries on the
-# larger, mixed-file PSM pool. Tunable independently of per-file via this
-# constant; per-file HP is intentionally untouched.
+# the slower lr lets boosting refine more decision boundaries on the
+# larger, mixed-file PSM pool.
 const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
                          num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                          bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                          max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
-
-# Per-fold training cap; folds larger than this are random-subsampled.
-const SHARED_LGBM_MAX_TRAIN = 250_000
 
 # Per-stage per-fold subsample caps.
 #
@@ -72,25 +51,9 @@ const SHARED_LGBM_MAX_TRAIN = 250_000
 # ScoringSearch experiment-wide LGBM: this is the final classifier driving
 # target/decoy discrimination at q≤0.01. The 2026-05-19 sweep showed +0.88%
 # IDs on Exploris and +1.47% on MTAC when bumping 250k → 1M; gains plateau
-# around 1M-2M. Default raised to 1M.
-#
-# Env precedence:
-#   PIONEER_MAIN_LGBM_MAX_TRAIN     — overrides MainSearch only
-#   PIONEER_SCORING_LGBM_MAX_TRAIN  — overrides ScoringSearch only
-#   PIONEER_LGBM_MAX_TRAIN          — legacy single knob; sets both
-const MAIN_LGBM_MAX_TRAIN_DEFAULT    = 250_000
-const SCORING_LGBM_MAX_TRAIN_DEFAULT = 2_500_000
-
-current_main_lgbm_max_train() = parse(Int,
-    get(ENV, "PIONEER_MAIN_LGBM_MAX_TRAIN",
-        get(ENV, "PIONEER_LGBM_MAX_TRAIN", string(MAIN_LGBM_MAX_TRAIN_DEFAULT))))
-
-current_scoring_lgbm_max_train() = parse(Int,
-    get(ENV, "PIONEER_SCORING_LGBM_MAX_TRAIN",
-        get(ENV, "PIONEER_LGBM_MAX_TRAIN", string(SCORING_LGBM_MAX_TRAIN_DEFAULT))))
-
-# Back-compat alias for any external code that still calls the old name.
-current_lgbm_max_train() = current_main_lgbm_max_train()
+# around 1M-2M.
+const MAIN_LGBM_MAX_TRAIN    = 250_000
+const SCORING_LGBM_MAX_TRAIN = 2_500_000
 
 # Adaptive HP selection trigger. After running the default LGBM, if its OOF
 # target count at q≤0.01 (summed across folds) is below this threshold, the
@@ -105,8 +68,8 @@ current_lgbm_max_train() = current_main_lgbm_max_train()
 const ADAPTIVE_HP_TARGET_THRESHOLD = 5_000
 
 # Adaptive HP candidates (used when n_psms < ADAPTIVE_HP_THRESHOLD).
-# All inherit env-overridable defaults from current_shared_lgbm_hp() and
-# only override min_data_in_leaf and num_leaves.
+# All inherit defaults from SHARED_LGBM_HP and only override
+# min_data_in_leaf and num_leaves.
 const ADAPTIVE_HP_OVERRIDES = (
     medium = (min_data_in_leaf = 50, num_leaves = 31),
     simple = (min_data_in_leaf = 20, num_leaves = 15),
@@ -127,8 +90,7 @@ Two-fold CV LightGBM training with the shared hyperparameters
 
 1. Builds a feature matrix from `features` (filtered to columns present in `psms`).
 2. Splits PSMs into the existing `cv_fold` column's 0/1 folds.
-3. Trains LightGBM per fold (sub-sampling each fold to at most
-   `SHARED_LGBM_MAX_TRAIN`).
+3. Trains LightGBM per fold (sub-sampling each fold to at most `max_train`).
 4. If `min(|fold0|, |fold1|) < SHARED_LGBM_LOW_DATA_THRESHOLD`, also trains a
    probit regression and picks whichever scores more targets at 1% OOF FDR.
 5. Returns:
@@ -144,15 +106,13 @@ Used by both `train_lgbm_and_select_best` (MainSearch) and
 function train_psm_classifier_with_fallback(
     psms::DataFrame;
     features::Vector{Symbol},
-    lgbm_hp = current_shared_lgbm_hp(),
+    lgbm_hp = SHARED_LGBM_HP,
     compute_infold::Bool = false,
-    max_train::Int = current_main_lgbm_max_train(),
+    max_train::Int = MAIN_LGBM_MAX_TRAIN,
 )
     targets_col = psms[!, :target]
     n_total = nrow(psms)
 
-    # Filter to available features
-    apply_feature_blacklist!(features)
     available_features = filter(f -> hasproperty(psms, f), features)
 
     # Build feature matrix
@@ -175,7 +135,10 @@ function train_psm_classifier_with_fallback(
     #                                 in-fold for idx0.
     fold_pairs = [(idx1, idx0), (idx0, idx1)]
 
-    _sample_pos(n_avail) = n_avail > MAX_TRAIN ? randperm(n_avail)[1:MAX_TRAIN] : collect(1:n_avail)
+    function _sample_pos(n_avail)
+        n_avail > MAX_TRAIN || return collect(1:n_avail)
+        return randperm(n_avail)[1:MAX_TRAIN]
+    end
     sub_positions = [_sample_pos(length(tr)) for (tr, _) in fold_pairs]
     min_fold_size = min(length(idx0), length(idx1))
     low_data = min_fold_size < LOW_DATA_THRESHOLD
@@ -264,13 +227,13 @@ function train_psm_classifier_with_fallback(
         count(i -> qvals[i] <= Float16(0.01) && y_fold[i], eachindex(qvals))
     end
 
-    @user_info "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
+    @debug_l1 "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
                "train=$(length.(sub_positions))  MAX_TRAIN=$MAX_TRAIN"
 
     # Always run the default-HP LGBM (single source of truth for big datasets
     # and the safest fallback for small ones).
     lgbm_scores, lgbm_infold_scores, last_classifier, lgbm_timings = _lgbm_cv()
-    @user_info "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s " *
+    @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s " *
                "fit=$(round(lgbm_timings.fit, digits=2))s " *
                "predict=$(round(lgbm_timings.predict, digits=2))s"
 
@@ -391,7 +354,7 @@ function train_lgbm_and_select_best(
     # in the log without grepping debug_l1.
     if hasproperty(info, :adaptive) && info.adaptive
         oof_str = join(["$k=$v" for (k,v) in sort(collect(info.candidate_oof))], " ")
-        @user_info "  Adaptive model selection (n=$(nrow(psms))): $oof_str → $(info.winner)"
+        @debug_l1 "  Adaptive model selection (n=$(nrow(psms))): $oof_str → $(info.winner)"
     end
 
     model = if last_classifier !== nothing
@@ -427,7 +390,7 @@ function train_lgbm_and_select_best(
             for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
-            @user_info join(lines, "\n")
+            @debug_l1 join(lines, "\n")
         end
     end
 

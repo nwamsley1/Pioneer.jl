@@ -49,8 +49,6 @@ function process_scans_fused!(
     prec_irts    = getIrt(precursors)
     prec_is_decoy = getIsDecoy(precursors)
 
-    split_deconv = get(ENV, "PIONEER_SPLIT_DECONV", "0") == "1"
-
     prec_estimation     = getPrecEstimation(params)
     n_frag_isotopes     = getNFragIsotopes(params)
     max_frag_rank       = getMaxFragRank(params)
@@ -128,23 +126,7 @@ function process_scans_fused!(
             return new_last_val
         end
 
-        if split_deconv
-            # Partition this scan's candidates by target/decoy and run deconv twice.
-            # Each call resets scratch and accumulates PSMs into the same scored_psms buffer.
-            target_idx = Int64[]
-            decoy_idx  = Int64[]
-            for i in prec_range
-                if prec_is_decoy[precs_vec[i]]
-                    push!(decoy_idx, Int64(i))
-                else
-                    push!(target_idx, Int64(i))
-                end
-            end
-            last_val = _run_subset!(target_idx)
-            last_val = _run_subset!(decoy_idx)
-        else
-            last_val = _run_subset!(collect(Int64, prec_range))
-        end
+        last_val = _run_subset!(collect(Int64, prec_range))
     end
 
     return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))

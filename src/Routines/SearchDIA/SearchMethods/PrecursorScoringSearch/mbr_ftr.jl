@@ -133,7 +133,7 @@ function apply_mbr_filter_paired!(
 
     n = nrow(psms)
     if n == 0
-        @user_info "MBR Batch F — apply_mbr_filter_paired!: no PSMs to filter"
+        @debug_l1 "MBR Batch F — apply_mbr_filter_paired!: no PSMs to filter"
         psms[!, :mbr_recovered]          = falses(0)
         psms[!, :MBR_transfer_candidate] = falses(0)
         psms[!, :ftr_qval_true]          = Float32[]
@@ -166,10 +166,10 @@ function apply_mbr_filter_paired!(
     n_cand = count(candidate_mask)
     cand_idx = findall(candidate_mask)
 
-    @user_info "MBR Batch F — paired FTR recovery:"
-    @user_info "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
-    @user_info "  candidates (pre-MBR q>$q_thresh + both donors): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
-    @user_info "  α (q-value FTR budget): $alpha"
+    @debug_l1 "MBR Batch F — paired FTR recovery:"
+    @debug_l1 "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
+    @debug_l1 "  candidates (pre-MBR q>$q_thresh + both donors): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
+    @debug_l1 "  α (q-value FTR budget): $alpha"
 
     if n_cand == 0
         psms[!, :mbr_recovered]          = falses(n)
@@ -228,23 +228,17 @@ function apply_mbr_filter_paired!(
     # monotonized to be non-increasing as score increases.
     # pep_double[i]   = per-row P(is_false | score), isotonic-regression-derived.
 
-    # ── 6. Recovery: top-half rows (real-MBR) with q ≤ alpha or pep ≤ alpha
-    #    Selectable via ENV var PIONEER_FTR_MODE = "pep" (default) or "qval".
+    # ── 6. Recovery: top-half rows (real-MBR) with pep ≤ alpha.
     #    PEP-based recovery at α=0.01 gives ~half the Dennis-FTR species-
     #    mismatch rate vs qval-based at the same α (validated 2026-05-15 on
     #    40-file YeastMBR + 20-file HelaOnly: any-YEAST 9.66% qval → 4.49% pep,
     #    strict-YEAST 8.86% → 3.32%). PEP is more conservative — ~33% fewer
     #    ΔTotal recoveries — but the surviving recoveries are dramatically
-    #    cleaner. Set PIONEER_FTR_MODE=qval to recover the old behavior.
+    #    cleaner. The qval path is retained in git history if needed.
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "pep")
-    # PIONEER_FTR_ALPHA env var overrides the default `alpha` kwarg so users
-    # can sweep without recompiling.
-    α_use = parse(Float32, get(ENV, "PIONEER_FTR_ALPHA", string(alpha)))
-    recovered_in_cand = ftr_mode == "pep" ? (pep_top .<= α_use) : (qvals_top .<= α_use)
+    recovered_in_cand = pep_top .<= alpha
     n_recovered = count(recovered_in_cand)
-    @user_info "  FTR threshold mode: $ftr_mode (alpha=$α_use)"
 
     mbr_recovered_full = falses(n)
     ftr_qval_full      = fill(NaN32, n)
@@ -276,25 +270,25 @@ function apply_mbr_filter_paired!(
     n_t_rec = count(i -> mbr_recovered_full[i] && target_col[i], 1:n)
     n_d_rec = n_recovered - n_t_rec
 
-    @user_info "  doubled-frame rows: $(2*n_cand)  (top=real, bottom=fake)"
-    @user_info "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
-    @user_info "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
-    @user_info "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
+    @debug_l1 "  doubled-frame rows: $(2*n_cand)  (top=real, bottom=fake)"
+    @debug_l1 "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
+    @debug_l1 "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
+    @debug_l1 "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
 
     if last_cls !== nothing
         lgbm_model = LightGBMModel(last_cls, available_true, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @user_info "  Batch F FTR-model feature importances (gain):"
+            @debug_l1 "  Batch F FTR-model feature importances (gain):"
             for (fname, gain) in sorted_imp
-                @user_info "    $(rpad(string(fname), 36)) $(round(gain, digits=2))"
+                @debug_l1 "    $(rpad(string(fname), 36)) $(round(gain, digits=2))"
             end
         end
     end
 
     elapsed = time() - t0
-    @user_info "  apply_mbr_filter_paired! elapsed: $(round(elapsed, digits=2))s"
+    @debug_l1 "  apply_mbr_filter_paired! elapsed: $(round(elapsed, digits=2))s"
 
     return (
         n_candidates = n_cand,

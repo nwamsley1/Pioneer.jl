@@ -329,19 +329,10 @@ function summarize_results!(
             return df
         end
 
-        # PIONEER_GLOBAL_FILTER_MODE = "qval" (default) | "pep" | "off"
-        # Controls the cross-run filter applied alongside the per-row qval.
-        #   "qval": filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold)
-        #   "pep":  filter on (:global_pep  ≤ threshold) AND (:qval ≤ threshold)
-        #   "off":  filter only on (:qval ≤ threshold) — no cross-run check
-        global_filter_mode = lowercase(get(ENV, "PIONEER_GLOBAL_FILTER_MODE", "qval"))
-        qval_conditions = if global_filter_mode == "off"
-            [(:qval, params.q_value_threshold)]
-        elseif global_filter_mode == "pep"
-            [(:global_pep, params.q_value_threshold), (:qval, params.q_value_threshold)]
-        else  # "qval" or anything else → default behavior
-            [(:global_qval, params.q_value_threshold), (:qval, params.q_value_threshold)]
-        end
+        # Cross-run filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold).
+        # The :pep and :off variants are retained in git history if needed.
+        qval_conditions = [(:global_qval, params.q_value_threshold),
+                           (:qval,        params.q_value_threshold)]
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>

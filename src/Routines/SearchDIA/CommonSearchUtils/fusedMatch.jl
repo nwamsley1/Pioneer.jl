@@ -445,11 +445,6 @@ end
 
 const NEUTRON_F32 = Float32(1.00335)
 
-# Per-(file_idx, scan_idx) → Set{precursor_idx} blacklist used by run_fused!
-# to skip specific (precursor, scan) deconv candidates (iterative refinement).
-# Loaded from PIONEER_SKIP_PRECS_PATH (deserialized Dict{Int64,Set{Tuple{UInt32,UInt32}}}).
-# DIAG_CURRENT_FILE_IDX is reused as the file-index source.
-const SKIP_PRECS = Dict{Tuple{Int64,UInt32}, Set{UInt32}}()
 
 """
     scan_for_nearest_in_window(corrected_mz, obs_low, obs_high,
@@ -739,14 +734,6 @@ function run_fused!(
     scan_idx::Int64 = 0   # for blacklist lookup; 0 disables
 ) where {K<:FusedSearchKind, I<:Integer}
 
-    # Per-scan blacklist (precursor_idx values to skip in this scan, this file).
-    # Populated by SKIP_PRECS dict if PIONEER_SKIP_PRECS_PATH was loaded.
-    skip_set = if !isempty(SKIP_PRECS) && scan_idx > 0
-        get(SKIP_PRECS, (DIAG_CURRENT_FILE_IDX[], UInt32(scan_idx)), nothing)
-    else
-        nothing
-    end
-
     reset!(Hs)
 
     fragments = getFragments(ion_list)
@@ -769,10 +756,6 @@ function run_fused!(
 
     @inbounds for i in prec_range
         prec_idx = precursors_passed[i]
-        # Skip blacklisted (precursor_idx, scan_idx) pairs (iterative refinement)
-        if skip_set !== nothing && prec_idx in skip_set
-            continue
-        end
         prec_charge = prec_charges[prec_idx]
         prec_mz = prec_mzs[prec_idx]
 
