@@ -152,13 +152,6 @@ function prepare_chronologer_input(
     decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
     use_sequence_decoys = _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
-    proteome_index = use_sequence_decoys ? ProteomeDistanceIndex(
-        protein_entries;
-        min_block_length = max(1, fld(_params.fasta_digest_params["min_length"], 2)),
-        max_block_length = cld(_params.fasta_digest_params["max_length"], 2),
-        show_progress = true,
-        log_progress = true,
-    ) : nothing
 
     # Step 1: Combine shared peptides (I/L equivalence)
     fasta_entries = combine_shared_peptides(fasta_entries)
@@ -188,13 +181,10 @@ function prepare_chronologer_input(
     # For diann_mutation, skip decoy generation here — decoys are created post-build
     # by apply_diann_decoy_style!() which shifts target fragment m/z values
     if use_sequence_decoys
-        @user_info "Generating grouped decoy sequences (method=$decoy_method, min_target_hamming_distance=2)"
+        @user_info "Generating grouped decoy sequences (method=$decoy_method)"
         fasta_entries = add_decoy_sequences_grouped(
             fasta_entries;
-            decoy_method = decoy_method,
-            fixed_mod_names = fixed_mods,
-            variable_mod_names = var_mods,
-            proteome_index = proteome_index,
+            decoy_method = decoy_method
         )
     end
         
