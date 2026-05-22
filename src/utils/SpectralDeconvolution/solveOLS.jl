@@ -18,6 +18,7 @@
 # Regularization type trait — stored on parameter structs but not currently
 # dispatched on (retained for backward compatibility with config files).
 abstract type RegularizationType end
+struct L1Norm <: RegularizationType end
 struct L2Norm <: RegularizationType end
 struct NoNorm <: RegularizationType end
 

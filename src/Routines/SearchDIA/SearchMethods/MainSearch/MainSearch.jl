@@ -36,6 +36,11 @@ const MAIN_PEP_FILTER_THR = 0.9f0
 # When false, the passing-set is computed and logged but not enforced.
 const ENFORCE_GLOBAL_PRESCORE_FILTER = false
 
+# Minimum number of high-confidence target precursors required to fit the
+# cross-fold iRT refinement model. Files with fewer than this many post-
+# pair-competition target precursors skip the refinement pass.
+const MAIN_IRT_REFINEMENT_MIN_PRECURSORS = 250
+
 struct MainSearch <: SearchMethod end
 
 """
@@ -281,11 +286,41 @@ function process_search_results!(
     n_total_psms = nrow(psms)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
-    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
+    best_psms, scores, lgbm_timings, lgbm_predictor = train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
     t_paircomp_start = t_lgbm_end
+
+    # Refine predicted iRTs with out-of-fold correction models. The correction
+    # changes iRT-dependent features for every candidate PSM, so reapply the
+    # same per-run classifier before reducing to one best scan per precursor.
+    precursors = getPrecursors(getSpecLib(search_context))
+    irt_refinement = MainSearchIrtRefinement(
+        precursors;
+        q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
+        min_precursors = MAIN_IRT_REFINEMENT_MIN_PRECURSORS,
+    )
+    irt_refinement_result = refine_mainsearch_irt_predictions!(
+        psms,
+        best_psms,
+        scores,
+        irt_refinement,
+    )
+    if irt_refinement_result.refined
+        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(psms, lgbm_predictor)
+        best_psms[!, :lgbm_prob] = scores
+        @debug_l1 "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                   "$(length(irt_refinement_result.training_target_precursors)) high-confidence target precursors; " *
+                   "reapplied LGBM after iRT feature refresh " *
+                   "(predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s)"
+        _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
+    else
+        @debug_l1 "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                   "skipped; $(length(irt_refinement_result.training_target_precursors)) " *
+                   "high-confidence target precursors available " *
+                   "(need $(irt_refinement.min_precursors))"
+    end
 
     # ============================================================
     # PAIR COMPETITION. See `apply_pair_competition!` in scoring.jl.
@@ -410,12 +445,18 @@ so the compiler specializes on concrete types, eliminating dynamic dispatch.
 """
 function _compute_phase2_columns!(
         prec_idx_col::AbstractVector{UInt32},
-        prec_mz_arr, entrap_group_ids,
+        irt_obs_col::AbstractVector{Float32},
+        irt_pred_col::AbstractVector{Float32},
+        prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+        irt_diff_col::Vector{Float32},
         prec_mz_col::Vector{Float32},
+        pair_id_col::Vector{UInt32},
         entrap_col::Vector{UInt8})
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
+        irt_diff_col[i] = abs(irt_obs_col[i] - irt_pred_col[i])
         prec_mz_col[i] = prec_mz_arr[pid]
+        pair_id_col[i] = extract_pair_idx(prec_pair_idxs, pid)
         entrap_col[i] = entrap_group_ids[pid]
     end
     return nothing
@@ -470,6 +511,7 @@ function summarize_results!(
     # Library lookups (shared across files)
     prec_irt = lib_irt
     prec_mz_arr = getMz(precursors)
+    prec_pair_idxs = getPairIdx(precursors)
     entrap_group_ids = getEntrapmentGroupId(precursors)
 
     n_processed_files = 0
@@ -519,14 +561,18 @@ function summarize_results!(
 
             # Add Phase 2 library-lookup columns (deferred from process_search_results!)
             N = nrow(tbl)
+            irt_diff_col = Vector{Float32}(undef, N)
             prec_mz_col = Vector{Float32}(undef, N)
+            pair_id_col = Vector{UInt32}(undef, N)
             entrap_col = Vector{UInt8}(undef, N)
             _compute_phase2_columns!(
-                tbl[!, :precursor_idx],
-                prec_mz_arr, entrap_group_ids,
-                prec_mz_col, entrap_col
+                tbl[!, :precursor_idx], tbl[!, :irt_obs], tbl[!, :irt_pred],
+                prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+                irt_diff_col, prec_mz_col, pair_id_col, entrap_col
             )
+            tbl[!, :irt_diff] = irt_diff_col
             tbl[!, :prec_mz] = prec_mz_col
+            tbl[!, :pair_id] = pair_id_col
             tbl[!, :entrapment_group_id] = entrap_col
 
             sort!(tbl, :rt)
@@ -556,13 +602,14 @@ function summarize_results!(
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
     @debug_l1 "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"
 
-    # Step 3: Compute chromatographic tolerance from fold files
+    # Step 3: Compute the RT-binned chromatographic tolerance used when
+    # extracting chromatograms around each precursor's refined RT.
     t3_start = time()
     if n_processed_files > 0
         if rt_binned_tol !== nothing
             compute_rt_binned_tolerance!(search_context, rt_binned_tol, ms_data, n_files)
         else
-            @debug_l1 "No RT-binned tolerance available — chromatogram integration will use per-file iRT tolerance from recalibrate_rt!"
+            @debug_l1 "No RT-binned tolerance registered — chromatogram extraction will fall back to the per-file iRT tolerance from recalibrate_rt!"
         end
     else
         @warn "No files processed in MainSearch — skipping chromatographic tolerance computation"

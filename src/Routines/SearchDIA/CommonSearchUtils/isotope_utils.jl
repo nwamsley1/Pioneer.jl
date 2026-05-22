@@ -58,9 +58,16 @@ end
                            compute_isotope_set=true)
 
 Compute precursor fraction transmitted and optionally which isotopes are
-captured in each isolation window. Adds columns to `chroms`:
+captured in each isolation window. The caller may pass either a PSM table or a
+chromatogram-row table.
+
+Adds columns to `chroms`:
 - `:precursor_fraction_transmitted` (always)
 - `:isotopes_captured` (when `compute_isotope_set=true`)
+
+Chromatogram integration always needs `:precursor_fraction_transmitted` for
+transmission-corrected smoothing. It only needs row-level `:isotopes_captured`
+when integrating separate isotope traces.
 
 Multi-threaded: partitions rows into chunks and spawns tasks.
 """

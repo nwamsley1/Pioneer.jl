@@ -81,6 +81,23 @@ end
     @test passing_psms.precursor_fraction_transmitted == Float32[0.82, 0.55]
 end
 
+@testset "combined trace seed selection uses highest score then lower scan" begin
+    passing_psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 20, 20],
+        scan_idx = UInt32[40, 20, 30, 80, 60],
+        lgbm_score = Float32[0.80, 0.95, 0.95, 0.70, 0.70],
+        precursor_fraction_transmitted = Float32[0.95, 0.40, 0.80, 0.80, 0.70],
+    )
+
+    selected_rows = Pioneer.select_combined_trace_seed_rows_by_score(passing_psms)
+    selected_psms = Pioneer.select_combined_trace_seed_psms_by_score(passing_psms)
+
+    @test selected_rows == [2, 5]
+    @test selected_psms.precursor_idx == UInt32[10, 20]
+    @test selected_psms.scan_idx == UInt32[20, 60]
+    @test selected_psms.lgbm_score == Float32[0.95, 0.70]
+end
+
 @testset "legacy chromatogram integration sort defaults to combined" begin
     chromatograms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10, 11],
@@ -106,12 +123,20 @@ end
     ]
 end
 
-function _write_trace_mode_params(path::AbstractString; trace_mode = nothing)
-    trace_mode_json = trace_mode === nothing ? "" : """
+function _write_trace_mode_params(
+    path::AbstractString;
+    trace_mode = nothing,
+    deconvolution_solver = nothing,
+)
+    chrom_fields = String[]
+    trace_mode !== nothing && push!(chrom_fields, "\"trace_mode\": \"$(trace_mode)\"")
+    deconvolution_solver !== nothing && push!(chrom_fields, "\"deconvolution_solver\": \"$(deconvolution_solver)\"")
+
+    trace_mode_json = isempty(chrom_fields) ? "" : """
         ,
         "optimization": {
             "chromatogram_integration": {
-                "trace_mode": "$(trace_mode)"
+                $(join(chrom_fields, ",\n                "))
             }
         }
     """
@@ -136,6 +161,24 @@ end
     default_params = Pioneer.parse_pioneer_parameters(default_path)
     default_integration = Pioneer.IntegrateChromatogramSearchParameters(default_params)
     @test default_integration.isotope_tracetype isa Pioneer.CombineTraces
+    @test isdefined(Pioneer, :HuberSolver)
+    if isdefined(Pioneer, :HuberSolver)
+        HuberSolver = getproperty(Pioneer, :HuberSolver)
+        @test default_integration.deconvolution_solver isa HuberSolver
+        @test default_integration.deconvolution_solver.delta == 300.0f0
+        @test Pioneer.chromatogram_integration_solver_label(default_integration.deconvolution_solver) ==
+            "HuberSolver(delta=300.0)"
+    end
+
+    pmm_path = joinpath(tmp, "pmm.json")
+    _write_trace_mode_params(pmm_path; deconvolution_solver = "pmm")
+    checked_pmm = Pioneer.checkParams(pmm_path)
+    @test checked_pmm["optimization"]["chromatogram_integration"]["deconvolution_solver"] == "pmm"
+    pmm_params = Pioneer.parse_pioneer_parameters(pmm_path)
+    pmm_integration = Pioneer.IntegrateChromatogramSearchParameters(pmm_params)
+    @test pmm_integration.deconvolution_solver isa Pioneer.PoissonMMSolver
+    @test Pioneer.chromatogram_integration_solver_label(pmm_integration.deconvolution_solver) ==
+        "PoissonMMSolver"
 
     separate_path = joinpath(tmp, "separate.json")
     _write_trace_mode_params(separate_path; trace_mode = "separate")
@@ -145,4 +188,9 @@ end
     separate_params = Pioneer.parse_pioneer_parameters(separate_path)
     separate_integration = Pioneer.IntegrateChromatogramSearchParameters(separate_params)
     @test separate_integration.isotope_tracetype isa Pioneer.SeperateTraces
+end
+
+@testset "chromatogram transmission annotation keeps combined mode weighted" begin
+    @test !Pioneer.compute_chromatogram_isotope_sets(Pioneer.CombineTraces(0.25f0))
+    @test Pioneer.compute_chromatogram_isotope_sets(Pioneer.SeperateTraces())
 end

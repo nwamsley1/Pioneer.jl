@@ -21,10 +21,15 @@
 Search method for analyzing chromatograms to get quantitative information.
 
 This search:
-1. Uses precursor and trace information from previous searches
-2. Builds chromatograms for each precursor
-3. Integrates areas for quantification
-4. Incorporates isotope pattern information
+1. Loads the best PSMs selected by `MainSearch`
+2. Builds MS2 chromatograms around each precursor's refined RT
+3. Annotates chromatogram rows with precursor transmission for weighted smoothing
+4. Integrates each peak with WH smoothing, second-derivative bounds, baseline
+   subtraction, and trapezoidal area calculation
+
+When separate isotope traces are requested, chromatogram rows also get an
+`:isotopes_captured` grouping label so integration can choose one trace per
+precursor.
 """
 struct IntegrateChromatogramSearch <: SearchMethod end
 
@@ -36,7 +41,7 @@ Type Definitions
 Results container for chromatogram integration search.
 """
 struct IntegrateChromatogramSearchResults <: SearchResults
-    psms::Base.Ref{DataFrame}  # Chromatogram data per file
+    psms::Base.Ref{DataFrame}  # PSM rows for one file after integration
 end
 
 function _resolve_chromatogram_trace_type(
@@ -57,8 +62,64 @@ function _resolve_chromatogram_trace_type(
     ))
 end
 
+function default_chromatogram_integration_huber_solver()
+    return HuberSolver(
+        300.0f0,      # delta (hardcoded until tuning is reintroduced)
+        0.0f0,        # lambda (no regularization)
+        Int64(50),    # max_iter_newton
+        Int64(100),   # max_iter_bisection
+        10.0f0,       # accuracy_newton
+        10.0f0,       # accuracy_bisection
+        NoNorm(),
+    )
+end
+
+function _resolve_chromatogram_deconvolution_solver(params::PioneerParameters)
+    solver_name = get(
+        params.optimization.chromatogram_integration,
+        :deconvolution_solver,
+        "huber",
+    )
+
+    if solver_name == "huber"
+        return default_chromatogram_integration_huber_solver()
+    elseif solver_name == "pmm"
+        return PoissonMMSolver()
+    end
+
+    throw(ArgumentError(
+        "Invalid optimization.chromatogram_integration.deconvolution_solver=$(repr(solver_name)); " *
+        "expected \"huber\" or \"pmm\".",
+    ))
+end
+
+with_chromatogram_huber_delta(solver::HuberSolver, delta::Float32) = with_huber_delta(solver, delta)
+with_chromatogram_huber_delta(solver::DeconvolutionSolver, ::Float32) = solver
+
+function calibrated_chromatogram_deconvolution_solver(
+    search_context::SearchContext,
+    solver::DeconvolutionSolver,
+)
+    return with_chromatogram_huber_delta(solver, getHuberDelta(search_context))
+end
+
+function chromatogram_integration_solver_label(solver::HuberSolver)
+    return "HuberSolver(delta=$(Float64(solver.delta)))"
+end
+
+function chromatogram_integration_solver_label(::PoissonMMSolver)
+    return "PoissonMMSolver"
+end
+
+function chromatogram_integration_solver_label(solver::DeconvolutionSolver)
+    return string(nameof(typeof(solver)))
+end
+
 """
 Parameters for chromatogram integration search.
+
+This stage configures trace mode and the deconvolution solver. Peak bounds are
+selected inside `integrate_chrom`.
 """
 struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
@@ -112,12 +173,12 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            PoissonMMSolver(),  # hardcoded: PMM is the production solver
+            _resolve_chromatogram_deconvolution_solver(params),
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 
             isotope_trace_type,
-            prec_estimation
+            prec_estimation,
         )
     end
 end
@@ -129,6 +190,12 @@ Interface Implementation
 
 get_parameters(::IntegrateChromatogramSearch, params::Any) = IntegrateChromatogramSearchParameters(params)
 
+function write_intermediate_chromatogram_debug_plots(
+    ::IntegrateChromatogramSearchParameters,
+)
+    return DEBUG_CONSOLE_LEVEL[] >= 1
+end
+
 function init_search_results(::IntegrateChromatogramSearchParameters, search_context::SearchContext)
     return IntegrateChromatogramSearchResults(
         Ref(DataFrame())
@@ -137,6 +204,10 @@ end
 
 """
 Process a single file for chromatogram integration.
+
+The integration input is the passing PSM table from `MainSearch`; no main-search
+intervals are passed to the bound picker. Chromatograms are extracted,
+transmission-annotated, sorted for the configured trace mode, then integrated.
 """
 function process_file!(
     results::IntegrateChromatogramSearchResults,
@@ -174,12 +245,15 @@ function process_file!(
         return results
     end
 
-    # Initialize columns to store integration results
-    # peak_area: Integrated area of chromatographic peak
-    # new_best_scan: Updated apex scan after refinement
+    if !seperateTraces(params.isotope_tracetype)
+        passing_psms = select_combined_trace_seed_psms_by_score(passing_psms)
+    end
+
+    # Initialize columns written by chromatogram integration.
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
         spectra,
@@ -190,20 +264,16 @@ function process_file!(
         ms_file_idx,
         MS2CHROM(),
     )
-    # Save unsorted chromatograms for sorting benchmarks (first file only)
-    if ms_file_idx == 1
-        out_dir = getDataOutDir(search_context)
-        bench_df = copy(chromatograms)
-        bench_df[!, :rt_milliminutes] = round.(UInt32, bench_df.rt .* 1000)
-        Arrow.write(joinpath(out_dir, "unsorted_chroms_ms2.arrow"), bench_df)
-    end
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
-    if seperateTraces(params.isotope_tracetype)
+    if nrow(chromatograms) > 0
+        # WH smoothing uses precursor transmission as both a correction factor
+        # and an observation weight. Separate-trace mode also uses isotope
+        # labels for chromatogram grouping.
         get_isotopes_captured!(
             chromatograms,
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -213,22 +283,8 @@ function process_file!(
             getMz(getPrecursors(getSpecLib(search_context))),
             getSulfurCount(getPrecursors(getSpecLib(search_context))),
             getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-    else
-        # Combined-trace integration needs the per-row transmission fraction, but
-        # must not group or sort points by isotope-capture state before integration.
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra);
-            compute_isotope_set=false
+            getIsolationWidthMzs(spectra),
+            compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
@@ -237,9 +293,13 @@ function process_file!(
     if nrow(chromatograms) > 0
         psm_isotopes_captured = nothing
         if seperateTraces(params.isotope_tracetype)
+            # In separate-trace mode, choose the transmitted isotope trace used
+            # for quantification and mirror that choice onto the PSM/output
+            # columns. Combined mode keeps the upstream PSM isotope metadata.
+            selected_quant_trace = select_quant_trace_by_transmission(chromatograms)
             apply_quant_trace_selection!(
                 passing_psms,
-                select_quant_trace_by_transmission(chromatograms),
+                selected_quant_trace,
             )
             psm_isotopes_captured = passing_psms[!, :isotopes_captured]
         end
@@ -253,8 +313,19 @@ function process_file!(
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
             isotopes_captured = psm_isotopes_captured,
-            λ = params.wh_smoothing_strength
+            λ = params.wh_smoothing_strength,
         )
+        if write_intermediate_chromatogram_debug_plots(params)
+            debug_write_target_chromatogram_plots(
+                chromatograms,
+                passing_psms,
+                params.min_fraction_transmitted,
+                params.wh_smoothing_strength,
+                getDataOutDir(search_context),
+                ms_file_idx,
+                getFileIdToName(getMSData(search_context), ms_file_idx),
+            )
+        end
     end
     # MS1 integration disabled — see extract_chromatograms call above.
     # Clear chromatograms to free memory

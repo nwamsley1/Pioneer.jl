@@ -1,7 +1,7 @@
 # Utility helpers for working with LightGBM directly through its native API.
 
 struct LightGBMModel
-    booster::Union{LightGBM.LGBMClassification, Nothing}
+    booster::Union{LightGBM.LGBMClassification, LightGBM.LGBMRanking, Nothing}
     features::Vector{Symbol}
     constant_prediction::Union{Float32, Nothing}
 end

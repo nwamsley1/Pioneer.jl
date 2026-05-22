@@ -151,6 +151,7 @@ function importScripts()
         [
             "solveOLS.jl",          # Non-negative OLS coordinate descent
             "solvePoissonMM.jl",    # Poisson MLE coordinate descent + dispatch
+            "solveHuber.jl",        # Robust Huber coordinate descent
         ]
     )
 
@@ -296,6 +297,7 @@ function importScripts()
         "types.jl",                      # MainSearchParameters (no deps)
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
+        "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
         "scoring.jl",                    # train_lgbm_and_select_best (uses features)
         "utils.jl",                      # recalibrate_rt!
         "MainSearch.jl"                  # struct + interface (uses everything above)
@@ -306,10 +308,18 @@ function importScripts()
     # Fused variant for MainSearch (loaded after process_scans.jl — uses its dispatch helpers)
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "process_scans_fused.jl"))
 
+    # Chromatogram integration (explicit order so new files are precompile-tracked)
+    include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
+        "integrate_chrom.jl",
+        "IntegrateChromatogramsSearch.jl",
+        "utils.jl"
+    ])
+
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
         root_basename = basename(root)
         if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" ||
+           root_basename == "HuberTuningSearch" ||
            root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch" ||
            occursin("MainSearch", root)
             continue
@@ -320,6 +330,16 @@ function importScripts()
             end
         end
     end
+
+    # Huber calibration depends on the chromatogram-integration fused RT-window
+    # utilities, so load it after the remaining SearchMethods pass above.
+    include_files!(
+        joinpath(search_methods_dir, "HuberTuningSearch"),
+        [
+            "HuberTuningSearch.jl",
+            "utils.jl"
+        ]
+    )
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 

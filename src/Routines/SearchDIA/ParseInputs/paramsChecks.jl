@@ -97,6 +97,13 @@ function checkParams(json_path::String)
             chrom_params,
         ))
     end
+    check_param(chrom_params, "deconvolution_solver", String)
+    if !(chrom_params["deconvolution_solver"] in ("huber", "pmm"))
+        throw(InvalidParametersError(
+            "Invalid parameter optimization.chromatogram_integration.deconvolution_solver: expected \"huber\" or \"pmm\"",
+            chrom_params,
+        ))
+    end
 
     # Validate protein scoring parameters
     protein_scoring = params["proteinScoring"]

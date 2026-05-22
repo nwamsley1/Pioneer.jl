@@ -164,7 +164,7 @@ jobs:
           test -f "$SMOKE_DIR/build_template.json"
 
           "$PIONEER" params-search \
-            "$GITHUB_WORKSPACE/data/ecoli_test/Prosit_ECOLI_500_600mz_062625.poin" \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
             "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
             "$SMOKE_DIR/search_results_from_cli" \
             --params-path "$SMOKE_DIR/search_template.json"
@@ -288,7 +288,7 @@ jobs:
           }
 
           & $pioneer params-search `
-            (Join-Path $env:GITHUB_WORKSPACE 'data\ecoli_test\Prosit_ECOLI_500_600mz_062625.poin') `
+            (Join-Path $env:GITHUB_WORKSPACE 'test\integration\ecoli_lib.poin') `
             (Join-Path $env:GITHUB_WORKSPACE 'data\ecoli_test\raw') `
             (Join-Path $smokeDir 'search_results_from_cli') `
             --params-path (Join-Path $smokeDir 'search_template.json')
@@ -403,7 +403,7 @@ jobs:
           test -f "$SMOKE_DIR/build_template.json"
 
           "$PIONEER" params-search \
-            "$GITHUB_WORKSPACE/data/ecoli_test/Prosit_ECOLI_500_600mz_062625.poin" \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
             "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
             "$SMOKE_DIR/search_results_from_cli" \
             --params-path "$SMOKE_DIR/search_template.json"
@@ -509,7 +509,7 @@ jobs:
           test -f "$SMOKE_DIR/build_template.json"
 
           "$PIONEER" params-search \
-            "$GITHUB_WORKSPACE/data/ecoli_test/Prosit_ECOLI_500_600mz_062625.poin" \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
             "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
             "$SMOKE_DIR/search_results_from_cli" \
             --params-path "$SMOKE_DIR/search_template.json"
