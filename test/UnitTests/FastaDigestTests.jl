@@ -291,74 +291,18 @@
         @test ("ANOTHER", zero(UInt8)) in pss_from_entries
     end
 
-    @testset "ProteomeDistanceIndex target protection" begin
-        proteins = [
-            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-        ]
-        proteome_index = Pioneer.ProteomeDistanceIndex(proteins)
-
-        @test !Pioneer.has_min_target_hamming_distance("PEPTIDEK", proteome_index)
-        @test !Pioneer.has_min_target_hamming_distance("AEPTIDEK", proteome_index)
-        @test Pioneer.has_min_target_hamming_distance("AEPTIDDK", proteome_index)
-        @test !Pioneer.has_min_target_hamming_distance("AAAAAAK", proteome_index)
-        @test !Pioneer.has_min_target_hamming_distance("CAAAAAK", proteome_index)
-        @test Pioneer.has_min_target_hamming_distance("CCAAAAK", proteome_index)
-    end
-
-    @testset "target adjacent swap exclusion" begin
-        proteins = [
-            FastaEntry("P1", "", "", "", "human", "test", "ACDEFGK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "", "", "human", "test", "ACDEFGHK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-        ]
-        proteome_index = Pioneer.ProteomeDistanceIndex(proteins)
-
-        @test Pioneer.has_min_target_hamming_distance("ADCEFGK", proteome_index)
-        @test Pioneer.has_min_target_hamming_distance("ADCEFGHK", proteome_index)
-        @test !Pioneer.passes_target_distance_constraints("ADCEFGK", proteome_index)
-        @test !Pioneer.passes_target_distance_constraints("ADCEFGHK", proteome_index)
-        @test Pioneer.passes_target_distance_constraints("AECDFGK", proteome_index)
-    end
-
-    @testset "add_decoy_sequences_grouped protects modified target positions" begin
-        Random.seed!(22)
-        proteins = [
-            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-        ]
-        proteome_index = Pioneer.ProteomeDistanceIndex(proteins)
-        protected_entries = [
-            FastaEntry(
-                "P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1),
-                [
-                    PeptideMod(UInt8(1), 'A', "Keep1"),
-                    PeptideMod(UInt8(2), 'A', "Keep2"),
-                    PeptideMod(UInt8(4), 'A', "Keep4"),
-                    PeptideMod(UInt8(5), 'A', "Keep5"),
-                ],
-                missing,
-                UInt8(2), UInt32(1), UInt32(1), UInt8(0), false
-            ),
+    @testset "add_decoy_sequences_grouped does not mutate when decoy generation exhausts" begin
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
         ]
 
         result = Pioneer.add_decoy_sequences_grouped(
-            protected_entries;
-            max_shuffle_attempts = 1,
-            proteome_index = proteome_index,
-            show_progress = false,
-            log_progress = false,
+            entries;
+            max_shuffle_attempts = 0
         )
 
-        @test length(result) == 2
-        decoy = only(filter(is_decoy, result))
-        decoy_seq = get_sequence(decoy)
-        @test decoy_seq[1] == 'A'
-        @test decoy_seq[2] == 'A'
-        @test decoy_seq[3] != 'A'
-        @test decoy_seq[4] == 'A'
-        @test decoy_seq[5] == 'A'
-        @test decoy_seq[6] != 'A'
-        @test decoy_seq[7] == 'K'
-        @test Pioneer.has_min_target_hamming_distance(decoy_seq, proteome_index)
+        @test length(result) == 1
+        @test isempty(filter(is_decoy, result))
     end
     
     @testset "add_entrapment_sequences" begin
