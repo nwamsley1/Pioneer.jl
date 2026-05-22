@@ -209,23 +209,14 @@ function calculate_expected_combinations(
     return total_combinations
 end
 
-# Verify fragment counts in library.
-#
-# Post-§9 (e605153f), BuildSpecLib's filter knobs are pinned as compile-time
-# constants in src/Routines/BuildSpecLib.jl — `library_params.max_frag_rank`
-# and `library_params.length_to_frag_count_multiple` from the JSON are NOT
-# read by the build path. The effective cap is `const_max_frag_rank =
-# UInt8(10)`. So the only meaningful structural invariant left to assert
-# is "no precursor exceeds the hardcoded cap"; the prior
-# `length × multiplier + 1` rule cannot be tested without first making
-# those JSON knobs user-configurable again.
-#
-# `expected_multiplier` is kept in the signature for backward
-# compatibility with existing call sites; it's no longer consulted.
+# Verify fragment counts in library. BuildSpecLib pins these filter knobs in
+# code rather than reading `library_params.max_frag_rank` or
+# `library_params.length_to_frag_count_multiple` from JSON, so this helper
+# checks the hardcoded length-multiplier policy used by library construction.
 function verify_fragment_counts(
     lib_dir::String,
     expected_multiplier::Float64,
-    max_frag_rank::Int = 10
+    max_frag_rank::Int = typemax(UInt8)
 )
     # Load precursors to get peptide lengths (kept for the warning text)
     precursors_file = joinpath(lib_dir, "precursors_table.arrow")
@@ -249,10 +240,12 @@ function verify_fragment_counts(
         end_idx = pid_to_fid[prec_idx + 1] - 1
         frag_count = end_idx - start_idx + 1
 
-        if frag_count > max_frag_rank
-            seq_length = length(precursors.sequence[prec_idx])
+        seq_length = length(precursors.sequence[prec_idx])
+        max_allowed = min(max_frag_rank, round(Int, seq_length * expected_multiplier))
+
+        if frag_count > max_allowed
             @warn "Precursor $prec_idx (length $seq_length) has $frag_count fragments, " *
-                  "exceeds hardcoded cap of $max_frag_rank"
+                  "exceeds allowed cap of $max_allowed"
             all_valid = false
         end
     end
@@ -697,21 +690,13 @@ end
     
     
     @testset "Fragment Count Rule Tests" begin
-        # Post-§9 BuildSpecLib pins `length_to_frag_count_multiple` and
-        # `max_frag_rank` as compile-time constants
-        # (`const_length_to_frag_count_multiple = 1000`,
-        # `const_max_frag_rank = 10` in src/Routines/BuildSpecLib.jl) — the
-        # JSON values for these knobs are not consulted. Every precursor
-        # therefore ends up capped at 10 fragments regardless of length or
-        # of `length_to_frag_count_multiple`. This testset's only useful
-        # job is verifying that cap holds; the historical multiplier loop
-        # was sweeping a knob that no longer does anything, so we run a
-        # single representative build.
-        HARDCODED_MAX_FRAG_RANK = 10
+        # BuildSpecLib pins fragment count filtering in code: keep the top
+        # 2 * peptide length fragments, with no 10-fragment construction cap.
+        DEFAULT_LENGTH_MULTIPLIER = 2.0
         scenario_base_dir = joinpath(test_data_dir, "scenario_frag_count")
         minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
 
-        @testset "All precursors respect hardcoded $HARDCODED_MAX_FRAG_RANK-fragment cap" begin
+        @testset "All precursors respect hardcoded 2x-length fragment cap" begin
             output_dir = joinpath(scenario_base_dir, "mult_2", "output")
             lib_name = "frag_mult_2"
             lib_dir = joinpath(output_dir, lib_name * ".poin")
@@ -742,7 +727,7 @@ end
             @test Pioneer.BuildSpecLib(params_file) === nothing
 
             if verify_library_structure(lib_dir)
-                @test verify_fragment_counts(lib_dir, 2.0, HARDCODED_MAX_FRAG_RANK)
+                @test verify_fragment_counts(lib_dir, DEFAULT_LENGTH_MULTIPLIER)
             else
                 @warn "Library structure verification failed"
                 @test false

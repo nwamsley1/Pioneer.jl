@@ -117,3 +117,50 @@ end
     @test Pioneer.validate_fragment_index_filters(
         UInt8(4), UInt8(2), UInt8(3), UInt8(1), false, true) === nothing
 end
+
+@testset "library fragment rank cap uses peptide length multiplier" begin
+    defaults = Pioneer.build_speclib_fragment_filter_defaults()
+    @test defaults.max_frag_rank == typemax(UInt8)
+    @test defaults.length_to_frag_count_multiple == 2.0f0
+
+    cap_ctx = Pioneer.SplineFragFilterCtx(
+        Dict(Int32(1) => Pioneer.PioneerFragAnnotation(
+            'y',
+            UInt8(3),
+            UInt8(1),
+            UInt8(0),
+            false,
+            false,
+            false,
+            Int8(0),
+        )),
+        UInt8[7],
+        Float32[600.0],
+        UInt8(3),
+        UInt8(2),
+        false,
+        false,
+        false,
+        false,
+        true,
+        UInt8(3),
+        typemax(UInt8),
+        2.0f0,
+        0.0f0,
+        FragBoundModel(
+            Pioneer.ImmutablePolynomial(Float32[0.0, 0.0]),
+            Pioneer.ImmutablePolynomial(Float32[1000.0, 0.0]),
+        ),
+    )
+    fragments = DataFrame(
+        annotation = fill(Int32(1), 20),
+        mz = Float32.(101:120),
+        precursor_idx = fill(UInt32(1), 20),
+    )
+
+    Pioneer.filter_fragments!(fragments, SplineCoefficientModel("altimeter"), cap_ctx)
+
+    @test nrow(fragments) == 14
+    @test Pioneer.filterFrag(14, UInt8(7), typemax(UInt8), 2.0f0) == false
+    @test Pioneer.filterFrag(15, UInt8(7), typemax(UInt8), 2.0f0) == true
+end

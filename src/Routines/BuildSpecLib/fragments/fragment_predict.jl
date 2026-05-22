@@ -49,6 +49,14 @@ struct SplineFragFilterCtx
     frag_bounds::FragBoundModel
 end
 
+@inline function fragment_rank_cap(
+    prec_len::Integer,
+    max_frag_rank::Integer,
+    length_to_frag_count_multiple::AbstractFloat,
+)::Int
+    return min(Int(max_frag_rank), round(Int, Float32(prec_len) * Float32(length_to_frag_count_multiple)))
+end
+
 """
     predict_fragments(
         peptide_table_path::String,
@@ -269,7 +277,7 @@ Per-fragment filters (decided from `ctx.annotation_lookup[annotation]`):
 
 Per-precursor rank cap (Altimeter returns fragments in importance order;
 this preserves that ordering and keeps the first N per precursor):
-  N = min(max_frag_rank, round(prec_len * length_to_frag_count_multiple) + 1)
+  N = min(max_frag_rank, round(prec_len * length_to_frag_count_multiple))
 """
 function filter_fragments!(df::DataFrame, model::SplineCoefficientModel,
                            ctx::SplineFragFilterCtx)
@@ -331,8 +339,11 @@ function filter_fragments!(df::DataFrame, model::SplineCoefficientModel,
         keep[i] || continue
         pid = pids[i]
         prec_len = ctx.prec_len[pid]
-        max_n = min(Int(ctx.max_frag_rank),
-                    round(Int, Float32(prec_len) * ctx.length_to_frag_count_multiple) + 1)
+        max_n = fragment_rank_cap(
+            prec_len,
+            ctx.max_frag_rank,
+            ctx.length_to_frag_count_multiple,
+        )
         cur = get(rank_per_pid, pid, 0) + 1
         rank_per_pid[pid] = cur
         if cur > max_n
@@ -351,4 +362,3 @@ Sort fragments by intensity within each precursor group.
 function sort_fragments!(df::DataFrame)
     sort!(df, [:precursor_idx, order(:intensities, rev=true)])
 end
-

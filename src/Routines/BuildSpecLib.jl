@@ -38,6 +38,27 @@ function main_BuildSpecLib(argv=ARGS)::Cint
 end
 
 """
+    build_speclib_fragment_filter_defaults()
+
+Return the hardcoded fragment filters used by the Altimeter library-build path.
+"""
+function build_speclib_fragment_filter_defaults()
+    return (
+        y_start = UInt8(3),
+        b_start = UInt8(2),
+        include_p = false,
+        include_isotope = false,
+        include_immonium = false,
+        include_internal = false,
+        include_neutral_diff = true,
+        max_frag_charge = UInt8(3),
+        max_frag_rank = typemax(UInt8),
+        length_to_frag_count_multiple = 2.0f0,
+        min_frag_intensity = 0.0f0,
+    )
+end
+
+"""
     BuildSpecLib(params_path::String)
 
 Main function to build a spectral library from parameters. Executes a series of steps:
@@ -202,17 +223,18 @@ function BuildSpecLib(params_path::String)
             # constants are passed). They live as locals so the early filter
             # in `predict_fragments` and the late path in `buildPionLib`
             # share a single source of truth.
-            const_y_start                       = UInt8(3)
-            const_b_start                       = UInt8(2)
-            const_include_p                     = false
-            const_include_isotope               = false
-            const_include_immonium              = false
-            const_include_internal              = false
-            const_include_neutral_diff          = true
-            const_max_frag_charge               = UInt8(3)
-            const_max_frag_rank                 = UInt8(10)
-            const_length_to_frag_count_multiple = Float32(1000)
-            const_min_frag_intensity            = 0.0f0
+            fragment_filter_defaults = build_speclib_fragment_filter_defaults()
+            const_y_start                       = fragment_filter_defaults.y_start
+            const_b_start                       = fragment_filter_defaults.b_start
+            const_include_p                     = fragment_filter_defaults.include_p
+            const_include_isotope               = fragment_filter_defaults.include_isotope
+            const_include_immonium              = fragment_filter_defaults.include_immonium
+            const_include_internal              = fragment_filter_defaults.include_internal
+            const_include_neutral_diff          = fragment_filter_defaults.include_neutral_diff
+            const_max_frag_charge               = fragment_filter_defaults.max_frag_charge
+            const_max_frag_rank                 = fragment_filter_defaults.max_frag_rank
+            const_length_to_frag_count_multiple = fragment_filter_defaults.length_to_frag_count_multiple
+            const_min_frag_intensity            = fragment_filter_defaults.min_frag_intensity
 
             # Fragment prediction
             @user_info "Predicting fragment ion intensities..."

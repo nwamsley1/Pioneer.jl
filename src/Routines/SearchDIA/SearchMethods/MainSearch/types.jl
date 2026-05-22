@@ -97,8 +97,8 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
         # max_rank is hardcoded to typemax(UInt8) (=255 = "no rank cap"). The
         # library already enforces a per-precursor rank cap at build time
-        # (BuildSpecLib's max_frag_rank=10), so the runtime knob was redundant.
-        # EXPERIMENT 2026-05-09: cap to 6 to test top-6 vs top-10 fragments.
+        # (BuildSpecLib keeps the top 2 * peptide length fragments), so the
+        # runtime knob is redundant.
         max_frag_rank = UInt8(parse(Int, get(ENV, "PIONEER_MAX_FRAG_RANK", "255")))
 
         # n_isotopes lives at search.n_isotopes (flattened). Fall back to
