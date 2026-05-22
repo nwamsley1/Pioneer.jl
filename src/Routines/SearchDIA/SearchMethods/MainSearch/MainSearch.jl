@@ -301,25 +301,18 @@ function process_search_results!(
         q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
         min_precursors = MAIN_IRT_REFINEMENT_MIN_PRECURSORS,
     )
-    irt_refinement_result = refine_mainsearch_irt_predictions!(
-        psms,
-        best_psms,
-        scores,
-        irt_refinement,
-    )
+    irt_refinement_result = refine_mainsearch_irt_predictions!(psms, best_psms, scores, irt_refinement)
     if irt_refinement_result.refined
         best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(psms, lgbm_predictor)
         best_psms[!, :lgbm_prob] = scores
-        @debug_l1 "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
-                   "$(length(irt_refinement_result.training_target_precursors)) high-confidence target precursors; " *
-                   "reapplied LGBM after iRT feature refresh " *
-                   "(predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s)"
+        @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                   "$(length(irt_refinement_result.training_target_precursors)) training precursors; " *
+                   "reapply predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s"
         _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
-        @debug_l1 "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
-                   "skipped; $(length(irt_refinement_result.training_target_precursors)) " *
-                   "high-confidence target precursors available " *
-                   "(need $(irt_refinement.min_precursors))"
+        @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): skipped " *
+                   "($(length(irt_refinement_result.training_target_precursors)) " *
+                   "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
 
     # ============================================================
