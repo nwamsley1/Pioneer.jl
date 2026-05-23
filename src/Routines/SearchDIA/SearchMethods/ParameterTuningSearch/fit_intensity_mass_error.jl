@@ -612,9 +612,10 @@ function fit_intensity_mass_error_model(
     # caps the spread at its value at the boundary.
     mz_q02, mz_q98 = Float32.(quantile(mz_f64, [0.02, 0.98]))
     I_q02, I_q98   = Float32.(quantile(log2I, [0.02, 0.98]))
+    I_q05, I_q95   = Float32.(quantile(log2I, [0.05, 0.95]))
     mz_extrap = make_spline_extrap(mz_spline, mz_q02, mz_q98)
     int_extrap = make_spline_extrap(I_spline, I_q02, I_q98)
-    spread_extrap_raw = make_spline_extrap(spread_spline, I_q02, I_q98)
+    spread_extrap_raw = make_spline_extrap(spread_spline, I_q05, I_q95)
     spread_extrap = SplineExtrap{Float32}(
         spread_extrap_raw.lo, spread_extrap_raw.hi,
         spread_extrap_raw.lo_val, Float32(0),  # constant extrap on left  (low intensity)
