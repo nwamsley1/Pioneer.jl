@@ -269,6 +269,13 @@ function SearchDIA(params_path::String)
         rethrow(e)
     finally
         finalize_pioneer_logging(warnings_full_path; banner_title = "Search completed")
+        # End-of-search runtime cleanup. Forces a full GC pass + flushes any
+        # buffered C-side stdio (libomp/LightGBM emit warnings via printf).
+        # Cheap (~tens of ms) and gives the runtime a clean state before the
+        # next SearchDIA call in the same REPL — mitigates the libomp
+        # re-entrance assertion that has historically aborted multi-call runs.
+        GC.gc(true)
+        Libc.flush_cstdio()
     end
 
     return nothing
