@@ -13,11 +13,10 @@ struct MainSearchIrtCorrectionModel
     coefficients::Dict{String, Float32}
 end
 
-mutable struct MainSearchIrtRefinement{P<:LibraryPrecursors}
+struct MainSearchIrtRefinement{P<:LibraryPrecursors}
     precursors::P
     q_value_threshold::Float32
     min_precursors::Int
-    token_cache::Dict{UInt32, Dict{String, Float32}}
 end
 
 function MainSearchIrtRefinement(
@@ -25,12 +24,7 @@ function MainSearchIrtRefinement(
     q_value_threshold::Float32 = PRESCORE_QVALUE_THRESHOLD,
     min_precursors::Int = 250,
 )
-    return MainSearchIrtRefinement(
-        precursors,
-        q_value_threshold,
-        min_precursors,
-        Dict{UInt32, Dict{String, Float32}}(),
-    )
+    return MainSearchIrtRefinement(precursors, q_value_threshold, min_precursors)
 end
 
 @inline function _irt_pred_basis(current_irt_pred::Float32)
@@ -86,11 +80,9 @@ function precursor_token_counts(
     precursor_idx::Integer,
 )
     pid = UInt32(precursor_idx)
-    return get!(strategy.token_cache, pid) do
-        sequence = String(getSequence(strategy.precursors)[pid])
-        structural_mods = getStructuralMods(strategy.precursors)[pid]
-        _precursor_token_counts(sequence, structural_mods)
-    end
+    sequence = String(getSequence(strategy.precursors)[pid])
+    structural_mods = getStructuralMods(strategy.precursors)[pid]
+    return _precursor_token_counts(sequence, structural_mods)
 end
 
 function _unique_sorted_precursor_ids(precursor_idx::AbstractVector)
