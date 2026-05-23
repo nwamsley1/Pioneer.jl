@@ -101,13 +101,14 @@ const PRESCORE_QVALUE_THRESHOLD = 0.015f0
 const LOGODDS_CLAMP_FLOOR = 0.02f0
 
 """
-    aggregate_prescore_globally!(search_context; fold_suffix="") -> (Set{UInt32}, Union{Nothing, RTBinnedTolerance})
+    aggregate_prescore_globally!(search_context; fold_suffix="") -> (rt_binned_tol = ...,)
 
 Load per-file LightGBM prescore arrow files, aggregate raw LightGBM probabilities
 via log-odds averaging of the top ⌊√N⌋ values per precursor, compute global
-target/decoy q-values, and return (1) the set of precursor indices passing at
-`q ≤ PRESCORE_QVALUE_THRESHOLD` and (2) an `RTBinnedTolerance` (or `nothing`
-if insufficient data).
+target/decoy q-values, and use the high-confidence (q ≤ 0.001) targets to fit an
+RT-binned chromatographic tolerance. Returns the `RTBinnedTolerance` (or `nothing`
+if insufficient data). The cross-file q-value is used only as a selector for the
+RT-tolerance fit; it is **not** propagated as a filter to ScoringSearch.
 """
 function aggregate_prescore_globally!(search_context::SearchContext;
                                       fold_suffix::String="")
@@ -167,47 +168,10 @@ function aggregate_prescore_globally!(search_context::SearchContext;
         global_targets[i] = !is_decoy[pid]
     end
 
-    # Q-values on global scores
+    # Q-values on global scores — used only as a selector for the RT-tolerance fit
+    # below. Not propagated to ScoringSearch.
     global_qvals = Vector{Float32}(undef, n_unique)
     get_qvalues!(global_probs, global_targets, global_qvals; doSort=true)
-
-    # Build passing set (targets + decoys at q ≤ threshold — this is what gets written
-    # to fold Arrow files and carried forward to ScoringSearch).
-    passing = Set{UInt32}()
-    n_targets_pass = 0
-    qvalue_threshold = PRESCORE_QVALUE_THRESHOLD
-    for i in eachindex(global_prec_idxs)
-        if global_qvals[i] <= qvalue_threshold
-            push!(passing, global_prec_idxs[i])
-            n_targets_pass += global_targets[i]
-        end
-    end
-
-    n_targets = count(global_targets)
-    n_decoys_pass = length(passing) - n_targets_pass
-    @debug_l1 "Global prescore: $n_unique precursors ($n_targets targets); $(length(passing)) pass q≤$qvalue_threshold ($n_targets_pass targets + $n_decoys_pass decoys) from $n_valid_files files"
-
-    # Multi-threshold diagnostic: count targets/decoys passing at a fixed grid of
-    # q-value cutoffs so we can see the threshold-sensitivity curve in the log.
-    diag_thresholds = Float32[0.001, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.10]
-    nthr = length(diag_thresholds)
-    n_targets_at = zeros(Int, nthr)
-    n_decoys_at  = zeros(Int, nthr)
-    for i in eachindex(global_qvals)
-        q = global_qvals[i]
-        for (k, thr) in enumerate(diag_thresholds)
-            if q <= thr
-                if global_targets[i]
-                    n_targets_at[k] += 1
-                else
-                    n_decoys_at[k] += 1
-                end
-            end
-        end
-    end
-    @debug_l1 "  q≤ thresholds:        " * join((string(round(t, digits=4)) for t in diag_thresholds), "  ")
-    @debug_l1 "  targets passing:      " * join((string(c) for c in n_targets_at), "  ")
-    @debug_l1 "  decoys  passing:      " * join((string(c) for c in n_decoys_at), "  ")
 
     # --- Compute per-RT-bin tolerances ---
     n_rt_bins = 20
@@ -299,15 +263,5 @@ function aggregate_prescore_globally!(search_context::SearchContext;
     t_total = time() - t_total_start
     @debug_l1 "Prescore aggregation: file_reads=$(r(t_reads))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
 
-    return (
-        passing            = passing,
-        rt_binned_tol      = rt_binned_tol,
-        n_targets_pass     = n_targets_pass,
-        n_decoys_pass      = n_decoys_pass,
-        qvalue_threshold   = qvalue_threshold,
-        # Returned for downstream global pair competition; per-precursor parallel arrays.
-        global_prec_idxs   = global_prec_idxs,
-        global_probs       = global_probs,
-        global_targets     = global_targets,
-    )
+    return (rt_binned_tol = rt_binned_tol,)
 end

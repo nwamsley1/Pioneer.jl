@@ -31,11 +31,6 @@ Pipeline:
 # disable the filter entirely.
 const MAIN_PEP_FILTER_THR = 0.9f0
 
-# When true, MainSearch enforces the global prescore q-value passing set by
-# dropping PSMs of non-passing precursors before ScoringSearch reads them.
-# When false, the passing-set is computed and logged but not enforced.
-const ENFORCE_GLOBAL_PRESCORE_FILTER = false
-
 # Minimum number of high-confidence target precursors required to fit the
 # cross-fold iRT refinement model. Files with fewer than this many post-
 # pair-competition target precursors skip the refinement pass.
@@ -470,28 +465,15 @@ function summarize_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     lib_irt = getIrt(precursors)
 
-    # Step 1: Per-fold global prescore aggregation → passing precursor sets + RT-binned tolerance
+    # Step 1: Per-fold global prescore aggregation → RT-binned tolerance only.
+    # No PSM filter is applied here; the per-file PEP filter upstream already
+    # gates what reaches ScoringSearch.
     t1_start = time()
     fold0_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
     fold1_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
-    passing_fold0 = fold0_result.passing
-    passing_fold1 = fold1_result.passing
-    # Use whichever fold's RT-binned tolerance is available (they should be similar)
     rt_binned_tol = fold0_result.rt_binned_tol !== nothing ?
                     fold0_result.rt_binned_tol : fold1_result.rt_binned_tol
-    passing_precs = union(passing_fold0, passing_fold1)
-    # One-line summary (combined across folds; per-fold detail is at @debug_l1)
-    n_targets_total = fold0_result.n_targets_pass + fold1_result.n_targets_pass
-    n_decoys_total  = fold0_result.n_decoys_pass  + fold1_result.n_decoys_pass
-    n_pass_total    = n_targets_total + n_decoys_total
-    # ENFORCE_GLOBAL_PRESCORE_FILTER=false → report only; =true → drop PSMs of
-    # non-passing precursors before ScoringSearch reads them.
-    enforce_filter = ENFORCE_GLOBAL_PRESCORE_FILTER
-    @user_info "  Global prescore: $n_pass_total precursors pass q≤$(fold0_result.qvalue_threshold) ($n_targets_total targets + $n_decoys_total decoys)" *
-               (enforce_filter ? " [FILTER ENFORCED]" : " [report only, no filter]")
     t1 = time() - t1_start
-
-    store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
 
     # Step 2: Load main_search_psms fold-split files, filter to passing precursors,
     # add deferred columns, OVERWRITE each fold file in place via writeArrow.
@@ -521,7 +503,6 @@ function summarize_results!(
         n_after_file = 0
 
         for fold in UInt8[0, 1]
-            passing = fold == 0 ? passing_fold0 : passing_fold1
             psm_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
 
             if !isfile(psm_path)
@@ -537,11 +518,6 @@ function summarize_results!(
             n_before_file += n_before
             n_total_precs += n_before
 
-            # Filter to this fold's passing precursors — only when enforce_filter is set.
-            if enforce_filter
-                mask = in.(tbl[!, :precursor_idx], Ref(passing))
-                tbl = tbl[mask, :]
-            end
             n_after = nrow(tbl)
             n_after_file += n_after
             n_kept_precs += n_after
