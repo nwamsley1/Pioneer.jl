@@ -187,7 +187,7 @@ function library_search(
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
-        @user_info "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
+        @debug_l1 "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
                    "deconv=$(round(t_deconv, digits=2))s  " *
                    "vcat=$(round(t_vcat, digits=2))s  " *
                    "candidates=$(length(get_precursors(prec_index)))"
