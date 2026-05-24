@@ -410,10 +410,10 @@ function merge_precursors_by_window!(
             end
         end
 
-        @user_info "  window merge: $n_groups groups from $n_scans scans (max_group=$max_group_size), " *
+        @debug_l1 "  window merge: $n_groups groups from $n_scans scans (max_group=$max_group_size), " *
                    "avg precs/scan: $avg_orig → $avg_merged (+$(inflation)%)\n"
         for d in group_details
-            @user_info "$d\n"
+            @debug_l1 "$d\n"
         end
     end
 
