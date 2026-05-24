@@ -39,6 +39,13 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Memory budget (MB) for in-memory PSM scoring. Above this, ScoringSearch switches to the out-of-memory path. |
 | `optimization.machine_learning.pep_bin_size` | Int | `10` | PSMs per bin in the empirical q-value/PEP histogram. Smaller is finer-grained but noisier; larger is smoother but coarser. |
 
+### Optimization (Chromatogram Integration)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `optimization.chromatogram_integration.trace_mode` | String | `"combined"` | `"combined"` integrates all isotope traces of a precursor as a single chromatogram; `"separate"` integrates each trace independently. |
+| `optimization.chromatogram_integration.deconvolution_solver` | String | `"huber"` | Solver used for chromatogram deconvolution. `"huber"` is the robust default; `"pmm"` selects the Poisson MM solver. |
+
 ### Protein Scoring
 
 | Parameter | Type | Default | Description |
