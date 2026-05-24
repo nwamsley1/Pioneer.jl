@@ -24,8 +24,8 @@ mirror the ParameterTuningSearchParameters dispatches — Complex PSM
 output, OLS-or-PMM deconv per params, MainSearch-style distance metrics.
 ==========================================================#
 
-get_scored_psms(sd::SearchDataStructures, ::QuadTuningSearchParameters) = getMainSearchScoredPsms(sd)
-get_unscored_psms(sd::SearchDataStructures, ::QuadTuningSearchParameters) = getComplexUnscoredPsms(sd)
+get_scored_psms(sd::SearchDataStructures, ::QuadTuningSearchParameters) = getTuningScoredPsms(sd)
+get_unscored_psms(sd::SearchDataStructures, ::QuadTuningSearchParameters) = getTuningUnscoredPsms(sd)
 
 function resize_if_needed!(search_data::SearchDataStructures, params::QuadTuningSearchParameters)
     weights = getTempWeights(search_data)
@@ -71,8 +71,8 @@ function score_psms!(
     mem::AbstractMassErrorModel = SimpleMassErrorModel(0f0, (0f0, 0f0))
 )
     score_result = Score!(
-        getMainSearchScoredPsms(search_data),
-        getComplexUnscoredPsms(search_data),
+        getTuningScoredPsms(search_data),
+        getTuningUnscoredPsms(search_data),
         getMainSearchSpectralScores(search_data),
         getTempWeights(search_data),
         getIdToCol(search_data),
@@ -839,7 +839,7 @@ function perform_quad_transmission_search(
         # iRT/isotope_err_bounds filters skipped by dispatch.
         nmatches, nmisses = run_fused!(
             FusedQuadEst(),
-            Hs, getComplexUnscoredPsms(search_data), id_to_col, fused_scratch,
+            Hs, getTuningUnscoredPsms(search_data), id_to_col, fused_scratch,
             corr_mz, obs_low, obs_high, peak_mz_len,
             isotopes_buf, prec_trans_buf,
             ion_list, nce_model,

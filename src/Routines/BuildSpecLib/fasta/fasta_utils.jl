@@ -668,7 +668,6 @@ function adjust_mod_positions(
     return adjusted_mods
 end
 
-
 """
     add_decoy_sequences(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
 

@@ -17,6 +17,25 @@ abstract type DeconvolutionSolver end
 struct OLSSolver <: DeconvolutionSolver end
 struct PoissonMMSolver <: DeconvolutionSolver end
 
+# Iterated adaptive LASSO with non-negativity, OLS loss. Parameters:
+#   λ_rel  ∈ (0, 1)  — fraction of the unpenalized λ_max that becomes λ_eff
+#   γ      > 0      — adaptive penalty exponent (typical: 1.0)
+#   ε_rel  > 0      — relative ε for penalty-weight stability (typical: 1e-3)
+#   n_iters ≥ 1    — outer reweighting iterations (typical: 2–3)
+struct AdaptiveLassoSolver <: DeconvolutionSolver
+    λ_rel::Float32
+    γ::Float32
+    ε_rel::Float32
+    n_iters::Int
+end
+
+# Simple non-iterative L1-regularized NNLS. Parameters:
+#   λ_rel ∈ (0, 1) — fraction of unpenalized λ_max that becomes λ_eff
+# Single solve with uniform penalty_weights = 1.
+struct LassoSolver <: DeconvolutionSolver
+    λ_rel::Float32
+end
+
 const POISSON_MU_FLOOR = 1f-6
 
 """
@@ -233,6 +252,16 @@ end
 function solve_deconvolution!(::OLSSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
     initResiduals!(r, Hs, w)
     return solveOLS!(Hs, r, w, colnorm2, max_iter, conv)
+end
+
+function solve_deconvolution!(s::AdaptiveLassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+    return solveIteratedAdaptiveLasso!(Hs, r, w, colnorm2,
+        eltype(w)(s.λ_rel), eltype(w)(s.γ), eltype(w)(s.ε_rel), s.n_iters,
+        max_iter, conv)
+end
+
+function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+    return solveLasso!(Hs, r, w, colnorm2, eltype(w)(s.λ_rel), max_iter, conv)
 end
 
 function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)

@@ -301,7 +301,6 @@ const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
 
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
-    pair_id::UInt32,
     base_pep_id::UInt32,
     sequence::String,
     charge::UInt8,
@@ -428,7 +427,6 @@ function _build_protein_rollup(
     prob_by_precursor = Dict{UInt32, Float32}()
     best_peak_area_by_precursor = Dict{UInt32, Float32}()
     base_pep_id_by_precursor = Dict{UInt32, UInt32}()
-    pair_id_by_precursor = Dict{UInt32, UInt32}()
     sequence_by_precursor = Dict{UInt32, String}()
     charge_by_precursor = Dict{UInt32, UInt8}()
     structural_mods_by_precursor = Dict{UInt32, String}()
@@ -450,8 +448,6 @@ function _build_protein_rollup(
             prob_by_precursor[precursor_idx] = prob_val
             best_peak_area_by_precursor[precursor_idx] = peak_area_val
             base_pep_id_by_precursor[precursor_idx] = UInt32(gdf.base_pep_id[i])
-            pair_id_by_precursor[precursor_idx] =
-                hasproperty(gdf, :pair_id) && !ismissing(gdf.pair_id[i]) ? UInt32(gdf.pair_id[i]) : zero(UInt32)
             sequence_by_precursor[precursor_idx] = String(gdf.sequence[i])
             charge_by_precursor[precursor_idx] =
                 hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0)
@@ -470,7 +466,6 @@ function _build_protein_rollup(
         score_val = Float32(-log(none_prob_val))
         push!(precursor_rows, (
             precursor_idx = precursor_idx,
-            pair_id = pair_id_by_precursor[precursor_idx],
             base_pep_id = base_pep_id_by_precursor[precursor_idx],
             sequence = sequence_by_precursor[precursor_idx],
             charge = charge_by_precursor[precursor_idx],

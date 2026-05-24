@@ -99,6 +99,6 @@ Add zero-initialized `trace_prob` and `q_value` columns to a PSM DataFrame.
 function initialize_prob_group_features!(psms::AbstractDataFrame)
     n = nrow(psms)
     psms[!, :trace_prob]  = zeros(Float32, n)
-    psms[!, :q_value]     = zeros(Float64, n)
+    psms[!, :q_value]     = zeros(Float32, n)
     return psms
 end

@@ -47,12 +47,13 @@ function library_search(
     ms_file_idx::Int64;
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
-    max_peaks::Int = 0
+    max_peaks::Int = 0,
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
     spec_lib = getSpecLib(search_context)
     search_data = getSearchData(search_context)
+
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)
     # Use presearch index (no iRT bins) when iRT tolerance is infinite (RT model not fitted).
     # This avoids iterating all fine iRT bins for no benefit.
@@ -186,9 +187,9 @@ function library_search(
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
-        @debug_l1 "  library_search: frag_index=$(round(t_frag, digits=2))s, " *
-                   "deconv=$(round(t_deconv, digits=2))s, " *
-                   "vcat=$(round(t_vcat, digits=2))s, " *
+        @debug_l1 "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
+                   "deconv=$(round(t_deconv, digits=2))s  " *
+                   "vcat=$(round(t_vcat, digits=2))s  " *
                    "candidates=$(length(get_precursors(prec_index)))"
     end
 
@@ -409,10 +410,10 @@ function merge_precursors_by_window!(
             end
         end
 
-        @user_info "  window merge: $n_groups groups from $n_scans scans (max_group=$max_group_size), " *
+        @debug_l1 "  window merge: $n_groups groups from $n_scans scans (max_group=$max_group_size), " *
                    "avg precs/scan: $avg_orig → $avg_merged (+$(inflation)%)\n"
         for d in group_details
-            @user_info "$d\n"
+            @debug_l1 "$d\n"
         end
     end
 

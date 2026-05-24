@@ -95,10 +95,10 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         min_fraction_transmitted = 0.25f0
         prec_estimation = PartialPrecCapture()
 
-        # max_rank is hardcoded to typemax(UInt8) (=255 = "no rank cap"). The
-        # library already enforces a per-precursor rank cap at build time
-        # (BuildSpecLib's max_frag_rank=10), so the runtime knob was redundant.
-        max_frag_rank = UInt8(255)
+        # max_rank = typemax(UInt8) → no runtime rank cap. The library already
+        # enforces a per-precursor rank cap at build time (BuildSpecLib's
+        # max_frag_rank=10), so a separate runtime knob is redundant.
+        max_frag_rank = typemax(UInt8)
 
         # n_isotopes lives at search.n_isotopes (flattened). Fall back to
         # the legacy nested location search.fragment_settings.n_isotopes
@@ -114,7 +114,7 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            PoissonMMSolver(),  # hardcoded: PMM is the production solver
+            PoissonMMSolver(),  # OLS / Lasso / AdaptiveLasso paths retained in git history
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 

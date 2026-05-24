@@ -17,6 +17,29 @@
 
 abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 
+# Counters for diagnostic accounting of skipped PSMs across all Score! calls.
+# Reset and read by the SearchDIA driver when PIONEER_LOG_SKIPPED=1.
+const SKIPPED_WEIGHT_TOTAL = Threads.Atomic{Int64}(0)
+const TOTAL_PSMS_CONSIDERED = Threads.Atomic{Int64}(0)
+
+# Per-thread diagnostic capture of precursors that ever appeared in deconv,
+# split by whether they passed the weight filter. Populated only when
+# PIONEER_LOG_DROPPED_PRECS=1. The current ms_file_idx is set by the search
+# driver before each file's deconv begins.
+const DIAG_CURRENT_FILE_IDX = Ref{Int64}(0)
+const DIAG_LOG_DROPPED = Ref{Bool}(false)
+# Sized at runtime by SearchDIA driver to current Threads.maxthreadid(); we
+# default to 1 here so module precompilation works with single-threaded julia.
+const DIAG_SEEN_PER_THREAD = Dict{Int, Set{UInt32}}[]
+const DIAG_DROPPED_PER_THREAD = Dict{Int, Set{UInt32}}[]
+function _diag_ensure_thread_storage()
+    n = Threads.maxthreadid()
+    while length(DIAG_SEEN_PER_THREAD) < n
+        push!(DIAG_SEEN_PER_THREAD, Dict{Int, Set{UInt32}}())
+        push!(DIAG_DROPPED_PER_THREAD, Dict{Int, Set{UInt32}}())
+    end
+end
+
 """
     psm_logfac(N) -> Float64
 
@@ -62,10 +85,34 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_matched_residual::L
     max_unmatched_residual::L
     fitted_manhattan_distance::L
-    percent_theoretical_ignored::L
     weight::H
 
     fitted_hellinger::L
+
+    # Rank feature carried from MainUnscoredPSM. Added 2026-05-11 so the
+    # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
+    # signal as the per-file LightGBM (previously dropped by Score!).
+    best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
+
+    # Per-rank M0 fragment intensities (top 6, for chromatogram-correlation features)
+    frag1_int::H
+    frag2_int::H
+    frag3_int::H
+    frag4_int::H
+    frag5_int::H
+    frag6_int::H
+
+    # E7 (Batch E, 2026-05-12): mean |ppm_err| over matched M0 fragments at
+    # ranks 1-3. Zero if no top-3 matches in this scan.
+    top3_ms2_mass_error_mean::H
+
+    # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
+    # peptides have characteristic b/y intensity ratios; chimeric hits don't.
+    log_by_ratio_m0::L
+
+    # E3 (Batch E, 2026-05-12): log2((b_int + y_int + 1) / (pred_int_sum_m0 + 1)).
+    # Completeness-of-match — observed vs predicted matched intensity.
+    matched_ratio::L
 
     #Non-scores/Labels
     precursor_idx::UInt32
@@ -76,7 +123,7 @@ function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_si
     scored_psms = append!(scored_psms, Vector{MainSearchScoredPSM{H,L}}(undef, block_size))
 end
 function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
-                unscored_PSMs::Vector{ComplexUnscoredPSM{H}},
+                unscored_PSMs::Vector{MainUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresMainSearch{L}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
@@ -128,7 +175,127 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             spectral_scores[scores_idx].max_matched_residual,
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
-            spectral_scores[scores_idx].percent_theoretical_ignored,
+            weight[scores_idx],
+
+            spectral_scores[scores_idx].fitted_hellinger,
+
+            unscored_PSMs[i].best_rank,
+
+            unscored_PSMs[i].frag1_int,
+            unscored_PSMs[i].frag2_int,
+            unscored_PSMs[i].frag3_int,
+            unscored_PSMs[i].frag4_int,
+            unscored_PSMs[i].frag5_int,
+            unscored_PSMs[i].frag6_int,
+
+            H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
+                unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
+                zero(H)),
+
+            L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
+              log(Float32(unscored_PSMs[i].y_int) + 1f0)),
+
+            L(log2((Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].y_int) + 1f0) /
+                   (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
+
+            UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(cycle_idx),
+            UInt32(scan_idx)
+        )
+        last_val += 1
+    end
+    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
+    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
+    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
+end
+
+"""
+    TuningScoredPSM{H,L} <: ScoredPSM{H,L}
+
+Slim per-scan row produced by `Score!` for tuning paths
+(ParameterTuningSearch, QuadTuningSearch). Same shape as
+`MainSearchScoredPSM` minus the MainSearch-only fragment-chromatogram
+fields (`rank1_matched`, `top3_matched`, `top5_matched`,
+`frag1_int..frag6_int`) since tuning code never consumes them.
+"""
+struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
+    longest_y::UInt8
+    b_count::UInt8
+    y_count::UInt8
+    total_ions::UInt8
+    total_ions_iso::UInt8
+
+    poisson::L
+    log2_intensity_explained::L
+    error::L
+
+    gof::L
+    max_matched_residual::L
+    max_unmatched_residual::L
+    fitted_manhattan_distance::L
+    weight::H
+
+    fitted_hellinger::L
+
+    precursor_idx::UInt32
+    ms_file_idx::UInt32
+    scan_idx::UInt32
+end
+
+function growScoredPSMs!(scored_psms::Vector{TuningScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
+    scored_psms = append!(scored_psms, Vector{TuningScoredPSM{H,L}}(undef, block_size))
+end
+
+function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
+                unscored_PSMs::Vector{TuningUnscoredPSM{H}},
+                spectral_scores::Vector{SpectralScoresMainSearch{L}},
+                weight::Vector{H},
+                IDtoCOL::AbstractPrecursorMap{UInt16},
+                cycle_idx::Int64,
+                expected_matches::Float64,
+                last_val::Int64,
+                n_vals::Int64,
+                spectrum_intensity::H,
+                scan_idx::Int64;
+                block_size::Int64 = 10000,
+                default_top3_ll::Float32 = Float32(0)
+                ) where {L,H<:AbstractFloat}
+
+    getPoisson(lam, observed) = psm_getPoisson(lam, observed)
+    start_idx = last_val
+    skipped = 0
+    skipped_weight = 0
+    for i in range(1, n_vals)
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
+
+        if weight[scores_idx] < Float32(1e-6)
+            skipped += 1
+            skipped_weight += 1
+            continue
+        end
+
+        if start_idx + i - skipped > length(scored_psms)
+            growScoredPSMs!(scored_psms, block_size);
+        end
+
+        total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
+        total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
+
+        scored_psms[start_idx + i - skipped] = TuningScoredPSM{H,L}(
+            unscored_PSMs[i].longest_y,
+            unscored_PSMs[i].b_count,
+            unscored_PSMs[i].y_count,
+            UInt8(min(total_ions, 255)),
+            UInt8(min(total_ions_iso, 255)),
+            L(getPoisson(expected_matches, total_ions + total_ions_iso)),
+            L(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
+            L(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
+
+            spectral_scores[scores_idx].gof,
+            spectral_scores[scores_idx].max_matched_residual,
+            spectral_scores[scores_idx].max_unmatched_residual,
+            spectral_scores[scores_idx].fitted_manhattan_distance,
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
@@ -139,5 +306,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         )
         last_val += 1
     end
-    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
+    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
+    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
+    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=0, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end

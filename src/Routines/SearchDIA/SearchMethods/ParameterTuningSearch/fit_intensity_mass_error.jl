@@ -29,6 +29,11 @@ Da residuals are divided by (mz / 1e6) to get ppm, then binned Laplace scale
 is computed on those ppm residuals. This yields m/z-proportional tolerance.
 ==========================================================#
 
+# Empirical-k coverage parameters. Quantile of |residual|/σ used to set the
+# coverage multiplier k; the result is clamped to [1.96, EMPK_CLAMP_HI].
+const EMPK_QUANTILE = 0.95
+const EMPK_CLAMP_HI = 4.5f0
+
 #==========================================================
 Binned Laplace scale estimator
 ==========================================================#
@@ -548,6 +553,27 @@ function fit_intensity_mass_error_model(
         end
     end
 
+    # Empirical k: fit k so the ±k·σ envelope covers ~95% of observed
+    # bias-corrected residuals. Replaces the previous static k=1.96 (which
+    # only achieves 95% under a Gaussian assumption — Olsen Exploris fragments
+    # showed ~86% empirical coverage at k=1.96, evidence the residual tails
+    # are heavier than Gaussian). Per-file fit; clamped to [1.96, 4.5] to
+    # avoid pathological blow-up on noisy files.
+    # 2026-05-15: 98% target was tested and dramatically regressed (−50k prec,
+    # −3.7k PG on 23-file Olsen) because BitVec LUT calibration trained on
+    # the wider window learns a stricter score cutoff. 95% is the sweet spot.
+    laplace_to_gauss = log(2.0) / 0.6744897501960817
+    σ_per_frag_mda = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+        σ_base = max(Float64(spread_spline_f64(Float32(log2I[i]))), 1e-4) * laplace_to_gauss
+        mz_corr = max(Float64(mz_spread_α) + Float64(mz_spread_β) * mz_f64[i] +
+                      Float64(mz_spread_γ) * mz_f64[i]^2, 0.1)
+        σ_per_frag_mda[i] = σ_base * mz_corr
+    end
+    normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
+    k_emp = Float32(quantile(normalized_residuals, EMPK_QUANTILE))
+    k = clamp(k_emp, 1.96f0, EMPK_CLAMP_HI)
+
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
     max_training_mz = Float32(maximum(mz_f64))
@@ -562,7 +588,6 @@ function fit_intensity_mass_error_model(
 
     # Default Gaussian log-density for missing top-3 fragments:
     # evaluated at 99th percentile using median intensity
-    laplace_to_gauss = log(2.0) / 0.6744897501960817
     median_log2I = Float32(median(log2I))
     σ_mda_default = max(Float64(spread_spline(median_log2I)), 1e-4) * laplace_to_gauss
     σ_da_default = σ_mda_default / 1e3
@@ -575,18 +600,26 @@ function fit_intensity_mass_error_model(
     max_da_observed = Float32(maximum(abs_residuals))
     max_da_tolerance = Float32(quantile(abs_residuals, 0.99))
 
-    # Precompute linear extrapolation at [2%, 98%] quantiles of training data.
-    # Splines are fit on all data but evaluation switches to linear outside
-    # these boundaries to avoid trusting the spline in sparse tail regions.
+    # Precompute extrapolation boundaries at 2%/98% quantiles of training data.
+    # Splines are fit on all data but evaluation switches to extrapolation
+    # outside these boundaries.
+    # The SPREAD spline uses CONSTANT extrapolation on both ends. The
+    # low-intensity tail can be sparsely sampled and the monotone-convex
+    # spline's linear extrapolation tended to blow up the spread there,
+    # which derails BitVecCalibration (admits more low-intensity noise →
+    # fewer bits clear the target/decoy excess threshold → narrower
+    # candidate set → fewer PSMs). Constant extrapolation beyond [q02, q98]
+    # caps the spread at its value at the boundary.
     mz_q02, mz_q98 = Float32.(quantile(mz_f64, [0.02, 0.98]))
-    I_q02, I_q98 = Float32.(quantile(log2I, [0.02, 0.98]))
+    I_q02, I_q98   = Float32.(quantile(log2I, [0.02, 0.98]))
+    I_q05, I_q95   = Float32.(quantile(log2I, [0.05, 0.95]))
     mz_extrap = make_spline_extrap(mz_spline, mz_q02, mz_q98)
     int_extrap = make_spline_extrap(I_spline, I_q02, I_q98)
-    spread_extrap_raw = make_spline_extrap(spread_spline, I_q02, I_q98)
+    spread_extrap_raw = make_spline_extrap(spread_spline, I_q05, I_q95)
     spread_extrap = SplineExtrap{Float32}(
         spread_extrap_raw.lo, spread_extrap_raw.hi,
-        spread_extrap_raw.lo_val, spread_extrap_raw.lo_slope,
-        spread_extrap_raw.hi_val, Float32(0)  # constant extrapolation on right (high intensity)
+        spread_extrap_raw.lo_val, Float32(0),  # constant extrap on left  (low intensity)
+        spread_extrap_raw.hi_val, Float32(0)   # constant extrap on right (high intensity)
     )
 
     model = IntensityMassErrorModel(

@@ -63,3 +63,12 @@ test/integration/keap1_lib.tsv
 
 # Claude Code agent state — local only
 .claude/
+
+# Scratch dirs / files (per-developer experimentation, never committed)
+dev/
+investigation_notes/
+test/test/
+test/buildspeclib_params.json
+*.bak
+*.bak[0-9]
+*.bak_*

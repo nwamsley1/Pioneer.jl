@@ -21,7 +21,6 @@ struct SpectralScoresMainSearch{T<:AbstractFloat} <: SpectralScores{T}
     max_matched_residual::T
     max_unmatched_residual::T
     fitted_manhattan_distance::T
-    percent_theoretical_ignored::T
     fitted_hellinger::T
 end
 function getDistanceMetrics(w::Vector{T},
@@ -54,7 +53,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
+                zero(U), zero(U), zero(U), zero(U), zero(U)
             )
             continue
         end
@@ -117,7 +116,6 @@ function getDistanceMetrics(w::Vector{T},
             U(max_matched_residual),
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
-            zero(U),  # percent_theoretical_ignored (single-pass, no iterative removal)
             U(fitted_hellinger)
         )
     end

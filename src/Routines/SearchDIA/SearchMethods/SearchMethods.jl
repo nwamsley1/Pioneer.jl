@@ -280,9 +280,12 @@ function initSimpleSearchContext(
         # avoids rehash on busy scans.
         SparsePrecMap{UInt16}(sizehint=8192),
         iso_splines,
-        [ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),
         Vector{SpectralScoresMainSearch{Float16}}(undef, 5000),
+        # Tuning buffers — slim PSM variants for ParameterTuning/QuadTuning/Integrate paths.
+        [TuningUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        Vector{TuningScoredPSM{Float32, Float16}}(undef, 5000),
         zeros(UInt32, 5000),
         # precursor_weights: cumulative matched-precursors over a run.
         # Hint to 256k — rough upper bound for typical DIA fill; resizes

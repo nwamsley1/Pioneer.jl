@@ -67,22 +67,22 @@ struct PrecursorScoringSearchParameters <: SearchParameters
 
     q_value_threshold::Float32
 
-    # MS1 scoring is hardcoded on. The knob was previously surfaced as
-    # global.ms1_scoring but never set to false in any shipping config —
-    # the only effect of toggling it was to filter MS1 features out of
-    # the LightGBM feature set, which kept the keep-as-true default.
-    ms1_scoring::Bool
+    # When false, skip MBR feature computation, the MBR-boosted second pass,
+    # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
+    match_between_runs::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
+        mbr = hasproperty(global_params, :match_between_runs) ?
+                Bool(global_params.match_between_runs) : true
+
         new(
             Float64(ml_params.max_psm_memory_mb),
             Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
-
-            true,                                                 # ms1_scoring (hardcoded)
+            mbr,
         )
     end
 end
@@ -163,9 +163,12 @@ function summarize_results!(
     search_context::SearchContext
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
-    
-    # Set up output folders
-    second_pass_folder = joinpath(temp_folder, "second_pass_psms")
+
+    # Set up output folders. PSM intermediates all live in `main_search_psms/`
+    # since 2026-05-20 — MainSearch writes fold-split files there,
+    # PrecursorScoring reads/merges/MBR-folds in place, and only the
+    # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
+    main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
@@ -197,13 +200,13 @@ function summarize_results!(
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
         score_precursor_isotope_traces(
-            second_pass_folder,
+            main_search_psms_folder,
             valid_fold_paths,
             getPrecursors(getSpecLib(search_context)),
             max_psms,
             params.q_value_threshold,
-            params.ms1_scoring,
-            FORCE_OOM
+            FORCE_OOM;
+            match_between_runs = params.match_between_runs,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -218,14 +221,26 @@ function summarize_results!(
         fold1_path = "$(base_path)_fold1.arrow"
         merged_path = "$(base_path).arrow"
 
-        # Collect data from both folds
+        # Collect data from both folds via PSMFileReference so the
+        # auto-discovered mbr_outputs sidecars (written by
+        # merge_mbr_sidecars_into_main!) are joined in. MainSearch
+        # initialized :trace_prob to zero in the fold files; the sidecar
+        # provides the real Pass-1 OOF score in :trace_prob_prepass, so we
+        # set :trace_prob = :trace_prob_prepass here (matching the legacy
+        # merge_mbr_sidecars_into_main! semantics).
         fold_dfs = DataFrame[]
-        if isfile(fold0_path)
-            push!(fold_dfs, DataFrame(Arrow.Table(fold0_path)))
+        fold_refs = PSMFileReference[]
+        function _load_fold(path)
+            ref = PSMFileReference(path)
+            push!(fold_refs, ref)
+            df = load_with_sidecars(ref)
+            if hasproperty(df, :trace_prob_prepass)
+                df[!, :trace_prob] = df[!, :trace_prob_prepass]
+            end
+            return df
         end
-        if isfile(fold1_path)
-            push!(fold_dfs, DataFrame(Arrow.Table(fold1_path)))
-        end
+        isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
+        isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
 
         if !isempty(fold_dfs)
             # Merge and write combined file
@@ -236,9 +251,14 @@ function summarize_results!(
             # Update search context with merged path
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
 
-            # Collect fold file paths for batch deletion after loop
-            isfile(fold0_path) && push!(fold_paths_to_delete, fold0_path)
-            isfile(fold1_path) && push!(fold_paths_to_delete, fold1_path)
+            # Collect fold file paths and their sidecars for batch deletion
+            for ref in fold_refs
+                fp = file_path(ref)
+                isfile(fp) && push!(fold_paths_to_delete, fp)
+                for s in ref.sidecars
+                    isfile(s.path) && push!(fold_paths_to_delete, s.path)
+                end
+            end
         end
     end
 
@@ -278,8 +298,10 @@ function summarize_results!(
         # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
         global_prob_dict, target_dict =
             build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
-        # A2: Compute global q-value dict from global_prob dict (NO file I/O)
+
+        # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
 
         # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
@@ -290,19 +312,44 @@ function summarize_results!(
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
 
-        # Phase B — Single per-file pipeline combining Steps 5+10
+        # Phase B — Single per-file pipeline combining Steps 5+10.
+        # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
+        # :qval filter (their qval is overridden to 0). The cross-run
+        # :global_qval threshold still applies to all rows.
+        mbr_qval_bypass = "mbr_recovery_qval_bypass" => function(df)
+            if hasproperty(df, :mbr_recovered) && hasproperty(df, :qval)
+                qv = df[!, :qval]
+                rec = df[!, :mbr_recovered]
+                @inbounds for i in 1:nrow(df)
+                    if rec[i]
+                        qv[i] = 0.0f0
+                    end
+                end
+            end
+            return df
+        end
+
+        # Cross-run filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold).
+        # The :pep and :off variants are retained in git history if needed.
+        qval_conditions = [(:global_qval, params.q_value_threshold),
+                           (:qval,        params.q_value_threshold)]
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
+            add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
+            mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-            filter_by_multiple_thresholds([
-                (:global_qval, params.q_value_threshold),
-                (:qval, params.q_value_threshold)
-            ])
+            filter_by_multiple_thresholds(qval_conditions)
 
         passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
     end
+
+    # After Step 5-10, the merged main_search_psms files are no longer read by
+    # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). The
+    # mid-pipeline cleanup that frees ~120 MB/file is temporarily disabled to
+    # keep these files available for diagnostic inspection. Re-enable once the
+    # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
     # Step 11: Re-calculate q-values using filtered data (sidecar-based)
     step11_time = @elapsed begin

@@ -151,6 +151,7 @@ function importScripts()
         [
             "solveOLS.jl",          # Non-negative OLS coordinate descent
             "solvePoissonMM.jl",    # Poisson MLE coordinate descent + dispatch
+            "solveHuber.jl",        # Robust Huber coordinate descent
         ]
     )
 
@@ -168,6 +169,7 @@ function importScripts()
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
+            "ftrUtilities.jl",
             "probitRegression.jl",
             "piecewiseLinearFunction.jl",
             "wittakerHendersonSmoothing.jl",
@@ -249,7 +251,8 @@ function importScripts()
             "types.jl",                    # All type definitions to avoid circular dependencies
             "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
             "utils.jl",                    # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
-            "fit_intensity_mass_error.jl"  # IntensityMassErrorModel fitting pipeline
+            "fit_intensity_mass_error.jl", # IntensityMassErrorModel fitting pipeline
+            "ms1_diagnostic.jl"            # MS1 ppm-residual diagnostic histogram
         ]
     )
     
@@ -259,6 +262,10 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
+            "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
+            "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
+            "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
             "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch
@@ -290,6 +297,7 @@ function importScripts()
         "types.jl",                      # MainSearchParameters (no deps)
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
+        "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
         "scoring.jl",                    # train_lgbm_and_select_best (uses features)
         "utils.jl",                      # recalibrate_rt!
         "MainSearch.jl"                  # struct + interface (uses everything above)
@@ -300,10 +308,18 @@ function importScripts()
     # Fused variant for MainSearch (loaded after process_scans.jl — uses its dispatch helpers)
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "process_scans_fused.jl"))
 
+    # Chromatogram integration (explicit order so new files are precompile-tracked)
+    include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
+        "integrate_chrom.jl",
+        "IntegrateChromatogramsSearch.jl",
+        "utils.jl"
+    ])
+
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
         root_basename = basename(root)
         if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" ||
+           root_basename == "HuberTuningSearch" ||
            root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch" ||
            occursin("MainSearch", root)
             continue
@@ -314,6 +330,16 @@ function importScripts()
             end
         end
     end
+
+    # Huber calibration depends on the chromatogram-integration fused RT-window
+    # utilities, so load it after the remaining SearchMethods pass above.
+    include_files!(
+        joinpath(search_methods_dir, "HuberTuningSearch"),
+        [
+            "HuberTuningSearch.jl",
+            "utils.jl"
+        ]
+    )
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 

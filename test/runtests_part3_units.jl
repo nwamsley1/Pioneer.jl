@@ -35,6 +35,9 @@ include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")
 include("./UnitTests/test_feature_finiteness.jl")
+include("./UnitTests/test_chromatogram_integration_trace_order.jl")
+include("./UnitTests/test_chromatogram_integration_bounds.jl")
+include("./UnitTests/test_huber_tuning_global.jl")
 
 # FileOperations focused tests
 include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
@@ -74,6 +77,7 @@ include("./UnitTests/test_summarize_precursor.jl")
 
 # PrecursorScoringSearch
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
+include("./UnitTests/test_mainsearch_irt_refinement.jl")
 
 # FileOperations pipeline
 include("./utils/FileOperations/pipeline/test_pipeline_filtering.jl")

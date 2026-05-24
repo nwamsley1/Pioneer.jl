@@ -703,7 +703,7 @@ const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
 
 # H2O, PROTON, NEUTRON constants are defined in get_mz.jl and available via importScripts()
 
-# Spectral deconvolution solver defaults (OLS / Poisson MM coordinate descent)
+# Spectral deconvolution solver defaults (Huber / OLS / Poisson MM coordinate descent)
 const DECONV_MAX_ITER::Int64 = Int64(1000)
 const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.01)
 

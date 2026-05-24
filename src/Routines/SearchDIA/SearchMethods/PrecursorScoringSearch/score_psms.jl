@@ -25,7 +25,7 @@ and the low-data probit fallback.
 """
     score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
                                     max_psms_in_memory, q_value_threshold,
-                                    ms1_scoring, force_oom)
+                                    force_oom; match_between_runs=true)
 
 Score PSMs experiment-wide with the same LightGBM classifier the per-file
 MainSearch uses (`SHARED_LGBM_HP` in `MainSearch/scoring.jl`). Loads PSMs
@@ -42,7 +42,6 @@ to the per-file Arrow files.
   currently unused (in-memory always; per-fold sub-sampling inside the
   shared helper handles large datasets).
 - `q_value_threshold`: Surfaced for backward compatibility; currently unused.
-- `ms1_scoring`: When `false`, drops MS1 features from the feature set.
 - `force_oom`: Surfaced for backward compatibility; ignored.
 
 # Returns
@@ -54,51 +53,153 @@ function score_precursor_isotope_traces(
     precursors::LibraryPrecursors,
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
-    ms1_scoring::Bool = true,
-    ::Bool = false,                # force_oom (unused)
+    ::Bool = false;                # force_oom (unused)
+    match_between_runs::Bool = true,
 )
-    # 1. Load PSMs into memory
+    # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
+    # MBR features, FTR recovery) — best_psms is never materialised as the
+    # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
+    if match_between_runs
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors)
+    else
+        return _score_precursor_isotope_traces_no_mbr(
+            second_pass_folder, file_paths, precursors,
+        )
+    end
+end
+
+# Streaming MBR-on path. Walks the per-file Arrow tables for everything;
+# the only DataFrame ever materialised is the slim FTR table (10 cols)
+# reconstructed from sidecars right before the FTR controller runs.
+function _score_precursor_isotope_traces_mbr(
+    file_paths::Vector{String}, precursors::LibraryPrecursors,
+)
+    # 1. pid → counterfactual_partner_pid map (streaming over Arrow tables).
+    cf_partner_dict = build_counterfactual_partner_map(file_paths, precursors)
+
+    # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
+    # out, so no quantile-binned features need pre-computing.
+    features = copy(ADVANCED_FEATURE_SET)
+
+    # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
+    # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
+    pass1 = train_and_predict_pass1_oom!(
+        file_paths;
+        features        = features,
+        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
+        lgbm_hp         = SCORING_LGBM_HP,
+    )
+
+    # 4. Pass-1 feature importance (last_classifier is whichever fold's
+    # booster the OOM trainer kept — only used for the diagnostic dump).
+    if pass1.last_classifier !== nothing
+        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
+        imp = importance(lgbm_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by = x -> -x[2])
+            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
+            for (fname, gain) in sorted_imp
+                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
+            end
+            @debug_l1 join(lines, "\n")
+        end
+    end
+
+    # 5. Collapse the partner Dict to a pid-indexed Vector. The MBR feature
+    # compute does a Vector index per inner-loop iteration; that's cheaper
+    # than a Dict.get and the Vector is bounded by max observed pid (few MB).
+    max_pid = isempty(cf_partner_dict) ? UInt32(0) : maximum(keys(cf_partner_dict))
+    cf_partner_vec = zeros(UInt32, Int(max_pid))
+    for (pid, partner) in cf_partner_dict
+        cf_partner_vec[Int(pid)] = partner
+    end
+    cf_partner_dict = Dict{UInt32, UInt32}()
+
+    # 6. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
+    @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+    @debug_l1 "  donor dict pids: $(length(donor_dict))"
+
+    # Parallelize the per-file MBR feature compute + sidecar write across
+    # files. donor_dict and cf_partner_vec are read-only across this loop
+    # (built before, not mutated by the per-file function), and each file
+    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
+    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
+    parallel_foreach!(length(file_paths)) do chunk
+        for f_idx in chunk
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(file_paths[f_idx], donor_dict, cf_partner_vec)
+        end
+    end
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    cf_partner_vec = UInt32[]
+    GC.gc()
+
+    # 7. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
+    # only as wide as the FTR controller needs.
+    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
+    psms = load_ftr_slim_dataframe(file_paths)
+    @debug_l1 "  slim FTR rows: $(nrow(psms))"
+
+    # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
+    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
+
+    # 9. Paired-counterfactual FTR.
+    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
+
+    # 10. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
+    # back into each main file in one pass.
+    @debug_l1 "MBR Batch F: writing recovery sidecars..."
+    write_recovery_sidecars(psms, file_paths)
+    psms = DataFrame()
+    GC.gc()
+    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
+    merge_mbr_sidecars_into_main!(file_paths)
+
+    return nothing
+end
+
+# Legacy in-memory path used only when match_between_runs = false. Kept for
+# small / non-MBR runs where the full best_psms easily fits in memory.
+function _score_precursor_isotope_traces_no_mbr(
+    second_pass_folder::String,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+)
     best_psms = load_psms_for_lightgbm(second_pass_folder)
     n_psms = nrow(best_psms)
-    @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
+    @debug_l1 "PSM scoring (no MBR): $n_psms PSMs loaded for in-memory LightGBM"
 
-    # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
-    # commented out, so we don't need to compute quantile-binned features here).
     features = copy(ADVANCED_FEATURE_SET)
-    apply_ms1_filtering!(features, ms1_scoring)
 
-    # 3. Add columns the helper / downstream code may inspect
     best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid]
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    # 5. Train via the shared helper (same hyperparameters + low-data probit
-    # fallback as MainSearch's per-file classifier)
-    all_scores, last_classifier, info = train_psm_classifier_with_fallback(
-        best_psms; features=features
+    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
+        best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
+        compute_infold = false,
+        max_train = SCORING_LGBM_MAX_TRAIN,
     )
+    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
+    best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
+    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
 
-    # 6. Log feature importances (LGBM only — probit doesn't expose them)
-    # Gated at debug_l2 — `importance()` allocates a Dict per call.
-    if last_classifier !== nothing && DEBUG_CONSOLE_LEVEL[] >= 2
+    if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l2 "ScoringSearch LightGBM Feature Importances (gain):"
+            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
             for (fname, gain) in sorted_imp
-                @debug_l2 "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
+            @debug_l1 join(lines, "\n")
         end
     end
 
-    # 7. Write trace_prob to the DataFrame (clamped away from 0/1 for downstream
-    # log-odds aggregation stability).
-    best_psms[!, :trace_prob] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
-
-    # 8. Distribute scored PSMs back to the per-file Arrow files
     write_scored_psms_to_files!(best_psms, file_paths)
-
     return nothing
 end
 

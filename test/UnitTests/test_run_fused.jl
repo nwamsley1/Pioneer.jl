@@ -19,7 +19,8 @@ const FullPrecCapture        = Pioneer.FullPrecCapture
 const PartialPrecCapture     = Pioneer.PartialPrecCapture
 const SparseArrayFused       = Pioneer.SparseArrayFused
 const FusedScratch           = Pioneer.FusedScratch
-const ComplexUnscoredPSM     = Pioneer.ComplexUnscoredPSM
+const MainUnscoredPSM     = Pioneer.MainUnscoredPSM
+const TuningUnscoredPSM      = Pioneer.TuningUnscoredPSM
 const DensePrecMap           = Pioneer.DensePrecMap
 const StandardFragmentLookup = Pioneer.StandardFragmentLookup
 const CompactFrag            = Pioneer.CompactFrag
@@ -85,7 +86,7 @@ function make_fused_fixture(;
     Hs = SparseArrayFused(UInt32(64))
 
     # PSM accumulator (one slot per possible column = up to n_precursors)
-    unscored_psms = [ComplexUnscoredPSM{Float32}() for _ in 1:max(8, n_precursors)]
+    unscored_psms = [MainUnscoredPSM{Float32}() for _ in 1:max(8, n_precursors)]
 
     # id_to_col: map prec_id -> column. FusedQuadEst uses (prec_id-1)*3 + iso_pass,
     # so size is 3*n_precursors + 1; for Standard it's just n_precursors.
@@ -228,11 +229,39 @@ end
         @test fx.Hs.n_vals == 2     # two entries in that column
         # id_to_col must record the column for prec_idx=1 (Standard maps to prec_idx).
         @test fx.id_to_col[1] == UInt16(1)
-        # ComplexUnscoredPSM should have been updated for col=1.
+        # MainUnscoredPSM should have been updated for col=1.
         @test fx.unscored_psms[1].precursor_idx == UInt32(1)
         # Both peaks landed in the matched buffer (rows 1 and 2).
         rows_in_col = sort([fx.Hs.rowval[i] for i in 1:fx.Hs.n_vals])
         @test rows_in_col == UInt32[1, 2]
+    end
+
+    # ------------------------------------------------------------
+    @testset "grows tuning PSM accumulator before writing new columns" begin
+        n_precs = 10
+        frags = [(UInt32(pid), Float32(200 + pid), 1000.0f0, UInt8(0))
+                 for pid in 1:n_precs]
+        fx = make_fused_fixture(
+            n_precursors = n_precs,
+            prec_mzs = fill(500.0f0, n_precs),
+            prec_charges = fill(UInt8(2), n_precs),
+            prec_sulfur_counts = fill(UInt8(0), n_precs),
+            prec_irts = fill(50.0f0, n_precs),
+            frags = frags,
+            prec_frag_ranges = UInt64.(1:(n_precs + 1)),
+            peak_mz = Float32[200 + pid for pid in 1:n_precs],
+            peak_int = fill(1000.0f0, n_precs),
+            prec_range = 1:n_precs,
+        )
+        tuning_psms = [TuningUnscoredPSM{Float32}() for _ in 1:4]
+
+        n_match, n_miss = call_run_fused!(fx, unscored_psms = tuning_psms)
+
+        @test n_match == n_precs
+        @test n_miss == 0
+        @test fx.Hs.n == n_precs
+        @test length(tuning_psms) >= n_precs
+        @test [tuning_psms[i].precursor_idx for i in 1:n_precs] == UInt32.(1:n_precs)
     end
 
     # ------------------------------------------------------------
@@ -415,11 +444,11 @@ end
         fx = make_fused_fixture(kind = kind, n_frag_isotopes = 4)
         # Snapshot psm fields before.
         before_pidx = fx.unscored_psms[1].precursor_idx
-        before_topn = fx.unscored_psms[1].topn
+        before_brank = fx.unscored_psms[1].best_rank
         n_match, _ = call_run_fused!(fx)
         @test n_match >= 1
         @test fx.unscored_psms[1].precursor_idx == before_pidx
-        @test fx.unscored_psms[1].topn          == before_topn
+        @test fx.unscored_psms[1].best_rank     == before_brank
     end
 
     # ------------------------------------------------------------
@@ -659,7 +688,7 @@ end
     @testset "unscored_psms field values: y-ion match populates y_count, longest_y" begin
         # Single y-ion at ion_pos=5, m/z 200, rank 0. Match against a peak.
         # Expect: y_count=1, y_int=peak intensity, longest_y=5, b_count=0,
-        # topn=1 (rank 0 ≤ m_rank), best_rank=0, isotope_count=0.
+        # best_rank=0, isotope_count=0.
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(0), :y, UInt8(5))]
         fx = make_fused_fixture(
             frags = frags,
@@ -674,7 +703,6 @@ end
         @test psm.y_int     === Float32(1500.0)
         @test psm.longest_y == UInt8(5)
         @test psm.b_count   == UInt8(0)
-        @test psm.topn      == UInt8(1)         # rank 0 ≤ m_rank (default 3)
         @test psm.best_rank == UInt8(0)
         @test psm.isotope_count == UInt8(0)     # iso 0 only
         @test psm.precursor_idx == UInt32(1)
@@ -791,7 +819,7 @@ end
 
     # ------------------------------------------------------------
     @testset "unscored_psms: p-ion match increments p_count, leaves y/b at 0" begin
-        # P-ion (precursor ion) match. apply_complex_scoring! routes via the
+        # P-ion (precursor ion) match. apply_main_scoring! routes via the
         # isP branch on the mono path, incrementing p_count. b_count, y_count,
         # longest_b, longest_y stay at 0.
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(0), :p, UInt8(2))]
@@ -816,7 +844,7 @@ end
 
     # ------------------------------------------------------------
     @testset "unscored_psms: non-canonical ion (no flag) increments fallback counter" begin
-        # apply_complex_scoring! has an `else` branch that catches frags
+        # apply_main_scoring! has an `else` branch that catches frags
         # which are neither y, b, nor p — increments non_cannonical_count.
         # Build a frag with all flags false (we hijack the constructor by
         # passing :other ion_type → none of is_y/is_b/is_p set).
@@ -837,13 +865,11 @@ end
     end
 
     # ------------------------------------------------------------
-    @testset "unscored_psms iso branch: best_rank_iso, topn_iso updated" begin
+    @testset "unscored_psms iso branch: isotope_count + y_count_iso updated" begin
         # Two fragments with different ranks; both M+1 isotopes match.
-        # iso branch updates best_rank_iso (min rank seen on iso) and
-        # topn_iso (count of iso matches with rank ≤ m_rank, default 3).
+        # iso branch increments isotope_count and y_count_iso / longest_y_iso.
         # Frag A rank=2, Frag B rank=5. Both M+1 should match.
-        # Expect: best_rank_iso=2 (min), topn_iso=1 (only rank-2 ≤ 3),
-        # isotope_count=2.
+        # Expect: isotope_count=2, y_count_iso=2, longest_y_iso=6.
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(2), :y, UInt8(3)),
                  (UInt32(1), 300.0f0,  900.0f0, UInt8(5), :y, UInt8(6))]
         fx = make_fused_fixture(
@@ -856,8 +882,6 @@ end
         n_match, _ = call_run_fused!(fx)
         @test n_match == 4                           # 2 fragments × 2 isos
         psm = fx.unscored_psms[1]
-        @test psm.best_rank_iso == UInt8(2)          # min rank on iso pass
-        @test psm.topn_iso      == UInt8(1)          # only rank-2 ≤ m_rank=3
         @test psm.isotope_count == UInt8(2)          # 2 M+1 matches
         @test psm.y_count_iso   == UInt8(2)          # both Y-ions on iso pass
         @test psm.longest_y_iso == UInt8(6)          # max ion_pos on iso Y
@@ -866,7 +890,6 @@ end
     # ------------------------------------------------------------
     @testset "unscored_psms: best_rank tracks minimum across mono matches" begin
         # Three Y-ions: ranks 4, 1, 7. After all match, best_rank should be 1.
-        # topn (rank ≤ m_rank=3) → ranks 1 only → topn=1.
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(4), :y, UInt8(1)),
                  (UInt32(1), 300.0f0,  900.0f0, UInt8(1), :y, UInt8(2)),
                  (UInt32(1), 400.0f0,  800.0f0, UInt8(7), :y, UInt8(3))]
@@ -880,7 +903,6 @@ end
         @test n_match == 3
         psm = fx.unscored_psms[1]
         @test psm.best_rank == UInt8(1)
-        @test psm.topn      == UInt8(1)              # only rank-1 ≤ 3
         @test psm.y_count   == UInt8(3)
     end
 

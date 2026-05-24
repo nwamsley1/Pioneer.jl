@@ -151,6 +151,7 @@ function prepare_chronologer_input(
     # Display decoy generation configuration
     decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
+    use_sequence_decoys = _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
 
     # Step 1: Combine shared peptides (I/L equivalence)
     fasta_entries = combine_shared_peptides(fasta_entries)
@@ -179,9 +180,12 @@ function prepare_chronologer_input(
     # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
     # For diann_mutation, skip decoy generation here — decoys are created post-build
     # by apply_diann_decoy_style!() which shifts target fragment m/z values
-    decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
-    if _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
-        fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
+    if use_sequence_decoys
+        @user_info "Generating grouped decoy sequences (method=$decoy_method)"
+        fasta_entries = add_decoy_sequences_grouped(
+            fasta_entries;
+            decoy_method = decoy_method
+        )
     end
         
     # Step 7: Add charges (creates precursor variants)

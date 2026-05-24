@@ -23,92 +23,59 @@ live in MainSearch/scoring.jl (`SHARED_LGBM_HP`,
 classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
-# Full feature set used for the experiment-wide LightGBM classifier.
-# Note: `:target` is excluded as it's the label, not a feature. The `_qbin`
-# variants are computed by `add_quantile_binned_features!` before training and
-# are kept commented out — the un-binned versions are currently used.
+# ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
+# (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
+#
+# Important: the MBR features (MBR_max_pair_prob_true, etc.) are NOT in
+# this list. They are computed AFTER Pass-1 LGBM trains (see steps 5-6
+# in _score_precursor_isotope_traces_mbr), so they wouldn't exist on the
+# DataFrame at Pass-1 training time anyway. MBR features are consumed
+# only by the FTR controller (mbr_ftr.jl::FTR_FEATURES_F_TRUE), which is
+# a separate LGBM trained later in the pipeline.
+#
+# Pre-2026-05-19 this list redundantly included the 6 MBR features —
+# they were always silently filtered out by the hasproperty guard in
+# pass1_oom.jl. Removed to make the design intent explicit.
+#
+# Conceptually ADVANCED_FEATURE_SET == PRESCORE_FEATURES at training
+# time (modulo a few per-precursor aggregate features like :smoothness
+# and :irt_fwhm that exist on best-per-precursor rows but not per-scan
+# rows). Lists kept separate due to load-order constraint in
+# importScripts.jl — PrecursorScoringSearch loads before MainSearch.
 const ADVANCED_FEATURE_SET = [
-    :missed_cleavage,
-    :Mox,
-    #:prec_mz_qbin,     # Quantile-binned version of :prec_mz
-    :prec_mz,
-    :sequence_length,
-    :charge,
-    #:irt_pred_qbin,    # Quantile-binned version of :irt_pred
-    :irt_pred,
-    :irt_error,
-    :irt_diff,
-    :max_y_ions,
-    :y_ions_sum,
-    :longest_y,
-    :y_count,
-    :b_count,
-    :isotope_count,
-    :total_ions,
-    :best_rank,
-    :best_rank_iso,
-    :topn,
-    :topn_iso,
-    :gof,
-    :max_fitted_manhattan_distance,
-    :max_fitted_spectral_contrast,
-    :max_matched_residual,
-    :max_unmatched_residual,
-    :max_gof,
-    :fitted_spectral_contrast,
-    :spectral_contrast,
-    :max_matched_ratio,
-    :err_norm,
-    :poisson,
-    #:weight_qbin,      # Quantile-binned version of :weight
-    :weight,
-    :log2_intensity_explained,
-    #:tic_qbin,         # Quantile-binned version of :tic
-    :tic,
-    :smoothness,
-
-    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
-    #:ms1_irt_diff,
-    #:weight_ms1,
-
-    :gof_ms1,
-    :max_matched_residual_ms1,
-    :max_unmatched_residual_ms1,
-    :fitted_spectral_contrast_ms1,
-    :error_ms1,
-    :m0_error_ms1,
-    :n_iso_ms1,
-    :big_iso_ms1,
-    :rt_max_intensity_ms1,
-    :rt_diff_max_intensity_ms1,
-    :ms1_features_missing,
-
-    :percent_theoretical_ignored,
-    :scribe,
-    :max_scribe,
-    :max_weight,
+    # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
+    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
+    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
+    :weight_ratio_at_scan, :weight_rank_at_scan,
+    :ms1_m0_mass_err_ppm,
+    :ms1_weight_apex_to_m0_apex_irt,
+    :ms1_m0_intensity, :ms1_m1_intensity,
+    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
+    # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
+    :frag_apex_dispersion_irt,
+    :n_correlated_fragments,
+    :frag_corr_best_m0,
+    :top3_ms2_mass_error_mean,
+    :delta_frame_peak_center,
+    :log_by_ratio_m0,
+    :n_scans,
+    :prec_mz,
+    :irt_fwhm,
+    :smoothness,
+    :log2_intensity_explained, :longest_y,
+    # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
+    # best_rank_iso, total_ions_iso removed.
+    # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,
+    # frag_corr_min_pairwise, ms1_corr_weight_m0, irt_dist_to_weight_apex,
+    # best_rank, ms1_envelope_dev_log2, n_above_hm, topn, topn_iso removed —
+    # 8-file Olsen: −476 IDs (−0.11%), +203 PGs (+0.39%), pf −864 (−0.24%).
+    # 2026-05-21: removed 11 features added during the 2026-05-20 experiment
+    # (5 max_*, 3 Tier-2 re-adds, 3 min_*). 8-file Olsen showed only ~+1% ID
+    # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
+    # along with their computation in select_best_per_precursor!.
 ]
 
-"""
-    apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
 
-Remove MS1 features from `features` in-place when `ms1_scoring=false`.
-This prevents using MS1 features when they would have zero variance.
-
-# Returns
-The mutated feature vector (for chaining).
-"""
-function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
-    if !ms1_scoring
-        ms1_features = Set([
-            :ms1_irt_diff, :ms1_ms2_rt_diff, :weight_ms1, :gof_ms1,
-            :max_matched_residual_ms1, :max_unmatched_residual_ms1,
-            :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1,
-            :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
-            :rt_diff_max_intensity_ms1, :ms1_features_missing,
-        ])
-        filter!(f -> !(f in ms1_features), features)
-    end
-    return features
-end

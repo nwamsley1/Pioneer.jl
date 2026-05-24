@@ -667,6 +667,30 @@ function process_file!(
                         @debug_l1 "  SimpleMassErrorModel: $(n_frags) frags"
                     end
 
+                    # MS1 mass-error fit (median bias + 5·MAD tolerance) from
+                    # MS2-accepted PSMs. Installs into SearchContext for use by
+                    # MainSearch MS1 features and IntegrateChromatogramsSearch.
+                    try
+                        ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx)
+                        parsed_fname_ms1 = getParsedFileName(search_context, ms_file_idx)
+                        ms1_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ms1_mass_error_plots")
+                        isdir(ms1_dir) || mkpath(ms1_dir)
+                        generate_ms1_residual_histogram(ms1_residuals, parsed_fname_ms1,
+                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
+                        fit = fit_ms1_model_from_residuals(ms1_residuals)
+                        if fit !== nothing
+                            ms1_model, ms1_med, ms1_mad = fit
+                            setMs1MassErrorModel!(search_context, ms_file_idx, ms1_model)
+                            @debug_l1 "  MS1 model: bias=$(round(ms1_med, digits=2)) ppm, " *
+                                      "tol=±$(round(MS1_DIAG_TOL_K_MAD*ms1_mad, digits=2)) ppm " *
+                                      "($(length(ms1_residuals)) residuals)"
+                        else
+                            @debug_l1 "  MS1 model: insufficient residuals ($(length(ms1_residuals)))"
+                        end
+                    catch ms1_err
+                        @debug_l1 "  MS1 diag failed: $(sprint(showerror, ms1_err))"
+                    end
+
                     # NCE sweep: reuse collected PSMs (skip fragment index)
                     nce_result = fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
                     if nce_result !== nothing

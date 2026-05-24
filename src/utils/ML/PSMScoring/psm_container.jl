@@ -231,19 +231,9 @@ function get_feature_matrix(container::AbstractPSMContainer, features::Vector{Sy
     n = nrows(container)
     m = length(features)
     X = Matrix{Float32}(undef, n, m)
-    for (j, feat) in enumerate(features)
-        col = get_column(container, feat)
-        for i in 1:n
-            val = col[i]
-            # Handle missing values
-            if ismissing(val)
-                X[i, j] = 0.0f0
-            elseif val isa Bool
-                X[i, j] = Float32(val)
-            else
-                X[i, j] = Float32(val)
-            end
-        end
+    cols = AbstractVector[get_column(container, f) for f in features]
+    Threads.@threads for j in 1:m
+        _fill_column!(X, j, cols[j])
     end
     return X
 end

@@ -187,12 +187,18 @@ function summarize_results!(
     end
 
     # Normalize the same integrated precursor tables that will feed MaxLFQ.
-    normalizeQuant(
-        [file_path(ref) for ref in psm_refs],
-        :peak_area,
-        N = MAXLFQ_NORM_N_RT_BINS,
-        spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS
-    )
+    # Only run when the result will actually be consumed: MaxLFQ's quant
+    # column selector + WriteOutputs both gate on run_to_run_normalization.
+    # IntegrateChromatograms already populates :peak_area_normalized with
+    # placeholder zeros, so a missing column never breaks downstream.
+    if params.run_to_run_normalization
+        normalizeQuant(
+            [file_path(ref) for ref in psm_refs],
+            :peak_area,
+            N = MAXLFQ_NORM_N_RT_BINS,
+            spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS
+        )
+    end
 
     # Ensure all PSM files are sorted correctly for MaxLFQ
     sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)

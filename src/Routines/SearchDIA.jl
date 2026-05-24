@@ -233,11 +233,16 @@ function SearchDIA(params_path::String)
             ("BitVec Calibration", BitVecCalibrationSearch()),
             ("Main Search", MainSearch()),
             ("Precursor Scoring", PrecursorScoringSearch()),
+        ]
+        if get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber"
+            push!(searches, ("Huber Calibration", HuberTuningSearch()))
+        end
+        append!(searches, [
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
             ("Protein Inference", ProteinInferenceSearch()),
             ("Protein Scoring", ProteinScoringSearch()),
             ("Quantification & Output", MaxLFQSearch())
-        ]
+        ])
 
         # Execute each search phase and record timing + peak RSS delta
         rss_deltas = Dict{String, Float64}()
@@ -264,6 +269,13 @@ function SearchDIA(params_path::String)
         rethrow(e)
     finally
         finalize_pioneer_logging(warnings_full_path; banner_title = "Search completed")
+        # End-of-search runtime cleanup. Forces a full GC pass + flushes any
+        # buffered C-side stdio (libomp/LightGBM emit warnings via printf).
+        # Cheap (~tens of ms) and gives the runtime a clean state before the
+        # next SearchDIA call in the same REPL — mitigates the libomp
+        # re-entrance assertion that has historically aborted multi-call runs.
+        GC.gc(true)
+        Libc.flush_cstdio()
     end
 
     return nothing
@@ -301,7 +313,7 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
     execution_order = [
         "Parameter Loading", "Spectral Library Loading", "Search Context Initialization",
         "Parameter Tuning", "Quadrupole Tuning", "BitVec Calibration",
-        "Main Search", "Precursor Scoring", "Chromatogram Integration",
+        "Main Search", "Precursor Scoring", "Huber Calibration", "Chromatogram Integration",
         "Protein Inference", "Protein Scoring", "Quantification & Output",
     ]
     seen = Set{String}()

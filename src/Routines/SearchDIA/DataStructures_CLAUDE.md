@@ -22,7 +22,7 @@ abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 - **Features**: Fragment counts (b/y/p/i), basic ranks, intensity, error
 - **Use Cases**: MainSearch, simple filtering
 
-**2. ComplexUnscoredPSM/ComplexScoredPSM** - Detailed fragmentation analysis
+**2. MainUnscoredPSM/ComplexScoredPSM** - Detailed fragmentation analysis
 - **Purpose**: Comprehensive scoring with isotope and residual analysis
 - **Features**: Isotope tracking, longest ion series, deconvolution metrics
 - **Use Cases**: MainSearch (deconvolution phase), ML training, detailed scoring

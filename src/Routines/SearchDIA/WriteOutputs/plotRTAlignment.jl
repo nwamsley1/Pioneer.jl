@@ -54,7 +54,7 @@ function plotRTAlign(RT::Vector{T},
             lw = 6.0,
             label = "RT Spline")
     =#
-    savefig(p, joinpath(out_fdir, out_fname)*".pdf")
+    savefig(p, joinpath(out_fdir, out_fname)*".png")
 
 
 end

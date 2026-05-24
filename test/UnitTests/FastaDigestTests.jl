@@ -290,6 +290,20 @@
         @test ("PEPTIDE", zero(UInt8)) in pss_from_entries
         @test ("ANOTHER", zero(UInt8)) in pss_from_entries
     end
+
+    @testset "add_decoy_sequences_grouped does not mutate when decoy generation exhausts" begin
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+
+        result = Pioneer.add_decoy_sequences_grouped(
+            entries;
+            max_shuffle_attempts = 0
+        )
+
+        @test length(result) == 1
+        @test isempty(filter(is_decoy, result))
+    end
     
     @testset "add_entrapment_sequences" begin
         # Create test entries
