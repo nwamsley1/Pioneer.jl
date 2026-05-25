@@ -5,12 +5,62 @@ using Pioneer
 using Pioneer: MainSearchIrtCorrectionModel, MainSearchIrtRefinement, _compute_phase2_columns!
 using Pioneer: _passing_precursor_targets, refine_mainsearch_irt_predictions!
 using Pioneer: reapply_psm_classifier_and_select_best!, train_lgbm_and_select_best
+using Pioneer: train_psm_classifier_with_fallback
 
 struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
     sequence::Vector{String}
     structural_mods::Vector{Union{Missing, String}}
     mz::Vector{Float32}
     irt::Vector{Float32}
+end
+
+@testset "MainSearch classifier fallback" begin
+    @testset "low-data model selection accepts non-LightGBM candidates" begin
+        psms = DataFrame(
+            target = Bool[
+                true, false, false, true,
+                true, false, false, true,
+                true, false, false, true,
+            ],
+            cv_fold = UInt8[
+                1, 0, 1, 0,
+                1, 0, 1, 0,
+                1, 0, 1, 0,
+            ],
+            discriminant = Float32[
+                0.9, 0.1, 0.2, 0.8,
+                0.85, 0.15, 0.25, 0.75,
+                0.88, 0.12, 0.22, 0.78,
+            ],
+        )
+
+        tiny_lgbm_hp = (
+            num_iterations = 3,
+            learning_rate = 0.2,
+            max_depth = 2,
+            num_leaves = 3,
+            min_data_in_leaf = 1,
+            feature_fraction = 1.0,
+            bagging_fraction = 1.0,
+            bagging_freq = 0,
+            is_unbalance = false,
+            max_bin = 16,
+            lambda_l1 = 0.0,
+            lambda_l2 = 0.0,
+        )
+
+        scores, infold_scores, _last_classifier, info = train_psm_classifier_with_fallback(
+            psms;
+            features = [:discriminant],
+            lgbm_hp = tiny_lgbm_hp,
+        )
+
+        @test length(scores) == nrow(psms)
+        @test infold_scores === nothing
+        @test info.low_data
+        @test haskey(info.candidate_oof, "probit")
+        @test all(isfinite, scores)
+    end
 end
 
 Pioneer.getSequence(p::MainSearchMockPrecursors) = p.sequence
