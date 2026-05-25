@@ -284,8 +284,18 @@ function train_psm_classifier_with_fallback(
         n_lgbm_default = _oof_count(lgbm_scores)
         adaptive = n_lgbm_default < ADAPTIVE_HP_TARGET_THRESHOLD
     end
-    candidates = [(name="lgbm_default", scores=lgbm_scores, infold=lgbm_infold_scores,
-                   last=last_classifier, predictors=lgbm_predictors, oof=n_lgbm_default)]
+    candidate_type = @NamedTuple{
+        name::String,
+        scores::Vector{Vector{Float64}},
+        infold::Union{Nothing, Vector{Vector{Float64}}},
+        last::Union{Nothing, LightGBM.LGBMClassification},
+        predictors::Vector{Any},
+        oof::Int64,
+    }
+    candidates = candidate_type[
+        (name="lgbm_default", scores=lgbm_scores, infold=lgbm_infold_scores,
+         last=last_classifier, predictors=lgbm_predictors, oof=n_lgbm_default)
+    ]
 
     if adaptive
         for (variant_name, hp_over) in pairs(ADAPTIVE_HP_OVERRIDES)
