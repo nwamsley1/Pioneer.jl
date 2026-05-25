@@ -77,6 +77,7 @@ include("./UnitTests/test_summarize_precursor.jl")
 
 # PrecursorScoringSearch
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_window_features.jl")
 include("./UnitTests/test_lgbm_charge_features.jl")
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
 

@@ -262,6 +262,7 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "wide_window_features.jl",         # Raw wide-window chromatogram features
             "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
             "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
             "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score

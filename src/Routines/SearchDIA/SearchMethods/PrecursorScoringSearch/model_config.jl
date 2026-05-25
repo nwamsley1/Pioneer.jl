@@ -23,6 +23,19 @@ live in MainSearch/scoring.jl (`SHARED_LGBM_HP`,
 classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
+# Raw full-window co-elution features computed only for the experiment-wide
+# PrecursorScoringSearch LightGBM. MainSearch's per-run PRESCORE_FEATURES does
+# not consume them.
+const WIDE_WINDOW_FEATURES = [
+    :wide_ms1_m0_candidate_fraction,
+    :wide_frag_candidate_fraction,
+    :wide_ms1_frag_sum_corr,
+    :wide_frag_corr_mean,
+    :wide_n_correlated_fragments,
+    :wide_frag_corr_best_m0,
+    :wide_signal_support,
+]
+
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
 # (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
 #
@@ -58,6 +71,13 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
     :frag_corr_best_m0,
+    :wide_ms1_m0_candidate_fraction,
+    :wide_frag_candidate_fraction,
+    :wide_ms1_frag_sum_corr,
+    :wide_frag_corr_mean,
+    :wide_n_correlated_fragments,
+    :wide_frag_corr_best_m0,
+    :wide_signal_support,
     :top3_ms2_mass_error_mean,
     :delta_frame_peak_center,
     :log_by_ratio_m0,
@@ -77,4 +97,3 @@ const ADVANCED_FEATURE_SET = [
     # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
     # along with their computation in select_best_per_precursor!.
 ]
-
