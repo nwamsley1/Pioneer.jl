@@ -578,7 +578,14 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         writeArrow(new_sidecar_path, side_df)
 
         if cleanup
-            rm(pass1_path); rm(mbr_path); rm(rec_path)
+            # Release the Arrow mmap handles before deleting: on Windows a raw
+            # rm() of a memory-mapped file throws EACCES until the mapping is
+            # released. Mirror the safeRm pattern used elsewhere in this module.
+            main = nothing; pass1 = nothing; mbr = nothing; rec = nothing
+            GC.gc(false)
+            safeRm(pass1_path, nothing; force=true)
+            safeRm(mbr_path, nothing; force=true)
+            safeRm(rec_path, nothing; force=true)
         end
         n_merged += 1
     end
