@@ -9,6 +9,11 @@ so this fallback rarely (if ever) fires. Formerly user-tunable as
 """
 const DEFAULT_INDEX_SEARCH_MIN_SCORE = UInt8(15)
 
+# Per-file PEP threshold applied during MainSearch. The same threshold defines
+# the cycle-contiguous wide-window core before best-per-precursor reduction,
+# and filters best-per-precursor rows after pair competition.
+const MAIN_PEP_FILTER_THR = 0.9f0
+
 """
     _resolve_n_isotopes(search_section) -> Int
 

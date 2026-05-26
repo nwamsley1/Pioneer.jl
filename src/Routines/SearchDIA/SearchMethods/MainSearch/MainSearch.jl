@@ -25,12 +25,6 @@ Pipeline:
 2. process_search_results!: Compute prescore features, train LightGBM, select best scan per precursor
 3. summarize_results!: Global prescore aggregation, write fold-split second_pass_psms for ScoringSearch
 """
-# Per-file PEP threshold applied to best-per-precursor PSMs after pair
-# competition. Precursors with PEP > MAIN_PEP_FILTER_THR are dropped before
-# being written to the second-pass arrows ScoringSearch reads. Set ≥ 1.0 to
-# disable the filter entirely.
-const MAIN_PEP_FILTER_THR = 0.9f0
-
 # Minimum number of high-confidence target precursors required to fit the
 # cross-fold iRT refinement model. Files with fewer than this many post-
 # pair-competition target precursors skip the refinement pass.

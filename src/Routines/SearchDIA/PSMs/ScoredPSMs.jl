@@ -117,6 +117,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
+    cycle_idx::UInt32
     scan_idx::UInt32
 end
 function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
@@ -127,6 +128,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 spectral_scores::Vector{SpectralScoresMainSearch{L}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
+                ms_file_idx::Int64,
                 cycle_idx::Int64,
                 expected_matches::Float64,
                 last_val::Int64,
@@ -199,6 +201,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                    (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
 
             UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(ms_file_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)
         )
@@ -239,6 +242,7 @@ struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     precursor_idx::UInt32
     ms_file_idx::UInt32
+    cycle_idx::UInt32
     scan_idx::UInt32
 end
 
@@ -251,6 +255,7 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
                 spectral_scores::Vector{SpectralScoresMainSearch{L}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
+                ms_file_idx::Int64,
                 cycle_idx::Int64,
                 expected_matches::Float64,
                 last_val::Int64,
@@ -301,6 +306,7 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
             spectral_scores[scores_idx].fitted_hellinger,
 
             UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(ms_file_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)
         )

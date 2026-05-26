@@ -394,6 +394,21 @@ function predict_psm_classifier_scores(
     return scores
 end
 
+function _mainsearch_pep_pass_mask(
+    scores::AbstractVector{<:Real},
+    targets::AbstractVector{Bool};
+    pep_threshold::Float32 = MAIN_PEP_FILTER_THR,
+)
+    n = length(scores)
+    length(targets) == n || throw(ArgumentError("scores and targets must have the same length"))
+    if pep_threshold >= 1.0f0
+        return trues(n)
+    end
+    peps = Vector{Float32}(undef, n)
+    get_PEP!(Float32.(scores), targets, peps; doSort = true, fdr_scale_factor = 1.0f0)
+    return peps .<= pep_threshold
+end
+
 """
     train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings, predictor)
 
@@ -456,8 +471,11 @@ function train_lgbm_and_select_best(
         Arrow.write(joinpath(diag_dir, "$(DIAG_DUMP_FILE_IDX[]).arrow"), psms[!, keep])
     end
 
-    # Select best scan per precursor by LightGBM score
-    psms = select_best_per_precursor!(psms, :lgbm_score)
+    # Select best scan per precursor by LightGBM score. The pass mask marks
+    # candidate scans inside the current MainSearch PEP threshold so the
+    # wide-window core can retain contiguous support before reduction.
+    pass_mask = _mainsearch_pep_pass_mask(all_scores, Vector{Bool}(psms[!, :target]))
+    psms = select_best_per_precursor!(psms, :lgbm_score; pass_mask = pass_mask)
 
     # Extract scores for best PSMs
     scores = psms[!, :lgbm_score]
@@ -500,7 +518,8 @@ function reapply_psm_classifier_and_select_best!(
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    best_psms = select_best_per_precursor!(psms, :lgbm_score)
+    pass_mask = _mainsearch_pep_pass_mask(all_scores, Vector{Bool}(psms[!, :target]))
+    best_psms = select_best_per_precursor!(psms, :lgbm_score; pass_mask = pass_mask)
     scores = best_psms[!, :lgbm_score]
     t_best = time()
 
@@ -511,6 +530,79 @@ function reapply_psm_classifier_and_select_best!(
     return best_psms, Vector{Float32}(scores), timings
 end
 
+@inline function _mainsearch_core_position(scan_idx, row_idx::Integer, cycle_info)
+    if cycle_info isa AbstractVector
+        return Int32(cycle_info[row_idx])
+    elseif hasproperty(cycle_info, :scan_to_window_pos)
+        s = Int(scan_idx)
+        return 1 <= s <= length(cycle_info.scan_to_window_pos) ?
+            Int32(cycle_info.scan_to_window_pos[s]) : Int32(0)
+    else
+        return Int32(0)
+    end
+end
+
+function _mainsearch_wide_core_bounds(
+    scan_idxs::AbstractVector{<:Integer},
+    scores::AbstractVector{<:Real},
+    pass_mask::AbstractVector{Bool},
+    cycle_info,
+)
+    n = length(scan_idxs)
+    n == 0 && return (scan_min = UInt32(0), scan_max = UInt32(0), n_scans = UInt16(0))
+    length(scores) == n || throw(ArgumentError("scores and scan_idxs must have the same length"))
+    length(pass_mask) == n || throw(ArgumentError("pass_mask and scan_idxs must have the same length"))
+
+    best_i = 1
+    best_score = Float32(scores[1])
+    positions = Vector{Int32}(undef, n)
+    @inbounds for i in 1:n
+        score_i = Float32(scores[i])
+        if score_i > best_score
+            best_score = score_i
+            best_i = i
+        end
+        positions[i] = _mainsearch_core_position(scan_idxs[i], i, cycle_info)
+    end
+
+    best_scan = UInt32(scan_idxs[best_i])
+    if positions[best_i] <= 0 || !pass_mask[best_i]
+        return (scan_min = best_scan, scan_max = best_scan, n_scans = UInt16(1))
+    end
+
+    order = sortperm(1:n; by = i -> (positions[i], UInt32(scan_idxs[i])))
+    best_pos = findfirst(==(best_i), order)
+    best_pos === nothing && return (scan_min = best_scan, scan_max = best_scan, n_scans = UInt16(1))
+
+    lo = best_pos
+    while lo > 1
+        cur = order[lo]
+        prev = order[lo - 1]
+        pass_mask[prev] || break
+        positions[prev] == positions[cur] - Int32(1) || break
+        lo -= 1
+    end
+
+    hi = best_pos
+    while hi < n
+        cur = order[hi]
+        nxt = order[hi + 1]
+        pass_mask[nxt] || break
+        positions[nxt] == positions[cur] + Int32(1) || break
+        hi += 1
+    end
+
+    scan_min = typemax(UInt32)
+    scan_max = UInt32(0)
+    @inbounds for j in lo:hi
+        scan = UInt32(scan_idxs[order[j]])
+        scan_min = min(scan_min, scan)
+        scan_max = max(scan_max, scan)
+    end
+    n_core = UInt16(min(hi - lo + 1, Int(typemax(UInt16))))
+    return (scan_min = scan_min, scan_max = scan_max, n_scans = n_core)
+end
+
 """
     select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
 
@@ -519,20 +611,31 @@ per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥
 otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
 weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` per precursor.
 """
-function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
+function select_best_per_precursor!(
+    psms::DataFrame,
+    score_col::Symbol;
+    pass_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+    scan_cycle_index = nothing,
+)
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
     has_irt = hasproperty(psms, :irt_obs)
     has_weight = hasproperty(psms, :weight)
     has_rt = hasproperty(psms, :rt)
+    has_scan_idx = hasproperty(psms, :scan_idx)
+    has_cycle_idx = hasproperty(psms, :cycle_idx)
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
+    scan_idxs = has_scan_idx ? psms[!, :scan_idx] : nothing
+    cycle_idxs = has_cycle_idx ? psms[!, :cycle_idx] : nothing
     # Type-assert the Float16 scoring columns. Without `::Vector{Float16}`
     # the DataFrame accessor returns an abstract type, which forces dynamic
     # dispatch inside the sub-pass-1 hot loop and costs ~3.5s/file on
     # Astral. Identified 2026-05-19.
     n = nrow(psms)
+    pass_mask !== nothing && length(pass_mask) != n &&
+        throw(ArgumentError("pass_mask length must match psms row count"))
 
     # sortperm groups PSMs by precursor_idx for contiguous processing
     perm = sortperm(prec_ids)
@@ -556,6 +659,11 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     # 2026-05-21: max_* / min_* / n_above_hm / num_scans / rt_fwhm outputs
     # removed (compute+write cost wasn't worth the ~+1% ID gain).
+    compute_wide_core = pass_mask !== nothing && has_scan_idx &&
+        (scan_cycle_index !== nothing || has_cycle_idx)
+    out_wide_core_scan_min = compute_wide_core ? Vector{UInt32}() : nothing
+    out_wide_core_scan_max = compute_wide_core ? Vector{UInt32}() : nothing
+    out_wide_core_n_scans = compute_wide_core ? Vector{UInt16}() : nothing
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -570,12 +678,21 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_smoothness !== nothing
         sizehint!(out_smoothness, n ÷ 10)
     end
+    if compute_wide_core
+        sizehint!(out_wide_core_scan_min, n ÷ 10)
+        sizehint!(out_wide_core_scan_max, n ÷ 10)
+        sizehint!(out_wide_core_n_scans, n ÷ 10)
+    end
 
     # Reusable buffers
     p75_buf = Vector{Float32}(undef, 128)
     smooth_w_buf  = Vector{Float32}(undef, 128)  # weights sorted by rt
     smooth_rt_buf = Vector{Float32}(undef, 128)  # rt sorted ascending
     smooth_ord_buf = Vector{Int}(undef, 128)     # per-group sort permutation
+    wide_scan_buf = Vector{UInt32}(undef, 128)
+    wide_score_buf = Vector{Float32}(undef, 128)
+    wide_pass_buf = Vector{Bool}(undef, 128)
+    wide_cycle_buf = Vector{Int32}(undef, 128)
 
     # Single pass: process each precursor group contiguously
     gi = 1
@@ -634,6 +751,34 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         end
 
         push!(keep_rows, best_row)
+
+        if compute_wide_core
+            if length(wide_scan_buf) < group_len
+                resize!(wide_scan_buf, group_len)
+                resize!(wide_score_buf, group_len)
+                resize!(wide_pass_buf, group_len)
+                resize!(wide_cycle_buf, group_len)
+            end
+            @inbounds for k in 0:(group_len - 1)
+                row = perm[group_start + k]
+                wide_scan_buf[k + 1] = UInt32(scan_idxs[row])
+                wide_score_buf[k + 1] = scores[row]
+                wide_pass_buf[k + 1] = pass_mask[row]
+                wide_cycle_buf[k + 1] = cycle_idxs === nothing ? Int32(0) : Int32(cycle_idxs[row])
+            end
+            cycle_info = scan_cycle_index === nothing ?
+                view(wide_cycle_buf, 1:group_len) :
+                scan_cycle_index
+            core = _mainsearch_wide_core_bounds(
+                view(wide_scan_buf, 1:group_len),
+                view(wide_score_buf, 1:group_len),
+                view(wide_pass_buf, 1:group_len),
+                cycle_info,
+            )
+            push!(out_wide_core_scan_min, core.scan_min)
+            push!(out_wide_core_scan_max, core.scan_max)
+            push!(out_wide_core_n_scans, core.n_scans)
+        end
 
         # --- Sub-pass 2: FWHM bounds. irt_fwhm is a LGBM feature;
         # n_above_hm + rt_fwhm are not LGBM features but are still consumed
@@ -740,6 +885,11 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     end
     if out_smoothness !== nothing
         result[!, :smoothness] = out_smoothness
+    end
+    if compute_wide_core
+        result[!, :wide_core_scan_min] = out_wide_core_scan_min
+        result[!, :wide_core_scan_max] = out_wide_core_scan_max
+        result[!, :wide_core_n_scans] = out_wide_core_n_scans
     end
 
     return result

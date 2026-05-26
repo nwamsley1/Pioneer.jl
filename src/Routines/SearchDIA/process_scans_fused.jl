@@ -3,9 +3,62 @@
 # match+score+build in one pass, then runs the same post-design-matrix /
 # distance-metric / scoring steps as classic.
 
+@inline function _ms2_cycle_window_key(center_mz, isolation_width)
+    center = ismissing(center_mz) ? 0.0 : Float64(center_mz)
+    width = ismissing(isolation_width) ? 0.0 : Float64(isolation_width)
+    return (round(Int32, center * 1000), round(Int32, width * 1000))
+end
+
+@inline _scan_ms2_cycle_window_key(spectra::MassSpecData, scan_idx::Integer) =
+    _ms2_cycle_window_key(
+        getCenterMz(spectra, scan_idx),
+        getIsolationWidthMz(spectra, scan_idx),
+    )
+
+@inline function _advance_ms2_cycle_idx(
+    cycle_idx::Integer,
+    anchor_window_key::Tuple{Int32, Int32},
+    has_anchor::Bool,
+    ms_order::Integer,
+    window_key::Tuple{Int32, Int32},
+)
+    ms_order == 2 || return Int64(cycle_idx), anchor_window_key, has_anchor
+    if !has_anchor
+        return Int64(1), window_key, true
+    elseif window_key == anchor_window_key
+        return Int64(cycle_idx) + 1, anchor_window_key, true
+    else
+        return Int64(cycle_idx), anchor_window_key, true
+    end
+end
+
+function _build_scan_cycle_indices(spectra::MassSpecData)
+    scan_to_cycle_idx = zeros(UInt32, length(spectra))
+    anchor_window_key = (Int32(0), Int32(0))
+    has_anchor = false
+    cycle_idx = 0
+
+    for scan_idx in 1:length(spectra)
+        ms_order = getMsOrder(spectra, scan_idx)
+        if ms_order == 2
+            cycle_idx, anchor_window_key, has_anchor = _advance_ms2_cycle_idx(
+                cycle_idx,
+                anchor_window_key,
+                has_anchor,
+                ms_order,
+                _scan_ms2_cycle_window_key(spectra, scan_idx),
+            )
+            scan_to_cycle_idx[scan_idx] = UInt32(cycle_idx)
+        end
+    end
+
+    return scan_to_cycle_idx
+end
+
 """
     process_scans_fused!(scan_range, spectra, prec_index,
-                         search_data, params, precursors, ion_list,
+                         scan_to_cycle_idx, ms_file_idx, search_data,
+                         params, precursors, ion_list,
                          nce_model, qtm, mem, rt_to_irt_spline, irt_tol)
     -> DataFrame
 
@@ -22,6 +75,8 @@ function process_scans_fused!(
     scan_range::Vector{Int64},
     spectra::MassSpecData,
     prec_index::PI,
+    scan_to_cycle_idx::Vector{UInt32},
+    ms_file_idx::Int64,
     search_data::SearchDataStructures,
     params::P,
     precursors::LibraryPrecursors,
@@ -60,17 +115,14 @@ function process_scans_fused!(
     kind = FusedStandard(prec_estimation, UInt8(max_frag_rank))
 
     last_val  = 0
-    cycle_idx = 0
 
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
 
         msn = getMsOrder(spectra, scan_idx)
-        if msn < 2
-            cycle_idx += 1
-        end
         msn ∉ getSpecOrder(params) && continue
         ismissing(get_prec_range(prec_index, scan_idx)) && continue
+        cycle_idx = Int64(scan_to_cycle_idx[scan_idx])
 
         scan_irt = Float32(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)))
 
@@ -121,7 +173,7 @@ function process_scans_fused!(
             end
             compute_distance_metrics!(Hs, search_data, params)
             new_last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                                  spectra, last_val, cycle_idx; mem=mem)
+                                  spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
             reset_scan_arrays!(id_to_col, Hs, unscored_psms)
             return new_last_val
         end

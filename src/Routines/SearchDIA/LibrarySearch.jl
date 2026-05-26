@@ -148,6 +148,7 @@ function library_search(
 
     # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
+    scan_to_cycle_idx = _build_scan_cycle_indices(spectra)
 
     # --- 3. Threaded scan processing, once per NCE model ---
     # All search methods use the fused per-precursor scan loop. The classic
@@ -158,7 +159,7 @@ function library_search(
     all_results = map(nce_entries) do (nce_model, nce_tag)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
-                last(thread_task), spectra, prec_index,
+                last(thread_task), spectra, prec_index, scan_to_cycle_idx, ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end

@@ -33,6 +33,7 @@ include("./UnitTests/test_fdr_utilities.jl")
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
+include("./UnitTests/test_cycle_indexing.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")
 include("./UnitTests/test_feature_finiteness.jl")
 include("./UnitTests/test_chromatogram_integration_trace_order.jl")

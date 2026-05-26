@@ -34,6 +34,7 @@ const WIDE_WINDOW_FEATURES = [
     :wide_n_correlated_fragments,
     :wide_frag_corr_best_m0,
     :wide_signal_support,
+    :wide_core_n_scans,
 ]
 
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
@@ -78,6 +79,7 @@ const ADVANCED_FEATURE_SET = [
     :wide_n_correlated_fragments,
     :wide_frag_corr_best_m0,
     :wide_signal_support,
+    :wide_core_n_scans,
     :top3_ms2_mass_error_mean,
     :delta_frame_peak_center,
     :log_by_ratio_m0,

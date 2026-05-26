@@ -7,6 +7,18 @@ using Pioneer: _passing_precursor_targets, refine_mainsearch_irt_predictions!
 using Pioneer: reapply_psm_classifier_and_select_best!, train_lgbm_and_select_best
 using Pioneer: train_psm_classifier_with_fallback
 
+function _mock_scan_cycle_index(pairs::Vector{Tuple{Int32, Int32}})
+    n = maximum(first, pairs)
+    scan_to_window_key = fill((Int32(0), Int32(0)), n)
+    scan_to_window_pos = zeros(Int32, n)
+    key = (Int32(500000), Int32(24000))
+    for (scan, pos) in pairs
+        scan_to_window_key[Int(scan)] = key
+        scan_to_window_pos[Int(scan)] = pos
+    end
+    return (scan_to_window_key = scan_to_window_key, scan_to_window_pos = scan_to_window_pos)
+end
+
 struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
     sequence::Vector{String}
     structural_mods::Vector{Union{Missing, String}}
@@ -60,6 +72,77 @@ end
         @test info.low_data
         @test haskey(info.candidate_oof, "probit")
         @test all(isfinite, scores)
+    end
+end
+
+@testset "MainSearch wide-window core bounds" begin
+    @testset "core follows cycle-contiguous passing scans around best PSM" begin
+        scan_cycle_index = _mock_scan_cycle_index([
+            (Int32(100), Int32(10)),
+            (Int32(105), Int32(11)),
+            (Int32(110), Int32(12)),
+            (Int32(120), Int32(14)),
+        ])
+
+        bounds = Pioneer._mainsearch_wide_core_bounds(
+            UInt32[100, 105, 110, 120],
+            Float32[0.70, 0.95, 0.80, 0.90],
+            Bool[true, true, true, true],
+            scan_cycle_index,
+        )
+
+        @test bounds.scan_min == UInt32(100)
+        @test bounds.scan_max == UInt32(110)
+        @test bounds.n_scans == UInt16(3)
+    end
+
+    @testset "non-passing scan breaks core contiguity" begin
+        scan_cycle_index = _mock_scan_cycle_index([
+            (Int32(100), Int32(10)),
+            (Int32(105), Int32(11)),
+            (Int32(110), Int32(12)),
+        ])
+
+        bounds = Pioneer._mainsearch_wide_core_bounds(
+            UInt32[100, 105, 110],
+            Float32[0.70, 0.95, 0.80],
+            Bool[true, true, false],
+            scan_cycle_index,
+        )
+
+        @test bounds.scan_min == UInt32(100)
+        @test bounds.scan_max == UInt32(105)
+        @test bounds.n_scans == UInt16(2)
+    end
+
+    @testset "best PSM row carries wide core metadata" begin
+        scan_cycle_index = _mock_scan_cycle_index([
+            (Int32(100), Int32(10)),
+            (Int32(105), Int32(11)),
+            (Int32(110), Int32(12)),
+            (Int32(120), Int32(14)),
+        ])
+        psms = DataFrame(
+            precursor_idx = UInt32[7, 7, 7, 7],
+            scan_idx = UInt32[100, 105, 110, 120],
+            lgbm_score = Float32[0.70, 0.95, 0.80, 0.90],
+            weight = Float32[10, 20, 15, 12],
+            irt_obs = Float32[1, 2, 3, 4],
+            rt = Float32[10, 20, 30, 40],
+        )
+
+        best = Pioneer.select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = Bool[true, true, true, true],
+            scan_cycle_index = scan_cycle_index,
+        )
+
+        @test nrow(best) == 1
+        @test best.scan_idx[1] == UInt32(105)
+        @test best.wide_core_scan_min[1] == UInt32(100)
+        @test best.wide_core_scan_max[1] == UInt32(110)
+        @test best.wide_core_n_scans[1] == UInt16(3)
     end
 end
 

@@ -391,6 +391,7 @@ function fit_nce_from_psms!(
         i = j
     end
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, prec_idxs_sorted)
+    scan_to_cycle_idx = _build_scan_cycle_indices(spectra)
 
     # Build thread tasks from unique scans
     unique_scans = unique(Int.(scan_idxs_sorted))
@@ -407,7 +408,7 @@ function fit_nce_from_psms!(
         nce_model = PiecewiseNceModel(nce_val)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
-                last(thread_task), spectra, prec_index,
+                last(thread_task), spectra, prec_index, scan_to_cycle_idx, ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end

@@ -7,9 +7,15 @@
 # MS1 scans, so the model can learn whether signal truly disappears beyond the
 # fragment-index support.
 
-const WIDE_WINDOW_CYCLE_MARGIN = 6
+const WIDE_WINDOW_CYCLE_MARGIN = 3
 const WIDE_WINDOW_FRAGMENT_PPM_TOL = 20f0
 const WIDE_WINDOW_CORR_THRESHOLD = 0.7f0
+
+@inline function _wide_window_cycle_margin()
+    margin = parse(Int, get(ENV, "PIONEER_WIDE_WINDOW_CYCLE_MARGIN", string(WIDE_WINDOW_CYCLE_MARGIN)))
+    margin > 0 || throw(ArgumentError("PIONEER_WIDE_WINDOW_CYCLE_MARGIN must be positive"))
+    return margin
+end
 
 @inline function _wide_window_pcor(x::AbstractVector, y::AbstractVector)
     n = length(x)
@@ -290,10 +296,11 @@ function _wide_expanded_window_scans(candidate_scans::Vector{Int32}, scan_index)
     end
 
     expanded = Int32[]
+    margin = _wide_window_cycle_margin()
     for (key, (lo, hi)) in bounds
         scans = scan_index.window_scans[key]
-        first_pos = max(1, Int(lo) - WIDE_WINDOW_CYCLE_MARGIN)
-        last_pos = min(length(scans), Int(hi) + WIDE_WINDOW_CYCLE_MARGIN)
+        first_pos = max(1, Int(lo) - margin)
+        last_pos = min(length(scans), Int(hi) + margin)
         for pos in first_pos:last_pos
             push!(expanded, scans[pos])
         end
@@ -301,6 +308,51 @@ function _wide_expanded_window_scans(candidate_scans::Vector{Int32}, scan_index)
     sort!(expanded)
     unique!(expanded)
     return expanded
+end
+
+function _wide_scans_between_bounds(scan_index, scan_min::Integer, scan_max::Integer)
+    n_scans = length(scan_index.scan_to_window_pos)
+    lo_scan = Int(scan_min)
+    hi_scan = Int(scan_max)
+    (lo_scan < 1 || hi_scan < 1 || lo_scan > n_scans || hi_scan > n_scans) && return Int32[]
+
+    key = scan_index.scan_to_window_key[lo_scan]
+    key == (Int32(0), Int32(0)) && return Int32[]
+    scan_index.scan_to_window_key[hi_scan] == key || return Int32[]
+
+    lo_pos = scan_index.scan_to_window_pos[lo_scan]
+    hi_pos = scan_index.scan_to_window_pos[hi_scan]
+    (lo_pos <= 0 || hi_pos <= 0) && return Int32[]
+    if lo_pos > hi_pos
+        lo_pos, hi_pos = hi_pos, lo_pos
+    end
+
+    scans = scan_index.window_scans[key]
+    return Int32[scans[pos] for pos in Int(lo_pos):Int(hi_pos)]
+end
+
+function _wide_candidate_scans_from_core(tbl, rows::Vector{Int}, scan_index, fallback_scans::Vector{Int32})
+    has_core = hasproperty(tbl, :wide_core_scan_min) && hasproperty(tbl, :wide_core_scan_max)
+    has_core || return fallback_scans
+
+    candidate_scans = Int32[]
+    @inbounds for row in rows
+        append!(
+            candidate_scans,
+            _wide_scans_between_bounds(
+                scan_index,
+                tbl.wide_core_scan_min[row],
+                tbl.wide_core_scan_max[row],
+            ),
+        )
+    end
+
+    if isempty(candidate_scans)
+        return fallback_scans
+    end
+    sort!(candidate_scans)
+    unique!(candidate_scans)
+    return candidate_scans
 end
 
 function _wide_top_fragment_mzs(
@@ -427,6 +479,9 @@ function add_wide_window_features_to_fold_file!(
     tbl[!, :wide_n_correlated_fragments] = zeros(UInt8, n)
     tbl[!, :wide_frag_corr_best_m0] = zeros(Float32, n)
     tbl[!, :wide_signal_support] = zeros(Float32, n)
+    if !hasproperty(tbl, :wide_core_n_scans)
+        tbl[!, :wide_core_n_scans] = zeros(UInt16, n)
+    end
 
     if n == 0 || !all(c -> hasproperty(tbl, c), (:precursor_idx, :scan_idx))
         writeArrow(fpath, tbl)
@@ -469,6 +524,7 @@ function add_wide_window_features_to_fold_file!(
             rows[k] = row
             candidate_scans[k] = Int32(tbl.scan_idx[row])
         end
+        candidate_scans = _wide_candidate_scans_from_core(tbl, rows, scan_index, candidate_scans)
 
         pid = UInt32(tbl.precursor_idx[rows[1]])
         if Int(pid) > length(prec_mzs)

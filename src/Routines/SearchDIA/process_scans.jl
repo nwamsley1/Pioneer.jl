@@ -167,11 +167,11 @@ end
 
 """
     score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                spectra, last_val, cycle_idx) -> Int64
+                spectra, last_val, ms_file_idx, cycle_idx) -> Int64
 
 Score PSMs for the current scan. Returns updated `last_val`.
 - Simple path: Score! with spectral contrast, matched ratio, and rank filters.
-- MainSearch: Score! with deconvolution weights and cycle index.
+- MainSearch: Score! with deconvolution weights, file index, and cycle index.
 """
 function score_psms!(
     search_data::SearchDataStructures,
@@ -182,6 +182,7 @@ function score_psms!(
     nmisses::Int64,
     spectra::MassSpecData,
     last_val::Int64,
+    ms_file_idx::Int64,
     cycle_idx::Int64;
     mem::AbstractMassErrorModel = SimpleMassErrorModel(0f0, (0f0, 0f0))
 )
@@ -191,6 +192,7 @@ function score_psms!(
         getMainSearchSpectralScores(search_data),
         getTempWeights(search_data),
         getIdToCol(search_data),
+        ms_file_idx,
         cycle_idx,
         nmatches / (nmatches + nmisses),
         last_val,
@@ -212,6 +214,7 @@ function score_psms!(
     nmisses::Int64,
     spectra::MassSpecData,
     last_val::Int64,
+    ms_file_idx::Int64,
     cycle_idx::Int64;
     mem::AbstractMassErrorModel = SimpleMassErrorModel(0f0, (0f0, 0f0))
 )
@@ -221,6 +224,7 @@ function score_psms!(
         getMainSearchSpectralScores(search_data),
         getTempWeights(search_data),
         getIdToCol(search_data),
+        ms_file_idx,
         cycle_idx,
         nmatches / (nmatches + nmisses),
         last_val,
@@ -232,4 +236,3 @@ function score_psms!(
     )
     return score_result.last_val
 end
-

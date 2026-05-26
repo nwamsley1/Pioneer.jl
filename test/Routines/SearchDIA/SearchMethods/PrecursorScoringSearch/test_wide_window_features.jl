@@ -33,6 +33,29 @@ end
     end
 end
 
+@testset "wide-window expansion uses persisted core bounds" begin
+    key = (Int32(50000), Int32(2400))
+    scan_to_window_key = fill((Int32(0), Int32(0)), 120)
+    scan_to_window_pos = zeros(Int32, 120)
+    for (pos, scan) in enumerate(Int32[100, 105, 110, 115])
+        scan_to_window_key[Int(scan)] = key
+        scan_to_window_pos[Int(scan)] = Int32(pos)
+    end
+    scan_index = (
+        window_scans = Dict(key => Int32[100, 105, 110, 115]),
+        scan_to_window_key = scan_to_window_key,
+        scan_to_window_pos = scan_to_window_pos,
+    )
+    tbl = (
+        wide_core_scan_min = UInt32[100],
+        wide_core_scan_max = UInt32[110],
+    )
+
+    scans = Pioneer._wide_candidate_scans_from_core(tbl, [1], scan_index, Int32[105])
+
+    @test scans == Int32[100, 105, 110]
+end
+
 @testset "wide-window features are cross-run only" begin
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, Pioneer.WIDE_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.WIDE_WINDOW_FEATURES)
