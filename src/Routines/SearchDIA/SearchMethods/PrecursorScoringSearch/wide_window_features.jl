@@ -3,9 +3,9 @@
 #
 # Existing fragment/MS1 chromatogram features are computed only over PSM rows
 # that survived the fragment-index search. These features inspect the raw
-# same-window MS2 scans immediately outside that candidate range, plus nearest
-# MS1 scans, so the model can learn whether signal truly disappears beyond the
-# fragment-index support.
+# same-window MS2 scans immediately outside that candidate range, plus MS1
+# signal near each MS2 retention time, so the model can learn whether signal
+# truly disappears beyond the fragment-index support.
 
 const WIDE_WINDOW_CYCLE_MARGIN = 3
 const WIDE_WINDOW_FRAGMENT_PPM_TOL = 20f0
@@ -15,6 +15,13 @@ const WIDE_WINDOW_CORR_THRESHOLD = 0.7f0
     margin = parse(Int, get(ENV, "PIONEER_WIDE_WINDOW_CYCLE_MARGIN", string(WIDE_WINDOW_CYCLE_MARGIN)))
     margin > 0 || throw(ArgumentError("PIONEER_WIDE_WINDOW_CYCLE_MARGIN must be positive"))
     return margin
+end
+
+@inline function _wide_window_use_learned_fragment_model()
+    value = lowercase(strip(get(ENV, "PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL", "false")))
+    value in ("1", "true", "yes", "on") && return true
+    value in ("0", "false", "no", "off") && return false
+    throw(ArgumentError("PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL must be true/false"))
 end
 
 @inline function _wide_window_pcor(x::AbstractVector, y::AbstractVector)
@@ -218,6 +225,33 @@ end
     return best_int
 end
 
+@inline function _wide_fragment_peak_intensity(
+    scan_corrected_mz::Vector{Float32},
+    scan_obs_low::Vector{Float32},
+    scan_obs_high::Vector{Float32},
+    scan_int,
+    n_peaks::Int,
+    target::Float32,
+    mem::AbstractMassErrorModel,
+)
+    n_peaks == 0 && return 0f0
+    half_width = conservative_half_width(mem, target)
+    conservative_low, conservative_high = match_window(target, half_width)
+    start_idx = bsearch_hybrid(scan_corrected_mz, conservative_low, 1, n_peaks)
+    best_peak, _, _ = scan_for_nearest_in_window(
+        scan_corrected_mz,
+        scan_obs_low,
+        scan_obs_high,
+        start_idx,
+        n_peaks,
+        target,
+        conservative_high,
+    )
+    best_peak == 0 && return 0f0
+    val = scan_int[best_peak]
+    return ismissing(val) ? 0f0 : Float32(val)
+end
+
 @inline function _wide_window_key(center_mz, isolation_width)
     (ismissing(center_mz) || ismissing(isolation_width)) && return (Int32(0), Int32(0))
     return (
@@ -390,6 +424,8 @@ function _wide_collect_feature_values(
     fragment_mzs::Vector{Float32},
     ms1_ppm_tol::Float32,
     ms1_ppm_offset::Float32,
+    frag_mem::AbstractMassErrorModel,
+    use_learned_fragment_model::Bool,
 )
     n = length(expanded_scans)
     n == 0 && return _wide_window_zero_feature_values()
@@ -399,6 +435,9 @@ function _wide_collect_feature_values(
     fragments = zeros(Float32, n, 6)
     candidate_mask = falses(n)
     ms1_target = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
+    scan_corrected_mz = Float32[]
+    scan_obs_low = Float32[]
+    scan_obs_high = Float32[]
 
     @inbounds for (i, scan_i32) in pairs(expanded_scans)
         scan_idx = Int(scan_i32)
@@ -416,10 +455,24 @@ function _wide_collect_feature_values(
 
         mz = getMzArray(spectra, scan_idx)
         intens = getIntensityArray(spectra, scan_idx)
+        n_peaks = use_learned_fragment_model ?
+            prepare_scan_peaks!(scan_corrected_mz, scan_obs_low, scan_obs_high, frag_mem, mz, intens) : 0
         for r in 1:6
             target = fragment_mzs[r]
             target > 0f0 || continue
-            fragments[i, r] = _wide_peak_intensity(mz, intens, target, WIDE_WINDOW_FRAGMENT_PPM_TOL)
+            fragments[i, r] = if use_learned_fragment_model
+                _wide_fragment_peak_intensity(
+                    scan_corrected_mz,
+                    scan_obs_low,
+                    scan_obs_high,
+                    intens,
+                    n_peaks,
+                    target,
+                    frag_mem,
+                )
+            else
+                _wide_peak_intensity(mz, intens, target, WIDE_WINDOW_FRAGMENT_PPM_TOL)
+            end
         end
     end
 
@@ -494,9 +547,11 @@ function add_wide_window_features_to_fold_file!(
         return n
     end
 
-    mem = getMs1MassErrorModel(search_context, ms_file_idx)
-    ms1_ppm_tol = Float32(max(10f0, getLeftTol(mem), getRightTol(mem)))
-    ms1_ppm_offset = Float32(getMassOffset(mem))
+    ms1_mem = getMs1MassErrorModel(search_context, ms_file_idx)
+    ms1_ppm_tol = Float32(max(10f0, getLeftTol(ms1_mem), getRightTol(ms1_mem)))
+    ms1_ppm_offset = Float32(getMassOffset(ms1_mem))
+    frag_mem = getMassErrorModel(search_context, ms_file_idx)
+    use_learned_fragment_model = _wide_window_use_learned_fragment_model()
     prec_mzs = getMz(precursors)
     prec_charges = getCharge(precursors)
     frag_list = getFragments(frag_lookup)
@@ -557,6 +612,8 @@ function add_wide_window_features_to_fold_file!(
             fragment_mzs,
             ms1_ppm_tol,
             ms1_ppm_offset,
+            frag_mem,
+            use_learned_fragment_model,
         )
         _wide_scatter_features!(columns, rows, features)
     end

@@ -56,6 +56,28 @@ end
     @test scans == Int32[100, 105, 110]
 end
 
+@testset "wide-window fragment lookup uses learned mass-error model" begin
+    scan_mz = Union{Missing, Float32}[500.025f0]
+    scan_int = Union{Missing, Float32}[123f0]
+    corrected = Float32[]
+    obs_low = Float32[]
+    obs_high = Float32[]
+    mem = Pioneer.MassErrorModel(50f0, (5f0, 5f0))
+
+    n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int)
+
+    @test Pioneer._wide_peak_intensity(scan_mz, scan_int, 500f0, 20f0) == 0f0
+    @test Pioneer._wide_fragment_peak_intensity(
+        corrected,
+        obs_low,
+        obs_high,
+        scan_int,
+        n_peaks,
+        500f0,
+        mem,
+    ) == 123f0
+end
+
 @testset "wide-window features are cross-run only" begin
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, Pioneer.WIDE_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.WIDE_WINDOW_FEATURES)
