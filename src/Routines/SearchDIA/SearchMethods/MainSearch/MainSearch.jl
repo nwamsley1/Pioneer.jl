@@ -193,8 +193,7 @@ function process_file!(
     # Dict-based version (measured 2026-05-19).
     t_scan_comp = @elapsed add_scan_competition_features!(psms)
 
-    # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
-    # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
+    # MS1 lookup features (M-1/M0/M+1 intensities, mass errors, and isotope ratios). Done
     # BEFORE the precursor sort so that consecutive rows within a per-chunk
     # task share scan_idx, which lets the per-task MS1-spectrum cache hit
     # ~once per unique scan in the chunk instead of being thrashed by
