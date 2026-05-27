@@ -154,8 +154,6 @@ const PRESCORE_FEATURES = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
-    :ms1_mminus1_present, :ms1_mminus1_intensity,
-    :ms1_mminus1_mass_err_ppm, :ms1_mminus1_to_m0_ratio,
 
     # Per-rank M0 fragment intensities (kept; used by chromatogram features)
     # frag5_int, frag6_int dropped 2026-05-14 (Tier-5 drop_5to6) — 8-file Olsen
@@ -205,16 +203,12 @@ const PRESCORE_FEATURES = [
 Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx):
 
 1. Find the nearest MS1 scan in time (binary search on RT).
-2. Search the MS1 spectrum for M-1, M0, and M+1 of the precursor (charge-aware
+2. Search the MS1 spectrum for M0 and M+1 of the precursor (charge-aware
    m/z = prec_mz + iso × NEUTRON_MASS / charge), within ±ms1_ppm_tol ppm.
 3. Populate MS1 point-lookup features per PSM:
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
    - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
    - `ms1_m1_intensity` (Float32): observed M+1 intensity; 0 if not matched
-   - `ms1_mminus1_present` (Float32): 1 if M-1 was matched, else 0
-   - `ms1_mminus1_intensity` (Float32): observed M-1 intensity; 0 if not matched
-   - `ms1_mminus1_mass_err_ppm` (Float32): absolute ppm error; -1 if no M-1
-   - `ms1_mminus1_to_m0_ratio` (Float32): M-1/M0 intensity ratio; -1 if unavailable
 
 The intensities are also consumed by `_add_ms1_chromatogram_features!` to build
 per-precursor M0 / M+1 / weight chromatograms and compute correlation features.
@@ -226,8 +220,7 @@ all signal from raw `m0/m1_intensity` (presence ⇔ intensity > 0; ratio implici
 tree splits); the explicit features were redundant. Removing them costs ~174 IDs at
 q≤.01 within run-to-run noise and slightly improves q≤.001 (+296).
 
-If no MS1 scan is available (file has only MS2), intensity/presence features are
-zeroed and the unavailable M-1 mass-error/ratio features remain at -1.
+If no MS1 scan is available (file has only MS2), intensity features remain zeroed.
 """
 # Top-level helper for the MS1 per-PSM peak search. Operates on clean
 # Vector{Float32} arrays (missings stripped during cache refresh — see
@@ -324,28 +317,15 @@ function _ms1_lookup_chunk!(psms, spectra,
         # ms1_m0_mass_err_ppm is computed against the shifted (bias-corrected)
         # target so its zero point matches the calibration.
         target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
-        isotope_step = NEUTRON / Float32(prec_chg)
-        target_mminus1 = target_m0 - isotope_step
         target_m1 = target_m0 + NEUTRON / Float32(prec_chg)
 
-        mminus1_hit, mminus1_int, mminus1_mz = target_mminus1 > 0f0 ?
-            _ms1_find_peak(cached_mz, cached_int, target_mminus1, ms1_ppm_tol) :
-            (false, 0f0, 0f0)
         m0_hit, m0_int, m0_mz = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
         m1_hit, m1_int, _    = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
 
-        if mminus1_hit
-            psms.ms1_mminus1_present[i] = 1f0
-            psms.ms1_mminus1_intensity[i] = mminus1_int
-            psms.ms1_mminus1_mass_err_ppm[i] = abs(mminus1_mz - target_mminus1) / target_mminus1 * 1f6
-        end
         psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
         psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
         if m0_hit
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
-        end
-        if mminus1_hit && mminus1_int > 0f0 && m0_hit && m0_int > 0f0
-            psms.ms1_mminus1_to_m0_ratio[i] = mminus1_int / m0_int
         end
         if m0_hit && m0_int > 0f0 && m1_hit
             obs_ratio = m1_int / m0_int
@@ -373,12 +353,8 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m0_mass_err_ppm`
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
-- `:ms1_mminus1_present`
-- `:ms1_mminus1_intensity`
-- `:ms1_mminus1_mass_err_ppm`
-- `:ms1_mminus1_to_m0_ratio`
 
-For each PSM: finds the nearest MS1 scan by RT, extracts M-1/M0/M1 intensities
+For each PSM: finds the nearest MS1 scan by RT, extracts M0/M1 intensities
 within a ppm tolerance window around the predicted precursor m/z, and
 computes isotope ratios/sentinel values.
 
@@ -404,10 +380,6 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
-    psms[!, :ms1_mminus1_present]        = zeros(Float32, n)
-    psms[!, :ms1_mminus1_intensity]      = zeros(Float32, n)
-    psms[!, :ms1_mminus1_mass_err_ppm]   = fill(-1f0, n)
-    psms[!, :ms1_mminus1_to_m0_ratio]    = fill(-1f0, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
