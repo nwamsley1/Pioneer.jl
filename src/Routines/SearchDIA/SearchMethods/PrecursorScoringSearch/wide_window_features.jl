@@ -18,7 +18,7 @@ const WIDE_WINDOW_CORR_THRESHOLD = 0.7f0
 end
 
 @inline function _wide_window_use_learned_fragment_model()
-    value = lowercase(strip(get(ENV, "PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL", "false")))
+    value = lowercase(strip(get(ENV, "PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL", "true")))
     value in ("1", "true", "yes", "on") && return true
     value in ("0", "false", "no", "off") && return false
     throw(ArgumentError("PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL must be true/false"))

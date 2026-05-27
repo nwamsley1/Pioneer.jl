@@ -78,6 +78,23 @@ end
     ) == 123f0
 end
 
+@testset "wide-window learned fragment model defaults on" begin
+    env_key = "PIONEER_WIDE_WINDOW_USE_LEARNED_FRAGMENT_MODEL"
+    old_value = get(ENV, env_key, nothing)
+    haskey(ENV, env_key) && delete!(ENV, env_key)
+    try
+        @test Pioneer._wide_window_use_learned_fragment_model()
+        ENV[env_key] = "false"
+        @test !Pioneer._wide_window_use_learned_fragment_model()
+    finally
+        if old_value === nothing
+            haskey(ENV, env_key) && delete!(ENV, env_key)
+        else
+            ENV[env_key] = old_value
+        end
+    end
+end
+
 @testset "wide-window features are cross-run only" begin
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, Pioneer.WIDE_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.WIDE_WINDOW_FEATURES)
