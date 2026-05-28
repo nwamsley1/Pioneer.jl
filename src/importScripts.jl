@@ -84,6 +84,11 @@ function importScripts()
         return successful_count
     end
     
+    # Core mass constants are used by SearchDIA and quad-model files, so load
+    # them before the broader dependency-order includes. The later BuildSpecLib
+    # utilities pass will skip this path because it is already in files_loaded.
+    safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib", "utils", "get_mz.jl"))
+
     # Include files using the safe import system
     include_files!(
         joinpath(package_root, "src","utils", "quadTransmissionModeling"),

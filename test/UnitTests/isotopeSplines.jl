@@ -129,14 +129,14 @@ function plotIsotopes(
     p = plot(title = title)
     iso_idx = 0
     for i in range(1, length(iso_a))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        mz = test_frag.mz + iso_idx*C13_C12_MASS_DIFF/frag_charge
         plot!(p, [mz, mz], [0.0, iso_a[i]], color = 1, alpha = 0.5, lw = 5, label = nothing)
         iso_idx += 1
     end
     hline!(p,[0.0], lw = 4, color = 1, labels = label_a)
     iso_idx = 0
     for i in range(1, length(iso_b))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        mz = test_frag.mz + iso_idx*C13_C12_MASS_DIFF/frag_charge
         plot!(p, [mz, mz], [0.0, iso_b[i]], color = 2, alpha = 0.5, lw = 5, label = nothing)
         iso_idx += 1
     end
@@ -421,4 +421,3 @@ test_fragments = [
     @test isotopes15[1] < b3_isotopes15[1]
     plotIsotopes(isotopes05, isotopes15, "(0, 5)", "(1, 5)", test_frag; title = "y16+1 of TFTLKTVLMIAIQLITR")
 end
-

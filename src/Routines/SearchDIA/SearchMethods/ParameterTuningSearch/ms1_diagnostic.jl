@@ -8,7 +8,7 @@
 
 const MS1_DIAG_WINDOW_PPM = 100.0f0
 const MS1_DIAG_TOL_K_MAD  = 5.0f0
-const MS1_DIAG_NEUTRON    = Float32(1.00335)
+const MS1_DIAG_ISOTOPE_SPACING = C13_C12_MASS_DIFF_F32
 
 # Inlined minimal nearest-peak finder. Uses Julia's searchsortedfirst rather
 # than the perf-tuned bsearch_hybrid since this only runs once per file on a
@@ -109,7 +109,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
         prec_chg = Int(prec_charges[pid]); prec_chg == 0 && (prec_chg = 1)
 
         for iso in 0:2
-            target = prec_mz + Float32(iso) * MS1_DIAG_NEUTRON / Float32(prec_chg)
+            target = prec_mz + Float32(iso) * MS1_DIAG_ISOTOPE_SPACING / Float32(prec_chg)
             hit, obs_mz = _ms1_diag_find_peak(cached_mz, target, MS1_DIAG_WINDOW_PPM)
             if hit
                 push!(residuals, (obs_mz - target) / target * 1f6)

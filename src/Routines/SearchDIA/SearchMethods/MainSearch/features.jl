@@ -148,7 +148,6 @@ const PRESCORE_FEATURES = [
 
     # Cross-precursor at-scan
     :weight_ratio_at_scan, :weight_rank_at_scan,
-    :ms1_m0_peak_frag_intensity_fraction,
 
     # MS1 features (chromatogram-correlations dropped, only m0_corr kept)
     :ms1_m0_mass_err_ppm,
@@ -205,7 +204,7 @@ Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx)
 
 1. Find the nearest MS1 scan in time (binary search on RT).
 2. Search the MS1 spectrum for M0 and M+1 of the precursor (charge-aware
-   m/z = prec_mz + iso × NEUTRON_MASS / charge), within ±ms1_ppm_tol ppm.
+   m/z = prec_mz + iso × C13_C12_MASS_DIFF / charge), within ±ms1_ppm_tol ppm.
 3. Populate MS1 point-lookup features per PSM:
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
    - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
@@ -292,7 +291,7 @@ end
 function _ms1_lookup_chunk!(psms, spectra,
                              prec_mzs, prec_charges, prec_sulfurs, iso_splines,
                              scan_to_ms1::Vector{Int32},
-                             ms1_ppm_tol::Float32, ms1_ppm_offset::Float32, NEUTRON::Float32,
+                             ms1_ppm_tol::Float32, ms1_ppm_offset::Float32, isotope_spacing::Float32,
                              m0_peak_keys::Vector{UInt64},
                              chunk_start::Int, chunk_end::Int)
     # Per-task scratch buffers; reused (resize-only) across cache misses
@@ -321,7 +320,7 @@ function _ms1_lookup_chunk!(psms, spectra,
         # ms1_m0_mass_err_ppm is computed against the shifted (bias-corrected)
         # target so its zero point matches the calibration.
         target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
-        target_m1 = target_m0 + NEUTRON / Float32(prec_chg)
+        target_m1 = target_m0 + isotope_spacing / Float32(prec_chg)
 
         m0_hit, m0_int, m0_mz, m0_peak_idx = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
         m1_hit, m1_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
@@ -359,12 +358,17 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
 - `:ms1_m0_peak_frag_intensity_fraction`
+- `:ms1_m0_peak_n_precursors`
+- `:scan_prec_mz_n_precursors`
 
 For each PSM: finds the nearest MS1 scan by RT, extracts M0/M1 intensities
 within a ppm tolerance window around the predicted precursor m/z, and
 computes isotope ratios/sentinel values. The peak-fragment fraction groups
 PSMs within the same MS2 scan by the exact matched MS1 M0 peak and reports
 each PSM's top-six matched M0 fragment-intensity share within that group.
+The companion counts report how many unique candidate precursors share that
+same matched M0 peak, and how many unique candidate precursors in the same
+MS2 spectrum have the exact same library precursor m/z.
 
 **PRECONDITION (perf-only)**: the per-task MS1-spectrum cache hits ~once
 per unique `scan_idx` in each chunk, so this is dramatically faster when
@@ -389,6 +393,8 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
     psms[!, :ms1_m0_peak_frag_intensity_fraction] = zeros(Float32, n)
+    psms[!, :ms1_m0_peak_n_precursors] = zeros(UInt16, n)
+    psms[!, :scan_prec_mz_n_precursors] = zeros(UInt16, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -432,7 +438,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
     prec_sulfurs   = getSulfurCount(precursors)
     iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
-    NEUTRON = Float32(1.00335)
+    isotope_spacing = C13_C12_MASS_DIFF_F32
     m0_peak_keys = zeros(UInt64, n)
 
     # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
@@ -450,32 +456,39 @@ function add_ms1_lookup_features!(psms::DataFrame,
             psms, spectra,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
-            Float32(ms1_ppm_tol), Float32(ms1_ppm_offset), NEUTRON,
+            Float32(ms1_ppm_tol), Float32(ms1_ppm_offset), isotope_spacing,
             m0_peak_keys,
             chunk_start, chunk_end
         )
     end
-    _add_m0_peak_fragment_competition_feature!(psms, m0_peak_keys)
+    _add_m0_peak_fragment_competition_feature!(psms, m0_peak_keys, prec_mzs)
     return
 end
 
 function _add_m0_peak_fragment_competition_feature!(psms::DataFrame,
-                                                    m0_peak_keys::AbstractVector{UInt64})
+                                                    m0_peak_keys::AbstractVector{UInt64},
+                                                    prec_mzs = nothing)
     n = nrow(psms)
     length(m0_peak_keys) == n || throw(ArgumentError("m0_peak_keys length must match psms rows"))
-    out = zeros(Float32, n)
-    psms[!, :ms1_m0_peak_frag_intensity_fraction] = out
+    frac_out = zeros(Float32, n)
+    peak_count_out = zeros(UInt16, n)
+    same_mz_count_out = zeros(UInt16, n)
+    psms[!, :ms1_m0_peak_frag_intensity_fraction] = frac_out
+    psms[!, :ms1_m0_peak_n_precursors] = peak_count_out
+    psms[!, :scan_prec_mz_n_precursors] = same_mz_count_out
     n == 0 && return
 
-    required = (:scan_idx, :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int)
+    required = (:precursor_idx, :scan_idx, :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int)
     if !all(c -> hasproperty(psms, c), required)
         @debug_l1 "_add_m0_peak_fragment_competition_feature!: missing required columns, skipping"
         return
     end
 
+    precursor_idx::Vector{UInt32} = psms[!, :precursor_idx]
     scan::Vector{UInt32} = psms[!, :scan_idx]
     f = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
          psms.frag4_int, psms.frag5_int, psms.frag6_int)
+    have_prec_mzs = prec_mzs !== nothing
 
     starts = Int[1]
     sizehint!(starts, n ÷ 4)
@@ -489,24 +502,58 @@ function _add_m0_peak_fragment_competition_feature!(psms::DataFrame,
 
     parallel_foreach!(n_runs) do chunk
         totals = Dict{UInt64, Float32}()
+        peak_counts = Dict{UInt64, UInt16}()
+        seen_peak_precursors = Set{UInt128}()
+        same_mz_counts = Dict{UInt32, UInt16}()
+        seen_mz_precursors = Set{UInt64}()
         @inbounds for r in chunk
             empty!(totals)
+            empty!(peak_counts)
+            empty!(seen_peak_precursors)
+            empty!(same_mz_counts)
+            empty!(seen_mz_precursors)
             s = starts[r]
             e = starts[r+1] - 1
             for row in s:e
+                pid = precursor_idx[row]
                 key = m0_peak_keys[row]
+                if key != 0
+                    seen_key = (UInt128(key) << 32) | UInt128(pid)
+                    if !(seen_key in seen_peak_precursors)
+                        push!(seen_peak_precursors, seen_key)
+                        prev = get(peak_counts, key, UInt16(0))
+                        peak_counts[key] = prev == typemax(UInt16) ? prev : prev + UInt16(1)
+                    end
+                end
+                if have_prec_mzs && 1 <= Int(pid) <= length(prec_mzs)
+                    mz_key = reinterpret(UInt32, Float32(prec_mzs[pid]))
+                    seen_key = (UInt64(mz_key) << 32) | UInt64(pid)
+                    if !(seen_key in seen_mz_precursors)
+                        push!(seen_mz_precursors, seen_key)
+                        prev = get(same_mz_counts, mz_key, UInt16(0))
+                        same_mz_counts[mz_key] = prev == typemax(UInt16) ? prev : prev + UInt16(1)
+                    end
+                end
                 key == 0 && continue
                 frag_sum = f[1][row] + f[2][row] + f[3][row] + f[4][row] + f[5][row] + f[6][row]
                 frag_sum > 0f0 || continue
                 totals[key] = get(totals, key, 0f0) + frag_sum
             end
             for row in s:e
+                pid = precursor_idx[row]
                 key = m0_peak_keys[row]
-                key == 0 && continue
-                denom = get(totals, key, 0f0)
-                denom > 0f0 || continue
-                frag_sum = f[1][row] + f[2][row] + f[3][row] + f[4][row] + f[5][row] + f[6][row]
-                out[row] = frag_sum > 0f0 ? frag_sum / denom : 0f0
+                if key != 0
+                    peak_count_out[row] = get(peak_counts, key, UInt16(0))
+                    denom = get(totals, key, 0f0)
+                    if denom > 0f0
+                        frag_sum = f[1][row] + f[2][row] + f[3][row] + f[4][row] + f[5][row] + f[6][row]
+                        frac_out[row] = frag_sum > 0f0 ? frag_sum / denom : 0f0
+                    end
+                end
+                if have_prec_mzs && 1 <= Int(pid) <= length(prec_mzs)
+                    mz_key = reinterpret(UInt32, Float32(prec_mzs[pid]))
+                    same_mz_count_out[row] = get(same_mz_counts, mz_key, UInt16(0))
+                end
             end
         end
     end

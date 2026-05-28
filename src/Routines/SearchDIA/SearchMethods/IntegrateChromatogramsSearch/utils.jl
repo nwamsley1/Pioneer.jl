@@ -542,9 +542,9 @@ function getPrecursorWindowRange(
     isotope_err_bounds::Tuple{I, I}
 ) where {I<:Integer}
     start = searchsortedfirst(precs, by = x->last(x),
-        min_prec_mz - first(isotope_err_bounds)*NEUTRON/2)
+        min_prec_mz - first(isotope_err_bounds)*C13_C12_MASS_DIFF/2)
     stop = searchsortedlast(precs, by = x->last(x),
-        max_prec_mz + last(isotope_err_bounds)*NEUTRON/2)
+        max_prec_mz + last(isotope_err_bounds)*C13_C12_MASS_DIFF/2)
     return start, stop
 end
 
@@ -553,8 +553,8 @@ function withinQuadrupoleBounds(
     min_prec_mz::Float32, max_prec_mz::Float32,
     isotope_err_bounds::Tuple{I, I}
 ) where {I<:Integer}
-    mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
-    mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
+    mz_low = min_prec_mz - first(isotope_err_bounds)*C13_C12_MASS_DIFF/prec_charge
+    mz_high = max_prec_mz + last(isotope_err_bounds)*C13_C12_MASS_DIFF/prec_charge
     return mz_low ≤ prec_mz ≤ mz_high
 end
 

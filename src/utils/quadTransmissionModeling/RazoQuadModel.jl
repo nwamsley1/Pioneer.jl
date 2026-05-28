@@ -574,7 +574,7 @@ function simmulateQuad(
         #Precursor charge state, m0 and m0 m/z, and m0 mass 
         prec_charge_state = rand([2])
         m0_mz = center_mz + offset
-        m1_mz =  m0_mz + NEUTRON/prec_charge_state
+        m1_mz =  m0_mz + C13_C12_MASS_DIFF/prec_charge_state
         mono_mass = Float32(m0_mz*prec_charge_state) #Approximate not accounting for proton 
 
 

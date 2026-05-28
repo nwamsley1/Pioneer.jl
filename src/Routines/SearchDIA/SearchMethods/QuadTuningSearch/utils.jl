@@ -208,7 +208,7 @@ function add_columns!(
     prec_charge = [lib_prec_charge[pid] for pid in precursor_idx]
     sulfur_count = [lib_sulfur_count[pid] for pid in precursor_idx]
     #The iso_idx is 1 indexed. So the M0 has an index of 1, the M+1 had an index of 2, etc.
-    iso_mz = Float32.(mono_mz .+ NEUTRON.*(iso_idx.-1.0f0)./prec_charge)
+    iso_mz = Float32.(mono_mz .+ C13_C12_MASS_DIFF.*(iso_idx.-1.0f0)./prec_charge)
     mz_offset = iso_mz .- center_mz
     δ = zeros(Float32, length(precursor_idx))
     for i in range(1, length(precursor_idx))
@@ -567,7 +567,7 @@ function summarize_precursor(
     #If we only got the M0
     if (length(iso_idx) == 1) && (iso_idx[1] == 1)
         m0_idx = 1
-        m1_mz = iso_mz[m0_idx] + (NEUTRON/prec_charge[m0_idx])
+        m1_mz = iso_mz[m0_idx] + (C13_C12_MASS_DIFF/prec_charge[m0_idx])
 
         return (center_mz = center_mz[m0_idx], 
             δ = δ[m0_idx], 
@@ -580,7 +580,7 @@ function summarize_precursor(
     #If we only got the M1
     if (length(iso_idx) == 1) && (iso_idx[1] == 2)
         m1_idx = 1
-        mo_mz = iso_mz[m1_idx] - (NEUTRON/prec_charge[m1_idx])
+        mo_mz = iso_mz[m1_idx] - (C13_C12_MASS_DIFF/prec_charge[m1_idx])
 
         return (center_mz = center_mz[m1_idx], 
                δ = δ[m1_idx], 
@@ -1256,11 +1256,11 @@ function process_quad_pipeline(
         x0 = processed_psms[i,:x0]::Float32
         hw = processed_psms[i,:half_width_mz]::Float32
         if x0 > zero(Float32)
-            if (x0 - hw) < (NEUTRON/4 + 0.1)
+            if (x0 - hw) < (C13_C12_MASS_DIFF/4 + 0.1)
                 keep_data[i] = true
             end
         else
-            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
+            if (abs(x0) - hw) < (C13_C12_MASS_DIFF/2 + 0.1)
                 keep_data[i] = true
             end
         end
@@ -1368,5 +1368,4 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
     )
     return fitted_params, initial_params
 end
-
 

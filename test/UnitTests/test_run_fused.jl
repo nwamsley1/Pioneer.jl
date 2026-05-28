@@ -29,7 +29,7 @@ const SquareQuadFunction     = Pioneer.SquareQuadFunction
 const SimpleMassErrorModel   = Pioneer.SimpleMassErrorModel
 # parseIsoXML is already imported into Main via runtests.jl
 # (`using Pioneer: parseIsoXML`); re-`const`-declaring it is a hard error
-# under Julia 1.12 — same issue as the NEUTRON case in
+# under Julia 1.12 — same issue as the isotope-spacing constant case in
 # test_fused_prec_filters.jl.
 const run_fused!             = Pioneer.run_fused!
 

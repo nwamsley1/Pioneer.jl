@@ -122,7 +122,7 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::I, p
     isotopes = Vector{Isotope{precision}}(undef, npeaks)
     for i in eachindex(isotopes)
         isotopes[i] = Isotope(mass, q[i], UInt8(i), UInt32(prec_id))
-        mass += Float32((NEUTRON/charge))
+        mass += Float32((C13_C12_MASS_DIFF/charge))
     end
     return isotopes
 end
@@ -210,7 +210,7 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, mz::Float32,
     isotopes = Vector{Isotope{precision}}(undef, npeaks)
     for i in eachindex(isotopes)
         isotopes[i] = Isotope(mass, q[i], UInt8(i), UInt32(prec_id))
-        mass += Float32((NEUTRON/charge))
+        mass += Float32((C13_C12_MASS_DIFF/charge))
     end
     return isotopes
 end
