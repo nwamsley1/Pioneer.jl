@@ -186,6 +186,10 @@ function process_file!(
     # Verified empirically 2026-05-19 on 3-file Astral: all scans
     # contiguous across ~48M PSMs / 758k unique scans.
 
+    # Keep raw top-6 matched fragment peak indices transiently through the
+    # per-run model. Cross-run fragment-peak competition is computed only after
+    # per-run best-per-precursor selection and PEP filtering.
+
     # Per-scan competition (weight_ratio_at_scan, weight_rank_at_scan).
     # Done BEFORE the precursor sort so it can exploit the
     # contiguous-by-scan invariant: linear sweep for run boundaries
@@ -341,6 +345,13 @@ function process_search_results!(
     t_pep_end = time()
     t_recal_start = t_pep_end
     # ============================================================
+
+    # Fragment-peak competition over the top-6 matched M0 fragments. This is a
+    # cross-run-only feature, so compute it only on PSMs/precursors that passed
+    # the per-run model, pair competition, and PEP filter. The raw peak-index
+    # columns are dropped before any Arrow write.
+    t_competition = @elapsed _add_fragment_peak_competition_features!(best_psms)
+    drop_fragment_peak_index_columns!(best_psms)
 
     # RT recalibration: refit iRT spline from high-confidence PSMs
     recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])

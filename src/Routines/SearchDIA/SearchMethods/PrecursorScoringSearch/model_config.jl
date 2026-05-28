@@ -51,13 +51,13 @@ const WIDE_WINDOW_FEATURES = [
 # they were always silently filtered out by the hasproperty guard in
 # pass1_oom.jl. Removed to make the design intent explicit.
 #
-# Conceptually ADVANCED_FEATURE_SET == PRESCORE_FEATURES at training
-# time (modulo a few per-precursor aggregate features like :smoothness
-# and :irt_fwhm that exist on best-per-precursor rows but not per-scan
-# rows). Lists kept separate due to load-order constraint in
-# importScripts.jl — PrecursorScoringSearch loads before MainSearch.
+# ADVANCED_FEATURE_SET intentionally extends PRESCORE_FEATURES with features
+# that only exist, or should only be learned, after per-run filtering (for
+# example wide-window and scan-local competition features). Lists are kept
+# separate due to load-order constraint in importScripts.jl —
+# PrecursorScoringSearch loads before MainSearch.
 const ADVANCED_FEATURE_SET = [
-    # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
+    # Core prescore-compatible features.
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :charge, :Mox, :spectrum_peak_count, :sequence_length,
@@ -75,6 +75,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
+    :frag_competition_num_unique_fragments,
+    :frag_competition_mean_candidates,
     :wide_ms1_m0_candidate_fraction,
     :wide_frag_candidate_fraction,
     :wide_ms1_frag_sum_corr,

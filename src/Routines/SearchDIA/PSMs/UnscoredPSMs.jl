@@ -45,6 +45,15 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag4_int::T
     frag5_int::T
     frag6_int::T
+    # Observed MS2 peak indices matched by each top-6 M0 fragment rank.
+    # Transient MainSearch columns use these for fragment-peak competition
+    # features, then drop the raw peak ids before fold files are written.
+    frag1_peak_idx::UInt32
+    frag2_peak_idx::UInt32
+    frag3_peak_idx::UInt32
+    frag4_peak_idx::UInt32
+    frag5_peak_idx::UInt32
+    frag6_peak_idx::UInt32
     # E7 (Batch E, 2026-05-12): top-3 fragment ppm-error capture. Accumulates
     # |ppm_err| for M0 matches at ranks 1-3 only; mean computed in Score!.
     top3_abs_ppm_err_sum::T
@@ -57,7 +66,18 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM{Float32}(
+    UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8),
+    zero(UInt8), zero(UInt8), Float32(0),
+    zero(UInt8), Float32(0), zero(UInt8),
+    zero(UInt8), zero(UInt8), Float32(0),
+    Float32(0), Float32(0), Float32(0),
+    Float32(0), Float32(0), Float32(0),
+    UInt32(0), UInt32(0), UInt32(0),
+    UInt32(0), UInt32(0), UInt32(0),
+    Float32(0), zero(UInt8), Float32(0),
+    UInt32(0), UInt32(0),
+)
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

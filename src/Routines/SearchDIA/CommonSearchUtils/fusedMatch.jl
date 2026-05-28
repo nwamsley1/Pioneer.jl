@@ -203,17 +203,19 @@ end
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
-        m_rank::Int64, prec_idx::UInt32, pred_int::Float32)
+        m_rank::Int64, prec_idx::UInt32, pred_int::Float32,
+        observed_peak::UInt32)
     ensure_unscored_capacity!(unscored_psms, col)
     apply_main_scoring!(unscored_psms, col, frag, iso_idx,
-                            intensity, ppm_err, m_rank, prec_idx, pred_int)
+                            intensity, ppm_err, m_rank, prec_idx, pred_int,
+                            observed_peak)
     return nothing
 end
 
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{TuningUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
-        m_rank::Int64, prec_idx::UInt32, ::Float32)
+        m_rank::Int64, prec_idx::UInt32, ::Float32, ::UInt32)
     ensure_unscored_capacity!(unscored_psms, col)
     apply_tuning_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
@@ -221,10 +223,10 @@ end
 end
 
 @inline record_match!(::FusedQuadEst, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32, ::UInt32) = nothing
 
 @inline record_match!(::FusedRTIndexed, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32, ::UInt32) = nothing
 
 #==========================================================
 Inline scoring for the fused path — mirrors ModifyFeatures!(MainUnscoredPSM, …)
@@ -233,7 +235,8 @@ FragmentMatch object (since the fused path never constructs matches).
 ==========================================================#
 
 """
-    apply_main_scoring!(unscored, col, frag, iso_idx, intensity, ppm_err, m_rank, prec_idx)
+    apply_main_scoring!(unscored, col, frag, iso_idx, intensity, ppm_err,
+                        m_rank, prec_idx, pred_int, observed_peak)
 
 Update `unscored[col]` with one (fragment, isotope) match. Equivalent to
 `ModifyFeatures!(score::MainUnscoredPSM, …)` called from classic's
@@ -249,7 +252,8 @@ error accumulation.
                                          ppm_err::Float32,
                                          m_rank::Int64,
                                          prec_idx::UInt32,
-                                         pred_int::Float32)
+                                         pred_int::Float32,
+                                         observed_peak::UInt32)
     @inbounds score = unscored[col]
 
     best_rank            = score.best_rank
@@ -275,6 +279,12 @@ error accumulation.
     frag4_int = score.frag4_int
     frag5_int = score.frag5_int
     frag6_int = score.frag6_int
+    frag1_peak_idx = score.frag1_peak_idx
+    frag2_peak_idx = score.frag2_peak_idx
+    frag3_peak_idx = score.frag3_peak_idx
+    frag4_peak_idx = score.frag4_peak_idx
+    frag5_peak_idx = score.frag5_peak_idx
+    frag6_peak_idx = score.frag6_peak_idx
     top3_abs_ppm_err_sum = score.top3_abs_ppm_err_sum
     top3_ppm_err_count   = score.top3_ppm_err_count
     pred_int_sum_m0 = score.pred_int_sum_m0
@@ -289,12 +299,36 @@ error accumulation.
         end
     else
         # Per-rank intensity capture (top-6 M0 fragments) for chromatogram features
-        if rank == UInt8(1);     frag1_int += intensity
-        elseif rank == UInt8(2); frag2_int += intensity
-        elseif rank == UInt8(3); frag3_int += intensity
-        elseif rank == UInt8(4); frag4_int += intensity
-        elseif rank == UInt8(5); frag5_int += intensity
-        elseif rank == UInt8(6); frag6_int += intensity
+        if rank == UInt8(1)
+            if frag1_peak_idx == UInt32(0) || intensity > frag1_int
+                frag1_peak_idx = observed_peak
+            end
+            frag1_int += intensity
+        elseif rank == UInt8(2)
+            if frag2_peak_idx == UInt32(0) || intensity > frag2_int
+                frag2_peak_idx = observed_peak
+            end
+            frag2_int += intensity
+        elseif rank == UInt8(3)
+            if frag3_peak_idx == UInt32(0) || intensity > frag3_int
+                frag3_peak_idx = observed_peak
+            end
+            frag3_int += intensity
+        elseif rank == UInt8(4)
+            if frag4_peak_idx == UInt32(0) || intensity > frag4_int
+                frag4_peak_idx = observed_peak
+            end
+            frag4_int += intensity
+        elseif rank == UInt8(5)
+            if frag5_peak_idx == UInt32(0) || intensity > frag5_int
+                frag5_peak_idx = observed_peak
+            end
+            frag5_int += intensity
+        elseif rank == UInt8(6)
+            if frag6_peak_idx == UInt32(0) || intensity > frag6_int
+                frag6_peak_idx = observed_peak
+            end
+            frag6_int += intensity
         end
         # E7: top-3 M0 fragment ppm-error capture
         if rank <= UInt8(3)
@@ -337,6 +371,8 @@ error accumulation.
         p_count, non_cannonical_count,
         error,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
+        frag1_peak_idx, frag2_peak_idx, frag3_peak_idx,
+        frag4_peak_idx, frag5_peak_idx, frag6_peak_idx,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
         pred_int_sum_m0,
         prec_idx, ms_file_idx)
@@ -866,7 +902,8 @@ function run_fused!(
 
                         ppm_err = compute_ppm_err(iso_mz, best_mz)
                         record_match!(kind, unscored_psms, Int(this_col),
-                            frag, UInt8(iso_idx), int_obs, ppm_err, m_rank, prec_idx, pred_int)
+                            frag, UInt8(iso_idx), int_obs, ppm_err, m_rank,
+                            prec_idx, pred_int, UInt32(best_peak))
 
                         if iso_idx == 0
                             mono_landing = best_peak

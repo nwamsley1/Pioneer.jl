@@ -9,6 +9,11 @@
 @inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
 @inline _count_mox(::Missing)            = zero(UInt8)
 
+const FRAGMENT_PEAK_INDEX_COLUMNS = (
+    :frag1_peak_idx, :frag2_peak_idx, :frag3_peak_idx,
+    :frag4_peak_idx, :frag5_peak_idx, :frag6_peak_idx,
+)
+
 """
     add_psm_features!(psms, search_context, spectra, ms_file_idx)
 
@@ -558,6 +563,123 @@ function _add_m0_peak_fragment_competition_feature!(psms::DataFrame,
         end
     end
     return
+end
+
+"""
+    _add_fragment_peak_competition_features!(psms)
+
+Add scan-local MS2 fragment peak competition features for the top-6 matched
+M0 fragments:
+
+- `:frag_competition_num_unique_fragments` — number of distinct observed MS2
+  peaks matched by this PSM's top-6 M0 fragments.
+- `:frag_competition_mean_candidates` — mean number of unique precursor
+  candidates in the same MS2 scan that also matched those observed peaks.
+
+The raw `frag*_peak_idx` columns are transient: `drop_fragment_peak_index_columns!`
+removes them after these features are computed.
+"""
+function _add_fragment_peak_competition_features!(psms::DataFrame)
+    n = nrow(psms)
+    num_unique_out = zeros(UInt8, n)
+    mean_candidates_out = zeros(Float32, n)
+    psms[!, :frag_competition_num_unique_fragments] = num_unique_out
+    psms[!, :frag_competition_mean_candidates] = mean_candidates_out
+    n == 0 && return
+
+    required = (:precursor_idx, :scan_idx, FRAGMENT_PEAK_INDEX_COLUMNS...)
+    if !all(c -> hasproperty(psms, c), required)
+        @debug_l1 "_add_fragment_peak_competition_features!: missing required columns, skipping"
+        return
+    end
+
+    precursor_idx::Vector{UInt32} = psms[!, :precursor_idx]
+    scan::Vector{UInt32} = psms[!, :scan_idx]
+    peak_cols = (
+        psms[!, :frag1_peak_idx]::Vector{UInt32},
+        psms[!, :frag2_peak_idx]::Vector{UInt32},
+        psms[!, :frag3_peak_idx]::Vector{UInt32},
+        psms[!, :frag4_peak_idx]::Vector{UInt32},
+        psms[!, :frag5_peak_idx]::Vector{UInt32},
+        psms[!, :frag6_peak_idx]::Vector{UInt32},
+    )
+
+    scan_order::Vector{Int} = sortperm(scan)
+    starts = Int[1]
+    sizehint!(starts, n ÷ 4)
+    @inbounds for i in 2:n
+        if scan[scan_order[i]] != scan[scan_order[i-1]]
+            push!(starts, i)
+        end
+    end
+    n_runs = length(starts)
+    push!(starts, n + 1)
+
+    parallel_foreach!(n_runs) do chunk
+        peak_counts = Dict{UInt32, UInt16}()
+        seen_peak_precursors = Set{UInt64}()
+        row_peaks = UInt32[]
+        sizehint!(row_peaks, 6)
+        @inbounds for r in chunk
+            empty!(peak_counts)
+            empty!(seen_peak_precursors)
+            s = starts[r]
+            e = starts[r+1] - 1
+
+            for pos in s:e
+                row = scan_order[pos]
+                pid = precursor_idx[row]
+                for peak_col in peak_cols
+                    peak = peak_col[row]
+                    peak == UInt32(0) && continue
+                    seen_key = (UInt64(peak) << 32) | UInt64(pid)
+                    if !(seen_key in seen_peak_precursors)
+                        push!(seen_peak_precursors, seen_key)
+                        prev = get(peak_counts, peak, UInt16(0))
+                        peak_counts[peak] = prev == typemax(UInt16) ? prev : prev + UInt16(1)
+                    end
+                end
+            end
+
+            for pos in s:e
+                row = scan_order[pos]
+                empty!(row_peaks)
+                for peak_col in peak_cols
+                    peak = peak_col[row]
+                    peak == UInt32(0) && continue
+                    seen = false
+                    for existing in row_peaks
+                        if existing == peak
+                            seen = true
+                            break
+                        end
+                    end
+                    seen || push!(row_peaks, peak)
+                end
+
+                n_unique = length(row_peaks)
+                n_unique == 0 && continue
+
+                sum_candidates = UInt32(0)
+                for peak in row_peaks
+                    count_i = get(peak_counts, peak, UInt16(0))
+                    sum_candidates += UInt32(count_i)
+                end
+
+                num_unique_out[row] = UInt8(min(n_unique, typemax(UInt8)))
+                mean_candidates_out[row] = Float32(sum_candidates) / Float32(n_unique)
+            end
+        end
+    end
+    return
+end
+
+function drop_fragment_peak_index_columns!(psms::DataFrame)
+    keep_cols = [col for col in propertynames(psms)
+                 if !(col in FRAGMENT_PEAK_INDEX_COLUMNS)]
+    length(keep_cols) == length(propertynames(psms)) && return nothing
+    select!(psms, keep_cols)
+    return nothing
 end
 
 """
