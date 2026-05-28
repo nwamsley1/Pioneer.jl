@@ -148,6 +148,7 @@ const PRESCORE_FEATURES = [
 
     # Cross-precursor at-scan
     :weight_ratio_at_scan, :weight_rank_at_scan,
+    :ms1_m0_peak_frag_intensity_fraction,
 
     # MS1 features (chromatogram-correlations dropped, only m0_corr kept)
     :ms1_m0_mass_err_ppm,
@@ -233,11 +234,12 @@ If no MS1 scan is available (file has only MS2), intensity features remain zeroe
     lo = mz_target - half_tol
     hi = mz_target + half_tol
     n_peaks = length(mz)
-    n_peaks == 0 && return (false, 0f0, 0f0)
+    n_peaks == 0 && return (false, 0f0, 0f0, 0)
     i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
     best_diff = Inf32
     best_int  = 0f0
     best_mz   = 0f0
+    best_idx  = 0
     found = false
     @inbounds @fastmath for j in i0:n_peaks
         m = mz[j]
@@ -247,10 +249,11 @@ If no MS1 scan is available (file has only MS2), intensity features remain zeroe
             best_diff = diff
             best_int  = intens[j]
             best_mz   = m
+            best_idx  = j
             found = true
         end
     end
-    return found, best_int, best_mz
+    return found, best_int, best_mz, best_idx
 end
 
 # Filter the (possibly Union{Missing,Float32}) MS1 spectrum into per-task
@@ -290,6 +293,7 @@ function _ms1_lookup_chunk!(psms, spectra,
                              prec_mzs, prec_charges, prec_sulfurs, iso_splines,
                              scan_to_ms1::Vector{Int32},
                              ms1_ppm_tol::Float32, ms1_ppm_offset::Float32, NEUTRON::Float32,
+                             m0_peak_keys::Vector{UInt64},
                              chunk_start::Int, chunk_end::Int)
     # Per-task scratch buffers; reused (resize-only) across cache misses
     # within this chunk. Type-stable Vector{Float32}.
@@ -319,12 +323,13 @@ function _ms1_lookup_chunk!(psms, spectra,
         target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
         target_m1 = target_m0 + NEUTRON / Float32(prec_chg)
 
-        m0_hit, m0_int, m0_mz = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
-        m1_hit, m1_int, _    = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
+        m0_hit, m0_int, m0_mz, m0_peak_idx = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
+        m1_hit, m1_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
 
         psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
         psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
         if m0_hit
+            m0_peak_keys[i] = (UInt64(UInt32(ms1_idx)) << 32) | UInt64(UInt32(m0_peak_idx))
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
         end
         if m0_hit && m0_int > 0f0 && m1_hit
@@ -353,10 +358,13 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m0_mass_err_ppm`
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
+- `:ms1_m0_peak_frag_intensity_fraction`
 
 For each PSM: finds the nearest MS1 scan by RT, extracts M0/M1 intensities
 within a ppm tolerance window around the predicted precursor m/z, and
-computes isotope ratios/sentinel values.
+computes isotope ratios/sentinel values. The peak-fragment fraction groups
+PSMs within the same MS2 scan by the exact matched MS1 M0 peak and reports
+each PSM's top-six matched M0 fragment-intensity share within that group.
 
 **PRECONDITION (perf-only)**: the per-task MS1-spectrum cache hits ~once
 per unique `scan_idx` in each chunk, so this is dramatically faster when
@@ -380,6 +388,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
+    psms[!, :ms1_m0_peak_frag_intensity_fraction] = zeros(Float32, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -424,6 +433,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
     iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
     NEUTRON = Float32(1.00335)
+    m0_peak_keys = zeros(UInt64, n)
 
     # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
     # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
@@ -441,8 +451,64 @@ function add_ms1_lookup_features!(psms::DataFrame,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
             Float32(ms1_ppm_tol), Float32(ms1_ppm_offset), NEUTRON,
+            m0_peak_keys,
             chunk_start, chunk_end
         )
+    end
+    _add_m0_peak_fragment_competition_feature!(psms, m0_peak_keys)
+    return
+end
+
+function _add_m0_peak_fragment_competition_feature!(psms::DataFrame,
+                                                    m0_peak_keys::AbstractVector{UInt64})
+    n = nrow(psms)
+    length(m0_peak_keys) == n || throw(ArgumentError("m0_peak_keys length must match psms rows"))
+    out = zeros(Float32, n)
+    psms[!, :ms1_m0_peak_frag_intensity_fraction] = out
+    n == 0 && return
+
+    required = (:scan_idx, :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int)
+    if !all(c -> hasproperty(psms, c), required)
+        @debug_l1 "_add_m0_peak_fragment_competition_feature!: missing required columns, skipping"
+        return
+    end
+
+    scan::Vector{UInt32} = psms[!, :scan_idx]
+    f = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
+         psms.frag4_int, psms.frag5_int, psms.frag6_int)
+
+    starts = Int[1]
+    sizehint!(starts, n ÷ 4)
+    @inbounds for i in 2:n
+        if scan[i] != scan[i-1]
+            push!(starts, i)
+        end
+    end
+    n_runs = length(starts)
+    push!(starts, n + 1)
+
+    parallel_foreach!(n_runs) do chunk
+        totals = Dict{UInt64, Float32}()
+        @inbounds for r in chunk
+            empty!(totals)
+            s = starts[r]
+            e = starts[r+1] - 1
+            for row in s:e
+                key = m0_peak_keys[row]
+                key == 0 && continue
+                frag_sum = f[1][row] + f[2][row] + f[3][row] + f[4][row] + f[5][row] + f[6][row]
+                frag_sum > 0f0 || continue
+                totals[key] = get(totals, key, 0f0) + frag_sum
+            end
+            for row in s:e
+                key = m0_peak_keys[row]
+                key == 0 && continue
+                denom = get(totals, key, 0f0)
+                denom > 0f0 || continue
+                frag_sum = f[1][row] + f[2][row] + f[3][row] + f[4][row] + f[5][row] + f[6][row]
+                out[row] = frag_sum > 0f0 ? frag_sum / denom : 0f0
+            end
+        end
     end
     return
 end

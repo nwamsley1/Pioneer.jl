@@ -63,6 +63,7 @@ const ADVANCED_FEATURE_SET = [
     :charge, :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
+    :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
