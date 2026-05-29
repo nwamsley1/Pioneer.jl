@@ -273,6 +273,7 @@ function process_search_results!(
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor-grouped chromatogram features still run here.
     t_ms1 = @elapsed add_chromatogram_features!(psms)
+    t_trace_features = 0.0
 
     # Train LightGBM on all PSMs, select best scan per precursor, then run the
     # usual one-time iRT refinement/reapply pass.
@@ -308,6 +309,32 @@ function process_search_results!(
                    "($(length(irt_refinement_result.training_target_precursors)) " *
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
+
+    # Compute isotope-trace metadata on the full scored PSM table before
+    # collapsing to best-per-precursor for ScoringSearch. The selected row keeps
+    # its own transmission fraction and gets a count of passing scans from
+    # non-selected isotope traces.
+    t_trace_features = @elapsed begin
+        get_isotopes_captured!(
+            psms,
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+        trace_pass_mask = _mainsearch_pep_pass_mask(
+            Float32.(psms[!, :lgbm_score]),
+            Vector{Bool}(psms[!, :target]),
+        )
+        best_psms = select_best_per_precursor!(psms, :lgbm_score; pass_mask = trace_pass_mask)
+        scores = Vector{Float32}(best_psms[!, :lgbm_score])
+        best_psms[!, :lgbm_prob] = scores
+    end
+    _summarize_psm_counts(best_psms, "after isotope-trace collapse", ms_file_idx, file_name)
 
     # ============================================================
     # PAIR COMPETITION. See `apply_pair_competition!` in scoring.jl.
@@ -365,18 +392,23 @@ function process_search_results!(
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
     t_recal = time()
 
-    # Compute isotopes_captured and filter by quad transmission
-    get_isotopes_captured!(
-        best_psms,
-        getQuadTransmissionModel(search_context, ms_file_idx),
-        getSearchData(search_context),
-        best_psms[!, :scan_idx],
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getMz(getPrecursors(getSpecLib(search_context))),
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
-    )
+    # Compute isotopes_captured and filter by quad transmission. The full-table
+    # isotope-trace collapse normally populated these columns already; keep the
+    # fallback so older or diagnostic call paths retain the previous behavior.
+    if !hasproperty(best_psms, :precursor_fraction_transmitted) ||
+       !hasproperty(best_psms, :isotopes_captured)
+        get_isotopes_captured!(
+            best_psms,
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            best_psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+    end
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
@@ -403,7 +435,7 @@ function process_search_results!(
     # it distinct from the recal-duration we compute below.
     t_recal_end = t_recal
     t_total = t_write - t_start
-    dur_features  = t_prepare + t_competition + t_apex + t_ms1
+    dur_features  = t_prepare + t_competition + t_apex + t_ms1 + t_trace_features
     dur_lgbm      = t_lgbm_end - t_lgbm_start   # train_cv + best-per-precursor
     dur_paircomp  = t_paircomp_end - t_paircomp_start
     dur_pep       = t_pep_end - t_pep_start
@@ -416,7 +448,7 @@ function process_search_results!(
     r = s -> round(s, digits=2)
     @debug_l1 "  MainSearch process_search_results! (file_idx=$ms_file_idx, $file_name): " *
                "$n_total_psms PSMs → $(nrow(best_psms)) precursors  total=$(r(t_total))s\n" *
-               "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s]\n" *
+               "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s trace=$(r(t_trace_features))s]\n" *
                "    lgbm=$(r(dur_lgbm))s [train_cv=$(r(lgbm_timings.train_cv))s best_per_prec=$(r(lgbm_timings.best))s]  " *
                "paircomp=$(r(dur_paircomp))s  pep_filter=$(r(dur_pep))s\n" *
                "    recal=$(r(dur_recal))s  phase2=$(r(dur_phase2))s  write=$(r(dur_write))s  " *

@@ -150,6 +150,116 @@ end
         @test best.wide_core_scan_max[1] == UInt32(110)
         @test best.wide_core_n_scans[1] == UInt16(3)
     end
+
+    @testset "best PSM row counts passing scans from other isotope traces" begin
+        psms = DataFrame(
+            precursor_idx = UInt32[7, 7, 7, 7, 7],
+            scan_idx = UInt32[100, 105, 110, 115, 120],
+            cycle_idx = UInt32[1, 2, 1, 2, 1],
+            lgbm_score = Float32[0.70, 0.95, 0.80, 0.75, 0.60],
+            weight = Float32[10, 20, 15, 12, 8],
+            irt_obs = Float32[1, 2, 3, 4, 5],
+            rt = Float32[10, 20, 30, 40, 50],
+            frag1_int = Float16[10, 20, 15, 12, 8],
+            frag2_int = Float16[0, 0, 0, 0, 0],
+            frag3_int = Float16[0, 0, 0, 0, 0],
+            frag4_int = Float16[0, 0, 0, 0, 0],
+            frag5_int = Float16[0, 0, 0, 0, 0],
+            frag6_int = Float16[0, 0, 0, 0, 0],
+            isotopes_captured = [
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+                (Int8(1), Int8(2)),
+                (Int8(1), Int8(2)),
+                (Int8(2), Int8(3)),
+            ],
+            precursor_fraction_transmitted = Float32[0.7, 0.8, 0.4, 0.4, 0.2],
+        )
+
+        best = Pioneer.select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = Bool[true, true, true, false, true],
+        )
+
+        @test nrow(best) == 1
+        @test best.scan_idx[1] == UInt32(105)
+        @test best.isotopes_captured[1] == (Int8(0), Int8(1))
+        @test best.precursor_fraction_transmitted[1] == Float32(0.8)
+        @test best.n_scans_other_traces[1] == UInt32(2)
+    end
+
+    @testset "best PSM row carries aligned isotope trace agreement features" begin
+        psms = DataFrame(
+            precursor_idx = fill(UInt32(7), 9),
+            scan_idx = UInt32[100, 105, 110, 115, 120, 125, 130, 135, 140],
+            cycle_idx = UInt32[1, 2, 3, 1, 2, 3, 2, 3, 4],
+            lgbm_score = Float32[0.70, 0.95, 0.80, 0.60, 0.65, 0.62, 0.55, 0.58, 0.57],
+            weight = Float32[1, 4, 1, 1, 4, 1, 1, 4, 1],
+            irt_obs = Float32[1, 2, 3, 1, 2, 3, 2, 3, 4],
+            rt = Float32[10, 20, 30, 10, 20, 30, 20, 30, 40],
+            frag1_int = Float16[2, 8, 2, 2, 8, 2, 1, 4, 1],
+            frag2_int = Float16[1, 4, 1, 1, 4, 1, 1, 4, 1],
+            frag3_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            frag4_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            frag5_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            frag6_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            isotopes_captured = [
+                (Int8(0), Int8(1)), (Int8(0), Int8(1)), (Int8(0), Int8(1)),
+                (Int8(1), Int8(2)), (Int8(1), Int8(2)), (Int8(1), Int8(2)),
+                (Int8(2), Int8(3)), (Int8(2), Int8(3)), (Int8(2), Int8(3)),
+            ],
+            precursor_fraction_transmitted = Float32[0.8, 0.8, 0.8, 0.4, 0.4, 0.4, 0.2, 0.2, 0.2],
+        )
+
+        best = Pioneer.select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = trues(nrow(psms)),
+        )
+
+        @test nrow(best) == 1
+        @test best.scan_idx[1] == UInt32(105)
+        @test best.n_scans_other_traces[1] == UInt32(6)
+        @test best.trace_other_weight_corr[1] ≈ 1.0f0 atol=1f-6
+        @test best.trace_other_frag_sum_corr[1] ≈ 1.0f0 atol=1f-6
+        @test best.trace_other_apex_delta_irt[1] ≈ 0.0f0
+    end
+
+    @testset "missing other isotope trace uses agreement sentinels" begin
+        psms = DataFrame(
+            precursor_idx = UInt32[7, 7, 7],
+            scan_idx = UInt32[100, 105, 110],
+            cycle_idx = UInt32[1, 2, 3],
+            lgbm_score = Float32[0.70, 0.95, 0.80],
+            weight = Float32[1, 4, 1],
+            irt_obs = Float32[1, 2, 3],
+            rt = Float32[10, 20, 30],
+            frag1_int = Float16[2, 8, 2],
+            frag2_int = Float16[1, 4, 1],
+            frag3_int = Float16[0, 0, 0],
+            frag4_int = Float16[0, 0, 0],
+            frag5_int = Float16[0, 0, 0],
+            frag6_int = Float16[0, 0, 0],
+            isotopes_captured = [
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+            ],
+            precursor_fraction_transmitted = Float32[0.8, 0.8, 0.8],
+        )
+
+        best = Pioneer.select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = trues(nrow(psms)),
+        )
+
+        @test best.n_scans_other_traces[1] == UInt32(0)
+        @test best.trace_other_weight_corr[1] == -1.0f0
+        @test best.trace_other_frag_sum_corr[1] == -1.0f0
+        @test best.trace_other_apex_delta_irt[1] == 100.0f0
+    end
 end
 
 Pioneer.getSequence(p::MainSearchMockPrecursors) = p.sequence
