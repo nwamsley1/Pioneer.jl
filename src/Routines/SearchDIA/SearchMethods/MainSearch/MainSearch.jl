@@ -274,7 +274,8 @@ function process_search_results!(
     # Only the precursor-grouped chromatogram features still run here.
     t_ms1 = @elapsed add_chromatogram_features!(psms)
 
-    # Train LightGBM on ALL PSMs, select best scan per precursor
+    # Train LightGBM on all PSMs, select best scan per precursor, then run the
+    # usual one-time iRT refinement/reapply pass.
     n_total_psms = nrow(psms)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
@@ -299,7 +300,8 @@ function process_search_results!(
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "$(length(irt_refinement_result.training_target_precursors)) training precursors; " *
-                   "reapply predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s"
+                   "reapply predict=$(round(reapply_timings.predict, digits=2))s " *
+                   "best=$(round(reapply_timings.best, digits=2))s"
         _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): skipped " *

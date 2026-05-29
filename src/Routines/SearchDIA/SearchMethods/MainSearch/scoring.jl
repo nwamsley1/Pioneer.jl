@@ -31,7 +31,7 @@
 # best-scan selection + the PEP > 0.9 gate, not final scoring).
 const SHARED_LGBM_HP = (num_iterations=50, learning_rate=0.20, max_depth=8,
                         num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
-                        bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
+                        bagging_fraction=0.8, bagging_freq=1, is_unbalance=true,
                         max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
 
 # Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
@@ -40,7 +40,7 @@ const SHARED_LGBM_HP = (num_iterations=50, learning_rate=0.20, max_depth=8,
 # larger, mixed-file PSM pool.
 const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
                          num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
-                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
+                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=true,
                          max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
 
 # Per-stage per-fold subsample caps.
@@ -109,9 +109,13 @@ function train_psm_classifier_with_fallback(
     lgbm_hp = SHARED_LGBM_HP,
     compute_infold::Bool = false,
     max_train::Int = MAIN_LGBM_MAX_TRAIN,
+    training_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
 )
     targets_col = psms[!, :target]
     n_total = nrow(psms)
+    if training_mask !== nothing && length(training_mask) != n_total
+        throw(ArgumentError("training_mask length must match psms row count"))
+    end
 
     available_features = filter(f -> hasproperty(psms, f), features)
 
@@ -128,20 +132,26 @@ function train_psm_classifier_with_fallback(
     MAX_TRAIN = max_train
     LOW_DATA_THRESHOLD = SHARED_LGBM_LOW_DATA_THRESHOLD
 
-    # Fold order: (train_idx, test_idx)
-    #   fold_pairs[1] = (idx1, idx0): trained on cv_fold==1, OOF for idx0,
-    #                                 in-fold for idx1.
-    #   fold_pairs[2] = (idx0, idx1): trained on cv_fold==0, OOF for idx1,
-    #                                 in-fold for idx0.
-    fold_pairs = [(idx1, idx0), (idx0, idx1)]
+    function _fit_idx(full_train_idx)
+        training_mask === nothing && return full_train_idx
+        return full_train_idx[training_mask[full_train_idx]]
+    end
+
+    # Fold order: (fit_idx, full_train_idx, test_idx)
+    #   fold_pairs[1] = trained on cv_fold==1, OOF for idx0,
+    #                   in-fold for all idx1 rows when requested.
+    #   fold_pairs[2] = trained on cv_fold==0, OOF for idx1,
+    #                   in-fold for all idx0 rows when requested.
+    fold_pairs = [(_fit_idx(idx1), idx1, idx0), (_fit_idx(idx0), idx0, idx1)]
 
     function _sample_pos(n_avail)
         n_avail > MAX_TRAIN || return collect(1:n_avail)
         return randperm(n_avail)[1:MAX_TRAIN]
     end
-    sub_positions = [_sample_pos(length(tr)) for (tr, _) in fold_pairs]
+    sub_positions = [_sample_pos(length(fit_idx)) for (fit_idx, _, _) in fold_pairs]
     min_fold_size = min(length(idx0), length(idx1))
-    low_data = min_fold_size < LOW_DATA_THRESHOLD
+    min_fit_size = minimum(length(fit_idx) for (fit_idx, _, _) in fold_pairs)
+    low_data = min_fit_size < LOW_DATA_THRESHOLD
 
     # LightGBM CV. Slices train/test matrices on demand (transient peak) to avoid
     # retaining two ~400MB per-fold matrices across the whole function.
@@ -156,14 +166,14 @@ function train_psm_classifier_with_fallback(
         fold_predictors = Vector{Any}(undef, 2)
         last_cls = nothing
         t_slice = 0.0; t_fit = 0.0; t_predict = 0.0
-        for (fi, (train_idx, test_idx)) in enumerate(fold_pairs)
-            sub_pos = train_idx[sub_positions[fi]]
+        for (fi, (fit_idx, full_train_idx, test_idx)) in enumerate(fold_pairs)
+            sub_pos = fit_idx[sub_positions[fi]]
             ts = time()
             X_tr = X_all[sub_pos, :]
             y_lbl = _prepare_labels(targets_col[sub_pos])
             t_slice += time() - ts
-            if length(unique(y_lbl)) == 1
-                constant_score = y_lbl[1] == 0 ? 0.0 : 1.0
+            if isempty(y_lbl) || length(unique(y_lbl)) == 1
+                constant_score = isempty(y_lbl) || y_lbl[1] == 0 ? 0.0 : 1.0
                 fold_scores[fi] = fill(constant_score, length(test_idx))
                 fold_predictors[fi] = (
                     kind = :constant,
@@ -172,7 +182,7 @@ function train_psm_classifier_with_fallback(
                     beta = nothing,
                 )
                 if compute_infold
-                    infold_scores[fi] = fill(constant_score, length(train_idx))
+                    infold_scores[fi] = fill(constant_score, length(full_train_idx))
                 end
             else
                 cls = build_lightgbm_classifier(; hp_eff...)
@@ -187,7 +197,7 @@ function train_psm_classifier_with_fallback(
                     beta = nothing,
                 )
                 if compute_infold
-                    ts3 = time(); X_tr_full = X_all[train_idx, :]; t_slice += time() - ts3
+                    ts3 = time(); X_tr_full = X_all[full_train_idx, :]; t_slice += time() - ts3
                     tp2 = time(); raw_in = LightGBM.predict(cls, X_tr_full); t_predict += time() - tp2
                     infold_scores[fi] = ndims(raw_in) == 2 ? dropdims(raw_in; dims=2) : raw_in
                 end
@@ -214,12 +224,26 @@ function train_psm_classifier_with_fallback(
         fold_scores  = Vector{Vector{Float64}}(undef, 2)
         infold_scores = compute_infold ? Vector{Vector{Float64}}(undef, 2) : nothing
         fold_predictors = Vector{Any}(undef, 2)
-        for (fi, (train_idx, test_idx)) in enumerate(fold_pairs)
+        for (fi, (fit_idx, full_train_idx, test_idx)) in enumerate(fold_pairs)
             sub_pos = sub_positions[fi]
-            train_sub_idx = train_idx[sub_pos]
+            train_sub_idx = fit_idx[sub_pos]
             tr = _mk_df(train_sub_idx)
             df_te = _mk_df(test_idx)
             y_bool = Vector{Bool}(targets_col[train_sub_idx])
+            if isempty(y_bool) || length(unique(y_bool)) == 1
+                constant_score = isempty(y_bool) || !y_bool[1] ? 0.0 : 1.0
+                fold_scores[fi] = fill(constant_score, length(test_idx))
+                fold_predictors[fi] = (
+                    kind = :constant,
+                    value = constant_score,
+                    model = nothing,
+                    beta = nothing,
+                )
+                if compute_infold
+                    infold_scores[fi] = fill(constant_score, length(full_train_idx))
+                end
+                continue
+            end
             β = zeros(Float64, ncol(tr))
             tr_chunks = Iterators.partition(1:length(y_bool), max(1, cld(length(y_bool), Threads.nthreads())))
             ProbitRegression(β, tr, y_bool, tr_chunks; max_iter=15)
@@ -234,7 +258,7 @@ function train_psm_classifier_with_fallback(
             ModelPredictProbs!(s, df_te, β, te_chunks)
             fold_scores[fi] = s
             if compute_infold
-                df_tr_full = _mk_df(train_idx)
+                df_tr_full = _mk_df(full_train_idx)
                 s_in = zeros(Float64, nrow(df_tr_full))
                 tr_full_chunks = Iterators.partition(1:nrow(df_tr_full),
                                                      max(1, cld(nrow(df_tr_full), Threads.nthreads())))
@@ -253,6 +277,7 @@ function train_psm_classifier_with_fallback(
     end
 
     @debug_l1 "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
+               "fit_folds=$([length(fit_idx) for (fit_idx, _, _) in fold_pairs]) " *
                "train=$(length.(sub_positions))  MAX_TRAIN=$MAX_TRAIN"
 
     # Always run the default-HP LGBM (single source of truth for big datasets
@@ -276,7 +301,7 @@ function train_psm_classifier_with_fallback(
     # Perf shortcut: on large datasets the OOF count at q≤0.01 will be tens of
     # thousands of targets, well above the 5_000 adaptive threshold — adaptive
     # will always be false.
-    skip_oof_probe = min_fold_size > 50_000
+    skip_oof_probe = min_fit_size > 50_000
     if skip_oof_probe
         n_lgbm_default = -1   # sentinel: not computed
         adaptive = false
@@ -409,29 +434,7 @@ function _mainsearch_pep_pass_mask(
     return peps .<= pep_threshold
 end
 
-"""
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings, predictor)
-
-Train LightGBM (with low-data probit fallback) on ALL PSMs (all scans) using
-the shared `train_psm_classifier_with_fallback` helper, then select the best
-scan per precursor by LightGBM score and log feature importances.
-
-Returns:
-- best_psms: DataFrame with one row per precursor (best by LightGBM score)
-- scores: Vector{Float32} of LightGBM probabilities for best_psms
-- timings: NamedTuple with timing breakdowns
-- predictor: fold predictor from the fitted classifier; after iRT refinement,
-  refreshed candidate features are scored with this same model before
-  best-scan selection is repeated
-"""
-function train_lgbm_and_select_best(
-    psms::DataFrame;
-    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    lgbm_hp = SHARED_LGBM_HP,
-)
-    t0 = time()
-    # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
-    # LightGBM can use :n_scans as a feature.
+function _ensure_mainsearch_n_scans!(psms::DataFrame)
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
         counts = Dict{UInt32, UInt32}()
         @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
@@ -439,6 +442,16 @@ function train_lgbm_and_select_best(
         end
         psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
     end
+    return nothing
+end
+
+function _train_mainsearch_classifier_iteration!(
+    psms::DataFrame;
+    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
+    lgbm_hp = SHARED_LGBM_HP,
+)
+    t0 = time()
+    _ensure_mainsearch_n_scans!(psms)
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         psms;
         features = features,
@@ -499,7 +512,42 @@ function train_lgbm_and_select_best(
         best = t_best - t_train_cv,
     )
 
-    return psms, Vector{Float32}(scores), timings, info.predictor
+    return (
+        best_psms = psms,
+        scores = Vector{Float32}(scores),
+        timings = timings,
+        predictor = info.predictor,
+        all_scores = Float32.(all_scores),
+        info = info,
+    )
+end
+
+"""
+    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings, predictor)
+
+Train LightGBM (with low-data probit fallback) on ALL PSMs (all scans) using
+the shared `train_psm_classifier_with_fallback` helper, then select the best
+scan per precursor by LightGBM score and log feature importances.
+
+Returns:
+- best_psms: DataFrame with one row per precursor (best by LightGBM score)
+- scores: Vector{Float32} of LightGBM probabilities for best_psms
+- timings: NamedTuple with timing breakdowns
+- predictor: fold predictor from the fitted classifier; after iRT refinement,
+  refreshed candidate features are scored with this same model before
+  best-scan selection is repeated
+"""
+function train_lgbm_and_select_best(
+    psms::DataFrame;
+    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
+    lgbm_hp = SHARED_LGBM_HP,
+)
+    result = _train_mainsearch_classifier_iteration!(
+        psms;
+        features = features,
+        lgbm_hp = lgbm_hp,
+    )
+    return result.best_psms, result.scores, result.timings, result.predictor
 end
 
 function reapply_psm_classifier_and_select_best!(
@@ -507,13 +555,7 @@ function reapply_psm_classifier_and_select_best!(
     predictor,
 )
     t0 = time()
-    if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
-        counts = Dict{UInt32, UInt32}()
-        @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
-            counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
-        end
-        psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
-    end
+    _ensure_mainsearch_n_scans!(psms)
 
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()

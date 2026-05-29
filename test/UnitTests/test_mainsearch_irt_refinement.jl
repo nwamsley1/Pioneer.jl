@@ -27,6 +27,11 @@ struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
 end
 
 @testset "MainSearch classifier fallback" begin
+    @testset "shared LightGBM configs enable unbalanced labels" begin
+        @test Pioneer.SHARED_LGBM_HP.is_unbalance === true
+        @test Pioneer.SCORING_LGBM_HP.is_unbalance === true
+    end
+
     @testset "low-data model selection accepts non-LightGBM candidates" begin
         psms = DataFrame(
             target = Bool[
@@ -73,6 +78,7 @@ end
         @test haskey(info.candidate_oof, "probit")
         @test all(isfinite, scores)
     end
+
 end
 
 @testset "MainSearch wide-window core bounds" begin

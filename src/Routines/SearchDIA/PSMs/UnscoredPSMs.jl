@@ -46,9 +46,10 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag4_int::T
     frag5_int::T
     frag6_int::T
-    # Observed MS2 peak indices matched by each top-6 M0 fragment rank.
-    # Transient MainSearch columns use these for fragment-peak competition
-    # features, then drop the raw peak ids before fold files are written.
+    # Observed MS2 peak indices matched by each top-6 fragment rank at that
+    # fragment trace's most abundant predicted isotope. Transient MainSearch
+    # columns use these for fragment-peak competition features, then drop the
+    # raw peak ids before fold files are written.
     frag1_peak_idx::UInt32
     frag2_peak_idx::UInt32
     frag3_peak_idx::UInt32

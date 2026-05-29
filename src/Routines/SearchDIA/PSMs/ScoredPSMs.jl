@@ -103,9 +103,10 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag5_int::H
     frag6_int::H
 
-    # Transient observed MS2 peak indices for top-6 M0 fragments. MainSearch
-    # uses these to compute fragment-peak competition features, then drops the
-    # raw peak ids before writing fold files.
+    # Transient observed MS2 peak indices for top-6 fragment ranks at each
+    # trace's most abundant predicted isotope. MainSearch uses these to compute
+    # fragment-peak competition features, then drops the raw peak ids before
+    # writing fold files.
     frag1_peak_idx::UInt32
     frag2_peak_idx::UInt32
     frag3_peak_idx::UInt32

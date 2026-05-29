@@ -83,6 +83,7 @@ include("./UnitTests/test_lgbm_charge_features.jl")
 include("./UnitTests/test_m0_peak_competition_features.jl")
 include("./UnitTests/test_isotope_mass_spacing.jl")
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
+include("./UnitTests/test_scoring_semisupervised.jl")
 
 # FileOperations pipeline
 include("./utils/FileOperations/pipeline/test_pipeline_filtering.jl")

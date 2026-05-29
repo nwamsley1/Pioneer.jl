@@ -78,8 +78,7 @@ end
     ) == 123f0
 end
 
-@testset "wide-window fragment lookup sums abundant isotope trace peaks" begin
-    iso_splines = Pioneer.parseIsoXML(joinpath(dirname(dirname(pathof(Pioneer))), "assets", "IsotopeSplines_10kDa_21isotopes.xml"))
+@testset "wide-window fragment lookup uses monoisotopic peak only" begin
     frag = Pioneer.DetailedFrag{Float32}(
         UInt32(1),
         1000.0f0,
@@ -95,30 +94,6 @@ end
         UInt8(1),
         UInt8(0),
     )
-    prec_mz = 700.0f0
-    prec_charge = UInt8(2)
-    prec_sulfur = UInt8(0)
-    qtf = Pioneer.getQuadTransmissionFunction(Pioneer.NoQuadModel(0.0f0), prec_mz, 50.0f0)
-    prec_isotope_set = Pioneer.getPrecursorIsotopeSet(prec_mz, prec_charge, qtf)
-    frag_iso_idx_range = 0:min(4, Int(last(prec_isotope_set)))
-    isotopes_buf = zeros(Float32, 5)
-    prec_trans_buf = zeros(Float32, 5)
-    Pioneer.getPrecursorIsotopeTransmission!(prec_trans_buf, prec_mz, prec_charge, qtf)
-    Pioneer.getFragIsotopes!(
-        Pioneer.PartialPrecCapture(),
-        isotopes_buf,
-        prec_trans_buf,
-        prec_isotope_set,
-        frag_iso_idx_range,
-        iso_splines,
-        prec_mz,
-        prec_charge,
-        prec_sulfur,
-        frag,
-        Pioneer.ConstantType(),
-    )
-    trace_max = maximum(isotopes_buf[iso_idx + 1] for iso_idx in frag_iso_idx_range)
-    @test isotopes_buf[2] >= Pioneer.FRAGMENT_TRACE_ISOTOPE_REL_THRESHOLD * trace_max
 
     m0 = Float32(Pioneer.getMz(frag))
     m1 = m0 + Pioneer.C13_C12_MASS_DIFF_F32 / Float32(Pioneer.getFragCharge(frag))
@@ -130,7 +105,7 @@ end
     mem = Pioneer.MassErrorModel(0.0f0, (5.0f0, 5.0f0))
     n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int)
 
-    @test Pioneer._wide_fragment_trace_peak_intensity(
+    @test Pioneer._wide_fragment_mono_peak_intensity(
         scan_mz,
         corrected,
         obs_low,
@@ -138,18 +113,9 @@ end
         scan_int,
         n_peaks,
         frag,
-        Pioneer.ConstantType(),
-        isotopes_buf,
-        prec_trans_buf,
-        prec_isotope_set,
-        frag_iso_idx_range,
-        iso_splines,
-        prec_mz,
-        prec_charge,
-        prec_sulfur,
         mem,
         true,
-    ) == 2400.0f0
+    ) == 1500.0f0
 end
 
 @testset "wide-window learned fragment model defaults on" begin

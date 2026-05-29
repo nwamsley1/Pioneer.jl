@@ -190,10 +190,16 @@ end
            pred_int >= FRAGMENT_TRACE_ISOTOPE_REL_THRESHOLD * max_pred
 end
 
+@inline function _fragment_trace_isotope_is_anchor(
+        pred_int::Float32,
+        max_pred::Float32)
+    return max_pred > 0f0 && pred_int >= max_pred
+end
+
 """
     record_match!(kind, unscored_psms, col, frag, iso_idx, intensity,
                    ppm_err, m_rank, prec_idx, pred_int, observed_peak,
-                   trace_intensity_match)
+                   trace_intensity_match, trace_anchor_match)
 
 Per-match inline scoring hook, dispatched on `(kind, eltype(unscored_psms))`.
 
@@ -228,18 +234,20 @@ end
         unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32, pred_int::Float32,
-        observed_peak::UInt32, trace_intensity_match::Bool)
+        observed_peak::UInt32, trace_intensity_match::Bool,
+        trace_anchor_match::Bool)
     ensure_unscored_capacity!(unscored_psms, col)
     apply_main_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx, pred_int,
-                            observed_peak, trace_intensity_match)
+                            observed_peak, trace_intensity_match,
+                            trace_anchor_match)
     return nothing
 end
 
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{TuningUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
-        m_rank::Int64, prec_idx::UInt32, ::Float32, ::UInt32, ::Bool)
+        m_rank::Int64, prec_idx::UInt32, ::Float32, ::UInt32, ::Bool, ::Bool)
     ensure_unscored_capacity!(unscored_psms, col)
     apply_tuning_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
@@ -247,10 +255,12 @@ end
 end
 
 @inline record_match!(::FusedQuadEst, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32, ::UInt32, ::Bool) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32,
+        ::Float32, ::UInt32, ::Bool, ::Bool) = nothing
 
 @inline record_match!(::FusedRTIndexed, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32, ::UInt32, ::Bool) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32,
+        ::Float32, ::UInt32, ::Bool, ::Bool) = nothing
 
 #==========================================================
 Inline scoring for the fused path — mirrors ModifyFeatures!(MainUnscoredPSM, …)
@@ -260,7 +270,8 @@ FragmentMatch object (since the fused path never constructs matches).
 
 """
     apply_main_scoring!(unscored, col, frag, iso_idx, intensity, ppm_err,
-                        m_rank, prec_idx, pred_int, observed_peak)
+                        m_rank, prec_idx, pred_int, observed_peak,
+                        trace_intensity_match, trace_anchor_match)
 
 Update `unscored[col]` with one (fragment, isotope) match. Equivalent to
 `ModifyFeatures!(score::MainUnscoredPSM, …)` called from classic's
@@ -278,7 +289,8 @@ error accumulation.
                                      prec_idx::UInt32,
                                      pred_int::Float32,
                                      observed_peak::UInt32,
-                                     trace_intensity_match::Bool)
+                                     trace_intensity_match::Bool,
+                                     trace_anchor_match::Bool)
     @inbounds score = unscored[col]
 
     best_rank            = score.best_rank
@@ -323,33 +335,6 @@ error accumulation.
             end
         end
     else
-        # Transient peak-id capture remains anchored to monoisotopic fragments
-        # so fragment-peak competition keeps its original M0 interpretation.
-        if rank == UInt8(1)
-            if frag1_peak_idx == UInt32(0) || intensity > frag1_int
-                frag1_peak_idx = observed_peak
-            end
-        elseif rank == UInt8(2)
-            if frag2_peak_idx == UInt32(0) || intensity > frag2_int
-                frag2_peak_idx = observed_peak
-            end
-        elseif rank == UInt8(3)
-            if frag3_peak_idx == UInt32(0) || intensity > frag3_int
-                frag3_peak_idx = observed_peak
-            end
-        elseif rank == UInt8(4)
-            if frag4_peak_idx == UInt32(0) || intensity > frag4_int
-                frag4_peak_idx = observed_peak
-            end
-        elseif rank == UInt8(5)
-            if frag5_peak_idx == UInt32(0) || intensity > frag5_int
-                frag5_peak_idx = observed_peak
-            end
-        elseif rank == UInt8(6)
-            if frag6_peak_idx == UInt32(0) || intensity > frag6_int
-                frag6_peak_idx = observed_peak
-            end
-        end
         # E7: top-3 M0 fragment ppm-error capture
         if rank <= UInt8(3)
             top3_abs_ppm_err_sum += abs(ppm_err)
@@ -376,6 +361,36 @@ error accumulation.
             p_count += UInt8(1)
         else
             non_cannonical_count += UInt8(1)
+        end
+    end
+
+    # Transient peak-id capture for fragment-peak competition anchors to the
+    # most abundant predicted isotope in each fragment trace.
+    if trace_anchor_match
+        if rank == UInt8(1)
+            if frag1_peak_idx == UInt32(0) || intensity > frag1_int
+                frag1_peak_idx = observed_peak
+            end
+        elseif rank == UInt8(2)
+            if frag2_peak_idx == UInt32(0) || intensity > frag2_int
+                frag2_peak_idx = observed_peak
+            end
+        elseif rank == UInt8(3)
+            if frag3_peak_idx == UInt32(0) || intensity > frag3_int
+                frag3_peak_idx = observed_peak
+            end
+        elseif rank == UInt8(4)
+            if frag4_peak_idx == UInt32(0) || intensity > frag4_int
+                frag4_peak_idx = observed_peak
+            end
+        elseif rank == UInt8(5)
+            if frag5_peak_idx == UInt32(0) || intensity > frag5_int
+                frag5_peak_idx = observed_peak
+            end
+        elseif rank == UInt8(6)
+            if frag6_peak_idx == UInt32(0) || intensity > frag6_int
+                frag6_peak_idx = observed_peak
+            end
         end
     end
 
@@ -918,6 +933,8 @@ function run_fused!(
                     pred_int = isotopes_buf[iso_idx + 1] * iso_scale
                     trace_intensity_match = _fragment_trace_isotope_contributes(
                         pred_int, trace_max_pred)
+                    trace_anchor_match = _fragment_trace_isotope_is_anchor(
+                        pred_int, trace_max_pred)
 
                     conservative_low, conservative_high = match_window(iso_mz, half_width)
 
@@ -947,7 +964,7 @@ function run_fused!(
                         record_match!(kind, unscored_psms, Int(this_col),
                             frag, UInt8(iso_idx), int_obs, ppm_err, m_rank,
                             prec_idx, pred_int, UInt32(best_peak),
-                            trace_intensity_match)
+                            trace_intensity_match, trace_anchor_match)
 
                         if iso_idx == 0
                             mono_landing = best_peak

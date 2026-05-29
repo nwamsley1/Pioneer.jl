@@ -68,6 +68,149 @@ function score_precursor_isotope_traces(
     end
 end
 
+const SCORING_SEMISUPERVISED_QVALUE_THRESHOLD = 0.01f0
+const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
+const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
+
+function _scoring_score_metrics(
+    scores::AbstractVector{<:Real},
+    targets::AbstractVector{Bool};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+)
+    n = length(scores)
+    length(targets) == n || throw(ArgumentError("scores and targets must have the same length"))
+    qvals = Vector{Float32}(undef, n)
+    get_qvalues!(Float32.(scores), targets, qvals; doSort = true, fdr_scale_factor = 1.0f0)
+    q_pass = qvals .<= q_threshold
+    return (
+        q_values = qvals,
+        target_q01 = count(q_pass .& targets),
+        decoy_q01 = count(q_pass .& .!targets),
+    )
+end
+
+function _scoring_semisupervised_train_mask(
+    targets::AbstractVector{Bool},
+    q_values::AbstractVector{<:Real};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+)
+    n = length(targets)
+    length(q_values) == n || throw(ArgumentError("targets and q_values must have the same length"))
+    mask = Vector{Bool}(undef, n)
+    @inbounds for i in 1:n
+        mask[i] = !targets[i] || Float32(q_values[i]) <= q_threshold
+    end
+    return mask
+end
+
+function _scoring_target_gain_sufficient(
+    previous_targets::Integer,
+    current_targets::Integer;
+    min_fraction::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
+)
+    previous_targets <= 0 && return current_targets > previous_targets
+    return Float64(current_targets) >= Float64(previous_targets) * (1.0 + Float64(min_fraction))
+end
+
+function _scoring_better_iteration_state(previous_state, current_state)
+    previous_state === nothing && return current_state
+    current_state === nothing && return previous_state
+    return current_state.target_q01 >= previous_state.target_q01 ? current_state : previous_state
+end
+
+function _split_scoring_train_masks(
+    prediction_results,
+    q_values::AbstractVector{Float32};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+)
+    masks = Vector{BitVector}(undef, length(prediction_results))
+    offset = 0
+    for (file_idx, result) in enumerate(prediction_results)
+        n = length(result.targets)
+        q_slice = @view q_values[(offset + 1):(offset + n)]
+        masks[file_idx] = BitVector(_scoring_semisupervised_train_mask(
+            result.targets,
+            q_slice;
+            q_threshold = q_threshold,
+        ))
+        offset += n
+    end
+    offset == length(q_values) ||
+        throw(ArgumentError("prediction row count does not match q-value count"))
+    return masks
+end
+
+function _train_scoring_classifier_semisupervised(
+    psms::DataFrame;
+    features::Vector{Symbol},
+    lgbm_hp = SCORING_LGBM_HP,
+    max_train::Int = SCORING_LGBM_MAX_TRAIN,
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+    min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
+    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+)
+    targets = Vector{Bool}(psms[!, :target])
+    training_mask = nothing
+    previous_target_q01 = -1
+    best_state = nothing
+
+    for iter_idx in 1:max_iterations
+        n_train_targets = training_mask === nothing ? count(targets) : count(training_mask .& targets)
+        n_train_decoys = training_mask === nothing ? count(.!targets) : count(training_mask .& .!targets)
+        all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
+            psms;
+            features = features,
+            lgbm_hp = lgbm_hp,
+            compute_infold = false,
+            max_train = max_train,
+            training_mask = training_mask,
+        )
+        scores = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+        metrics = _scoring_score_metrics(scores, targets; q_threshold = q_threshold)
+        current_state = (
+            scores = scores,
+            last_classifier = last_classifier,
+            info = info,
+            target_q01 = metrics.target_q01,
+            decoy_q01 = metrics.decoy_q01,
+            iter = iter_idx,
+        )
+        @debug_l1 "ScoringSearch semi-supervised iter $iter_idx (in-memory): " *
+                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
+                   "q≤.01 targets=$(metrics.target_q01) decoys=$(metrics.decoy_q01)"
+
+        if iter_idx > 1 && !_scoring_target_gain_sufficient(
+            previous_target_q01,
+            metrics.target_q01;
+            min_fraction = min_gain,
+        )
+            best_state = _scoring_better_iteration_state(best_state, current_state)
+            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
+                       "iter $iter_idx q≤.01 targets=$(metrics.target_q01) did not improve by " *
+                       "$(round(100 * min_gain, digits=2))% over $previous_target_q01; " *
+                       "using iter $(best_state.iter) with q≤.01 targets=$(best_state.target_q01)"
+            break
+        end
+
+        best_state = _scoring_better_iteration_state(best_state, current_state)
+        if iter_idx == max_iterations
+            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
+                       "hit max iterations $max_iterations; using iter $(best_state.iter) " *
+                       "with q≤.01 targets=$(best_state.target_q01)"
+            break
+        end
+
+        previous_target_q01 = metrics.target_q01
+        training_mask = _scoring_semisupervised_train_mask(
+            targets,
+            metrics.q_values;
+            q_threshold = q_threshold,
+        )
+    end
+
+    return best_state.scores, best_state.last_classifier, best_state.info, best_state
+end
+
 # Streaming MBR-on path. Walks the per-file Arrow tables for everything;
 # the only DataFrame ever materialised is the slim FTR table (10 cols)
 # reconstructed from sidecars right before the FTR controller runs.
@@ -88,6 +231,7 @@ function _score_precursor_isotope_traces_mbr(
         features        = features,
         compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
         lgbm_hp         = SCORING_LGBM_HP,
+        semisupervised  = true,
     )
 
     # 4. Pass-1 feature importance (last_classifier is whichever fold's
@@ -176,15 +320,17 @@ function _score_precursor_isotope_traces_no_mbr(
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
-        best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
-        compute_infold = false,
+    all_scores, last_classifier, info, semisup_state = _train_scoring_classifier_semisupervised(
+        best_psms;
+        features = features,
+        lgbm_hp = SCORING_LGBM_HP,
         max_train = SCORING_LGBM_MAX_TRAIN,
     )
-    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    best_psms[!, :trace_prob_prepass] = all_scores
     best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
     best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
-    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
+    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features; " *
+               "selected semi-supervised iter $(semisup_state.iter)"
 
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)

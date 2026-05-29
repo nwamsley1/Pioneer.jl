@@ -376,10 +376,10 @@ end
 
     # ------------------------------------------------------------
     @testset "top-6 fragment trace intensity includes abundant matched isotopes" begin
-        # At this fragment mass, M+1 is expected to be comfortably above 25%
-        # of the most abundant predicted isotope. The trace intensity should
-        # include both observed isotope peaks, while the transient peak id stays
-        # anchored to the monoisotopic observed peak.
+        # At this fragment mass, M+1 is the most abundant predicted isotope.
+        # The trace intensity should include both observed isotope peaks, while
+        # the transient peak id used by competition features should anchor to
+        # the predicted isotope apex rather than the monoisotopic peak.
         iso1_mz = 1000.0f0 + Float32(Pioneer.C13_C12_MASS_DIFF)
         frags = [(UInt32(1), 1000.0f0, 1000.0f0, UInt8(1), :y, UInt8(4))]
         fx = make_fused_fixture(
@@ -395,7 +395,7 @@ end
         @test n_match == 2
         psm = fx.unscored_psms[1]
         @test psm.frag1_int == 2400.0f0
-        @test psm.frag1_peak_idx == UInt32(1)
+        @test psm.frag1_peak_idx == UInt32(2)
         @test psm.y_count == UInt8(1)
         @test psm.y_count_iso == UInt8(1)
     end

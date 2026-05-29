@@ -571,10 +571,10 @@ end
     _add_fragment_peak_competition_features!(psms)
 
 Add scan-local MS2 fragment peak competition features for the top-6 matched
-M0 fragments:
+fragment trace anchors:
 
 - `:frag_competition_num_unique_fragments` — number of distinct observed MS2
-  peaks matched by this PSM's top-6 M0 fragments.
+  peaks matched by this PSM's top-6 fragment trace anchors.
 - `:frag_competition_mean_candidates` — mean number of unique precursor
   candidates in the same MS2 scan that also matched those observed peaks.
 

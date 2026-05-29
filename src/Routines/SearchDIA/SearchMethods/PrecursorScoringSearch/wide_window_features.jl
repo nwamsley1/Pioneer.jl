@@ -252,7 +252,7 @@ end
     return ismissing(val) ? 0f0 : Float32(val)
 end
 
-@inline function _wide_fragment_trace_peak_intensity(
+@inline function _wide_fragment_mono_peak_intensity(
     scan_mz,
     scan_corrected_mz::Vector{Float32},
     scan_obs_low::Vector{Float32},
@@ -260,61 +260,22 @@ end
     scan_int,
     n_peaks::Int,
     frag::AltimeterFragment,
-    spline_data,
-    isotopes_buf::Vector{Float32},
-    prec_trans_buf::Vector{Float32},
-    prec_isotope_set::Tuple{<:Integer, <:Integer},
-    frag_iso_idx_range::UnitRange{Int64},
-    iso_splines::IsotopeSplineModel,
-    prec_mz::Float32,
-    prec_charge::UInt8,
-    prec_sulfur::UInt8,
     mem::AbstractMassErrorModel,
     use_learned_fragment_model::Bool,
 )
-    getFragIsotopes!(
-        PartialPrecCapture(),
-        isotopes_buf,
-        prec_trans_buf,
-        prec_isotope_set,
-        frag_iso_idx_range,
-        iso_splines,
-        prec_mz,
-        prec_charge,
-        prec_sulfur,
-        frag,
-        spline_data,
-    )
-
-    trace_max_pred = _fragment_trace_max_pred_intensity(
-        isotopes_buf,
-        frag_iso_idx_range,
-        1f0,
-    )
-    trace_max_pred > 0f0 || return 0f0
-
     frag_mz = Float32(getMz(frag))
-    frag_charge_inv = 1f0 / Float32(getFragCharge(frag))
-    trace_intensity = 0f0
-    @inbounds for iso_idx in frag_iso_idx_range
-        pred_int = isotopes_buf[iso_idx + 1]
-        _fragment_trace_isotope_contributes(pred_int, trace_max_pred) || continue
-        iso_mz = iso_mz_for(frag_mz, iso_idx, frag_charge_inv)
-        trace_intensity += if use_learned_fragment_model
-            _wide_fragment_peak_intensity(
-                scan_corrected_mz,
-                scan_obs_low,
-                scan_obs_high,
-                scan_int,
-                n_peaks,
-                iso_mz,
-                mem,
-            )
-        else
-            _wide_peak_intensity(scan_mz, scan_int, iso_mz, WIDE_WINDOW_FRAGMENT_PPM_TOL)
-        end
+    if use_learned_fragment_model
+        return _wide_fragment_peak_intensity(
+            scan_corrected_mz,
+            scan_obs_low,
+            scan_obs_high,
+            scan_int,
+            n_peaks,
+            frag_mz,
+            mem,
+        )
     end
-    return trace_intensity
+    return _wide_peak_intensity(scan_mz, scan_int, frag_mz, WIDE_WINDOW_FRAGMENT_PPM_TOL)
 end
 
 @inline function _wide_window_key(center_mz, isolation_width)
@@ -487,18 +448,12 @@ function _wide_collect_feature_values(
     candidate_scans::Vector{Int32},
     prec_mz::Float32,
     prec_charge::UInt8,
-    prec_sulfur::UInt8,
     fragment_idxs::Vector{UInt64},
     frag_list,
-    spline_data,
-    iso_splines::IsotopeSplineModel,
-    quad_model::QuadTransmissionModel,
     ms1_ppm_tol::Float32,
     ms1_ppm_offset::Float32,
     frag_mem::AbstractMassErrorModel,
     use_learned_fragment_model::Bool,
-    isotopes_buf::Vector{Float32},
-    prec_trans_buf::Vector{Float32},
 )
     n = length(expanded_scans)
     n == 0 && return _wide_window_zero_feature_values()
@@ -531,24 +486,10 @@ function _wide_collect_feature_values(
         n_peaks = use_learned_fragment_model ?
             prepare_scan_peaks!(scan_corrected_mz, scan_obs_low, scan_obs_high, frag_mem, mz, intens) : 0
 
-        center_mz = getCenterMz(spectra, scan_idx)
-        isolation_width = getIsolationWidthMz(spectra, scan_idx)
-        (ismissing(center_mz) || ismissing(isolation_width)) && continue
-        qtf = getQuadTransmissionFunction(
-            quad_model,
-            Float32(center_mz),
-            Float32(isolation_width),
-        )
-        getPrecursorIsotopeTransmission!(prec_trans_buf, prec_mz, prec_charge, qtf)
-        prec_isotope_set = getPrecursorIsotopeSet(prec_mz, prec_charge, qtf)
-        max_iso_idx = min(length(isotopes_buf) - 1, Int(last(prec_isotope_set)))
-        max_iso_idx < 0 && continue
-        frag_iso_idx_range = 0:max_iso_idx
-
         for r in 1:6
             frag_idx = fragment_idxs[r]
             frag_idx > 0 || continue
-            fragments[i, r] = _wide_fragment_trace_peak_intensity(
+            fragments[i, r] = _wide_fragment_mono_peak_intensity(
                 mz,
                 scan_corrected_mz,
                 scan_obs_low,
@@ -556,15 +497,6 @@ function _wide_collect_feature_values(
                 intens,
                 n_peaks,
                 frag_list[Int(frag_idx)],
-                spline_data,
-                isotopes_buf,
-                prec_trans_buf,
-                prec_isotope_set,
-                frag_iso_idx_range,
-                iso_splines,
-                prec_mz,
-                prec_charge,
-                prec_sulfur,
                 frag_mem,
                 use_learned_fragment_model,
             )
@@ -647,15 +579,8 @@ function add_wide_window_features_to_fold_file!(
     ms1_ppm_offset = Float32(getMassOffset(ms1_mem))
     frag_mem = getMassErrorModel(search_context, ms_file_idx)
     use_learned_fragment_model = _wide_window_use_learned_fragment_model()
-    quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
-    search_data = getSearchData(search_context)
-    first_search_data = first(search_data)
-    iso_splines = getIsoSplines(first_search_data)
-    isotope_buf_len = length(getIsotopes(first_search_data))
-    prec_trans_buf_len = length(getPrecursorTransmission(first_search_data))
     prec_mzs = getMz(precursors)
     prec_charges = getCharge(precursors)
-    prec_sulfurs = getSulfurCount(precursors)
     frag_list = getFragments(frag_lookup)
 
     perm, starts, ends = _wide_precursor_groups(tbl.precursor_idx)
@@ -671,9 +596,6 @@ function add_wide_window_features_to_fold_file!(
 
     n_precursors = length(starts)
     Threads.@threads :static for group_idx in 1:n_precursors
-        isotopes_buf = zeros(Float32, isotope_buf_len)
-        prec_trans_buf = zeros(Float32, prec_trans_buf_len)
-
         i_start = starts[group_idx]
         i_end = ends[group_idx]
         n_rows = i_end - i_start + 1
@@ -700,7 +622,6 @@ function add_wide_window_features_to_fold_file!(
 
         prec_mz = Float32(prec_mzs[pid])
         prec_charge = UInt8(prec_charges[pid])
-        prec_sulfur = UInt8(prec_sulfurs[pid])
         fragment_idxs = _wide_top_fragment_idxs(
             frag_lookup,
             frag_list,
@@ -717,18 +638,12 @@ function add_wide_window_features_to_fold_file!(
             candidate_scans,
             prec_mz,
             prec_charge,
-            prec_sulfur,
             fragment_idxs,
             frag_list,
-            spline_data,
-            iso_splines,
-            quad_model,
             ms1_ppm_tol,
             ms1_ppm_offset,
             frag_mem,
             use_learned_fragment_model,
-            isotopes_buf,
-            prec_trans_buf,
         )
         _wide_scatter_features!(columns, rows, features)
     end
