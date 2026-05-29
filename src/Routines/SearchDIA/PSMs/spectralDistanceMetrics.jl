@@ -22,6 +22,7 @@ struct SpectralScoresMainSearch{T<:AbstractFloat} <: SpectralScores{T}
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     fitted_hellinger::T
+    spectral_contrast::T
 end
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
@@ -53,7 +54,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U)
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
             )
             continue
         end
@@ -69,11 +70,19 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient
         sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
+        dot_product = zero(T)
+        h2_sum = zero(T)
+        x2_sum = zero(T)
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
             fitted_peak = w[col]*H.nzval[i]
             manhattan_distance += abs(fitted_peak - H.x[i])
+            pred_peak = max(H.nzval[i], zero(T))
+            observed_peak = max(H.x[i], zero(T))
+            dot_product += pred_peak * observed_peak
+            h2_sum += pred_peak^2
+            x2_sum += observed_peak^2
 
             shadow_peak = fitted_peak - r[H.rowval[i]]
             r_abs = abs(r[H.rowval[i]])
@@ -111,12 +120,16 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
 
+        spectral_denom = sqrt(h2_sum * x2_sum)
+        spectral_contrast = spectral_denom > zero(T) ? dot_product / spectral_denom : zero(T)
+
         spectral_scores[col] = SpectralScoresMainSearch(
             U(gof),
             U(max_matched_residual),
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
-            U(fitted_hellinger)
+            U(fitted_hellinger),
+            U(spectral_contrast)
         )
     end
 end

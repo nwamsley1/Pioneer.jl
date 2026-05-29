@@ -98,6 +98,8 @@ end
     @test isfinite(s.max_unmatched_residual)
     @test isfinite(s.fitted_manhattan_distance)
     @test isfinite(s.fitted_hellinger)
+    @test isfinite(s.spectral_contrast)
+    @test s.spectral_contrast ≈ Float16(1)
 
     # Case B — perfect multi-fragment match
     s = _score_single(1.0f0,
@@ -105,7 +107,8 @@ end
                       Float32[1.0, 2.0, 3.0],
                       Bool[true, true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger,
+              s.spectral_contrast)
         @test isfinite(v)
     end
 
@@ -115,7 +118,8 @@ end
                       Float32[1.0, 2.0],
                       Bool[true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger,
+              s.spectral_contrast)
         @test isfinite(v)
         @test v == zero(Float16)
     end
@@ -136,7 +140,8 @@ end
                       Float32[0.0, 0.0],
                       Bool[true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger,
+              s.spectral_contrast)
         @test isfinite(v)
     end
 
@@ -147,7 +152,8 @@ end
                       Float32[1.0, 1.0],
                       Bool[false, false])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger,
+              s.spectral_contrast)
         @test isfinite(v)
     end
 
@@ -174,6 +180,7 @@ end
         @test isfinite(s.max_unmatched_residual)
         @test isfinite(s.fitted_manhattan_distance)
         @test isfinite(s.fitted_hellinger)
+        @test isfinite(s.spectral_contrast)
     end
 end
 

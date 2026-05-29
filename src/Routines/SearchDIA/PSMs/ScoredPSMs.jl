@@ -88,6 +88,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     weight::H
 
     fitted_hellinger::L
+    spectral_contrast::L
 
     # Rank feature carried from MainUnscoredPSM. Added 2026-05-11 so the
     # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
@@ -192,6 +193,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
+            spectral_scores[scores_idx].spectral_contrast,
 
             unscored_PSMs[i].best_rank,
 
