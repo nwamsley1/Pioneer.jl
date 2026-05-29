@@ -375,6 +375,32 @@ end
     end
 
     # ------------------------------------------------------------
+    @testset "top-6 fragment trace intensity includes abundant matched isotopes" begin
+        # At this fragment mass, M+1 is expected to be comfortably above 25%
+        # of the most abundant predicted isotope. The trace intensity should
+        # include both observed isotope peaks, while the transient peak id stays
+        # anchored to the monoisotopic observed peak.
+        iso1_mz = 1000.0f0 + Float32(Pioneer.C13_C12_MASS_DIFF)
+        frags = [(UInt32(1), 1000.0f0, 1000.0f0, UInt8(1), :y, UInt8(4))]
+        fx = make_fused_fixture(
+            frags = frags,
+            prec_frag_ranges = UInt64[1, 2],
+            peak_mz = Float32[1000.0f0, iso1_mz],
+            peak_int = Float32[1500.0f0, 900.0f0],
+            n_frag_isotopes = 2,
+        )
+
+        n_match, _ = call_run_fused!(fx)
+
+        @test n_match == 2
+        psm = fx.unscored_psms[1]
+        @test psm.frag1_int == 2400.0f0
+        @test psm.frag1_peak_idx == UInt32(1)
+        @test psm.y_count == UInt8(1)
+        @test psm.y_count_iso == UInt8(1)
+    end
+
+    # ------------------------------------------------------------
     @testset "iso_anchor advances within fragment (iso 1 search starts ≥ iso 0 anchor)" begin
         # Two fragments with overlapping iso m/z ranges. With proper iso_anchor
         # advancement, iso 1's bsearch lo ≥ iso 0's start_idx — testing here

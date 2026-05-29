@@ -38,7 +38,8 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     p_count::UInt8
     non_cannonical_count::UInt8
     error::T
-    # Per-rank M0 fragment intensities (rank 1-6); for fragment-correlation features
+    # Per-rank top-6 fragment trace intensities. Each rank sums matched fragment
+    # isotope peaks predicted at >=25% of that fragment's most abundant isotope.
     frag1_int::T
     frag2_int::T
     frag3_int::T
