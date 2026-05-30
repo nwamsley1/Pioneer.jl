@@ -317,6 +317,26 @@ function process_search_results!(
     # collapsing to best-per-precursor for ScoringSearch. The selected row keeps
     # its own transmission fraction and gets a count of passing scans from
     # non-selected isotope traces.
+    frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
+    frag_list = getFragments(frag_lookup)
+    prec_mzs = getMz(precursors)
+    prec_charges = getCharge(precursors)
+    nce_model = getNceModel(search_context, ms_file_idx)
+    pred_fragment_intensity_provider! = let frag_lookup = frag_lookup,
+            frag_list = frag_list,
+            nce_model = nce_model,
+            prec_mzs = prec_mzs,
+            prec_charges = prec_charges
+        (buf, pid) -> _mainsearch_predicted_fragment_rank_intensities!(
+            buf,
+            frag_lookup,
+            frag_list,
+            nce_model,
+            prec_mzs,
+            prec_charges,
+            pid,
+        )
+    end
     t_trace_features = @elapsed begin
         get_isotopes_captured!(
             psms,
@@ -338,6 +358,7 @@ function process_search_results!(
             :lgbm_score;
             pass_mask = trace_pass_mask,
             bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx)),
+            pred_fragment_intensity_provider! = pred_fragment_intensity_provider!,
         )
         scores = Vector{Float32}(best_psms[!, :lgbm_score])
         best_psms[!, :lgbm_prob] = scores

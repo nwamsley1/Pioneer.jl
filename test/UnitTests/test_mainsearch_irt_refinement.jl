@@ -228,6 +228,18 @@ end
             :lgbm_score;
             pass_mask = Bool[true, true, true, false, true, true],
             bitvec_rank_table = bitvec_rank_table,
+            pred_fragment_intensity_provider! = (buf, pid) -> begin
+                @test pid == UInt32(7)
+                buf[1] = 30f0
+                buf[2] = 25f0
+                buf[3] = 21f0
+                buf[4] = 2f0
+                buf[5] = 0f0
+                buf[6] = 3f0
+                buf[7] = 21f0
+                buf[8] = 16f0
+                nothing
+            end,
         )
 
         @test nrow(best) == 1
@@ -236,6 +248,7 @@ end
         @test best.n_frags_detected_intersection[1] == UInt8(3)
         @test best.n_frags_detected_union_bitvec_rank[1] == UInt16(11)
         @test best.n_frags_detected_intersection_bitvec_rank[1] == UInt16(22)
+        @test best.frag_observed_sum_spectral_angle[1] ≈ 1.0f0 atol=1f-6
     end
 
     @testset "best PSM row carries aligned isotope trace agreement features" begin
