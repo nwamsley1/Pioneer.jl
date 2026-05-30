@@ -79,6 +79,7 @@ include("./UnitTests/test_summarize_precursor.jl")
 # PrecursorScoringSearch
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_window_features.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_empirical_fragment_features.jl")
 include("./UnitTests/test_lgbm_charge_features.jl")
 include("./UnitTests/test_m0_peak_competition_features.jl")
 include("./UnitTests/test_isotope_mass_spacing.jl")

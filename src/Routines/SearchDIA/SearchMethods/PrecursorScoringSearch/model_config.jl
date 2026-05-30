@@ -38,6 +38,14 @@ const WIDE_WINDOW_FEATURES = [
     :wide_core_n_scans,
 ]
 
+# Empirical observed-fragment shape features. These are cross-run only:
+# they compare each per-run best PSM's raw top-8 fragment intensities against
+# the best empirical reference PSM for the same precursor from another run.
+const EMPIRICAL_FRAGMENT_FEATURES = [
+    :empirical_frag_best_hellinger,
+    :empirical_frag_ref_pep,
+]
+
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
 # (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
 #
@@ -87,6 +95,8 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_union_bitvec_rank,
     :n_frags_detected_intersection_bitvec_rank,
     :frag_observed_sum_hellinger,
+    :empirical_frag_best_hellinger,
+    :empirical_frag_ref_pep,
     :trace_other_weight_corr,
     :trace_other_frag_sum_corr,
     :trace_other_apex_delta_irt,

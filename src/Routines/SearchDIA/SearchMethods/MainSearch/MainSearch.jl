@@ -385,11 +385,16 @@ function process_search_results!(
     # second_pass arrow files and therefore can't reach ScoringSearch.
     # ============================================================
     pep_filter_thr = MAIN_PEP_FILTER_THR
-    if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
+    if nrow(best_psms) > 0
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
         peps_filt  = Vector{Float32}(undef, length(probs_filt))
         get_PEP!(probs_filt, is_t_filt, peps_filt; doSort=true, fdr_scale_factor=1.0f0)
+        best_psms[!, :main_pep] = peps_filt
+    end
+    if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
+        peps_filt = best_psms[!, :main_pep]
+        is_t_filt = Vector{Bool}(best_psms[!, :target])
         keep = peps_filt .<= pep_filter_thr
         n_before_pep = nrow(best_psms)
         n_drop_t = count(.!keep .& is_t_filt)

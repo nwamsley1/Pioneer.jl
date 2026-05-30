@@ -267,6 +267,7 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "empirical_fragment_features.jl",   # Cross-run empirical observed-fragment shape features
             "wide_window_features.jl",         # Raw wide-window chromatogram features
             "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
             "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
