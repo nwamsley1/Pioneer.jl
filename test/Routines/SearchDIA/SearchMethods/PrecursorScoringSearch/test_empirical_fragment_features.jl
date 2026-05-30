@@ -39,7 +39,8 @@
 end
 
 @testset "empirical fragment features are cross-run only" begin
-    @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, Pioneer.EMPIRICAL_FRAGMENT_FEATURES)
+    @test :empirical_frag_best_hellinger in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:empirical_frag_ref_pep in Pioneer.ADVANCED_FEATURE_SET)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.EMPIRICAL_FRAGMENT_FEATURES)
 end
 
