@@ -11,6 +11,7 @@
 
 using Test
 using Pioneer
+using Pioneer: parseIsoXML
 
 const FusedStandard          = Pioneer.FusedStandard
 const FusedRTIndexed         = Pioneer.FusedRTIndexed
@@ -375,7 +376,7 @@ end
     end
 
     # ------------------------------------------------------------
-    @testset "top-6 fragment trace intensity includes abundant matched isotopes" begin
+    @testset "fragment trace intensity includes abundant matched isotopes" begin
         # At this fragment mass, M+1 is the most abundant predicted isotope.
         # The trace intensity should include both observed isotope peaks, while
         # the transient peak id used by competition features should anchor to
@@ -398,6 +399,28 @@ end
         @test psm.frag1_peak_idx == UInt32(2)
         @test psm.y_count == UInt8(1)
         @test psm.y_count_iso == UInt8(1)
+    end
+
+    # ------------------------------------------------------------
+    @testset "top-8 fragment trace intensity captures rank 8" begin
+        frags = [(UInt32(1), 1000.0f0, 1000.0f0, UInt8(8), :y, UInt8(4))]
+        fx = make_fused_fixture(
+            frags = frags,
+            prec_frag_ranges = UInt64[1, 2],
+            peak_mz = Float32[1000.0f0],
+            peak_int = Float32[1500.0f0],
+            kind = FusedStandard(FullPrecCapture(), UInt8(8)),
+        )
+
+        n_match, _ = call_run_fused!(fx)
+
+        @test n_match == 1
+        psm = fx.unscored_psms[1]
+        @test psm.frag8_int == 1500.0f0
+        @test psm.frag7_int == 0.0f0
+        @test psm.frag8_peak_idx == UInt32(1)
+        @test psm.frag7_peak_idx == UInt32(0)
+        @test psm.y_count == UInt8(1)
     end
 
     # ------------------------------------------------------------

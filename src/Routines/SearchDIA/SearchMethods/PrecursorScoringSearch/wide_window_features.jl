@@ -58,6 +58,7 @@ end
         wide_ms1_frag_sum_corr = 0f0,
         wide_frag_corr_mean = 0f0,
         wide_n_correlated_fragments = UInt8(0),
+        wide_n_correlated_fragments_bitvec_rank = UInt16(0),
         wide_frag_corr_best_m0 = 0f0,
         wide_signal_support = 0f0,
     )
@@ -67,6 +68,8 @@ function _wide_window_feature_values(
     ms1_m0::AbstractVector,
     fragments::AbstractMatrix,
     candidate_mask::AbstractVector{Bool},
+    ;
+    bitvec_rank_table = nothing,
 )
     n_scans = length(ms1_m0)
     n_scans == length(candidate_mask) ||
@@ -132,15 +135,19 @@ function _wide_window_feature_values(
     frag_corr_mean = pair_count > 0 ? Float32(pair_sum / pair_count) : 0f0
 
     n_correlated = UInt8(0)
+    correlated_mask = UInt8(0)
     other_sum = Vector{Float32}(undef, n_scans)
     @inbounds for r in 1:n_frags
         has_signal[r] || continue
         for i in 1:n_scans
             other_sum[i] = frag_sum[i] - max(Float32(fragments[i, r]), 0f0)
         end
-        _wide_window_pcor(view(fragments, :, r), other_sum) > WIDE_WINDOW_CORR_THRESHOLD &&
-            (n_correlated += UInt8(1))
+        if _wide_window_pcor(view(fragments, :, r), other_sum) > WIDE_WINDOW_CORR_THRESHOLD
+            n_correlated += UInt8(1)
+            correlated_mask |= UInt8(1) << (r - 1)
+        end
     end
+    correlated_rank = _bitvec_pattern_rank(bitvec_rank_table, correlated_mask)
 
     best_r = 0
     best_consensus = typemin(Float32)
@@ -167,6 +174,7 @@ function _wide_window_feature_values(
         wide_ms1_frag_sum_corr = ms1_frag_sum_corr,
         wide_frag_corr_mean = frag_corr_mean,
         wide_n_correlated_fragments = n_correlated,
+        wide_n_correlated_fragments_bitvec_rank = correlated_rank,
         wide_frag_corr_best_m0 = best_m0_corr,
         wide_signal_support = signal_support,
     )
@@ -423,15 +431,15 @@ function _wide_top_fragment_idxs(
     prec_charge::UInt8,
     prec_mz::Float32,
 )
-    frag_idxs = zeros(UInt64, 6)
-    pred_ints = fill(-Inf32, 6)
+    frag_idxs = zeros(UInt64, 8)
+    pred_ints = fill(-Inf32, 8)
     spline_data = getSplineData(frag_lookup, nce_model, prec_charge, prec_mz)
     frag_range = getPrecFragRange(frag_lookup, pid)
     @inbounds for frag_idx in frag_range
         frag = frag_list[Int(frag_idx)]
         isIso(frag) && continue
         rank = Int(getRank(frag))
-        1 <= rank <= 6 || continue
+        1 <= rank <= 8 || continue
         pred_int = max(Float32(getIntensity(frag, spline_data)), 0f0)
         if pred_int > pred_ints[rank]
             pred_ints[rank] = pred_int
@@ -454,13 +462,15 @@ function _wide_collect_feature_values(
     ms1_ppm_offset::Float32,
     frag_mem::AbstractMassErrorModel,
     use_learned_fragment_model::Bool,
+    ;
+    bitvec_rank_table = nothing,
 )
     n = length(expanded_scans)
     n == 0 && return _wide_window_zero_feature_values()
 
     candidate_set = Set(candidate_scans)
     ms1_m0 = zeros(Float32, n)
-    fragments = zeros(Float32, n, 6)
+    fragments = zeros(Float32, n, 8)
     candidate_mask = falses(n)
     ms1_target = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
     scan_corrected_mz = Float32[]
@@ -486,7 +496,7 @@ function _wide_collect_feature_values(
         n_peaks = use_learned_fragment_model ?
             prepare_scan_peaks!(scan_corrected_mz, scan_obs_low, scan_obs_high, frag_mem, mz, intens) : 0
 
-        for r in 1:6
+        for r in 1:8
             frag_idx = fragment_idxs[r]
             frag_idx > 0 || continue
             fragments[i, r] = _wide_fragment_mono_peak_intensity(
@@ -503,7 +513,12 @@ function _wide_collect_feature_values(
         end
     end
 
-    return _wide_window_feature_values(ms1_m0, fragments, candidate_mask)
+    return _wide_window_feature_values(
+        ms1_m0,
+        fragments,
+        candidate_mask;
+        bitvec_rank_table=bitvec_rank_table,
+    )
 end
 
 function _wide_precursor_groups(precursor_idx)
@@ -534,6 +549,7 @@ function _wide_scatter_features!(columns, rows::Vector{Int}, features)
         columns.ms1_frag_corr[row] = features.wide_ms1_frag_sum_corr
         columns.frag_corr_mean[row] = features.wide_frag_corr_mean
         columns.n_correlated[row] = features.wide_n_correlated_fragments
+        columns.n_correlated_rank[row] = features.wide_n_correlated_fragments_bitvec_rank
         columns.best_m0[row] = features.wide_frag_corr_best_m0
         columns.signal_support[row] = features.wide_signal_support
     end
@@ -557,6 +573,7 @@ function add_wide_window_features_to_fold_file!(
     tbl[!, :wide_ms1_frag_sum_corr] = zeros(Float32, n)
     tbl[!, :wide_frag_corr_mean] = zeros(Float32, n)
     tbl[!, :wide_n_correlated_fragments] = zeros(UInt8, n)
+    tbl[!, :wide_n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
     tbl[!, :wide_frag_corr_best_m0] = zeros(Float32, n)
     tbl[!, :wide_signal_support] = zeros(Float32, n)
     if !hasproperty(tbl, :wide_core_n_scans)
@@ -578,6 +595,7 @@ function add_wide_window_features_to_fold_file!(
     ms1_ppm_tol = Float32(max(10f0, getLeftTol(ms1_mem), getRightTol(ms1_mem)))
     ms1_ppm_offset = Float32(getMassOffset(ms1_mem))
     frag_mem = getMassErrorModel(search_context, ms_file_idx)
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     use_learned_fragment_model = _wide_window_use_learned_fragment_model()
     prec_mzs = getMz(precursors)
     prec_charges = getCharge(precursors)
@@ -590,6 +608,7 @@ function add_wide_window_features_to_fold_file!(
         ms1_frag_corr = tbl[!, :wide_ms1_frag_sum_corr],
         frag_corr_mean = tbl[!, :wide_frag_corr_mean],
         n_correlated = tbl[!, :wide_n_correlated_fragments],
+        n_correlated_rank = tbl[!, :wide_n_correlated_fragments_bitvec_rank],
         best_m0 = tbl[!, :wide_frag_corr_best_m0],
         signal_support = tbl[!, :wide_signal_support],
     )
@@ -644,6 +663,7 @@ function add_wide_window_features_to_fold_file!(
             ms1_ppm_offset,
             frag_mem,
             use_learned_fragment_model,
+            bitvec_rank_table = bitvec_rank_table,
         )
         _wide_scatter_features!(columns, rows, features)
     end

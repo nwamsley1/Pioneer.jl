@@ -12,6 +12,8 @@ using Pioneer
         frag4_int = Float32[0, 0, 0, 0, 0, 0, 0],
         frag5_int = Float32[0, 0, 0, 0, 0, 0, 0],
         frag6_int = Float32[0, 0, 0, 0, 0, 0, 0],
+        frag7_int = Float32[0, 0, 0, 0, 0, 0, 0],
+        frag8_int = Float32[0, 0, 0, 0, 0, 0, 0],
     )
     m0_peak_keys = UInt64[100, 100, 200, 100, 0, 300, 300]
     precursor_mzs = Float32[500, 501, 500, 502, 502, 503]
@@ -50,6 +52,8 @@ end
         frag4_peak_idx = UInt32[0, 0, 0, 0, 0],
         frag5_peak_idx = UInt32[0, 0, 0, 0, 0],
         frag6_peak_idx = UInt32[0, 0, 0, 0, 0],
+        frag7_peak_idx = UInt32[700, 700, 700, 0, 0],
+        frag8_peak_idx = UInt32[0, 0, 800, 0, 800],
     )
 
     Pioneer._add_fragment_peak_competition_features!(psms)
@@ -57,13 +61,13 @@ end
     @test :frag_competition_num_unique_fragments in propertynames(psms)
     @test :frag_competition_mean_candidates in propertynames(psms)
     @test !(:frag_competition_max_candidates in propertynames(psms))
-    @test psms.frag_competition_num_unique_fragments == UInt8[3, 2, 2, 0, 2]
+    @test psms.frag_competition_num_unique_fragments == UInt8[4, 3, 4, 0, 3]
     @test psms.frag_competition_mean_candidates ≈ Float32[
-        5 / 3,
+        7 / 4,
         1,
-        1.5,
+        7 / 4,
         0,
-        1.5,
+        5 / 3,
     ]
     Pioneer.drop_fragment_peak_index_columns!(psms)
     @test !any(c -> c in propertynames(psms), Pioneer.FRAGMENT_PEAK_INDEX_COLUMNS)

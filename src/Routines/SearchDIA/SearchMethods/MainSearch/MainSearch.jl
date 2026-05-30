@@ -186,7 +186,7 @@ function process_file!(
     # Verified empirically 2026-05-19 on 3-file Astral: all scans
     # contiguous across ~48M PSMs / 758k unique scans.
 
-    # Keep raw top-6 matched fragment peak indices transiently through the
+    # Keep raw top-8 matched fragment peak indices transiently through the
     # per-run model. Cross-run fragment-peak competition is computed only after
     # per-run best-per-precursor selection and PEP filtering.
 
@@ -272,7 +272,10 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor-grouped chromatogram features still run here.
-    t_ms1 = @elapsed add_chromatogram_features!(psms)
+    t_ms1 = @elapsed add_chromatogram_features!(
+        psms;
+        bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx)),
+    )
     t_trace_features = 0.0
 
     # Train LightGBM on all PSMs, select best scan per precursor, then run the
@@ -330,7 +333,12 @@ function process_search_results!(
             Float32.(psms[!, :lgbm_score]),
             Vector{Bool}(psms[!, :target]),
         )
-        best_psms = select_best_per_precursor!(psms, :lgbm_score; pass_mask = trace_pass_mask)
+        best_psms = select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = trace_pass_mask,
+            bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx)),
+        )
         scores = Vector{Float32}(best_psms[!, :lgbm_score])
         best_psms[!, :lgbm_prob] = scores
     end
@@ -375,7 +383,7 @@ function process_search_results!(
     t_recal_start = t_pep_end
     # ============================================================
 
-    # Fragment-peak competition over the top-6 matched M0 fragments. This is a
+    # Fragment-peak competition over the top-8 matched fragment trace anchors. This is a
     # cross-run-only feature, so compute it only on PSMs/precursors that passed
     # the per-run model, pair competition, and PEP filter. The raw peak-index
     # columns are dropped before any Arrow write.

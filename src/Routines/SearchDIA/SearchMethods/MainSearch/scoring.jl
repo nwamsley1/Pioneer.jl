@@ -657,6 +657,55 @@ end
     return s
 end
 
+@inline function _mainsearch_fragment_presence_mask(row::Int, frag_cols)
+    mask = UInt8(0)
+    bit = UInt8(1)
+    @inbounds for col in frag_cols
+        if Float32(col[row]) > 0f0
+            mask |= bit
+        end
+        bit <<= 1
+    end
+    return mask
+end
+
+function _mainsearch_selected_trace_fragment_support(
+    perm::Vector{Int},
+    group_start::Int,
+    group_len::Int,
+    best_row::Int,
+    pass_mask::AbstractVector{Bool},
+    isotope_traces,
+    frag_cols,
+    bitvec_rank_table = nothing,
+)
+    selected_trace = isotope_traces[best_row]
+    union_mask = UInt8(0)
+    intersection_mask = UInt8(0xff)
+    seen_selected_pass = false
+
+    @inbounds for k in 0:(group_len - 1)
+        row = perm[group_start + k]
+        pass_mask[row] || continue
+        isotope_traces[row] == selected_trace || continue
+        mask = _mainsearch_fragment_presence_mask(row, frag_cols)
+        union_mask |= mask
+        intersection_mask &= mask
+        seen_selected_pass = true
+    end
+
+    if !seen_selected_pass
+        intersection_mask = UInt8(0)
+    end
+
+    return (
+        union = UInt8(count_ones(union_mask)),
+        intersection = UInt8(count_ones(intersection_mask)),
+        union_rank = _bitvec_pattern_rank(bitvec_rank_table, union_mask),
+        intersection_rank = _bitvec_pattern_rank(bitvec_rank_table, intersection_mask),
+    )
+end
+
 function _mainsearch_trace_agreement_features(
     perm::Vector{Int},
     group_start::Int,
@@ -853,6 +902,7 @@ function select_best_per_precursor!(
     score_col::Symbol;
     pass_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
     scan_cycle_index = nothing,
+    bitvec_rank_table = nothing,
 )
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
@@ -862,15 +912,20 @@ function select_best_per_precursor!(
     has_scan_idx = hasproperty(psms, :scan_idx)
     has_cycle_idx = hasproperty(psms, :cycle_idx)
     has_isotopes_captured = hasproperty(psms, :isotopes_captured)
-    frag_feature_cols = (:frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int)
-    has_frag_features = all(c -> hasproperty(psms, c), frag_feature_cols)
+    trace_frag_feature_cols = (:frag1_int, :frag2_int, :frag3_int, :frag4_int,
+                               :frag5_int, :frag6_int, :frag7_int, :frag8_int)
+    support_frag_feature_cols = (:frag1_int, :frag2_int, :frag3_int, :frag4_int,
+                                 :frag5_int, :frag6_int, :frag7_int, :frag8_int)
+    has_trace_frag_features = all(c -> hasproperty(psms, c), trace_frag_feature_cols)
+    has_support_frag_features = all(c -> hasproperty(psms, c), support_frag_feature_cols)
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
     scan_idxs = has_scan_idx ? psms[!, :scan_idx] : nothing
     cycle_idxs = has_cycle_idx ? psms[!, :cycle_idx] : nothing
     isotope_traces = has_isotopes_captured ? psms[!, :isotopes_captured] : nothing
-    frag_cols = has_frag_features ? ntuple(i -> psms[!, frag_feature_cols[i]], 6) : nothing
+    trace_frag_cols = has_trace_frag_features ? ntuple(i -> psms[!, trace_frag_feature_cols[i]], 8) : nothing
+    support_frag_cols = has_support_frag_features ? ntuple(i -> psms[!, support_frag_feature_cols[i]], 8) : nothing
     # Type-assert the Float16 scoring columns. Without `::Vector{Float16}`
     # the DataFrame accessor returns an abstract type, which forces dynamic
     # dispatch inside the sub-pass-1 hot loop and costs ~3.5s/file on
@@ -904,12 +959,17 @@ function select_best_per_precursor!(
     compute_wide_core = pass_mask !== nothing && has_scan_idx &&
         (scan_cycle_index !== nothing || has_cycle_idx)
     compute_other_traces = pass_mask !== nothing && has_isotopes_captured
+    compute_fragment_support = compute_other_traces && has_support_frag_features
     compute_trace_agreement = compute_other_traces && has_cycle_idx && weights !== nothing &&
-        has_irt && has_frag_features
+        has_irt && has_trace_frag_features
     out_wide_core_scan_min = compute_wide_core ? Vector{UInt32}() : nothing
     out_wide_core_scan_max = compute_wide_core ? Vector{UInt32}() : nothing
     out_wide_core_n_scans = compute_wide_core ? Vector{UInt16}() : nothing
     out_n_scans_other_traces = compute_other_traces ? Vector{UInt32}() : nothing
+    out_n_frags_detected_union = compute_fragment_support ? Vector{UInt8}() : nothing
+    out_n_frags_detected_intersection = compute_fragment_support ? Vector{UInt8}() : nothing
+    out_n_frags_detected_union_bitvec_rank = compute_fragment_support ? Vector{UInt16}() : nothing
+    out_n_frags_detected_intersection_bitvec_rank = compute_fragment_support ? Vector{UInt16}() : nothing
     out_trace_other_weight_corr = compute_trace_agreement ? Vector{Float32}() : nothing
     out_trace_other_frag_sum_corr = compute_trace_agreement ? Vector{Float32}() : nothing
     out_trace_other_apex_delta_irt = compute_trace_agreement ? Vector{Float32}() : nothing
@@ -934,6 +994,12 @@ function select_best_per_precursor!(
     end
     if compute_other_traces
         sizehint!(out_n_scans_other_traces, n ÷ 10)
+    end
+    if compute_fragment_support
+        sizehint!(out_n_frags_detected_union, n ÷ 10)
+        sizehint!(out_n_frags_detected_intersection, n ÷ 10)
+        sizehint!(out_n_frags_detected_union_bitvec_rank, n ÷ 10)
+        sizehint!(out_n_frags_detected_intersection_bitvec_rank, n ÷ 10)
     end
     if compute_trace_agreement
         sizehint!(out_trace_other_weight_corr, n ÷ 10)
@@ -1047,6 +1113,22 @@ function select_best_per_precursor!(
                 n_other += UInt32(1)
             end
             push!(out_n_scans_other_traces, n_other)
+            if compute_fragment_support
+                support = _mainsearch_selected_trace_fragment_support(
+                    perm,
+                    group_start,
+                    group_len,
+                    best_row,
+                    pass_mask,
+                    isotope_traces,
+                    support_frag_cols,
+                    bitvec_rank_table,
+                )
+                push!(out_n_frags_detected_union, support.union)
+                push!(out_n_frags_detected_intersection, support.intersection)
+                push!(out_n_frags_detected_union_bitvec_rank, support.union_rank)
+                push!(out_n_frags_detected_intersection_bitvec_rank, support.intersection_rank)
+            end
             if compute_trace_agreement
                 if n_other == UInt32(0)
                     push!(out_trace_other_weight_corr, TRACE_OTHER_CORR_SENTINEL)
@@ -1063,7 +1145,7 @@ function select_best_per_precursor!(
                         cycle_idxs,
                         weights,
                         irt_obs,
-                        frag_cols,
+                        trace_frag_cols,
                     )
                     push!(out_trace_other_weight_corr, agreement.weight_corr)
                     push!(out_trace_other_frag_sum_corr, agreement.frag_sum_corr)
@@ -1185,6 +1267,12 @@ function select_best_per_precursor!(
     end
     if compute_other_traces
         result[!, :n_scans_other_traces] = out_n_scans_other_traces
+    end
+    if compute_fragment_support
+        result[!, :n_frags_detected_union] = out_n_frags_detected_union
+        result[!, :n_frags_detected_intersection] = out_n_frags_detected_intersection
+        result[!, :n_frags_detected_union_bitvec_rank] = out_n_frags_detected_union_bitvec_rank
+        result[!, :n_frags_detected_intersection_bitvec_rank] = out_n_frags_detected_intersection_bitvec_rank
     end
     if compute_trace_agreement
         result[!, :trace_other_weight_corr] = out_trace_other_weight_corr

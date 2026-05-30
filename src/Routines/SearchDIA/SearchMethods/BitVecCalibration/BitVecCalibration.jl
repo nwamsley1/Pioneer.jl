@@ -259,6 +259,32 @@ const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
 const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
 
+function _bitvec_excess_rank_table(
+    tc::AbstractVector{<:Integer},
+    dc::AbstractVector{<:Integer},
+    fdr_scale::Real = 1.0,
+)
+    length(tc) == 256 || throw(ArgumentError("target count vector must have length 256"))
+    length(dc) == 256 || throw(ArgumentError("decoy count vector must have length 256"))
+    α = 1.0
+    s = Float64(fdr_scale)
+    rates = Vector{Float64}(undef, 256)
+    excess = Vector{Float64}(undef, 256)
+    @inbounds for i in 1:256
+        tf = Float64(tc[i]) + α
+        df = s * (Float64(dc[i]) + α)
+        ex = tf - df
+        excess[i] = ex
+        rates[i] = ex / df
+    end
+    order = sortperm(1:256, by = i -> (-rates[i], -excess[i], i))
+    ranks = Vector{UInt16}(undef, 256)
+    @inbounds for (rank, i) in pairs(order)
+        ranks[i] = UInt16(rank)
+    end
+    return ranks
+end
+
 function process_file!(
     results::BitVecCalibrationResults,
     params::BitVecCalibrationParameters,
@@ -333,6 +359,7 @@ function process_file!(
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
+    setBitVecExcessRanks!(search_context, ms_file_idx, _bitvec_excess_rank_table(file_tc, file_dc, fdr_scale))
 
     if total_counts >= BITVEC_COARSE_GROUP_THRESHOLD
         # Sufficient data: per-bin excess rate decision
@@ -428,11 +455,13 @@ function summarize_results!(
     out_dir = getDataOutDir(search_context)
 
     # Raw 256-bin counts
+    global_excess_rank = _bitvec_excess_rank_table(tc, dc, fdr_scale)
     Arrow.write(joinpath(out_dir, "bitvec_counts_256.arrow"), DataFrame(
         pattern = collect(UInt8(0):UInt8(255)),
         target_count = tc,
         decoy_count = dc,
         count_ones = UInt8[count_ones(UInt8(p)) for p in 0:255],
+        excess_rank = global_excess_rank,
     ))
 
     # Per-merged-bin model

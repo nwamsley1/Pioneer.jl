@@ -166,6 +166,8 @@ end
             frag4_int = Float16[0, 0, 0, 0, 0],
             frag5_int = Float16[0, 0, 0, 0, 0],
             frag6_int = Float16[0, 0, 0, 0, 0],
+            frag7_int = Float16[0, 0, 0, 0, 0],
+            frag8_int = Float16[0, 0, 0, 0, 0],
             isotopes_captured = [
                 (Int8(0), Int8(1)),
                 (Int8(0), Int8(1)),
@@ -189,6 +191,53 @@ end
         @test best.n_scans_other_traces[1] == UInt32(2)
     end
 
+    @testset "best PSM row carries selected-trace fragment support union and intersection" begin
+        psms = DataFrame(
+            precursor_idx = fill(UInt32(7), 6),
+            scan_idx = UInt32[100, 105, 110, 115, 120, 125],
+            cycle_idx = UInt32[1, 2, 3, 4, 2, 3],
+            lgbm_score = Float32[0.70, 0.95, 0.80, 0.75, 0.60, 0.55],
+            weight = Float32[10, 20, 15, 12, 5, 6],
+            irt_obs = Float32[1, 2, 3, 4, 2, 3],
+            rt = Float32[10, 20, 30, 40, 20, 30],
+            frag1_int = Float16[10, 20, 0, 5, 99, 99],
+            frag2_int = Float16[0, 10, 15, 0, 99, 99],
+            frag3_int = Float16[5, 7, 9, 0, 99, 99],
+            frag4_int = Float16[0, 0, 2, 0, 99, 99],
+            frag5_int = Float16[0, 0, 0, 0, 99, 99],
+            frag6_int = Float16[1, 1, 1, 0, 99, 99],
+            frag7_int = Float16[7, 7, 7, 0, 99, 99],
+            frag8_int = Float16[8, 8, 0, 0, 99, 99],
+            isotopes_captured = [
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+                (Int8(0), Int8(1)),
+                (Int8(1), Int8(2)),
+                (Int8(1), Int8(2)),
+            ],
+            precursor_fraction_transmitted = Float32[0.8, 0.8, 0.8, 0.8, 0.4, 0.4],
+        )
+
+        bitvec_rank_table = fill(UInt16(256), 256)
+        bitvec_rank_table[Int(0xef) + 1] = UInt16(11)
+        bitvec_rank_table[Int(0x64) + 1] = UInt16(22)
+
+        best = Pioneer.select_best_per_precursor!(
+            psms,
+            :lgbm_score;
+            pass_mask = Bool[true, true, true, false, true, true],
+            bitvec_rank_table = bitvec_rank_table,
+        )
+
+        @test nrow(best) == 1
+        @test best.scan_idx[1] == UInt32(105)
+        @test best.n_frags_detected_union[1] == UInt8(7)
+        @test best.n_frags_detected_intersection[1] == UInt8(3)
+        @test best.n_frags_detected_union_bitvec_rank[1] == UInt16(11)
+        @test best.n_frags_detected_intersection_bitvec_rank[1] == UInt16(22)
+    end
+
     @testset "best PSM row carries aligned isotope trace agreement features" begin
         psms = DataFrame(
             precursor_idx = fill(UInt32(7), 9),
@@ -204,6 +253,8 @@ end
             frag4_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
             frag5_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
             frag6_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            frag7_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
+            frag8_int = Float16[0, 0, 0, 0, 0, 0, 0, 0, 0],
             isotopes_captured = [
                 (Int8(0), Int8(1)), (Int8(0), Int8(1)), (Int8(0), Int8(1)),
                 (Int8(1), Int8(2)), (Int8(1), Int8(2)), (Int8(1), Int8(2)),
@@ -241,6 +292,8 @@ end
             frag4_int = Float16[0, 0, 0],
             frag5_int = Float16[0, 0, 0],
             frag6_int = Float16[0, 0, 0],
+            frag7_int = Float16[0, 0, 0],
+            frag8_int = Float16[0, 0, 0],
             isotopes_captured = [
                 (Int8(0), Int8(1)),
                 (Int8(0), Int8(1)),
