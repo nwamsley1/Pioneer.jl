@@ -706,24 +706,26 @@ function _mainsearch_selected_trace_fragment_support(
     )
 end
 
-@inline function _mainsearch_spectral_angle(obs::AbstractVector, pred::AbstractVector)
-    dot = 0f0
-    obs2 = 0f0
-    pred2 = 0f0
+@inline function _mainsearch_hellinger_distance(obs::AbstractVector, pred::AbstractVector)
+    obs_sum = 0f0
+    pred_sum = 0f0
     @inbounds for i in 1:8
-        o = max(Float32(obs[i]), 0f0)
-        p = max(Float32(pred[i]), 0f0)
-        dot += o * p
-        obs2 += o * o
-        pred2 += p * p
+        obs_sum += max(Float32(obs[i]), 0f0)
+        pred_sum += max(Float32(pred[i]), 0f0)
     end
-    denom = sqrt(obs2 * pred2)
-    denom > 0f0 || return 0f0
-    cosine = clamp(Float32(dot / denom), -1f0, 1f0)
-    return Float32(1f0 - (2f0 * acos(cosine) / Float32(pi)))
+    (obs_sum > 0f0 && pred_sum > 0f0) || return 1f0
+
+    dist2 = 0f0
+    @inbounds for i in 1:8
+        po = max(Float32(obs[i]), 0f0) / obs_sum
+        pp = max(Float32(pred[i]), 0f0) / pred_sum
+        d = sqrt(po) - sqrt(pp)
+        dist2 += d * d
+    end
+    return sqrt(max(0f0, 0.5f0 * dist2))
 end
 
-function _mainsearch_selected_trace_fragment_spectral_angle(
+function _mainsearch_selected_trace_fragment_hellinger(
     perm::Vector{Int},
     group_start::Int,
     group_len::Int,
@@ -745,12 +747,13 @@ function _mainsearch_selected_trace_fragment_spectral_angle(
         pass_mask[row] || continue
         isotope_traces[row] == selected_trace || continue
         for r in 1:8
-            obs_buf[r] += max(Float32(frag_cols[r][row]), 0f0)
+            observed = max(Float32(frag_cols[r][row]), 0f0)
+            obs_buf[r] += observed
         end
     end
 
     pred_fragment_intensity_provider!(pred_buf, pid)
-    return _mainsearch_spectral_angle(obs_buf, pred_buf)
+    return _mainsearch_hellinger_distance(obs_buf, pred_buf)
 end
 
 function _mainsearch_predicted_fragment_rank_intensities!(
@@ -1034,7 +1037,7 @@ function select_best_per_precursor!(
         (scan_cycle_index !== nothing || has_cycle_idx)
     compute_other_traces = pass_mask !== nothing && has_isotopes_captured
     compute_fragment_support = compute_other_traces && has_support_frag_features
-    compute_frag_observed_sum_spectral_angle = compute_fragment_support &&
+    compute_frag_observed_shape_features = compute_fragment_support &&
         pred_fragment_intensity_provider! !== nothing
     compute_trace_agreement = compute_other_traces && has_cycle_idx && weights !== nothing &&
         has_irt && has_trace_frag_features
@@ -1046,7 +1049,7 @@ function select_best_per_precursor!(
     out_n_frags_detected_intersection = compute_fragment_support ? Vector{UInt8}() : nothing
     out_n_frags_detected_union_bitvec_rank = compute_fragment_support ? Vector{UInt16}() : nothing
     out_n_frags_detected_intersection_bitvec_rank = compute_fragment_support ? Vector{UInt16}() : nothing
-    out_frag_observed_sum_spectral_angle = compute_frag_observed_sum_spectral_angle ? Vector{Float32}() : nothing
+    out_frag_observed_sum_hellinger = compute_frag_observed_shape_features ? Vector{Float32}() : nothing
     out_trace_other_weight_corr = compute_trace_agreement ? Vector{Float32}() : nothing
     out_trace_other_frag_sum_corr = compute_trace_agreement ? Vector{Float32}() : nothing
     out_trace_other_apex_delta_irt = compute_trace_agreement ? Vector{Float32}() : nothing
@@ -1078,8 +1081,8 @@ function select_best_per_precursor!(
         sizehint!(out_n_frags_detected_union_bitvec_rank, n ÷ 10)
         sizehint!(out_n_frags_detected_intersection_bitvec_rank, n ÷ 10)
     end
-    if compute_frag_observed_sum_spectral_angle
-        sizehint!(out_frag_observed_sum_spectral_angle, n ÷ 10)
+    if compute_frag_observed_shape_features
+        sizehint!(out_frag_observed_sum_hellinger, n ÷ 10)
     end
     if compute_trace_agreement
         sizehint!(out_trace_other_weight_corr, n ÷ 10)
@@ -1210,10 +1213,10 @@ function select_best_per_precursor!(
                 push!(out_n_frags_detected_intersection, support.intersection)
                 push!(out_n_frags_detected_union_bitvec_rank, support.union_rank)
                 push!(out_n_frags_detected_intersection_bitvec_rank, support.intersection_rank)
-                if compute_frag_observed_sum_spectral_angle
+                if compute_frag_observed_shape_features
                     push!(
-                        out_frag_observed_sum_spectral_angle,
-                        _mainsearch_selected_trace_fragment_spectral_angle(
+                        out_frag_observed_sum_hellinger,
+                        _mainsearch_selected_trace_fragment_hellinger(
                             perm,
                             group_start,
                             group_len,
@@ -1374,8 +1377,8 @@ function select_best_per_precursor!(
         result[!, :n_frags_detected_union_bitvec_rank] = out_n_frags_detected_union_bitvec_rank
         result[!, :n_frags_detected_intersection_bitvec_rank] = out_n_frags_detected_intersection_bitvec_rank
     end
-    if compute_frag_observed_sum_spectral_angle
-        result[!, :frag_observed_sum_spectral_angle] = out_frag_observed_sum_spectral_angle
+    if compute_frag_observed_shape_features
+        result[!, :frag_observed_sum_hellinger] = out_frag_observed_sum_hellinger
     end
     if compute_trace_agreement
         result[!, :trace_other_weight_corr] = out_trace_other_weight_corr

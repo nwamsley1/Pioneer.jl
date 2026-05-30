@@ -248,7 +248,7 @@ end
         @test best.n_frags_detected_intersection[1] == UInt8(3)
         @test best.n_frags_detected_union_bitvec_rank[1] == UInt16(11)
         @test best.n_frags_detected_intersection_bitvec_rank[1] == UInt16(22)
-        @test best.frag_observed_sum_spectral_angle[1] ≈ 1.0f0 atol=1f-6
+        @test best.frag_observed_sum_hellinger[1] ≈ 0.0f0 atol=1f-6
     end
 
     @testset "best PSM row carries aligned isotope trace agreement features" begin

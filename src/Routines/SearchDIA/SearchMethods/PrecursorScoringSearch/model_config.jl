@@ -86,7 +86,7 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_intersection,
     :n_frags_detected_union_bitvec_rank,
     :n_frags_detected_intersection_bitvec_rank,
-    :frag_observed_sum_spectral_angle,
+    :frag_observed_sum_hellinger,
     :trace_other_weight_corr,
     :trace_other_frag_sum_corr,
     :trace_other_apex_delta_irt,

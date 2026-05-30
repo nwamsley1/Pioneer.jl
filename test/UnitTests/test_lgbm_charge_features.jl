@@ -119,6 +119,7 @@ end
     @test !(:n_frags_detected_union_bitvec_rank in Pioneer.PRESCORE_FEATURES)
     @test !(:n_frags_detected_intersection_bitvec_rank in Pioneer.PRESCORE_FEATURES)
     @test !(:frag_observed_sum_spectral_angle in Pioneer.PRESCORE_FEATURES)
+    @test !(:frag_observed_sum_hellinger in Pioneer.PRESCORE_FEATURES)
     @test :precursor_fraction_transmitted in Pioneer.ADVANCED_FEATURE_SET
     @test :n_scans_other_traces in Pioneer.ADVANCED_FEATURE_SET
     @test :trace_other_weight_corr in Pioneer.ADVANCED_FEATURE_SET
@@ -128,7 +129,8 @@ end
     @test :n_frags_detected_intersection in Pioneer.ADVANCED_FEATURE_SET
     @test :n_frags_detected_union_bitvec_rank in Pioneer.ADVANCED_FEATURE_SET
     @test :n_frags_detected_intersection_bitvec_rank in Pioneer.ADVANCED_FEATURE_SET
-    @test :frag_observed_sum_spectral_angle in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:frag_observed_sum_spectral_angle in Pioneer.ADVANCED_FEATURE_SET)
+    @test :frag_observed_sum_hellinger in Pioneer.ADVANCED_FEATURE_SET
 
     X = Pioneer.feature_matrix(
         DataFrame(
@@ -141,7 +143,7 @@ end
             n_frags_detected_intersection = UInt8[1, 4],
             n_frags_detected_union_bitvec_rank = UInt16[20, 5],
             n_frags_detected_intersection_bitvec_rank = UInt16[30, 6],
-            frag_observed_sum_spectral_angle = Float32[0.25, 0.95],
+            frag_observed_sum_hellinger = Float32[0.5, 0.1],
         ),
         [
             :precursor_fraction_transmitted,
@@ -153,11 +155,11 @@ end
             :n_frags_detected_intersection,
             :n_frags_detected_union_bitvec_rank,
             :n_frags_detected_intersection_bitvec_rank,
-            :frag_observed_sum_spectral_angle,
+            :frag_observed_sum_hellinger,
         ],
     )
     @test X == Float32[
-        0.25 0 -1 -1 100 2 1 20 30 0.25
-        0.75 3 0.9 0.8 0.2 6 4 5 6 0.95
+        0.25 0 -1 -1 100 2 1 20 30 0.5
+        0.75 3 0.9 0.8 0.2 6 4 5 6 0.1
     ]
 end
