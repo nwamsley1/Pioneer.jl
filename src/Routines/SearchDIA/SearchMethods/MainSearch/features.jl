@@ -173,6 +173,8 @@ const PRESCORE_FEATURES = [
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
     :n_correlated_fragments_bitvec_rank,
+    :frag_corr_strength,
+    :frag_corr_effective_n,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -933,6 +935,18 @@ end
     d > 0 ? Float32(sxy/d) : 0f0
 end
 
+@inline function _positive_corr_summary(corrs::Vector{Float32})
+    strength = 0f0
+    sumsq = 0f0
+    @inbounds for c in corrs
+        pos = min(max(c, 0f0), 1f0)
+        strength += pos
+        sumsq += pos * pos
+    end
+    effective_n = sumsq > 0f0 ? Float32((strength * strength) / sumsq) : 0f0
+    return strength, effective_n
+end
+
 function _add_fragment_chromatogram_features!(psms::DataFrame;
         groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
         bitvec_rank_table = nothing)
@@ -948,6 +962,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
     psms[!, :n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
+    psms[!, :frag_corr_strength]          = zeros(Float32, n)
+    psms[!, :frag_corr_effective_n]       = zeros(Float32, n)
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     # :n_scans (per-precursor PSM count) — also a PRESCORE_FEATURES feature.
@@ -1064,6 +1080,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 end
             end
             corr_rank = _bitvec_pattern_rank(bitvec_rank_table, corr_mask)
+            corr_strength, corr_effective_n = _positive_corr_summary(c_fw)
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
             # to the other top-8 fragments. 56 Pearson calls per precursor.
@@ -1100,6 +1117,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 psms.frag_apex_dispersion_irt[i_orig] = apex_disp
                 psms.n_correlated_fragments[i_orig]    = n_corr_70
                 psms.n_correlated_fragments_bitvec_rank[i_orig] = corr_rank
+                psms.frag_corr_strength[i_orig]        = corr_strength
+                psms.frag_corr_effective_n[i_orig]     = corr_effective_n
                 psms.frag_corr_best_m0[i_orig]         = c_best_m0
                 psms.delta_frame_peak_center[i_orig]   = delta_frame
             end

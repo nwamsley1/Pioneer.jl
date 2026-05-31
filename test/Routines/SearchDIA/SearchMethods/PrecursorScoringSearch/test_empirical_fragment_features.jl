@@ -1,4 +1,4 @@
-@testset "empirical fragment reference features use top-5 leave-one-out PEP-weighted consensus" begin
+@testset "empirical fragment reference features use top-2 leave-one-out references" begin
     precursor_idx = UInt32[10, 10, 10, 10, 10, 10, 11]
     row_ids = UInt64[1, 2, 3, 4, 5, 6, 7]
     scores = Float32[0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.7]
@@ -33,13 +33,8 @@
     @test hellinger[2] ≈ 1.0f0
     @test ref_pep[2] ≈ 0.0f0
 
-    w1 = 1.0f0
-    w2 = 0.25f0
-    c1 = w1 / sqrt(w1^2 + w2^2)
-    c2 = w2 / sqrt(w1^2 + w2^2)
-    expected_row6 = sqrt(0.5f0 * ((0.0f0 - c1)^2 + (1.0f0 - c2)^2))
-    @test hellinger[6] ≈ expected_row6
-    @test ref_pep[6] ≈ 0.15f0
+    @test hellinger[6] ≈ 1.0f0
+    @test ref_pep[6] ≈ 0.0f0
 
     @test hellinger[7] ≈ 1.0f0
     @test ref_pep[7] ≈ 1.0f0

@@ -16,6 +16,8 @@
     @test features.wide_ms1_frag_sum_corr > 0.9f0
     @test features.wide_frag_corr_mean > 0.99f0
     @test features.wide_n_correlated_fragments == UInt8(2)
+    @test features.wide_frag_corr_strength > 1.9f0
+    @test features.wide_frag_corr_effective_n > 1.99f0
     @test features.wide_frag_corr_best_m0 > 0.9f0
     @test features.wide_signal_support == 1f0
 end
@@ -136,6 +138,20 @@ end
 end
 
 @testset "wide-window features are cross-run only" begin
+    @test !(:wide_frag_corr_roll_peak_effective_n in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_frag_corr_roll_peak_to_mean_delta in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_frag_corr_roll_apex_delta_scan in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_frag_corr_roll_peak_effective_n in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_frag_corr_roll_peak_to_mean_delta in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_frag_corr_roll_apex_delta_scan in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_left_frag_corr_effective_n in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_right_frag_corr_effective_n in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_flank_max_frag_corr_effective_n in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_core_to_flank_effective_n_delta in Pioneer.WIDE_WINDOW_FEATURES)
+    @test !(:wide_left_frag_corr_effective_n in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_right_frag_corr_effective_n in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_flank_max_frag_corr_effective_n in Pioneer.ADVANCED_FEATURE_SET)
+    @test !(:wide_core_to_flank_effective_n_delta in Pioneer.ADVANCED_FEATURE_SET)
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, Pioneer.WIDE_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.WIDE_WINDOW_FEATURES)
 end

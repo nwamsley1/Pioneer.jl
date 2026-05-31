@@ -50,8 +50,16 @@ end
 
     @test :n_correlated_fragments_bitvec_rank in Pioneer.PRESCORE_FEATURES
     @test :n_correlated_fragments_bitvec_rank in Pioneer.ADVANCED_FEATURE_SET
+    @test :frag_corr_strength in Pioneer.PRESCORE_FEATURES
+    @test :frag_corr_strength in Pioneer.ADVANCED_FEATURE_SET
+    @test :frag_corr_effective_n in Pioneer.PRESCORE_FEATURES
+    @test :frag_corr_effective_n in Pioneer.ADVANCED_FEATURE_SET
     @test !(:wide_n_correlated_fragments_bitvec_rank in Pioneer.PRESCORE_FEATURES)
     @test :wide_n_correlated_fragments_bitvec_rank in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:wide_frag_corr_strength in Pioneer.PRESCORE_FEATURES)
+    @test :wide_frag_corr_strength in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:wide_frag_corr_effective_n in Pioneer.PRESCORE_FEATURES)
+    @test :wide_frag_corr_effective_n in Pioneer.ADVANCED_FEATURE_SET
     @test !(:n_frags_detected_union_bitvec_rank in Pioneer.PRESCORE_FEATURES)
     @test !(:n_frags_detected_intersection_bitvec_rank in Pioneer.PRESCORE_FEATURES)
     @test :n_frags_detected_union_bitvec_rank in Pioneer.ADVANCED_FEATURE_SET
@@ -95,6 +103,8 @@ end
     Pioneer._add_fragment_chromatogram_features!(psms; bitvec_rank_table = rank_table)
     @test psms.n_correlated_fragments == UInt8[2, 2, 2]
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
+    @test psms.frag_corr_strength ≈ Float32[2, 2, 2]
+    @test psms.frag_corr_effective_n ≈ Float32[2, 2, 2]
 
     features = Pioneer._wide_window_feature_values(
         Float32[0, 0, 0],
@@ -106,6 +116,8 @@ end
     )
     @test features.wide_n_correlated_fragments == UInt8(2)
     @test features.wide_n_correlated_fragments_bitvec_rank == UInt16(7)
+    @test features.wide_frag_corr_strength ≈ 2f0
+    @test features.wide_frag_corr_effective_n ≈ 2f0
 end
 
 @testset "LightGBM isotope-trace collapse features" begin

@@ -1,12 +1,11 @@
 # Empirical observed-fragment shape features for cross-run scoring.
 #
 # MainSearch writes one best PSM per precursor/run. For each precursor, keep
-# the top K per-run PSMs by MainSearch score and score each row against a
-# leave-one-out consensus of those empirical spectra. The consensus uses
-# deconvolved observed ("shadow") top-8 fragment trace intensities, weighted
-# by per-run confidence (1 - PEP).
+# the top 2 per-run PSMs by MainSearch score and score each row against the
+# best one that is not itself. References use deconvolved observed ("shadow")
+# top-8 fragment trace intensities.
 
-const EMPIRICAL_FRAGMENT_REF_K = 5
+const EMPIRICAL_FRAGMENT_REF_K = 2
 const EMPIRICAL_FRAGMENT_COLUMNS = (
     :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
     :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
@@ -167,55 +166,23 @@ function _empirical_fragment_topk_refs(
     return refs
 end
 
-@inline function _empirical_fragment_consensus_reference(ref::EmpiricalFragmentTopKRef, row_id::UInt64)
-    h1 = 0.0f0
-    h2 = 0.0f0
-    h3 = 0.0f0
-    h4 = 0.0f0
-    h5 = 0.0f0
-    h6 = 0.0f0
-    h7 = 0.0f0
-    h8 = 0.0f0
-    weight_sum = 0.0f0
-    pep_weighted_sum = 0.0f0
-
+@inline function _empirical_fragment_reference(ref::EmpiricalFragmentTopKRef, row_id::UInt64)
     @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
         rid = ref.rows[j]
         (rid == UInt64(0) || rid == row_id) && continue
-        weight = max(1.0f0 - ref.peps[j], 0.0f0)
-        weight > 0.0f0 || continue
         sqrt_frag = ref.sqrt_frags[j]
         _empirical_fragment_sqrt_is_valid(sqrt_frag) || continue
-
-        h1 += weight * sqrt_frag[1]
-        h2 += weight * sqrt_frag[2]
-        h3 += weight * sqrt_frag[3]
-        h4 += weight * sqrt_frag[4]
-        h5 += weight * sqrt_frag[5]
-        h6 += weight * sqrt_frag[6]
-        h7 += weight * sqrt_frag[7]
-        h8 += weight * sqrt_frag[8]
-        weight_sum += weight
-        pep_weighted_sum += weight * ref.peps[j]
-    end
-
-    norm = h1*h1 + h2*h2 + h3*h3 + h4*h4 + h5*h5 + h6*h6 + h7*h7 + h8*h8
-    if weight_sum <= 0.0f0 || norm <= 0.0f0
         return (
-            found = false,
-            sqrt_frag = EMPIRICAL_FRAGMENT_EMPTY_VEC,
-            pep = EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP,
+            found = true,
+            sqrt_frag = sqrt_frag,
+            pep = ref.peps[j],
         )
     end
 
-    inv_norm = 1.0f0 / sqrt(norm)
     return (
-        found = true,
-        sqrt_frag = (
-            h1 * inv_norm, h2 * inv_norm, h3 * inv_norm, h4 * inv_norm,
-            h5 * inv_norm, h6 * inv_norm, h7 * inv_norm, h8 * inv_norm,
-        ),
-        pep = pep_weighted_sum / weight_sum,
+        found = false,
+        sqrt_frag = EMPIRICAL_FRAGMENT_EMPTY_VEC,
+        pep = EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP,
     )
 end
 
@@ -235,7 +202,7 @@ function _empirical_fragment_reference_features(
     @inbounds for i in 1:n
         ref = get(refs, UInt32(precursor_idx[i]), nothing)
         ref === nothing && continue
-        picked = _empirical_fragment_consensus_reference(ref, row_ids[i])
+        picked = _empirical_fragment_reference(ref, row_ids[i])
         picked.found || continue
         obs_sqrt = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
         _empirical_fragment_sqrt_is_valid(obs_sqrt) || continue
@@ -307,7 +274,7 @@ function add_empirical_fragment_features_to_fold_file!(
         @inbounds for i in 1:n
             ref = get(refs, UInt32(tbl.precursor_idx[i]), nothing)
             ref === nothing && continue
-            picked = _empirical_fragment_consensus_reference(ref, row_start + UInt64(i - 1))
+            picked = _empirical_fragment_reference(ref, row_start + UInt64(i - 1))
             picked.found || continue
             obs_sqrt = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
             _empirical_fragment_sqrt_is_valid(obs_sqrt) || continue
@@ -340,7 +307,7 @@ function add_empirical_fragment_features_to_fold_files!(file_paths::Vector{Strin
     end
 
     @debug_l1 "Empirical fragment cross-run features: added $(length(EMPIRICAL_FRAGMENT_FEATURES)) features " *
-              "to $n_files fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO, PEP-weighted) " *
+              "to $n_files fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO) " *
               "in $(round(t, digits = 2))s"
     return nothing
 end

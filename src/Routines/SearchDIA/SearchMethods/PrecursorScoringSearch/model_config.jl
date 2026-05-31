@@ -33,6 +33,8 @@ const WIDE_WINDOW_FEATURES = [
     :wide_frag_corr_mean,
     :wide_n_correlated_fragments,
     :wide_n_correlated_fragments_bitvec_rank,
+    :wide_frag_corr_strength,
+    :wide_frag_corr_effective_n,
     :wide_frag_corr_best_m0,
     :wide_signal_support,
     :wide_core_n_scans,
@@ -40,8 +42,8 @@ const WIDE_WINDOW_FEATURES = [
 
 # Empirical observed-fragment shape features. These are cross-run only:
 # they compare each per-run best PSM's deconvolved observed ("shadow") top-8
-# fragment intensities against a top-5 leave-one-out empirical consensus for
-# the same precursor, weighted by per-run confidence (1 - PEP).
+# fragment intensities against the best top-2 empirical reference for the
+# same precursor, excluding the current PSM when it is itself one of the top 2.
 # empirical_frag_ref_pep is computed as a diagnostic/reference-confidence column
 # but is intentionally excluded from ADVANCED_FEATURE_SET to avoid inflating
 # false transfer rate through per-run PEP feedback.
@@ -86,6 +88,8 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
     :n_correlated_fragments_bitvec_rank,
+    :frag_corr_strength,
+    :frag_corr_effective_n,
     :frag_corr_best_m0,
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
@@ -109,6 +113,8 @@ const ADVANCED_FEATURE_SET = [
     :wide_frag_corr_mean,
     :wide_n_correlated_fragments,
     :wide_n_correlated_fragments_bitvec_rank,
+    :wide_frag_corr_strength,
+    :wide_frag_corr_effective_n,
     :wide_frag_corr_best_m0,
     :wide_signal_support,
     :wide_core_n_scans,

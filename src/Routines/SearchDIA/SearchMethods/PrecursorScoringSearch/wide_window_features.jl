@@ -59,6 +59,8 @@ end
         wide_frag_corr_mean = 0f0,
         wide_n_correlated_fragments = UInt8(0),
         wide_n_correlated_fragments_bitvec_rank = UInt16(0),
+        wide_frag_corr_strength = 0f0,
+        wide_frag_corr_effective_n = 0f0,
         wide_frag_corr_best_m0 = 0f0,
         wide_signal_support = 0f0,
     )
@@ -136,18 +138,25 @@ function _wide_window_feature_values(
 
     n_correlated = UInt8(0)
     correlated_mask = UInt8(0)
+    corr_strength = 0f0
+    corr_sumsq = 0f0
     other_sum = Vector{Float32}(undef, n_scans)
     @inbounds for r in 1:n_frags
         has_signal[r] || continue
         for i in 1:n_scans
             other_sum[i] = frag_sum[i] - max(Float32(fragments[i, r]), 0f0)
         end
-        if _wide_window_pcor(view(fragments, :, r), other_sum) > WIDE_WINDOW_CORR_THRESHOLD
+        c = _wide_window_pcor(view(fragments, :, r), other_sum)
+        pos = min(max(c, 0f0), 1f0)
+        corr_strength += pos
+        corr_sumsq += pos * pos
+        if c > WIDE_WINDOW_CORR_THRESHOLD
             n_correlated += UInt8(1)
             correlated_mask |= UInt8(1) << (r - 1)
         end
     end
     correlated_rank = _bitvec_pattern_rank(bitvec_rank_table, correlated_mask)
+    corr_effective_n = corr_sumsq > 0f0 ? Float32((corr_strength * corr_strength) / corr_sumsq) : 0f0
 
     best_r = 0
     best_consensus = typemin(Float32)
@@ -175,6 +184,8 @@ function _wide_window_feature_values(
         wide_frag_corr_mean = frag_corr_mean,
         wide_n_correlated_fragments = n_correlated,
         wide_n_correlated_fragments_bitvec_rank = correlated_rank,
+        wide_frag_corr_strength = corr_strength,
+        wide_frag_corr_effective_n = corr_effective_n,
         wide_frag_corr_best_m0 = best_m0_corr,
         wide_signal_support = signal_support,
     )
@@ -550,6 +561,8 @@ function _wide_scatter_features!(columns, rows::Vector{Int}, features)
         columns.frag_corr_mean[row] = features.wide_frag_corr_mean
         columns.n_correlated[row] = features.wide_n_correlated_fragments
         columns.n_correlated_rank[row] = features.wide_n_correlated_fragments_bitvec_rank
+        columns.corr_strength[row] = features.wide_frag_corr_strength
+        columns.corr_effective_n[row] = features.wide_frag_corr_effective_n
         columns.best_m0[row] = features.wide_frag_corr_best_m0
         columns.signal_support[row] = features.wide_signal_support
     end
@@ -574,6 +587,8 @@ function add_wide_window_features_to_fold_file!(
     tbl[!, :wide_frag_corr_mean] = zeros(Float32, n)
     tbl[!, :wide_n_correlated_fragments] = zeros(UInt8, n)
     tbl[!, :wide_n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
+    tbl[!, :wide_frag_corr_strength] = zeros(Float32, n)
+    tbl[!, :wide_frag_corr_effective_n] = zeros(Float32, n)
     tbl[!, :wide_frag_corr_best_m0] = zeros(Float32, n)
     tbl[!, :wide_signal_support] = zeros(Float32, n)
     if !hasproperty(tbl, :wide_core_n_scans)
@@ -609,6 +624,8 @@ function add_wide_window_features_to_fold_file!(
         frag_corr_mean = tbl[!, :wide_frag_corr_mean],
         n_correlated = tbl[!, :wide_n_correlated_fragments],
         n_correlated_rank = tbl[!, :wide_n_correlated_fragments_bitvec_rank],
+        corr_strength = tbl[!, :wide_frag_corr_strength],
+        corr_effective_n = tbl[!, :wide_frag_corr_effective_n],
         best_m0 = tbl[!, :wide_frag_corr_best_m0],
         signal_support = tbl[!, :wide_signal_support],
     )
