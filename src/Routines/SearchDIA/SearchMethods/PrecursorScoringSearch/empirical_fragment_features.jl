@@ -2,11 +2,13 @@
 #
 # MainSearch writes one best PSM per precursor/run. For each precursor, keep
 # the top two per-run PSMs by MainSearch score so each row can be scored
-# against the best empirical reference that is not itself.
+# against the best empirical reference that is not itself. The fragment shape
+# uses deconvolved observed ("shadow") top-8 intensities rather than raw peaks
+# so shared MS2 peaks are not credited wholesale to every competing precursor.
 
 const EMPIRICAL_FRAGMENT_COLUMNS = (
-    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
-    :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
+    :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
 )
 const EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER = 1.0f0
 const EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP = 1.0f0

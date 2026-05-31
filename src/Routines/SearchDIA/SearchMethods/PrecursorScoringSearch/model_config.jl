@@ -39,8 +39,9 @@ const WIDE_WINDOW_FEATURES = [
 ]
 
 # Empirical observed-fragment shape features. These are cross-run only:
-# they compare each per-run best PSM's raw top-8 fragment intensities against
-# the best empirical reference PSM for the same precursor from another run.
+# they compare each per-run best PSM's deconvolved observed ("shadow") top-8
+# fragment intensities against the best empirical reference PSM for the same
+# precursor from another run.
 # empirical_frag_ref_pep is computed as a diagnostic/reference-confidence column
 # but is intentionally excluded from ADVANCED_FEATURE_SET to avoid inflating
 # false transfer rate through per-run PEP feedback.

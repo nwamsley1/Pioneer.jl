@@ -106,6 +106,19 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag7_int::H
     frag8_int::H
 
+    # Deconvolved observed ("shadow") top-8 fragment trace intensities from
+    # the fitted spectrum. These mirror frag1_int..frag8_int, but use
+    # max(fitted_peak - residual, 0) so empirical cross-run spectra can ignore
+    # intensity explained by competing precursors in the same MS2 scan.
+    shadow_frag1_int::H
+    shadow_frag2_int::H
+    shadow_frag3_int::H
+    shadow_frag4_int::H
+    shadow_frag5_int::H
+    shadow_frag6_int::H
+    shadow_frag7_int::H
+    shadow_frag8_int::H
+
     # Transient observed MS2 peak indices for top-8 fragment ranks at each
     # trace's most abundant predicted isotope. MainSearch uses these to compute
     # fragment-peak competition features, then drops the raw peak ids before
@@ -209,6 +222,15 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag6_int,
             unscored_PSMs[i].frag7_int,
             unscored_PSMs[i].frag8_int,
+
+            H(spectral_scores[scores_idx].shadow_frag1_int),
+            H(spectral_scores[scores_idx].shadow_frag2_int),
+            H(spectral_scores[scores_idx].shadow_frag3_int),
+            H(spectral_scores[scores_idx].shadow_frag4_int),
+            H(spectral_scores[scores_idx].shadow_frag5_int),
+            H(spectral_scores[scores_idx].shadow_frag6_int),
+            H(spectral_scores[scores_idx].shadow_frag7_int),
+            H(spectral_scores[scores_idx].shadow_frag8_int),
 
             unscored_PSMs[i].frag1_peak_idx,
             unscored_PSMs[i].frag2_peak_idx,

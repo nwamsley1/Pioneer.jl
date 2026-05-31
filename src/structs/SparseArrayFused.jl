@@ -26,6 +26,10 @@ Column-sparse design matrix produced by the fused per-precursor scan path.
   `isotope::Vector{UInt8}` arrays — one byte per entry rather than two.
   Read via the `matched_at(H, i)` and `isotope_at(H, i)` accessors defined
   on `AbstractSparseDesignMatrix`.
+- `frag_rank::Vector{UInt8}`: top-8 fragment rank to which this entry can be
+  attributed for shadow-spectrum empirical features. Zero means no tracked
+  top-8 contribution; same-peak mixed-rank deduplication keeps the lower
+  positive rank.
 - `colptr::Vector{Ti}`: CSC column pointer. `colptr[c]:colptr[c+1]-1` gives
   the entry range for column `c`. Written directly by `finalize_column!`;
   no sortSparse! step.
@@ -44,6 +48,7 @@ mutable struct SparseArrayFused{Ti<:Integer, T<:AbstractFloat} <: AbstractSparse
     nzval::Vector{T}
     x::Vector{T}
     meta::Vector{UInt8}
+    frag_rank::Vector{UInt8}
     colptr::Vector{Ti}
 end
 
@@ -56,6 +61,7 @@ end
 # Override the abstract accessors for the packed layout.
 @inline matched_at(H::SparseArrayFused, i::Integer) = unpack_matched(H.meta[i])
 @inline isotope_at(H::SparseArrayFused, i::Integer) = unpack_isotope(H.meta[i])
+@inline fragment_rank_at(H::SparseArrayFused, i::Integer) = H.frag_rank[i]
 
 SparseArrayFused(N::I) where {I<:Integer} = SparseArrayFused(
     0, 0, 0,
@@ -63,6 +69,7 @@ SparseArrayFused(N::I) where {I<:Integer} = SparseArrayFused(
     zeros(Float32, N),  # nzval
     zeros(Float32, N),  # x
     fill(UInt8(1), N),  # meta — default matched=true, iso=0 (mirrors SparseArray)
+    zeros(UInt8, N),    # frag_rank
     zeros(I, N),        # colptr
 )
 
@@ -72,6 +79,7 @@ function reset!(sa::SparseArrayFused{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
         sa.x[i]      = zero(T)
         sa.nzval[i]  = zero(T)
         sa.meta[i]   = UInt8(1)  # matched=true, iso=0
+        sa.frag_rank[i] = UInt8(0)
     end
     # colptr is indexed by column count, not entry count; zero up to (n + 1).
     @inbounds for i in 1:(sa.n + 1)
@@ -86,8 +94,8 @@ end
 """
     grow_if_needed!(sa, needed_entries)
 
-Expand the entry-indexed vectors (`rowval/nzval/x/meta`) so they can hold
-at least `needed_entries` entries. No-op if already large enough.
+Expand the entry-indexed vectors (`rowval/nzval/x/meta/frag_rank`) so they
+can hold at least `needed_entries` entries. No-op if already large enough.
 """
 function grow_if_needed!(sa::SparseArrayFused{Ti,T}, needed_entries::Integer) where {Ti,T}
     cap = length(sa.rowval)
@@ -98,6 +106,7 @@ function grow_if_needed!(sa::SparseArrayFused{Ti,T}, needed_entries::Integer) wh
         append!(sa.nzval,  zeros(T,  extra))
         append!(sa.x,      zeros(T,  extra))
         append!(sa.meta,   fill(UInt8(1), extra))
+        append!(sa.frag_rank, zeros(UInt8, extra))
     end
     return
 end

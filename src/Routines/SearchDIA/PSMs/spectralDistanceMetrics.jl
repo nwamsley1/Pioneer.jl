@@ -23,7 +23,33 @@ struct SpectralScoresMainSearch{T<:AbstractFloat} <: SpectralScores{T}
     fitted_manhattan_distance::T
     fitted_hellinger::T
     spectral_contrast::T
+    shadow_frag1_int::T
+    shadow_frag2_int::T
+    shadow_frag3_int::T
+    shadow_frag4_int::T
+    shadow_frag5_int::T
+    shadow_frag6_int::T
+    shadow_frag7_int::T
+    shadow_frag8_int::T
 end
+
+SpectralScoresMainSearch(gof::T,
+    max_matched_residual::T,
+    max_unmatched_residual::T,
+    fitted_manhattan_distance::T,
+    fitted_hellinger::T,
+    spectral_contrast::T) where {T<:AbstractFloat} =
+    SpectralScoresMainSearch(
+        gof,
+        max_matched_residual,
+        max_unmatched_residual,
+        fitted_manhattan_distance,
+        fitted_hellinger,
+        spectral_contrast,
+        zero(T), zero(T), zero(T), zero(T),
+        zero(T), zero(T), zero(T), zero(T),
+    )
+
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::AbstractSparseDesignMatrix{Ti,T},
@@ -70,6 +96,14 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient
         sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
+        shadow_frag1_int = zero(T)
+        shadow_frag2_int = zero(T)
+        shadow_frag3_int = zero(T)
+        shadow_frag4_int = zero(T)
+        shadow_frag5_int = zero(T)
+        shadow_frag6_int = zero(T)
+        shadow_frag7_int = zero(T)
+        shadow_frag8_int = zero(T)
         dot_product = zero(T)
         h2_sum = zero(T)
         x2_sum = zero(T)
@@ -95,6 +129,24 @@ function getDistanceMetrics(w::Vector{T},
             bc_sum += sqrt(fitted_peak * x_i)
 
             if matched_at(H, i)
+                rank = fragment_rank_at(H, i)
+                if rank == UInt8(1)
+                    shadow_frag1_int += x_i
+                elseif rank == UInt8(2)
+                    shadow_frag2_int += x_i
+                elseif rank == UInt8(3)
+                    shadow_frag3_int += x_i
+                elseif rank == UInt8(4)
+                    shadow_frag4_int += x_i
+                elseif rank == UInt8(5)
+                    shadow_frag5_int += x_i
+                elseif rank == UInt8(6)
+                    shadow_frag6_int += x_i
+                elseif rank == UInt8(7)
+                    shadow_frag7_int += x_i
+                elseif rank == UInt8(8)
+                    shadow_frag8_int += x_i
+                end
                 sum_of_fitted_peaks_matched += fitted_peak
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
@@ -129,7 +181,15 @@ function getDistanceMetrics(w::Vector{T},
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             U(fitted_hellinger),
-            U(spectral_contrast)
+            U(spectral_contrast),
+            U(shadow_frag1_int),
+            U(shadow_frag2_int),
+            U(shadow_frag3_int),
+            U(shadow_frag4_int),
+            U(shadow_frag5_int),
+            U(shadow_frag6_int),
+            U(shadow_frag7_int),
+            U(shadow_frag8_int),
         )
     end
 end

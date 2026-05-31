@@ -61,6 +61,14 @@ end
             frag6_int = Float32[0, 0],
             frag7_int = Float32[0, 0],
             frag8_int = Float32[0, 0],
+            shadow_frag1_int = Float32[0, 25],
+            shadow_frag2_int = Float32[100, 25],
+            shadow_frag3_int = Float32[0, 0],
+            shadow_frag4_int = Float32[0, 0],
+            shadow_frag5_int = Float32[0, 0],
+            shadow_frag6_int = Float32[0, 0],
+            shadow_frag7_int = Float32[0, 0],
+            shadow_frag8_int = Float32[0, 0],
         ))
         Arrow.write(f2, DataFrame(
             precursor_idx = UInt32[20],
@@ -74,6 +82,14 @@ end
             frag6_int = Float32[0],
             frag7_int = Float32[0],
             frag8_int = Float32[0],
+            shadow_frag1_int = Float32[0],
+            shadow_frag2_int = Float32[100],
+            shadow_frag3_int = Float32[0],
+            shadow_frag4_int = Float32[0],
+            shadow_frag5_int = Float32[0],
+            shadow_frag6_int = Float32[0],
+            shadow_frag7_int = Float32[0],
+            shadow_frag8_int = Float32[0],
         ))
 
         Pioneer.add_empirical_fragment_features_to_fold_files!([f1, f2])
@@ -81,11 +97,11 @@ end
         d1 = DataFrame(Arrow.Table(f1))
         d2 = DataFrame(Arrow.Table(f2))
 
-        @test d1.empirical_frag_best_hellinger[1] ≈ 1.0f0
+        @test d1.empirical_frag_best_hellinger[1] ≈ 0.0f0
         @test d1.empirical_frag_ref_pep[1] ≈ 0.03f0
         @test d1.empirical_frag_best_hellinger[2] ≈ 1.0f0
         @test d1.empirical_frag_ref_pep[2] ≈ 1.0f0
-        @test d2.empirical_frag_best_hellinger[1] ≈ 1.0f0
+        @test d2.empirical_frag_best_hellinger[1] ≈ 0.0f0
         @test d2.empirical_frag_ref_pep[1] ≈ 0.01f0
     end
 end

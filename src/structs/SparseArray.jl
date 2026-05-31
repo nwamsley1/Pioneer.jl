@@ -32,6 +32,7 @@ abstract type AbstractSparseDesignMatrix{Ti<:Integer, T<:AbstractFloat} end
 """
     matched_at(H, i) -> Bool
     isotope_at(H, i) -> UInt8
+    fragment_rank_at(H, i) -> UInt8
 
 Per-entry accessors that abstract over storage layout. `SparseArrayFused`
 packs `matched + isotope` into a single `UInt8`, so the methods on it
@@ -40,6 +41,7 @@ layout that stores them as separate arrays.
 """
 @inline matched_at(H::AbstractSparseDesignMatrix, i::Integer) = H.matched[i]
 @inline isotope_at(H::AbstractSparseDesignMatrix, i::Integer) = H.isotope[i]
+@inline fragment_rank_at(::AbstractSparseDesignMatrix, ::Integer) = UInt8(0)
 
 """
     initResiduals!(r, sa, w)
