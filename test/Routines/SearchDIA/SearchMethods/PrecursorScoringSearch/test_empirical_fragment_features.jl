@@ -1,20 +1,20 @@
-@testset "empirical fragment reference features use second-best for self rows" begin
-    precursor_idx = UInt32[10, 10, 10, 11]
-    row_ids = UInt64[1, 2, 3, 4]
-    scores = Float32[0.9, 0.8, 0.2, 0.7]
-    peps = Float32[0.01, 0.03, 0.50, 0.02]
+@testset "empirical fragment reference features use top-5 leave-one-out PEP-weighted consensus" begin
+    precursor_idx = UInt32[10, 10, 10, 10, 10, 10, 11]
+    row_ids = UInt64[1, 2, 3, 4, 5, 6, 7]
+    scores = Float32[0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.7]
+    peps = Float32[0.0, 0.75, 1.0, 1.0, 1.0, 0.0, 0.02]
     frag_cols = (
-        Float32[100, 0, 100, 25],
-        Float32[0, 100, 0, 25],
-        Float32[0, 0, 0, 0],
-        Float32[0, 0, 0, 0],
-        Float32[0, 0, 0, 0],
-        Float32[0, 0, 0, 0],
-        Float32[0, 0, 0, 0],
-        Float32[0, 0, 0, 0],
+        Float32[100, 0, 0, 0, 0, 0, 25],
+        Float32[0, 100, 100, 100, 100, 100, 25],
+        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0],
     )
 
-    refs = Pioneer._empirical_fragment_top2_refs(
+    refs = Pioneer._empirical_fragment_topk_refs(
         precursor_idx,
         row_ids,
         scores,
@@ -29,13 +29,20 @@
     )
 
     @test hellinger[1] ≈ 1.0f0
-    @test ref_pep[1] ≈ 0.03f0
+    @test ref_pep[1] ≈ 0.75f0
     @test hellinger[2] ≈ 1.0f0
-    @test ref_pep[2] ≈ 0.01f0
-    @test hellinger[3] ≈ 0.0f0
-    @test ref_pep[3] ≈ 0.01f0
-    @test hellinger[4] ≈ 1.0f0
-    @test ref_pep[4] ≈ 1.0f0
+    @test ref_pep[2] ≈ 0.0f0
+
+    w1 = 1.0f0
+    w2 = 0.25f0
+    c1 = w1 / sqrt(w1^2 + w2^2)
+    c2 = w2 / sqrt(w1^2 + w2^2)
+    expected_row6 = sqrt(0.5f0 * ((0.0f0 - c1)^2 + (1.0f0 - c2)^2))
+    @test hellinger[6] ≈ expected_row6
+    @test ref_pep[6] ≈ 0.15f0
+
+    @test hellinger[7] ≈ 1.0f0
+    @test ref_pep[7] ≈ 1.0f0
 end
 
 @testset "empirical fragment features are cross-run only" begin
@@ -97,11 +104,11 @@ end
         d1 = DataFrame(Arrow.Table(f1))
         d2 = DataFrame(Arrow.Table(f2))
 
-        @test d1.empirical_frag_best_hellinger[1] ≈ 0.0f0
+        @test isapprox(d1.empirical_frag_best_hellinger[1], 0.0f0; atol = 1.0f-6)
         @test d1.empirical_frag_ref_pep[1] ≈ 0.03f0
         @test d1.empirical_frag_best_hellinger[2] ≈ 1.0f0
         @test d1.empirical_frag_ref_pep[2] ≈ 1.0f0
-        @test d2.empirical_frag_best_hellinger[1] ≈ 0.0f0
+        @test isapprox(d2.empirical_frag_best_hellinger[1], 0.0f0; atol = 1.0f-6)
         @test d2.empirical_frag_ref_pep[1] ≈ 0.01f0
     end
 end

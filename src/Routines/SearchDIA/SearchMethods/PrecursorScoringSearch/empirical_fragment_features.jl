@@ -1,11 +1,12 @@
 # Empirical observed-fragment shape features for cross-run scoring.
 #
 # MainSearch writes one best PSM per precursor/run. For each precursor, keep
-# the top two per-run PSMs by MainSearch score so each row can be scored
-# against the best empirical reference that is not itself. The fragment shape
-# uses deconvolved observed ("shadow") top-8 intensities rather than raw peaks
-# so shared MS2 peaks are not credited wholesale to every competing precursor.
+# the top K per-run PSMs by MainSearch score and score each row against a
+# leave-one-out consensus of those empirical spectra. The consensus uses
+# deconvolved observed ("shadow") top-8 fragment trace intensities, weighted
+# by per-run confidence (1 - PEP).
 
+const EMPIRICAL_FRAGMENT_REF_K = 5
 const EMPIRICAL_FRAGMENT_COLUMNS = (
     :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
     :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
@@ -13,28 +14,24 @@ const EMPIRICAL_FRAGMENT_COLUMNS = (
 const EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER = 1.0f0
 const EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP = 1.0f0
 const EMPIRICAL_FRAGMENT_EMPTY_VEC = ntuple(_ -> 0.0f0, 8)
+const EMPIRICAL_FRAGMENT_EMPTY_ROWS = ntuple(_ -> UInt64(0), EMPIRICAL_FRAGMENT_REF_K)
+const EMPIRICAL_FRAGMENT_EMPTY_SCORES = ntuple(_ -> typemin(Float32), EMPIRICAL_FRAGMENT_REF_K)
+const EMPIRICAL_FRAGMENT_EMPTY_PEPS = ntuple(_ -> EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP, EMPIRICAL_FRAGMENT_REF_K)
+const EMPIRICAL_FRAGMENT_EMPTY_FRAGS = ntuple(_ -> EMPIRICAL_FRAGMENT_EMPTY_VEC, EMPIRICAL_FRAGMENT_REF_K)
 
-mutable struct EmpiricalFragmentTop2Ref
-    row1::UInt64
-    score1::Float32
-    pep1::Float32
-    frag1::NTuple{8, Float32}
-    row2::UInt64
-    score2::Float32
-    pep2::Float32
-    frag2::NTuple{8, Float32}
+mutable struct EmpiricalFragmentTopKRef
+    rows::NTuple{EMPIRICAL_FRAGMENT_REF_K, UInt64}
+    scores::NTuple{EMPIRICAL_FRAGMENT_REF_K, Float32}
+    peps::NTuple{EMPIRICAL_FRAGMENT_REF_K, Float32}
+    sqrt_frags::NTuple{EMPIRICAL_FRAGMENT_REF_K, NTuple{8, Float32}}
 end
 
 function _empirical_fragment_empty_ref()
-    return EmpiricalFragmentTop2Ref(
-        UInt64(0),
-        typemin(Float32),
-        EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP,
-        EMPIRICAL_FRAGMENT_EMPTY_VEC,
-        UInt64(0),
-        typemin(Float32),
-        EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP,
-        EMPIRICAL_FRAGMENT_EMPTY_VEC,
+    return EmpiricalFragmentTopKRef(
+        EMPIRICAL_FRAGMENT_EMPTY_ROWS,
+        EMPIRICAL_FRAGMENT_EMPTY_SCORES,
+        EMPIRICAL_FRAGMENT_EMPTY_PEPS,
+        EMPIRICAL_FRAGMENT_EMPTY_FRAGS,
     )
 end
 
@@ -48,59 +45,103 @@ end
     return ntuple(i -> max(_empirical_fragment_safe_float(frag_cols[i][row], 0.0f0), 0.0f0), 8)
 end
 
-@inline function _empirical_fragment_hellinger_distance(
-    obs::NTuple{8, Float32},
-    ref::NTuple{8, Float32},
-)
-    obs_sum = 0.0f0
-    ref_sum = 0.0f0
+@inline function _empirical_fragment_sqrt_tuple(frag::NTuple{8, Float32})
+    frag_sum = 0.0f0
     @inbounds for i in 1:8
-        obs_sum += obs[i]
-        ref_sum += ref[i]
+        frag_sum += frag[i]
     end
-    (obs_sum > 0.0f0 && ref_sum > 0.0f0) || return EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER
+    frag_sum > 0.0f0 || return EMPIRICAL_FRAGMENT_EMPTY_VEC
 
+    inv_sum = 1.0f0 / frag_sum
+    return ntuple(i -> sqrt(frag[i] * inv_sum), 8)
+end
+
+@inline function _empirical_fragment_sqrt_is_valid(frag_sqrt::NTuple{8, Float32})
+    sumsq = 0.0f0
+    @inbounds for i in 1:8
+        sumsq += frag_sqrt[i] * frag_sqrt[i]
+    end
+    return sumsq > 0.0f0
+end
+
+@inline function _empirical_fragment_hellinger_from_sqrt(
+    obs_sqrt::NTuple{8, Float32},
+    ref_sqrt::NTuple{8, Float32},
+)
     dist2 = 0.0f0
     @inbounds for i in 1:8
-        po = obs[i] / obs_sum
-        pr = ref[i] / ref_sum
-        d = sqrt(po) - sqrt(pr)
+        d = obs_sqrt[i] - ref_sqrt[i]
         dist2 += d * d
     end
     return sqrt(max(0.0f0, 0.5f0 * dist2))
 end
 
-@inline function _empirical_fragment_update_top2!(
-    refs::Dict{UInt32, EmpiricalFragmentTop2Ref},
+@inline function _empirical_fragment_hellinger_distance(
+    obs::NTuple{8, Float32},
+    ref::NTuple{8, Float32},
+)
+    obs_sqrt = _empirical_fragment_sqrt_tuple(obs)
+    ref_sqrt = _empirical_fragment_sqrt_tuple(ref)
+    (_empirical_fragment_sqrt_is_valid(obs_sqrt) &&
+     _empirical_fragment_sqrt_is_valid(ref_sqrt)) ||
+        return EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER
+    return _empirical_fragment_hellinger_from_sqrt(obs_sqrt, ref_sqrt)
+end
+
+@inline function _empirical_fragment_update_topk!(
+    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
     pid::UInt32,
     row_id::UInt64,
     score::Float32,
     pep::Float32,
-    frag::NTuple{8, Float32},
+    sqrt_frag::NTuple{8, Float32},
 )
+    _empirical_fragment_sqrt_is_valid(sqrt_frag) || return nothing
     ref = get!(refs, pid) do
         _empirical_fragment_empty_ref()
     end
 
-    if score > ref.score1
-        ref.row2 = ref.row1
-        ref.score2 = ref.score1
-        ref.pep2 = ref.pep1
-        ref.frag2 = ref.frag1
-        ref.row1 = row_id
-        ref.score1 = score
-        ref.pep1 = pep
-        ref.frag1 = frag
-    elseif score > ref.score2
-        ref.row2 = row_id
-        ref.score2 = score
-        ref.pep2 = pep
-        ref.frag2 = frag
+    insert_pos = 0
+    @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
+        if score > ref.scores[j]
+            insert_pos = j
+            break
+        end
     end
+    insert_pos == 0 && return nothing
+
+    old_rows = ref.rows
+    old_scores = ref.scores
+    old_peps = ref.peps
+    old_sqrt_frags = ref.sqrt_frags
+    ref.rows = ntuple(
+        j -> j < insert_pos ? old_rows[j] :
+             j == insert_pos ? row_id :
+             old_rows[j - 1],
+        EMPIRICAL_FRAGMENT_REF_K,
+    )
+    ref.scores = ntuple(
+        j -> j < insert_pos ? old_scores[j] :
+             j == insert_pos ? score :
+             old_scores[j - 1],
+        EMPIRICAL_FRAGMENT_REF_K,
+    )
+    ref.peps = ntuple(
+        j -> j < insert_pos ? old_peps[j] :
+             j == insert_pos ? pep :
+             old_peps[j - 1],
+        EMPIRICAL_FRAGMENT_REF_K,
+    )
+    ref.sqrt_frags = ntuple(
+        j -> j < insert_pos ? old_sqrt_frags[j] :
+             j == insert_pos ? sqrt_frag :
+             old_sqrt_frags[j - 1],
+        EMPIRICAL_FRAGMENT_REF_K,
+    )
     return nothing
 end
 
-function _empirical_fragment_top2_refs(
+function _empirical_fragment_topk_refs(
     precursor_idx::AbstractVector,
     row_ids::AbstractVector{UInt64},
     scores::AbstractVector,
@@ -114,37 +155,75 @@ function _empirical_fragment_top2_refs(
     all(c -> length(c) == n, frag_cols) ||
         throw(ArgumentError("fragment columns must match precursor_idx length"))
 
-    refs = Dict{UInt32, EmpiricalFragmentTop2Ref}()
+    refs = Dict{UInt32, EmpiricalFragmentTopKRef}()
     sizehint!(refs, min(n, 1_000_000))
     @inbounds for i in 1:n
         pid = UInt32(precursor_idx[i])
         score = _empirical_fragment_safe_float(scores[i], typemin(Float32))
         pep = clamp(_empirical_fragment_safe_float(peps[i], EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP), 0.0f0, 1.0f0)
-        frag = _empirical_fragment_tuple(frag_cols, i)
-        _empirical_fragment_update_top2!(refs, pid, row_ids[i], score, pep, frag)
+        sqrt_frag = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
+        _empirical_fragment_update_topk!(refs, pid, row_ids[i], score, pep, sqrt_frag)
     end
     return refs
 end
 
-@inline function _empirical_fragment_pick_reference(ref::EmpiricalFragmentTop2Ref, row_id::UInt64)
-    if ref.row1 != UInt64(0) && ref.row1 != row_id
-        return (found = true, frag = ref.frag1, pep = ref.pep1)
-    elseif ref.row2 != UInt64(0) && ref.row2 != row_id
-        return (found = true, frag = ref.frag2, pep = ref.pep2)
-    else
+@inline function _empirical_fragment_consensus_reference(ref::EmpiricalFragmentTopKRef, row_id::UInt64)
+    h1 = 0.0f0
+    h2 = 0.0f0
+    h3 = 0.0f0
+    h4 = 0.0f0
+    h5 = 0.0f0
+    h6 = 0.0f0
+    h7 = 0.0f0
+    h8 = 0.0f0
+    weight_sum = 0.0f0
+    pep_weighted_sum = 0.0f0
+
+    @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
+        rid = ref.rows[j]
+        (rid == UInt64(0) || rid == row_id) && continue
+        weight = max(1.0f0 - ref.peps[j], 0.0f0)
+        weight > 0.0f0 || continue
+        sqrt_frag = ref.sqrt_frags[j]
+        _empirical_fragment_sqrt_is_valid(sqrt_frag) || continue
+
+        h1 += weight * sqrt_frag[1]
+        h2 += weight * sqrt_frag[2]
+        h3 += weight * sqrt_frag[3]
+        h4 += weight * sqrt_frag[4]
+        h5 += weight * sqrt_frag[5]
+        h6 += weight * sqrt_frag[6]
+        h7 += weight * sqrt_frag[7]
+        h8 += weight * sqrt_frag[8]
+        weight_sum += weight
+        pep_weighted_sum += weight * ref.peps[j]
+    end
+
+    norm = h1*h1 + h2*h2 + h3*h3 + h4*h4 + h5*h5 + h6*h6 + h7*h7 + h8*h8
+    if weight_sum <= 0.0f0 || norm <= 0.0f0
         return (
             found = false,
-            frag = EMPIRICAL_FRAGMENT_EMPTY_VEC,
+            sqrt_frag = EMPIRICAL_FRAGMENT_EMPTY_VEC,
             pep = EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP,
         )
     end
+
+    inv_norm = 1.0f0 / sqrt(norm)
+    return (
+        found = true,
+        sqrt_frag = (
+            h1 * inv_norm, h2 * inv_norm, h3 * inv_norm, h4 * inv_norm,
+            h5 * inv_norm, h6 * inv_norm, h7 * inv_norm, h8 * inv_norm,
+        ),
+        pep = pep_weighted_sum / weight_sum,
+    )
 end
 
 function _empirical_fragment_reference_features(
     precursor_idx::AbstractVector,
     row_ids::AbstractVector{UInt64},
     frag_cols,
-    refs::Dict{UInt32, EmpiricalFragmentTop2Ref},
+    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
 )
     n = length(precursor_idx)
     length(row_ids) == n || throw(ArgumentError("row_ids length must match precursor_idx"))
@@ -156,10 +235,11 @@ function _empirical_fragment_reference_features(
     @inbounds for i in 1:n
         ref = get(refs, UInt32(precursor_idx[i]), nothing)
         ref === nothing && continue
-        picked = _empirical_fragment_pick_reference(ref, row_ids[i])
+        picked = _empirical_fragment_consensus_reference(ref, row_ids[i])
         picked.found || continue
-        obs = _empirical_fragment_tuple(frag_cols, i)
-        hellinger[i] = _empirical_fragment_hellinger_distance(obs, picked.frag)
+        obs_sqrt = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
+        _empirical_fragment_sqrt_is_valid(obs_sqrt) || continue
+        hellinger[i] = _empirical_fragment_hellinger_from_sqrt(obs_sqrt, picked.sqrt_frag)
         ref_pep[i] = picked.pep
     end
     return hellinger, ref_pep
@@ -179,7 +259,7 @@ function _empirical_fragment_has_required_columns(tbl)
 end
 
 function _empirical_fragment_build_refs(file_paths::Vector{String})
-    refs = Dict{UInt32, EmpiricalFragmentTop2Ref}()
+    refs = Dict{UInt32, EmpiricalFragmentTopKRef}()
     row_starts = Vector{UInt64}(undef, length(file_paths))
     row_id = UInt64(1)
     n_rows = 0
@@ -204,8 +284,8 @@ function _empirical_fragment_build_refs(file_paths::Vector{String})
                 0.0f0,
                 1.0f0,
             )
-            frag = _empirical_fragment_tuple(frag_cols, i)
-            _empirical_fragment_update_top2!(refs, pid, rid, score, pep, frag)
+            sqrt_frag = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
+            _empirical_fragment_update_topk!(refs, pid, rid, score, pep, sqrt_frag)
         end
     end
 
@@ -214,7 +294,7 @@ end
 
 function add_empirical_fragment_features_to_fold_file!(
     fpath::String,
-    refs::Dict{UInt32, EmpiricalFragmentTop2Ref},
+    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
     row_start::UInt64,
 )
     tbl = DataFrame(Tables.columntable(Arrow.Table(fpath)); copycols = true)
@@ -227,10 +307,11 @@ function add_empirical_fragment_features_to_fold_file!(
         @inbounds for i in 1:n
             ref = get(refs, UInt32(tbl.precursor_idx[i]), nothing)
             ref === nothing && continue
-            picked = _empirical_fragment_pick_reference(ref, row_start + UInt64(i - 1))
+            picked = _empirical_fragment_consensus_reference(ref, row_start + UInt64(i - 1))
             picked.found || continue
-            obs = _empirical_fragment_tuple(frag_cols, i)
-            hellinger[i] = _empirical_fragment_hellinger_distance(obs, picked.frag)
+            obs_sqrt = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
+            _empirical_fragment_sqrt_is_valid(obs_sqrt) || continue
+            hellinger[i] = _empirical_fragment_hellinger_from_sqrt(obs_sqrt, picked.sqrt_frag)
             ref_pep[i] = picked.pep
         end
     end
@@ -259,6 +340,7 @@ function add_empirical_fragment_features_to_fold_files!(file_paths::Vector{Strin
     end
 
     @debug_l1 "Empirical fragment cross-run features: added $(length(EMPIRICAL_FRAGMENT_FEATURES)) features " *
-              "to $n_files fold files ($n_rows rows; refs=$n_refs) in $(round(t, digits = 2))s"
+              "to $n_files fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO, PEP-weighted) " *
+              "in $(round(t, digits = 2))s"
     return nothing
 end
