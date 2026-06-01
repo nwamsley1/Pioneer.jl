@@ -84,8 +84,5 @@ Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfa
 <a href="https://majorlab.wustl.edu/"><img src="figures/majorlab.png" width="125px"/></a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://goldfarblab.wustl.edu/"><img src="figures/goldfarb.png" width="125px"/></a>
 <br>
 
-## ASMS 2025
-<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/Pioneer.jpg"/>
-
-## ASMS 2024
-<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/asms_2024_image.jpg"/>
+## ASMS 2026
+<img src="figures/ASMS-2026-final.png"/>
