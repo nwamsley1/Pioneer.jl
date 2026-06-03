@@ -522,6 +522,46 @@ function _compute_phase2_columns!(
     return nothing
 end
 
+function _mainsearch_fragment_annotation_ids(frag_lookup::LibraryFragmentLookup, frag_list, pid::UInt32)
+    frag_ids = fill(UInt16(0), 8)
+    frag_range = getPrecFragRange(frag_lookup, pid)
+    @inbounds for frag_idx in frag_range
+        frag = frag_list[Int(frag_idx)]
+        isIso(frag) && continue
+        rank = Int(getRank(frag))
+        1 <= rank <= 8 || continue
+        frag_ids[rank] == UInt16(0) || continue
+        frag_ids[rank] = _fragment_annotation_id(frag)
+    end
+    return ntuple(i -> frag_ids[i], 8)
+end
+
+function _add_fragment_annotation_id_columns!(
+    tbl::DataFrame,
+    frag_lookup::LibraryFragmentLookup,
+    frag_list,
+)
+    n = nrow(tbl)
+    out_cols = ntuple(_ -> Vector{UInt16}(undef, n), 8)
+    cache = Dict{UInt32, NTuple{8, UInt16}}()
+    sizehint!(cache, min(n, 1_000_000))
+
+    @inbounds for row in 1:n
+        pid = UInt32(tbl.precursor_idx[row])
+        frag_ids = get!(cache, pid) do
+            _mainsearch_fragment_annotation_ids(frag_lookup, frag_list, pid)
+        end
+        for r in 1:8
+            out_cols[r][row] = frag_ids[r]
+        end
+    end
+
+    for r in 1:8
+        tbl[!, FRAGMENT_ANNOTATION_ID_COLUMNS[r]] = out_cols[r]
+    end
+    return nothing
+end
+
 function summarize_results!(
     results::MainSearchResults,
     params::P,
@@ -560,6 +600,8 @@ function summarize_results!(
     prec_mz_arr = getMz(precursors)
     prec_pair_idxs = getPairIdx(precursors)
     entrap_group_ids = getEntrapmentGroupId(precursors)
+    frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
+    frag_list = getFragments(frag_lookup)
 
     n_processed_files = 0
     n_total_precs = 0
@@ -615,6 +657,7 @@ function summarize_results!(
             tbl[!, :prec_mz] = prec_mz_col
             tbl[!, :pair_id] = pair_id_col
             tbl[!, :entrapment_group_id] = entrap_col
+            _add_fragment_annotation_id_columns!(tbl, frag_lookup, frag_list)
 
             sort!(tbl, :rt)
             initialize_prob_group_features!(tbl)

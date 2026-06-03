@@ -10,13 +10,40 @@ const EMPIRICAL_FRAGMENT_COLUMNS = (
     :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
     :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
 )
+const FRAGMENT_ANNOTATION_ID_COLUMNS = (
+    :frag1_id, :frag2_id, :frag3_id, :frag4_id,
+    :frag5_id, :frag6_id, :frag7_id, :frag8_id,
+)
 const EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER = 1.0f0
 const EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP = 1.0f0
 const EMPIRICAL_FRAGMENT_EMPTY_VEC = ntuple(_ -> 0.0f0, 8)
+const FRAGMENT_ANNOTATION_EMPTY_IDS = ntuple(_ -> UInt16(0), 8)
 const EMPIRICAL_FRAGMENT_EMPTY_ROWS = ntuple(_ -> UInt64(0), EMPIRICAL_FRAGMENT_REF_K)
 const EMPIRICAL_FRAGMENT_EMPTY_SCORES = ntuple(_ -> typemin(Float32), EMPIRICAL_FRAGMENT_REF_K)
 const EMPIRICAL_FRAGMENT_EMPTY_PEPS = ntuple(_ -> EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP, EMPIRICAL_FRAGMENT_REF_K)
 const EMPIRICAL_FRAGMENT_EMPTY_FRAGS = ntuple(_ -> EMPIRICAL_FRAGMENT_EMPTY_VEC, EMPIRICAL_FRAGMENT_REF_K)
+
+@inline function _fragment_annotation_series_code(f)::UInt16
+    isB(f) && return UInt16(1)
+    isY(f) && return UInt16(2)
+    isP(f) && return UInt16(3)
+    return UInt16(0)
+end
+
+@inline function _fragment_annotation_id(series::UInt16, position::UInt8, charge::UInt8)::UInt16
+    series == UInt16(0) && return UInt16(0)
+    pos = UInt16(min(position, UInt8(63)))
+    z = UInt16(min(charge, UInt8(3)))
+    return pos | (series << 6) | (z << 8)
+end
+
+@inline function _fragment_annotation_id(f)::UInt16
+    return _fragment_annotation_id(
+        _fragment_annotation_series_code(f),
+        getIonPosition(f),
+        getFragCharge(f),
+    )
+end
 
 mutable struct EmpiricalFragmentTopKRef
     rows::NTuple{EMPIRICAL_FRAGMENT_REF_K, UInt64}
