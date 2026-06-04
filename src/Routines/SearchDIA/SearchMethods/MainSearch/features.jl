@@ -160,6 +160,8 @@ const PRESCORE_FEATURES = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
+    :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
 
     # Per-rank top-8 fragment trace intensities (kept; used by chromatogram features).
     # Each rank sums matched isotope peaks predicted at >=25% of the fragment's
@@ -219,6 +221,15 @@ Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx)
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
    - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
    - `ms1_m1_intensity` (Float32): observed M+1 intensity; 0 if not matched
+   - `ms1_m0_m1_m2_window_fraction` (Float32): (M0 + M1 + M2 intensity)
+     divided by total nearest-MS1 peak intensity inside the paired MS2
+     isolation window
+   - `ms1_ms2_explained_delta` (Float32): signed difference between the MS1
+     isolation-window fraction and the MS2 explained-intensity fraction
+   - `ms1_m0_m1_m2_window_fraction_pc` (Float32): pseudocounted version of the
+     MS1 isolation-window fraction using the nearest-MS1 scan noise floor
+   - `ms1_ms2_explained_delta_pc` (Float32): signed difference between the
+     pseudocounted MS1 fraction and the MS2 explained-intensity fraction
 
 The intensities are also consumed by `_add_ms1_chromatogram_features!` to build
 per-precursor M0 / M+1 / weight chromatograms and compute correlation features.
@@ -265,6 +276,71 @@ If no MS1 scan is available (file has only MS2), intensity features remain zeroe
     return found, best_int, best_mz, best_idx
 end
 
+@inline function _ms1_sum_window_intensity(mz::Vector{Float32}, intens::Vector{Float32},
+                                           low_mz::Float32, high_mz::Float32)
+    (isfinite(low_mz) && isfinite(high_mz) && high_mz >= low_mz) || return 0f0
+    n_peaks = length(mz)
+    n_peaks == 0 && return 0f0
+    i0 = bsearch_hybrid(mz, low_mz, 1, n_peaks)
+    total = 0f0
+    @inbounds @fastmath for j in i0:n_peaks
+        m = mz[j]
+        m > high_mz && break
+        total += intens[j]
+    end
+    return total
+end
+
+@inline function _ms1_m0_m1_m2_window_fraction(m0_int, m1_int, m2_int, window_intensity)::Float32
+    denom = Float32(window_intensity)
+    denom > 0f0 || return 0f0
+    numer = max(Float32(m0_int), 0f0) + max(Float32(m1_int), 0f0) +
+            max(Float32(m2_int), 0f0)
+    return clamp(numer / denom, 0f0, 1f0)
+end
+
+@inline function _ms1_noise_floor(intens::Vector{Float32})::Float32
+    floor = Inf32
+    @inbounds @fastmath for it in intens
+        if it > 0f0 && it < floor
+            floor = it
+        end
+    end
+    return isfinite(floor) ? floor : 0f0
+end
+
+@inline function _ms1_m0_m1_m2_window_fraction_pseudocount(m0_int, m1_int, m2_int,
+                                                           m0_hit::Bool, m1_hit::Bool, m2_hit::Bool,
+                                                           window_intensity,
+                                                           noise_floor)::Float32
+    pc = max(Float32(noise_floor), 0f0)
+    m0_eff = m0_hit ? max(Float32(m0_int), 0f0) : pc
+    m1_eff = m1_hit ? max(Float32(m1_int), 0f0) : pc
+    m2_eff = m2_hit ? max(Float32(m2_int), 0f0) : pc
+    denom = max(Float32(window_intensity), 0f0) + 3f0 * pc
+    denom > 0f0 || return 0f0
+    return clamp((m0_eff + m1_eff + m2_eff) / denom, 0f0, 1f0)
+end
+
+@inline function _ms2_explained_fraction(log2_intensity_explained)::Float32
+    x = Float32(log2_intensity_explained)
+    isfinite(x) || return 0f0
+    return clamp(exp2(x), 0f0, 1f0)
+end
+
+@inline function _ms1_ms2_explained_delta(ms1_fraction, log2_intensity_explained)::Float32
+    return Float32(ms1_fraction) - _ms2_explained_fraction(log2_intensity_explained)
+end
+
+function _initialize_ms1_isolation_window_features!(psms)
+    n = nrow(psms)
+    psms[!, :ms1_m0_m1_m2_window_fraction] = zeros(Float32, n)
+    psms[!, :ms1_ms2_explained_delta] = zeros(Float32, n)
+    psms[!, :ms1_m0_m1_m2_window_fraction_pc] = zeros(Float32, n)
+    psms[!, :ms1_ms2_explained_delta_pc] = zeros(Float32, n)
+    return nothing
+end
+
 # Filter the (possibly Union{Missing,Float32}) MS1 spectrum into per-task
 # scratch Vector{Float32} buffers, dropping any peaks where either m/z or
 # intensity is missing. Result: dense, type-stable arrays that bsearch_hybrid
@@ -301,6 +377,7 @@ end
 function _ms1_lookup_chunk!(psms, spectra,
                              prec_mzs, prec_charges, prec_sulfurs, iso_splines,
                              scan_to_ms1::Vector{Int32},
+                             scan_window_low::Vector{Float32}, scan_window_high::Vector{Float32},
                              ms1_ppm_tol::Float32, ms1_ppm_offset::Float32, isotope_spacing::Float32,
                              m0_peak_keys::Vector{UInt64},
                              chunk_start::Int, chunk_end::Int)
@@ -309,6 +386,7 @@ function _ms1_lookup_chunk!(psms, spectra,
     cached_mz  = Vector{Float32}()
     cached_int = Vector{Float32}()
     cached_ms1_idx::Int = -1   # force first miss
+    cached_noise_floor = 0f0
 
     @inbounds for i in chunk_start:chunk_end
         ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
@@ -318,6 +396,7 @@ function _ms1_lookup_chunk!(psms, spectra,
             _ms1_refresh_cache!(cached_mz, cached_int,
                                 getMzArray(spectra, ms1_idx),
                                 getIntensityArray(spectra, ms1_idx))
+            cached_noise_floor = _ms1_noise_floor(cached_int)
         end
 
         pid = UInt32(psms.precursor_idx[i])
@@ -331,9 +410,44 @@ function _ms1_lookup_chunk!(psms, spectra,
         # target so its zero point matches the calibration.
         target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
         target_m1 = target_m0 + isotope_spacing / Float32(prec_chg)
+        target_m2 = target_m0 + 2f0 * isotope_spacing / Float32(prec_chg)
 
         m0_hit, m0_int, m0_mz, m0_peak_idx = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
         m1_hit, m1_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
+        m2_hit, m2_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m2, ms1_ppm_tol)
+
+        scan_id = Int(psms.scan_idx[i])
+        window_low = scan_window_low[scan_id]
+        window_high = scan_window_high[scan_id]
+        m0_in_window = m0_hit && target_m0 >= window_low && target_m0 <= window_high
+        m1_in_window = m1_hit && target_m1 >= window_low && target_m1 <= window_high
+        m2_in_window = m2_hit && target_m2 >= window_low && target_m2 <= window_high
+        window_intensity = _ms1_sum_window_intensity(
+            cached_mz, cached_int,
+            window_low, window_high,
+        )
+        ms1_fraction = _ms1_m0_m1_m2_window_fraction(
+            m0_in_window ? m0_int : 0f0,
+            m1_in_window ? m1_int : 0f0,
+            m2_in_window ? m2_int : 0f0,
+            window_intensity,
+        )
+        psms.ms1_m0_m1_m2_window_fraction[i] = ms1_fraction
+        psms.ms1_ms2_explained_delta[i] = _ms1_ms2_explained_delta(
+            ms1_fraction,
+            psms.log2_intensity_explained[i],
+        )
+        ms1_fraction_pc = _ms1_m0_m1_m2_window_fraction_pseudocount(
+            m0_int, m1_int, m2_int,
+            m0_in_window, m1_in_window, m2_in_window,
+            window_intensity,
+            cached_noise_floor,
+        )
+        psms.ms1_m0_m1_m2_window_fraction_pc[i] = ms1_fraction_pc
+        psms.ms1_ms2_explained_delta_pc[i] = _ms1_ms2_explained_delta(
+            ms1_fraction_pc,
+            psms.log2_intensity_explained[i],
+        )
 
         psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
         psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
@@ -367,6 +481,10 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m0_mass_err_ppm`
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
+- `:ms1_m0_m1_m2_window_fraction`
+- `:ms1_ms2_explained_delta`
+- `:ms1_m0_m1_m2_window_fraction_pc`
+- `:ms1_ms2_explained_delta_pc`
 - `:ms1_m0_peak_frag_intensity_fraction`
 - `:ms1_m0_peak_n_precursors`
 - `:scan_prec_mz_n_precursors`
@@ -402,6 +520,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
+    _initialize_ms1_isolation_window_features!(psms)
     psms[!, :ms1_m0_peak_frag_intensity_fraction] = zeros(Float32, n)
     psms[!, :ms1_m0_peak_n_precursors] = zeros(UInt16, n)
     psms[!, :scan_prec_mz_n_precursors] = zeros(UInt16, n)
@@ -441,6 +560,22 @@ function add_ms1_lookup_features!(psms::DataFrame,
         end
     end
 
+    scan_window_low = fill(Inf32, n_scans)
+    scan_window_high = fill(-Inf32, n_scans)
+    @inbounds for s in 1:n_scans
+        center_mz = getCenterMz(spectra, s)
+        isolation_width = getIsolationWidthMz(spectra, s)
+        if !ismissing(center_mz) && !ismissing(isolation_width)
+            width = Float32(isolation_width)
+            if width > 0f0
+                center = Float32(center_mz)
+                half_width = width / 2f0
+                scan_window_low[s] = center - half_width
+                scan_window_high[s] = center + half_width
+            end
+        end
+    end
+
     # 2. Per-precursor info
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mzs       = getMz(precursors)
@@ -466,6 +601,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
             psms, spectra,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
+            scan_window_low, scan_window_high,
             Float32(ms1_ppm_tol), Float32(ms1_ppm_offset), isotope_spacing,
             m0_peak_keys,
             chunk_start, chunk_end

@@ -82,6 +82,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
+    :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int,
     :frag5_int, :frag6_int, :frag7_int, :frag8_int,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.

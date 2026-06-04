@@ -36,7 +36,7 @@
 # A single cross-run donor entry: one row's score + the per-row donor
 # features we need to compute MBR features for a recipient row in
 # another file. Holds the bare minimum so the donor dict stays small
-# (each entry is still compact; ~50k pids × 2 ≈ a few MB).
+# (each entry is ~40 bytes; ~50k pids × 2 ≈ a few MB).
 struct _MBRDonorEntry
     trace_prob::Float32
     weight::Float32
@@ -45,14 +45,11 @@ struct _MBRDonorEntry
     irt_obs::Float32       # raw observed iRT of the donor row
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
     rt_obs::Float32        # literal scan RT (minutes) of the donor row
-    shadow_sqrt::NTuple{8, Float32}
-    shadow_ids::NTuple{8, UInt16}
     ms_file_idx::UInt32
     is_decoy::Bool
 end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
-const MBR_SHADOW_HELLINGER_SENTINEL = -1.0f0
 
 # Columns the donor dict reads from each (main + pass1 sidecar) pair.
 # Listed once so reader and consumer stay in sync. `is_decoy` is hardcoded
@@ -60,7 +57,7 @@ const MBR_SHADOW_HELLINGER_SENTINEL = -1.0f0
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
-    :ms_file_idx, EMPIRICAL_FRAGMENT_COLUMNS..., FRAGMENT_ANNOTATION_ID_COLUMNS...)
+    :ms_file_idx)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -73,90 +70,12 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
-    :MBR_shadow_hellinger_true,     :MBR_shadow_hellinger_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
 # pipeline. All sidecars carry (:precursor_idx, :scan_idx) as alignment keys.
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
-
-@inline function _mbr_shadow_columns(tbl)
-    all(c -> hasproperty(tbl, c), EMPIRICAL_FRAGMENT_COLUMNS) || return nothing
-    return ntuple(i -> Tables.getcolumn(tbl, EMPIRICAL_FRAGMENT_COLUMNS[i]), 8)
-end
-
-@inline function _mbr_fragment_id_columns(tbl)
-    all(c -> hasproperty(tbl, c), FRAGMENT_ANNOTATION_ID_COLUMNS) || return nothing
-    return ntuple(i -> Tables.getcolumn(tbl, FRAGMENT_ANNOTATION_ID_COLUMNS[i]), 8)
-end
-
-@inline function _mbr_shadow_sqrt_at(shadow_cols, row::Integer)
-    shadow_cols === nothing && return EMPIRICAL_FRAGMENT_EMPTY_VEC
-    return _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(shadow_cols, row))
-end
-
-@inline function _mbr_fragment_ids_at(id_cols, row::Integer)
-    id_cols === nothing && return FRAGMENT_ANNOTATION_EMPTY_IDS
-    return ntuple(i -> UInt16(id_cols[i][row]), 8)
-end
-
-@inline function _mbr_shadow_ids_cover_spectrum(
-    shadow_sqrt::NTuple{8, Float32},
-    ids::NTuple{8, UInt16},
-)
-    @inbounds for i in 1:8
-        shadow_sqrt[i] > 0f0 && ids[i] == UInt16(0) && return false
-    end
-    return true
-end
-
-@inline function _mbr_id_present(ids::NTuple{8, UInt16}, id::UInt16)
-    @inbounds for i in 1:8
-        ids[i] == id && return true
-    end
-    return false
-end
-
-@inline function _mbr_shadow_value_for_id(
-    shadow_sqrt::NTuple{8, Float32},
-    ids::NTuple{8, UInt16},
-    id::UInt16,
-)
-    @inbounds for i in 1:8
-        ids[i] == id && return shadow_sqrt[i]
-    end
-    return 0f0
-end
-
-@inline function _mbr_shadow_hellinger_from_sqrt(
-    recipient_shadow::NTuple{8, Float32},
-    recipient_ids::NTuple{8, UInt16},
-    donor_shadow::NTuple{8, Float32},
-    donor_ids::NTuple{8, UInt16},
-)
-    (_empirical_fragment_sqrt_is_valid(recipient_shadow) &&
-     _empirical_fragment_sqrt_is_valid(donor_shadow) &&
-     _mbr_shadow_ids_cover_spectrum(recipient_shadow, recipient_ids) &&
-     _mbr_shadow_ids_cover_spectrum(donor_shadow, donor_ids)) ||
-        return MBR_SHADOW_HELLINGER_SENTINEL
-
-    dist2 = 0f0
-    @inbounds for i in 1:8
-        id = recipient_ids[i]
-        id == UInt16(0) && continue
-        donor_value = _mbr_shadow_value_for_id(donor_shadow, donor_ids, id)
-        d = recipient_shadow[i] - donor_value
-        dist2 += d * d
-    end
-    @inbounds for i in 1:8
-        id = donor_ids[i]
-        id == UInt16(0) && continue
-        _mbr_id_present(recipient_ids, id) && continue
-        dist2 += donor_shadow[i] * donor_shadow[i]
-    end
-    return sqrt(max(0f0, 0.5f0 * dist2))
-end
 
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
 # sidecar at `side_path`. Concrete `AbstractVector{T}` signatures force Julia
@@ -280,34 +199,23 @@ end
     logby_c::Union{Nothing, AbstractVector{Float16}},
     rt_c::Union{Nothing, AbstractVector{Float32}},
     fidx_c::AbstractVector{UInt32},
-    shadow_cols,
-    id_cols,
     side_path::String,
 )
     n = length(pid_c)
     K = 2
     has_logby = logby_c !== nothing
     has_rt    = rt_c    !== nothing
-    has_shadow = shadow_cols !== nothing && id_cols !== nothing
     @inbounds for i in 1:n
         # Sanity-check alignment (cheap: one cmp per row)
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
             error("Pass-1 sidecar misaligned at row $i of $side_path")
         pid = pid_c[i]
-        shadow_sqrt = has_shadow ?
-                      _mbr_shadow_sqrt_at(shadow_cols, i) :
-                      EMPIRICAL_FRAGMENT_EMPTY_VEC
-        shadow_ids = has_shadow ?
-                     _mbr_fragment_ids_at(id_cols, i) :
-                     FRAGMENT_ANNOTATION_EMPTY_IDS
         e = _MBRDonorEntry(
             score_c[i], w_c[i], Float32(l2ie_c[i]),
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
-            shadow_sqrt,
-            shadow_ids,
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -351,8 +259,6 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
             main.ms_file_idx,
-            _mbr_shadow_columns(main),
-            _mbr_fragment_id_columns(main),
             side_path,
         )
     end
@@ -384,7 +290,6 @@ end
     out_miss_t::BitVector,      out_miss_f::BitVector,
     out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
     out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
-    out_shadow_h_t::Vector{Float32}, out_shadow_h_f::Vector{Float32},
     pid_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
@@ -393,8 +298,6 @@ end
     irto_v::AbstractVector{Float32},
     logby_v::Union{Nothing, AbstractVector{Float16}},
     rt_v::Union{Nothing, AbstractVector{Float32}},
-    shadow_cols,
-    id_cols,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_col::Vector{UInt32},
 )
@@ -402,14 +305,10 @@ end
     plen = length(partner_col)
     has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
-    has_shadow = shadow_cols !== nothing && id_cols !== nothing
     @inbounds for i in 1:n
         my_file = file_v[i]
         my_pid  = pid_v[i]
         my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
-        recipient_shadow = EMPIRICAL_FRAGMENT_EMPTY_VEC
-        recipient_ids = FRAGMENT_ANNOTATION_EMPTY_IDS
-        have_recipient_shadow = false
 
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
         if donor_t !== nothing
@@ -425,17 +324,6 @@ end
             end
             if has_rt
                 out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
-            end
-            if has_shadow
-                recipient_shadow = _mbr_shadow_sqrt_at(shadow_cols, i)
-                recipient_ids = _mbr_fragment_ids_at(id_cols, i)
-                have_recipient_shadow = true
-                out_shadow_h_t[i] = _mbr_shadow_hellinger_from_sqrt(
-                    recipient_shadow,
-                    recipient_ids,
-                    donor_t.shadow_sqrt,
-                    donor_t.shadow_ids,
-                )
             end
             out_miss_t[i] = false
         end
@@ -454,18 +342,6 @@ end
                 end
                 if has_rt
                     out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
-                end
-                if has_shadow
-                    if !have_recipient_shadow
-                        recipient_shadow = _mbr_shadow_sqrt_at(shadow_cols, i)
-                        recipient_ids = _mbr_fragment_ids_at(id_cols, i)
-                    end
-                    out_shadow_h_f[i] = _mbr_shadow_hellinger_from_sqrt(
-                        recipient_shadow,
-                        recipient_ids,
-                        donor_f.shadow_sqrt,
-                        donor_f.shadow_ids,
-                    )
                 end
                 out_miss_f[i] = false
             end
@@ -498,8 +374,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     irto_v  = main.irt_obs
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    shadow_cols = _mbr_shadow_columns(main)
-    id_cols = _mbr_fragment_id_columns(main)
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -513,17 +387,14 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_shadow_h_t = fill(MBR_SHADOW_HELLINGER_SENTINEL, n)
-    out_shadow_h_f = fill(MBR_SHADOW_HELLINGER_SENTINEL, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
         out_le_t, out_le_f, out_ir_t, out_ir_f,
         out_miss_t, out_miss_f,
         out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
-        out_shadow_h_t, out_shadow_h_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
-        logby_v, rt_v, shadow_cols, id_cols,
+        logby_v, rt_v,
         donor_dict, partner_col,
     )
 
@@ -545,8 +416,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_log_by_diff_false          = out_log_by_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
-        MBR_shadow_hellinger_true      = out_shadow_h_t,
-        MBR_shadow_hellinger_false     = out_shadow_h_f,
     )
     writeArrow(side_path, side_df)
     return side_path
@@ -716,3 +585,4 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
     @debug_l1 "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
+
