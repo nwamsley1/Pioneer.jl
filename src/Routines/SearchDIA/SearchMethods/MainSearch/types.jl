@@ -14,6 +14,64 @@ const DEFAULT_INDEX_SEARCH_MIN_SCORE = UInt8(15)
 # and filters best-per-precursor rows after pair competition.
 const MAIN_PEP_FILTER_THR = 0.9f0
 
+# PEP ceiling for rows that fail the normal MainSearch gate but are retained
+# as MBR-only rescue candidates. Rows with PEP above this value are discarded
+# before the expensive cross-run rescue feature/scoring path.
+const MAIN_MBR_RESCUE_PEP_MAX = 0.95f0
+
+function _get_optional_named_value(section, keys::Tuple)
+    for key in keys
+        hasproperty(section, key) && return getproperty(section, key)
+    end
+    return nothing
+end
+
+function _resolve_optional_float32(
+    search_section,
+    global_section,
+    search_keys::Tuple,
+    global_keys::Tuple,
+    env_key::String,
+    default::Float32,
+)
+    val = _get_optional_named_value(search_section, search_keys)
+    val === nothing && (val = _get_optional_named_value(global_section, global_keys))
+    if val === nothing && !isempty(env_key) && haskey(ENV, env_key)
+        val = ENV[env_key]
+    end
+    val === nothing && return default
+    return Float32(parse(Float64, string(val)))
+end
+
+function _resolve_mainsearch_pep_thresholds(search_section, global_section)
+    pep_filter_threshold = _resolve_optional_float32(
+        search_section,
+        global_section,
+        (:main_pep_filter_threshold, :main_pep_filter_thr),
+        (:main_pep_filter_threshold, :main_pep_filter_thr),
+        "PIONEER_MAIN_PEP_FILTER_THR",
+        MAIN_PEP_FILTER_THR,
+    )
+    mbr_rescue_pep_max = _resolve_optional_float32(
+        search_section,
+        global_section,
+        (:mbr_rescue_pep_threshold, :mbr_rescue_pep_max),
+        (:mbr_rescue_pep_threshold, :mbr_rescue_pep_max),
+        "PIONEER_MBR_RESCUE_PEP_MAX",
+        MAIN_MBR_RESCUE_PEP_MAX,
+    )
+    (0.0f0 <= pep_filter_threshold <= 1.0f0) ||
+        throw(ArgumentError("main_pep_filter_threshold must be between 0 and 1"))
+    (0.0f0 <= mbr_rescue_pep_max <= 1.0f0) ||
+        throw(ArgumentError("mbr_rescue_pep_threshold must be between 0 and 1"))
+    mbr_rescue_pep_max >= pep_filter_threshold ||
+        throw(ArgumentError("mbr_rescue_pep_threshold must be >= main_pep_filter_threshold"))
+    return (
+        pep_filter_threshold = pep_filter_threshold,
+        mbr_rescue_pep_max = mbr_rescue_pep_max,
+    )
+end
+
 """
     _resolve_n_isotopes(search_section) -> Int
 
@@ -88,9 +146,14 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
     # Pre-filter: require marginal candidates to appear in ≥ N scans
     prefilter_min_scan_count::Int64
 
+    # Per-file PEP gates for normal cross-run entry and MBR-only rescue.
+    pep_filter_threshold::Float32
+    mbr_rescue_pep_max::Float32
+
     function MainSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         quant_params = params.search
+        global_params = params.global_settings
 
         # Hardcoded constants — formerly user-tunable via global.isotope_settings
         # but every shipping config used the same values. The combine-traces
@@ -109,6 +172,7 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         # the legacy nested location search.fragment_settings.n_isotopes
         # so old configs keep working.
         n_isotopes_val = _resolve_n_isotopes(quant_params)
+        pep_thresholds = _resolve_mainsearch_pep_thresholds(quant_params, global_params)
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             isotope_bounds,
@@ -141,6 +205,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             DEFAULT_INDEX_SEARCH_MIN_SCORE,
 
             0,                  # prefilter_min_scan_count (formerly fragment_index_search.prefilter_min_scan_count; never overridden)
+
+            pep_thresholds.pep_filter_threshold,
+            pep_thresholds.mbr_rescue_pep_max,
         )
     end
 end

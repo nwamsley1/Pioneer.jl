@@ -154,6 +154,11 @@ function estimate_max_rows(memory_mb::Float64, sample_file::String)
     return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
 end
 
+function _combine_precursor_scoring_fold_dfs(fold_dfs::Vector{DataFrame})
+    isempty(fold_dfs) && return DataFrame()
+    return vcat(fold_dfs...; cols = :union)
+end
+
 """
 Process all results to get final protein scores.
 """
@@ -196,6 +201,12 @@ function summarize_results!(
         return nothing
     end
 
+    mbr_rescue_fold_paths = params.match_between_runs ?
+                            get_existing_mbr_rescue_fold_paths(valid_fold_paths) :
+                            String[]
+    !isempty(mbr_rescue_fold_paths) && @debug_l1 "MBR rescue pool: found " *
+        "$(length(mbr_rescue_fold_paths)) fold files before cross-run scoring"
+
     add_wide_window_features_to_fold_files!(search_context, Int.(valid_file_indices))
     add_empirical_fragment_features_to_fold_files!(valid_fold_paths)
 
@@ -210,6 +221,7 @@ function summarize_results!(
             params.q_value_threshold,
             FORCE_OOM;
             match_between_runs = params.match_between_runs,
+            mbr_rescue_file_paths = mbr_rescue_fold_paths,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -245,9 +257,27 @@ function summarize_results!(
         isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
         isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
 
+        n_rescue_loaded = 0
+        n_rescue_recovered = 0
+        for fold in UInt8[0, 1]
+            rescue_path = mbr_rescue_fold_path("$(base_path)_fold$(fold).arrow")
+            isfile(rescue_path) || continue
+            rescue_df = _load_fold(rescue_path)
+            n_rescue_loaded += nrow(rescue_df)
+            if hasproperty(rescue_df, :mbr_recovered)
+                keep_rescue = Bool.(rescue_df[!, :mbr_recovered])
+                n_rescue_recovered += count(keep_rescue)
+                if any(keep_rescue)
+                    push!(fold_dfs, rescue_df[keep_rescue, :])
+                end
+            end
+        end
+        n_rescue_loaded > 0 && @debug_l1 "MBR rescue pool ($idx): " *
+            "$n_rescue_recovered / $n_rescue_loaded recovered rows merged into precursor scoring"
+
         if !isempty(fold_dfs)
             # Merge and write combined file
-            combined_df = vcat(fold_dfs...)
+            combined_df = _combine_precursor_scoring_fold_dfs(fold_dfs)
             writeArrow(merged_path, combined_df)
             push!(merged_psm_paths, merged_path)
 

@@ -52,11 +52,10 @@ const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 # interaction modeling. Dropping them gained +1,015 IDs (rtv3 doc)
 # and dropped Dennis FTR by 0.31 pp.
 #
-# rtv4 dropped `trace_prob_prepass` (OOF) too — the in-fold score
-# absorbs ~88% of the combined OOF+infold LGBM gain. The trace_prob_*
-# columns are still computed and used downstream (qval pipeline,
-# MBR top-K aggregation) — they just aren't exposed to the FTR LGBM
-# as features.
+# 2026-06-05: `trace_prob_infold` was replaced by the recipient's
+# per-run confidence (`1 - main_pep`). That lets MBR-rescue rows avoid the
+# expensive cross-run Pass-1 feature/prediction path; donors still use the
+# true cross-run Pass-1 scores.
 #
 # Dead features dropped (gain ≈ 0 across all rtv3/rtv4 runs):
 #   - MBR_is_missing_true (the -1 sentinel on every other MBR feature
@@ -64,7 +63,7 @@ const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 #   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
 #     both subsequently dropped along with the other M0 frag-6-vector features)
 const FTR_FEATURES_F_TRUE = Symbol[
-    :trace_prob_infold,                            # rtv3: in-fold Pass-1 score
+    :mbr_recipient_main_confidence,
     :MBR_max_pair_prob_true,
     :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true,
@@ -104,6 +103,49 @@ const FTR_FEATURES_F_FALSE = Symbol[
     for f in FTR_FEATURES_F_TRUE
 ]
 
+function _mbr_candidate_gate(
+    psms::DataFrame;
+    q_thresh::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+)
+    n = nrow(psms)
+    pre_score = Float32.(psms[!, :trace_prob_prepass])
+    target_col = Bool.(psms[!, :target])
+    rescue_mask = hasproperty(psms, :mbr_rescue_candidate) ?
+                  Bool.(psms[!, :mbr_rescue_candidate]) :
+                  falses(n)
+
+    pre_qvals = fill(1.0f0, n)
+    normal_idx = findall(.!rescue_mask)
+    if !isempty(normal_idx)
+        normal_qvals = Vector{Float32}(undef, length(normal_idx))
+        get_qvalues!(pre_score[normal_idx], target_col[normal_idx], normal_qvals)
+        @inbounds for (j, i) in enumerate(normal_idx)
+            pre_qvals[i] = normal_qvals[j]
+        end
+    end
+
+    donor_target_pass = (.!rescue_mask) .&
+                        (pre_qvals .<= donor_q_threshold) .&
+                        target_col
+    prob_thresh = any(donor_target_pass) ? minimum(pre_score[donor_target_pass]) : Float32(Inf)
+
+    mbr_pp_t   = Float32.(psms[!, :MBR_max_pair_prob_true])
+    mbr_miss_t = Bool.(psms[!, :MBR_is_missing_true])
+    mbr_miss_f = Bool.(psms[!, :MBR_is_missing_false])
+    candidate_mask = (pre_qvals .> q_thresh) .&
+                     (mbr_pp_t .>= prob_thresh) .&
+                     (.!mbr_miss_t) .&
+                     (.!mbr_miss_f)
+
+    return (
+        candidate_mask = candidate_mask,
+        pre_qvals = pre_qvals,
+        prob_thresh = prob_thresh,
+        rescue_mask = rescue_mask,
+    )
+end
+
 """
     apply_mbr_filter_paired!(psms; alpha=0.01f0, q_thresh=0.01f0) -> NamedTuple
 
@@ -142,33 +184,28 @@ function apply_mbr_filter_paired!(
     end
 
     # ── 1. Pre-MBR q-values from the non-MBR (pass-1) score ──
+    # MBR-rescue rows were deliberately kept out of the cross-run universe
+    # before this point, so they must not shift the donor q-value threshold.
     pre_score  = Float32.(psms[!, :trace_prob_prepass])
     target_col = Bool.(psms[!, :target])
     decoy_col  = Bool.(psms[!, :decoy])
-    pre_qvals  = Vector{Float32}(undef, n)
-    get_qvalues!(pre_score, target_col, pre_qvals)
-
-    donor_target_pass = (pre_qvals .<= MBR_DONOR_Q_THRESHOLD) .& target_col
-    prob_thresh = if any(donor_target_pass)
-        minimum(pre_score[donor_target_pass])
-    else
-        Float32(Inf)
-    end
 
     # ── 2. Candidates: failed q-cut, have BOTH _true and _false donors ──
-    mbr_pp_t       = Float32.(psms[!, :MBR_max_pair_prob_true])
-    mbr_miss_t     = Bool.(psms[!, :MBR_is_missing_true])
-    mbr_miss_f     = Bool.(psms[!, :MBR_is_missing_false])
-    candidate_mask = (pre_qvals .> q_thresh) .&
-                     (mbr_pp_t  .>= prob_thresh) .&
-                     (.!mbr_miss_t) .&
-                     (.!mbr_miss_f)
+    gate = _mbr_candidate_gate(psms; q_thresh = q_thresh)
+    pre_qvals = gate.pre_qvals
+    prob_thresh = gate.prob_thresh
+    candidate_mask = gate.candidate_mask
+    rescue_mask = gate.rescue_mask
     n_cand = count(candidate_mask)
+    n_rescue = count(rescue_mask)
+    n_rescue_cand = count(candidate_mask .& rescue_mask)
+    n_normal_cand = n_cand - n_rescue_cand
     cand_idx = findall(candidate_mask)
 
     @debug_l1 "MBR Batch F — paired FTR recovery:"
     @debug_l1 "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
     @debug_l1 "  candidates (pre-MBR q>$q_thresh + both donors): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
+    @debug_l1 "  rescue rows: $n_rescue; candidates normal=$n_normal_cand rescue=$n_rescue_cand"
     @debug_l1 "  α (q-value FTR budget): $alpha"
 
     if n_cand == 0
@@ -269,11 +306,14 @@ function apply_mbr_filter_paired!(
     # for recovery; here counts are simpler: T or D recoveries.
     n_t_rec = count(i -> mbr_recovered_full[i] && target_col[i], 1:n)
     n_d_rec = n_recovered - n_t_rec
+    n_rescue_rec = count(i -> mbr_recovered_full[i] && rescue_mask[i], 1:n)
+    n_normal_rec = n_recovered - n_rescue_rec
 
     @debug_l1 "  doubled-frame rows: $(2*n_cand)  (top=real, bottom=fake)"
     @debug_l1 "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
     @debug_l1 "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
     @debug_l1 "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
+    @debug_l1 "  recovered transfers normal=$n_normal_rec rescue=$n_rescue_rec"
 
     if last_cls !== nothing
         lgbm_model = LightGBMModel(last_cls, available_true, nothing)

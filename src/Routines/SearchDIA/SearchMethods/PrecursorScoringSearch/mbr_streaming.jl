@@ -77,6 +77,12 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
 
+@inline function _mbr_main_pep_confidence(pep)
+    p = Float64(pep)
+    isfinite(p) || return 0.0f0
+    return Float32(round(clamp(1.0 - p, 0.0, 1.0), digits = 6))
+end
+
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
 # sidecar at `side_path`. Concrete `AbstractVector{T}` signatures force Julia
 # to specialise on the eltype (UInt32 / Float32 — see caller for the
@@ -116,6 +122,36 @@ function _emit_pass1_sidecar!(
     )
     writeArrow(side_path, side_df)
     return nothing
+end
+
+function write_mbr_rescue_main_pep_pass1_sidecar!(main_path::String)
+    main = Arrow.Table(main_path)
+    hasproperty(main, :main_pep) ||
+        error("MBR rescue file $main_path is missing required :main_pep column")
+    n = length(main.precursor_idx)
+    conf = Vector{Float32}(undef, n)
+    @inbounds for i in 1:n
+        conf[i] = _mbr_main_pep_confidence(main.main_pep[i])
+    end
+    side_df = DataFrame(
+        precursor_idx = collect(UInt32.(main.precursor_idx)),
+        scan_idx = collect(UInt32.(main.scan_idx)),
+        trace_prob_prepass = conf,
+        trace_prob_infold = copy(conf),
+    )
+    writeArrow(main_path * PASS1_SIDECAR_SUFFIX, side_df)
+    return n
+end
+
+function write_mbr_rescue_main_pep_pass1_sidecars!(file_paths::Vector{String})
+    n_files = 0
+    n_rows = 0
+    for path in file_paths
+        isfile(path) || continue
+        n_rows += write_mbr_rescue_main_pep_pass1_sidecar!(path)
+        n_files += 1
+    end
+    return (n_files = n_files, n_rows = n_rows)
 end
 
 # Distribute Pass-1 LightGBM scores (trace_prob_prepass, trace_prob_infold)
@@ -450,8 +486,14 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
             cv_fold             = collect(UInt8.(main.cv_fold)),
             target              = collect(Bool.(main.target)),
             decoy               = .!collect(Bool.(main.target)),
+            mbr_rescue_candidate = hasproperty(main, :mbr_rescue_candidate) ?
+                                   collect(Bool.(main.mbr_rescue_candidate)) :
+                                   falses(n),
             trace_prob_prepass  = collect(Float32.(pass1.trace_prob_prepass)),
             trace_prob_infold   = collect(Float32.(pass1.trace_prob_infold)),
+            mbr_recipient_main_confidence = hasproperty(main, :main_pep) ?
+                [_mbr_main_pep_confidence(p) for p in main.main_pep] :
+                collect(Float32.(pass1.trace_prob_infold)),
         )
         # Pull all MBR_* columns from the MBR sidecar.
         for c in _MBR_SIDECAR_OUT_COLS
@@ -468,65 +510,39 @@ end
 # DataFrame, distribute them back to per-file recovery sidecars in the SAME
 # row order as the main files.
 function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
-    # Build (ms_file_idx, cv_fold) → main path map.
-    is_fold_split = any(p -> occursin("_fold", p), file_paths)
-    key_to_path = if is_fold_split
-        d = Dict{Tuple{UInt32, UInt8}, String}()
-        for fpath in file_paths
-            fold_match = match(r"_fold(\d)\.arrow$", fpath)
-            fold_match === nothing && continue
-            fold_num = parse(UInt8, fold_match.captures[1])
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[(UInt32(first(orig.ms_file_idx)), fold_num)] = fpath
-        end
-        d
-    else
-        d = Dict{UInt32, String}()
-        for fpath in file_paths
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[UInt32(first(orig.ms_file_idx))] = fpath
-        end
-        d
-    end
-
+    offset = 0
     n_written = 0
-    if is_fold_split && hasproperty(slim_df, :cv_fold)
-        for (key, g) in pairs(groupby(slim_df, [:ms_file_idx, :cv_fold]))
-            lookup_key = (UInt32(key[:ms_file_idx]), UInt8(key[:cv_fold]))
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * RECOVERY_SIDECAR_SUFFIX
-            d = DataFrame(
-                precursor_idx          = collect(UInt32.(g[!, :precursor_idx])),
-                scan_idx               = collect(UInt32.(g[!, :scan_idx])),
-                mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
-                MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
-                ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
-                ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
-            )
-            writeArrow(side_path, d)
-            n_written += 1
+    total_rows = nrow(slim_df)
+    for main_path in file_paths
+        main = Arrow.Table(main_path)
+        n = length(main.precursor_idx)
+        n == 0 && continue
+        offset + n <= total_rows || error(
+            "write_recovery_sidecars: slim_df has $total_rows rows but " *
+            "file row counts exceed it at $(basename(main_path))"
+        )
+        rng = (offset + 1):(offset + n)
+        @inbounds for (j, row) in enumerate(rng)
+            (UInt32(main.precursor_idx[j]) == UInt32(slim_df.precursor_idx[row]) &&
+             UInt32(main.scan_idx[j])      == UInt32(slim_df.scan_idx[row])) ||
+                error("write_recovery_sidecars: slim_df misaligned at row $row for $main_path")
         end
-    else
-        for (key, g) in pairs(groupby(slim_df, :ms_file_idx))
-            lookup_key = UInt32(key[:ms_file_idx])
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * RECOVERY_SIDECAR_SUFFIX
-            d = DataFrame(
-                precursor_idx          = collect(UInt32.(g[!, :precursor_idx])),
-                scan_idx               = collect(UInt32.(g[!, :scan_idx])),
-                mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
-                MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
-                ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
-                ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
-            )
-            writeArrow(side_path, d)
-            n_written += 1
-        end
+        side_path = main_path * RECOVERY_SIDECAR_SUFFIX
+        d = DataFrame(
+            precursor_idx          = collect(UInt32.(view(slim_df[!, :precursor_idx], rng))),
+            scan_idx               = collect(UInt32.(view(slim_df[!, :scan_idx], rng))),
+            mbr_recovered          = collect(Bool.(view(slim_df[!, :mbr_recovered], rng))),
+            MBR_transfer_candidate = collect(Bool.(view(slim_df[!, :MBR_transfer_candidate], rng))),
+            ftr_qval_true          = collect(Float32.(view(slim_df[!, :ftr_qval_true], rng))),
+            ftr_pep_true           = collect(Float32.(view(slim_df[!, :ftr_pep_true], rng))),
+        )
+        writeArrow(side_path, d)
+        offset += n
+        n_written += 1
     end
+    offset == total_rows || error(
+        "write_recovery_sidecars: distributed $offset rows but slim_df has $total_rows"
+    )
     @debug_l1 "  Wrote $n_written recovery sidecars"
     return n_written
 end
@@ -569,6 +585,10 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         side_df[!, :trace_prob_prepass]   = collect(Float32.(pass1.trace_prob_prepass))
         side_df[!, :trace_prob_infold]    = collect(Float32.(pass1.trace_prob_infold))
         side_df[!, :trace_prob]           = side_df[!, :trace_prob_prepass]
+        if hasproperty(main, :main_pep)
+            side_df[!, :mbr_recipient_main_confidence] =
+                [_mbr_main_pep_confidence(p) for p in main.main_pep]
+        end
         side_df[!, :mbr_recovered]        = collect(Bool.(rec.mbr_recovered))
         side_df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
         side_df[!, :ftr_qval_true]        = collect(Float32.(rec.ftr_qval_true))
@@ -585,4 +605,3 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
     @debug_l1 "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
-

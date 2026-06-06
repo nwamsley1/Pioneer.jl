@@ -55,12 +55,17 @@ function score_precursor_isotope_traces(
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
     # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
     # MBR features, FTR recovery) — best_psms is never materialised as the
     # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors)
+        return _score_precursor_isotope_traces_mbr(
+            file_paths,
+            precursors;
+            mbr_rescue_file_paths = mbr_rescue_file_paths,
+        )
     else
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
@@ -215,7 +220,9 @@ end
 # the only DataFrame ever materialised is the slim FTR table (10 cols)
 # reconstructed from sidecars right before the FTR controller runs.
 function _score_precursor_isotope_traces_mbr(
-    file_paths::Vector{String}, precursors::LibraryPrecursors,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors;
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
     # 1. pid → counterfactual_partner_pid map (streaming over Arrow tables).
     cf_partner_dict = build_counterfactual_partner_map(file_paths, precursors)
@@ -229,10 +236,19 @@ function _score_precursor_isotope_traces_mbr(
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,
-        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
+        compute_infold  = true,
         lgbm_hp         = SCORING_LGBM_HP,
         semisupervised  = true,
     )
+
+    rescue_file_paths = filter(isfile, mbr_rescue_file_paths)
+    if !isempty(rescue_file_paths)
+        rescue_sidecar_t = @elapsed rescue_sidecar_stats =
+            write_mbr_rescue_main_pep_pass1_sidecars!(rescue_file_paths)
+        @debug_l1 "MBR rescue pool: wrote $(rescue_sidecar_stats.n_rows) cheap 1-PEP " *
+                  "Pass-1 sidecar rows across $(rescue_sidecar_stats.n_files) fold files " *
+                  "in $(round(rescue_sidecar_t, digits=2))s"
+    end
 
     # 4. Pass-1 feature importance (last_classifier is whichever fold's
     # booster the OOM trainer kept — only used for the diagnostic dump).
@@ -264,14 +280,16 @@ function _score_precursor_isotope_traces_mbr(
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
+    all_mbr_file_paths = vcat(file_paths, rescue_file_paths)
+
     # Parallelize the per-file MBR feature compute + sidecar write across
     # files. donor_dict and cf_partner_vec are read-only across this loop
     # (built before, not mutated by the per-file function), and each file
     # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
     @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
-    parallel_foreach!(length(file_paths)) do chunk
+    parallel_foreach!(length(all_mbr_file_paths)) do chunk
         for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(file_paths[f_idx], donor_dict, cf_partner_vec)
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(all_mbr_file_paths[f_idx], donor_dict, cf_partner_vec)
         end
     end
 
@@ -282,7 +300,7 @@ function _score_precursor_isotope_traces_mbr(
     # 7. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
     # only as wide as the FTR controller needs.
     @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
-    psms = load_ftr_slim_dataframe(file_paths)
+    psms = load_ftr_slim_dataframe(all_mbr_file_paths)
     @debug_l1 "  slim FTR rows: $(nrow(psms))"
 
     # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
@@ -294,11 +312,11 @@ function _score_precursor_isotope_traces_mbr(
     # 10. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
     # back into each main file in one pass.
     @debug_l1 "MBR Batch F: writing recovery sidecars..."
-    write_recovery_sidecars(psms, file_paths)
+    write_recovery_sidecars(psms, all_mbr_file_paths)
     psms = DataFrame()
     GC.gc()
     @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
-    merge_mbr_sidecars_into_main!(file_paths)
+    merge_mbr_sidecars_into_main!(all_mbr_file_paths)
 
     return nothing
 end

@@ -82,6 +82,7 @@ include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_win
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_empirical_fragment_features.jl")
 include("./UnitTests/test_lgbm_charge_features.jl")
 include("./UnitTests/test_m0_peak_competition_features.jl")
+include("./UnitTests/test_mbr_rescue_candidates.jl")
 include("./UnitTests/test_other_charge_state_features.jl")
 include("./UnitTests/test_ms1_isolation_window_features.jl")
 include("./UnitTests/test_isotope_mass_spacing.jl")

@@ -522,6 +522,7 @@ function train_and_predict_pass1_oom!(
         n_fold1            = total_n1,
         k_per_fold         = k_per_fold,
         last_classifier    = best_state.last_classifier,   # for importance reporting
+        cls_trained_on     = best_state.cls_trained_on,
         available_features = available,
         semisupervised_iter = best_state.iter,
         target_q01         = best_state.target_q01,

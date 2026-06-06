@@ -727,3 +727,42 @@ function add_wide_window_features_to_fold_files!(
               "to $n_files fold files ($n_rows rows) in $(round(t, digits = 2))s"
     return nothing
 end
+
+function add_wide_window_features_to_paths!(
+    search_context::SearchContext,
+    fold_paths::Vector{String},
+)
+    isempty(fold_paths) && return nothing
+
+    ms_ref = getMSData(search_context)
+    spec_lib = getSpecLib(search_context)
+    precursors = getPrecursors(spec_lib)
+    frag_lookup = getFragmentLookupTable(spec_lib)
+
+    n_files = 0
+    n_rows = 0
+    t = @elapsed begin
+        for fpath in fold_paths
+            isfile(fpath) || continue
+            tbl = Arrow.Table(fpath)
+            length(tbl.ms_file_idx) == 0 && continue
+            ms_file_idx = Int(first(tbl.ms_file_idx))
+            spectra = getMSData(ms_ref, ms_file_idx)
+            nce_model = getNceModel(search_context, ms_file_idx)
+            n_rows += add_wide_window_features_to_fold_file!(
+                fpath,
+                spectra,
+                search_context,
+                ms_file_idx,
+                precursors,
+                frag_lookup,
+                nce_model,
+            )
+            n_files += 1
+        end
+    end
+
+    @debug_l1 "Wide-window cross-run features: added $(length(WIDE_WINDOW_FEATURES)) features " *
+              "to $n_files rescue fold files ($n_rows rows) in $(round(t, digits = 2))s"
+    return nothing
+end

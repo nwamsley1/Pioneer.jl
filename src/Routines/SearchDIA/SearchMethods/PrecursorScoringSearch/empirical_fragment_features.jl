@@ -311,3 +311,32 @@ function add_empirical_fragment_features_to_fold_files!(file_paths::Vector{Strin
               "in $(round(t, digits = 2))s"
     return nothing
 end
+
+function add_empirical_fragment_features_to_extra_fold_files!(
+    reference_paths::Vector{String},
+    extra_paths::Vector{String},
+)
+    isempty(reference_paths) && return nothing
+    isempty(extra_paths) && return nothing
+
+    n_files = 0
+    n_rows = 0
+    n_refs = 0
+    t = @elapsed begin
+        refs, _, reference_rows = _empirical_fragment_build_refs(reference_paths)
+        n_refs = length(refs)
+        row_start = UInt64(reference_rows) + UInt64(1)
+        for fpath in extra_paths
+            isfile(fpath) || continue
+            n = add_empirical_fragment_features_to_fold_file!(fpath, refs, row_start)
+            row_start += UInt64(n)
+            n_rows += n
+            n_files += 1
+        end
+    end
+
+    @debug_l1 "Empirical fragment cross-run features: added $(length(EMPIRICAL_FRAGMENT_FEATURES)) features " *
+              "to $n_files rescue fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO) " *
+              "in $(round(t, digits = 2))s"
+    return nothing
+end

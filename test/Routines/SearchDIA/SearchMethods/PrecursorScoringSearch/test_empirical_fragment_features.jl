@@ -13,7 +13,6 @@
         Float32[0, 0, 0, 0, 0, 0, 0],
         Float32[0, 0, 0, 0, 0, 0, 0],
     )
-
     refs = Pioneer._empirical_fragment_topk_refs(
         precursor_idx,
         row_ids,
@@ -105,5 +104,7 @@ end
         @test d1.empirical_frag_ref_pep[2] ≈ 1.0f0
         @test isapprox(d2.empirical_frag_best_hellinger[1], 0.0f0; atol = 1.0f-6)
         @test d2.empirical_frag_ref_pep[1] ≈ 0.01f0
+        @test !hasproperty(d1, :empirical_frag_corr_n)
+        @test !hasproperty(d2, :empirical_frag_corr_n)
     end
 end

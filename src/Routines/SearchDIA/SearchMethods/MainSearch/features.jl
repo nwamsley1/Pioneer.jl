@@ -160,6 +160,7 @@ const PRESCORE_FEATURES = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :ms1_isotope_dotp_m0_m1_m2,
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
 
@@ -221,6 +222,9 @@ Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx)
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
    - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
    - `ms1_m1_intensity` (Float32): observed M+1 intensity; 0 if not matched
+   - `ms1_isotope_dotp_m0_m1_m2` (Float32): cosine dot product between
+     observed M0/M1/M2 intensities and isotope-spline expected M0/M1/M2
+     probabilities; missing peaks contribute 0
    - `ms1_m0_m1_m2_window_fraction` (Float32): (M0 + M1 + M2 intensity)
      divided by total nearest-MS1 peak intensity inside the paired MS2
      isolation window
@@ -322,6 +326,22 @@ end
     return clamp((m0_eff + m1_eff + m2_eff) / denom, 0f0, 1f0)
 end
 
+@inline function _ms1_isotope_dotp_m0_m1_m2(m0_int, m1_int, m2_int,
+                                            pred0, pred1, pred2)::Float32
+    obs0 = max(Float32(m0_int), 0f0)
+    obs1 = max(Float32(m1_int), 0f0)
+    obs2 = max(Float32(m2_int), 0f0)
+    exp0 = max(Float32(pred0), 0f0)
+    exp1 = max(Float32(pred1), 0f0)
+    exp2 = max(Float32(pred2), 0f0)
+    obs_norm2 = obs0 * obs0 + obs1 * obs1 + obs2 * obs2
+    exp_norm2 = exp0 * exp0 + exp1 * exp1 + exp2 * exp2
+    denom = sqrt(obs_norm2 * exp_norm2)
+    denom > 0f0 || return 0f0
+    dotp = (obs0 * exp0 + obs1 * exp1 + obs2 * exp2) / denom
+    return clamp(Float32(dotp), 0f0, 1f0)
+end
+
 @inline function _ms2_explained_fraction(log2_intensity_explained)::Float32
     x = Float32(log2_intensity_explained)
     isfinite(x) || return 0f0
@@ -338,6 +358,7 @@ function _initialize_ms1_isolation_window_features!(psms)
     psms[!, :ms1_ms2_explained_delta] = zeros(Float32, n)
     psms[!, :ms1_m0_m1_m2_window_fraction_pc] = zeros(Float32, n)
     psms[!, :ms1_ms2_explained_delta_pc] = zeros(Float32, n)
+    psms[!, :ms1_isotope_dotp_m0_m1_m2] = zeros(Float32, n)
     return nothing
 end
 
@@ -415,6 +436,17 @@ function _ms1_lookup_chunk!(psms, spectra,
         m0_hit, m0_int, m0_mz, m0_peak_idx = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
         m1_hit, m1_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
         m2_hit, m2_int, _, _               = _ms1_find_peak(cached_mz, cached_int, target_m2, ms1_ppm_tol)
+        sulf = clamp(Int(prec_sulfurs[pid]), 0, 5)
+        prec_mass = (prec_mz - Float32(PROTON)) * Float32(prec_chg)
+        p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass), 0f0)
+        p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass), 0f0)
+        p2 = max(iso_splines(Int64(sulf), Int64(2), prec_mass), 0f0)
+        psms.ms1_isotope_dotp_m0_m1_m2[i] = _ms1_isotope_dotp_m0_m1_m2(
+            m0_hit ? m0_int : 0f0,
+            m1_hit ? m1_int : 0f0,
+            m2_hit ? m2_int : 0f0,
+            p0, p1, p2,
+        )
 
         scan_id = Int(psms.scan_idx[i])
         window_low = scan_window_low[scan_id]
@@ -481,6 +513,7 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m0_mass_err_ppm`
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
+- `:ms1_isotope_dotp_m0_m1_m2`
 - `:ms1_m0_m1_m2_window_fraction`
 - `:ms1_ms2_explained_delta`
 - `:ms1_m0_m1_m2_window_fraction_pc`
@@ -1087,8 +1120,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
         groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
         bitvec_rank_table = nothing)
     n = nrow(psms)
-    # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
-    # are computed and written. Earlier versions emitted 15 more outputs
+    # Only the fragment-chromatogram features consumed by PRESCORE_FEATURES /
+    # ADVANCED_FEATURE_SET are computed and written. Earlier versions emitted
+    # 15 more outputs
     # (frag_corr_mean_pairwise — 15 Spearman per precursor; frag_corr_min_pairwise
     # — 15 Pearson; frag_corr_top1_top2/_top3/_weight, frag_corr_top3_weight,
     # frag_corr_top5_weight, n_correlated_fragments / _50, frag_corr_best_weight,
