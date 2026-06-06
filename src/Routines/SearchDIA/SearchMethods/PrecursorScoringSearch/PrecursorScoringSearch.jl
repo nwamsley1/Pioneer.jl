@@ -222,6 +222,7 @@ function summarize_results!(
             FORCE_OOM;
             match_between_runs = params.match_between_runs,
             mbr_rescue_file_paths = mbr_rescue_fold_paths,
+            frag_lookup = getFragmentLookupTable(getSpecLib(search_context)),
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"

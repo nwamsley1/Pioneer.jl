@@ -67,6 +67,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_max_pair_prob_true,
     :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true,
+    :MBR_frag_annot_hellinger_true,
     :MBR_best_irt_diff_true,
     :MBR_log_by_diff_true,
     # rtv1 (2026-05-13): literal donor-vs-recipient scan RT diff.
@@ -85,7 +86,11 @@ const FTR_FEATURES_F_TRUE = Symbol[
 #   6-vector features lowered Dennis FTR 2.59 % → 2.40 % and raised PGs +0.16 %,
 #   at a cost of −0.06 % precursor IDs / −2.1 % MBR recoveries (YeastMBR);
 #   HelaOnly pure-FTR 0.252 % → 0.242 %, PGs +0.33 %, IDs −0.65 %. Net quality
-#   win; donor entries no longer need frag1_int..frag8_int.
+#   win.
+# 2026-06-06:
+#   Reintroduced a fragment-shape MBR feature, but annotation-matched rather
+#   than rank-matched. The true and counterfactual donor spectra are compared
+#   on the union of compact top-8 fragment labels, with zeros for missing labels.
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror
@@ -96,6 +101,7 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
+    f === :MBR_frag_annot_hellinger_true ? :MBR_frag_annot_hellinger_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :

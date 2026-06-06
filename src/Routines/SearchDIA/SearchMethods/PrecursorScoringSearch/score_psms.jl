@@ -43,6 +43,8 @@ to the per-file Arrow files.
   shared helper handles large datasets).
 - `q_value_threshold`: Surfaced for backward compatibility; currently unused.
 - `force_oom`: Surfaced for backward compatibility; ignored.
+- `frag_lookup`: Optional fragment lookup used by the MBR path for
+  annotation-matched empirical donor/recipient fragment comparisons.
 
 # Returns
 `nothing` (scores are written to file).
@@ -56,6 +58,7 @@ function score_precursor_isotope_traces(
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
     mbr_rescue_file_paths::Vector{String} = String[],
+    frag_lookup::Union{Nothing, LibraryFragmentLookup} = nothing,
 )
     # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
     # MBR features, FTR recovery) — best_psms is never materialised as the
@@ -65,6 +68,7 @@ function score_precursor_isotope_traces(
             file_paths,
             precursors;
             mbr_rescue_file_paths = mbr_rescue_file_paths,
+            frag_lookup = frag_lookup,
         )
     else
         return _score_precursor_isotope_traces_no_mbr(
@@ -223,6 +227,7 @@ function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String},
     precursors::LibraryPrecursors;
     mbr_rescue_file_paths::Vector{String} = String[],
+    frag_lookup::Union{Nothing, LibraryFragmentLookup} = nothing,
 )
     # 1. pid → counterfactual_partner_pid map (streaming over Arrow tables).
     cf_partner_dict = build_counterfactual_partner_map(file_paths, precursors)
@@ -277,7 +282,7 @@ function _score_precursor_isotope_traces_mbr(
 
     # 6. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
     @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
-    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths, frag_lookup)
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
     all_mbr_file_paths = vcat(file_paths, rescue_file_paths)
@@ -289,7 +294,12 @@ function _score_precursor_isotope_traces_mbr(
     @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
     parallel_foreach!(length(all_mbr_file_paths)) do chunk
         for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(all_mbr_file_paths[f_idx], donor_dict, cf_partner_vec)
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                all_mbr_file_paths[f_idx],
+                donor_dict,
+                cf_partner_vec,
+                frag_lookup,
+            )
         end
     end
 
