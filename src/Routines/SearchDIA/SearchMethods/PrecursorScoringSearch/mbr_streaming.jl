@@ -17,7 +17,7 @@
 #     Streams each (main + pass1 sidecar) pair to build the top-2 donor dict
 #     keyed by precursor_idx. Top-2 (not top-1) covers the same-file fallback
 #     in `_donor_for` — top-1 might be the recipient's own file.
-#     Memory: ~50k pids × 2 entries, including an 8-fragment shadow payload.
+#     Memory: ~50k pids × 2 entries.
 #
 #   Sweep 2 (compute_mbr_features_per_file_to_sidecar_with_pass1!)
 #     Loads ONE file's main + pass1 sidecar at a time, computes the MBR_*
@@ -36,10 +36,7 @@
 # A single cross-run donor entry: one row's score + the per-row donor
 # features we need to compute MBR features for a recipient row in
 # another file. Holds the bare minimum so the donor dict stays small
-# (top-2 per precursor; fragment payload is 8 labels + 8 Float32s).
-const MBR_FRAGMENT_HELLINGER_SENTINEL = 1.0f0
-const _MBR_EMPTY_FRAGMENT_KEYS = ntuple(_ -> UInt32(0), 8)
-const _MBR_EMPTY_FRAGMENT_INTS = ntuple(_ -> 0.0f0, 8)
+# (top-2 per precursor).
 
 struct _MBRDonorEntry
     trace_prob::Float32
@@ -49,8 +46,6 @@ struct _MBRDonorEntry
     irt_obs::Float32       # raw observed iRT of the donor row
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
     rt_obs::Float32        # literal scan RT (minutes) of the donor row
-    frag_keys::NTuple{8, UInt32}
-    frag_ints::NTuple{8, Float32}
     ms_file_idx::UInt32
     is_decoy::Bool
 end
@@ -63,7 +58,7 @@ const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
-    :ms_file_idx, EMPIRICAL_FRAGMENT_COLUMNS...)
+    :ms_file_idx)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -76,7 +71,6 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
-    :MBR_frag_annot_hellinger_true, :MBR_frag_annot_hellinger_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -161,136 +155,6 @@ function write_mbr_rescue_main_pep_pass1_sidecars!(file_paths::Vector{String})
     return (n_files = n_files, n_rows = n_rows)
 end
 
-@inline function _mbr_safe_fragment_intensity(x)
-    ismissing(x) && return 0.0f0
-    y = Float32(x)
-    return isfinite(y) ? max(y, 0.0f0) : 0.0f0
-end
-
-function _mbr_shadow_fragment_columns(tbl)
-    all(c -> hasproperty(tbl, c), EMPIRICAL_FRAGMENT_COLUMNS) || return nothing
-    return ntuple(i -> Tables.getcolumn(tbl, EMPIRICAL_FRAGMENT_COLUMNS[i]), 8)
-end
-
-@inline _mbr_shadow_fragment_tuple(::Nothing, ::Integer) = _MBR_EMPTY_FRAGMENT_INTS
-
-@inline function _mbr_shadow_fragment_tuple(frag_cols, row::Integer)
-    return ntuple(i -> _mbr_safe_fragment_intensity(frag_cols[i][row]), 8)
-end
-
-@inline function _mbr_fragment_annotation_key(frag)
-    family = isY(frag) ? UInt32(1) :
-             isB(frag) ? UInt32(2) :
-             isP(frag) ? UInt32(3) :
-                         UInt32(4)
-    return (family << 28) |
-           ((UInt32(getFragCharge(frag)) & 0x0f) << 24) |
-           ((UInt32(getIonPosition(frag)) & 0xff) << 16) |
-           (UInt32(getIonType(frag)) & 0xffff)
-end
-
-function _mbr_top8_fragment_keys(frag_lookup::LibraryFragmentLookup, pid::UInt32)
-    keys = zeros(UInt32, 8)
-    frag_list = getFragments(frag_lookup)
-    @inbounds for frag_idx in getPrecFragRange(frag_lookup, pid)
-        frag = frag_list[Int(frag_idx)]
-        isIso(frag) && continue
-        rank = Int(getRank(frag))
-        1 <= rank <= 8 || continue
-        keys[rank] == UInt32(0) || continue
-        keys[rank] = _mbr_fragment_annotation_key(frag)
-    end
-    return (keys[1], keys[2], keys[3], keys[4], keys[5], keys[6], keys[7], keys[8])
-end
-
-@inline function _mbr_top8_fragment_keys_cached(
-    ::Nothing,
-    ::Dict{UInt32, NTuple{8, UInt32}},
-    ::UInt32,
-)
-    return _MBR_EMPTY_FRAGMENT_KEYS
-end
-
-@inline function _mbr_top8_fragment_keys_cached(
-    frag_lookup::LibraryFragmentLookup,
-    cache::Dict{UInt32, NTuple{8, UInt32}},
-    pid::UInt32,
-)
-    return get!(() -> _mbr_top8_fragment_keys(frag_lookup, pid), cache, pid)
-end
-
-@inline function _mbr_annotation_total(keys::NTuple{8, UInt32}, ints::NTuple{8, Float32})
-    total = 0.0f0
-    @inbounds for i in 1:8
-        keys[i] == UInt32(0) && continue
-        ints[i] > 0.0f0 || continue
-        total += ints[i]
-    end
-    return total
-end
-
-@inline function _mbr_annotation_seen_before(keys::NTuple{8, UInt32}, pos::Int, key::UInt32)
-    @inbounds for j in 1:(pos - 1)
-        keys[j] == key && return true
-    end
-    return false
-end
-
-@inline function _mbr_annotation_has_key(keys::NTuple{8, UInt32}, key::UInt32)
-    @inbounds for j in 1:8
-        keys[j] == key && return true
-    end
-    return false
-end
-
-@inline function _mbr_annotation_sum_for_key(
-    keys::NTuple{8, UInt32},
-    ints::NTuple{8, Float32},
-    key::UInt32,
-)
-    total = 0.0f0
-    @inbounds for j in 1:8
-        keys[j] == key || continue
-        ints[j] > 0.0f0 || continue
-        total += ints[j]
-    end
-    return total
-end
-
-@inline function _mbr_annotation_hellinger(
-    obs_keys::NTuple{8, UInt32},
-    obs_ints::NTuple{8, Float32},
-    ref_keys::NTuple{8, UInt32},
-    ref_ints::NTuple{8, Float32},
-)
-    obs_total = _mbr_annotation_total(obs_keys, obs_ints)
-    ref_total = _mbr_annotation_total(ref_keys, ref_ints)
-    (obs_total > 0.0f0 && ref_total > 0.0f0) || return MBR_FRAGMENT_HELLINGER_SENTINEL
-
-    dist2 = 0.0f0
-    inv_obs = 1.0f0 / obs_total
-    inv_ref = 1.0f0 / ref_total
-
-    @inbounds for i in 1:8
-        key = obs_keys[i]
-        key == UInt32(0) && continue
-        _mbr_annotation_seen_before(obs_keys, i, key) && continue
-        p_obs = _mbr_annotation_sum_for_key(obs_keys, obs_ints, key) * inv_obs
-        p_ref = _mbr_annotation_sum_for_key(ref_keys, ref_ints, key) * inv_ref
-        d = sqrt(p_obs) - sqrt(p_ref)
-        dist2 += d * d
-    end
-    @inbounds for i in 1:8
-        key = ref_keys[i]
-        key == UInt32(0) && continue
-        _mbr_annotation_seen_before(ref_keys, i, key) && continue
-        _mbr_annotation_has_key(obs_keys, key) && continue
-        p_ref = _mbr_annotation_sum_for_key(ref_keys, ref_ints, key) * inv_ref
-        dist2 += p_ref
-    end
-    return Float32(sqrt(max(0.0f0, 0.5f0 * dist2)))
-end
-
 # Distribute Pass-1 LightGBM scores (trace_prob_prepass, trace_prob_infold)
 # back to per-file Pass-1 sidecars.
 #
@@ -372,9 +236,6 @@ end
     logby_c::Union{Nothing, AbstractVector{Float16}},
     rt_c::Union{Nothing, AbstractVector{Float32}},
     fidx_c::AbstractVector{UInt32},
-    frag_cols,
-    frag_lookup::Union{Nothing, LibraryFragmentLookup},
-    frag_key_cache::Dict{UInt32, NTuple{8, UInt32}},
     side_path::String,
 )
     n = length(pid_c)
@@ -386,16 +247,12 @@ end
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
             error("Pass-1 sidecar misaligned at row $i of $side_path")
         pid = pid_c[i]
-        frag_keys = _mbr_top8_fragment_keys_cached(frag_lookup, frag_key_cache, pid)
-        frag_ints = _mbr_shadow_fragment_tuple(frag_cols, i)
         e = _MBRDonorEntry(
             score_c[i], w_c[i], Float32(l2ie_c[i]),
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
-            frag_keys,
-            frag_ints,
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -418,12 +275,8 @@ end
 # `trace_prob_prepass` from the Pass-1 sidecar (rather than expecting it
 # in the main file). All other donor columns come from the main file.
 # Alignment between main and sidecar is asserted via (:precursor_idx, :scan_idx).
-function build_mbr_donor_dict_streaming_with_pass1(
-    file_paths::Vector{String},
-    frag_lookup::Union{Nothing, LibraryFragmentLookup} = nothing,
-)
+function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    frag_key_cache = Dict{UInt32, NTuple{8, UInt32}}()
     for main_path in file_paths
         side_path = main_path * PASS1_SIDECAR_SUFFIX
         isfile(side_path) || error("Missing Pass-1 sidecar at $side_path")
@@ -432,7 +285,6 @@ function build_mbr_donor_dict_streaming_with_pass1(
         n = length(main.precursor_idx)
         n == length(side.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $side_path")
-        frag_cols = _mbr_shadow_fragment_columns(main)
         _accumulate_donor_entries!(
             all_entries,
             main.precursor_idx, side.precursor_idx,
@@ -444,9 +296,6 @@ function build_mbr_donor_dict_streaming_with_pass1(
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
             main.ms_file_idx,
-            frag_cols,
-            frag_lookup,
-            frag_key_cache,
             side_path,
         )
     end
@@ -478,7 +327,6 @@ end
     out_miss_t::BitVector,      out_miss_f::BitVector,
     out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
     out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
-    out_frag_h_t::Vector{Float32}, out_frag_h_f::Vector{Float32},
     pid_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
@@ -487,9 +335,6 @@ end
     irto_v::AbstractVector{Float32},
     logby_v::Union{Nothing, AbstractVector{Float16}},
     rt_v::Union{Nothing, AbstractVector{Float32}},
-    frag_cols,
-    frag_lookup::Union{Nothing, LibraryFragmentLookup},
-    frag_key_cache::Dict{UInt32, NTuple{8, UInt32}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_col::Vector{UInt32},
 )
@@ -503,9 +348,6 @@ end
         my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
 
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
-        have_frag_payload = false
-        frag_keys = _MBR_EMPTY_FRAGMENT_KEYS
-        frag_ints = _MBR_EMPTY_FRAGMENT_INTS
         if donor_t !== nothing
             out_max_t[i] = donor_t.trace_prob
             wi = weight_v[i]
@@ -520,12 +362,6 @@ end
             if has_rt
                 out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
             end
-            frag_keys = _mbr_top8_fragment_keys_cached(frag_lookup, frag_key_cache, my_pid)
-            frag_ints = _mbr_shadow_fragment_tuple(frag_cols, i)
-            have_frag_payload = true
-            out_frag_h_t[i] = _mbr_annotation_hellinger(
-                frag_keys, frag_ints, donor_t.frag_keys, donor_t.frag_ints,
-            )
             out_miss_t[i] = false
         end
         if my_partner != UInt32(0)
@@ -544,14 +380,6 @@ end
                 if has_rt
                     out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
                 end
-                if !have_frag_payload
-                    frag_keys = _mbr_top8_fragment_keys_cached(frag_lookup, frag_key_cache, my_pid)
-                    frag_ints = _mbr_shadow_fragment_tuple(frag_cols, i)
-                    have_frag_payload = true
-                end
-                out_frag_h_f[i] = _mbr_annotation_hellinger(
-                    frag_keys, frag_ints, donor_f.frag_keys, donor_f.frag_ints,
-                )
                 out_miss_f[i] = false
             end
         end
@@ -565,8 +393,7 @@ end
 function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         main_path::AbstractString,
         donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-        partner_col::Vector{UInt32},
-        frag_lookup::Union{Nothing, LibraryFragmentLookup} = nothing)
+        partner_col::Vector{UInt32})
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -584,8 +411,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     irto_v  = main.irt_obs
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    frag_cols = _mbr_shadow_fragment_columns(main)
-    frag_key_cache = Dict{UInt32, NTuple{8, UInt32}}()
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -599,17 +424,14 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_frag_h_t = fill(-1f0, n); out_frag_h_f = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
         out_le_t, out_le_f, out_ir_t, out_ir_f,
         out_miss_t, out_miss_f,
         out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
-        out_frag_h_t, out_frag_h_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v, rt_v,
-        frag_cols, frag_lookup, frag_key_cache,
         donor_dict, partner_col,
     )
 
@@ -631,8 +453,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_log_by_diff_false          = out_log_by_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
-        MBR_frag_annot_hellinger_true  = out_frag_h_t,
-        MBR_frag_annot_hellinger_false = out_frag_h_f,
     )
     writeArrow(side_path, side_df)
     return side_path

@@ -86,6 +86,8 @@ function process_scans_fused!(
     mem::AbstractMassErrorModel,
     rt_to_irt_spline,
     irt_tol::AbstractFloat
+    ;
+    deconvolution_solver_override = nothing,
 ) where {P<:FragmentIndexSearchParameters, PI<:PrecursorIndex}
 
     Hs              = getHsFused(search_data)
@@ -166,7 +168,16 @@ function process_scans_fused!(
                 return last_val
             end
             resize_if_needed!(search_data, params)
-            converged = post_design_matrix!(search_data, Hs, params)
+            converged = if deconvolution_solver_override === nothing
+                post_design_matrix!(search_data, Hs, params)
+            else
+                post_design_matrix!(
+                    search_data,
+                    Hs,
+                    params;
+                    deconvolution_solver_override = deconvolution_solver_override,
+                )
+            end
             if !converged
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)
                 return last_val

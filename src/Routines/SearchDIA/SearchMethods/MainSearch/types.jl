@@ -17,7 +17,7 @@ const MAIN_PEP_FILTER_THR = 0.9f0
 # PEP ceiling for rows that fail the normal MainSearch gate but are retained
 # as MBR-only rescue candidates. Rows with PEP above this value are discarded
 # before the expensive cross-run rescue feature/scoring path.
-const MAIN_MBR_RESCUE_PEP_MAX = 0.95f0
+const MAIN_MBR_RESCUE_PEP_MAX = 0.98f0
 
 function _get_optional_named_value(section, keys::Tuple)
     for key in keys

@@ -24,6 +24,13 @@ using Pioneer
         @test thresholds.mbr_rescue_pep_max == 0.98f0
     end
 
+    @testset "main-search PEP threshold defaults are current baseline" begin
+        thresholds = Pioneer._resolve_mainsearch_pep_thresholds(NamedTuple(), NamedTuple())
+
+        @test thresholds.pep_filter_threshold == 0.9f0
+        @test thresholds.mbr_rescue_pep_max == 0.98f0
+    end
+
     @testset "rescue pass1 sidecars use per-run 1-PEP confidence" begin
         mktempdir() do dir
             rescue_path = joinpath(dir, "run1_fold0.arrow")
@@ -46,8 +53,6 @@ using Pioneer
 
     @testset "FTR slim loader exposes per-run 1-PEP confidence" begin
         @test :mbr_recipient_main_confidence in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_frag_annot_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_frag_annot_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :trace_prob_infold ∉ Pioneer.FTR_FEATURES_F_TRUE
 
         mktempdir() do dir
@@ -84,8 +89,6 @@ using Pioneer
                 MBR_log_by_diff_false = Float32[0.8],
                 MBR_best_rt_diff_true = Float32[0.9],
                 MBR_best_rt_diff_false = Float32[1.0],
-                MBR_frag_annot_hellinger_true = Float32[0.11],
-                MBR_frag_annot_hellinger_false = Float32[0.22],
             ))
 
             slim = Pioneer.load_ftr_slim_dataframe([path])
