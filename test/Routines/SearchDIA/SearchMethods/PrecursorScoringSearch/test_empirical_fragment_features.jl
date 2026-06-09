@@ -1,17 +1,17 @@
 @testset "empirical fragment reference features use top-2 leave-one-out references" begin
-    precursor_idx = UInt32[10, 10, 10, 10, 10, 10, 11]
-    row_ids = UInt64[1, 2, 3, 4, 5, 6, 7]
-    scores = Float32[0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.7]
-    peps = Float32[0.0, 0.75, 1.0, 1.0, 1.0, 0.0, 0.02]
+    precursor_idx = UInt32[10, 10, 10, 10, 10, 10, 11, 12, 12, 12]
+    row_ids = UInt64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    scores = Float32[0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.7, 0.9, 0.8, 0.7]
+    peps = Float32[0.0, 0.75, 1.0, 1.0, 1.0, 0.0, 0.02, 0.1, 0.2, 0.3]
     frag_cols = (
-        Float32[100, 0, 0, 0, 0, 0, 25],
-        Float32[0, 100, 100, 100, 100, 100, 25],
-        Float32[0, 0, 0, 0, 0, 0, 0],
-        Float32[0, 0, 0, 0, 0, 0, 0],
-        Float32[0, 0, 0, 0, 0, 0, 0],
-        Float32[0, 0, 0, 0, 0, 0, 0],
-        Float32[0, 0, 0, 0, 0, 0, 0],
-        Float32[0, 0, 0, 0, 0, 0, 0],
+        Float32[100, 0, 0, 0, 0, 0, 25, 100, 81, 100],
+        Float32[0, 100, 100, 100, 100, 100, 25, 0, 19, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Float32[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     )
     refs = Pioneer._empirical_fragment_topk_refs(
         precursor_idx,
@@ -20,7 +20,7 @@
         peps,
         frag_cols,
     )
-    hellinger, ref_pep = Pioneer._empirical_fragment_reference_features(
+    hellinger, ref_pep, gated_similarity = Pioneer._empirical_fragment_reference_features(
         precursor_idx,
         row_ids,
         frag_cols,
@@ -29,19 +29,29 @@
 
     @test hellinger[1] ≈ 1.0f0
     @test ref_pep[1] ≈ 0.75f0
+    @test gated_similarity[1] ≈ 0.0f0
     @test hellinger[2] ≈ 1.0f0
     @test ref_pep[2] ≈ 0.0f0
+    @test gated_similarity[2] ≈ 0.0f0
 
     @test hellinger[6] ≈ 1.0f0
     @test ref_pep[6] ≈ 0.0f0
+    @test gated_similarity[6] ≈ 0.0f0
 
     @test hellinger[7] ≈ 1.0f0
     @test ref_pep[7] ≈ 1.0f0
+    @test gated_similarity[7] ≈ 0.0f0
+
+    @test isapprox(hellinger[10], 0.0f0; atol = 1.0f-6)
+    @test ref_pep[10] ≈ 0.1f0
+    @test 0.6f0 < gated_similarity[10] <= 1.0f0
 end
 
 @testset "empirical fragment features are cross-run only" begin
     @test :empirical_frag_best_hellinger in Pioneer.ADVANCED_FEATURE_SET
-    @test :empirical_frag_ref_pep in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:empirical_frag_ref_pep in Pioneer.ADVANCED_FEATURE_SET)
+    @test :empirical_frag_quality_gated_similarity in Pioneer.ADVANCED_FEATURE_SET
+    @test :empirical_frag_quality_gated_similarity in Pioneer.EMPIRICAL_FRAGMENT_FEATURES
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.EMPIRICAL_FRAGMENT_FEATURES)
 end
 
@@ -100,10 +110,13 @@ end
 
         @test isapprox(d1.empirical_frag_best_hellinger[1], 0.0f0; atol = 1.0f-6)
         @test d1.empirical_frag_ref_pep[1] ≈ 0.03f0
+        @test isapprox(d1.empirical_frag_quality_gated_similarity[1], 1.0f0; atol = 1.0f-6)
         @test d1.empirical_frag_best_hellinger[2] ≈ 1.0f0
         @test d1.empirical_frag_ref_pep[2] ≈ 1.0f0
+        @test d1.empirical_frag_quality_gated_similarity[2] ≈ 0.0f0
         @test isapprox(d2.empirical_frag_best_hellinger[1], 0.0f0; atol = 1.0f-6)
         @test d2.empirical_frag_ref_pep[1] ≈ 0.01f0
+        @test isapprox(d2.empirical_frag_quality_gated_similarity[1], 1.0f0; atol = 1.0f-6)
         @test !hasproperty(d1, :empirical_frag_corr_n)
         @test !hasproperty(d2, :empirical_frag_corr_n)
     end
