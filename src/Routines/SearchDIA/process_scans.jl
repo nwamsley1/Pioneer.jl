@@ -113,19 +113,11 @@ Post-design-matrix processing. Returns `true` if scoring should proceed.
 - Simple path: no-op, always returns true.
 - MainSearch: initialize weights, solve deconvolution, update precursor weights.
 """
-function post_design_matrix!(
-    search_data::SearchDataStructures,
-    Hs::AbstractSparseDesignMatrix,
-    params::MainSearchParameters;
-    deconvolution_solver_override = nothing,
-)
+function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::MainSearchParameters)
     weights = getTempWeights(search_data)
     initialize_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
-    solver = deconvolution_solver_override === nothing ?
-             params.deconvolution_solver :
-             deconvolution_solver_override
     converged = first(solve_deconvolution!(
-        solver,
+        params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
         params.max_iter_outer, params.max_diff
@@ -137,19 +129,11 @@ function post_design_matrix!(
     return converged
 end
 
-function post_design_matrix!(
-    search_data::SearchDataStructures,
-    Hs::AbstractSparseDesignMatrix,
-    params::ParameterTuningSearchParameters;
-    deconvolution_solver_override = nothing,
-)
+function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::ParameterTuningSearchParameters)
     weights = getTempWeights(search_data)
     initialize_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
-    solver = deconvolution_solver_override === nothing ?
-             OLSSolver() :
-             deconvolution_solver_override
     converged = first(solve_deconvolution!(
-        solver,
+        OLSSolver(),
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
         DECONV_MAX_ITER, DECONV_CONVERGENCE_TOL

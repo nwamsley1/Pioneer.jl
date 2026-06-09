@@ -71,10 +71,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
     match_between_runs::Bool
 
-    # MainSearch settings reused for the targeted empirical-reference Huber
-    # rerun. The rerun overrides only the solver and only for selected scans.
-    main_search_params
-
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
@@ -87,7 +83,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
             mbr,
-            MainSearchParameters(params),
         )
     end
 end
@@ -213,11 +208,7 @@ function summarize_results!(
         "$(length(mbr_rescue_fold_paths)) fold files before cross-run scoring"
 
     add_wide_window_features_to_fold_files!(search_context, Int.(valid_file_indices))
-    add_empirical_fragment_features_to_fold_files!(
-        valid_fold_paths;
-        search_context = search_context,
-        main_search_params = params.main_search_params,
-    )
+    add_empirical_fragment_features_to_fold_files!(valid_fold_paths)
 
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))

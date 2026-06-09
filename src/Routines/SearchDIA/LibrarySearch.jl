@@ -48,7 +48,6 @@ function library_search(
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
     max_peaks::Int = 0,
-    deconvolution_solver_override = nothing,
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
@@ -162,8 +161,7 @@ function library_search(
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index, scan_to_cycle_idx, ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                nce_model, qtm, mem, rt_to_irt, irt_tol;
-                deconvolution_solver_override = deconvolution_solver_override)
+                nce_model, qtm, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.

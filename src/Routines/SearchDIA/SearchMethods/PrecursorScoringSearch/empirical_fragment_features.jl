@@ -18,22 +18,6 @@ const EMPIRICAL_FRAGMENT_EMPTY_SCORES = ntuple(_ -> typemin(Float32), EMPIRICAL_
 const EMPIRICAL_FRAGMENT_EMPTY_PEPS = ntuple(_ -> EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP, EMPIRICAL_FRAGMENT_REF_K)
 const EMPIRICAL_FRAGMENT_EMPTY_FRAGS = ntuple(_ -> EMPIRICAL_FRAGMENT_EMPTY_VEC, EMPIRICAL_FRAGMENT_REF_K)
 
-struct EmpiricalFragmentHuberRefreshStats
-    reference_rows::Int64
-    replaced_rows::Int64
-    fallback_rows::Int64
-    unique_scans::Int64
-    huber_rows::Int64
-    runtime_sec::Float64
-end
-
-struct EmpiricalFragmentReferenceRow
-    row_id::UInt64
-    ms_file_idx::UInt32
-    scan_idx::UInt32
-    precursor_idx::UInt32
-end
-
 mutable struct EmpiricalFragmentTopKRef
     rows::NTuple{EMPIRICAL_FRAGMENT_REF_K, UInt64}
     scores::NTuple{EMPIRICAL_FRAGMENT_REF_K, Float32}
@@ -48,10 +32,6 @@ function _empirical_fragment_empty_ref()
         EMPIRICAL_FRAGMENT_EMPTY_PEPS,
         EMPIRICAL_FRAGMENT_EMPTY_FRAGS,
     )
-end
-
-function _empirical_fragment_empty_huber_stats()
-    return EmpiricalFragmentHuberRefreshStats(0, 0, 0, 0, 0, 0.0)
 end
 
 @inline function _empirical_fragment_safe_float(x, default::Float32)
@@ -93,49 +73,6 @@ end
         dist2 += d * d
     end
     return sqrt(max(0.0f0, 0.5f0 * dist2))
-end
-
-function _empirical_fragment_apply_reference_overrides!(
-    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
-    overrides::Dict{UInt64, NTuple{8, Float32}};
-    unique_scans::Integer = 0,
-    huber_rows::Integer = 0,
-    runtime_sec::Real = 0.0,
-)
-    reference_rows = 0
-    replaced_rows = 0
-
-    for ref in values(refs)
-        old_sqrt_frags = ref.sqrt_frags
-        new_sqrt_frags = Vector{NTuple{8, Float32}}(undef, EMPIRICAL_FRAGMENT_REF_K)
-        @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
-            row_id = ref.rows[j]
-            old_sqrt = old_sqrt_frags[j]
-            if row_id == UInt64(0) || !_empirical_fragment_sqrt_is_valid(old_sqrt)
-                new_sqrt_frags[j] = old_sqrt
-                continue
-            end
-
-            reference_rows += 1
-            override = get(overrides, row_id, nothing)
-            if override !== nothing && _empirical_fragment_sqrt_is_valid(override)
-                new_sqrt_frags[j] = override
-                replaced_rows += 1
-            else
-                new_sqrt_frags[j] = old_sqrt
-            end
-        end
-        ref.sqrt_frags = ntuple(j -> new_sqrt_frags[j], EMPIRICAL_FRAGMENT_REF_K)
-    end
-
-    return EmpiricalFragmentHuberRefreshStats(
-        reference_rows,
-        replaced_rows,
-        reference_rows - replaced_rows,
-        Int64(unique_scans),
-        Int64(huber_rows),
-        Float64(runtime_sec),
-    )
 end
 
 @inline function _empirical_fragment_hellinger_distance(
@@ -322,155 +259,6 @@ function _empirical_fragment_build_refs(file_paths::Vector{String})
     return refs, row_starts, n_rows
 end
 
-function _empirical_fragment_reference_row_ids(refs::Dict{UInt32, EmpiricalFragmentTopKRef})
-    row_ids = Set{UInt64}()
-    for ref in values(refs)
-        @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
-            row_id = ref.rows[j]
-            row_id == UInt64(0) && continue
-            _empirical_fragment_sqrt_is_valid(ref.sqrt_frags[j]) || continue
-            push!(row_ids, row_id)
-        end
-    end
-    return row_ids
-end
-
-function _empirical_fragment_collect_reference_rows(
-    file_paths::Vector{String},
-    row_starts::Vector{UInt64},
-    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
-)
-    selected_row_ids = _empirical_fragment_reference_row_ids(refs)
-    isempty(selected_row_ids) && return EmpiricalFragmentReferenceRow[]
-
-    rows = EmpiricalFragmentReferenceRow[]
-    sizehint!(rows, length(selected_row_ids))
-    for (file_idx, fpath) in enumerate(file_paths)
-        isfile(fpath) || continue
-        tbl = Arrow.Table(fpath)
-        n = length(tbl.precursor_idx)
-        n == 0 && continue
-        if !(hasproperty(tbl, :ms_file_idx) &&
-             hasproperty(tbl, :scan_idx) &&
-             hasproperty(tbl, :precursor_idx))
-            continue
-        end
-
-        row_start = row_starts[file_idx]
-        @inbounds for i in 1:n
-            row_id = row_start + UInt64(i - 1)
-            row_id in selected_row_ids || continue
-            push!(
-                rows,
-                EmpiricalFragmentReferenceRow(
-                    row_id,
-                    UInt32(tbl.ms_file_idx[i]),
-                    UInt32(tbl.scan_idx[i]),
-                    UInt32(tbl.precursor_idx[i]),
-                ),
-            )
-        end
-    end
-    return rows
-end
-
-@inline function _empirical_fragment_ref_key(ms_file_idx, scan_idx, precursor_idx)
-    return (UInt32(ms_file_idx), UInt32(scan_idx), UInt32(precursor_idx))
-end
-
-function _empirical_fragment_huber_reference_overrides(
-    search_context::SearchContext,
-    main_search_params,
-    reference_rows::Vector{EmpiricalFragmentReferenceRow},
-)
-    overrides = Dict{UInt64, NTuple{8, Float32}}()
-    isempty(reference_rows) && return (
-        overrides = overrides,
-        unique_scans = 0,
-        huber_rows = 0,
-        runtime_sec = 0.0,
-    )
-
-    file_to_scans = Dict{Int64, Set{Int64}}()
-    key_to_row = Dict{Tuple{UInt32, UInt32, UInt32}, UInt64}()
-    for row in reference_rows
-        scans = get!(file_to_scans, Int64(row.ms_file_idx)) do
-            Set{Int64}()
-        end
-        push!(scans, Int64(row.scan_idx))
-        key = _empirical_fragment_ref_key(row.ms_file_idx, row.scan_idx, row.precursor_idx)
-        haskey(key_to_row, key) || (key_to_row[key] = row.row_id)
-    end
-
-    ms_ref = getMSData(search_context)
-    huber_solver = default_chromatogram_integration_huber_solver()
-    huber_rows = 0
-    unique_scans = 0
-    runtime_sec = @elapsed begin
-        for ms_file_idx in sort!(collect(keys(file_to_scans)))
-            scans = sort!(collect(file_to_scans[ms_file_idx]))
-            isempty(scans) && continue
-            unique_scans += length(scans)
-            spectra = getMSData(ms_ref, ms_file_idx)
-            huber_psms = library_search(
-                spectra,
-                search_context,
-                main_search_params,
-                ms_file_idx;
-                scan_indices = scans,
-                deconvolution_solver_override = huber_solver,
-            )
-            huber_rows += nrow(huber_psms)
-            nrow(huber_psms) == 0 && continue
-            all(c -> hasproperty(huber_psms, c), EMPIRICAL_FRAGMENT_COLUMNS) || continue
-            frag_cols = ntuple(i -> huber_psms[!, EMPIRICAL_FRAGMENT_COLUMNS[i]], 8)
-
-            @inbounds for i in 1:nrow(huber_psms)
-                key = _empirical_fragment_ref_key(
-                    huber_psms.ms_file_idx[i],
-                    huber_psms.scan_idx[i],
-                    huber_psms.precursor_idx[i],
-                )
-                row_id = get(key_to_row, key, UInt64(0))
-                row_id == UInt64(0) && continue
-                haskey(overrides, row_id) && continue
-                sqrt_frag = _empirical_fragment_sqrt_tuple(_empirical_fragment_tuple(frag_cols, i))
-                _empirical_fragment_sqrt_is_valid(sqrt_frag) || continue
-                overrides[row_id] = sqrt_frag
-            end
-        end
-    end
-
-    return (
-        overrides = overrides,
-        unique_scans = unique_scans,
-        huber_rows = huber_rows,
-        runtime_sec = runtime_sec,
-    )
-end
-
-function _empirical_fragment_refresh_refs_with_huber!(
-    refs::Dict{UInt32, EmpiricalFragmentTopKRef},
-    file_paths::Vector{String},
-    row_starts::Vector{UInt64},
-    search_context::SearchContext,
-    main_search_params,
-)
-    reference_rows = _empirical_fragment_collect_reference_rows(file_paths, row_starts, refs)
-    refresh = _empirical_fragment_huber_reference_overrides(
-        search_context,
-        main_search_params,
-        reference_rows,
-    )
-    return _empirical_fragment_apply_reference_overrides!(
-        refs,
-        refresh.overrides;
-        unique_scans = refresh.unique_scans,
-        huber_rows = refresh.huber_rows,
-        runtime_sec = refresh.runtime_sec,
-    )
-end
-
 function add_empirical_fragment_features_to_fold_file!(
     fpath::String,
     refs::Dict{UInt32, EmpiricalFragmentTopKRef},
@@ -501,30 +289,16 @@ function add_empirical_fragment_features_to_fold_file!(
     return n
 end
 
-function add_empirical_fragment_features_to_fold_files!(
-    file_paths::Vector{String};
-    search_context = nothing,
-    main_search_params = nothing,
-)
+function add_empirical_fragment_features_to_fold_files!(file_paths::Vector{String})
     isempty(file_paths) && return nothing
 
     n_files = 0
     n_rows = 0
     n_refs = 0
-    huber_stats = _empirical_fragment_empty_huber_stats()
     t = @elapsed begin
         refs, row_starts, n_rows_total = _empirical_fragment_build_refs(file_paths)
         n_refs = length(refs)
         n_rows = n_rows_total
-        if search_context !== nothing && main_search_params !== nothing
-            huber_stats = _empirical_fragment_refresh_refs_with_huber!(
-                refs,
-                file_paths,
-                row_starts,
-                search_context,
-                main_search_params,
-            )
-        end
         for (file_idx, fpath) in enumerate(file_paths)
             isfile(fpath) || continue
             add_empirical_fragment_features_to_fold_file!(fpath, refs, row_starts[file_idx])
@@ -532,15 +306,8 @@ function add_empirical_fragment_features_to_fold_files!(
         end
     end
 
-    huber_msg = if search_context !== nothing && main_search_params !== nothing
-        "; huber_refs=$(huber_stats.replaced_rows)/$(huber_stats.reference_rows) " *
-        "fallback=$(huber_stats.fallback_rows) scans=$(huber_stats.unique_scans) " *
-        "huber_rows=$(huber_stats.huber_rows) huber_time=$(round(huber_stats.runtime_sec, digits = 2))s"
-    else
-        ""
-    end
     @debug_l1 "Empirical fragment cross-run features: added $(length(EMPIRICAL_FRAGMENT_FEATURES)) features " *
-              "to $n_files fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO$huber_msg) " *
+              "to $n_files fold files ($n_rows rows; refs=$n_refs; topK=$(EMPIRICAL_FRAGMENT_REF_K), LOO) " *
               "in $(round(t, digits = 2))s"
     return nothing
 end

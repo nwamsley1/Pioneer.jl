@@ -44,9 +44,8 @@ const WIDE_WINDOW_FEATURES = [
 # they compare each per-run best PSM's deconvolved observed ("shadow") top-8
 # fragment intensities against the best top-2 empirical reference for the
 # same precursor, excluding the current PSM when it is itself one of the top 2.
-# empirical_frag_ref_pep is computed as a diagnostic/reference-confidence column
-# but is intentionally excluded from ADVANCED_FEATURE_SET to avoid inflating
-# false transfer rate through per-run PEP feedback.
+# empirical_frag_ref_pep is the per-run PEP of the selected empirical reference
+# spectrum and is available to the cross-run model.
 const EMPIRICAL_FRAGMENT_FEATURES = [
     :empirical_frag_best_hellinger,
     :empirical_frag_ref_pep,
@@ -107,6 +106,7 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_intersection_bitvec_rank,
     :frag_observed_sum_hellinger,
     :empirical_frag_best_hellinger,
+    :empirical_frag_ref_pep,
     :trace_other_weight_corr,
     :trace_other_frag_sum_corr,
     :trace_other_apex_delta_irt,

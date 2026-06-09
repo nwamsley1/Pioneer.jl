@@ -41,53 +41,8 @@ end
 
 @testset "empirical fragment features are cross-run only" begin
     @test :empirical_frag_best_hellinger in Pioneer.ADVANCED_FEATURE_SET
-    @test !(:empirical_frag_ref_pep in Pioneer.ADVANCED_FEATURE_SET)
+    @test :empirical_frag_ref_pep in Pioneer.ADVANCED_FEATURE_SET
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), Pioneer.EMPIRICAL_FRAGMENT_FEATURES)
-end
-
-@testset "empirical fragment references can use Huber shadow overrides" begin
-    precursor_idx = UInt32[20, 20, 20]
-    row_ids = UInt64[1, 2, 3]
-    scores = Float32[0.9, 0.8, 0.7]
-    peps = Float32[0.01, 0.02, 0.03]
-    frag_cols = (
-        Float32[100, 0, 0],
-        Float32[0, 100, 100],
-        Float32[0, 0, 0],
-        Float32[0, 0, 0],
-        Float32[0, 0, 0],
-        Float32[0, 0, 0],
-        Float32[0, 0, 0],
-        Float32[0, 0, 0],
-    )
-    refs = Pioneer._empirical_fragment_topk_refs(
-        precursor_idx,
-        row_ids,
-        scores,
-        peps,
-        frag_cols,
-    )
-    override = Pioneer._empirical_fragment_sqrt_tuple((
-        0.0f0, 100.0f0, 0.0f0, 0.0f0,
-        0.0f0, 0.0f0, 0.0f0, 0.0f0,
-    ))
-
-    stats = Pioneer._empirical_fragment_apply_reference_overrides!(
-        refs,
-        Dict(UInt64(1) => override),
-    )
-    hellinger, ref_pep = Pioneer._empirical_fragment_reference_features(
-        precursor_idx,
-        row_ids,
-        frag_cols,
-        refs,
-    )
-
-    @test stats.reference_rows == 2
-    @test stats.replaced_rows == 1
-    @test stats.fallback_rows == 1
-    @test isapprox(hellinger[2], 0.0f0; atol = 1.0f-6)
-    @test ref_pep[2] ≈ 0.01f0
 end
 
 @testset "empirical fragment features annotate fold files" begin
