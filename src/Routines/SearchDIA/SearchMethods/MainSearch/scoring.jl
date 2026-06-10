@@ -1438,7 +1438,9 @@ function _mark_paircomp_losers!(keep_mask::Vector{Bool},
                                  targets::AbstractVector{Bool},
                                  partner_col::AbstractVector,
                                  row_by_pid::Vector{Int32},
-                                 score_by_pid::Vector{Float32})
+                                 score_by_pid::Vector{Float32},
+                                 scan_by_pid::Vector{UInt32},
+                                 scan_margin::Int)
     n0 = length(prec_ids)
     parallel_foreach!(n0) do chunk
         @inbounds for i in chunk
@@ -1451,6 +1453,8 @@ function _mark_paircomp_losers!(keep_mask::Vector{Bool},
             partner <= pid && continue
             partner_row_i32 = row_by_pid[Int(partner)]
             partner_row_i32 == 0 && continue
+            abs(Int(scan_by_pid[Int(pid)]) - Int(scan_by_pid[Int(partner)])) <= scan_margin ||
+                continue
             partner_row = Int(partner_row_i32)
             my_score = score_by_pid[Int(pid)]
             pt_score = score_by_pid[Int(partner)]
@@ -1472,14 +1476,16 @@ end
     apply_pair_competition!(best_psms, search_context) -> (n_pairs, n_dropped_t, n_dropped_d)
 
 For each precursor that has a target↔decoy partner in the library, if
-both rows are present in `best_psms` drop the lower-scoring row. Operates
-on `:lgbm_prob`. Equivalent to 1-vs-1 target-decoy competition before
-q-value computation.
-
-Empirically (Olsen Exploris one-file, non-entrap library): +2,556 q≤.001,
-+1,131 q≤.01, +89 protein groups vs single-pass without paircomp.
+both rows are present in `best_psms` with selected apex scans within
+`scan_margin` scans, drop the lower-scoring row. Operates on `:lgbm_prob`.
+Equivalent to scan-local 1-vs-1 target-decoy competition before q-value
+computation.
 """
-function apply_pair_competition!(best_psms::DataFrame, search_context::SearchContext)
+function apply_pair_competition!(
+    best_psms::DataFrame,
+    search_context::SearchContext;
+    scan_margin::Int = 1,
+)
     n0 = nrow(best_psms)
     n0 == 0 && return 0, 0, 0
     precursors = getPrecursors(getSpecLib(search_context))
@@ -1489,15 +1495,20 @@ function apply_pair_competition!(best_psms::DataFrame, search_context::SearchCon
     prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
     lgbm_probs = best_psms[!, :lgbm_prob]
     targets    = best_psms[!, :target]::AbstractVector{Bool}
+    scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
 
     row_by_pid, score_by_pid = _build_paircomp_lookups(prec_ids, lgbm_probs, n_lib)
+    scan_by_pid = zeros(UInt32, n_lib)
+    @inbounds for i in eachindex(prec_ids)
+        scan_by_pid[Int(prec_ids[i])] = scan_idxs[i]
+    end
 
     # Vector{Bool} (1 byte/elem) instead of BitVector — different threads
     # writing to different indices in the same packed 64-bit word would
     # race in a BitVector. Vector{Bool} is byte-addressable → safe.
     keep_mask = fill(true, n0)
     _mark_paircomp_losers!(keep_mask, prec_ids, targets, partner_col,
-                            row_by_pid, score_by_pid)
+                            row_by_pid, score_by_pid, scan_by_pid, scan_margin)
 
     # Tally dropped target/decoy counts in one pass (cheap; avoids atomics).
     n_dropped_t = 0
