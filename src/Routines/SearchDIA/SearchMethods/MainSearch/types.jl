@@ -11,7 +11,7 @@ const DEFAULT_INDEX_SEARCH_MIN_SCORE = UInt8(15)
 
 # Per-file PEP threshold applied during MainSearch. The same threshold defines
 # the cycle-contiguous wide-window core before best-per-precursor reduction,
-# and filters best-per-precursor rows after pair competition.
+# and filters best-per-precursor rows before cross-run scoring.
 const MAIN_PEP_FILTER_THR = 0.9f0
 
 # PEP ceiling for rows that fail the normal MainSearch gate but are retained

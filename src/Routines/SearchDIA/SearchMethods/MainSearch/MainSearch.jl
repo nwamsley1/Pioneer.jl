@@ -311,7 +311,6 @@ function process_search_results!(
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
-    t_paircomp_start = t_lgbm_end
 
     # Refine predicted iRTs with out-of-fold correction models. The correction
     # changes iRT-dependent features for every candidate PSM, so reapply the
@@ -388,27 +387,14 @@ function process_search_results!(
         best_psms[!, :lgbm_prob] = scores
     end
     _summarize_psm_counts(best_psms, "after isotope-trace collapse", ms_file_idx, file_name)
-
-    # ============================================================
-    # PAIR COMPETITION. See `apply_pair_competition!` in scoring.jl.
-    # ============================================================
-    n0 = nrow(best_psms)
-    n_pairs = 0
-    n_dropped_t = 0
-    n_dropped_d = 0
-    @debug_l1 "  Pair competition skipped (file_idx=$ms_file_idx, $file_name): " *
-               "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
-               "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
-    _summarize_psm_counts(best_psms, "after paircomp", ms_file_idx, file_name)
-    t_paircomp_end = time()
-    t_pep_start = t_paircomp_end
-    # ============================================================
+    _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
+    t_pep_start = time()
 
     # ============================================================
     # PER-FILE PEP FILTER (PEP ≤ params.pep_filter_threshold).
-    # Computed on best-per-precursor PSMs (post-paircomp) so each precursor
-    # gets one PEP value. Precursors with PEP > threshold never enter the
-    # second_pass arrow files and therefore can't reach ScoringSearch.
+    # Computed on best-per-precursor PSMs so each precursor gets one PEP value.
+    # Precursors with PEP > threshold never enter the second_pass arrow files
+    # and therefore can't reach ScoringSearch.
     # ============================================================
     rescue_psms = DataFrame()
     pep_filter_thr = params.pep_filter_threshold
@@ -462,8 +448,8 @@ function process_search_results!(
 
     # Fragment-peak competition over the top-8 matched fragment trace anchors. This is a
     # cross-run-only feature, so compute it only on PSMs/precursors that passed
-    # the per-run model, pair competition, and PEP filter. The raw peak-index
-    # columns are dropped before any Arrow write.
+    # the per-run model and PEP filter. The raw peak-index columns are dropped
+    # before any Arrow write.
     t_competition = @elapsed begin
         if nrow(rescue_psms) > 0
             n_kept = nrow(best_psms)
@@ -551,12 +537,11 @@ function process_search_results!(
     t_total = t_write - t_start
     dur_features  = t_prepare + t_competition + t_apex + t_ms1 + t_trace_features
     dur_lgbm      = t_lgbm_end - t_lgbm_start   # train_cv + best-per-precursor
-    dur_paircomp  = t_paircomp_end - t_paircomp_start
     dur_pep       = t_pep_end - t_pep_start
     dur_recal     = t_recal_end - t_recal_start
     dur_phase2    = t_phase2 - t_recal_end
     dur_write     = t_write - t_phase2
-    dur_accounted = dur_features + dur_lgbm + dur_paircomp + dur_pep +
+    dur_accounted = dur_features + dur_lgbm + dur_pep +
                     dur_recal + dur_phase2 + dur_write
     dur_overhead  = t_total - dur_accounted
     r = s -> round(s, digits=2)
@@ -564,7 +549,7 @@ function process_search_results!(
                "$n_total_psms PSMs → $(nrow(best_psms)) precursors  total=$(r(t_total))s\n" *
                "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s trace=$(r(t_trace_features))s]\n" *
                "    lgbm=$(r(dur_lgbm))s [train_cv=$(r(lgbm_timings.train_cv))s best_per_prec=$(r(lgbm_timings.best))s]  " *
-               "paircomp=$(r(dur_paircomp))s  pep_filter=$(r(dur_pep))s\n" *
+               "pep_filter=$(r(dur_pep))s\n" *
                "    recal=$(r(dur_recal))s  phase2=$(r(dur_phase2))s  write=$(r(dur_write))s  " *
                "overhead=$(r(dur_overhead))s"
 
