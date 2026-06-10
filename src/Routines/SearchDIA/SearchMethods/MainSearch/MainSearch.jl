@@ -393,12 +393,10 @@ function process_search_results!(
     # PAIR COMPETITION. See `apply_pair_competition!` in scoring.jl.
     # ============================================================
     n0 = nrow(best_psms)
-    n_pairs, n_dropped_t, n_dropped_d = apply_pair_competition!(
-        best_psms,
-        search_context;
-        scan_margin = 10,
-    )
-    @debug_l1 "  Pair competition scan-local ±10 scans (file_idx=$ms_file_idx, $file_name): " *
+    n_pairs = 0
+    n_dropped_t = 0
+    n_dropped_d = 0
+    @debug_l1 "  Pair competition skipped (file_idx=$ms_file_idx, $file_name): " *
                "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
                "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
     _summarize_psm_counts(best_psms, "after paircomp", ms_file_idx, file_name)
