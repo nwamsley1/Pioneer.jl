@@ -1484,7 +1484,7 @@ computation.
 function apply_pair_competition!(
     best_psms::DataFrame,
     search_context::SearchContext;
-    scan_margin::Int = 1,
+    scan_margin::Int = 10,
 )
     n0 = nrow(best_psms)
     n0 == 0 && return 0, 0, 0
