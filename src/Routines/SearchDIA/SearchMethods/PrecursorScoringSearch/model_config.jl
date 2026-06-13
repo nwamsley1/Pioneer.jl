@@ -49,7 +49,6 @@ const WIDE_WINDOW_FEATURES = [
 const EMPIRICAL_FRAGMENT_FEATURES = [
     :empirical_frag_best_hellinger,
     :empirical_frag_ref_pep,
-    :empirical_frag_quality_gated_similarity,
 ]
 
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
@@ -87,6 +86,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int,
     :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    :frag9_int, :frag10_int,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
@@ -107,7 +107,6 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_intersection_bitvec_rank,
     :frag_observed_sum_hellinger,
     :empirical_frag_best_hellinger,
-    :empirical_frag_quality_gated_similarity,
     :trace_other_weight_corr,
     :trace_other_frag_sum_corr,
     :trace_other_apex_delta_irt,

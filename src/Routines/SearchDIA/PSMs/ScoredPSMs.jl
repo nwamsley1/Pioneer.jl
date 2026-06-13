@@ -95,7 +95,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # signal as the per-file LightGBM (previously dropped by Score!).
     best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
 
-    # Per-rank top-8 fragment trace intensities. Each rank sums matched fragment
+    # Per-rank top-10 fragment trace intensities. Each rank sums matched fragment
     # isotope peaks predicted at >=25% of that fragment's most abundant isotope.
     frag1_int::H
     frag2_int::H
@@ -105,6 +105,8 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag6_int::H
     frag7_int::H
     frag8_int::H
+    frag9_int::H
+    frag10_int::H
 
     # Deconvolved observed ("shadow") top-8 fragment trace intensities from
     # the fitted spectrum. These mirror frag1_int..frag8_int, but use
@@ -222,6 +224,8 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag6_int,
             unscored_PSMs[i].frag7_int,
             unscored_PSMs[i].frag8_int,
+            unscored_PSMs[i].frag9_int,
+            unscored_PSMs[i].frag10_int,
 
             H(spectral_scores[scores_idx].shadow_frag1_int),
             H(spectral_scores[scores_idx].shadow_frag2_int),
@@ -270,7 +274,7 @@ Slim per-scan row produced by `Score!` for tuning paths
 (ParameterTuningSearch, QuadTuningSearch). Same shape as
 `MainSearchScoredPSM` minus the MainSearch-only fragment-chromatogram
 fields (`rank1_matched`, `top3_matched`, `top5_matched`,
-`frag1_int..frag8_int`) since tuning code never consumes them.
+`frag1_int..frag10_int`) since tuning code never consumes them.
 """
 struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     longest_y::UInt8

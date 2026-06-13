@@ -202,7 +202,7 @@ function process_file!(
     psms = library_search(spectra, search_context, params, ms_file_idx)
     t_lib_search = time() - t_file_start
 
-    # IMPORTANT: the next two steps depend on the deconv output being
+    # IMPORTANT: the next scan-local steps depend on the deconv output being
     # contiguous-by-:scan_idx — all PSMs sharing a scan_idx form one
     # contiguous run. This is the natural emit order from the per-thread
     # `for scan_idx in scan_range` loop in process_scans_fused.jl:67
@@ -220,6 +220,7 @@ function process_file!(
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
     t_scan_comp = @elapsed add_scan_competition_features!(psms)
+    t_frag_unique = @elapsed _add_fragment_peak_candidate_counts!(psms)
 
     # MS1 lookup features (M0/M+1 intensities, mass errors, and isotope ratios). Done
     # BEFORE the precursor sort so that consecutive rows within a per-chunk
@@ -243,6 +244,7 @@ function process_file!(
     @debug_l1 "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
                "scan_comp=$(round(t_scan_comp * 1000, digits=0))ms  " *
+               "frag_unique=$(round(t_frag_unique * 1000, digits=0))ms  " *
                "ms1=$(round(t_ms1, digits=2))s  " *
                "sort=$(round(t_sort * 1000, digits=0))ms  n_cols=$(ncol(psms))"
 
@@ -387,6 +389,7 @@ function process_search_results!(
         best_psms[!, :lgbm_prob] = scores
     end
     _summarize_psm_counts(best_psms, "after isotope-trace collapse", ms_file_idx, file_name)
+
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
 

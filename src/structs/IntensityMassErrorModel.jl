@@ -17,7 +17,7 @@
 
 """
 Precomputed linear extrapolation at the boundaries of a spline.
-Outside [lo, hi] (typically the 2% and 98% quantiles of training data),
+Outside [lo, hi] (configured from training-data quantiles),
 evaluation switches from the spline to: val + slope * (t - boundary).
 This avoids trusting the spline in sparse tail regions while keeping
 the full data for fitting.
@@ -34,20 +34,19 @@ end
 """
 Intensity-aware mass error model.
 
-Bias is decomposed into two convexity-constrained smoothing splines (Da):
+Bias is decomposed into m/z- and intensity-dependent smoothing splines (Da):
   bias_Da(mz, I) = mz_bias_spline(mz) + intensity_bias_spline(log2(I))
 
 Spread is Laplace-distributed with scale parameter **in mDa** modeled as a
 monotone-decreasing convex cubic B-spline of log2(I).
 
-Splines are fit on all training data but evaluate with **linear extrapolation**
-outside the [2%, 98%] quantile range of the training data. This avoids trusting
-the spline in sparse tail regions. `conservative_tol_da` is the stopping bound
-for 2-arg methods. No hard clamp is applied — the tolerance is determined by
-`k * σ_mDa / 1e3` with linear extrapolation.
+Bias splines are fit on all training data but switch to linear extrapolation
+outside the configured central training-data quantiles. `conservative_tol_da`
+is the stopping bound for 2-arg methods. No hard clamp is applied — the tolerance
+is determined by `k * σ_mDa / 1e3` with linear extrapolation.
 """
-struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMassErrorModel
-    # m/z-dependent bias (Da): convexity-constrained smoothing spline
+struct IntensityMassErrorModel{Nmz, NI, Nspread, Nmzspread, T<:AbstractFloat} <: AbstractMassErrorModel
+    # m/z-dependent bias (Da): binned robust regularized spline
     mz_bias_spline::UniformSpline{Nmz, T}
 
     # Intensity-dependent bias (Da): convexity-constrained smoothing spline of log2(I)
@@ -56,7 +55,7 @@ struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMa
     # Laplace spread (mDa): monotone-decreasing convex spline of log2(I)
     spread_spline::UniformSpline{Nspread, T}
 
-    # Linear extrapolation outside [q2, q98] of training data
+    # Linear extrapolation outside central training-data quantiles
     mz_bias_extrap::SplineExtrap{T}
     int_bias_extrap::SplineExtrap{T}
     spread_extrap::SplineExtrap{T}
@@ -67,8 +66,11 @@ struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMa
     # Maximum tolerance in Da. Used as conservative stopping bound for 2-arg methods.
     conservative_tol_da::T
 
-    # m/z-dependent spread correction: effective_spread_mDa = b_mda(log2I) * (α + β·mz + γ·mz²)
-    # Default α=1, β=0, γ=0 gives no correction.
+    # m/z-dependent spread correction: effective_spread_mDa = b_mda(log2I) * c(mz).
+    # The historical α/β/γ fields are kept for compatibility/logging; the
+    # correction now evaluates mz_spread_spline with constant endpoint extrap.
+    mz_spread_spline::UniformSpline{Nmzspread, T}
+    mz_spread_extrap::SplineExtrap{T}
     mz_spread_α::T
     mz_spread_β::T
     mz_spread_γ::T
@@ -123,7 +125,7 @@ function make_spline_extrap(spline::UniformSpline{N, T}, lo::T, hi::T) where {N,
 end
 
 #==========================================================
-Spline evaluation with linear extrapolation outside [q2, q98]
+Spline evaluation with linear extrapolation outside stored quantile boundaries
 ==========================================================#
 
 @inline function _eval_with_extrap(spline::UniformSpline, e::SplineExtrap{T}, t::U) where {T, U<:AbstractFloat}
@@ -175,8 +177,12 @@ end
 m/z-dependent spread correction factor (in mDa space)
 ==========================================================#
 
+@inline function _mz_spread_correction(spline::UniformSpline, e::SplineExtrap{T}, mz::U) where {T, U<:AbstractFloat}
+    @fastmath return min(max(_eval_with_extrap(spline, e, mz), U(0.1)), U(10.0))
+end
+
 @inline function _mz_spread_correction(m::IntensityMassErrorModel, mz::T) where {T<:AbstractFloat}
-    @fastmath return max(muladd(muladd(T(m.mz_spread_γ), mz, T(m.mz_spread_β)), mz, T(m.mz_spread_α)), T(0.1))
+    return _mz_spread_correction(m.mz_spread_spline, m.mz_spread_extrap, mz)
 end
 
 #==========================================================
@@ -279,6 +285,12 @@ function convert_spline_to_f32(s::UniformSpline{N, Float64}) where N
         Float32(s.bin_width)
     )
 end
+
+convert_spline_extrap_to_f32(e::SplineExtrap{Float64}) = SplineExtrap{Float32}(
+    Float32(e.lo), Float32(e.hi),
+    Float32(e.lo_val), Float32(e.lo_slope),
+    Float32(e.hi_val), Float32(e.hi_slope)
+)
 
 #==========================================================
 ScoutCalibratedMassErrorModel

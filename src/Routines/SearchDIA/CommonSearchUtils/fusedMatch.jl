@@ -318,6 +318,8 @@ error accumulation.
     frag6_int = score.frag6_int
     frag7_int = score.frag7_int
     frag8_int = score.frag8_int
+    frag9_int = score.frag9_int
+    frag10_int = score.frag10_int
     frag1_peak_idx = score.frag1_peak_idx
     frag2_peak_idx = score.frag2_peak_idx
     frag3_peak_idx = score.frag3_peak_idx
@@ -406,7 +408,7 @@ error accumulation.
         end
     end
 
-    # Per-rank trace intensity capture for top-8 fragments. This sums matched
+    # Per-rank trace intensity capture for top-10 fragments. This sums matched
     # isotope peaks whose predicted intensity is at least 25% of the fragment's
     # most abundant predicted isotope.
     if trace_intensity_match
@@ -426,6 +428,10 @@ error accumulation.
             frag7_int += intensity
         elseif rank == UInt8(8)
             frag8_int += intensity
+        elseif rank == UInt8(9)
+            frag9_int += intensity
+        elseif rank == UInt8(10)
+            frag10_int += intensity
         end
     end
 
@@ -441,7 +447,7 @@ error accumulation.
         p_count, non_cannonical_count,
         error,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
-        frag7_int, frag8_int,
+        frag7_int, frag8_int, frag9_int, frag10_int,
         frag1_peak_idx, frag2_peak_idx, frag3_peak_idx,
         frag4_peak_idx, frag5_peak_idx, frag6_peak_idx,
         frag7_peak_idx, frag8_peak_idx,
@@ -1037,7 +1043,7 @@ Filter (matches classic MassErrEstimationStrategy):
   - y-ions only
   - getFragCharge(frag) == 1
   - getRank(frag) ≤ max_rank   (default 6)
-  - getIonPosition(frag) ≥ min_ion_position (default 5)
+  - getIonPosition(frag) ≥ min_ion_position (default 4)
 ==========================================================#
 
 """
@@ -1072,7 +1078,7 @@ function run_fused_masserr!(
     scan_mz::AbstractArray{Union{Missing, Float32}},
     scan_int::AbstractArray{Union{Missing, Float32}};
     max_rank::Int = 6,
-    min_ion_position::Int = 5)
+    min_ion_position::Int = 4)
 
     fragments = getFragments(ion_list)
     n_peaks = peak_mz_len

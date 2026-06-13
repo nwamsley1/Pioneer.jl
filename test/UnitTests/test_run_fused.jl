@@ -28,11 +28,13 @@ const CompactFrag            = Pioneer.CompactFrag
 const PiecewiseNceModel      = Pioneer.PiecewiseNceModel
 const SquareQuadFunction     = Pioneer.SquareQuadFunction
 const SimpleMassErrorModel   = Pioneer.SimpleMassErrorModel
+const MassErrSample          = Pioneer.MassErrSample
 # parseIsoXML is already imported into Main via runtests.jl
 # (`using Pioneer: parseIsoXML`); re-`const`-declaring it is a hard error
 # under Julia 1.12 — same issue as the isotope-spacing constant case in
 # test_fused_prec_filters.jl.
 const run_fused!             = Pioneer.run_fused!
+const run_fused_masserr!     = Pioneer.run_fused_masserr!
 
 # Load the real isotope splines once (small XML, fast parse).
 const ISO_XML = joinpath(dirname(dirname(@__DIR__)), "assets",
@@ -205,6 +207,18 @@ function call_run_fused!(fx; kwargs...)
         f.isotope_err_bounds)
 end
 
+function call_run_fused_masserr!(fx; samples = MassErrSample[], sample_idx = 0, kwargs...)
+    f = merge(fx, values(kwargs))
+    scan_mz = Union{Missing, Float32}[mz for mz in f.scan_corrected_mz]
+    return run_fused_masserr!(
+        samples, sample_idx,
+        f.scan_corrected_mz, f.scan_obs_low, f.scan_obs_high, f.peak_mz_len,
+        f.ion_list,
+        f.precursors_passed, f.prec_range,
+        f.mem, scan_mz, f.scan_int;
+        kwargs...)
+end
+
 # =============================================================================
 @testset "run_fused! orchestration" begin
 
@@ -318,6 +332,32 @@ end
     end
 
     # ------------------------------------------------------------
+    @testset "mass-error calibration default starts at y4 fragments" begin
+        frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(1), :y, UInt8(4)),
+                 (UInt32(1), 300.0f0,  900.0f0, UInt8(1), :y, UInt8(3))]
+        fx = make_fused_fixture(
+            frags = frags,
+            prec_frag_ranges = UInt64[1, 3],
+            peak_mz = Float32[200.0, 300.0],
+            peak_int = Float32[1000.0, 900.0],
+        )
+
+        samples = MassErrSample[]
+        n_default = call_run_fused_masserr!(fx; samples = samples, max_rank = 6)
+
+        @test n_default == 1
+        if n_default == 1
+            @test samples[1].theoretical_mz == 200.0f0
+        end
+
+        widened_samples = MassErrSample[]
+        n_widened = call_run_fused_masserr!(
+            fx; samples = widened_samples, max_rank = 6, min_ion_position = 3)
+
+        @test n_widened == 2
+    end
+
+    # ------------------------------------------------------------
     @testset "rank filter: high-rank fragments skipped" begin
         # Make the second fragment rank=15 (above FusedStandard's threshold=7).
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(0)),
@@ -421,6 +461,33 @@ end
         @test psm.frag8_peak_idx == UInt32(1)
         @test psm.frag7_peak_idx == UInt32(0)
         @test psm.y_count == UInt8(1)
+    end
+
+    # ------------------------------------------------------------
+    @testset "top-10 fragment trace intensity captures ranks 9 and 10" begin
+        frags = [
+            (UInt32(1), 1000.0f0, 1000.0f0, UInt8(9), :y, UInt8(4)),
+            (UInt32(1), 1100.0f0,  900.0f0, UInt8(10), :y, UInt8(5)),
+        ]
+        fx = make_fused_fixture(
+            frags = frags,
+            prec_frag_ranges = UInt64[1, 3],
+            peak_mz = Float32[1000.0f0, 1100.0f0],
+            peak_int = Float32[1500.0f0, 900.0f0],
+            kind = FusedStandard(FullPrecCapture(), UInt8(10)),
+        )
+
+        n_match, _ = call_run_fused!(fx)
+
+        @test n_match == 2
+        psm = fx.unscored_psms[1]
+        @test hasproperty(psm, :frag9_int)
+        @test hasproperty(psm, :frag10_int)
+        if hasproperty(psm, :frag9_int) && hasproperty(psm, :frag10_int)
+            @test psm.frag9_int == 1500.0f0
+            @test psm.frag10_int == 900.0f0
+        end
+        @test psm.y_count == UInt8(2)
     end
 
     # ------------------------------------------------------------

@@ -501,10 +501,20 @@ setBitVecFilter!(s::SearchContext, ms_file_idx::Int64, filter::Vector{Bool}) = (
 setBitVecExcessRanks!(s::SearchContext, ms_file_idx::Int64, ranks::Vector{UInt16}) = (s.bitvec_excess_rank[ms_file_idx] = ranks)
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor
 
-@inline function _bitvec_pattern_rank(rank_table, mask::UInt8)
+@inline function _bitvec_pattern_rank(rank_table, mask::UInt16)
     rank_table === nothing && return UInt16(0)
-    @inbounds return rank_table[Int(mask) + 1]
+    idx = Int(mask) + 1
+    if idx <= length(rank_table)
+        @inbounds return rank_table[idx]
+    end
+    if length(rank_table) == 256
+        @inbounds return rank_table[Int(mask & 0x00ff) + 1]
+    end
+    return UInt16(0)
 end
+
+@inline _bitvec_pattern_rank(rank_table, mask::UInt8) =
+    _bitvec_pattern_rank(rank_table, UInt16(mask))
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
 

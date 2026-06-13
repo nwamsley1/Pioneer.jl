@@ -38,7 +38,7 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     p_count::UInt8
     non_cannonical_count::UInt8
     error::T
-    # Per-rank top-8 fragment trace intensities. Each rank sums matched fragment
+    # Per-rank top-10 fragment trace intensities. Each rank sums matched fragment
     # isotope peaks predicted at >=25% of that fragment's most abundant isotope.
     frag1_int::T
     frag2_int::T
@@ -48,6 +48,8 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag6_int::T
     frag7_int::T
     frag8_int::T
+    frag9_int::T
+    frag10_int::T
     # Observed MS2 peak indices matched by each top-8 fragment rank at that
     # fragment trace's most abundant predicted isotope. Transient MainSearch
     # columns use these for fragment-peak competition features, then drop the
@@ -79,7 +81,8 @@ MainUnscoredPSM{Float32}() = MainUnscoredPSM{Float32}(
     zero(UInt8), zero(UInt8), Float32(0),
     Float32(0), Float32(0), Float32(0),
     Float32(0), Float32(0), Float32(0),
-    Float32(0), Float32(0),
+    Float32(0), Float32(0), Float32(0),
+    Float32(0),
     UInt32(0), UInt32(0), UInt32(0),
     UInt32(0), UInt32(0), UInt32(0),
     UInt32(0), UInt32(0),
@@ -93,7 +96,7 @@ MainUnscoredPSM{Float32}() = MainUnscoredPSM{Float32}(
 Slim per-(scan, precursor) accumulator for tuning paths
 (ParameterTuningSearch, QuadTuningSearch, IntegrateChromatogramsSearch).
 Same structural shape as `MainUnscoredPSM` but omits the MainSearch-only
-fragment-chromatogram captures (`matched_rank_mask`, `frag1_int..frag8_int`)
+fragment-chromatogram captures (`matched_rank_mask`, `frag1_int..frag10_int`)
 since tuning code never reads them. Written by `apply_tuning_scoring!`.
 """
 struct TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

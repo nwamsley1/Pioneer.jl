@@ -1,3 +1,4 @@
+import Pioneer
 using Pioneer: SoAFragBins, LocalFragment, Counter, LocalPartition,
     LocalPartitionedFragmentIndex, FragIndexBin, MassErrorModel,
     HINT_LINEAR_THRESHOLD, MAX_LOCAL_PRECS,

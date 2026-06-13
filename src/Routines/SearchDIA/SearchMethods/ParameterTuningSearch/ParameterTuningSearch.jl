@@ -909,7 +909,7 @@ function process_search_results!(
 
             if has_intensity_model
                 @debug_l1 "IntensityMassErrorModel plots: $n_frags fragments, " *
-                    "model α=$(current_model.mz_spread_α), β=$(current_model.mz_spread_β), γ=$(current_model.mz_spread_γ)"
+                    "m/z spread spline coeffs=$(length(current_model.mz_spread_spline.coeffs))"
                 intensity_plots = generate_intensity_model_plots(frag_data, current_model, parsed_fname)
                 @debug_l2 "Generated $(length(intensity_plots)) intensity model plots"
                 append!(file_mass_plots, intensity_plots)

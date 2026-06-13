@@ -727,17 +727,17 @@ function generate_intensity_model_plots(
     corrected_mda = corrected .* 1e3
 
     # ── Bias diagnostics: two separate pages ──
-    n_bins = 20
+    diagnostic_bin_sz = TUNING_CALIBRATION_BIN_SIZE
+    n_bins = max(n ÷ diagnostic_bin_sz, 1)
     mz_order = sortperm(frag_mzs)
-    bin_size = n ÷ n_bins
     mz_f64 = Float64.(frag_mzs)
 
     # Page 1: m/z-dependent bias
     bin_mz_c = Float64[]
     bin_med_raw = Float64[]
     for b in 1:n_bins
-        s = (b - 1) * bin_size + 1
-        e = b == n_bins ? n : b * bin_size
+        s = (b - 1) * diagnostic_bin_sz + 1
+        e = b == n_bins ? n : b * diagnostic_bin_sz
         idx = mz_order[s:e]
         push!(bin_mz_c, Float64(median(frag_mzs[idx])))
         push!(bin_med_raw, median(mda_errs[idx]))
@@ -764,8 +764,8 @@ function generate_intensity_model_plots(
     bin_med_resid = Float64[]
     mz_resid_mda = (da_errs .- mz_bias) .* 1e3
     for b in 1:n_bins
-        s = (b - 1) * bin_size + 1
-        e = b == n_bins ? n : b * bin_size
+        s = (b - 1) * diagnostic_bin_sz + 1
+        e = b == n_bins ? n : b * diagnostic_bin_sz
         idx = int_order[s:e]
         push!(bin_log2I_c, median(log2I[idx]))
         push!(bin_med_resid, median(mz_resid_mda[idx]))
@@ -787,7 +787,7 @@ function generate_intensity_model_plots(
     push!(plots_out, p_int_bias)
 
     # ── Shared spread computation ──
-    spread_bin_sz = 100
+    spread_bin_sz = TUNING_CALIBRATION_BIN_SIZE
     k_sel = Float64(model.k)
     scatter_idx = 1:n  # plot all points — PNG rendering handles size
 
@@ -817,8 +817,7 @@ function generate_intensity_model_plots(
     n_within_env = 0
     for i in 1:n
         σ_i = Float64(_laplace_scale_mda(model, Float32(log2I[i]))) * laplace_to_gauss *
-              max(Float64(model.mz_spread_α) + Float64(model.mz_spread_β) * mz_f64[i] +
-                  Float64(model.mz_spread_γ) * mz_f64[i]^2, 0.1)
+              Float64(_mz_spread_correction(model, Float32(mz_f64[i])))
         if abs(corrected_mda[i]) <= k_sel * σ_i
             n_within_env += 1
         end
@@ -847,7 +846,7 @@ function generate_intensity_model_plots(
     push!(plots_out, p_envelope)
 
     # ── Plot 4: m/z-dependent spread correction (top panel only) ──
-    mz_bin_sz = 200
+    mz_bin_sz = TUNING_CALIBRATION_BIN_SIZE
     mz_sort = sortperm(mz_f64)
     n_mz_bins = max(n ÷ mz_bin_sz, 1)
 
@@ -870,19 +869,8 @@ function generate_intensity_model_plots(
     mz_fit_range = range(minimum(bin_mz_centers), maximum(bin_mz_centers), length=200)
     fit_corr = coef_corr[1] .+ coef_corr[2] .* mz_fit_range
 
-    model_α = Float64(model.mz_spread_α)
-    model_β = Float64(model.mz_spread_β)
-    model_γ = Float64(model.mz_spread_γ)
-    model_corr = model_α .+ model_β .* mz_fit_range .+ model_γ .* mz_fit_range .^ 2
-    has_quad = abs(model_γ) > 0.0
-    has_linear = abs(model_β) > 0.0 || has_quad
-    model_label = if has_quad
-        "model: $(round(model_α, digits=3)) + $(round(model_β, sigdigits=2))·mz + $(round(model_γ, sigdigits=2))·mz²"
-    elseif has_linear
-        "model: $(round(model_α, digits=3)) + $(round(model_β, sigdigits=2))·mz"
-    else
-        "model: constant $(round(model_α, digits=3))"
-    end
+    model_corr = [Float64(_mz_spread_correction(model, Float32(mz))) for mz in mz_fit_range]
+    model_label = "model: correction spline ($(length(model.mz_spread_spline.coeffs)) coeffs)"
 
     p_corr = plot(size=(900, 900),
         plot_title=_split_title(fname, "m/z-dependent spread correction"),

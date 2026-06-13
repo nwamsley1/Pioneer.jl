@@ -12,7 +12,6 @@ const EMPIRICAL_FRAGMENT_COLUMNS = (
 )
 const EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER = 1.0f0
 const EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP = 1.0f0
-const EMPIRICAL_FRAGMENT_SENTINEL_GATED_SIMILARITY = 0.0f0
 const EMPIRICAL_FRAGMENT_EMPTY_VEC = ntuple(_ -> 0.0f0, 8)
 const EMPIRICAL_FRAGMENT_EMPTY_ROWS = ntuple(_ -> UInt64(0), EMPIRICAL_FRAGMENT_REF_K)
 const EMPIRICAL_FRAGMENT_EMPTY_SCORES = ntuple(_ -> typemin(Float32), EMPIRICAL_FRAGMENT_REF_K)
@@ -86,23 +85,6 @@ end
      _empirical_fragment_sqrt_is_valid(ref_sqrt)) ||
         return EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER
     return _empirical_fragment_hellinger_from_sqrt(obs_sqrt, ref_sqrt)
-end
-
-@inline function _empirical_fragment_ref_quality(ref::EmpiricalFragmentTopKRef)
-    first_sqrt = EMPIRICAL_FRAGMENT_EMPTY_VEC
-    found_first = false
-    @inbounds for j in 1:EMPIRICAL_FRAGMENT_REF_K
-        sqrt_frag = ref.sqrt_frags[j]
-        _empirical_fragment_sqrt_is_valid(sqrt_frag) || continue
-        if !found_first
-            first_sqrt = sqrt_frag
-            found_first = true
-        else
-            hellinger = _empirical_fragment_hellinger_from_sqrt(first_sqrt, sqrt_frag)
-            return max(0.0f0, 1.0f0 - hellinger)
-        end
-    end
-    return EMPIRICAL_FRAGMENT_SENTINEL_GATED_SIMILARITY
 end
 
 @inline function _empirical_fragment_update_topk!(
@@ -217,7 +199,6 @@ function _empirical_fragment_reference_features(
 
     hellinger = fill(EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER, n)
     ref_pep = fill(EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP, n)
-    gated_similarity = fill(EMPIRICAL_FRAGMENT_SENTINEL_GATED_SIMILARITY, n)
     @inbounds for i in 1:n
         ref = get(refs, UInt32(precursor_idx[i]), nothing)
         ref === nothing && continue
@@ -228,10 +209,8 @@ function _empirical_fragment_reference_features(
         hellinger_val = _empirical_fragment_hellinger_from_sqrt(obs_sqrt, picked.sqrt_frag)
         hellinger[i] = hellinger_val
         ref_pep[i] = picked.pep
-        similarity = max(0.0f0, 1.0f0 - hellinger_val)
-        gated_similarity[i] = similarity * _empirical_fragment_ref_quality(ref)
     end
-    return hellinger, ref_pep, gated_similarity
+    return hellinger, ref_pep
 end
 
 function _empirical_fragment_score_column(tbl)
@@ -290,7 +269,6 @@ function add_empirical_fragment_features_to_fold_file!(
     n = nrow(tbl)
     hellinger = fill(EMPIRICAL_FRAGMENT_SENTINEL_HELLINGER, n)
     ref_pep = fill(EMPIRICAL_FRAGMENT_SENTINEL_REF_PEP, n)
-    gated_similarity = fill(EMPIRICAL_FRAGMENT_SENTINEL_GATED_SIMILARITY, n)
 
     if n > 0 && _empirical_fragment_has_required_columns(tbl)
         frag_cols = ntuple(i -> tbl[!, EMPIRICAL_FRAGMENT_COLUMNS[i]], 8)
@@ -304,14 +282,11 @@ function add_empirical_fragment_features_to_fold_file!(
             hellinger_val = _empirical_fragment_hellinger_from_sqrt(obs_sqrt, picked.sqrt_frag)
             hellinger[i] = hellinger_val
             ref_pep[i] = picked.pep
-            similarity = max(0.0f0, 1.0f0 - hellinger_val)
-            gated_similarity[i] = similarity * _empirical_fragment_ref_quality(ref)
         end
     end
 
     tbl[!, :empirical_frag_best_hellinger] = hellinger
     tbl[!, :empirical_frag_ref_pep] = ref_pep
-    tbl[!, :empirical_frag_quality_gated_similarity] = gated_similarity
     writeArrow(fpath, tbl)
     return n
 end
