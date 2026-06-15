@@ -289,7 +289,8 @@ end
 function _ms1_lookup_chunk!(psms, spectra,
                              prec_mzs, prec_charges, prec_sulfurs, iso_splines,
                              scan_to_ms1::Vector{Int32},
-                             ms1_ppm_tol::Float32, ms1_ppm_offset::Float32, NEUTRON::Float32,
+                             ms1_ppm_tol::Float32, ms1_ppm_offset::Float32,
+                             c13_c12_mass_diff::Float32,
                              chunk_start::Int, chunk_end::Int)
     # Per-task scratch buffers; reused (resize-only) across cache misses
     # within this chunk. Type-stable Vector{Float32}.
@@ -317,7 +318,7 @@ function _ms1_lookup_chunk!(psms, spectra,
         # ms1_m0_mass_err_ppm is computed against the shifted (bias-corrected)
         # target so its zero point matches the calibration.
         target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
-        target_m1 = target_m0 + NEUTRON / Float32(prec_chg)
+        target_m1 = target_m0 + c13_c12_mass_diff / Float32(prec_chg)
 
         m0_hit, m0_int, m0_mz = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
         m1_hit, m1_int, _    = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
@@ -423,8 +424,6 @@ function add_ms1_lookup_features!(psms::DataFrame,
     prec_sulfurs   = getSulfurCount(precursors)
     iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
-    NEUTRON = Float32(1.00335)
-
     # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
     # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
     # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache.
@@ -440,7 +439,8 @@ function add_ms1_lookup_features!(psms::DataFrame,
             psms, spectra,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
-            Float32(ms1_ppm_tol), Float32(ms1_ppm_offset), NEUTRON,
+            Float32(ms1_ppm_tol), Float32(ms1_ppm_offset),
+            C13_C12_MASS_DIFF_F32,
             chunk_start, chunk_end
         )
     end

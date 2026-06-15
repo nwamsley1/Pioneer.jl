@@ -41,7 +41,7 @@ using Pioneer
         @test result.yt == 10.0f0  # Expected extreme ratio
         @test result.x0 ≈ 0.1f0
         @test result.prec_charge == 2
-        # x1 should be m1_mz - center_mz where m1_mz = iso_mz + NEUTRON/charge
+        # x1 should be m1_mz - center_mz where m1_mz = iso_mz + C13_C12_MASS_DIFF/charge
     end
     
     @testset "Single M1 isotope" begin

@@ -20,7 +20,8 @@
 ##########
 const H2O::Float64 = Float64(18.010565)
 const PROTON::Float64 = Float64(1.0072764)
-const NEUTRON::Float64 = Float64(1.00335)
+const C13_C12_MASS_DIFF::Float64 = Float64(13.00335483507 - 12.0)
+const C13_C12_MASS_DIFF_F32::Float32 = Float32(C13_C12_MASS_DIFF)
 
 const default_mods::Dict{String, Float64} = Dict{String, Float64}(
     "Carb" => Float64(57.021464))

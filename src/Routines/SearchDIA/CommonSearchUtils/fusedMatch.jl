@@ -467,9 +467,6 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
     return n
 end
 
-const NEUTRON_F32 = Float32(1.00335)
-
-
 """
     scan_for_nearest_in_window(corrected_mz, obs_low, obs_high,
                                 start_idx, n_peaks, iso_mz, conservative_high)
@@ -576,16 +573,16 @@ True iff `|prec_irt - scan_irt| <= irt_tol`. Boundary inclusive.
     quad_window_with_iso_bounds(qfunc, prec_charge, iso_err_bounds) -> (low, high)
 
 Returns the precursor-m/z acceptance window: the quadrupole bounds widened
-by ±NEUTRON/charge × isotope-error bounds (so a precursor whose monoisotopic
+by ±C13_C12_MASS_DIFF/charge × isotope-error bounds (so a precursor whose monoisotopic
 m/z sits outside the literal quad window can still be admitted via an
 allowed isotope offset).
 """
 @inline function quad_window_with_iso_bounds(qfunc::QuadTransmissionFunction,
         prec_charge::Integer, iso_err_bounds::Tuple{<:Integer, <:Integer})
     low  = getPrecMinBound(qfunc) -
-           Float32(NEUTRON * first(iso_err_bounds) / prec_charge)
+           Float32(C13_C12_MASS_DIFF * first(iso_err_bounds) / prec_charge)
     high = getPrecMaxBound(qfunc) +
-           Float32(NEUTRON * last(iso_err_bounds)  / prec_charge)
+           Float32(C13_C12_MASS_DIFF * last(iso_err_bounds)  / prec_charge)
     return low, high
 end
 
@@ -605,7 +602,7 @@ and `frag_charge_inv = 1 / frag_charge`. iso_idx=0 returns the monoisotopic
 m/z. Caller hoists the reciprocal so this stays an FMA per call.
 """
 @inline iso_mz_for(frag_mz::Float32, iso_idx::Integer, frag_charge_inv::Float32) =
-    Float32(frag_mz + Float32(iso_idx) * NEUTRON_F32 * frag_charge_inv)
+    Float32(frag_mz + Float32(iso_idx) * C13_C12_MASS_DIFF_F32 * frag_charge_inv)
 
 """
     in_frag_mz_window(iso_mz, lo, hi) -> Bool

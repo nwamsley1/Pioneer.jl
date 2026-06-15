@@ -376,7 +376,7 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
                                 max_prec_mz::Float32)
     first_iso, last_iso = -1, -1
     @fastmath for iso_count in range(0, MAX_PRECURSOR_ISOTOPE)
-        iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
+        iso_mz = iso_count*C13_C12_MASS_DIFF/prec_charge + prec_mz
         if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz)
             if first_iso < 0
                 first_iso = iso_count
@@ -418,7 +418,7 @@ function getPrecursorIsotopeTransmission!(
     prec_iso_mz = prec_mono_mz
     @inbounds @fastmath for i in range(1, length(prec_isotope_transmission))
         prec_isotope_transmission[i] = qtf(prec_iso_mz)
-        prec_iso_mz += Float32(NEUTRON/prec_charge)
+        prec_iso_mz += Float32(C13_C12_MASS_DIFF/prec_charge)
     end
 end
 

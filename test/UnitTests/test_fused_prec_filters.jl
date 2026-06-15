@@ -21,10 +21,9 @@ const compute_ppm_err             = Pioneer.compute_ppm_err
 const push_match!                 = Pioneer.push_match!
 const push_miss!                  = Pioneer.push_miss!
 const FusedScratch                = Pioneer.FusedScratch
-# NEUTRON is already imported into Main via runtests.jl's
-# `using Pioneer: H2O, PROTON, NEUTRON`. Re-`const`-declaring it here
-# is fatal under Julia 1.12 (was a warning under 1.11).
-const NEUTRON_F32                 = Pioneer.NEUTRON_F32
+# Use the module-qualified Float64 constant below so this file works both
+# standalone and when included after test_setup.jl.
+const C13_C12_MASS_DIFF_F32 = Pioneer.C13_C12_MASS_DIFF_F32
 
 # A minimal QuadTransmissionFunction stand-in: GeneralGaussModel exists in
 # Pioneer and supports getPrecMinBound / getPrecMaxBound. Using a fixed-bounds
@@ -50,21 +49,21 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
         # Quad bounds [500, 510], iso bounds (-1, 1), charge 2.
         qfunc = FixedQuadFunc(500.0f0, 510.0f0)
         low, high = quad_window_with_iso_bounds(qfunc, 2, (-1, 1))
-        @test low  === 500.0f0 - Float32(NEUTRON * (-1) / 2)
-        @test high === 510.0f0 + Float32(NEUTRON *  1  / 2)
+        @test low  === 500.0f0 - Float32(Pioneer.C13_C12_MASS_DIFF * (-1) / 2)
+        @test high === 510.0f0 + Float32(Pioneer.C13_C12_MASS_DIFF *  1  / 2)
 
-        # Charge dependence: |NEUTRON/charge| is smaller at higher charge,
+        # Charge dependence: the C13-C12 m/z offset is smaller at higher charge,
         # so the offset relative to literal quad bounds shrinks with charge.
         for charge in (1, 2, 3, 4)
             l, h = quad_window_with_iso_bounds(qfunc, charge, (-1, 1))
-            @test l === 500.0f0 - Float32(NEUTRON * (-1) / charge)
-            @test h === 510.0f0 + Float32(NEUTRON *   1  / charge)
+            @test l === 500.0f0 - Float32(Pioneer.C13_C12_MASS_DIFF * (-1) / charge)
+            @test h === 510.0f0 + Float32(Pioneer.C13_C12_MASS_DIFF *   1  / charge)
         end
 
         # Asymmetric bounds (-2, 0) → first/last applied independently.
         low_a, high_a = quad_window_with_iso_bounds(qfunc, 2, (-2, 0))
-        @test low_a  === 500.0f0 - Float32(NEUTRON * (-2) / 2)
-        @test high_a === 510.0f0 + Float32(NEUTRON *   0  / 2)
+        @test low_a  === 500.0f0 - Float32(Pioneer.C13_C12_MASS_DIFF * (-2) / 2)
+        @test high_a === 510.0f0 + Float32(Pioneer.C13_C12_MASS_DIFF *   0  / 2)
     end
 
     @testset "passes_prec_mz_filter" begin
@@ -81,19 +80,19 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
         @test iso_mz_for(800.123f0, 0, 0.5f0)    === 800.123f0
 
         # +1 isotope at charge 1 / 2 / 3.
-        @test iso_mz_for(500.0f0, 1, 1f0)        ≈ 500.0f0 + NEUTRON_F32
-        @test iso_mz_for(500.0f0, 1, 1f0/2f0)    ≈ 500.0f0 + NEUTRON_F32/2f0
-        @test iso_mz_for(500.0f0, 1, 1f0/3f0)    ≈ 500.0f0 + NEUTRON_F32/3f0
+        @test iso_mz_for(500.0f0, 1, 1f0)        ≈ 500.0f0 + C13_C12_MASS_DIFF_F32
+        @test iso_mz_for(500.0f0, 1, 1f0/2f0)    ≈ 500.0f0 + C13_C12_MASS_DIFF_F32/2f0
+        @test iso_mz_for(500.0f0, 1, 1f0/3f0)    ≈ 500.0f0 + C13_C12_MASS_DIFF_F32/3f0
 
-        # +2 isotope at charge 2 → exactly NEUTRON higher than monoisotopic.
-        @test iso_mz_for(500.0f0, 2, 1f0/2f0)    ≈ 500.0f0 + NEUTRON_F32
+        # +2 isotope at charge 2 → exactly one C13-C12 spacing above monoisotopic.
+        @test iso_mz_for(500.0f0, 2, 1f0/2f0)    ≈ 500.0f0 + C13_C12_MASS_DIFF_F32
 
         # bit-identical to the original expression.
         for frag_mz in (123.45f0, 800.5f0, 1500.001f0),
             iso_idx in 0:3,
             charge in (1, 2, 3, 4)
             inv = 1f0 / Float32(charge)
-            ref = Float32(frag_mz + Float32(iso_idx) * NEUTRON_F32 * inv)
+            ref = Float32(frag_mz + Float32(iso_idx) * C13_C12_MASS_DIFF_F32 * inv)
             @test iso_mz_for(frag_mz, iso_idx, inv) === ref
         end
     end
@@ -195,9 +194,9 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
         qfunc = FixedQuadFunc(498.7f0, 511.3f0)
         for prec_charge in (1, 2, 3, 4), bounds in ((-1,1), (-2,0), (0,2), (-3,3))
             ref_lo = Pioneer.getPrecMinBound(qfunc) -
-                     Float32(NEUTRON * first(bounds) / prec_charge)
+                     Float32(Pioneer.C13_C12_MASS_DIFF * first(bounds) / prec_charge)
             ref_hi = Pioneer.getPrecMaxBound(qfunc) +
-                     Float32(NEUTRON * last(bounds)  / prec_charge)
+                     Float32(Pioneer.C13_C12_MASS_DIFF * last(bounds)  / prec_charge)
             lo, hi = quad_window_with_iso_bounds(qfunc, prec_charge, bounds)
             @test lo === ref_lo
             @test hi === ref_hi
