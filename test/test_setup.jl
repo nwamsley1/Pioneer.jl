@@ -12,7 +12,7 @@ using Pioneer  # Load the Pioneer module for exported functions
 using Pioneer: parseIsoXML
 using Pioneer: UniSpecFragAnnotation, GenericFragAnnotation
 using Pioneer: SplineCoefficientModel, RetentionTimeModel
-using Pioneer: H2O, PROTON, NEUTRON
+using Pioneer: H2O, PROTON, C13_C12_MASS_DIFF
 using Pioneer: InterpolationTypeAlias
 using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
 using Pioneer: DEBUG_CONSOLE_LEVEL

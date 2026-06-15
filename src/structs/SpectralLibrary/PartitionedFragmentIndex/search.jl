@@ -497,8 +497,8 @@ function _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline,
         scan_irt_lo[si] = irt_lo
         scan_irt_hi[si] = irt_hi
         scan_irts[si] = scan_irt
-        scan_prec_min[si] = Float32(getPrecMinBound(quad_func) - NEUTRON * first(iso_bounds) / 2)
-        scan_prec_max[si] = Float32(getPrecMaxBound(quad_func) + NEUTRON * last(iso_bounds) / 2)
+        scan_prec_min[si] = Float32(getPrecMinBound(quad_func) - C13_C12_MASS_DIFF * first(iso_bounds) / 2)
+        scan_prec_max[si] = Float32(getPrecMaxBound(quad_func) + C13_C12_MASS_DIFF * last(iso_bounds) / 2)
     end
     return scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts
 end
