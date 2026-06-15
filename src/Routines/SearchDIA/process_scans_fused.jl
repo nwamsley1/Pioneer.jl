@@ -72,14 +72,15 @@ function process_scans_fused!(
         msn ∉ getSpecOrder(params) && continue
         ismissing(get_prec_range(prec_index, scan_idx)) && continue
 
-        scan_irt = Float32(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)))
+        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+        scan_irt = Float32(rt_to_irt_spline(scan_rt))
 
         # Pre-compute per-peak (corrected_mz, obs_low, obs_high) once per scan
-        # using the 3-arg intensity-aware MEM API.
+        # using the intensity/RT-aware MEM API.
         scan_mz  = getMzArray(spectra, scan_idx)
         scan_int = getIntensityArray(spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                           mem, scan_mz, scan_int)
+                                           mem, scan_mz, scan_int, scan_rt)
 
         quad_fn = getQuadTransmissionFunction(qtm,
             getCenterMz(spectra, scan_idx),

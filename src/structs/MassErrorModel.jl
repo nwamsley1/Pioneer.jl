@@ -55,11 +55,19 @@ end
 # 3-arg forwarding: SimpleMassErrorModel ignores intensity
 getCorrectedMz(mem::SimpleMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(mem, mz)
 getMzBoundsReverse(mem::SimpleMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(mem, mass)
+getCorrectedMz(mem::SimpleMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(mem, mz, intensity)
+getMzBoundsReverse(mem::SimpleMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(mem, mass, log2I)
 
 @inline function getCorrectedMzAndBounds(mem::SimpleMassErrorModel, mz::Float32, ::Float32)
     corrected = getCorrectedMz(mem, mz)
     low, high = getMzBoundsReverse(mem, corrected)
     return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(mem::SimpleMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(mem, mz, intensity)
 end
 
 #==========================================================
@@ -93,11 +101,19 @@ getMassCorrection(m::LinearDaMassErrorModel) = m.intercept
 # 3-arg forwarding: ignores intensity
 getCorrectedMz(m::LinearDaMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(m, mz)
 getMzBoundsReverse(m::LinearDaMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(m, mass)
+getCorrectedMz(m::LinearDaMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(m, mz, intensity)
+getMzBoundsReverse(m::LinearDaMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
 
 @inline function getCorrectedMzAndBounds(m::LinearDaMassErrorModel, mz::Float32, ::Float32)
     corrected = getCorrectedMz(m, mz)
     low, high = getMzBoundsReverse(m, corrected)
     return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(m::LinearDaMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(m, mz, intensity)
 end
 
 # Scoring fallbacks
@@ -139,11 +155,19 @@ getMassCorrection(m::LinearBiasPpmTolMassErrorModel) = m.intercept
 
 getCorrectedMz(m::LinearBiasPpmTolMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(m, mz)
 getMzBoundsReverse(m::LinearBiasPpmTolMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(m, mass)
+getCorrectedMz(m::LinearBiasPpmTolMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(m, mz, intensity)
+getMzBoundsReverse(m::LinearBiasPpmTolMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
 
 @inline function getCorrectedMzAndBounds(m::LinearBiasPpmTolMassErrorModel, mz::Float32, ::Float32)
     corrected = getCorrectedMz(m, mz)
     low, high = getMzBoundsReverse(m, corrected)
     return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(m::LinearBiasPpmTolMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(m, mz, intensity)
 end
 
 laplace_log_density(::LinearBiasPpmTolMassErrorModel, ::Float32, ::Float32, ::Float32) = Float32(0)

@@ -22,6 +22,14 @@ const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter fo
 const TUNING_MAX_FRAGS_FOR_MASS_ERR = UInt8(3)  # Fragments per PSM for mass error estimation
 const TUNING_MIN_COLLECT_SCANS = Int64(5000)    # Minimum initial scan estimate for collection
 const TUNING_MAX_SCAN_FRACTION = Float64(0.10)  # Legacy: kept for struct compatibility
+const TUNING_CALIBRATION_BIN_SIZE = Int64(200)  # Equal-count bins for mass-error calibration summaries
+const TUNING_MZ_BIAS_BIN_SIZE = Int64(100)      # Denser bins for m/z-dependent bias medians
+const TUNING_MZ_BIAS_KNOTS = Int64(24)          # Knots for binned m/z-dependent bias spline
+const TUNING_MZ_BIAS_LAMBDA = Float64(0.1)      # Smoothness penalty for m/z-dependent bias spline
+const TUNING_RT_BIAS_BIN_SIZE = Int64(100)      # Denser bins for RT-dependent bias medians
+const TUNING_RT_BIAS_KNOTS = Int64(48)          # Knots for raw RT bias spline
+const TUNING_RT_BIAS_LAMBDA = Float64(0.03)     # Smoothness penalty for RT-dependent bias spline
+const TUNING_BIAS_EXTRAP_EDGE_POINTS = Int64(5) # Binned medians per edge for robust linear extrapolation
 
 # Wide scout constants
 const WIDE_SCOUT_TOL_PPM = Float32(100.0)       # ±100 ppm wide scout tolerance

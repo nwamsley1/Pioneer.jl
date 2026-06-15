@@ -18,7 +18,7 @@
 """
     MassErrSample
 
-12-byte sample emitted by `run_fused_masserr!` (ParameterTuning's per-thread
+16-byte sample emitted by `run_fused_masserr!` (ParameterTuning's per-thread
 mass-error collector) and consumed by `fit_mass_err_model`,
 `fit_intensity_mass_error_model`, `fit_scout_calibrated_model`,
 `extract_fragment_plot_data`, and `generate_wide_scout_plot`.
@@ -29,6 +29,7 @@ struct MassErrSample
     theoretical_mz::Float32   # 4B — fragment library m/z
     observed_mz::Float32      # 4B — raw peak m/z
     intensity::Float32        # 4B — peak intensity
+    rt::Float32               # 4B — scan retention time
 end
 
-MassErrSample() = MassErrSample(0f0, 0f0, 0f0)
+MassErrSample() = MassErrSample(0f0, 0f0, 0f0, 0f0)

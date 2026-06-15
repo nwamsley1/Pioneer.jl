@@ -17,7 +17,7 @@
 
 """
 Precomputed linear extrapolation at the boundaries of a spline.
-Outside [lo, hi] (typically the 2% and 98% quantiles of training data),
+Outside [lo, hi] (configured from training-data quantiles),
 evaluation switches from the spline to: val + slope * (t - boundary).
 This avoids trusting the spline in sparse tail regions while keeping
 the full data for fitting.
@@ -34,32 +34,36 @@ end
 """
 Intensity-aware mass error model.
 
-Bias is decomposed into two convexity-constrained smoothing splines (Da):
-  bias_Da(mz, I) = mz_bias_spline(mz) + intensity_bias_spline(log2(I))
+Bias is decomposed into m/z- and intensity-dependent smoothing splines (Da):
+  bias_Da(mz, I, rt) =
+      mz_bias_spline(mz) + intensity_bias_spline(log2(I)) + rt_bias_spline(rt)
 
 Spread is Laplace-distributed with scale parameter **in mDa** modeled as a
-monotone-decreasing convex cubic B-spline of log2(I).
+regularized cubic B-spline of log2(I), then adjusted by an m/z-dependent
+correction factor.
 
-Splines are fit on all training data but evaluate with **linear extrapolation**
-outside the [2%, 98%] quantile range of the training data. This avoids trusting
-the spline in sparse tail regions. `conservative_tol_da` is the stopping bound
-for 2-arg methods. No hard clamp is applied — the tolerance is determined by
-`k * σ_mDa / 1e3` with linear extrapolation.
+Bias splines are fit on all training data but use configured extrapolation
+outside their supported ranges. `conservative_tol_da` is the stopping bound
+for 2-arg methods. The active tolerance is determined by `k * σ_mDa / 1e3`.
 """
-struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMassErrorModel
-    # m/z-dependent bias (Da): convexity-constrained smoothing spline
+struct IntensityMassErrorModel{Nmz, NI, Nspread, Nrt, Nmzspread, T<:AbstractFloat} <: AbstractMassErrorModel
+    # m/z-dependent bias (Da): binned robust regularized spline
     mz_bias_spline::UniformSpline{Nmz, T}
 
     # Intensity-dependent bias (Da): convexity-constrained smoothing spline of log2(I)
     intensity_bias_spline::UniformSpline{NI, T}
 
-    # Laplace spread (mDa): monotone-decreasing convex spline of log2(I)
+    # Laplace spread (mDa): regularized spline of log2(I)
     spread_spline::UniformSpline{Nspread, T}
 
-    # Linear extrapolation outside [q2, q98] of training data
+    # RT-dependent additive bias (Da), evaluated on raw RT within this run.
+    rt_bias_spline::UniformSpline{Nrt, T}
+
+    # Extrapolation rules outside supported spline ranges
     mz_bias_extrap::SplineExtrap{T}
     int_bias_extrap::SplineExtrap{T}
     spread_extrap::SplineExtrap{T}
+    rt_bias_extrap::SplineExtrap{T}
 
     # Coverage multiplier (k * Laplace_scale_mDa / 1e3 gives half-width in Da)
     k::T
@@ -67,8 +71,11 @@ struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMa
     # Maximum tolerance in Da. Used as conservative stopping bound for 2-arg methods.
     conservative_tol_da::T
 
-    # m/z-dependent spread correction: effective_spread_mDa = b_mda(log2I) * (α + β·mz + γ·mz²)
-    # Default α=1, β=0, γ=0 gives no correction.
+    # m/z-dependent spread correction: effective_spread_mDa = b_mda(log2I) * c(mz).
+    # Coefficients are retained for logging; evaluation uses mz_spread_spline
+    # with constant endpoint extrapolation.
+    mz_spread_spline::UniformSpline{Nmzspread, T}
+    mz_spread_extrap::SplineExtrap{T}
     mz_spread_α::T
     mz_spread_β::T
     mz_spread_γ::T
@@ -81,6 +88,10 @@ struct IntensityMassErrorModel{Nmz, NI, Nspread, T<:AbstractFloat} <: AbstractMa
     # Diagnostic only — NOT used as a clamp. Tolerance is determined by the
     # Gaussian model (k * σ_mDa / 1e3) with no upper bound.
     max_da_tolerance::T
+
+    # Raw RT range covered by rt_bias_spline.
+    rt_min::T
+    rt_max::T
 end
 
 #==========================================================
@@ -123,7 +134,7 @@ function make_spline_extrap(spline::UniformSpline{N, T}, lo::T, hi::T) where {N,
 end
 
 #==========================================================
-Spline evaluation with linear extrapolation outside [q2, q98]
+Spline evaluation with linear extrapolation outside stored quantile boundaries
 ==========================================================#
 
 @inline function _eval_with_extrap(spline::UniformSpline, e::SplineExtrap{T}, t::U) where {T, U<:AbstractFloat}
@@ -150,8 +161,19 @@ end
     return _eval_with_extrap(m.intensity_bias_spline, m.int_bias_extrap, log2I)
 end
 
+@inline function _rt_bias_da(m::IntensityMassErrorModel, rt::T) where {T<:AbstractFloat}
+    if !isfinite(rt)
+        rt = (T(m.rt_min) + T(m.rt_max)) / T(2)
+    end
+    return _eval_with_extrap(m.rt_bias_spline, m.rt_bias_extrap, rt)
+end
+
 @inline function _total_bias_da(m::IntensityMassErrorModel, mz::T, log2I::T) where {T<:AbstractFloat}
     return _mz_bias_da(m, mz) + _intensity_bias_da(m, log2I)
+end
+
+@inline function _total_bias_da(m::IntensityMassErrorModel, mz::T, log2I::T, rt::T) where {T<:AbstractFloat}
+    return _total_bias_da(m, mz, log2I) + _rt_bias_da(m, rt)
 end
 
 #==========================================================
@@ -175,8 +197,12 @@ end
 m/z-dependent spread correction factor (in mDa space)
 ==========================================================#
 
+@inline function _mz_spread_correction(spline::UniformSpline, e::SplineExtrap{T}, mz::U) where {T, U<:AbstractFloat}
+    @fastmath return min(max(_eval_with_extrap(spline, e, mz), U(0.1)), U(10.0))
+end
+
 @inline function _mz_spread_correction(m::IntensityMassErrorModel, mz::T) where {T<:AbstractFloat}
-    @fastmath return max(muladd(muladd(T(m.mz_spread_γ), mz, T(m.mz_spread_β)), mz, T(m.mz_spread_α)), T(0.1))
+    return _mz_spread_correction(m.mz_spread_spline, m.mz_spread_extrap, mz)
 end
 
 #==========================================================
@@ -204,7 +230,7 @@ getMassOffset(m::IntensityMassErrorModel) = Float32(m.mz_bias_spline(m.mz_bias_s
 getMassCorrection(m::IntensityMassErrorModel) = getMassOffset(m)
 
 #==========================================================
-3-arg interface (fragment index search — intensity-aware)
+Intensity/RT-aware interface used by fragment matching.
 Spread is in mDa; converted to Da directly.
 ==========================================================#
 
@@ -214,11 +240,20 @@ function getCorrectedMz(m::IntensityMassErrorModel, mz::Float32, intensity::Floa
     return Float32(mz - bias_da)
 end
 
+function getCorrectedMz(m::IntensityMassErrorModel, mz::Float32, intensity::Float32, rt::Float32)
+    log2I = fast_log2(intensity)
+    bias_da = _total_bias_da(m, mz, log2I, rt)
+    return Float32(mz - bias_da)
+end
+
 function getMzBoundsReverse(m::IntensityMassErrorModel, mass::Float32, log2I::Float32)
     σ_mda = _gaussian_sigma_mda(m, log2I) * _mz_spread_correction(m, mass)
     half_width = m.k * σ_mda / 1f3  # mDa → Da
     return Float32(mass - half_width), Float32(mass + half_width)
 end
+
+getMzBoundsReverse(m::IntensityMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
 
 """
     getCorrectedMzAndBounds(m, mz, intensity) -> (corrected, low, high)
@@ -234,6 +269,17 @@ Avoids redundant log2 computation vs calling getCorrectedMz + getMzBoundsReverse
         corrected = mz - bias_da
         σ_mda = _gaussian_sigma_mda(m, log2I) * _mz_spread_correction(m, corrected)
         half_width = m.k * σ_mda * 1f-3  # mDa → Da (multiply faster than divide)
+        return corrected, corrected - half_width, corrected + half_width
+    end
+end
+
+@inline function getCorrectedMzAndBounds(m::IntensityMassErrorModel, mz::Float32, intensity::Float32, rt::Float32)
+    @fastmath begin
+        log2I = fast_log2(intensity)
+        bias_da = _total_bias_da(m, mz, log2I, rt)
+        corrected = mz - bias_da
+        σ_mda = _gaussian_sigma_mda(m, log2I) * _mz_spread_correction(m, corrected)
+        half_width = m.k * σ_mda * 1f-3
         return corrected, corrected - half_width, corrected + half_width
     end
 end
@@ -279,6 +325,12 @@ function convert_spline_to_f32(s::UniformSpline{N, Float64}) where N
         Float32(s.bin_width)
     )
 end
+
+convert_spline_extrap_to_f32(e::SplineExtrap{Float64}) = SplineExtrap{Float32}(
+    Float32(e.lo), Float32(e.hi),
+    Float32(e.lo_val), Float32(e.lo_slope),
+    Float32(e.hi_val), Float32(e.hi_slope)
+)
 
 #==========================================================
 ScoutCalibratedMassErrorModel
@@ -347,6 +399,10 @@ function getCorrectedMz(m::ScoutCalibratedMassErrorModel, mz::Float32, intensity
 end
 
 getMzBoundsReverse(m::ScoutCalibratedMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(m, mass)
+getCorrectedMz(m::ScoutCalibratedMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(m, mz, intensity)
+getMzBoundsReverse(m::ScoutCalibratedMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
 laplace_log_density(::ScoutCalibratedMassErrorModel, ::Float32, ::Float32, ::Float32) = Float32(0)
 get_default_top3_ll(::ScoutCalibratedMassErrorModel) = Float32(0)
 
@@ -357,4 +413,8 @@ get_default_top3_ll(::ScoutCalibratedMassErrorModel) = Float32(0)
         corrected = mz - bias_da
         return corrected, Float32(corrected - m.tolerance_da), Float32(corrected + m.tolerance_da)
     end
+end
+
+@inline function getCorrectedMzAndBounds(m::ScoutCalibratedMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(m, mz, intensity)
 end

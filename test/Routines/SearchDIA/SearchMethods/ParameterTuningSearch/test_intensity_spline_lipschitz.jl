@@ -11,8 +11,16 @@
 # trip the original divergence and assert the fit returns a finite
 # UniformSpline.
 
+using Random
+using Statistics: median
 using Pioneer: fit_convex_bias_spline, fit_monotone_bias_spline,
-               fit_monotone_convex_spread_spline
+               fit_monotone_convex_spread_spline,
+               fit_intensity_mass_error_model,
+               IntensityMassErrorModel,
+               MassErrSample,
+               SimpleMassErrorModel,
+               getCorrectedMz,
+               _rt_bias_da
 
 @testset "Intensity spline Lipschitz step cap" begin
     rng = MersenneTwister(0x5eedfa11)
@@ -51,4 +59,40 @@ using Pioneer: fit_convex_bias_spline, fit_monotone_bias_spline,
         @test spline !== nothing
         @test all(isfinite, spline.coeffs)
     end
+end
+
+@testset "Intensity mass error model learns RT-dependent bias" begin
+    rng = MersenneTwister(0x71cafe)
+    n = 1_800
+    rts = collect(range(5.0, 85.0; length=n))
+    mzs = [420.0 + 7.0 * mod(i, 120) + 0.03 * randn(rng) for i in 1:n]
+    log2I = [10.0 + 0.05 * mod(37 * i, 220) for i in 1:n]
+    intensities = Float32.(2.0 .^ log2I)
+
+    rt_bias = @. 0.0014 * tanh((rts - 48.0) / 7.0)
+    noise = 0.00003 .* randn(rng, n)
+    da_err = rt_bias .+ noise
+
+    samples = [
+        MassErrSample(Float32(mzs[i]), Float32(mzs[i] + da_err[i]), intensities[i], Float32(rts[i]))
+        for i in 1:n
+    ]
+
+    model = fit_intensity_mass_error_model(
+        samples,
+        SimpleMassErrorModel(0.0f0, (30.0f0, 30.0f0)),
+    )
+
+    @test model isa IntensityMassErrorModel
+    @test model.rt_min ≈ Float32(first(rts))
+    @test model.rt_max ≈ Float32(last(rts))
+
+    early_bias = _rt_bias_da(model, 10.0f0)
+    late_bias = _rt_bias_da(model, 80.0f0)
+    @test late_bias - early_bias > 0.0015f0
+
+    obs_mz = 700.0f0
+    intensity = Float32(2.0 ^ 16.0)
+    @test getCorrectedMz(model, obs_mz, intensity, 80.0f0) <
+          getCorrectedMz(model, obs_mz, intensity, 10.0f0)
 end

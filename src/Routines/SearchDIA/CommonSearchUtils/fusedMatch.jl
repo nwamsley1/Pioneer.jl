@@ -426,12 +426,12 @@ update and `frag1..6_int` captures (those fields don't exist on
 end
 
 """
-    prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int) -> Int
+    prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int, scan_rt) -> Int
 
 Per-scan precompute of the SoA peak table used by `run_fused!`. For each
-peak calls the 3-arg `getCorrectedMzAndBounds(mem, mz, intensity)` so the
-intensity-dependent bias and tolerance (IntensityMassErrorModel) are
-fully applied. Missing m/z or intensity → `Inf` / impossible window.
+peak calls the 4-arg `getCorrectedMzAndBounds(mem, mz, intensity, rt)` so
+the intensity- and RT-dependent bias and tolerance (IntensityMassErrorModel)
+are fully applied. Missing m/z or intensity → `Inf` / impossible window.
 
 Three parallel `Vector{Float32}`s (not a tuple-packed AoS) so SIMD
 bsearch primitives can load 8 adjacent values per operation.
@@ -443,7 +443,8 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
                               obs_high::Vector{Float32},
                               mem::AbstractMassErrorModel,
                               scan_mz::AbstractArray{Union{Missing, Float32}},
-                              scan_int::AbstractArray{Union{Missing, Float32}})
+                              scan_int::AbstractArray{Union{Missing, Float32}},
+                              scan_rt::Float32)
     n = length(scan_mz)
     if length(corrected) < n
         resize!(corrected, n)
@@ -458,7 +459,7 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
             obs_low[i]   = Float32(Inf)
             obs_high[i]  = -Float32(Inf)  # never matches any theoretical
         else
-            c, lo, hi = getCorrectedMzAndBounds(mem, Float32(m), Float32(it))
+            c, lo, hi = getCorrectedMzAndBounds(mem, Float32(m), Float32(it), scan_rt)
             corrected[i] = c
             obs_low[i]   = lo
             obs_high[i]  = hi
@@ -945,9 +946,10 @@ function run_fused_masserr!(
     prec_range::UnitRange{Int64},
     mem::AbstractMassErrorModel,
     scan_mz::AbstractArray{Union{Missing, Float32}},
-    scan_int::AbstractArray{Union{Missing, Float32}};
+    scan_int::AbstractArray{Union{Missing, Float32}},
+    scan_rt::Float32;
     max_rank::Int = 6,
-    min_ion_position::Int = 5)
+    min_ion_position::Int = 4)
 
     fragments = getFragments(ion_list)
     n_peaks = peak_mz_len
@@ -992,7 +994,7 @@ function run_fused_masserr!(
                 raw_int = scan_int[best_peak]
                 int_obs = ismissing(raw_int) ? 0f0 : Float32(raw_int)
 
-                samples[samples_idx] = MassErrSample(frag_mz, raw_mz, int_obs)
+                samples[samples_idx] = MassErrSample(frag_mz, raw_mz, int_obs, scan_rt)
 
                 # Monotonic advance: next fragment's mono mz ≥ current,
                 # so its match peak index can't precede this one.
