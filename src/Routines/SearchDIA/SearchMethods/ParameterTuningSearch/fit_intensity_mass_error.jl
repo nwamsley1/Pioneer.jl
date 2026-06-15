@@ -21,17 +21,19 @@ Intensity-Aware Mass Error Model Fitting Pipeline
 Fits an IntensityMassErrorModel from matched fragment data:
   1. m/z-dependent bias: binned robust regularized spline (Da)
   2. intensity-dependent bias: convexity-constrained smoothing spline (Da)
-  3. Laplace spread: monotone-decreasing convex spline of log2(I) (**ppm**)
-  4. Coverage multiplier k (from PEP-based tolerance scanning)
+  3. RT-dependent bias: binned robust regularized spline on raw RT (Da)
+  4. Laplace spread: regularized spline of log2(I) (mDa)
+  5. m/z-dependent spread correction
+  6. Empirical coverage multiplier k
 
-Bias is fit in Da space. Spread is fit in ppm space — after bias correction,
-Da residuals are divided by (mz / 1e6) to get ppm, then binned Laplace scale
-is computed on those ppm residuals. This yields m/z-proportional tolerance.
+Bias is fit in Da space. Spread is fit in mDa space after bias correction,
+then adjusted by a fitted m/z-dependent correction factor.
 ==========================================================#
 
 # Empirical-k coverage parameters. Quantile of |residual|/σ used to set the
-# coverage multiplier k; the result is clamped to [1.96, EMPK_CLAMP_HI].
+# coverage multiplier k; the result is clamped to [EMPK_MIN_K, EMPK_CLAMP_HI].
 const EMPK_QUANTILE = 0.95
+const EMPK_MIN_K = Float32(quantile(Normal(), (1.0 + EMPK_QUANTILE) / 2.0))
 const EMPK_CLAMP_HI = 4.5f0
 
 #==========================================================
@@ -143,11 +145,50 @@ function make_edge_point_spline_extrap(spline::UniformSpline{N, T},
     centers, vals = _binned_bias_medians(x, y, lo, hi; bin_size=bin_size)
     lo_slope = _edge_point_slope(centers, vals, :lo, n_edge_points)
     hi_slope = _edge_point_slope(centers, vals, :hi, n_edge_points)
+    extrap_lo = length(centers) >= 2 ? T(first(centers)) : lo
+    extrap_hi = length(centers) >= 2 ? T(last(centers)) : hi
 
     return SplineExtrap{T}(
-        lo, hi,
-        spline(lo), T(lo_slope === nothing ? 0.0 : lo_slope),
-        spline(hi), T(hi_slope === nothing ? 0.0 : hi_slope)
+        extrap_lo, extrap_hi,
+        spline(extrap_lo), T(lo_slope === nothing ? 0.0 : lo_slope),
+        spline(extrap_hi), T(hi_slope === nothing ? 0.0 : hi_slope)
+    )
+end
+
+function make_binned_bound_spline_extrap(spline::UniformSpline{N, T},
+                                         x::AbstractVector{<:Real},
+                                         y::AbstractVector{<:Real},
+                                         lo::T,
+                                         hi::T;
+                                         bin_size::Int = TUNING_CALIBRATION_BIN_SIZE) where {N, T}
+    centers, _ = _binned_bias_medians(x, y, lo, hi; bin_size=bin_size)
+    extrap_lo = length(centers) >= 2 ? T(first(centers)) : lo
+    extrap_hi = length(centers) >= 2 ? T(last(centers)) : hi
+    return make_spline_extrap(spline, extrap_lo, extrap_hi)
+end
+
+function make_rt_range_edge_spline_extrap(spline::UniformSpline{N, T},
+                                          x::AbstractVector{<:Real},
+                                          y::AbstractVector{<:Real},
+                                          lo::T,
+                                          hi::T;
+                                          bound_bin_size::Int = TUNING_RT_BIAS_BIN_SIZE) where {N, T}
+    bound_centers, _ = _binned_bias_medians(x, y, lo, hi; bin_size=bound_bin_size)
+    lo_f = length(bound_centers) >= 2 ? first(bound_centers) : Float64(lo)
+    hi_f = length(bound_centers) >= 2 ? last(bound_centers) : Float64(hi)
+    span = hi_f - lo_f
+    if !(isfinite(span) && span > 0)
+        return SplineExtrap{T}(
+            lo, hi,
+            spline(lo), zero(T),
+            spline(hi), zero(T)
+        )
+    end
+
+    return SplineExtrap{T}(
+        T(lo_f), T(hi_f),
+        spline(T(lo_f)), zero(T),
+        spline(T(hi_f)), zero(T)
     )
 end
 
@@ -185,60 +226,105 @@ function _constant_mz_spread_correction_extrap(spline::UniformSpline{N, Float64}
     )
 end
 
-function _fit_regularized_mz_spread_correction_spline(
+function _constant_bias_spline(first_x::Float64,
+                               last_x::Float64;
+                               value::Float64 = 0.0)
+    _first = isfinite(first_x) ? first_x : 0.0
+    _last = isfinite(last_x) ? last_x : _first + 1.0
+    _last <= _first && (_last = _first + 1.0)
+    degree = 3
+    n_knots = 3
+    coeffs = Float64[]
+    for _ in 1:n_knots
+        append!(coeffs, (value, 0.0, 0.0, 0.0))
+    end
+    return UniformSpline{length(coeffs), Float64}(
+        SVector{length(coeffs), Float64}(coeffs),
+        degree,
+        _first,
+        _last,
+        (_last - _first) / (n_knots - 1)
+    )
+end
+
+function _constant_bias_extrap(spline::UniformSpline{N, Float64}) where N
+    return SplineExtrap{Float64}(
+        spline.first,
+        spline.last,
+        spline(spline.first),
+        0.0,
+        spline(spline.last),
+        0.0
+    )
+end
+
+function _shift_spline(spline::UniformSpline{N, Float64}, offset::Float64) where N
+    coeffs = collect(spline.coeffs)
+    stride = spline.degree + 1
+    for i in 1:stride:length(coeffs)
+        coeffs[i] -= offset
+    end
+    return UniformSpline{N, Float64}(
+        SVector{N, Float64}(coeffs),
+        spline.degree,
+        spline.first,
+        spline.last,
+        spline.bin_width
+    )
+end
+
+function _linear_mz_spread_correction_spline(first_mz::Float64,
+                                             last_mz::Float64,
+                                             intercept::Float64,
+                                             slope::Float64)
+    _first = isfinite(first_mz) ? first_mz : 0.0
+    _last = isfinite(last_mz) ? last_mz : _first + 1.0
+    _last <= _first && (_last = _first + 1.0)
+
+    degree = 3
+    n_knots = 3
+    bin_width = (_last - _first) / (n_knots - 1)
+    coeffs = Float64[]
+    for k in 0:(n_knots - 1)
+        mz = _first + k * bin_width
+        append!(coeffs, (intercept + slope * mz, slope * bin_width, 0.0, 0.0))
+    end
+
+    return UniformSpline{length(coeffs), Float64}(
+        SVector{length(coeffs), Float64}(coeffs),
+        degree,
+        _first,
+        _last,
+        bin_width
+    )
+end
+
+function _fit_robust_linear_mz_spread_correction(
     corr_centers::Vector{Float64},
     corr_vals::Vector{Float64};
-    n_knots::Int = 8,
-    λ_candidates::Tuple = (100.0, 30.0, 10.0, 3.0, 1.0, 0.3, 0.1, 0.03, 0.01),
-    min_local_ratio::Float64 = 0.85,
     floor_val::Float64 = 0.1,
     ceiling_val::Float64 = 10.0,
 )
     n_pts = length(corr_centers)
-    n_pts < 5 && return nothing, "constant (too few m/z correction bins)"
+    n_pts < 2 && return nothing, Float32(1.0), Float32(0.0), Float32(0.0),
+                         "constant (too few m/z correction bins)"
 
     order = sortperm(corr_centers)
     x = corr_centers[order]
     y = clamp.(corr_vals[order], floor_val, ceiling_val)
     _first = minimum(x)
     _last = maximum(x)
-    _last <= _first && return nothing, "constant (degenerate m/z correction bins)"
+    _last <= _first && return nothing, Float32(1.0), Float32(0.0), Float32(0.0),
+                         "constant (degenerate m/z correction bins)"
 
-    n_knots = min(n_knots, max(3, n_pts - 3))
-    knots = collect(LinRange(_first, _last, n_knots))
-    bin_width = (_last - _first) / (n_knots - 1)
-    X = _build_numeric_design_matrix(x, knots, bin_width)
-    n_coeffs = n_knots + 3
-    D2 = build_difference_matrix(n_coeffs, 2)
-    P = D2' * D2
-    ridge = 1e-6 * Matrix{Float64}(I, n_coeffs, n_coeffs)
-    Xty = X' * y
-    XtX = X' * X
+    slope = _theil_sen_slope(x, y)
+    slope === nothing && return nothing, Float32(1.0), Float32(0.0), Float32(0.0),
+                              "constant (too few m/z correction bins)"
+    intercept = median(y .- slope .* x)
 
-    best_spline = nothing
-    best_label = "regularized spline"
-    best_score = Inf
-    best_λ = last(λ_candidates)
-
-    for λ in λ_candidates
-        H = XtX + λ * P + ridge
-        c = H \ Xty
-        spline = _coeffs_to_spline(c, knots, bin_width, 3, n_knots, _first, _last)
-        pred = clamp.([Float64(spline(xi)) for xi in x], floor_val, ceiling_val)
-        rss = sum((pred .- y).^2)
-        roughness = sum((D2 * c).^2)
-        score = rss + 0.01 * roughness
-        if all(pred .>= min_local_ratio .* y)
-            return spline, "regularized spline (λ=$(λ), bins=$(n_pts))"
-        end
-        if score < best_score
-            best_score = score
-            best_spline = spline
-            best_λ = λ
-        end
-    end
-
-    return best_spline, "regularized spline (λ=$(best_λ), undercoverage guard relaxed, bins=$(n_pts))"
+    spline = _linear_mz_spread_correction_spline(_first, _last, intercept, slope)
+    return spline, Float32(intercept), Float32(slope), Float32(0.0),
+           "robust linear (Theil-Sen, bins=$(n_pts))"
 end
 
 function _select_regularized_mz_spread_correction(corr_centers::AbstractVector{<:Real},
@@ -260,14 +346,18 @@ function _select_regularized_mz_spread_correction(corr_centers::AbstractVector{<
                Float32(1.0), Float32(0.0), Float32(0.0), "constant (too few fragments)"
     end
 
-    spline, label = _fit_regularized_mz_spread_correction_spline(centers, vals)
+    spline, mz_spread_α, mz_spread_β, mz_spread_γ, label =
+        _fit_robust_linear_mz_spread_correction(centers, vals)
     if spline === nothing
         value = median(clamp.(vals, 0.1, 10.0))
         spline = _constant_mz_spread_correction_spline(minimum(centers), maximum(centers); value=value)
+        mz_spread_α = Float32(value)
+        mz_spread_β = Float32(0.0)
+        mz_spread_γ = Float32(0.0)
     end
 
     return spline, _constant_mz_spread_correction_extrap(spline),
-           Float32(1.0), Float32(0.0), Float32(0.0), label
+           mz_spread_α, mz_spread_β, mz_spread_γ, label
 end
 
 #==========================================================
@@ -584,15 +674,15 @@ function fit_best_monotone_bias(x::Vector{Float64}, y::Vector{Float64};
 end
 
 #==========================================================
-Monotone-decreasing convex spline for Laplace spread
+Regularized spline for Laplace spread
 ==========================================================#
 
 """
     fit_monotone_convex_spread_spline(bin_centers, bin_scales; ...)
 
-Fit a monotone-decreasing, convex cubic B-spline to pre-binned Laplace scale.
-Knot count is adaptive: at most n_knots, reduced to maintain a 10:1
-data-to-coefficient ratio.
+Fit an unconstrained regularized cubic B-spline to pre-binned Laplace scale.
+Knot count is adaptive: at most n_knots, reduced until each knot interval has
+enough binned scale estimates to avoid poorly supported local wiggles.
 Takes (bin_centers, bin_scales) from `binned_laplace_scale`.
 Returns a UniformSpline (Float64), or nothing.
 """
@@ -609,13 +699,18 @@ function fit_monotone_convex_spread_spline(
     n_pts = length(bin_centers)
     n_pts < 5 && return nothing
 
-    t = Float64.(bin_centers)
-    y = Float64.(bin_scales)
+    valid = findall(i -> isfinite(bin_centers[i]) && isfinite(bin_scales[i]), eachindex(bin_centers))
+    length(valid) < 5 && return nothing
+
+    order = valid[sortperm(bin_centers[valid])]
+    t = Float64.(bin_centers[order])
+    y = max.(Float64.(bin_scales[order]), floor_val)
     _first = minimum(t); _last = maximum(t)
+    _last <= _first && return nothing
 
     # Adaptive knot count: reduce n_knots until every uniform knot interval
-    # contains at least `min_pts_per_interval` data points (Laplace bin centers).
-    min_pts_per_interval = 5
+    # contains enough binned Laplace-scale estimates.
+    min_pts_per_interval = 3
     while n_knots > 1
         bin_width = (_last - _first) / (n_knots - 1)
         # Count data points in each knot interval
@@ -631,7 +726,7 @@ function fit_monotone_convex_spread_spline(
         min_count >= min_pts_per_interval && break
         n_knots -= 1
     end
-    n_knots < 1 && return nothing
+    n_knots < 3 && return nothing
 
     spline_bin_width = (_last - _first) / (n_knots - 1)
     knots = collect(LinRange(_first, _last, n_knots))
@@ -640,40 +735,11 @@ function fit_monotone_convex_spread_spline(
 
     D2 = build_difference_matrix(n_coeffs, 2)
     P = D2' * D2
-    H = X' * X + λ * P
+    ridge = 1e-8 * Matrix{Float64}(I, n_coeffs, n_coeffs)
+    H = X' * X + λ * P + ridge
     Xty = X' * y
     c = H \ Xty
-
-    function project!(c::Vector{Float64})
-        for _ in 1:30
-            changed = false
-            # Convexity: f''(x) >= 0
-            for i in 1:(length(c)-2)
-                v = c[i+2] - 2*c[i+1] + c[i]
-                if v < 0
-                    c[i] += (-v) / 3; c[i+1] -= 2 * (-v) / 3; c[i+2] += (-v) / 3
-                    changed = true
-                end
-            end
-            !changed && break
-        end
-        for i in eachindex(c); c[i] = max(c[i], floor_val); end
-    end
-
-    project!(c)
-    # See fit_convex_bias_spline for rationale.
-    lr_eff = min(lr, 1.8 / opnorm(H))
-    prev_obj = Inf
-    for iter in 1:max_iter
-        grad = H * c - Xty
-        c .-= lr_eff .* grad
-        project!(c)
-        if iter % 100 == 0
-            obj = 0.5 * (c' * H * c) - (Xty' * c)
-            if abs(prev_obj - obj) / max(abs(obj), 1.0) < tol; break; end
-            prev_obj = obj
-        end
-    end
+    c = max.(c, floor_val)
 
     degree = 3
     return _coeffs_to_spline(c, knots, spline_bin_width, degree, n_knots, _first, _last)
@@ -687,9 +753,9 @@ Orchestrator: fit_intensity_mass_error_model
     fit_intensity_mass_error_model(fragments, old_model; k, conservative_k)
 
 Fit an IntensityMassErrorModel from matched fragment data.
-Bias in Da space; spread in ppm space. Bias uses convexity-constrained
-smoothing splines fit to all per-fragment data; spread uses monotone-decreasing
-convex spline fit to binned Laplace scale values of ppm residuals.
+Bias is fit in Da space with m/z, intensity, and RT components. Spread is fit
+in mDa space from binned Laplace scale estimates, with an m/z-dependent spread
+correction and empirical coverage multiplier.
 """
 function fit_intensity_mass_error_model(
     samples::AbstractVector{MassErrSample},
@@ -706,27 +772,31 @@ function fit_intensity_mass_error_model(
     # Extract data in Da
     frag_mzs = Vector{Float32}(undef, n)
     intensities = Vector{Float32}(undef, n)
+    rts = Vector{Float32}(undef, n)
     da_errs = Vector{Float64}(undef, n)
 
     @inbounds for i in 1:n
         s = samples[i]
         frag_mzs[i] = s.theoretical_mz
         intensities[i] = s.intensity
+        rts[i] = s.rt
         da_errs[i] = Float64(s.observed_mz - s.theoretical_mz)
     end
 
-    valid = intensities .> 0.0f0
+    valid = (intensities .> 0.0f0) .& isfinite.(rts)
     if sum(valid) < 50
         @user_warn "Too few valid-intensity fragments ($(sum(valid))) for IntensityMassErrorModel"
         return old_model
     end
     frag_mzs = frag_mzs[valid]
     intensities = intensities[valid]
+    rts = rts[valid]
     da_errs = da_errs[valid]
     n = length(da_errs)
 
     log2I = log2.(Float64.(intensities))
     mz_f64 = Float64.(frag_mzs)
+    rt_f64 = Float64.(rts)
 
     # Step 1: m/z bias — binned robust spline, unconstrained in curvature
     mz_spline_f64, mz_label = fit_binned_regularized_bias_spline(
@@ -756,9 +826,36 @@ function fit_intensity_mass_error_model(
         return old_model
     end
 
-    full_residuals = mz_residuals .- [I_spline_f64(li) for li in log2I]
+    intensity_residuals = mz_residuals .- [I_spline_f64(li) for li in log2I]
 
-    # Step 3: Spread — binned MAD → Gaussian σ per intensity bin
+    # Step 3: RT bias — binned robust spline on raw RT.
+    rt_min = minimum(rt_f64)
+    rt_max = maximum(rt_f64)
+    rt_width = rt_max - rt_min
+    rt_spline_f64 = _constant_bias_spline(rt_min, rt_max)
+    rt_label = "none (degenerate RT range)"
+
+    if rt_width > 0 && n >= TUNING_RT_BIAS_BIN_SIZE * 5
+        fitted_rt_spline, fitted_rt_label = fit_binned_regularized_bias_spline(
+            rt_f64,
+            intensity_residuals;
+            n_knots = TUNING_RT_BIAS_KNOTS,
+            λ = TUNING_RT_BIAS_LAMBDA,
+            bin_size = TUNING_RT_BIAS_BIN_SIZE,
+            min_bins = 5,
+        )
+        if fitted_rt_spline !== nothing
+            rt_center = median([fitted_rt_spline(rt) for rt in rt_f64])
+            rt_spline_f64 = _shift_spline(fitted_rt_spline, rt_center)
+            rt_label = fitted_rt_label
+        else
+            rt_label = fitted_rt_label
+        end
+    end
+
+    full_residuals = intensity_residuals .- [rt_spline_f64(rt) for rt in rt_f64]
+
+    # Step 4: Spread — binned MAD → Gaussian σ per intensity bin
     full_residuals_mda = full_residuals .* 1e3  # Da → mDa
 
     I_order = sortperm(log2I)
@@ -777,7 +874,7 @@ function fit_intensity_mass_error_model(
     I_spline = convert_spline_to_f32(I_spline_f64)
     spread_spline = convert_spline_to_f32(spread_spline_f64)
 
-    # Step 4: m/z-dependent spread correction in mDa space
+    # Step 5: m/z-dependent spread correction in mDa space
     # Regularized spline for the correction factor c(mz), with constant endpoint extrapolation.
     mz_spread_α = Float32(1.0)
     mz_spread_β = Float32(0.0)
@@ -808,15 +905,9 @@ function fit_intensity_mass_error_model(
             _select_regularized_mz_spread_correction(corr_centers, corr_vals)
     end
 
-    # Empirical k: fit k so the ±k·σ envelope covers ~95% of observed
-    # bias-corrected residuals. Replaces the previous static k=1.96 (which
-    # only achieves 95% under a Gaussian assumption — Olsen Exploris fragments
-    # showed ~86% empirical coverage at k=1.96, evidence the residual tails
-    # are heavier than Gaussian). Per-file fit; clamped to [1.96, 4.5] to
-    # avoid pathological blow-up on noisy files.
-    # 2026-05-15: 98% target was tested and dramatically regressed (−50k prec,
-    # −3.7k PG on 23-file Olsen) because BitVec LUT calibration trained on
-    # the wider window learns a stricter score cutoff. 95% is the sweet spot.
+    # Empirical k: fit k so the ±k·σ envelope covers the target fraction of
+    # observed bias-corrected residuals. Per-file fit; clamped to
+    # [EMPK_MIN_K, EMPK_CLAMP_HI] to avoid pathological under/over-widths.
     laplace_to_gauss = log(2.0) / 0.6744897501960817
     σ_per_frag_mda = Vector{Float64}(undef, n)
     @inbounds for i in 1:n
@@ -826,7 +917,7 @@ function fit_intensity_mass_error_model(
     end
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
     k_emp = Float32(quantile(normalized_residuals, EMPK_QUANTILE))
-    k = clamp(k_emp, 1.96f0, EMPK_CLAMP_HI)
+    k = clamp(k_emp, EMPK_MIN_K, EMPK_CLAMP_HI)
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
@@ -854,25 +945,27 @@ function fit_intensity_mass_error_model(
     max_da_observed = Float32(maximum(abs_residuals))
     max_da_tolerance = Float32(quantile(abs_residuals, 0.99))
 
-    # Precompute extrapolation boundaries at central quantiles of training data.
-    # Splines are fit on all data but evaluation switches to extrapolation
-    # outside these boundaries.
-    # The SPREAD spline uses CONSTANT extrapolation on both ends. The
-    # low-intensity tail can be sparsely sampled and the monotone-convex
-    # spline's linear extrapolation tended to blow up the spread there,
-    # which derails BitVecCalibration (admits more low-intensity noise →
-    # fewer bits clear the target/decoy excess threshold → narrower
-    # candidate set → fewer PSMs). Constant extrapolation beyond [q05, q95]
-    # caps the spread at its value at the boundary.
-    bias_q_lo, bias_q_hi = TUNING_BIAS_EXTRAP_QUANTILES
-    mz_qlo, mz_qhi = Float32.(quantile(mz_f64, [bias_q_lo, bias_q_hi]))
-    I_qlo, I_qhi   = Float32.(quantile(log2I, [bias_q_lo, bias_q_hi]))
-    I_q05, I_q95   = Float32.(quantile(log2I, [0.05, 0.95]))
+    # Precompute bias extrapolation at the first/last binned training points.
+    # Splines are fit on all data; outside the binned boundaries, m/z and
+    # intensity bias use robust edge slopes and RT bias uses range-binned
+    # edge slopes.
+    # The spread spline uses constant extrapolation outside its supported range:
+    # low intensity is capped at the 5% boundary, while high intensity uses the
+    # fitted spline through its right edge.
+    mz_qlo, mz_qhi = Float32(minimum(mz_f64)), Float32(maximum(mz_f64))
+    I_qlo, I_qhi   = Float32(minimum(log2I)), Float32(maximum(log2I))
+    rt_qlo, rt_qhi = Float32(minimum(rt_f64)), Float32(maximum(rt_f64))
+    I_lo_spread = Float32(quantile(log2I, 0.05))
+    I_hi_spread = spread_spline.last
     mz_extrap = make_edge_point_spline_extrap(
         mz_spline, mz_f64, da_errs, mz_qlo, mz_qhi)
     int_extrap = make_edge_point_spline_extrap(
         I_spline, log2I, mz_residuals, I_qlo, I_qhi)
-    spread_extrap_raw = make_spline_extrap(spread_spline, I_q05, I_q95)
+    rt_spline = convert_spline_to_f32(rt_spline_f64)
+    rt_extrap = make_rt_range_edge_spline_extrap(
+        rt_spline, rt_f64, intensity_residuals, rt_qlo, rt_qhi;
+        bound_bin_size = TUNING_RT_BIAS_BIN_SIZE)
+    spread_extrap_raw = make_spline_extrap(spread_spline, I_lo_spread, I_hi_spread)
     spread_extrap = SplineExtrap{Float32}(
         spread_extrap_raw.lo, spread_extrap_raw.hi,
         spread_extrap_raw.lo_val, Float32(0),  # constant extrap on left  (low intensity)
@@ -885,9 +978,11 @@ function fit_intensity_mass_error_model(
         mz_spline,
         I_spline,
         spread_spline,
+        rt_spline,
         mz_extrap,
         int_extrap,
         spread_extrap,
+        rt_extrap,
         k,
         conservative_tol_da,
         mz_spread_spline,
@@ -896,7 +991,9 @@ function fit_intensity_mass_error_model(
         mz_spread_β,
         mz_spread_γ,
         default_top3_ll,
-        max_da_tolerance
+        max_da_tolerance,
+        Float32(rt_min),
+        Float32(rt_max)
     )
 
     # Model's unclamped worst-case: k * spread_mDa(leftmost) * max_mz_correction
@@ -910,7 +1007,8 @@ function fit_intensity_mass_error_model(
     @debug_l1 "Fitted IntensityMassErrorModel (bias Da, spread mDa):" *
         "\n  m/z bias: $mz_label spline ($(length(mz_spline.coeffs)) coeffs)" *
         "\n  intensity bias: $I_label spline ($(length(I_spline.coeffs)) coeffs)" *
-        "\n  spread: monotone-convex spline ($(length(spread_spline.coeffs)) coeffs)" *
+        "\n  RT bias: $rt_label spline ($(length(rt_spline.coeffs)) coeffs)" *
+        "\n  spread: regularized spline ($(length(spread_spline.coeffs)) coeffs)" *
         "\n  m/z spread correction (mDa): $mz_corr_label ($(length(mz_spread_spline.coeffs)) coeffs; α=$(round(mz_spread_α, digits=4)), β=$(round(mz_spread_β, sigdigits=2)), γ=$(round(mz_spread_γ, sigdigits=2)))" *
         "\n  k=$(k), Da clamp (q99)=$(round(max_da_tolerance * 1e3, digits=2)) mDa, max observed=$(round(max_da_observed * 1e3, digits=2)) mDa, model max=$(round(model_max_mda, digits=2)) mDa" *
         "\n  MAD after correction: $(round(mad_corr_mda, digits=2)) mDa" *
@@ -1032,14 +1130,13 @@ function fit_scout_calibrated_model(
     mz_spline = convert_spline_to_f32(mz_spline_f64)
     I_spline = convert_spline_to_f32(I_spline_f64)
 
-    # Precompute linear extrapolation at central bias quantiles. Scout keeps
-    # endpoint-derivative slopes so the Wide Scout bias diagnostics stay
-    # comparable to the pre-edge-slope model.
-    bias_q_lo, bias_q_hi = TUNING_BIAS_EXTRAP_QUANTILES
-    mz_qlo, mz_qhi = Float32.(quantile(mz_f64, [bias_q_lo, bias_q_hi]))
-    I_qlo, I_qhi = Float32.(quantile(log2I, [bias_q_lo, bias_q_hi]))
-    mz_extrap = make_spline_extrap(mz_spline, mz_qlo, mz_qhi)
-    int_extrap = make_spline_extrap(I_spline, I_qlo, I_qhi)
+    # Precompute spline-derivative bias extrapolation at binned data endpoints.
+    mz_qlo, mz_qhi = Float32(minimum(mz_f64)), Float32(maximum(mz_f64))
+    I_qlo, I_qhi = Float32(minimum(log2I)), Float32(maximum(log2I))
+    mz_extrap = make_binned_bound_spline_extrap(
+        mz_spline, mz_f64, da_errs, mz_qlo, mz_qhi)
+    int_extrap = make_binned_bound_spline_extrap(
+        I_spline, log2I, mz_residuals, I_qlo, I_qhi)
 
     model = ScoutCalibratedMassErrorModel(
         mz_spline, mz_extrap,

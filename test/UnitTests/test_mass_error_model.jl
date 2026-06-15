@@ -10,11 +10,53 @@
 # - the Linear* models' Laplace log-density fallbacks
 
 using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
-               LinearBiasPpmTolMassErrorModel,
+               LinearBiasPpmTolMassErrorModel, IntensityMassErrorModel,
+               UniformSpline, SplineExtrap,
                getRightTol, getLeftTol, getMassOffset, getMassCorrection,
                getCorrectedMz, getMzBounds, getMzBoundsReverse,
                getCorrectedMzAndBounds, laplace_log_density,
-               get_default_top3_ll
+               get_default_top3_ll,
+               _model_tolerance_heatmap_grid
+import Pioneer
+using StaticArrays: SVector
+
+_test_const_spline_f32(value::Float32; first::Float32 = 0f0, last::Float32 = 1f0) =
+    UniformSpline{12, Float32}(
+        SVector{12, Float32}(
+            value, 0f0, 0f0, 0f0,
+            value, 0f0, 0f0, 0f0,
+            value, 0f0, 0f0, 0f0,
+        ),
+        3,
+        first,
+        last,
+        (last - first) / 2f0,
+    )
+
+_test_linear_spline_f32(intercept::Float32, slope::Float32; first::Float32 = 0f0, last::Float32 = 1f0) =
+    let bin_width = (last - first) / 2f0
+        UniformSpline{12, Float32}(
+            SVector{12, Float32}(
+                intercept, slope * bin_width, 0f0, 0f0,
+                intercept + slope * bin_width, slope * bin_width, 0f0, 0f0,
+                intercept + slope * (last - first), slope * bin_width, 0f0, 0f0,
+            ),
+            3,
+            first,
+            last,
+            bin_width,
+        )
+    end
+
+_test_extrap_f32(spline::UniformSpline{N, Float32}) where N =
+    SplineExtrap{Float32}(
+        spline.first,
+        spline.last,
+        spline(spline.first),
+        0f0,
+        spline(spline.last),
+        0f0,
+    )
 
 @testset "MassErrorModel" begin
 
@@ -242,6 +284,110 @@ using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
             @test getCorrectedMz(m, 1000.0f0, 0.5f0) == getCorrectedMz(m, 1000.0f0)
             @test getMzBoundsReverse(m, 1000.0f0, 0.5f0) == getMzBoundsReverse(m, 1000.0f0)
         end
+    end
+
+    @testset "IntensityMassErrorModel RT bias" begin
+        mz_bias = _test_const_spline_f32(0f0; first=100f0, last=1000f0)
+        intensity_bias = _test_const_spline_f32(0f0; first=0f0, last=20f0)
+        spread = _test_const_spline_f32(1f0; first=0f0, last=20f0)
+        mz_spread = _test_const_spline_f32(1f0; first=100f0, last=1000f0)
+        rt_bias = _test_linear_spline_f32(0f0, 0.0004f0; first=10f0, last=20f0)
+
+        mem = IntensityMassErrorModel(
+            mz_bias,
+            intensity_bias,
+            spread,
+            rt_bias,
+            _test_extrap_f32(mz_bias),
+            _test_extrap_f32(intensity_bias),
+            _test_extrap_f32(spread),
+            _test_extrap_f32(rt_bias),
+            1.96f0,
+            0.02f0,
+            mz_spread,
+            _test_extrap_f32(mz_spread),
+            1f0,
+            0f0,
+            0f0,
+            0f0,
+            0.02f0,
+            10f0,
+            20f0,
+        )
+
+        mz = 500f0
+        intensity = 1024f0
+        corrected_no_rt, _, _ = getCorrectedMzAndBounds(mem, mz, intensity)
+        corrected_mid_rt, low_mid_rt, high_mid_rt = getCorrectedMzAndBounds(mem, mz, intensity, 15f0)
+        corrected_hi_rt, _, _ = getCorrectedMzAndBounds(mem, mz, intensity, 20f0)
+
+        @test corrected_no_rt == mz
+        @test corrected_mid_rt ≈ mz - 0.002f0 atol=2f-5
+        @test corrected_hi_rt ≈ mz - 0.004f0 atol=2f-5
+        @test low_mid_rt < corrected_mid_rt < high_mid_rt
+    end
+
+    @testset "IntensityMassErrorModel tolerance heatmap grid uses fitted spread surface" begin
+        mz_bias = _test_const_spline_f32(0f0; first=100f0, last=1000f0)
+        intensity_bias = _test_const_spline_f32(0f0; first=0f0, last=20f0)
+        spread = _test_const_spline_f32(2f0; first=0f0, last=20f0)
+        mz_spread = _test_const_spline_f32(3f0; first=100f0, last=1000f0)
+        rt_bias = _test_const_spline_f32(0f0; first=10f0, last=20f0)
+
+        mem = IntensityMassErrorModel(
+            mz_bias,
+            intensity_bias,
+            spread,
+            rt_bias,
+            _test_extrap_f32(mz_bias),
+            _test_extrap_f32(intensity_bias),
+            _test_extrap_f32(spread),
+            _test_extrap_f32(rt_bias),
+            2f0,
+            0.02f0,
+            mz_spread,
+            _test_extrap_f32(mz_spread),
+            1f0,
+            0f0,
+            0f0,
+            0f0,
+            0.02f0,
+            10f0,
+            20f0,
+        )
+
+        mz_grid, log2I_grid, tolerance_mda =
+            _model_tolerance_heatmap_grid(mem, Float32[200, 800], Float64[4, 16];
+                                          n_mz_bins=2, n_intensity_bins=2)
+
+        @test mz_grid == [200.0, 800.0]
+        @test log2I_grid == [4.0, 16.0]
+        @test size(tolerance_mda) == (2, 2)
+        @test all(tolerance_mda .≈ 2.0 * 2.0 * (log(2.0) / 0.6744897501960817) * 3.0)
+    end
+
+    @testset "IntensityMassErrorModel fits RT bias with m/z-like flexibility" begin
+        n = 5000
+        samples = Vector{Pioneer.MassErrSample}(undef, n)
+        for i in 1:n
+            frac = Float32((i - 1) / (n - 1))
+            mz = 300f0 + 700f0 * Float32(((i * 37) % n) / (n - 1))
+            log2I = 8f0 + 8f0 * Float32(((i * 53) % n) / (n - 1))
+            rt = 5f0 + 30f0 * frac
+            rt_bias = 0.003f0 * sin(8f0 * Float32(pi) * frac)
+            samples[i] = Pioneer.MassErrSample(mz, mz + rt_bias, 2f0 ^ log2I, rt)
+        end
+
+        old_model = SimpleMassErrorModel(0f0, (20f0, 20f0))
+        model = Pioneer.fit_intensity_mass_error_model(samples, old_model; k=1.96f0)
+
+        @test model isa IntensityMassErrorModel
+        @test length(model.rt_bias_spline.coeffs) >= length(model.mz_bias_spline.coeffs)
+        @test model.rt_bias_spline.first >= 4.9f0
+        @test model.rt_bias_spline.last <= 35.1f0
+        @test model.rt_bias_extrap.lo_slope == 0f0
+        @test model.rt_bias_extrap.hi_slope == 0f0
+        @test 4.9f0 <= model.rt_bias_extrap.lo < model.rt_bias_extrap.hi <= 35.1f0
     end
 
 end

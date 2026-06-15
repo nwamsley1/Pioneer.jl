@@ -26,7 +26,9 @@ const TUNING_CALIBRATION_BIN_SIZE = Int64(200)  # Equal-count bins for mass-erro
 const TUNING_MZ_BIAS_BIN_SIZE = Int64(100)      # Denser bins for m/z-dependent bias medians
 const TUNING_MZ_BIAS_KNOTS = Int64(24)          # Knots for binned m/z-dependent bias spline
 const TUNING_MZ_BIAS_LAMBDA = Float64(0.1)      # Smoothness penalty for m/z-dependent bias spline
-const TUNING_BIAS_EXTRAP_QUANTILES = (Float64(0.02), Float64(0.98)) # Extrapolation bounds for bias splines
+const TUNING_RT_BIAS_BIN_SIZE = Int64(100)      # Denser bins for RT-dependent bias medians
+const TUNING_RT_BIAS_KNOTS = Int64(48)          # Knots for raw RT bias spline
+const TUNING_RT_BIAS_LAMBDA = Float64(0.03)     # Smoothness penalty for RT-dependent bias spline
 const TUNING_BIAS_EXTRAP_EDGE_POINTS = Int64(5) # Binned medians per edge for robust linear extrapolation
 
 # Wide scout constants

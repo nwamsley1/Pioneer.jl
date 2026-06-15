@@ -357,15 +357,16 @@ function mass_error_search(
 
                 scan_mz  = getMzArray(spectra, scan_idx)
                 scan_int = getIntensityArray(spectra, scan_idx)
+                scan_rt = Float32(getRetentionTime(spectra, scan_idx))
                 peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                                  mem, scan_mz, scan_int)
+                                                  mem, scan_mz, scan_int, scan_rt)
 
                 sample_idx = run_fused_masserr!(
                     samples, sample_idx,
                     corr_mz, obs_low, obs_high, peak_mz_len,
                     ion_list,
                     precursor_idxs, scan_to_prec_idx[scan_idx],
-                    mem, scan_mz, scan_int;
+                    mem, scan_mz, scan_int, scan_rt;
                     max_rank = max_rank)
             end
 
@@ -439,7 +440,7 @@ end
 After tolerance scanning, fit an IntensityMassErrorModel from the collected
 fragment data and install it as the mass error model for this file.
 The SimpleMassErrorModel remains available as fallback.
-Spread is fitted in ppm space; bias stays in Da.
+Spread is fitted in mDa space; bias stays in Da.
 """
 function fit_and_install_intensity_model!(
     search_context::SearchContext,
@@ -547,7 +548,7 @@ end
     generate_mass_error_plot_mda(fragments, model, fname)
 
 Generates bias-corrected mDa mass error histogram with tolerance bounds.
-Uses the IntensityMassErrorModel to subtract mz + intensity bias, then shows
+Uses the IntensityMassErrorModel to subtract m/z + intensity + RT bias, then shows
 both the max observed error clamp and the empirical 99.9% quantile clamp.
 """
 function generate_mass_error_plot_mda(
@@ -557,6 +558,7 @@ function generate_mass_error_plot_mda(
 )
     frag_mzs = frag_data.frag_mzs
     log2I = frag_data.log2I
+    rts = frag_data.rts
     da_errs = frag_data.da_errs
     n = length(da_errs)
     n < 10 && return nothing
@@ -566,7 +568,12 @@ function generate_mass_error_plot_mda(
 
     corrected_mda = Vector{Float64}(undef, n)
     @inbounds for i in 1:n
-        bias_da = Float64(_mz_bias_da(model, frag_mzs[i])) + Float64(_intensity_bias_da(model, Float32(log2I[i])))
+        bias_da = Float64(_total_bias_da(
+            model,
+            Float32(frag_mzs[i]),
+            Float32(log2I[i]),
+            Float32(rts[i]),
+        ))
         corrected_mda[i] = (da_errs[i] - bias_da) * 1e3
     end
 
@@ -667,33 +674,73 @@ end
 
 Generate diagnostic plots for an IntensityMassErrorModel showing:
 1. Bias fit: corrected residuals vs m/z and vs log2(intensity) with fitted curves
-2. Spread fit: Laplace scale vs log2(intensity) with fitted quadratic
-3. Corrected scatter: residuals after full bias correction vs m/z (should be centered at 0)
+2. RT-dependent bias: residuals after m/z + intensity correction vs RT
+3. Spread fit: Laplace scale vs log2(intensity) with fitted quadratic
+4. Corrected scatter: residuals after full bias correction vs m/z (should be centered at 0)
 
 Returns a vector of Plot objects.
 """
 # Extract arrays from FragmentMatch vector for plotting. Returns NamedTuple
-# with (frag_mzs, log2I, da_errs, mda_errs). Call once, pass to multiple plotters.
+# with (frag_mzs, log2I, rts, da_errs, mda_errs). Call once, pass to multiple plotters.
 function extract_fragment_plot_data(samples::AbstractVector{MassErrSample})
     n = length(samples)
     frag_mzs = Vector{Float32}(undef, n)
     intensities = Vector{Float32}(undef, n)
+    rts = Vector{Float32}(undef, n)
     da_errs = Vector{Float64}(undef, n)
 
     @inbounds for i in 1:n
         s = samples[i]
         frag_mzs[i] = s.theoretical_mz
         intensities[i] = s.intensity
+        rts[i] = s.rt
         da_errs[i] = Float64(s.observed_mz - s.theoretical_mz)
     end
 
-    valid = intensities .> 0.0f0
+    valid = (intensities .> 0.0f0) .& isfinite.(rts)
     frag_mzs = frag_mzs[valid]
+    rts = rts[valid]
     da_errs = da_errs[valid]
     log2I = log2.(Float64.(intensities[valid]))
     mda_errs = da_errs .* 1e3
 
-    return (frag_mzs=frag_mzs, log2I=log2I, da_errs=da_errs, mda_errs=mda_errs)
+    return (frag_mzs=frag_mzs, log2I=log2I, rts=rts, da_errs=da_errs, mda_errs=mda_errs)
+end
+
+function _diagnostic_axis_grid(values::AbstractVector, n_bins::Integer)
+    n = max(Int(n_bins), 2)
+    finite_values = Float64[x for x in values if isfinite(x)]
+    isempty(finite_values) && return collect(range(0.0, 1.0; length=n))
+
+    lo, hi = extrema(finite_values)
+    if lo == hi
+        pad = max(abs(lo) * 0.01, 1.0)
+        lo -= pad
+        hi += pad
+    end
+    return collect(range(lo, hi; length=n))
+end
+
+function _model_tolerance_heatmap_grid(
+    model::IntensityMassErrorModel,
+    frag_mzs::AbstractVector,
+    log2I::AbstractVector;
+    n_mz_bins::Integer=80,
+    n_intensity_bins::Integer=80,
+)
+    mz_grid = _diagnostic_axis_grid(frag_mzs, n_mz_bins)
+    log2I_grid = _diagnostic_axis_grid(log2I, n_intensity_bins)
+    tolerance_mda = Matrix{Float64}(undef, length(log2I_grid), length(mz_grid))
+
+    @inbounds for (iy, intensity) in pairs(log2I_grid)
+        sigma_mda = Float64(_gaussian_sigma_mda(model, Float32(intensity)))
+        for (ix, mz) in pairs(mz_grid)
+            correction = Float64(_mz_spread_correction(model, Float32(mz)))
+            tolerance_mda[iy, ix] = Float64(model.k) * sigma_mda * correction
+        end
+    end
+
+    return mz_grid, log2I_grid, tolerance_mda
 end
 
 function generate_intensity_model_plots(
@@ -704,6 +751,7 @@ function generate_intensity_model_plots(
     plots_out = Plots.Plot[]
     frag_mzs = frag_data.frag_mzs
     log2I = frag_data.log2I
+    rts = frag_data.rts
     da_errs = frag_data.da_errs
     mda_errs = frag_data.mda_errs
     n = length(da_errs)
@@ -713,13 +761,15 @@ function generate_intensity_model_plots(
     # Bias in Da, spread in ppm (converted to Da per-fragment for calibration)
     mz_bias = Vector{Float64}(undef, n)
     int_bias = Vector{Float64}(undef, n)
+    rt_bias = Vector{Float64}(undef, n)
     total_bias = Vector{Float64}(undef, n)
     laplace_scale_mda = Vector{Float64}(undef, n)
 
     @inbounds for i in 1:n
         mz_bias[i] = Float64(_mz_bias_da(model, Float32(frag_mzs[i])))
         int_bias[i] = Float64(_intensity_bias_da(model, Float32(log2I[i])))
-        total_bias[i] = mz_bias[i] + int_bias[i]
+        rt_bias[i] = Float64(_rt_bias_da(model, Float32(rts[i])))
+        total_bias[i] = mz_bias[i] + int_bias[i] + rt_bias[i]
         laplace_scale_mda[i] = Float64(_laplace_scale_mda(model, Float32(log2I[i])))  # now actually mDa
     end
 
@@ -785,6 +835,37 @@ function generate_intensity_model_plots(
            color=:orange, lw=1.5, ls=:dot, label="2%/98% extrap boundary")
     title!(p_int_bias, _split_title(fname, "Intensity-dependent bias (mDa)"))
     push!(plots_out, p_int_bias)
+
+    # Page 3: RT-dependent bias
+    rt_raw = Float64.(rts)
+    rt_order = sortperm(rt_raw)
+    bin_rt_c = Float64[]
+    bin_med_rt_resid = Float64[]
+    mz_int_resid_mda = (da_errs .- mz_bias .- int_bias) .* 1e3
+    for b in 1:n_bins
+        s = (b - 1) * diagnostic_bin_sz + 1
+        e = b == n_bins ? n : b * diagnostic_bin_sz
+        idx = rt_order[s:e]
+        push!(bin_rt_c, median(rt_raw[idx]))
+        push!(bin_med_rt_resid, median(mz_int_resid_mda[idx]))
+    end
+
+    rt_range = range(minimum(rt_raw), maximum(rt_raw), length=200)
+    rt_fit = [Float64(_rt_bias_da(model, Float32(x))) * 1e3
+              for x in rt_range]
+    p_rt_bias = plot(size=(900, 900), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
+    scatter!(p_rt_bias, rt_raw, mz_int_resid_mda,
+             alpha=0.08, markersize=1, color=:gray, label=nothing)
+    scatter!(p_rt_bias, bin_rt_c, bin_med_rt_resid,
+             xlabel="RT (min)", ylabel="Residual after m/z + intensity bias (mDa)",
+             label="bin median", marker=:circle, color=:blue, ms=4)
+    plot!(p_rt_bias, rt_range, rt_fit, lw=2.5, color=:red, label="RT bias spline")
+    hline!(p_rt_bias, [0.0], color=:black, lw=1, ls=:dot, label=nothing)
+    vline!(p_rt_bias, [Float64(model.rt_bias_extrap.lo), Float64(model.rt_bias_extrap.hi)],
+           color=:orange, lw=1.5, ls=:dot, label="2%/98% extrap boundary")
+    title!(p_rt_bias, _split_title(fname, "RT-dependent bias (mDa)") *
+                      "\nRT $(round(model.rt_min, digits=2))-$(round(model.rt_max, digits=2)) min")
+    push!(plots_out, p_rt_bias)
 
     # ── Shared spread computation ──
     spread_bin_sz = TUNING_CALIBRATION_BIN_SIZE
@@ -883,6 +964,25 @@ function generate_intensity_model_plots(
     plot!(p_corr, mz_fit_range, model_corr; lw=2.5, color=:green, label=model_label)
     hline!(p_corr, [1.0]; lw=1.5, ls=:dash, color=:black, label="ideal (1.0)")
     push!(plots_out, p_corr)
+
+    # ── Plot 5: fitted tolerance surface over fragment m/z and intensity ──
+    mz_heat, log2I_heat, tolerance_heat_mda =
+        _model_tolerance_heatmap_grid(model, frag_mzs, log2I)
+    p_tolerance_heatmap = heatmap(
+        mz_heat,
+        log2I_heat,
+        tolerance_heat_mda;
+        xlabel="Fragment m/z",
+        ylabel="log2(intensity)",
+        title=_split_title(fname, "Fitted tolerance heatmap") *
+              "\ncolor = k*sigma tolerance half-width (mDa)",
+        size=(900, 900),
+        color=:viridis,
+        rightmargin=12Plots.mm,
+        bottommargin=10Plots.mm,
+        leftmargin=10Plots.mm,
+    )
+    push!(plots_out, p_tolerance_heatmap)
 
     return plots_out
 end

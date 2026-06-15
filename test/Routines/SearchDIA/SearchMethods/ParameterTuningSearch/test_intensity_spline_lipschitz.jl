@@ -13,6 +13,7 @@
 
 using Random
 using Statistics: median, quantile
+using Distributions: Normal
 import Pioneer
 using Pioneer: fit_convex_bias_spline, fit_monotone_bias_spline,
                fit_binned_regularized_bias_spline,
@@ -24,18 +25,30 @@ using Pioneer: fit_convex_bias_spline, fit_monotone_bias_spline,
                _mz_spread_correction,
                binned_laplace_scale,
                make_edge_point_spline_extrap,
+               make_rt_range_edge_spline_extrap,
                spline_derivative,
                IntensityMassErrorModel,
                MassErrSample,
                ScoutCalibratedMassErrorModel,
                SimpleMassErrorModel,
+               EMPK_CLAMP_HI,
+               EMPK_MIN_K,
+               EMPK_QUANTILE,
                TUNING_BIAS_EXTRAP_EDGE_POINTS,
-               TUNING_BIAS_EXTRAP_QUANTILES,
                TUNING_CALIBRATION_BIN_SIZE,
                TUNING_MIN_SAMPLES,
                TUNING_MZ_BIAS_BIN_SIZE,
                TUNING_MZ_BIAS_KNOTS,
-               TUNING_MZ_BIAS_LAMBDA
+               TUNING_MZ_BIAS_LAMBDA,
+               TUNING_RT_BIAS_BIN_SIZE,
+               TUNING_RT_BIAS_KNOTS,
+               TUNING_RT_BIAS_LAMBDA
+
+@testset "Empirical k constants use matching Gaussian lower bound" begin
+    @test 0.95 <= EMPK_QUANTILE < 1.0
+    @test EMPK_MIN_K ≈ Float32(quantile(Normal(), (1.0 + EMPK_QUANTILE) / 2.0))
+    @test EMPK_MIN_K < EMPK_CLAMP_HI
+end
 
 @testset "Intensity spline Lipschitz step cap" begin
     rng = MersenneTwister(0x5eedfa11)
@@ -95,8 +108,75 @@ end
     @test TUNING_MZ_BIAS_LAMBDA == 0.1
     @test TUNING_MZ_BIAS_BIN_SIZE == 100
     @test TUNING_MZ_BIAS_KNOTS == 24
-    @test TUNING_BIAS_EXTRAP_QUANTILES == (0.02, 0.98)
     @test TUNING_BIAS_EXTRAP_EDGE_POINTS == 5
+end
+
+@testset "Parameter tuning RT bias tracks local transitions" begin
+    @test TUNING_RT_BIAS_BIN_SIZE == 100
+    @test TUNING_RT_BIAS_KNOTS == 48
+    @test TUNING_RT_BIAS_LAMBDA == 0.03
+
+    rng = MersenneTwister(0x7254)
+    rt = repeat(collect(range(10.0, 80.0; length=71)), inner=100)
+    truth = @. 0.0006 -
+               0.0022 / (1 + exp(-(rt - 61.0) / 1.1)) +
+               0.00035 * exp(-((rt - 53.0) / 2.2)^2)
+    residuals = truth .+ 0.00012 .* randn(rng, length(rt))
+
+    spline, label = fit_binned_regularized_bias_spline(
+        rt, residuals;
+        n_knots=TUNING_RT_BIAS_KNOTS,
+        λ=TUNING_RT_BIAS_LAMBDA,
+        bin_size=TUNING_RT_BIAS_BIN_SIZE)
+
+    probes = [53.0, 58.0, 61.0, 64.0, 70.0]
+    expected = @. 0.0006 -
+                  0.0022 / (1 + exp(-(probes - 61.0) / 1.1)) +
+                  0.00035 * exp(-((probes - 53.0) / 2.2)^2)
+    fitted = [spline(p) for p in probes]
+
+    @test occursin("binned regularized", label)
+    @test median(abs.(fitted .- expected)) < 3e-5
+    @test abs(spline(64.0) - expected[4]) < 3e-5
+end
+
+@testset "Spread spline tracks high-intensity tail structure" begin
+    centers = collect(range(8.0, 24.0; length=81))
+    truth = @. 3.8 - 2.2 / (1 + exp(-(centers - 13.0) / 0.9)) +
+               0.16 * exp(-((centers - 16.6) / 0.65)^2) -
+               0.20 * exp(-((centers - 19.0) / 0.8)^2) +
+               0.58 / (1 + exp(-(centers - 21.4) / 0.55))
+    spline = fit_monotone_convex_spread_spline(centers, truth;
+        n_knots=20, λ=0.01, max_iter=1000, lr=1e-3)
+
+    probes = [16.6, 19.0, 21.4, 23.0]
+    expected = @. 3.8 - 2.2 / (1 + exp(-(probes - 13.0) / 0.9)) +
+                  0.16 * exp(-((probes - 16.6) / 0.65)^2) -
+                  0.20 * exp(-((probes - 19.0) / 0.8)^2) +
+                  0.58 / (1 + exp(-(probes - 21.4) / 0.55))
+    fitted = [spline(p) for p in probes]
+
+    @test spline !== nothing
+    @test all(isfinite, spline.coeffs)
+    @test median(abs.(fitted .- expected)) < 0.035
+    @test spline(23.0) - spline(19.0) > 0.35
+end
+
+function _expected_binned_bounds(x, y; bin_size)
+    valid = [
+        i for i in eachindex(x)
+        if isfinite(Float64(x[i])) && isfinite(Float64(y[i]))
+    ]
+    order = valid[sortperm(Float64.(x[valid]))]
+    n = length(order)
+    n_bins = max(n ÷ bin_size, 1)
+    centers = Float64[]
+    for b in 1:n_bins
+        s = (b - 1) * bin_size + 1
+        e = b == n_bins ? n : b * bin_size
+        push!(centers, median(Float64.(x[order[s:e]])))
+    end
+    return first(centers), last(centers)
 end
 
 @testset "Bias extrapolation slopes use first and last five binned medians" begin
@@ -112,11 +192,44 @@ end
     lo, hi = quantile(x, [0.02, 0.98])
     extrap = make_edge_point_spline_extrap(
         spline, x, y, lo, hi; n_edge_points=5, bin_size=100)
+    expected_lo, expected_hi = _expected_binned_bounds(
+        x[(lo .<= x) .& (x .<= hi)], y[(lo .<= x) .& (x .<= hi)];
+        bin_size=100)
 
+    @test extrap.lo ≈ expected_lo
+    @test extrap.hi ≈ expected_hi
     @test extrap.lo_slope ≈ 0.003 atol=1e-5
     @test extrap.hi_slope ≈ -0.004 atol=1e-5
-    @test !(extrap.lo_slope ≈ spline_derivative(spline, lo))
-    @test !(extrap.hi_slope ≈ spline_derivative(spline, hi))
+    @test !(extrap.lo_slope ≈ spline_derivative(spline, extrap.lo))
+    @test !(extrap.hi_slope ≈ spline_derivative(spline, extrap.hi))
+end
+
+@testset "RT bias extrapolation is constant outside binned RT range" begin
+    x = vcat(
+        collect(range(0.0, 99.0; length=2_000)),
+        collect(range(99.80, 100.00; length=500)),
+    )
+    y = @. 0.001 * x
+    dense = x .>= 99.80
+    y[dense] .= @. 0.001 * x[dense] + 0.040 * (x[dense] - 99.80)
+
+    spline = fit_convex_bias_spline(x, @. 0.0 * x;
+        convex_up=true, n_knots=10, λ=1.0, max_iter=1000)
+    lo, hi = quantile(x, [0.02, 0.98])
+
+    clustered_extrap = make_edge_point_spline_extrap(
+        spline, x, y, lo, hi; n_edge_points=5, bin_size=100)
+    rt_extrap = make_rt_range_edge_spline_extrap(
+        spline, x, y, lo, hi; bound_bin_size=100)
+    expected_lo, expected_hi = _expected_binned_bounds(
+        x[(lo .<= x) .& (x .<= hi)], y[(lo .<= x) .& (x .<= hi)];
+        bin_size=100)
+
+    @test rt_extrap.lo ≈ expected_lo
+    @test rt_extrap.hi ≈ expected_hi
+    @test clustered_extrap.hi_slope > 0.02
+    @test rt_extrap.lo_slope == 0.0
+    @test rt_extrap.hi_slope == 0.0
 end
 
 @testset "Scout calibrated bias extrapolation keeps spline endpoint slopes" begin
@@ -133,12 +246,19 @@ end
     da_err[right_idx] .= -1e-3 .- 2e-4 .* (mz[right_idx] .- mz[first(right_idx)])
 
     samples = [
-        MassErrSample(Float32(mz[i]), Float32(mz[i] + da_err[i]), Float32(2.0 ^ log2I[i]))
+        MassErrSample(Float32(mz[i]), Float32(mz[i] + da_err[i]), Float32(2.0 ^ log2I[i]), Float32(i))
         for i in eachindex(mz)
     ]
     model = fit_scout_calibrated_model(samples; with_intensity=false)
+    expected_lo, expected_hi = _expected_binned_bounds(
+        Float64.(Float32.(mz)), Float64.(Float32.(mz .+ da_err)) .- Float64.(Float32.(mz));
+        bin_size=TUNING_CALIBRATION_BIN_SIZE)
 
     @test model isa ScoutCalibratedMassErrorModel
+    @test model.mz_bias_extrap.lo ≈ expected_lo
+    @test model.mz_bias_extrap.hi ≈ expected_hi
+    @test !(model.mz_bias_extrap.lo ≈ Float32(quantile(mz, 0.02)))
+    @test !(model.mz_bias_extrap.hi ≈ Float32(quantile(mz, 0.98)))
     @test model.mz_bias_extrap.lo_slope ≈
           spline_derivative(model.mz_bias_spline, model.mz_bias_extrap.lo)
     @test model.mz_bias_extrap.hi_slope ≈
@@ -155,19 +275,13 @@ end
     da_err = da_bias .+ 4.0e-5 .* randn(rng, n)
 
     samples = [
-        MassErrSample(Float32(mz[i]), Float32(mz[i] + da_err[i]), intensities[i])
+        MassErrSample(Float32(mz[i]), Float32(mz[i] + da_err[i]), intensities[i], Float32(i))
         for i in eachindex(mz)
     ]
     old_model = SimpleMassErrorModel(0.0f0, (20.0f0, 20.0f0))
     model = fit_intensity_mass_error_model(samples, old_model)
 
     @test model isa IntensityMassErrorModel
-    mz_qlo, mz_qhi = Float32.(quantile(mz, [0.02, 0.98]))
-    I_qlo, I_qhi = Float32.(quantile(log2I, [0.02, 0.98]))
-    @test model.mz_bias_extrap.lo ≈ mz_qlo
-    @test model.mz_bias_extrap.hi ≈ mz_qhi
-    @test model.int_bias_extrap.lo ≈ I_qlo
-    @test model.int_bias_extrap.hi ≈ I_qhi
 
     fit_mz = Float64.(Float32.(mz))
     fit_obs_mz = Float64.(Float32.(mz .+ da_err))
@@ -175,17 +289,28 @@ end
     fit_log2I = log2.(Float64.(intensities))
 
     expected_mz_extrap = make_edge_point_spline_extrap(
-        model.mz_bias_spline, fit_mz, fit_da_err, mz_qlo, mz_qhi)
+        model.mz_bias_spline, fit_mz, fit_da_err,
+        Float32(minimum(fit_mz)), Float32(maximum(fit_mz)))
     mz_residuals = fit_da_err .- [Float64(model.mz_bias_spline(Float32(m))) for m in fit_mz]
     expected_int_extrap = make_edge_point_spline_extrap(
-        model.intensity_bias_spline, fit_log2I, mz_residuals, I_qlo, I_qhi)
+        model.intensity_bias_spline, fit_log2I, mz_residuals,
+        Float32(minimum(fit_log2I)), Float32(maximum(fit_log2I)))
 
+    @test model.mz_bias_extrap.lo ≈ expected_mz_extrap.lo
+    @test model.mz_bias_extrap.hi ≈ expected_mz_extrap.hi
+    @test model.int_bias_extrap.lo ≈ expected_int_extrap.lo
+    @test model.int_bias_extrap.hi ≈ expected_int_extrap.hi
+    @test !(model.mz_bias_extrap.lo ≈ Float32(quantile(mz, 0.02)))
+    @test !(model.mz_bias_extrap.hi ≈ Float32(quantile(mz, 0.98)))
     @test model.mz_bias_extrap.lo_slope ≈ expected_mz_extrap.lo_slope atol=1e-8
     @test model.mz_bias_extrap.hi_slope ≈ expected_mz_extrap.hi_slope atol=1e-8
     @test model.int_bias_extrap.lo_slope ≈ expected_int_extrap.lo_slope atol=1e-7
     @test model.int_bias_extrap.hi_slope ≈ expected_int_extrap.hi_slope atol=1e-7
     @test model.spread_extrap.lo ≈ Float32(quantile(log2I, 0.05))
-    @test model.spread_extrap.hi ≈ Float32(quantile(log2I, 0.95))
+    @test model.spread_extrap.hi ≈ model.spread_spline.last
+    @test model.spread_extrap.lo < model.spread_extrap.hi
+    @test model.spread_extrap.lo_slope == 0.0f0
+    @test model.spread_extrap.hi_slope == 0.0f0
 end
 
 @testset "Binned regularized m/z bias spline captures local edge structure" begin
@@ -214,28 +339,29 @@ end
     @test binned_spline(325.0) > binned_spline(610.0)
 end
 
-@testset "Regularized m/z spread correction spline preserves low-mz coverage" begin
-    corr_centers = collect(250.0:100.0:1450.0)
-    corr_vals = [
-        2.6, 2.1, 1.55, 1.1, 0.9, 0.95, 1.05,
-        1.15, 1.35, 1.6, 1.85, 2.05, 2.2
-    ]
+@testset "Robust linear m/z spread correction ignores outlier bins" begin
+    corr_centers = collect(300.0:100.0:1300.0)
+    corr_vals = @. 0.45 + 0.00075 * corr_centers
+    corr_vals[3] = 4.8
+    corr_vals[9] = 0.18
 
     spline, extrap, α, β, γ, label =
         _select_regularized_mz_spread_correction(corr_centers, corr_vals)
 
-    @test occursin("regularized spline", label)
+    @test occursin("robust linear", label)
     @test all(isfinite, spline.coeffs)
-    @test α == 1.0f0
-    @test β == 0.0f0
+    @test -0.1f0 < α < 0.9f0
+    @test 0.0004f0 < β < 0.0012f0
     @test γ == 0.0f0
 
     low = _mz_spread_correction(spline, extrap, 300.0f0)
-    mid = _mz_spread_correction(spline, extrap, 750.0f0)
-    high = _mz_spread_correction(spline, extrap, 1350.0f0)
+    mid = _mz_spread_correction(spline, extrap, 800.0f0)
+    high = _mz_spread_correction(spline, extrap, 1300.0f0)
+    outlier_hi = _mz_spread_correction(spline, extrap, 500.0f0)
+    outlier_lo = _mz_spread_correction(spline, extrap, 1100.0f0)
 
-    @test low > 1.5f0
-    @test low > mid
-    @test high > mid
-    @test mid > 0.5f0
+    @test high > low + 0.55f0
+    @test abs(mid - Float32(0.45 + 0.00075 * 800.0)) < 0.08f0
+    @test outlier_hi < 2.0f0
+    @test outlier_lo > 1.0f0
 end

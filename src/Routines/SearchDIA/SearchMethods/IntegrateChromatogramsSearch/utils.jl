@@ -808,7 +808,7 @@ function build_chromatograms(
         scan_mz  = getMzArray(spectra, scan_idx)
         scan_int = getIntensityArray(spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                          mass_error_model, scan_mz, scan_int)
+                                          mass_error_model, scan_mz, scan_int, Float32(rt))
 
         # 3. Fused match+build. iRT + iso_err_bounds filters already done
         #    upstream — skipped by FusedRTIndexed's check_prec_filters = false.

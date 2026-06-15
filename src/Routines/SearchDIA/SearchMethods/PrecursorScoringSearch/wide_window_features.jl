@@ -504,8 +504,9 @@ function _wide_collect_feature_values(
 
         mz = getMzArray(spectra, scan_idx)
         intens = getIntensityArray(spectra, scan_idx)
+        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
         n_peaks = use_learned_fragment_model ?
-            prepare_scan_peaks!(scan_corrected_mz, scan_obs_low, scan_obs_high, frag_mem, mz, intens) : 0
+            prepare_scan_peaks!(scan_corrected_mz, scan_obs_low, scan_obs_high, frag_mem, mz, intens, scan_rt) : 0
 
         for r in 1:8
             frag_idx = fragment_idxs[r]

@@ -202,13 +202,14 @@ end
 
 Score one partition's fragments using hint-informed search with SIMD acceleration.
 When `mass_err_model` is an IntensityMassErrorModel, uses per-peak intensity-aware
-bias correction and tolerance windows via the 3-arg getCorrectedMz / getMzBoundsReverse.
+bias correction and RT-aware bias correction.
 """
 @inline function _score_partition_hinted!(
         local_counter::Counter{UInt16, UInt8},
         partition::LocalPartition{T},
         irt_low::Float32,
         irt_high::Float32,
+        scan_rt::Float32,
         masses::AbstractArray{Union{Missing, U}},
         intensities::AbstractArray{Union{Missing, V}},
         mass_err_model::AbstractMassErrorModel;
@@ -242,7 +243,7 @@ bias correction and tolerance windows via the 3-arg getCorrectedMz / getMzBounds
                 @inbounds int_f32 = intensities[peak_i]::Float32
                 int_f32 < intensity_threshold && continue
                 @inbounds mass_f32 = masses[peak_i]::Float32
-                corrected_mz, frag_min, frag_max = getCorrectedMzAndBounds(mass_err_model, mass_f32, int_f32)
+                corrected_mz, frag_min, frag_max = getCorrectedMzAndBounds(mass_err_model, mass_f32, int_f32, scan_rt)
 
                 lower_bound_guess, upper_bound_guess = queryFragmentHinted!(
                     local_counter, max_frag_bin,
@@ -404,7 +405,7 @@ function searchFragmentIndexPartitionMajorHinted(
     n_scans = length(all_scan_idxs)
 
     # ── 1. Pre-compute per-scan properties ─────────────────────────────────
-    scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts =
+    scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts, scan_rts =
         _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline, irt_tol, qtm, iso_bounds, n_scans)
 
     # ── 2. Map partitions to scans ─────────────────────────────────────────
@@ -455,7 +456,7 @@ function searchFragmentIndexPartitionMajorHinted(
                 thread_si_bufs[tid], thread_pid_bufs[tid],
                 pfi, partition_to_scans, all_scan_idxs, spectra,
                 scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
-                scan_irts, precursor_mzs,
+                scan_irts, scan_rts, precursor_mzs,
                 mem, linear_threshold, n_threads,
                 thread_int_bufs[tid], max_peaks)
             thread_times[tid] = time() - t_thread
@@ -487,9 +488,11 @@ function _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline,
     scan_prec_min = Vector{Float32}(undef, n_scans)
     scan_prec_max = Vector{Float32}(undef, n_scans)
     scan_irts    = Vector{Float32}(undef, n_scans)
+    scan_rts     = Vector{Float32}(undef, n_scans)
 
     for (si, scan_idx) in enumerate(all_scan_idxs)
-        scan_irt = Float32(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)))
+        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+        scan_irt = Float32(rt_to_irt_spline(scan_rt))
         irt_lo, irt_hi = getRTWindow(scan_irt, irt_tol)
         quad_func = getQuadTransmissionFunction(
             qtm, getCenterMz(spectra, scan_idx),
@@ -497,10 +500,11 @@ function _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline,
         scan_irt_lo[si] = irt_lo
         scan_irt_hi[si] = irt_hi
         scan_irts[si] = scan_irt
+        scan_rts[si] = scan_rt
         scan_prec_min[si] = Float32(getPrecMinBound(quad_func) - C13_C12_MASS_DIFF * first(iso_bounds) / 2)
         scan_prec_max[si] = Float32(getPrecMaxBound(quad_func) + C13_C12_MASS_DIFF * last(iso_bounds) / 2)
     end
-    return scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts
+    return scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts, scan_rts
 end
 
 """Build partition → scan mapping for partition-major traversal."""
@@ -526,6 +530,7 @@ function _run_thread(tid::Int, emit::E,
         scan_irt_lo::Vector{Float32}, scan_irt_hi::Vector{Float32},
         scan_prec_min::Vector{Float32}, scan_prec_max::Vector{Float32},
         scan_irts::Vector{Float32},
+        scan_rts::Vector{Float32},
         precursor_mzs::AbstractVector{Float32},
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
@@ -563,6 +568,7 @@ function _run_thread(tid::Int, emit::E,
 
             _score_partition_hinted!(lc, partition,
                 scan_irt_lo[si], scan_irt_hi[si],
+                scan_rts[si],
                 getMzArray(spectra, scan_idx),
                 getIntensityArray(spectra, scan_idx),
                 mem;

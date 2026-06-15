@@ -661,7 +661,9 @@ function process_file!(
                     if n_frags >= MIN_FRAGS_FOR_INTENSITY_MODEL
                         k_val = Float32(quantile(Normal(), (1.0 + TUNING_GAUSSIAN_COVERAGE) / 2.0))
                         fit_and_install_intensity_model!(search_context, ms_file_idx, frags; k=k_val)
-                        @debug_l1 "  IntensityMassErrorModel: $(n_frags) frags, k=$(round(k_val, digits=3))"
+                        installed_model = getMassErrorModel(search_context, ms_file_idx)
+                        installed_k = installed_model isa IntensityMassErrorModel ? installed_model.k : k_val
+                        @debug_l1 "  IntensityMassErrorModel: $(n_frags) frags, k=$(round(installed_k, digits=3))"
                     elseif n_frags > 0
                         mass_err_model, _, _ = fit_models_from_fragments(params, frags)
                         mass_err_model !== nothing && setMassErrorModel!(search_context, ms_file_idx, mass_err_model)

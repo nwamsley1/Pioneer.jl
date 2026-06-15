@@ -66,7 +66,7 @@ end
     obs_high = Float32[]
     mem = Pioneer.MassErrorModel(50f0, (5f0, 5f0))
 
-    n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int)
+    n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int, 0f0)
 
     @test Pioneer._wide_peak_intensity(scan_mz, scan_int, 500f0, 20f0) == 0f0
     @test Pioneer._wide_fragment_peak_intensity(
@@ -105,7 +105,7 @@ end
     obs_low = Float32[]
     obs_high = Float32[]
     mem = Pioneer.MassErrorModel(0.0f0, (5.0f0, 5.0f0))
-    n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int)
+    n_peaks = Pioneer.prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int, 0f0)
 
     @test Pioneer._wide_fragment_mono_peak_intensity(
         scan_mz,

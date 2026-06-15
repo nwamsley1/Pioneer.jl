@@ -208,14 +208,14 @@ function call_run_fused!(fx; kwargs...)
 end
 
 function call_run_fused_masserr!(fx; samples = MassErrSample[], sample_idx = 0, kwargs...)
-    f = merge(fx, values(kwargs))
+    f = merge((scan_rt = 0f0,), fx, values(kwargs))
     scan_mz = Union{Missing, Float32}[mz for mz in f.scan_corrected_mz]
     return run_fused_masserr!(
         samples, sample_idx,
         f.scan_corrected_mz, f.scan_obs_low, f.scan_obs_high, f.peak_mz_len,
         f.ion_list,
         f.precursors_passed, f.prec_range,
-        f.mem, scan_mz, f.scan_int;
+        f.mem, scan_mz, f.scan_int, f.scan_rt;
         kwargs...)
 end
 
