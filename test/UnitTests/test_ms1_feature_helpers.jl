@@ -45,6 +45,20 @@ end
     @test m1_mz == 100.5020f0
     @test m1_idx == 2
     @test m1_cursor == 2
+
+    floor_cursor = Pioneer.bsearch_hybrid(mz, 100.0f0, 1, length(mz))
+    ceiling_cursor = Pioneer.bsearch_hybrid(mz, nextfloat(101.0034f0), floor_cursor, length(mz)) - 1
+    lower_hit, lower_int, lower_mz, lower_idx, lower_cursor =
+        Pioneer._ms1_find_peak_from_bounds(mz, intens, 100.5020f0, 10f0, floor_cursor, ceiling_cursor)
+    @test lower_hit
+    @test lower_int == 20f0
+    @test lower_mz == 100.5020f0
+    @test lower_idx == 2
+    @test lower_cursor == 2
+
+    outside_hit, _, _, _, _ =
+        Pioneer._ms1_find_peak_from_bounds(mz, intens, 102.0f0, 10f0, floor_cursor, ceiling_cursor)
+    @test !outside_hit
 end
 
 @testset "MS1 M0 peak competition scan-run features" begin

@@ -237,19 +237,21 @@ If no MS1 scan is available (file has only MS2), all features are zeroed.
 # Vector{Float32} arrays (missings stripped during cache refresh — see
 # _ms1_refresh_cache!). Use the same `bsearch_hybrid` primitive as the
 # MS2 fused-match path so we get a branchless binary search to the window
-# lower bound, followed by a tight scalar walk for the in-window peaks. For
-# isotope envelopes, M1/M2 reuse the previous lower-bound cursor instead of
-# paying another binary search.
+# lower bound, followed by a tight scalar walk for the in-window peaks. M0
+# lookups can reuse scan-run min/max bounds; M1/M2 reuse the previous isotope
+# lower-bound cursor instead of paying another binary search.
 @inline function _ms1_find_peak_at_lower_bound(mz::Vector{Float32}, intens::Vector{Float32},
                                                mz_target::Float32, hi::Float32,
-                                               i0::Int)
+                                               i0::Int, last_idx::Int)
     best_diff = Inf32
     best_int  = 0f0
     best_mz   = 0f0
     best_idx  = 0
     found = false
-    n_peaks = length(mz)
-    @inbounds @fastmath for j in i0:n_peaks
+    last = min(last_idx, length(mz))
+    i0 = max(i0, 1)
+    i0 > last && return (false, 0f0, 0f0, 0, i0)
+    @inbounds @fastmath for j in i0:last
         m = mz[j]
         m > hi && break
         diff = abs(m - mz_target)
@@ -272,22 +274,31 @@ end
     n_peaks = length(mz)
     n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
     i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
-    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0)
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, n_peaks)
 end
 
 @inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
                                             mz_target::Float32, ms1_ppm_tol::Float32,
                                             start_cursor::Int)
+    return _ms1_find_peak_from_cursor(mz, intens, mz_target, ms1_ppm_tol,
+                                      start_cursor, length(mz))
+end
+
+@inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
+                                            mz_target::Float32, ms1_ppm_tol::Float32,
+                                            start_cursor::Int, last_idx::Int)
     half_tol = mz_target * ms1_ppm_tol * 1f-6
     lo = mz_target - half_tol
     hi = mz_target + half_tol
     n_peaks = length(mz)
     n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
+    last = min(last_idx, n_peaks)
+    last < 1 && return (false, 0f0, 0f0, 0, 1)
 
     i0 = if start_cursor < 1
         1
-    elseif start_cursor > n_peaks
-        n_peaks + 1
+    elseif start_cursor > last
+        last + 1
     else
         start_cursor
     end
@@ -297,18 +308,38 @@ end
     # non-monotone use.
     if i0 > 1 && i0 <= n_peaks
         @inbounds if mz[i0 - 1] >= lo
-            i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
+            i0 = bsearch_hybrid(mz, lo, 1, last)
         end
-    elseif i0 == n_peaks + 1
-        @inbounds if mz[n_peaks] >= lo
-            i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
+    elseif i0 == last + 1
+        @inbounds if mz[last] >= lo
+            i0 = bsearch_hybrid(mz, lo, 1, last)
         end
     end
 
-    @inbounds while i0 <= n_peaks && mz[i0] < lo
+    @inbounds while i0 <= last && mz[i0] < lo
         i0 += 1
     end
-    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0)
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
+end
+
+@inline function _ms1_find_peak_from_bounds(mz::Vector{Float32}, intens::Vector{Float32},
+                                            mz_target::Float32, ms1_ppm_tol::Float32,
+                                            floor_cursor::Int, ceiling_cursor::Int)
+    half_tol = mz_target * ms1_ppm_tol * 1f-6
+    lo = mz_target - half_tol
+    hi = mz_target + half_tol
+    n_peaks = length(mz)
+    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
+    first = clamp(floor_cursor, 1, n_peaks)
+    last = min(ceiling_cursor, n_peaks)
+    first > last && return (false, 0f0, 0f0, 0, first)
+    if first > 1
+        @inbounds if mz[first - 1] >= lo
+            first = bsearch_hybrid(mz, lo, 1, last)
+        end
+    end
+    i0 = first <= last ? bsearch_hybrid(mz, lo, first, last) : first
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
 end
 
 @inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
@@ -605,6 +636,34 @@ function _ms1_lookup_scan_runs!(psms, spectra,
         resize!(m0_peak_keys, run_end - run_start + 1)
         fill!(m0_peak_keys, UInt64(0))
 
+        m0_min_lo = Inf32
+        m0_max_hi = -Inf32
+        ms1_bias_factor = 1f0 + ms1_ppm_offset * 1f-6
+        @inbounds for i in run_start:run_end
+            pid = UInt32(precursor_idxs[i])
+            target_m0 = Float32(prec_mzs[pid]) * ms1_bias_factor
+            half_tol = target_m0 * ms1_ppm_tol * 1f-6
+            m0_min_lo = min(m0_min_lo, target_m0 - half_tol)
+            m0_max_hi = max(m0_max_hi, target_m0 + half_tol)
+        end
+        n_cached_peaks = length(cached_mz)
+        m0_floor_cursor = 1
+        m0_ceiling_cursor = 0
+        if n_cached_peaks > 0 && isfinite(m0_min_lo) && isfinite(m0_max_hi)
+            m0_floor_cursor = bsearch_hybrid(cached_mz, m0_min_lo, 1, n_cached_peaks)
+            if m0_floor_cursor <= n_cached_peaks
+                first_after_m0 = bsearch_hybrid(
+                    cached_mz,
+                    nextfloat(m0_max_hi),
+                    m0_floor_cursor,
+                    n_cached_peaks,
+                )
+                m0_ceiling_cursor = min(first_after_m0 - 1, n_cached_peaks)
+            end
+        end
+        prev_m0_lo = -Inf32
+        prev_m0_cursor = m0_floor_cursor
+
         for i in run_start:run_end
             pid = UInt32(precursor_idxs[i])
             prec_mz = Float32(prec_mzs[pid])
@@ -615,12 +674,25 @@ function _ms1_lookup_scan_runs!(psms, spectra,
             # Shift theoretical target by the fitted per-file ppm bias so peaks
             # are searched where they actually land. Residual feature
             # ms1_m0_mass_err_ppm is computed against the shifted target.
-            target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
+            target_m0 = prec_mz * ms1_bias_factor
             target_m1 = target_m0 + isotope_spacing * inv_charge
             target_m2 = target_m0 + 2f0 * isotope_spacing * inv_charge
 
-            m0_hit, m0_int, m0_mz, m0_peak_idx, m0_cursor =
-                _ms1_find_peak_bsearch(cached_mz, cached_int, target_m0, ms1_ppm_tol)
+            target_m0_half_tol = target_m0 * ms1_ppm_tol * 1f-6
+            target_m0_lo = target_m0 - target_m0_half_tol
+            m0_hit, m0_int, m0_mz, m0_peak_idx, m0_cursor = if target_m0_lo >= prev_m0_lo
+                _ms1_find_peak_from_cursor(
+                    cached_mz, cached_int, target_m0, ms1_ppm_tol,
+                    prev_m0_cursor, m0_ceiling_cursor,
+                )
+            else
+                _ms1_find_peak_from_bounds(
+                    cached_mz, cached_int, target_m0, ms1_ppm_tol,
+                    m0_floor_cursor, m0_ceiling_cursor,
+                )
+            end
+            prev_m0_lo = target_m0_lo
+            prev_m0_cursor = m0_cursor
             m1_hit, m1_int, _, _, m1_cursor =
                 _ms1_find_peak_from_cursor(cached_mz, cached_int, target_m1, ms1_ppm_tol, m0_cursor)
             m2_hit, m2_int, _, _, _ =
