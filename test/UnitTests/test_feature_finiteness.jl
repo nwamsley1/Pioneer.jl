@@ -54,6 +54,41 @@ function _score_single(w_val::Float32, nzval, x, matched)
     spectral_scores[1]
 end
 
+function _score_shared_peak_column1()
+    H = _SparseArrayFused(UInt32(3))
+    H.n_vals = 3
+    H.m = 2
+    H.n = 2
+    @inbounds begin
+        # Column 1: predicted [1, 2], raw observed [3, 1].
+        H.rowval[1] = UInt32(1)
+        H.nzval[1] = 1.0f0
+        H.x[1] = 3.0f0
+        H.meta[1] = _pack_meta(true, UInt8(0))
+        H.rowval[2] = UInt32(2)
+        H.nzval[2] = 2.0f0
+        H.x[2] = 1.0f0
+        H.meta[2] = _pack_meta(true, UInt8(0))
+
+        # Column 2 explains 2 units of the shared first peak, leaving
+        # column 1 with shadow spectrum [1, 1].
+        H.rowval[3] = UInt32(1)
+        H.nzval[3] = 2.0f0
+        H.x[3] = 3.0f0
+        H.meta[3] = _pack_meta(true, UInt8(0))
+    end
+    resize!(H.colptr, 3)
+    H.colptr[1] = UInt32(1)
+    H.colptr[2] = UInt32(3)
+    H.colptr[3] = UInt32(4)
+
+    w = Float32[1.0f0, 1.0f0]
+    r = zeros(Float32, H.m)
+    spectral_scores = Vector{_SpectralScoresMainSearch{Float16}}(undef, 2)
+    _getDistanceMetrics(w, r, H, spectral_scores)
+    spectral_scores[1]
+end
+
 @testset "Feature finiteness — psm_getPoisson" begin
     # Hypothesis from production: zero-error or zero-fragment edge cases
     # should never produce NaN or Inf in any feature.
@@ -155,6 +190,15 @@ end
     expected_contrast = (1.0f0 * 2.0f0 + 2.0f0 * 1.0f0) /
         sqrt((1.0f0^2 + 2.0f0^2) * (2.0f0^2 + 1.0f0^2))
     @test Float32(s.spectral_contrast) ≈ expected_contrast rtol=1.0f-3
+
+    # Case E3 — shared peaks use the deconvolved shadow spectrum, not raw H.x.
+    s = _score_shared_peak_column1()
+    expected_shadow_contrast = (1.0f0 * 1.0f0 + 2.0f0 * 1.0f0) /
+        sqrt((1.0f0^2 + 2.0f0^2) * (1.0f0^2 + 1.0f0^2))
+    raw_contrast = (1.0f0 * 3.0f0 + 2.0f0 * 1.0f0) /
+        sqrt((1.0f0^2 + 2.0f0^2) * (3.0f0^2 + 1.0f0^2))
+    @test Float32(s.spectral_contrast) ≈ expected_shadow_contrast rtol=1.0f-3
+    @test !isapprox(Float32(s.spectral_contrast), raw_contrast; rtol=1.0f-3)
 
     # Case F — purely unmatched fragments (sum_of_fitted_peaks_matched = 0
     # → branch returns zero, must not produce NaN)

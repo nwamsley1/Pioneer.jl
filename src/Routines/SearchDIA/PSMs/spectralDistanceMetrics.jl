@@ -72,17 +72,12 @@ function getDistanceMetrics(w::Vector{T},
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
         dot_product = zero(T)
         pred_norm2 = zero(T)
-        obs_norm2 = zero(T)
+        shadow_norm2 = zero(T)
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
             fitted_peak = w[col]*H.nzval[i]
             manhattan_distance += abs(fitted_peak - H.x[i])
-            pred_peak = max(H.nzval[i], zero(T))
-            obs_peak = max(H.x[i], zero(T))
-            dot_product += pred_peak * obs_peak
-            pred_norm2 += pred_peak * pred_peak
-            obs_norm2 += obs_peak * obs_peak
 
             shadow_peak = fitted_peak - r[H.rowval[i]]
             r_abs = abs(r[H.rowval[i]])
@@ -93,6 +88,10 @@ function getDistanceMetrics(w::Vector{T},
             sum_fitted += fitted_peak
             sum_shadow += x_i
             bc_sum += sqrt(fitted_peak * x_i)
+            pred_peak = max(fitted_peak, zero(T))
+            dot_product += pred_peak * x_i
+            pred_norm2 += pred_peak * pred_peak
+            shadow_norm2 += x_i * x_i
 
             if matched_at(H, i)
                 sum_of_fitted_peaks_matched += fitted_peak
@@ -119,7 +118,7 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_denom = sqrt(sum_fitted * sum_shadow)
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
-        spectral_denom = sqrt(pred_norm2 * obs_norm2)
+        spectral_denom = sqrt(pred_norm2 * shadow_norm2)
         spectral_contrast = spectral_denom > zero(T) ? dot_product / spectral_denom : zero(T)
 
         spectral_scores[col] = SpectralScoresMainSearch(
