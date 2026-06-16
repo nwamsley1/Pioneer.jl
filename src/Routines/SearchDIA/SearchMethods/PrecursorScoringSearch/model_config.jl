@@ -53,11 +53,17 @@ const ADVANCED_FEATURE_SET = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :ms1_isotope_dotp_m0_m1_m2,
+    :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
+    :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
     :frag_corr_best_m0,
+    :ms1_m0_peak_frag_intensity_fraction,
+    :ms1_m0_peak_n_precursors,
+    :scan_prec_mz_n_precursors,
     :top3_ms2_mass_error_mean,
     :delta_frame_peak_center,
     :log_by_ratio_m0,
@@ -77,5 +83,4 @@ const ADVANCED_FEATURE_SET = [
     # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
     # along with their computation in select_best_per_precursor!.
 ]
-
 
