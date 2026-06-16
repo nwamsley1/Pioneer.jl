@@ -360,6 +360,119 @@ function _select_regularized_mz_spread_correction(corr_centers::AbstractVector{<
            mz_spread_α, mz_spread_β, mz_spread_γ, label
 end
 
+function _project_convex_coeffs!(c::Vector{Float64}, convex_up::Bool; floor_val::Union{Nothing, Float64}=nothing)
+    for _ in 1:30
+        changed = false
+        for i in 1:(length(c)-2)
+            v = c[i+2] - 2*c[i+1] + c[i]
+            if convex_up ? (v < 0) : (v > 0)
+                correction = abs(v)
+                if convex_up
+                    c[i] += correction / 3
+                    c[i+1] -= 2 * correction / 3
+                    c[i+2] += correction / 3
+                else
+                    c[i] -= correction / 3
+                    c[i+1] += 2 * correction / 3
+                    c[i+2] -= correction / 3
+                end
+                changed = true
+            end
+        end
+        !changed && break
+    end
+
+    if floor_val !== nothing
+        for i in eachindex(c)
+            c[i] = max(c[i], floor_val)
+        end
+    end
+    return c
+end
+
+function _project_monotone_coeffs!(c::Vector{Float64}, increasing::Bool)
+    for _ in 1:30
+        changed = false
+        for i in 1:(length(c)-1)
+            if increasing ? (c[i+1] < c[i]) : (c[i+1] > c[i])
+                avg = (c[i] + c[i+1]) / 2
+                c[i] = avg
+                c[i+1] = avg
+                changed = true
+            end
+        end
+        !changed && break
+    end
+    return c
+end
+
+function _projected_gradient!(
+    c::Vector{Float64},
+    H::AbstractMatrix{Float64},
+    rhs::AbstractVector{Float64},
+    project!::F;
+    lr::Float64,
+    max_iter::Int,
+    tol::Float64,
+    check_every::Int,
+) where {F}
+    project!(c)
+
+    # opnorm(H) is the gradient Lipschitz constant of this convex quadratic.
+    lr_eff = min(lr, 1.8 / opnorm(H))
+    grad = similar(c)
+    prev_obj = Inf
+    for iter in 1:max_iter
+        mul!(grad, H, c)
+        grad .-= rhs
+        c .-= lr_eff .* grad
+        project!(c)
+        if iter % check_every == 0
+            mul!(grad, H, c)
+            obj = 0.5 * dot(c, grad) - dot(rhs, c)
+            if abs(prev_obj - obj) / max(abs(obj), 1.0) < tol
+                break
+            end
+            prev_obj = obj
+        end
+    end
+    return c
+end
+
+function _projected_irls_coeffs(
+    X::AbstractMatrix{Float64},
+    y::Vector{Float64},
+    n_coeffs::Int,
+    project!::F;
+    λ::Float64,
+    max_iter::Int,
+    lr::Float64,
+    tol::Float64,
+    n_irls::Int,
+) where {F}
+    w = ones(length(y))
+    c = zeros(n_coeffs)
+    resid = similar(y)
+
+    for irls_iter in 1:n_irls
+        H, rhs = _penalized_spline_system(X, y; λ=λ, weights=w, order=2)
+        c = H \ rhs
+        _projected_gradient!(c, H, rhs, project!;
+                             lr=lr, max_iter=max_iter, tol=tol, check_every=200)
+
+        irls_iter == n_irls && break
+        mul!(resid, X, c)
+        resid .= y .- resid
+        σ_hat = median(abs.(resid)) / 0.6744897501960817
+        δ = 1.345 * max(σ_hat, 1e-10)
+        for i in eachindex(w, resid)
+            r_abs = abs(resid[i])
+            w[i] = r_abs <= δ ? 1.0 : δ / r_abs
+        end
+    end
+    return c
+end
+
 #==========================================================
 Convexity-constrained smoothing spline for bias
 ==========================================================#
@@ -386,78 +499,15 @@ function fit_convex_bias_spline(x::Vector{Float64}, y::Vector{Float64};
     n_pts = length(x)
     n_pts < n_knots && return nothing
 
-    _first = minimum(x); _last = maximum(x)
-    bin_width = (_last - _first) / (n_knots - 1)
-    knots = collect(LinRange(_first, _last, n_knots))
-    X = _build_numeric_design_matrix(x, knots, bin_width)
-    n_coeffs = n_knots + 3
+    basis = _make_uniform_spline_basis(x, n_knots)
+    X = basis.X
+    n_coeffs = basis.n_coeffs
 
-    D2 = build_difference_matrix(n_coeffs, 2)
-    P = D2' * D2
+    project!(c) = _project_convex_coeffs!(c, convex_up)
+    c = _projected_irls_coeffs(X, y, n_coeffs, project!;
+                               λ=λ, max_iter=max_iter, lr=lr, tol=tol, n_irls=n_irls)
 
-    function project!(c::Vector{Float64})
-        for _ in 1:30
-            changed = false
-            for i in 1:(length(c)-2)
-                v = c[i+2] - 2*c[i+1] + c[i]
-                if convex_up ? (v < 0) : (v > 0)
-                    correction = abs(v)
-                    if convex_up
-                        c[i] += correction / 3
-                        c[i+1] -= 2 * correction / 3
-                        c[i+2] += correction / 3
-                    else
-                        c[i] -= correction / 3
-                        c[i+1] += 2 * correction / 3
-                        c[i+2] -= correction / 3
-                    end
-                    changed = true
-                end
-            end
-            !changed && break
-        end
-    end
-
-    w = ones(n_pts)
-    c = zeros(n_coeffs)
-
-    for irls_iter in 1:n_irls
-        WX = Diagonal(w) * X
-        H = WX' * X + λ * P
-        Xty = WX' * y
-        c = H \ Xty
-        project!(c)
-
-        # Lipschitz-safe step cap: opnorm(H) is the gradient Lipschitz
-        # constant of this convex quadratic, so any lr ≤ 2/L is stable.
-        # Without this cap, fixed lr diverges once n_pts is large enough
-        # that L grows past 1/lr (LU factorization at the next IRLS
-        # iteration then throws on the resulting Inf/NaN coefficients).
-        lr_eff = min(lr, 1.8 / opnorm(H))
-
-        prev_obj = Inf
-        for iter in 1:max_iter
-            grad = H * c - Xty
-            c .-= lr_eff .* grad
-            project!(c)
-            if iter % 200 == 0
-                obj = 0.5 * (c' * H * c) - (Xty' * c)
-                if abs(prev_obj - obj) / max(abs(obj), 1.0) < tol
-                    break
-                end
-                prev_obj = obj
-            end
-        end
-
-        irls_iter == n_irls && break
-        resid = y .- X * c
-        σ_hat = median(abs.(resid)) / 0.6744897501960817
-        δ = 1.345 * max(σ_hat, 1e-10)
-        w = [abs(r) <= δ ? 1.0 : δ / abs(r) for r in resid]
-    end
-
-    degree = 3
-    return _coeffs_to_spline(c, knots, bin_width, degree, n_knots, _first, _last)
+    return _coeffs_to_spline(c, basis)
 end
 
 """
@@ -531,32 +581,29 @@ function fit_binned_regularized_bias_spline(
     _last <= _first && return nothing, "failed (degenerate m/z bins)"
 
     n_fit_knots = min(n_knots, max(3, n_bins - 3))
-    knots = collect(LinRange(_first, _last, n_fit_knots))
-    bin_width = (_last - _first) / (n_fit_knots - 1)
-    X = _build_numeric_design_matrix(centers, knots, bin_width)
-    n_coeffs = n_fit_knots + 3
-    D2 = build_difference_matrix(n_coeffs, 2)
-    P = D2' * D2
-    ridge = 1e-8 * Matrix{Float64}(I, n_coeffs, n_coeffs)
+    basis = _make_uniform_spline_basis(centers, n_fit_knots)
+    X = basis.X
 
     base_weights = weights ./ median(weights)
     fit_weights = copy(base_weights)
-    c = zeros(n_coeffs)
+    c = zeros(basis.n_coeffs)
+    resid = similar(vals)
     for irls_iter in 1:n_irls
-        WX = Diagonal(fit_weights) * X
-        H = WX' * X + λ * P + ridge
-        Xty = X' * (fit_weights .* vals)
-        c = H \ Xty
+        H, rhs = _penalized_spline_system(X, vals; λ=λ, weights=fit_weights, order=2, ridge=1e-8)
+        c = H \ rhs
 
         irls_iter == n_irls && break
-        resid = vals .- X * c
+        mul!(resid, X, c)
+        resid .= vals .- resid
         σ_hat = median(abs.(resid)) / 0.6744897501960817
         δ = 1.345 * max(σ_hat, 1e-10)
-        huber_weights = [abs(r) <= δ ? 1.0 : δ / abs(r) for r in resid]
-        fit_weights = base_weights .* huber_weights
+        for i in eachindex(fit_weights, base_weights, resid)
+            r_abs = abs(resid[i])
+            fit_weights[i] = base_weights[i] * (r_abs <= δ ? 1.0 : δ / r_abs)
+        end
     end
 
-    spline = _coeffs_to_spline(c, knots, bin_width, 3, n_fit_knots, _first, _last)
+    spline = _coeffs_to_spline(c, basis)
     return spline, "binned regularized (λ=$(λ), knots=$(n_fit_knots), bins=$(n_bins))"
 end
 
@@ -586,64 +633,15 @@ function fit_monotone_bias_spline(x::Vector{Float64}, y::Vector{Float64};
     n_pts = length(x)
     n_pts < n_knots && return nothing
 
-    _first = minimum(x); _last = maximum(x)
-    bin_width = (_last - _first) / (n_knots - 1)
-    knots = collect(LinRange(_first, _last, n_knots))
-    X = _build_numeric_design_matrix(x, knots, bin_width)
-    n_coeffs = n_knots + 3
+    basis = _make_uniform_spline_basis(x, n_knots)
+    X = basis.X
+    n_coeffs = basis.n_coeffs
 
-    D2 = build_difference_matrix(n_coeffs, 2)
-    P = D2' * D2
+    project!(c) = _project_monotone_coeffs!(c, increasing)
+    c = _projected_irls_coeffs(X, y, n_coeffs, project!;
+                               λ=λ, max_iter=max_iter, lr=lr, tol=tol, n_irls=n_irls)
 
-    function project!(c::Vector{Float64})
-        for _ in 1:30
-            changed = false
-            for i in 1:(length(c)-1)
-                if increasing ? (c[i+1] < c[i]) : (c[i+1] > c[i])
-                    avg = (c[i] + c[i+1]) / 2
-                    c[i] = avg; c[i+1] = avg; changed = true
-                end
-            end
-            !changed && break
-        end
-    end
-
-    w = ones(n_pts)
-    c = zeros(n_coeffs)
-
-    for irls_iter in 1:n_irls
-        WX = Diagonal(w) * X
-        H = WX' * X + λ * P
-        Xty = WX' * y
-        c = H \ Xty
-        project!(c)
-
-        # See fit_convex_bias_spline for rationale.
-        lr_eff = min(lr, 1.8 / opnorm(H))
-
-        prev_obj = Inf
-        for iter in 1:max_iter
-            grad = H * c - Xty
-            c .-= lr_eff .* grad
-            project!(c)
-            if iter % 200 == 0
-                obj = 0.5 * (c' * H * c) - (Xty' * c)
-                if abs(prev_obj - obj) / max(abs(obj), 1.0) < tol
-                    break
-                end
-                prev_obj = obj
-            end
-        end
-
-        irls_iter == n_irls && break
-        resid = y .- X * c
-        σ_hat = median(abs.(resid)) / 0.6744897501960817
-        δ = 1.345 * max(σ_hat, 1e-10)
-        w = [abs(r) <= δ ? 1.0 : δ / abs(r) for r in resid]
-    end
-
-    degree = 3
-    return _coeffs_to_spline(c, knots, bin_width, degree, n_knots, _first, _last)
+    return _coeffs_to_spline(c, basis)
 end
 
 """
@@ -678,7 +676,7 @@ Regularized spline for Laplace spread
 ==========================================================#
 
 """
-    fit_monotone_convex_spread_spline(bin_centers, bin_scales; ...)
+    fit_regularized_spread_spline(bin_centers, bin_scales; ...)
 
 Fit an unconstrained regularized cubic B-spline to pre-binned Laplace scale.
 Knot count is adaptive: at most n_knots, reduced until each knot interval has
@@ -686,14 +684,11 @@ enough binned scale estimates to avoid poorly supported local wiggles.
 Takes (bin_centers, bin_scales) from `binned_laplace_scale`.
 Returns a UniformSpline (Float64), or nothing.
 """
-function fit_monotone_convex_spread_spline(
+function fit_regularized_spread_spline(
     bin_centers::Vector{Float64},
     bin_scales::Vector{Float64};
     n_knots::Int = 20,
     λ::Float64 = 0.01,
-    max_iter::Int = 5000,
-    lr::Float64 = 0.001,
-    tol::Float64 = 1e-8,
     floor_val::Float64 = 0.0001
 )
     n_pts = length(bin_centers)
@@ -728,21 +723,14 @@ function fit_monotone_convex_spread_spline(
     end
     n_knots < 3 && return nothing
 
-    spline_bin_width = (_last - _first) / (n_knots - 1)
-    knots = collect(LinRange(_first, _last, n_knots))
-    X = _build_numeric_design_matrix(t, knots, spline_bin_width)
-    n_coeffs = n_knots + 3
+    basis = _make_uniform_spline_basis(t, n_knots)
+    H, rhs = _penalized_spline_system(basis.X, y; λ=λ, order=2, ridge=1e-8)
+    c = H \ rhs
+    for i in eachindex(c)
+        c[i] = max(c[i], floor_val)
+    end
 
-    D2 = build_difference_matrix(n_coeffs, 2)
-    P = D2' * D2
-    ridge = 1e-8 * Matrix{Float64}(I, n_coeffs, n_coeffs)
-    H = X' * X + λ * P + ridge
-    Xty = X' * y
-    c = H \ Xty
-    c = max.(c, floor_val)
-
-    degree = 3
-    return _coeffs_to_spline(c, knots, spline_bin_width, degree, n_knots, _first, _last)
+    return _coeffs_to_spline(c, basis)
 end
 
 #==========================================================
@@ -862,7 +850,7 @@ function fit_intensity_mass_error_model(
     spread_centers, spread_b_vals = binned_laplace_scale(
         I_order, log2I, full_residuals_mda, TUNING_CALIBRATION_BIN_SIZE)
 
-    spread_spline_f64 = fit_monotone_convex_spread_spline(spread_centers, spread_b_vals)
+    spread_spline_f64 = fit_regularized_spread_spline(spread_centers, spread_b_vals)
 
     if spread_spline_f64 === nothing
         @user_warn "Spread spline fitting failed, keeping SimpleMassErrorModel"

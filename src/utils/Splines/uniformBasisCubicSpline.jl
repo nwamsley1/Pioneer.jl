@@ -160,6 +160,56 @@ function _setup_knots(sorted_t::Vector{T}, n_knots::Int) where {T}
     return knots, bin_width, _first, _last
 end
 
+function _make_uniform_spline_basis(t::Vector{T}, n_knots::Integer) where {T<:AbstractFloat}
+    n_knots_int = Int(n_knots)
+    knots, bin_width, _first, _last = _setup_knots(t, n_knots_int)
+    return (
+        X = _build_numeric_design_matrix(t, knots, bin_width),
+        knots = knots,
+        bin_width = bin_width,
+        first = _first,
+        last = _last,
+        n_knots = n_knots_int,
+        n_coeffs = n_knots_int + 3,
+    )
+end
+
+function _penalized_spline_system(
+    X::AbstractMatrix{T},
+    y::AbstractVector{T};
+    λ::Real = zero(T),
+    weights::Union{Nothing, AbstractVector{<:Real}} = nothing,
+    order::Int = 2,
+    ridge::Real = 0,
+) where {T<:AbstractFloat}
+    size(X, 1) == length(y) || throw(DimensionMismatch("X row count must equal length(y)"))
+
+    if weights === nothing
+        H = X' * X
+        rhs = X' * y
+    else
+        length(weights) == size(X, 1) || throw(DimensionMismatch("length(weights) must equal number of rows in X"))
+        w = T.(weights)
+        H = (X .* reshape(w, :, 1))' * X
+        rhs = X' * (w .* y)
+    end
+
+    if λ != 0
+        D = build_difference_matrix(size(X, 2), order)
+        H = H + T(λ) * (D' * D)
+    end
+
+    if ridge != 0
+        H = H + T(ridge) * I
+    end
+
+    return H, rhs
+end
+
+function _coeffs_to_spline(c::Vector{T}, basis) where {T<:AbstractFloat}
+    return _coeffs_to_spline(c, basis.knots, basis.bin_width, 3, basis.n_knots, basis.first, basis.last)
+end
+
 #############################################################################
 # UniformSpline — unpenalized least squares fit
 #############################################################################
@@ -173,12 +223,8 @@ function UniformSpline(
 
     _validate_spline_inputs(u, t, degree, n_knots)
     sorted_u, sorted_t = _sort_inputs(u, t)
-    knots, bin_width, _first, _last = _setup_knots(sorted_t, n_knots)
-
-    X = _build_numeric_design_matrix(sorted_t, knots, bin_width)
-    c = X \ sorted_u
-
-    return _coeffs_to_spline(c, knots, bin_width, degree, n_knots, _first, _last)
+    basis = _make_uniform_spline_basis(sorted_t, n_knots)
+    return _coeffs_to_spline(convert(Vector{T}, basis.X \ sorted_u), basis)
 end
 
 #############################################################################
@@ -294,21 +340,14 @@ function UniformSplinePenalized(
     λ < 0 && error("Penalty parameter λ must be non-negative")
 
     sorted_u, sorted_t = _sort_inputs(u, t)
-    knots, bin_width, _first, _last = _setup_knots(sorted_t, n_knots)
-
-    X = _build_numeric_design_matrix(sorted_t, knots, bin_width)
-    n_coeffs = n_knots + degree
-
-    if λ == 0
-        c = X \ sorted_u
+    basis = _make_uniform_spline_basis(sorted_t, n_knots)
+    c = if λ == 0
+        basis.X \ sorted_u
     else
-        D = build_difference_matrix(n_coeffs, order)
-        P = D' * D
-        c = (X'X + T(λ) * P) \ (X'sorted_u)
+        H, rhs = _penalized_spline_system(basis.X, sorted_u; λ=λ, order=order)
+        H \ rhs
     end
-    c = convert(Vector{T}, c)
-
-    return _coeffs_to_spline(c, knots, bin_width, degree, n_knots, _first, _last)
+    return _coeffs_to_spline(convert(Vector{T}, c), basis)
 end
 
 #############################################################################
