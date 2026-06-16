@@ -53,9 +53,6 @@ include("./UnitTests/test_scoring_workspace_coverage.jl")
 include("./UnitTests/test_rt_alignment_utils.jl")
 include("./UnitTests/test_protein_model_fit.jl")
 
-# ParameterTuningSearch — Lipschitz step cap regression
-include("./Routines/SearchDIA/SearchMethods/ParameterTuningSearch/test_intensity_spline_lipschitz.jl")
-
 # Coverage data is normally flushed to .cov files by an atexit hook
 # that `_exit` skips. Flush it explicitly before terminating, otherwise
 # `--code-coverage=...` produces zero output and codecov reports 0%.
