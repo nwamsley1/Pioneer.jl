@@ -46,6 +46,7 @@ include("./UnitTests/test_counter.jl")
 
 # Coverage: small modules with previously-poor unit coverage.
 include("./UnitTests/test_mass_error_model.jl")
+include("./UnitTests/test_ms1_feature_helpers.jl")
 include("./UnitTests/test_parse_mods.jl")
 include("./UnitTests/test_quad_models_basic.jl")
 include("./UnitTests/test_solve_poisson_mm.jl")

@@ -154,6 +154,9 @@ const PRESCORE_FEATURES = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
+    :ms1_isotope_dotp_m0_m1_m2,
+    :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
+    :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
 
     # Per-rank M0 fragment intensities (kept; used by chromatogram features)
     # frag5_int, frag6_int dropped 2026-05-14 (Tier-5 drop_5to6) — 8-file Olsen
@@ -203,12 +206,20 @@ const PRESCORE_FEATURES = [
 Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx):
 
 1. Find the nearest MS1 scan in time (binary search on RT).
-2. Search the MS1 spectrum for M0 and M+1 of the precursor (charge-aware
-   m/z = prec_mz + iso × NEUTRON_MASS / charge), within ±ms1_ppm_tol ppm.
-3. Populate three features per PSM:
+2. Search the MS1 spectrum for M0, M+1, and M+2 of the precursor (charge-aware
+   m/z = prec_mz + iso * C13_C12_MASS_DIFF / charge), within +/-ms1_ppm_tol ppm.
+3. Populate MS1 point-lookup features per PSM:
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
    - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
    - `ms1_m1_intensity` (Float32): observed M+1 intensity; 0 if not matched
+   - `ms1_isotope_dotp_m0_m1_m2` (Float32): cosine dot product between
+     observed M0/M1/M2 intensities and isotope-spline expected M0/M1/M2
+   - `ms1_m0_m1_m2_window_fraction` (Float32): M0/M1/M2 intensity fraction
+     of the paired MS2 isolation window in the nearest MS1 scan
+   - `ms1_ms2_explained_delta` (Float32): MS1 window fraction minus the MS2
+     explained-intensity fraction
+   - `ms1_m0_m1_m2_window_fraction_pc` and `ms1_ms2_explained_delta_pc`:
+     pseudocounted variants using the nearest-MS1 scan noise floor
 
 The intensities are also consumed by `_add_ms1_chromatogram_features!` to build
 per-precursor M0 / M+1 / weight chromatograms and compute correlation features.
@@ -222,24 +233,25 @@ q≤.01 within run-to-run noise and slightly improves q≤.001 (+296).
 
 If no MS1 scan is available (file has only MS2), all features are zeroed.
 """
-# Top-level helper for the MS1 per-PSM peak search. Operates on clean
+# Top-level helpers for the MS1 per-PSM peak search. Operate on clean
 # Vector{Float32} arrays (missings stripped during cache refresh — see
-# _ms1_refresh_cache!). Uses the same `bsearch_hybrid` primitive as the
+# _ms1_refresh_cache!). Use the same `bsearch_hybrid` primitive as the
 # MS2 fused-match path so we get a branchless binary search to the window
-# lower bound, followed by a tight scalar walk for the in-window peaks.
-@inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
-                                 mz_target::Float32, ms1_ppm_tol::Float32)
-    half_tol = mz_target * ms1_ppm_tol * 1f-6
-    lo = mz_target - half_tol
-    hi = mz_target + half_tol
-    n_peaks = length(mz)
-    n_peaks == 0 && return (false, 0f0, 0f0)
-    i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
+# lower bound, followed by a tight scalar walk for the in-window peaks. M0
+# lookups can reuse scan-run min/max bounds; M1/M2 reuse the previous isotope
+# lower-bound cursor instead of paying another binary search.
+@inline function _ms1_find_peak_at_lower_bound(mz::Vector{Float32}, intens::Vector{Float32},
+                                               mz_target::Float32, hi::Float32,
+                                               i0::Int, last_idx::Int)
     best_diff = Inf32
     best_int  = 0f0
     best_mz   = 0f0
+    best_idx  = 0
     found = false
-    @inbounds @fastmath for j in i0:n_peaks
+    last = min(last_idx, length(mz))
+    i0 = max(i0, 1)
+    i0 > last && return (false, 0f0, 0f0, 0, i0)
+    @inbounds @fastmath for j in i0:last
         m = mz[j]
         m > hi && break
         diff = abs(m - mz_target)
@@ -247,10 +259,271 @@ If no MS1 scan is available (file has only MS2), all features are zeroed.
             best_diff = diff
             best_int  = intens[j]
             best_mz   = m
+            best_idx  = j
             found = true
         end
     end
-    return found, best_int, best_mz
+    return found, best_int, best_mz, best_idx, i0
+end
+
+@inline function _ms1_find_peak_bsearch(mz::Vector{Float32}, intens::Vector{Float32},
+                                        mz_target::Float32, ms1_ppm_tol::Float32)
+    half_tol = mz_target * ms1_ppm_tol * 1f-6
+    lo = mz_target - half_tol
+    hi = mz_target + half_tol
+    n_peaks = length(mz)
+    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
+    i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, n_peaks)
+end
+
+@inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
+                                            mz_target::Float32, ms1_ppm_tol::Float32,
+                                            start_cursor::Int)
+    return _ms1_find_peak_from_cursor(mz, intens, mz_target, ms1_ppm_tol,
+                                      start_cursor, length(mz))
+end
+
+@inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
+                                            mz_target::Float32, ms1_ppm_tol::Float32,
+                                            start_cursor::Int, last_idx::Int)
+    half_tol = mz_target * ms1_ppm_tol * 1f-6
+    lo = mz_target - half_tol
+    hi = mz_target + half_tol
+    n_peaks = length(mz)
+    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
+    last = min(last_idx, n_peaks)
+    last < 1 && return (false, 0f0, 0f0, 0, 1)
+
+    i0 = if start_cursor < 1
+        1
+    elseif start_cursor > last
+        last + 1
+    else
+        start_cursor
+    end
+
+    # In the hot path, isotope targets are monotone increasing, so this is a
+    # short forward walk. The fallback keeps the helper exact for accidental
+    # non-monotone use.
+    if i0 > 1 && i0 <= n_peaks
+        @inbounds if mz[i0 - 1] >= lo
+            i0 = bsearch_hybrid(mz, lo, 1, last)
+        end
+    elseif i0 == last + 1
+        @inbounds if mz[last] >= lo
+            i0 = bsearch_hybrid(mz, lo, 1, last)
+        end
+    end
+
+    @inbounds while i0 <= last && mz[i0] < lo
+        i0 += 1
+    end
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
+end
+
+@inline function _ms1_find_peak_from_bounds(mz::Vector{Float32}, intens::Vector{Float32},
+                                            mz_target::Float32, ms1_ppm_tol::Float32,
+                                            floor_cursor::Int, ceiling_cursor::Int)
+    half_tol = mz_target * ms1_ppm_tol * 1f-6
+    lo = mz_target - half_tol
+    hi = mz_target + half_tol
+    n_peaks = length(mz)
+    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
+    first = clamp(floor_cursor, 1, n_peaks)
+    last = min(ceiling_cursor, n_peaks)
+    first > last && return (false, 0f0, 0f0, 0, first)
+    if first > 1
+        @inbounds if mz[first - 1] >= lo
+            first = bsearch_hybrid(mz, lo, 1, last)
+        end
+    end
+    i0 = first <= last ? bsearch_hybrid(mz, lo, first, last) : first
+    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
+end
+
+@inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
+                                mz_target::Float32, ms1_ppm_tol::Float32)
+    found, best_int, best_mz, best_idx, _ =
+        _ms1_find_peak_bsearch(mz, intens, mz_target, ms1_ppm_tol)
+    return found, best_int, best_mz, best_idx
+end
+
+@inline function _ms1_sum_window_intensity(mz::Vector{Float32}, intens::Vector{Float32},
+                                           low_mz::Float32, high_mz::Float32)
+    (isfinite(low_mz) && isfinite(high_mz) && high_mz >= low_mz) || return 0f0
+    n_peaks = length(mz)
+    n_peaks == 0 && return 0f0
+    i0 = bsearch_hybrid(mz, low_mz, 1, n_peaks)
+    total = 0f0
+    @inbounds @fastmath for j in i0:n_peaks
+        m = mz[j]
+        m > high_mz && break
+        total += intens[j]
+    end
+    return total
+end
+
+@inline function _ms1_m0_m1_m2_window_fraction(m0_int, m1_int, m2_int,
+                                               window_intensity)::Float32
+    denom = Float32(window_intensity)
+    denom > 0f0 || return 0f0
+    numer = max(Float32(m0_int), 0f0) + max(Float32(m1_int), 0f0) +
+            max(Float32(m2_int), 0f0)
+    return clamp(numer / denom, 0f0, 1f0)
+end
+
+@inline function _ms1_noise_floor(intens::Vector{Float32})::Float32
+    floor = Inf32
+    @inbounds @fastmath for it in intens
+        if it > 0f0 && it < floor
+            floor = it
+        end
+    end
+    return isfinite(floor) ? floor : 0f0
+end
+
+@inline function _ms1_m0_m1_m2_window_fraction_pseudocount(m0_int, m1_int, m2_int,
+                                                           m0_hit::Bool, m1_hit::Bool, m2_hit::Bool,
+                                                           window_intensity,
+                                                           noise_floor)::Float32
+    pc = max(Float32(noise_floor), 0f0)
+    m0_eff = m0_hit ? max(Float32(m0_int), 0f0) : pc
+    m1_eff = m1_hit ? max(Float32(m1_int), 0f0) : pc
+    m2_eff = m2_hit ? max(Float32(m2_int), 0f0) : pc
+    denom = max(Float32(window_intensity), 0f0) + 3f0 * pc
+    denom > 0f0 || return 0f0
+    return clamp((m0_eff + m1_eff + m2_eff) / denom, 0f0, 1f0)
+end
+
+@inline function _ms1_isotope_dotp_m0_m1_m2(m0_int, m1_int, m2_int,
+                                            pred0, pred1, pred2)::Float32
+    obs0 = max(Float32(m0_int), 0f0)
+    obs1 = max(Float32(m1_int), 0f0)
+    obs2 = max(Float32(m2_int), 0f0)
+    exp0 = max(Float32(pred0), 0f0)
+    exp1 = max(Float32(pred1), 0f0)
+    exp2 = max(Float32(pred2), 0f0)
+    obs_norm2 = obs0 * obs0 + obs1 * obs1 + obs2 * obs2
+    exp_norm2 = exp0 * exp0 + exp1 * exp1 + exp2 * exp2
+    denom = sqrt(obs_norm2 * exp_norm2)
+    denom > 0f0 || return 0f0
+    dotp = (obs0 * exp0 + obs1 * exp1 + obs2 * exp2) / denom
+    return clamp(Float32(dotp), 0f0, 1f0)
+end
+
+@inline function _ms2_explained_fraction(log2_intensity_explained)::Float32
+    x = Float32(log2_intensity_explained)
+    isfinite(x) || return 0f0
+    return clamp(exp2(x), 0f0, 1f0)
+end
+
+@inline function _ms1_ms2_explained_delta(ms1_fraction, log2_intensity_explained)::Float32
+    return Float32(ms1_fraction) - _ms2_explained_fraction(log2_intensity_explained)
+end
+
+function _initialize_ms1_isolation_window_features!(psms)
+    n = nrow(psms)
+    psms[!, :ms1_m0_m1_m2_window_fraction] = zeros(Float32, n)
+    psms[!, :ms1_ms2_explained_delta] = zeros(Float32, n)
+    psms[!, :ms1_m0_m1_m2_window_fraction_pc] = zeros(Float32, n)
+    psms[!, :ms1_ms2_explained_delta_pc] = zeros(Float32, n)
+    psms[!, :ms1_isotope_dotp_m0_m1_m2] = zeros(Float32, n)
+    return nothing
+end
+
+struct _M0PeakCompetitionScratch
+    totals::Dict{UInt64,Float32}
+    peak_counts::Dict{UInt64,UInt16}
+    seen_peak_precursors::Set{UInt128}
+    same_mz_counts::Dict{UInt32,UInt16}
+    seen_mz_precursors::Set{UInt64}
+end
+
+function _M0PeakCompetitionScratch()
+    return _M0PeakCompetitionScratch(
+        Dict{UInt64,Float32}(),
+        Dict{UInt64,UInt16}(),
+        Set{UInt128}(),
+        Dict{UInt32,UInt16}(),
+        Set{UInt64}(),
+    )
+end
+
+@inline _inc_u16_saturating(x::UInt16) = x == typemax(UInt16) ? x : x + UInt16(1)
+
+@inline function _fragment_sum6(frag_cols, row::Int)::Float32
+    return Float32(frag_cols[1][row]) + Float32(frag_cols[2][row]) +
+           Float32(frag_cols[3][row]) + Float32(frag_cols[4][row]) +
+           Float32(frag_cols[5][row]) + Float32(frag_cols[6][row])
+end
+
+function _add_m0_peak_fragment_competition_run!(
+        frac_out::Vector{Float32},
+        peak_count_out::Vector{UInt16},
+        same_mz_count_out::Vector{UInt16},
+        precursor_idx::Vector{UInt32},
+        prec_mzs,
+        m0_peak_keys::AbstractVector{UInt64},
+        frag_cols,
+        rows::UnitRange{Int},
+        scratch::_M0PeakCompetitionScratch)
+    isempty(rows) && return nothing
+
+    totals = scratch.totals
+    peak_counts = scratch.peak_counts
+    seen_peak_precursors = scratch.seen_peak_precursors
+    same_mz_counts = scratch.same_mz_counts
+    seen_mz_precursors = scratch.seen_mz_precursors
+    empty!(totals)
+    empty!(peak_counts)
+    empty!(seen_peak_precursors)
+    empty!(same_mz_counts)
+    empty!(seen_mz_precursors)
+
+    first_row = first(rows)
+    have_prec_mzs = prec_mzs !== nothing
+    @inbounds for row in rows
+        pid = precursor_idx[row]
+        key = m0_peak_keys[row - first_row + 1]
+        if key != 0
+            seen_key = (UInt128(key) << 32) | UInt128(pid)
+            if !(seen_key in seen_peak_precursors)
+                push!(seen_peak_precursors, seen_key)
+                peak_counts[key] = _inc_u16_saturating(get(peak_counts, key, UInt16(0)))
+            end
+            frag_sum = _fragment_sum6(frag_cols, row)
+            if frag_sum > 0f0
+                totals[key] = get(totals, key, 0f0) + frag_sum
+            end
+        end
+        if have_prec_mzs && 1 <= Int(pid) <= length(prec_mzs)
+            mz_key = reinterpret(UInt32, Float32(prec_mzs[pid]))
+            seen_key = (UInt64(mz_key) << 32) | UInt64(pid)
+            if !(seen_key in seen_mz_precursors)
+                push!(seen_mz_precursors, seen_key)
+                same_mz_counts[mz_key] = _inc_u16_saturating(get(same_mz_counts, mz_key, UInt16(0)))
+            end
+        end
+    end
+
+    @inbounds for row in rows
+        pid = precursor_idx[row]
+        key = m0_peak_keys[row - first_row + 1]
+        if key != 0
+            peak_count_out[row] = get(peak_counts, key, UInt16(0))
+            denom = get(totals, key, 0f0)
+            if denom > 0f0
+                frag_sum = _fragment_sum6(frag_cols, row)
+                frac_out[row] = frag_sum > 0f0 ? frag_sum / denom : 0f0
+            end
+        end
+        if have_prec_mzs && 1 <= Int(pid) <= length(prec_mzs)
+            mz_key = reinterpret(UInt32, Float32(prec_mzs[pid]))
+            same_mz_count_out[row] = get(same_mz_counts, mz_key, UInt16(0))
+        end
+    end
+    return nothing
 end
 
 # Filter the (possibly Union{Missing,Float32}) MS1 spectrum into per-task
@@ -279,70 +552,218 @@ end
     return scratch_mz, scratch_int
 end
 
-# Per-chunk worker. Each task processes its row range with a thread-local
-# MS1-spectrum cache so the (getMzArray, getIntensityArray) lookups amortize
-# across consecutive PSMs that share the same nearest MS1 scan.
-#
-# `scan_to_ms1` is a precomputed mapping (scan_id → nearest MS1 scan id),
-# built once in the caller. This eliminates the per-PSM
-# `getRetentionTime` + `searchsortedfirst` work.
-function _ms1_lookup_chunk!(psms, spectra,
-                             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
-                             scan_to_ms1::Vector{Int32},
-                             ms1_ppm_tol::Float32, ms1_ppm_offset::Float32,
-                             c13_c12_mass_diff::Float32,
-                             chunk_start::Int, chunk_end::Int)
-    # Per-task scratch buffers; reused (resize-only) across cache misses
-    # within this chunk. Type-stable Vector{Float32}.
+function _scan_run_starts(scan::Vector{UInt32})
+    n = length(scan)
+    starts = Int[1]
+    n == 0 && return starts
+    sizehint!(starts, max(1, n ÷ 4))
+    @inbounds for i in 2:n
+        if scan[i] != scan[i-1]
+            push!(starts, i)
+        end
+    end
+    push!(starts, n + 1)
+    return starts
+end
+
+function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
+    required = (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
+                :frag4_int, :frag5_int, :frag6_int)
+    all(c -> hasproperty(psms, c), required) || return nothing
+    return (
+        psms[!, :ms1_m0_peak_frag_intensity_fraction]::Vector{Float32},
+        psms[!, :ms1_m0_peak_n_precursors]::Vector{UInt16},
+        psms[!, :scan_prec_mz_n_precursors]::Vector{UInt16},
+        psms[!, :precursor_idx]::Vector{UInt32},
+        prec_mzs,
+        (psms[!, :frag1_int], psms[!, :frag2_int], psms[!, :frag3_int],
+         psms[!, :frag4_int], psms[!, :frag5_int], psms[!, :frag6_int]),
+    )
+end
+
+# Per-scan-run worker. The input PSM table is contiguous by :scan_idx at this
+# point in MainSearch, so each run shares one nearest MS1 scan and one MS2
+# isolation window. That lets us compute window intensity/noise once per scan
+# run instead of once per candidate PSM.
+function _ms1_lookup_scan_runs!(psms, spectra,
+                                prec_mzs, prec_charges, prec_sulfurs, iso_splines,
+                                scan_to_ms1::Vector{Int32},
+                                scan_window_low::Vector{Float32},
+                                scan_window_high::Vector{Float32},
+                                ms1_ppm_tol::Float32, ms1_ppm_offset::Float32,
+                                isotope_spacing::Float32,
+                                starts::Vector{Int}, run_chunk,
+                                competition_inputs)
+    scan_idxs::Vector{UInt32} = psms[!, :scan_idx]
+    precursor_idxs::Vector{UInt32} = psms[!, :precursor_idx]
+    log2_intensity_explained = psms[!, :log2_intensity_explained]
+
+    ms1_m0_mass_err_ppm::Vector{Float32} = psms[!, :ms1_m0_mass_err_ppm]
+    ms1_m0_intensity::Vector{Float32} = psms[!, :ms1_m0_intensity]
+    ms1_m1_intensity::Vector{Float32} = psms[!, :ms1_m1_intensity]
+    ms1_m1_to_m0_ratio::Vector{Float32} = psms[!, :ms1_m1_to_m0_ratio]
+    ms1_m1_to_m0_pred::Vector{Float32} = psms[!, :ms1_m1_to_m0_pred]
+    ms1_isotope_dotp::Vector{Float32} = psms[!, :ms1_isotope_dotp_m0_m1_m2]
+    ms1_window_fraction::Vector{Float32} = psms[!, :ms1_m0_m1_m2_window_fraction]
+    ms1_delta::Vector{Float32} = psms[!, :ms1_ms2_explained_delta]
+    ms1_window_fraction_pc::Vector{Float32} = psms[!, :ms1_m0_m1_m2_window_fraction_pc]
+    ms1_delta_pc::Vector{Float32} = psms[!, :ms1_ms2_explained_delta_pc]
+
     cached_mz  = Vector{Float32}()
     cached_int = Vector{Float32}()
     cached_ms1_idx::Int = -1   # force first miss
+    cached_noise_floor = 0f0
+    m0_peak_keys = UInt64[]
+    competition_scratch = _M0PeakCompetitionScratch()
 
-    @inbounds for i in chunk_start:chunk_end
-        ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
+    @inbounds for r in run_chunk
+        run_start = starts[r]
+        run_end = starts[r+1] - 1
+        scan_id = Int(scan_idxs[run_start])
+        ms1_idx = Int(scan_to_ms1[scan_id])
 
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
             _ms1_refresh_cache!(cached_mz, cached_int,
                                 getMzArray(spectra, ms1_idx),
                                 getIntensityArray(spectra, ms1_idx))
+            cached_noise_floor = _ms1_noise_floor(cached_int)
         end
 
-        pid = UInt32(psms.precursor_idx[i])
-        prec_mz   = Float32(prec_mzs[pid])
-        prec_chg  = Int(prec_charges[pid])
-        prec_chg == 0 && (prec_chg = 1)
+        window_low = scan_window_low[scan_id]
+        window_high = scan_window_high[scan_id]
+        window_intensity = _ms1_sum_window_intensity(cached_mz, cached_int, window_low, window_high)
+        resize!(m0_peak_keys, run_end - run_start + 1)
+        fill!(m0_peak_keys, UInt64(0))
 
-        # Shift theoretical target by the fitted per-file ppm bias so peaks
-        # are searched where they actually land. Residual feature
-        # ms1_m0_mass_err_ppm is computed against the shifted (bias-corrected)
-        # target so its zero point matches the calibration.
-        target_m0 = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
-        target_m1 = target_m0 + c13_c12_mass_diff / Float32(prec_chg)
-
-        m0_hit, m0_int, m0_mz = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
-        m1_hit, m1_int, _    = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
-
-        psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
-        psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
-        if m0_hit
-            psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
+        m0_min_lo = Inf32
+        m0_max_hi = -Inf32
+        ms1_bias_factor = 1f0 + ms1_ppm_offset * 1f-6
+        @inbounds for i in run_start:run_end
+            pid = UInt32(precursor_idxs[i])
+            target_m0 = Float32(prec_mzs[pid]) * ms1_bias_factor
+            half_tol = target_m0 * ms1_ppm_tol * 1f-6
+            m0_min_lo = min(m0_min_lo, target_m0 - half_tol)
+            m0_max_hi = max(m0_max_hi, target_m0 + half_tol)
         end
-        if m0_hit && m0_int > 0f0 && m1_hit
-            obs_ratio = m1_int / m0_int
-            sulf_raw = Int(prec_sulfurs[pid])
-            sulf = clamp(sulf_raw, 0, 5)
-            prec_mass_approx = prec_mz * Float32(prec_chg)
-            p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
-            p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
-            pred_ratio = Float32(p1 / p0)
-            psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
-            psms.ms1_m1_to_m0_pred[i]     = pred_ratio
-            # ms1_envelope_dev_log2 = log2(obs_ratio / pred_ratio) was dropped
-            # in 143d6b87 (smart-composite reduction); compute deleted 2026-05-19.
+        n_cached_peaks = length(cached_mz)
+        m0_floor_cursor = 1
+        m0_ceiling_cursor = 0
+        if n_cached_peaks > 0 && isfinite(m0_min_lo) && isfinite(m0_max_hi)
+            m0_floor_cursor = bsearch_hybrid(cached_mz, m0_min_lo, 1, n_cached_peaks)
+            if m0_floor_cursor <= n_cached_peaks
+                first_after_m0 = bsearch_hybrid(
+                    cached_mz,
+                    nextfloat(m0_max_hi),
+                    m0_floor_cursor,
+                    n_cached_peaks,
+                )
+                m0_ceiling_cursor = min(first_after_m0 - 1, n_cached_peaks)
+            end
+        end
+        prev_m0_lo = -Inf32
+        prev_m0_cursor = m0_floor_cursor
+
+        for i in run_start:run_end
+            pid = UInt32(precursor_idxs[i])
+            prec_mz = Float32(prec_mzs[pid])
+            prec_chg = Int(prec_charges[pid])
+            prec_chg == 0 && (prec_chg = 1)
+            inv_charge = 1f0 / Float32(prec_chg)
+
+            # Shift theoretical target by the fitted per-file ppm bias so peaks
+            # are searched where they actually land. Residual feature
+            # ms1_m0_mass_err_ppm is computed against the shifted target.
+            target_m0 = prec_mz * ms1_bias_factor
+            target_m1 = target_m0 + isotope_spacing * inv_charge
+            target_m2 = target_m0 + 2f0 * isotope_spacing * inv_charge
+
+            target_m0_half_tol = target_m0 * ms1_ppm_tol * 1f-6
+            target_m0_lo = target_m0 - target_m0_half_tol
+            m0_hit, m0_int, m0_mz, m0_peak_idx, m0_cursor = if target_m0_lo >= prev_m0_lo
+                _ms1_find_peak_from_cursor(
+                    cached_mz, cached_int, target_m0, ms1_ppm_tol,
+                    prev_m0_cursor, m0_ceiling_cursor,
+                )
+            else
+                _ms1_find_peak_from_bounds(
+                    cached_mz, cached_int, target_m0, ms1_ppm_tol,
+                    m0_floor_cursor, m0_ceiling_cursor,
+                )
+            end
+            prev_m0_lo = target_m0_lo
+            prev_m0_cursor = m0_cursor
+            m1_hit, m1_int, _, _, m1_cursor =
+                _ms1_find_peak_from_cursor(cached_mz, cached_int, target_m1, ms1_ppm_tol, m0_cursor)
+            m2_hit, m2_int, _, _, _ =
+                _ms1_find_peak_from_cursor(cached_mz, cached_int, target_m2, ms1_ppm_tol, m1_cursor)
+
+            sulf = clamp(Int(prec_sulfurs[pid]), 0, 5)
+            neutral_mass = (prec_mz - Float32(PROTON)) * Float32(prec_chg)
+            p0 = max(iso_splines(Int64(sulf), Int64(0), neutral_mass), 0f0)
+            p1 = max(iso_splines(Int64(sulf), Int64(1), neutral_mass), 0f0)
+            p2 = max(iso_splines(Int64(sulf), Int64(2), neutral_mass), 0f0)
+
+            obs_m0 = m0_hit ? m0_int : 0f0
+            obs_m1 = m1_hit ? m1_int : 0f0
+            obs_m2 = m2_hit ? m2_int : 0f0
+            ms1_m0_intensity[i] = obs_m0
+            ms1_m1_intensity[i] = obs_m1
+            ms1_isotope_dotp[i] = _ms1_isotope_dotp_m0_m1_m2(obs_m0, obs_m1, obs_m2, p0, p1, p2)
+
+            m0_in_window = m0_hit && target_m0 >= window_low && target_m0 <= window_high
+            m1_in_window = m1_hit && target_m1 >= window_low && target_m1 <= window_high
+            m2_in_window = m2_hit && target_m2 >= window_low && target_m2 <= window_high
+            ms1_fraction = _ms1_m0_m1_m2_window_fraction(
+                m0_in_window ? m0_int : 0f0,
+                m1_in_window ? m1_int : 0f0,
+                m2_in_window ? m2_int : 0f0,
+                window_intensity,
+            )
+            ms1_window_fraction[i] = ms1_fraction
+            ms1_delta[i] = _ms1_ms2_explained_delta(ms1_fraction, log2_intensity_explained[i])
+
+            ms1_fraction_pc = _ms1_m0_m1_m2_window_fraction_pseudocount(
+                m0_int, m1_int, m2_int,
+                m0_in_window, m1_in_window, m2_in_window,
+                window_intensity,
+                cached_noise_floor,
+            )
+            ms1_window_fraction_pc[i] = ms1_fraction_pc
+            ms1_delta_pc[i] = _ms1_ms2_explained_delta(ms1_fraction_pc, log2_intensity_explained[i])
+
+            if m0_hit
+                m0_peak_keys[i - run_start + 1] =
+                    (UInt64(UInt32(ms1_idx)) << 32) | UInt64(UInt32(m0_peak_idx))
+                ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
+            end
+            if m0_hit && m0_int > 0f0 && m1_hit
+                obs_ratio = m1_int / m0_int
+                prec_mass_approx = prec_mz * Float32(prec_chg)
+                ratio_p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
+                ratio_p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
+                ms1_m1_to_m0_ratio[i] = Float32(obs_ratio)
+                ms1_m1_to_m0_pred[i] = Float32(ratio_p1 / ratio_p0)
+            end
+        end
+
+        if competition_inputs !== nothing
+            frac_out, peak_count_out, same_mz_count_out,
+                comp_precursor_idx, comp_prec_mzs, frag_cols = competition_inputs
+            _add_m0_peak_fragment_competition_run!(
+                frac_out,
+                peak_count_out,
+                same_mz_count_out,
+                comp_precursor_idx,
+                comp_prec_mzs,
+                m0_peak_keys,
+                frag_cols,
+                run_start:run_end,
+                competition_scratch,
+            )
         end
     end
-    return
+    return nothing
 end
 
 """
@@ -354,16 +775,25 @@ Per-PSM MS1 spectrum lookup. Populates:
 - `:ms1_m0_mass_err_ppm`
 - `:ms1_m1_to_m0_ratio`
 - `:ms1_m1_to_m0_pred`
+- `:ms1_isotope_dotp_m0_m1_m2`
+- `:ms1_m0_m1_m2_window_fraction`
+- `:ms1_ms2_explained_delta`
+- `:ms1_m0_m1_m2_window_fraction_pc`
+- `:ms1_ms2_explained_delta_pc`
+- `:ms1_m0_peak_frag_intensity_fraction`
+- `:ms1_m0_peak_n_precursors`
+- `:scan_prec_mz_n_precursors`
 
 For each PSM: finds the nearest MS1 scan by RT, extracts M0/M1 intensities
 within a ppm tolerance window around the predicted precursor m/z, and
-computes the observed/predicted M1:M0 ratio.
+computes the observed/predicted M1:M0 ratio plus M0/M1/M2 isolation-window
+features. Scan-local M0 peak competition is computed per contiguous MS2 scan
+run using thread-local scratch.
 
 **PRECONDITION (perf-only)**: the per-task MS1-spectrum cache hits ~once
-per unique `scan_idx` in each chunk, so this is dramatically faster when
+per unique `scan_idx` in each run chunk, so this is dramatically faster when
 the input PSMs are contiguous-by-:scan_idx — the natural ordering of the
-deconv output. Call BEFORE `permute_psms_by_precursor_idx!`. (Correctness
-is unchanged either way; the cache just thrashes when precursor-sorted.)
+deconv output. Call BEFORE `permute_psms_by_precursor_idx!`.
 """
 function add_ms1_lookup_features!(psms::DataFrame,
                             spectra,
@@ -381,6 +811,10 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
+    _initialize_ms1_isolation_window_features!(psms)
+    psms[!, :ms1_m0_peak_frag_intensity_fraction] = zeros(Float32, n)
+    psms[!, :ms1_m0_peak_n_precursors] = zeros(UInt16, n)
+    psms[!, :scan_prec_mz_n_precursors] = zeros(UInt16, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -417,6 +851,22 @@ function add_ms1_lookup_features!(psms::DataFrame,
         end
     end
 
+    scan_window_low = fill(Inf32, n_scans)
+    scan_window_high = fill(-Inf32, n_scans)
+    @inbounds for s in 1:n_scans
+        center_mz = getCenterMz(spectra, s)
+        isolation_width = getIsolationWidthMz(spectra, s)
+        if !ismissing(center_mz) && !ismissing(isolation_width)
+            width = Float32(isolation_width)
+            if width > 0f0
+                center = Float32(center_mz)
+                half_width = width / 2f0
+                scan_window_low[s] = center - half_width
+                scan_window_high[s] = center + half_width
+            end
+        end
+    end
+
     # 2. Per-precursor info
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mzs       = getMz(precursors)
@@ -424,24 +874,23 @@ function add_ms1_lookup_features!(psms::DataFrame,
     prec_sulfurs   = getSulfurCount(precursors)
     iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
-    # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
-    # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
-    # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache.
-    # When input is contiguous-by-scan, the cache hits ~once per unique scan
-    # in each chunk; when input is precursor-sorted the cache thrashes.
-    nt = Threads.nthreads()
-    chunk_size = max(1, cld(n, nt))
-    @sync for t in 1:nt
-        chunk_start = (t - 1) * chunk_size + 1
-        chunk_start > n && break
-        chunk_end = min(t * chunk_size, n)
-        Threads.@spawn _ms1_lookup_chunk!(
+    starts = _scan_run_starts(psms[!, :scan_idx]::Vector{UInt32})
+    n_runs = length(starts) - 1
+    competition_inputs = _ms1_m0_peak_competition_inputs(psms, prec_mzs)
+    if competition_inputs === nothing
+        @debug_l1 "add_ms1_lookup_features!: missing frag1_int..frag6_int, skipping M0 peak competition"
+    end
+
+    parallel_foreach!(n_runs) do chunk
+        _ms1_lookup_scan_runs!(
             psms, spectra,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
+            scan_window_low, scan_window_high,
             Float32(ms1_ppm_tol), Float32(ms1_ppm_offset),
             C13_C12_MASS_DIFF_F32,
-            chunk_start, chunk_end
+            starts, chunk,
+            competition_inputs,
         )
     end
     return
