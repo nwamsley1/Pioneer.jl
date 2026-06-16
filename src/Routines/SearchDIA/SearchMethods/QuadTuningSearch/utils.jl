@@ -824,8 +824,9 @@ function perform_quad_transmission_search(
 
         scan_mz  = getMzArray(spectra, scan_idx)
         scan_int = getIntensityArray(spectra, scan_idx)
+        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                          mem, scan_mz, scan_int)
+                                          mem, scan_mz, scan_int, scan_rt)
 
         quad_fn = getQuadTransmissionFunction(
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -1366,6 +1367,5 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
     )
     return fitted_params, initial_params
 end
-
 
 

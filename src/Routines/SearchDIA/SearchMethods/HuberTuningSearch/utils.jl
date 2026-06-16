@@ -203,7 +203,7 @@ function process_huber_calibration_scans!(
         scan_int = getIntensityArray(spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(
             corr_mz, obs_low, obs_high,
-            mass_error_model, scan_mz, scan_int,
+            mass_error_model, scan_mz, scan_int, Float32(rt),
         )
 
         nmatches, nmisses = run_fused!(

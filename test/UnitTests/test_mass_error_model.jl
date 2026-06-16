@@ -14,7 +14,7 @@ using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
                getRightTol, getLeftTol, getMassOffset, getMassCorrection,
                getCorrectedMz, getMzBounds, getMzBoundsReverse,
                getCorrectedMzAndBounds, laplace_log_density,
-               get_default_top3_ll
+               get_default_top3_ll, MassErrSample
 
 @testset "MassErrorModel" begin
 
@@ -114,6 +114,17 @@ using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
             @test getCorrectedMz(mem, mz, 0.0f0) == getCorrectedMz(mem, mz)
             @test getMzBoundsReverse(mem, mz, 5.0f0) == getMzBoundsReverse(mem, mz)
         end
+
+        @testset "4-arg forwarding ignores scan retention time" begin
+            mem = SimpleMassErrorModel(2.5f0, (12.0f0, 9.0f0))
+            mz = 750.0f0
+            intensity = 42.0f0
+            scan_rt = 31.5f0
+            @test getCorrectedMz(mem, mz, intensity, scan_rt) == getCorrectedMz(mem, mz, intensity)
+            @test getMzBoundsReverse(mem, mz, intensity, scan_rt) == getMzBoundsReverse(mem, mz, intensity)
+            @test getCorrectedMzAndBounds(mem, mz, intensity, scan_rt) ==
+                  getCorrectedMzAndBounds(mem, mz, intensity)
+        end
     end
 
     @testset "LinearDaMassErrorModel" begin
@@ -186,6 +197,17 @@ using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
             @test getCorrectedMz(m, 1000.0f0, 0.5f0) == getCorrectedMz(m, 1000.0f0)
             @test getMzBoundsReverse(m, 1000.0f0, 0.5f0) == getMzBoundsReverse(m, 1000.0f0)
         end
+
+        @testset "4-arg forwarding ignores scan retention time" begin
+            m = LinearDaMassErrorModel(0.001f0, 0.0f0, 0.002f0)
+            mz = 1000.0f0
+            intensity = 0.5f0
+            scan_rt = 18.25f0
+            @test getCorrectedMz(m, mz, intensity, scan_rt) == getCorrectedMz(m, mz, intensity)
+            @test getMzBoundsReverse(m, mz, intensity, scan_rt) == getMzBoundsReverse(m, mz, intensity)
+            @test getCorrectedMzAndBounds(m, mz, intensity, scan_rt) ==
+                  getCorrectedMzAndBounds(m, mz, intensity)
+        end
     end
 
     @testset "LinearBiasPpmTolMassErrorModel" begin
@@ -242,6 +264,25 @@ using Pioneer: SimpleMassErrorModel, LinearDaMassErrorModel,
             @test getCorrectedMz(m, 1000.0f0, 0.5f0) == getCorrectedMz(m, 1000.0f0)
             @test getMzBoundsReverse(m, 1000.0f0, 0.5f0) == getMzBoundsReverse(m, 1000.0f0)
         end
+
+        @testset "4-arg forwarding ignores scan retention time" begin
+            m = LinearBiasPpmTolMassErrorModel(0.0005f0, 0.0f0, 6.0f0)
+            mz = 1000.0f0
+            intensity = 0.5f0
+            scan_rt = 18.25f0
+            @test getCorrectedMz(m, mz, intensity, scan_rt) == getCorrectedMz(m, mz, intensity)
+            @test getMzBoundsReverse(m, mz, intensity, scan_rt) == getMzBoundsReverse(m, mz, intensity)
+            @test getCorrectedMzAndBounds(m, mz, intensity, scan_rt) ==
+                  getCorrectedMzAndBounds(m, mz, intensity)
+        end
+    end
+
+    @testset "MassErrSample stores scan retention time" begin
+        sample = MassErrSample(500.0f0, 500.002f0, 1234.0f0, 42.5f0)
+        @test sample.theoretical_mz == 500.0f0
+        @test sample.observed_mz == 500.002f0
+        @test sample.intensity == 1234.0f0
+        @test sample.rt == 42.5f0
     end
 
 end
