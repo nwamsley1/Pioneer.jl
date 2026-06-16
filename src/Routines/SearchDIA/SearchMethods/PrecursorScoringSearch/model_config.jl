@@ -46,7 +46,7 @@ const ADVANCED_FEATURE_SET = [
     # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
-    :Mox, :spectrum_peak_count, :sequence_length,
+    :charge, :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
     :ms1_m0_mass_err_ppm,
