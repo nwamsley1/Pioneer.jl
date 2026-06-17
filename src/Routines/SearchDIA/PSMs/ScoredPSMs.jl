@@ -94,7 +94,8 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # signal as the per-file LightGBM (previously dropped by Score!).
     best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
 
-    # Per-rank M0 fragment intensities (top 6, for chromatogram-correlation features)
+    # Per-rank fragment trace intensities (top 6); sums matched isotope peaks
+    # predicted at >=25% of the fragment's most abundant isotope.
     frag1_int::H
     frag2_int::H
     frag3_int::H
