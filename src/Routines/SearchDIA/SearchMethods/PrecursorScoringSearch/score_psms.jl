@@ -68,6 +68,194 @@ function score_precursor_isotope_traces(
     end
 end
 
+const SCORING_SEMISUPERVISED_QVALUE_THRESHOLD = 0.01f0
+const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
+const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
+
+function _scoring_semisupervised_train_mask(
+    targets::AbstractVector{Bool},
+    q_values::AbstractVector{<:Real};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+)
+    n = length(targets)
+    mask = Vector{Bool}(undef, n)
+    @inbounds for i in 1:n
+        mask[i] = !targets[i] || Float32(q_values[i]) <= q_threshold
+    end
+    return mask
+end
+
+function _scoring_semisupervised_metrics_and_mask(
+    scores::AbstractVector{<:Real},
+    targets::AbstractVector{Bool};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+)
+    n = length(scores)
+    order = sortperm(scores; rev = true, alg = QuickSort)
+    training_mask = BitVector(undef, n)
+    total_targets = count(targets)
+    total_decoys = n - total_targets
+    suffix_targets = 0
+    suffix_decoys = 0
+    min_q = Inf32
+    target_q01 = 0
+    decoy_q01 = 0
+
+    @inbounds for sorted_pos in n:-1:1
+        i = Int(order[sorted_pos])
+        prefix_targets = total_targets - suffix_targets
+        prefix_decoys = total_decoys - suffix_decoys
+        raw_q = prefix_targets == 0 ? Inf32 : Float32(prefix_decoys) / Float32(prefix_targets)
+        min_q = min(min_q, raw_q)
+        q_pass = min_q <= q_threshold
+        is_target = targets[i]
+
+        if q_pass
+            if is_target
+                target_q01 += 1
+            else
+                decoy_q01 += 1
+            end
+        end
+        training_mask[i] = !is_target || q_pass
+
+        if is_target
+            suffix_targets += 1
+        else
+            suffix_decoys += 1
+        end
+    end
+
+    return (
+        training_mask = training_mask,
+        target_q01 = target_q01,
+        decoy_q01 = decoy_q01,
+    )
+end
+
+function _scoring_training_target_decoy_counts(
+    targets::AbstractVector{Bool},
+    training_mask::Union{Nothing, AbstractVector{Bool}},
+)
+    if training_mask === nothing
+        n_targets = count(targets)
+        return n_targets, length(targets) - n_targets
+    end
+    n_targets = 0
+    n_decoys = 0
+    @inbounds for i in eachindex(targets)
+        training_mask[i] || continue
+        if targets[i]
+            n_targets += 1
+        else
+            n_decoys += 1
+        end
+    end
+    return n_targets, n_decoys
+end
+
+function _scoring_target_gain_sufficient(
+    previous_targets::Integer,
+    current_targets::Integer;
+    min_fraction::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
+)
+    previous_targets <= 0 && return current_targets > previous_targets
+    return Float64(current_targets) >= Float64(previous_targets) * (1.0 + Float64(min_fraction))
+end
+
+function _scoring_better_iteration_state(previous_state, current_state)
+    previous_state === nothing && return current_state
+    current_state === nothing && return previous_state
+    return current_state.target_q01 >= previous_state.target_q01 ? current_state : previous_state
+end
+
+function _split_scoring_train_masks(
+    row_counts::AbstractVector{<:Integer},
+    training_mask::AbstractVector{Bool},
+)
+    masks = Vector{BitVector}(undef, length(row_counts))
+    offset = 0
+    for (file_idx, n_integer) in enumerate(row_counts)
+        n = Int(n_integer)
+        masks[file_idx] = BitVector(@view training_mask[(offset + 1):(offset + n)])
+        offset += n
+    end
+    return masks
+end
+
+function _train_scoring_classifier_semisupervised(
+    psms::DataFrame;
+    features::Vector{Symbol},
+    lgbm_hp = SCORING_LGBM_HP,
+    max_train::Int = SCORING_LGBM_MAX_TRAIN,
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+    min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
+    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+)
+    targets = Vector{Bool}(psms[!, :target])
+    training_mask = nothing
+    previous_target_q01 = -1
+    best_state = nothing
+
+    for iter_idx in 1:max_iterations
+        n_train_targets, n_train_decoys = _scoring_training_target_decoy_counts(
+            targets,
+            training_mask,
+        )
+        all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
+            psms;
+            features = features,
+            lgbm_hp = lgbm_hp,
+            compute_infold = false,
+            max_train = max_train,
+            training_mask = training_mask,
+        )
+        scores = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+        metrics = _scoring_semisupervised_metrics_and_mask(
+            scores,
+            targets;
+            q_threshold = q_threshold,
+        )
+        current_state = (
+            scores = scores,
+            last_classifier = last_classifier,
+            info = info,
+            target_q01 = metrics.target_q01,
+            decoy_q01 = metrics.decoy_q01,
+            iter = iter_idx,
+        )
+        @debug_l1 "ScoringSearch semi-supervised iter $iter_idx (in-memory): " *
+                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
+                   "q≤.01 targets=$(metrics.target_q01) decoys=$(metrics.decoy_q01)"
+
+        if iter_idx > 1 && !_scoring_target_gain_sufficient(
+            previous_target_q01,
+            metrics.target_q01;
+            min_fraction = min_gain,
+        )
+            best_state = _scoring_better_iteration_state(best_state, current_state)
+            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
+                       "iter $iter_idx q≤.01 targets=$(metrics.target_q01) did not improve by " *
+                       "$(round(100 * min_gain, digits=2))% over $previous_target_q01; " *
+                       "using iter $(best_state.iter) with q≤.01 targets=$(best_state.target_q01)"
+            break
+        end
+
+        best_state = _scoring_better_iteration_state(best_state, current_state)
+        if iter_idx == max_iterations
+            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
+                       "hit max iterations $max_iterations; using iter $(best_state.iter) " *
+                       "with q≤.01 targets=$(best_state.target_q01)"
+            break
+        end
+
+        previous_target_q01 = metrics.target_q01
+        training_mask = metrics.training_mask
+    end
+
+    return best_state.scores, best_state.last_classifier, best_state.info, best_state
+end
+
 # Streaming MBR-on path. Walks the per-file Arrow tables for everything;
 # the only DataFrame ever materialised is the slim FTR table (10 cols)
 # reconstructed from sidecars right before the FTR controller runs.
@@ -88,6 +276,7 @@ function _score_precursor_isotope_traces_mbr(
         features        = features,
         compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
         lgbm_hp         = SCORING_LGBM_HP,
+        semisupervised  = true,
     )
 
     # 4. Pass-1 feature importance (last_classifier is whichever fold's
@@ -176,15 +365,17 @@ function _score_precursor_isotope_traces_no_mbr(
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
-        best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
-        compute_infold = false,
+    all_scores, last_classifier, info, semisup_state = _train_scoring_classifier_semisupervised(
+        best_psms;
+        features = features,
+        lgbm_hp = SCORING_LGBM_HP,
         max_train = SCORING_LGBM_MAX_TRAIN,
     )
-    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    best_psms[!, :trace_prob_prepass] = all_scores
     best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
     best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
-    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
+    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features; " *
+               "selected semi-supervised iter $(semisup_state.iter)"
 
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
