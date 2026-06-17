@@ -61,9 +61,9 @@ const ADVANCED_FEATURE_SET = [
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
-    :n_correlated_fragments_bitvec_rank,
-    :frag_corr_strength,
-    :frag_corr_effective_n,
+    #:n_correlated_fragments_bitvec_rank,
+    #:frag_corr_strength,
+    #:frag_corr_effective_n,
     :frag_corr_best_m0,
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
