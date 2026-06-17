@@ -237,7 +237,9 @@ function apply_mbr_filter_paired!(
     #    cleaner. The qval path is retained in git history if needed.
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    recovered_in_cand = pep_top .<= alpha
+    # Branch A: recover at FTR q-value ≤ alpha (looser than the PEP rule). The FTR q is the
+    # counterfactual-frame q-value (target=is_real, decoy=counterfactual partner).
+    recovered_in_cand = qvals_top .<= alpha
     n_recovered = count(recovered_in_cand)
 
     mbr_recovered_full = falses(n)
