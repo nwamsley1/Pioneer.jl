@@ -168,6 +168,8 @@ const PRESCORE_FEATURES = [
     # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
+    :frag_corr_strength,
+    :frag_corr_effective_n,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -1134,11 +1136,39 @@ end
     d > 0 ? Float32(sxy/d) : 0f0
 end
 
+function _fragment_rank_weights(n_frags::Integer)
+    weights = Vector{Float32}(undef, n_frags)
+    sum_w = 0f0
+    @inbounds for r in 1:n_frags
+        w = 1f0 / sqrt(Float32(r))
+        weights[r] = w
+        sum_w += w
+    end
+    scale = sum_w > 0f0 ? Float32(n_frags) / sum_w : 0f0
+    @inbounds for r in 1:n_frags
+        weights[r] *= scale
+    end
+    return weights
+end
+
+@inline function _positive_corr_summary(corrs::Vector{Float32}, rank_weights::Vector{Float32})
+    strength = 0f0
+    sumsq = 0f0
+    @inbounds for i in eachindex(corrs)
+        pos = min(max(corrs[i], 0f0), 1f0)
+        weighted = rank_weights[i] * pos
+        strength += weighted
+        sumsq += weighted * weighted
+    end
+    effective_n = sumsq > 0f0 ? Float32((strength * strength) / sumsq) : 0f0
+    return strength, effective_n
+end
+
 function _add_fragment_chromatogram_features!(psms::DataFrame;
         groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
     n = nrow(psms)
-    # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
-    # are computed and written. Earlier versions emitted 15 more outputs
+    # Only the features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
+    # are computed and written. Earlier prototypes emitted many more outputs
     # (frag_corr_mean_pairwise — 15 Spearman per precursor; frag_corr_min_pairwise
     # — 15 Pearson; frag_corr_top1_top2/_top3/_weight, frag_corr_top3_weight,
     # frag_corr_top5_weight, n_correlated_fragments / _50, frag_corr_best_weight,
@@ -1147,6 +1177,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # sort + ~10 vector allocations per precursor.
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
+    psms[!, :frag_corr_strength]          = zeros(Float32, n)
+    psms[!, :frag_corr_effective_n]       = zeros(Float32, n)
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     # :n_scans (per-precursor PSM count) — also a PRESCORE_FEATURES feature.
@@ -1173,15 +1205,16 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
-    # order within the run does not affect any of the 4 output features
+    # order within the run does not affect any of the output features
     # (correlations + apex stats are order-independent).
     perm, starts, ends = groups === nothing ?
         _build_precursor_groups(prec) :
         groups
     n_prec = length(starts)
+    rank_weights = _fragment_rank_weights(6)
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
-    # in the 5 output columns; all input arrays are read-only.
+    # in the output columns; all input arrays are read-only.
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
@@ -1256,6 +1289,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 has_signal[r] || continue
                 if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
             end
+            corr_strength, corr_effective_n = _positive_corr_summary(c_fw, rank_weights)
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
             # to the other top-6 fragments. 30 Pearson calls per precursor.
@@ -1291,6 +1325,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 i_orig = perm[i_start + k - 1]
                 psms.frag_apex_dispersion_irt[i_orig] = apex_disp
                 psms.n_correlated_fragments[i_orig]    = n_corr_70
+                psms.frag_corr_strength[i_orig]        = corr_strength
+                psms.frag_corr_effective_n[i_orig]     = corr_effective_n
                 psms.frag_corr_best_m0[i_orig]         = c_best_m0
                 psms.delta_frame_peak_center[i_orig]   = delta_frame
             end
