@@ -86,7 +86,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
 #   6-vector features lowered Dennis FTR 2.59 % → 2.40 % and raised PGs +0.16 %,
 #   at a cost of −0.06 % precursor IDs / −2.1 % MBR recoveries (YeastMBR);
 #   HelaOnly pure-FTR 0.252 % → 0.242 %, PGs +0.33 %, IDs −0.65 %. Net quality
-#   win; donor entries no longer need frag1_int..frag6_int.
+#   win; donor entries no longer need frag1_int..frag8_int.
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror

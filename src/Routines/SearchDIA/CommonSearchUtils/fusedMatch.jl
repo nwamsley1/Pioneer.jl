@@ -311,6 +311,8 @@ error accumulation.
     frag4_int = score.frag4_int
     frag5_int = score.frag5_int
     frag6_int = score.frag6_int
+    frag7_int = score.frag7_int
+    frag8_int = score.frag8_int
     top3_abs_ppm_err_sum = score.top3_abs_ppm_err_sum
     top3_ppm_err_count   = score.top3_ppm_err_count
     pred_int_sum_m0 = score.pred_int_sum_m0
@@ -360,6 +362,8 @@ error accumulation.
         elseif rank == UInt8(4); frag4_int += intensity
         elseif rank == UInt8(5); frag5_int += intensity
         elseif rank == UInt8(6); frag6_int += intensity
+        elseif rank == UInt8(7); frag7_int += intensity
+        elseif rank == UInt8(8); frag8_int += intensity
         end
     end
 
@@ -375,6 +379,7 @@ error accumulation.
         p_count, non_cannonical_count,
         error,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
+        frag7_int, frag8_int,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
         pred_int_sum_m0,
         prec_idx, ms_file_idx)
@@ -387,7 +392,7 @@ end
 
 Slim variant of `apply_main_scoring!` for tuning paths. Identical
 accumulation except it skips the MainSearch-only `matched_rank_mask`
-update and `frag1..6_int` captures (those fields don't exist on
+update and `frag1..8_int` captures (those fields don't exist on
 `TuningUnscoredPSM`).
 """
 @inline function apply_tuning_scoring!(unscored::Vector{TuningUnscoredPSM{Float32}},

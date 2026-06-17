@@ -17,6 +17,8 @@ end
         frag4_int = Float32[0, 0, 0],
         frag5_int = Float32[1, 1, 1],
         frag6_int = Float32[0, 2, 4],
+        frag7_int = Float32[3, 2, 1],
+        frag8_int = Float32[2, 3, 4],
         weight = Float32[1, 2, 3],
         irt_obs = Float32[0, 1, 2],
         ms1_m0_intensity = Float32[1, 2, 3],
@@ -24,12 +26,12 @@ end
 
     Pioneer._add_fragment_chromatogram_features!(psms)
 
-    rank_weights = _test_fragment_rank_weights(6)
-    expected_strength = rank_weights[1] + rank_weights[2] + rank_weights[6]
+    rank_weights = _test_fragment_rank_weights(8)
+    expected_strength = rank_weights[1] + rank_weights[2] + rank_weights[6] + rank_weights[8]
     expected_effective_n = expected_strength^2 /
-        (rank_weights[1]^2 + rank_weights[2]^2 + rank_weights[6]^2)
+        (rank_weights[1]^2 + rank_weights[2]^2 + rank_weights[6]^2 + rank_weights[8]^2)
 
-    @test psms.n_correlated_fragments == UInt8[3, 3, 3]
+    @test psms.n_correlated_fragments == UInt8[4, 4, 4]
     @test psms.frag_corr_strength ≈ fill(expected_strength, 3)
     @test psms.frag_corr_effective_n ≈ fill(expected_effective_n, 3)
 end
@@ -43,16 +45,17 @@ end
         frag4_int = Float32[0, 0, 0],
         frag5_int = Float32[1, 1, 1],
         frag6_int = Float32[0, 2, 4],
+        frag7_int = Float32[3, 2, 1],
+        frag8_int = Float32[2, 3, 4],
         weight = Float32[1, 2, 3],
         irt_obs = Float32[0, 1, 2],
         ms1_m0_intensity = Float32[1, 2, 3],
     )
     rank_table = fill(UInt16(99), 256)
-    rank_table[0x23 + 1] = UInt16(7)
+    rank_table[0xa3 + 1] = UInt16(7)
 
     Pioneer._add_fragment_chromatogram_features!(psms; bitvec_rank_table=rank_table)
 
-    @test psms.n_correlated_fragments == UInt8[3, 3, 3]
+    @test psms.n_correlated_fragments == UInt8[4, 4, 4]
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
 end
-
