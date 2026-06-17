@@ -34,3 +34,25 @@ end
     @test psms.frag_corr_effective_n ≈ fill(expected_effective_n, 3)
 end
 
+@testset "fragment correlated mask bitvec rank" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10],
+        frag1_int = Float32[1, 2, 3],
+        frag2_int = Float32[2, 4, 6],
+        frag3_int = Float32[3, 2, 1],
+        frag4_int = Float32[0, 0, 0],
+        frag5_int = Float32[1, 1, 1],
+        frag6_int = Float32[0, 2, 4],
+        weight = Float32[1, 2, 3],
+        irt_obs = Float32[0, 1, 2],
+        ms1_m0_intensity = Float32[1, 2, 3],
+    )
+    rank_table = fill(UInt16(99), 256)
+    rank_table[0x23 + 1] = UInt16(7)
+
+    Pioneer._add_fragment_chromatogram_features!(psms; bitvec_rank_table=rank_table)
+
+    @test psms.n_correlated_fragments == UInt8[3, 3, 3]
+    @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
+end
+

@@ -288,6 +288,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
 
     # BitVec pre-filter (256-entry Bool table per file, trained by BitVecCalibration)
     bitvec_filter::Dict{Int64, Vector{Bool}}
+    # Per-file bitmask-pattern rank by target/decoy excess. Index is
+    # Int(mask)+1, lower rank is better.
+    bitvec_excess_rank::Dict{Int64, Vector{UInt16}}
 
     # Reusable per-thread scratch buffers for searchFragmentIndexPartitionMajorHinted
     # (see FragIndexScratch in src/structs/Counter.jl). Lifted out of the per-call
@@ -325,6 +328,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0,  # Initialize library stats with defaults
             Dict{Int64, Vector{Bool}}(),  # Initialize bitvec_filter
+            Dict{Int64, Vector{UInt16}}(), # Initialize bitvec_excess_rank
             FragIndexScratch(n_threads),  # reusable frag-index scratch buffers
         )
     end
@@ -490,8 +494,10 @@ getPredIrt(s::SearchContext, prec_idx::UInt32) = getIrt(getPrecursors(getSpecLib
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
 getBitVecFilter(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_filter, ms_file_idx, nothing)
+getBitVecExcessRanks(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_excess_rank, ms_file_idx, nothing)
 getFragIndexScratch(s::SearchContext) = s.frag_index_scratch
 setBitVecFilter!(s::SearchContext, ms_file_idx::Int64, filter::Vector{Bool}) = (s.bitvec_filter[ms_file_idx] = filter)
+setBitVecExcessRanks!(s::SearchContext, ms_file_idx::Int64, ranks::Vector{UInt16}) = (s.bitvec_excess_rank[ms_file_idx] = ranks)
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)

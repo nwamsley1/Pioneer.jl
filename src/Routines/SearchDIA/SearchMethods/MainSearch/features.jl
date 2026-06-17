@@ -168,6 +168,7 @@ const PRESCORE_FEATURES = [
     # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
+    :n_correlated_fragments_bitvec_rank,
     :frag_corr_strength,
     :frag_corr_effective_n,
     :frag_corr_best_m0,
@@ -911,7 +912,7 @@ shared per-precursor group structure built once via `_build_precursor_groups`.
 `add_ms1_lookup_features!` to have already populated the :ms1_m0_intensity
 / :ms1_m1_intensity columns.
 """
-function add_chromatogram_features!(psms::DataFrame)
+function add_chromatogram_features!(psms::DataFrame; bitvec_rank_table = nothing)
     n = nrow(psms)
     n == 0 && return
     # Build precursor grouping (perm + starts/ends) once; reuse across both passes.
@@ -919,7 +920,8 @@ function add_chromatogram_features!(psms::DataFrame)
         _build_precursor_groups(psms.precursor_idx) :
         nothing
     t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
-    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms; groups=groups)
+    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(
+        psms; groups=groups, bitvec_rank_table=bitvec_rank_table)
     @debug_l1 "  chrom-feature passes (n_psms=$n): " *
                "groups=$(round(t_groups, digits=2))s  " *
                "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
@@ -1164,8 +1166,17 @@ end
     return strength, effective_n
 end
 
+@inline function _bitvec_pattern_rank(rank_table, mask::Integer)
+    rank_table === nothing && return UInt16(0)
+    length(rank_table) == 256 || throw(ArgumentError("bitvec rank table must have length 256"))
+    idx = Int(UInt16(mask) & 0x00ff) + 1
+    @inbounds rank = UInt16(rank_table[idx])
+    return rank
+end
+
 function _add_fragment_chromatogram_features!(psms::DataFrame;
-        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
+        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
+        bitvec_rank_table = nothing)
     n = nrow(psms)
     # Only the features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
     # are computed and written. Earlier prototypes emitted many more outputs
@@ -1177,6 +1188,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # sort + ~10 vector allocations per precursor.
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
+    psms[!, :n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
     psms[!, :frag_corr_strength]          = zeros(Float32, n)
     psms[!, :frag_corr_effective_n]       = zeros(Float32, n)
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
@@ -1285,10 +1297,15 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
             end
             n_corr_70 = UInt8(0)
+            corr_mask = UInt16(0)
             for r in 1:6
                 has_signal[r] || continue
-                if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
+                if c_fw[r] > 0.7f0
+                    n_corr_70 += UInt8(1)
+                    corr_mask |= UInt16(1) << (r - 1)
+                end
             end
+            corr_rank = _bitvec_pattern_rank(bitvec_rank_table, corr_mask)
             corr_strength, corr_effective_n = _positive_corr_summary(c_fw, rank_weights)
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
@@ -1325,6 +1342,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 i_orig = perm[i_start + k - 1]
                 psms.frag_apex_dispersion_irt[i_orig] = apex_disp
                 psms.n_correlated_fragments[i_orig]    = n_corr_70
+                psms.n_correlated_fragments_bitvec_rank[i_orig] = corr_rank
                 psms.frag_corr_strength[i_orig]        = corr_strength
                 psms.frag_corr_effective_n[i_orig]     = corr_effective_n
                 psms.frag_corr_best_m0[i_orig]         = c_best_m0

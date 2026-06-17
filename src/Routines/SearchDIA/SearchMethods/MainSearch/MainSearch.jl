@@ -274,7 +274,10 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor-grouped chromatogram features still run here.
-    t_ms1 = @elapsed add_chromatogram_features!(psms)
+    t_ms1 = @elapsed add_chromatogram_features!(
+        psms;
+        bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx)),
+    )
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
