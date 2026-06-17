@@ -65,6 +65,8 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_strength,
     :frag_corr_effective_n,
     :frag_corr_best_m0,
+    :n_frags_detected_union_bitvec_rank,
+    :n_frags_detected_intersection_bitvec_rank,
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,

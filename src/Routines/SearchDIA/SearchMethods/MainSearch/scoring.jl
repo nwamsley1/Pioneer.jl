@@ -434,6 +434,7 @@ function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
     lgbm_hp = SHARED_LGBM_HP,
+    bitvec_rank_table = nothing,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -478,7 +479,11 @@ function train_lgbm_and_select_best(
     end
 
     # Select best scan per precursor by LightGBM score
-    psms = select_best_per_precursor!(psms, :lgbm_score)
+    psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        bitvec_rank_table = bitvec_rank_table,
+    )
 
     # Extract scores for best PSMs
     scores = psms[!, :lgbm_score]
@@ -507,7 +512,8 @@ end
 
 function reapply_psm_classifier_and_select_best!(
     psms::DataFrame,
-    predictor,
+    predictor;
+    bitvec_rank_table = nothing,
 )
     t0 = time()
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
@@ -521,7 +527,11 @@ function reapply_psm_classifier_and_select_best!(
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    best_psms = select_best_per_precursor!(psms, :lgbm_score)
+    best_psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        bitvec_rank_table = bitvec_rank_table,
+    )
     scores = best_psms[!, :lgbm_score]
     t_best = time()
 
@@ -532,15 +542,32 @@ function reapply_psm_classifier_and_select_best!(
     return best_psms, Vector{Float32}(scores), timings
 end
 
+const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
+    :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+)
+
+@inline function _mainsearch_fragment_presence_mask(row::Int, frag_cols)
+    mask = UInt16(0)
+    bit = UInt16(1)
+    @inbounds for col in frag_cols
+        if Float32(col[row]) > 0f0
+            mask |= bit
+        end
+        bit <<= 1
+    end
+    return mask
+end
+
 """
-    select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
+    select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_rank_table=nothing) -> DataFrame
 
 Keeps one row per precursor_idx. Uses sortperm for contiguous group processing:
 per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥4 PSMs),
 otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
 weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` per precursor.
 """
-function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
+function select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_rank_table = nothing)
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
     has_irt = hasproperty(psms, :irt_obs)
@@ -549,6 +576,7 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
+    frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
     # Type-assert the Float16 scoring columns. Without `::Vector{Float16}`
     # the DataFrame accessor returns an abstract type, which forces dynamic
     # dispatch inside the sub-pass-1 hot loop and costs ~3.5s/file on
@@ -577,6 +605,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     # 2026-05-21: max_* / min_* / n_above_hm / num_scans / rt_fwhm outputs
     # removed (compute+write cost wasn't worth the ~+1% ID gain).
+    out_n_frags_detected_union_bitvec_rank = Vector{UInt16}()
+    out_n_frags_detected_intersection_bitvec_rank = Vector{UInt16}()
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -591,6 +621,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_smoothness !== nothing
         sizehint!(out_smoothness, n ÷ 10)
     end
+    sizehint!(out_n_frags_detected_union_bitvec_rank, n ÷ 10)
+    sizehint!(out_n_frags_detected_intersection_bitvec_rank, n ÷ 10)
 
     # Reusable buffers
     p75_buf = Vector{Float32}(undef, 128)
@@ -655,6 +687,23 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         end
 
         push!(keep_rows, best_row)
+
+        union_mask = UInt16(0)
+        intersection_mask = UInt16(0x00ff)
+        @inbounds for k in 0:(group_len - 1)
+            row = perm[group_start + k]
+            mask = _mainsearch_fragment_presence_mask(row, frag_cols)
+            union_mask |= mask
+            intersection_mask &= mask
+        end
+        push!(
+            out_n_frags_detected_union_bitvec_rank,
+            _bitvec_pattern_rank(bitvec_rank_table, union_mask),
+        )
+        push!(
+            out_n_frags_detected_intersection_bitvec_rank,
+            _bitvec_pattern_rank(bitvec_rank_table, intersection_mask),
+        )
 
         # --- Sub-pass 2: FWHM bounds. irt_fwhm is a LGBM feature;
         # n_above_hm + rt_fwhm are not LGBM features but are still consumed
@@ -762,6 +811,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_smoothness !== nothing
         result[!, :smoothness] = out_smoothness
     end
+    result[!, :n_frags_detected_union_bitvec_rank] = out_n_frags_detected_union_bitvec_rank
+    result[!, :n_frags_detected_intersection_bitvec_rank] = out_n_frags_detected_intersection_bitvec_rank
 
     return result
 end

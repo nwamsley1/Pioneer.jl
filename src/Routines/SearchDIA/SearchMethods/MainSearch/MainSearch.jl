@@ -274,16 +274,18 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor-grouped chromatogram features still run here.
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     t_ms1 = @elapsed add_chromatogram_features!(
         psms;
-        bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx)),
+        bitvec_rank_table = bitvec_rank_table,
     )
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
-    best_psms, scores, lgbm_timings, lgbm_predictor = train_lgbm_and_select_best(psms)
+    best_psms, scores, lgbm_timings, lgbm_predictor =
+        train_lgbm_and_select_best(psms; bitvec_rank_table = bitvec_rank_table)
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
@@ -299,7 +301,11 @@ function process_search_results!(
     )
     irt_refinement_result = refine_mainsearch_irt_predictions!(psms, best_psms, scores, irt_refinement)
     if irt_refinement_result.refined
-        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(psms, lgbm_predictor)
+        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
+            psms,
+            lgbm_predictor;
+            bitvec_rank_table = bitvec_rank_table,
+        )
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "$(length(irt_refinement_result.training_target_precursors)) training precursors; " *

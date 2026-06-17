@@ -59,3 +59,32 @@ end
     @test psms.n_correlated_fragments == UInt8[4, 4, 4]
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
 end
+
+@testset "best-per-precursor fragment union and intersection bitvec ranks" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 20],
+        lgbm_score = Float32[0.1, 0.9, 0.3, 0.4],
+        frag1_int = Float32[1, 0, 1, 0],
+        frag2_int = Float32[0, 2, 2, 0],
+        frag3_int = Float32[3, 3, 0, 4],
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+    )
+    rank_table = fill(UInt16(99), 256)
+    rank_table[0x07 + 1] = UInt16(11)
+    rank_table[0x00 + 1] = UInt16(22)
+    rank_table[0x04 + 1] = UInt16(33)
+
+    best = Pioneer.select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        bitvec_rank_table = rank_table,
+    )
+
+    @test best.precursor_idx == UInt32[10, 20]
+    @test best.n_frags_detected_union_bitvec_rank == UInt16[11, 33]
+    @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 33]
+end
