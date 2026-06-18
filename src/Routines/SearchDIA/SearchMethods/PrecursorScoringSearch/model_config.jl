@@ -53,7 +53,8 @@ const FLANKING_WINDOW_FEATURES = [
     :flanking_frag_corr_effective_n,
     :flanking_frag_corr_best_m0,
     :flanking_signal_support,
-    :flanking_core_n_scans,
+    :n_contiguous_scans,
+    :frag_apex_gt2x_flank_bitvec_rank,
 ]
 
 const ADVANCED_FEATURE_SET = [

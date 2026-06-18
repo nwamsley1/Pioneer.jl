@@ -702,7 +702,7 @@ function add_trace_and_fragment_features!(
     n_best = nrow(best_psms)
     out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)
     out_flanking_core_scan_max = Vector{UInt32}(undef, n_best)
-    out_flanking_core_n_scans = Vector{UInt16}(undef, n_best)
+    out_n_contiguous_scans = Vector{UInt16}(undef, n_best)
     out_flanking_core_ms1_m0_signal = Vector{Float32}(undef, n_best)
     out_flanking_core_frag_signal = Vector{Float32}(undef, n_best)
     out_union = Vector{UInt8}(undef, n_best)
@@ -736,7 +736,7 @@ function add_trace_and_fragment_features!(
         )
         out_flanking_core_scan_min[i] = flanking_core.scan_min
         out_flanking_core_scan_max[i] = flanking_core.scan_max
-        out_flanking_core_n_scans[i] = flanking_core.n_scans
+        out_n_contiguous_scans[i] = flanking_core.n_scans
 
         core_ms1_m0_signal = 0f0
         core_frag_signal = 0f0
@@ -763,7 +763,7 @@ function add_trace_and_fragment_features!(
 
     best_psms[!, :flanking_core_scan_min] = out_flanking_core_scan_min
     best_psms[!, :flanking_core_scan_max] = out_flanking_core_scan_max
-    best_psms[!, :flanking_core_n_scans] = out_flanking_core_n_scans
+    best_psms[!, :n_contiguous_scans] = out_n_contiguous_scans
     best_psms[!, :flanking_core_ms1_m0_signal] = out_flanking_core_ms1_m0_signal
     best_psms[!, :flanking_core_frag_signal] = out_flanking_core_frag_signal
     best_psms[!, :n_frags_detected_union] = out_union
