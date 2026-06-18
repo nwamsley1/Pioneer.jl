@@ -85,6 +85,8 @@ end
     )
 
     @test best.precursor_idx == UInt32[10, 20]
+    @test best.n_frags_detected_union == UInt8[3, 1]
+    @test best.n_frags_detected_intersection == UInt8[0, 1]
     @test best.n_frags_detected_union_bitvec_rank == UInt16[11, 33]
     @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 33]
 end

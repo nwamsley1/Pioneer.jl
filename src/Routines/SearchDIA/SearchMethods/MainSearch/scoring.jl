@@ -605,6 +605,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_r
     out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     # 2026-05-21: max_* / min_* / n_above_hm / num_scans / rt_fwhm outputs
     # removed (compute+write cost wasn't worth the ~+1% ID gain).
+    out_n_frags_detected_union = Vector{UInt8}()
+    out_n_frags_detected_intersection = Vector{UInt8}()
     out_n_frags_detected_union_bitvec_rank = Vector{UInt16}()
     out_n_frags_detected_intersection_bitvec_rank = Vector{UInt16}()
 
@@ -621,6 +623,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_r
     if out_smoothness !== nothing
         sizehint!(out_smoothness, n ÷ 10)
     end
+    sizehint!(out_n_frags_detected_union, n ÷ 10)
+    sizehint!(out_n_frags_detected_intersection, n ÷ 10)
     sizehint!(out_n_frags_detected_union_bitvec_rank, n ÷ 10)
     sizehint!(out_n_frags_detected_intersection_bitvec_rank, n ÷ 10)
 
@@ -696,6 +700,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_r
             union_mask |= mask
             intersection_mask &= mask
         end
+        push!(out_n_frags_detected_union, UInt8(count_ones(union_mask)))
+        push!(out_n_frags_detected_intersection, UInt8(count_ones(intersection_mask)))
         push!(
             out_n_frags_detected_union_bitvec_rank,
             _bitvec_pattern_rank(bitvec_rank_table, union_mask),
@@ -811,6 +817,8 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol; bitvec_r
     if out_smoothness !== nothing
         result[!, :smoothness] = out_smoothness
     end
+    result[!, :n_frags_detected_union] = out_n_frags_detected_union
+    result[!, :n_frags_detected_intersection] = out_n_frags_detected_intersection
     result[!, :n_frags_detected_union_bitvec_rank] = out_n_frags_detected_union_bitvec_rank
     result[!, :n_frags_detected_intersection_bitvec_rank] = out_n_frags_detected_intersection_bitvec_rank
 
