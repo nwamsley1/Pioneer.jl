@@ -285,7 +285,7 @@ function process_search_results!(
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
     best_psms, scores, lgbm_timings, lgbm_predictor =
-        train_lgbm_and_select_best(psms; bitvec_rank_table = bitvec_rank_table)
+        train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
@@ -303,8 +303,7 @@ function process_search_results!(
     if irt_refinement_result.refined
         best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
             psms,
-            lgbm_predictor;
-            bitvec_rank_table = bitvec_rank_table,
+            lgbm_predictor,
         )
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
@@ -370,6 +369,7 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
+    add_fragment_detection_features!(best_psms, psms; bitvec_rank_table = bitvec_rank_table)
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 

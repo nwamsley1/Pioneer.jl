@@ -60,33 +60,33 @@ end
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
 end
 
-@testset "best-per-precursor fragment union and intersection bitvec ranks" begin
+@testset "post-filter fragment union and intersection bitvec ranks" begin
     psms = DataFrame(
-        precursor_idx = UInt32[10, 10, 10, 20],
-        lgbm_score = Float32[0.1, 0.9, 0.3, 0.4],
-        frag1_int = Float32[1, 0, 1, 0],
-        frag2_int = Float32[0, 2, 2, 0],
-        frag3_int = Float32[3, 3, 0, 4],
-        frag4_int = zeros(Float32, 4),
-        frag5_int = zeros(Float32, 4),
-        frag6_int = zeros(Float32, 4),
-        frag7_int = zeros(Float32, 4),
-        frag8_int = zeros(Float32, 4),
+        precursor_idx = UInt32[10, 10, 10, 20, 30, 30],
+        lgbm_score = Float32[0.1, 0.9, 0.3, 0.4, 0.8, 0.2],
+        frag1_int = Float32[1, 0, 1, 0, 5, 0],
+        frag2_int = Float32[0, 2, 2, 0, 0, 0],
+        frag3_int = Float32[3, 3, 0, 4, 0, 0],
+        frag4_int = Float32[0, 0, 0, 0, 6, 7],
+        frag5_int = zeros(Float32, 6),
+        frag6_int = zeros(Float32, 6),
+        frag7_int = zeros(Float32, 6),
+        frag8_int = zeros(Float32, 6),
     )
     rank_table = fill(UInt16(99), 256)
     rank_table[0x07 + 1] = UInt16(11)
     rank_table[0x00 + 1] = UInt16(22)
     rank_table[0x04 + 1] = UInt16(33)
+    rank_table[0x09 + 1] = UInt16(44)
+    rank_table[0x08 + 1] = UInt16(55)
 
-    best = Pioneer.select_best_per_precursor!(
-        psms,
-        :lgbm_score;
-        bitvec_rank_table = rank_table,
-    )
+    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    deleteat!(best, 2)
+    Pioneer.add_fragment_detection_features!(best, psms; bitvec_rank_table = rank_table)
 
-    @test best.precursor_idx == UInt32[10, 20]
-    @test best.n_frags_detected_union == UInt8[3, 1]
+    @test best.precursor_idx == UInt32[10, 30]
+    @test best.n_frags_detected_union == UInt8[3, 2]
     @test best.n_frags_detected_intersection == UInt8[0, 1]
-    @test best.n_frags_detected_union_bitvec_rank == UInt16[11, 33]
-    @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 33]
+    @test best.n_frags_detected_union_bitvec_rank == UInt16[11, 44]
+    @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 55]
 end
