@@ -33,8 +33,11 @@ include("./UnitTests/test_fdr_utilities.jl")
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
+include("./UnitTests/test_fragment_isotope_trace_intensities.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")
 include("./UnitTests/test_feature_finiteness.jl")
+include("./UnitTests/test_bitvec_rank_features.jl")
+include("./UnitTests/test_fragment_correlation_summaries.jl")
 include("./UnitTests/test_chromatogram_integration_trace_order.jl")
 include("./UnitTests/test_chromatogram_integration_bounds.jl")
 include("./UnitTests/test_huber_tuning_global.jl")
@@ -78,6 +81,7 @@ include("./UnitTests/test_summarize_precursor.jl")
 # PrecursorScoringSearch
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
+include("./UnitTests/test_scoring_semisupervised.jl")
 
 # FileOperations pipeline
 include("./utils/FileOperations/pipeline/test_pipeline_filtering.jl")

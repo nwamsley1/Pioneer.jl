@@ -158,16 +158,19 @@ const PRESCORE_FEATURES = [
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
 
-    # Per-rank M0 fragment intensities (kept; used by chromatogram features)
-    # frag5_int, frag6_int dropped 2026-05-14 (Tier-5 drop_5to6) — 8-file Olsen
-    # +794 IDs / +29 PGs. Still captured per-scan for chromatogram-correlation features.
+    # Per-rank top-8 fragment trace intensities; each rank sums matched isotope
+    # peaks predicted at >=25% of the fragment's most abundant isotope.
     :frag1_int, :frag2_int, :frag3_int, :frag4_int,
+    :frag5_int, :frag6_int, :frag7_int, :frag8_int,
 
     # Fragment-chromatogram correlations (frag_w_corr family dropped; pairs dropped)
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13 — cross-dataset test
     # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
+    :n_correlated_fragments_bitvec_rank,
+    :frag_corr_strength,
+    :frag_corr_effective_n,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -568,7 +571,7 @@ end
 
 function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
     required = (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
-                :frag4_int, :frag5_int, :frag6_int)
+                :frag4_int, :frag5_int, :frag6_int, :frag7_int, :frag8_int)
     all(c -> hasproperty(psms, c), required) || return nothing
     return (
         psms[!, :ms1_m0_peak_frag_intensity_fraction]::Vector{Float32},
@@ -577,7 +580,8 @@ function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
         psms[!, :precursor_idx]::Vector{UInt32},
         prec_mzs,
         (psms[!, :frag1_int], psms[!, :frag2_int], psms[!, :frag3_int],
-         psms[!, :frag4_int], psms[!, :frag5_int], psms[!, :frag6_int]),
+         psms[!, :frag4_int], psms[!, :frag5_int], psms[!, :frag6_int],
+         psms[!, :frag7_int], psms[!, :frag8_int]),
     )
 end
 
@@ -878,7 +882,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
     n_runs = length(starts) - 1
     competition_inputs = _ms1_m0_peak_competition_inputs(psms, prec_mzs)
     if competition_inputs === nothing
-        @debug_l1 "add_ms1_lookup_features!: missing frag1_int..frag6_int, skipping M0 peak competition"
+        @debug_l1 "add_ms1_lookup_features!: missing frag1_int..frag8_int, skipping M0 peak competition"
     end
 
     parallel_foreach!(n_runs) do chunk
@@ -901,7 +905,7 @@ end
 
 Per-precursor chromatogram-feature passes (MS1 + MS2-fragment). Calls
 `_add_ms1_chromatogram_features!` (uses :ms1_m0_intensity, :ms1_m1_intensity)
-and `_add_fragment_chromatogram_features!` (uses :frag1..6_int) over the
+and `_add_fragment_chromatogram_features!` (uses :frag1..8_int) over the
 shared per-precursor group structure built once via `_build_precursor_groups`.
 
 **PRECONDITION**: requires psms to be sorted by :precursor_idx (the
@@ -909,7 +913,7 @@ shared per-precursor group structure built once via `_build_precursor_groups`.
 `add_ms1_lookup_features!` to have already populated the :ms1_m0_intensity
 / :ms1_m1_intensity columns.
 """
-function add_chromatogram_features!(psms::DataFrame)
+function add_chromatogram_features!(psms::DataFrame; bitvec_rank_table = nothing)
     n = nrow(psms)
     n == 0 && return
     # Build precursor grouping (perm + starts/ends) once; reuse across both passes.
@@ -917,7 +921,8 @@ function add_chromatogram_features!(psms::DataFrame)
         _build_precursor_groups(psms.precursor_idx) :
         nothing
     t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
-    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms; groups=groups)
+    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(
+        psms; groups=groups, bitvec_rank_table=bitvec_rank_table)
     @debug_l1 "  chrom-feature passes (n_psms=$n): " *
                "groups=$(round(t_groups, digits=2))s  " *
                "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
@@ -1025,7 +1030,7 @@ end
     _add_fragment_chromatogram_features!(psms)
 
 Per-precursor MS2 fragment chromatogram features. For each precursor, builds
-6 fragment chromatograms (`frag1_int .. frag6_int` indexed by MS2 scan, captured
+8 fragment chromatograms (`frag1_int .. frag8_int` indexed by MS2 scan, captured
 in `Score!` from `MainUnscoredPSM`) plus the deconv weight chromatogram, then
 computes:
 
@@ -1035,7 +1040,7 @@ computes:
 - `frag_corr_mean_pairwise`    Mean **Spearman** over all 15 pairs of (frag_i, frag_j) chromatograms (won the Pearson A/B; intensity-scale is not informative for frag-vs-frag)
 - `frag_corr_min_pairwise`     Min Pearson over the same pairs (catches single contaminated fragment)
 - `frag_corr_top3_weight`      Mean Pearson(rank-1..3 chrom, weight chrom)
-- `frag_apex_dispersion_irt`   Std-dev of arg-max iRT across the 6 fragments (real: tight; chimeric: wide)
+- `frag_apex_dispersion_irt`   Std-dev of arg-max iRT across the 8 fragments (real: tight; chimeric: wide)
 - `n_correlated_fragments`     Count of fragments with Pearson(frag, weight) > 0.7
 
 Validated 2026-05-10 to add ~+2,088 IDs at q≤.01 vs MS1-only baseline (Olsen
@@ -1134,11 +1139,48 @@ end
     d > 0 ? Float32(sxy/d) : 0f0
 end
 
+function _fragment_rank_weights(n_frags::Integer)
+    weights = Vector{Float32}(undef, n_frags)
+    sum_w = 0f0
+    @inbounds for r in 1:n_frags
+        w = 1f0 / sqrt(Float32(r))
+        weights[r] = w
+        sum_w += w
+    end
+    scale = sum_w > 0f0 ? Float32(n_frags) / sum_w : 0f0
+    @inbounds for r in 1:n_frags
+        weights[r] *= scale
+    end
+    return weights
+end
+
+@inline function _positive_corr_summary(corrs::Vector{Float32}, rank_weights::Vector{Float32})
+    strength = 0f0
+    sumsq = 0f0
+    @inbounds for i in eachindex(corrs)
+        pos = min(max(corrs[i], 0f0), 1f0)
+        weighted = rank_weights[i] * pos
+        strength += weighted
+        sumsq += weighted * weighted
+    end
+    effective_n = sumsq > 0f0 ? Float32((strength * strength) / sumsq) : 0f0
+    return strength, effective_n
+end
+
+@inline function _bitvec_pattern_rank(rank_table, mask::Integer)
+    rank_table === nothing && return UInt16(0)
+    length(rank_table) == 256 || throw(ArgumentError("bitvec rank table must have length 256"))
+    idx = Int(UInt16(mask) & 0x00ff) + 1
+    @inbounds rank = UInt16(rank_table[idx])
+    return rank
+end
+
 function _add_fragment_chromatogram_features!(psms::DataFrame;
-        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
+        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
+        bitvec_rank_table = nothing)
     n = nrow(psms)
-    # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
-    # are computed and written. Earlier versions emitted 15 more outputs
+    # Only the features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
+    # are computed and written. Earlier prototypes emitted many more outputs
     # (frag_corr_mean_pairwise — 15 Spearman per precursor; frag_corr_min_pairwise
     # — 15 Pearson; frag_corr_top1_top2/_top3/_weight, frag_corr_top3_weight,
     # frag_corr_top5_weight, n_correlated_fragments / _50, frag_corr_best_weight,
@@ -1147,6 +1189,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # sort + ~10 vector allocations per precursor.
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
+    psms[!, :n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
+    psms[!, :frag_corr_strength]          = zeros(Float32, n)
+    psms[!, :frag_corr_effective_n]       = zeros(Float32, n)
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     # :n_scans (per-precursor PSM count) — also a PRESCORE_FEATURES feature.
@@ -1157,7 +1202,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
-                                        :frag4_int, :frag5_int, :frag6_int, :weight, :irt_obs))
+                                        :frag4_int, :frag5_int, :frag6_int, :frag7_int,
+                                        :frag8_int, :weight, :irt_obs))
         @debug_l1 "_add_fragment_chromatogram_features!: missing required columns, skipping"
         return
     end
@@ -1166,22 +1212,24 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     weight = psms.weight
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
-              psms.frag4_int, psms.frag5_int, psms.frag6_int)
+              psms.frag4_int, psms.frag5_int, psms.frag6_int,
+              psms.frag7_int, psms.frag8_int)
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
     n_scans_col = psms.n_scans::Vector{UInt32}
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
-    # order within the run does not affect any of the 4 output features
+    # order within the run does not affect any of the output features
     # (correlations + apex stats are order-independent).
     perm, starts, ends = groups === nothing ?
         _build_precursor_groups(prec) :
         groups
     n_prec = length(starts)
+    rank_weights = _fragment_rank_weights(8)
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
-    # in the 5 output columns; all input arrays are read-only.
+    # in the output columns; all input arrays are read-only.
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
@@ -1197,9 +1245,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             end
             npts < 2 && continue
 
-            # Extract chromatograms for the 6 fragments + weight + iRT
-            F = Vector{Vector{Float32}}(undef, 6)
-            for r in 1:6
+            # Extract chromatograms for the 8 fragments + weight + iRT
+            F = Vector{Vector{Float32}}(undef, 8)
+            for r in 1:8
                 v = Vector{Float32}(undef, npts)
                 for k in 1:npts
                     v[k] = Float32(f[r][perm[i_start + k - 1]])
@@ -1214,11 +1262,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 IRT[k] = Float32(irt[i_orig])
             end
 
-            has_signal = ntuple(r -> maximum(F[r]) > 0, 6)
+            has_signal = ntuple(r -> maximum(F[r]) > 0, 8)
 
             # Apex dispersion across fragments with signal (also feeds delta_frame).
             apex_irts = Float32[]
-            for r in 1:6
+            for r in 1:8
                 has_signal[r] || continue
                 ai = 1; vmax = F[r][1]
                 for k in 2:npts; if F[r][k] > vmax; vmax = F[r][k]; ai = k; end; end
@@ -1247,25 +1295,31 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             # 2026-05-15: replaced n_correlated_fragments_90 (>0.9) — 0.7 threshold
             # was ~11× more informative in ScoringSearch Pass-1 LGBM gain on
             # 23-file Olsen.
-            c_fw = Vector{Float32}(undef, 6)
-            for r in 1:6
+            c_fw = Vector{Float32}(undef, 8)
+            for r in 1:8
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
             end
             n_corr_70 = UInt8(0)
-            for r in 1:6
+            corr_mask = UInt16(0)
+            for r in 1:8
                 has_signal[r] || continue
-                if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
+                if c_fw[r] > 0.7f0
+                    n_corr_70 += UInt8(1)
+                    corr_mask |= UInt16(1) << (r - 1)
+                end
             end
+            corr_rank = _bitvec_pattern_rank(bitvec_rank_table, corr_mask)
+            corr_strength, corr_effective_n = _positive_corr_summary(c_fw, rank_weights)
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
-            # to the other top-6 fragments. 30 Pearson calls per precursor.
+            # to the other top-8 fragments. 56 Pearson calls per precursor.
             # Anchors frag_corr_best_m0 = Pearson(best_frag, MS1 m0 chrom).
             best_r = 0
             best_consensus = typemin(Float32)
-            for r in 1:6
+            for r in 1:8
                 has_signal[r] || continue
                 consensus = 0f0; npairs = 0
-                for r2 in 1:6
+                for r2 in 1:8
                     (r2 == r || !has_signal[r2]) && continue
                     consensus += _frag_pcor(F[r], F[r2]); npairs += 1
                 end
@@ -1291,6 +1345,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 i_orig = perm[i_start + k - 1]
                 psms.frag_apex_dispersion_irt[i_orig] = apex_disp
                 psms.n_correlated_fragments[i_orig]    = n_corr_70
+                psms.n_correlated_fragments_bitvec_rank[i_orig] = corr_rank
+                psms.frag_corr_strength[i_orig]        = corr_strength
+                psms.frag_corr_effective_n[i_orig]     = corr_effective_n
                 psms.frag_corr_best_m0[i_orig]         = c_best_m0
                 psms.delta_frame_peak_center[i_orig]   = delta_frame
             end
