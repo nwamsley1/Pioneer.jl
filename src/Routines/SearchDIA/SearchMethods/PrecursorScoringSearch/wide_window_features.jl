@@ -28,58 +28,65 @@ const WIDE_WINDOW_CORR_THRESHOLD = 0.7f0
     return denom > 0f0 ? Float32(sum_xy / denom) : 0f0
 end
 
-@inline function _wide_window_zero_feature_values()
+@inline function _wide_candidate_signal_fraction(core_signal::Float32, flank_signal::Float32)
+    total_signal = core_signal + flank_signal
+    return total_signal > 0f0 ? Float32(core_signal / total_signal) : 0f0
+end
+
+@inline function _wide_window_zero_feature_values(
+    core_ms1_m0_signal::Float32 = 0f0,
+    core_frag_signal::Float32 = 0f0,
+)
+    core_ms1_m0_signal = max(core_ms1_m0_signal, 0f0)
+    core_frag_signal = max(core_frag_signal, 0f0)
     return (
-        wide_ms1_m0_candidate_fraction = 0f0,
-        wide_frag_candidate_fraction = 0f0,
-        wide_ms1_frag_sum_corr = 0f0,
-        wide_frag_corr_mean = 0f0,
-        wide_n_correlated_fragments = UInt8(0),
-        wide_n_correlated_fragments_bitvec_rank = UInt16(0),
-        wide_frag_corr_strength = 0f0,
-        wide_frag_corr_effective_n = 0f0,
-        wide_frag_corr_best_m0 = 0f0,
-        wide_signal_support = 0f0,
+        flanking_ms1_m0_candidate_fraction = _wide_candidate_signal_fraction(core_ms1_m0_signal, 0f0),
+        flanking_frag_candidate_fraction = _wide_candidate_signal_fraction(core_frag_signal, 0f0),
+        flanking_ms1_frag_sum_corr = 0f0,
+        flanking_frag_corr_mean = 0f0,
+        flanking_n_correlated_fragments = UInt8(0),
+        flanking_n_correlated_fragments_bitvec_rank = UInt16(0),
+        flanking_frag_corr_strength = 0f0,
+        flanking_frag_corr_effective_n = 0f0,
+        flanking_frag_corr_best_m0 = 0f0,
+        flanking_signal_support = 0f0,
     )
 end
 
-function _wide_window_feature_values(
-    ms1_m0::AbstractVector,
-    fragments::AbstractMatrix,
-    candidate_mask::AbstractVector{Bool};
+function _wide_flank_feature_values(
+    core_ms1_m0_signal::Float32,
+    core_frag_signal::Float32,
+    flank_ms1_m0::AbstractVector,
+    flank_fragments::AbstractMatrix;
     bitvec_rank_table = nothing,
 )
-    n_scans = length(ms1_m0)
-    n_scans == 0 && return _wide_window_zero_feature_values()
+    core_ms1_m0_signal = max(core_ms1_m0_signal, 0f0)
+    core_frag_signal = max(core_frag_signal, 0f0)
+    n_scans = length(flank_ms1_m0)
+    n_scans == 0 && return _wide_window_zero_feature_values(core_ms1_m0_signal, core_frag_signal)
 
-    n_frags = size(fragments, 2)
+    n_frags = size(flank_fragments, 2)
     frag_sum = zeros(Float32, n_scans)
-    ms1_total = 0f0
-    ms1_candidate = 0f0
-    frag_total = 0f0
-    frag_candidate = 0f0
+    ms1_flank_signal = 0f0
+    frag_flank_signal = 0f0
     signal_scans = 0
 
     @inbounds for scan_i in 1:n_scans
-        m0 = max(Float32(ms1_m0[scan_i]), 0f0)
+        m0 = max(Float32(flank_ms1_m0[scan_i]), 0f0)
         summed_frag = 0f0
         for frag_i in 1:n_frags
-            summed_frag += max(Float32(fragments[scan_i, frag_i]), 0f0)
+            summed_frag += max(Float32(flank_fragments[scan_i, frag_i]), 0f0)
         end
         frag_sum[scan_i] = summed_frag
-        ms1_total += m0
-        frag_total += summed_frag
-        if candidate_mask[scan_i]
-            ms1_candidate += m0
-            frag_candidate += summed_frag
-        end
+        ms1_flank_signal += m0
+        frag_flank_signal += summed_frag
         (m0 > 0f0 || summed_frag > 0f0) && (signal_scans += 1)
     end
 
     has_signal = falses(n_frags)
     @inbounds for frag_i in 1:n_frags
         for scan_i in 1:n_scans
-            if Float32(fragments[scan_i, frag_i]) > 0f0
+            if Float32(flank_fragments[scan_i, frag_i]) > 0f0
                 has_signal[frag_i] = true
                 break
             end
@@ -93,7 +100,7 @@ function _wide_window_feature_values(
         has_signal[frag_a] || continue
         for frag_b in (frag_a + 1):n_frags
             has_signal[frag_b] || continue
-            corr = _wide_window_pcor(view(fragments, :, frag_a), view(fragments, :, frag_b))
+            corr = _wide_window_pcor(view(flank_fragments, :, frag_a), view(flank_fragments, :, frag_b))
             pair_corr[frag_a, frag_b] = corr
             pair_corr[frag_b, frag_a] = corr
             pair_sum += corr
@@ -109,9 +116,9 @@ function _wide_window_feature_values(
     @inbounds for frag_i in 1:n_frags
         has_signal[frag_i] || continue
         for scan_i in 1:n_scans
-            other_sum[scan_i] = frag_sum[scan_i] - max(Float32(fragments[scan_i, frag_i]), 0f0)
+            other_sum[scan_i] = frag_sum[scan_i] - max(Float32(flank_fragments[scan_i, frag_i]), 0f0)
         end
-        corr = _wide_window_pcor(view(fragments, :, frag_i), other_sum)
+        corr = _wide_window_pcor(view(flank_fragments, :, frag_i), other_sum)
         positive_corr = min(max(corr, 0f0), 1f0)
         corr_strength += positive_corr
         corr_sumsq += positive_corr * positive_corr
@@ -140,16 +147,16 @@ function _wide_window_feature_values(
     end
 
     return (
-        wide_ms1_m0_candidate_fraction = ms1_total > 0f0 ? Float32(ms1_candidate / ms1_total) : 0f0,
-        wide_frag_candidate_fraction = frag_total > 0f0 ? Float32(frag_candidate / frag_total) : 0f0,
-        wide_ms1_frag_sum_corr = _wide_window_pcor(ms1_m0, frag_sum),
-        wide_frag_corr_mean = pair_count > 0 ? Float32(pair_sum / pair_count) : 0f0,
-        wide_n_correlated_fragments = n_correlated,
-        wide_n_correlated_fragments_bitvec_rank = _bitvec_pattern_rank(bitvec_rank_table, correlated_mask),
-        wide_frag_corr_strength = corr_strength,
-        wide_frag_corr_effective_n = corr_sumsq > 0f0 ? Float32((corr_strength * corr_strength) / corr_sumsq) : 0f0,
-        wide_frag_corr_best_m0 = best_frag > 0 ? _wide_window_pcor(view(fragments, :, best_frag), ms1_m0) : 0f0,
-        wide_signal_support = Float32(signal_scans / n_scans),
+        flanking_ms1_m0_candidate_fraction = _wide_candidate_signal_fraction(core_ms1_m0_signal, ms1_flank_signal),
+        flanking_frag_candidate_fraction = _wide_candidate_signal_fraction(core_frag_signal, frag_flank_signal),
+        flanking_ms1_frag_sum_corr = _wide_window_pcor(flank_ms1_m0, frag_sum),
+        flanking_frag_corr_mean = pair_count > 0 ? Float32(pair_sum / pair_count) : 0f0,
+        flanking_n_correlated_fragments = n_correlated,
+        flanking_n_correlated_fragments_bitvec_rank = _bitvec_pattern_rank(bitvec_rank_table, correlated_mask),
+        flanking_frag_corr_strength = corr_strength,
+        flanking_frag_corr_effective_n = corr_sumsq > 0f0 ? Float32((corr_strength * corr_strength) / corr_sumsq) : 0f0,
+        flanking_frag_corr_best_m0 = best_frag > 0 ? _wide_window_pcor(view(flank_fragments, :, best_frag), flank_ms1_m0) : 0f0,
+        flanking_signal_support = Float32(signal_scans / n_scans),
     )
 end
 
@@ -313,7 +320,7 @@ function _wide_window_index_spectra(spectra)
     )
 end
 
-function _wide_expanded_window_scans(candidate_scans::Vector{Int32}, scan_index)
+function _wide_flank_window_scans(candidate_scans::Vector{Int32}, scan_index)
     bounds = Dict{Tuple{Int32, Int32}, Tuple{Int32, Int32}}()
     @inbounds for scan in candidate_scans
         pos = scan_index.scan_to_window_pos[Int(scan)]
@@ -327,18 +334,19 @@ function _wide_expanded_window_scans(candidate_scans::Vector{Int32}, scan_index)
         end
     end
 
-    expanded = Int32[]
+    flank_scans = Int32[]
     for (key, (low_pos, high_pos)) in bounds
         scans = scan_index.window_scans[key]
-        first_pos = max(1, Int(low_pos) - WIDE_WINDOW_CYCLE_MARGIN)
-        last_pos = min(length(scans), Int(high_pos) + WIDE_WINDOW_CYCLE_MARGIN)
-        for pos in first_pos:last_pos
-            push!(expanded, scans[pos])
+        for pos in max(1, Int(low_pos) - WIDE_WINDOW_CYCLE_MARGIN):(Int(low_pos) - 1)
+            push!(flank_scans, scans[pos])
+        end
+        for pos in (Int(high_pos) + 1):min(length(scans), Int(high_pos) + WIDE_WINDOW_CYCLE_MARGIN)
+            push!(flank_scans, scans[pos])
         end
     end
-    sort!(expanded)
-    unique!(expanded)
-    return expanded
+    sort!(flank_scans)
+    unique!(flank_scans)
+    return flank_scans
 end
 
 function _wide_scans_between_bounds(scan_index, scan_min::Integer, scan_max::Integer)
@@ -363,8 +371,8 @@ function _wide_candidate_scans_from_core(tbl, group_start::Int, group_stop::Int,
             candidate_scans,
             _wide_scans_between_bounds(
                 scan_index,
-                tbl.wide_core_scan_min[row],
-                tbl.wide_core_scan_max[row],
+                tbl.flanking_core_scan_min[row],
+                tbl.flanking_core_scan_max[row],
             ),
         )
     end
@@ -407,8 +415,9 @@ end
 function _wide_collect_feature_values(
     spectra,
     scan_index,
-    expanded_scans::Vector{Int32},
-    candidate_scans::Vector{Int32},
+    flank_scans::Vector{Int32},
+    core_ms1_m0_signal::Float32,
+    core_frag_signal::Float32,
     prec_mz::Float32,
     fragment_idxs::Vector{UInt64},
     frag_list,
@@ -417,30 +426,21 @@ function _wide_collect_feature_values(
     frag_mem::AbstractMassErrorModel;
     bitvec_rank_table = nothing,
 )
-    n_scans = length(expanded_scans)
-    n_scans == 0 && return _wide_window_zero_feature_values()
+    n_scans = length(flank_scans)
+    n_scans == 0 && return _wide_window_zero_feature_values(core_ms1_m0_signal, core_frag_signal)
 
     ms1_m0 = zeros(Float32, n_scans)
     fragments = zeros(Float32, n_scans, 8)
-    candidate_mask = falses(n_scans)
     ms1_target = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
     scan_corrected_mz = Float32[]
     scan_obs_low = Float32[]
     scan_obs_high = Float32[]
-    candidate_pos = 1
-    n_candidate_scans = length(candidate_scans)
 
-    @inbounds for (expanded_pos, scan_i32) in pairs(expanded_scans)
-        while candidate_pos <= n_candidate_scans && candidate_scans[candidate_pos] < scan_i32
-            candidate_pos += 1
-        end
-        candidate_mask[expanded_pos] = candidate_pos <= n_candidate_scans &&
-            candidate_scans[candidate_pos] == scan_i32
-
+    @inbounds for (flank_pos, scan_i32) in pairs(flank_scans)
         scan_idx = Int(scan_i32)
         ms1_idx = scan_index.scan_to_ms1[scan_idx]
         if ms1_idx > 0
-            ms1_m0[expanded_pos] = _wide_peak_intensity(
+            ms1_m0[flank_pos] = _wide_peak_intensity(
                 getMzArray(spectra, Int(ms1_idx)),
                 getIntensityArray(spectra, Int(ms1_idx)),
                 ms1_target,
@@ -464,7 +464,7 @@ function _wide_collect_feature_values(
         for rank in 1:8
             frag_idx = fragment_idxs[rank]
             frag_idx > 0 || continue
-            fragments[expanded_pos, rank] = _wide_fragment_mono_peak_intensity(
+            fragments[flank_pos, rank] = _wide_fragment_mono_peak_intensity(
                 scan_corrected_mz,
                 scan_obs_low,
                 scan_obs_high,
@@ -476,26 +476,27 @@ function _wide_collect_feature_values(
         end
     end
 
-    return _wide_window_feature_values(
+    return _wide_flank_feature_values(
+        core_ms1_m0_signal,
+        core_frag_signal,
         ms1_m0,
-        fragments,
-        candidate_mask;
+        fragments;
         bitvec_rank_table = bitvec_rank_table,
     )
 end
 
 function _wide_scatter_features!(columns, group_start::Int, group_stop::Int, features)
     @inbounds for row in group_start:group_stop
-        columns.ms1_candidate[row] = features.wide_ms1_m0_candidate_fraction
-        columns.frag_candidate[row] = features.wide_frag_candidate_fraction
-        columns.ms1_frag_corr[row] = features.wide_ms1_frag_sum_corr
-        columns.frag_corr_mean[row] = features.wide_frag_corr_mean
-        columns.n_correlated[row] = features.wide_n_correlated_fragments
-        columns.n_correlated_rank[row] = features.wide_n_correlated_fragments_bitvec_rank
-        columns.corr_strength[row] = features.wide_frag_corr_strength
-        columns.corr_effective_n[row] = features.wide_frag_corr_effective_n
-        columns.best_m0[row] = features.wide_frag_corr_best_m0
-        columns.signal_support[row] = features.wide_signal_support
+        columns.ms1_candidate[row] = features.flanking_ms1_m0_candidate_fraction
+        columns.frag_candidate[row] = features.flanking_frag_candidate_fraction
+        columns.ms1_frag_corr[row] = features.flanking_ms1_frag_sum_corr
+        columns.frag_corr_mean[row] = features.flanking_frag_corr_mean
+        columns.n_correlated[row] = features.flanking_n_correlated_fragments
+        columns.n_correlated_rank[row] = features.flanking_n_correlated_fragments_bitvec_rank
+        columns.corr_strength[row] = features.flanking_frag_corr_strength
+        columns.corr_effective_n[row] = features.flanking_frag_corr_effective_n
+        columns.best_m0[row] = features.flanking_frag_corr_best_m0
+        columns.signal_support[row] = features.flanking_signal_support
     end
     return nothing
 end
@@ -512,16 +513,16 @@ function add_wide_window_features_to_fold_file!(
     tbl = DataFrame(Tables.columntable(Arrow.Table(fpath)); copycols = true)
     n = nrow(tbl)
 
-    tbl[!, :wide_ms1_m0_candidate_fraction] = zeros(Float32, n)
-    tbl[!, :wide_frag_candidate_fraction] = zeros(Float32, n)
-    tbl[!, :wide_ms1_frag_sum_corr] = zeros(Float32, n)
-    tbl[!, :wide_frag_corr_mean] = zeros(Float32, n)
-    tbl[!, :wide_n_correlated_fragments] = zeros(UInt8, n)
-    tbl[!, :wide_n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
-    tbl[!, :wide_frag_corr_strength] = zeros(Float32, n)
-    tbl[!, :wide_frag_corr_effective_n] = zeros(Float32, n)
-    tbl[!, :wide_frag_corr_best_m0] = zeros(Float32, n)
-    tbl[!, :wide_signal_support] = zeros(Float32, n)
+    tbl[!, :flanking_ms1_m0_candidate_fraction] = zeros(Float32, n)
+    tbl[!, :flanking_frag_candidate_fraction] = zeros(Float32, n)
+    tbl[!, :flanking_ms1_frag_sum_corr] = zeros(Float32, n)
+    tbl[!, :flanking_frag_corr_mean] = zeros(Float32, n)
+    tbl[!, :flanking_n_correlated_fragments] = zeros(UInt8, n)
+    tbl[!, :flanking_n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
+    tbl[!, :flanking_frag_corr_strength] = zeros(Float32, n)
+    tbl[!, :flanking_frag_corr_effective_n] = zeros(Float32, n)
+    tbl[!, :flanking_frag_corr_best_m0] = zeros(Float32, n)
+    tbl[!, :flanking_signal_support] = zeros(Float32, n)
 
     if n == 0
         writeArrow(fpath, tbl)
@@ -538,16 +539,16 @@ function add_wide_window_features_to_fold_file!(
     prec_charges = getCharge(precursors)
     frag_list = getFragments(frag_lookup)
     columns = (
-        ms1_candidate = tbl[!, :wide_ms1_m0_candidate_fraction],
-        frag_candidate = tbl[!, :wide_frag_candidate_fraction],
-        ms1_frag_corr = tbl[!, :wide_ms1_frag_sum_corr],
-        frag_corr_mean = tbl[!, :wide_frag_corr_mean],
-        n_correlated = tbl[!, :wide_n_correlated_fragments],
-        n_correlated_rank = tbl[!, :wide_n_correlated_fragments_bitvec_rank],
-        corr_strength = tbl[!, :wide_frag_corr_strength],
-        corr_effective_n = tbl[!, :wide_frag_corr_effective_n],
-        best_m0 = tbl[!, :wide_frag_corr_best_m0],
-        signal_support = tbl[!, :wide_signal_support],
+        ms1_candidate = tbl[!, :flanking_ms1_m0_candidate_fraction],
+        frag_candidate = tbl[!, :flanking_frag_candidate_fraction],
+        ms1_frag_corr = tbl[!, :flanking_ms1_frag_sum_corr],
+        frag_corr_mean = tbl[!, :flanking_frag_corr_mean],
+        n_correlated = tbl[!, :flanking_n_correlated_fragments],
+        n_correlated_rank = tbl[!, :flanking_n_correlated_fragments_bitvec_rank],
+        corr_strength = tbl[!, :flanking_frag_corr_strength],
+        corr_effective_n = tbl[!, :flanking_frag_corr_effective_n],
+        best_m0 = tbl[!, :flanking_frag_corr_best_m0],
+        signal_support = tbl[!, :flanking_signal_support],
     )
 
     row = 1
@@ -560,9 +561,16 @@ function add_wide_window_features_to_fold_file!(
         group_stop = row - 1
 
         candidate_scans = _wide_candidate_scans_from_core(tbl, group_start, group_stop, scan_index)
-        expanded_scans = _wide_expanded_window_scans(candidate_scans, scan_index)
-        if isempty(expanded_scans)
-            _wide_scatter_features!(columns, group_start, group_stop, _wide_window_zero_feature_values())
+        flank_scans = _wide_flank_window_scans(candidate_scans, scan_index)
+        core_ms1_m0_signal = Float32(tbl.flanking_core_ms1_m0_signal[group_start])
+        core_frag_signal = Float32(tbl.flanking_core_frag_signal[group_start])
+        if isempty(flank_scans)
+            _wide_scatter_features!(
+                columns,
+                group_start,
+                group_stop,
+                _wide_window_zero_feature_values(core_ms1_m0_signal, core_frag_signal),
+            )
             continue
         end
 
@@ -579,8 +587,9 @@ function add_wide_window_features_to_fold_file!(
         features = _wide_collect_feature_values(
             spectra,
             scan_index,
-            expanded_scans,
-            candidate_scans,
+            flank_scans,
+            core_ms1_m0_signal,
+            core_frag_signal,
             prec_mz,
             fragment_idxs,
             frag_list,
@@ -592,6 +601,7 @@ function add_wide_window_features_to_fold_file!(
         _wide_scatter_features!(columns, group_start, group_stop, features)
     end
 
+    select!(tbl, Not([:flanking_core_ms1_m0_signal, :flanking_core_frag_signal]))
     writeArrow(fpath, tbl)
     return n
 end
@@ -628,7 +638,7 @@ function add_wide_window_features_to_fold_files!(
         end
     end
 
-    @debug_l1 "Wide-window cross-run features: added $(length(WIDE_WINDOW_FEATURES)) features " *
+    @debug_l1 "Flanking-window cross-run features: added $(length(FLANKING_WINDOW_FEATURES)) features " *
               "to $n_files fold files ($n_rows rows)"
     return nothing
 end

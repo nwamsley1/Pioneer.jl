@@ -589,7 +589,7 @@ const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
     :frag5_int, :frag6_int, :frag7_int, :frag8_int,
 )
 
-function _mainsearch_wide_core_bounds!(
+function _mainsearch_flanking_core_bounds!(
     order::Vector{Int},
     group_start::Int,
     group_stop::Int,
@@ -676,6 +676,14 @@ end
     return mask
 end
 
+@inline function _mainsearch_fragment_intensity_sum(row::Int, frag_cols)
+    total = 0f0
+    @inbounds for col in frag_cols
+        total += max(Float32(col[row]), 0f0)
+    end
+    return total
+end
+
 function add_trace_and_fragment_features!(
     best_psms::DataFrame,
     psms::DataFrame,
@@ -688,18 +696,21 @@ function add_trace_and_fragment_features!(
     scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
     cycle_idxs = psms[!, :cycle_idx]
     scores = psms[!, :lgbm_score]::Vector{Float32}
+    ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
     frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
 
     n_best = nrow(best_psms)
-    out_wide_core_scan_min = Vector{UInt32}(undef, n_best)
-    out_wide_core_scan_max = Vector{UInt32}(undef, n_best)
-    out_wide_core_n_scans = Vector{UInt16}(undef, n_best)
+    out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)
+    out_flanking_core_scan_max = Vector{UInt32}(undef, n_best)
+    out_flanking_core_n_scans = Vector{UInt16}(undef, n_best)
+    out_flanking_core_ms1_m0_signal = Vector{Float32}(undef, n_best)
+    out_flanking_core_frag_signal = Vector{Float32}(undef, n_best)
     out_union = Vector{UInt8}(undef, n_best)
     out_intersection = Vector{UInt8}(undef, n_best)
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
 
-    wide_core_order = Int[]
+    flanking_core_order = Int[]
 
     row = 1
     n = nrow(psms)
@@ -714,8 +725,8 @@ function add_trace_and_fragment_features!(
         end
         group_stop = row - 1
 
-        wide_core = _mainsearch_wide_core_bounds!(
-            wide_core_order,
+        flanking_core = _mainsearch_flanking_core_bounds!(
+            flanking_core_order,
             group_start,
             group_stop,
             scan_idxs,
@@ -723,10 +734,12 @@ function add_trace_and_fragment_features!(
             scores,
             pass_mask,
         )
-        out_wide_core_scan_min[i] = wide_core.scan_min
-        out_wide_core_scan_max[i] = wide_core.scan_max
-        out_wide_core_n_scans[i] = wide_core.n_scans
+        out_flanking_core_scan_min[i] = flanking_core.scan_min
+        out_flanking_core_scan_max[i] = flanking_core.scan_max
+        out_flanking_core_n_scans[i] = flanking_core.n_scans
 
+        core_ms1_m0_signal = 0f0
+        core_frag_signal = 0f0
         union_mask = UInt16(0)
         intersection_mask = UInt16(0x00ff)
 
@@ -734,17 +747,25 @@ function add_trace_and_fragment_features!(
             mask = _mainsearch_fragment_presence_mask(group_row, frag_cols)
             union_mask |= mask
             intersection_mask &= mask
+            if flanking_core.scan_min <= scan_idxs[group_row] <= flanking_core.scan_max
+                core_ms1_m0_signal += max(ms1_m0_intensities[group_row], 0f0)
+                core_frag_signal += _mainsearch_fragment_intensity_sum(group_row, frag_cols)
+            end
         end
 
+        out_flanking_core_ms1_m0_signal[i] = core_ms1_m0_signal
+        out_flanking_core_frag_signal[i] = core_frag_signal
         out_union[i] = UInt8(count_ones(union_mask))
         out_intersection[i] = UInt8(count_ones(intersection_mask))
         out_union_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, union_mask)
         out_intersection_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, intersection_mask)
     end
 
-    best_psms[!, :wide_core_scan_min] = out_wide_core_scan_min
-    best_psms[!, :wide_core_scan_max] = out_wide_core_scan_max
-    best_psms[!, :wide_core_n_scans] = out_wide_core_n_scans
+    best_psms[!, :flanking_core_scan_min] = out_flanking_core_scan_min
+    best_psms[!, :flanking_core_scan_max] = out_flanking_core_scan_max
+    best_psms[!, :flanking_core_n_scans] = out_flanking_core_n_scans
+    best_psms[!, :flanking_core_ms1_m0_signal] = out_flanking_core_ms1_m0_signal
+    best_psms[!, :flanking_core_frag_signal] = out_flanking_core_frag_signal
     best_psms[!, :n_frags_detected_union] = out_union
     best_psms[!, :n_frags_detected_intersection] = out_intersection
     best_psms[!, :n_frags_detected_union_bitvec_rank] = out_union_rank
