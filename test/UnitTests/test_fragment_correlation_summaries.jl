@@ -83,10 +83,6 @@ end
     rank_table[0x04 + 1] = UInt16(33)
     rank_table[0x09 + 1] = UInt16(44)
     rank_table[0x08 + 1] = UInt16(55)
-    prec_charge = fill(UInt8(1), 30)
-    prec_mz = fill(500f0, 30)
-    center_mz = Union{Missing, Float32}[500.5f0 for _ in 1:6]
-    isolation_width_mz = Union{Missing, Float32}[2.0f0 for _ in 1:6]
 
     best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
     deleteat!(best, 2)
@@ -95,10 +91,6 @@ end
         psms,
         falses(nrow(psms));
         bitvec_rank_table = rank_table,
-        prec_charge = prec_charge,
-        prec_mz = prec_mz,
-        centerMz = center_mz,
-        isolationWidthMz = isolation_width_mz,
     )
 
     @test best.precursor_idx == UInt32[10, 30]
@@ -108,29 +100,13 @@ end
     @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 55]
 end
 
-@testset "sorted sparse trace correlation matches zero-filled alignment" begin
-    cycles_a = UInt32[1, 3, 5]
-    values_a = Float32[1, 3, 5]
-    cycles_b = UInt32[2, 3, 4]
-    values_b = Float32[2, 3, 4]
-
-    aligned_a = Float32[1, 0, 3, 0, 5]
-    aligned_b = Float32[0, 2, 3, 4, 0]
-    mean_a = sum(aligned_a) / Float32(length(aligned_a))
-    mean_b = sum(aligned_b) / Float32(length(aligned_b))
-    delta_a = aligned_a .- mean_a
-    delta_b = aligned_b .- mean_b
-    expected = sum(delta_a .* delta_b) / sqrt(sum(delta_a .* delta_a) * sum(delta_b .* delta_b))
-
-    @test Pioneer._trace_aligned_corr_sorted(
-        cycles_a,
-        values_a,
-        cycles_b,
-        values_b,
-    ) ≈ expected
-end
-
-@testset "other isotope trace agreement summaries" begin
+@testset "trace feature pass skips slow other-trace summaries" begin
+    other_trace_features = (
+        :n_scans_other_traces,
+        :trace_other_weight_corr,
+        :trace_other_frag_sum_corr,
+        :trace_other_apex_delta_irt,
+    )
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
         scan_idx = UInt32[101, 102, 103, 104],
@@ -148,16 +124,6 @@ end
         frag7_int = zeros(Float32, 4),
         frag8_int = zeros(Float32, 4),
     )
-    prec_charge = fill(UInt8(1), 10)
-    prec_mz = fill(0f0, 10)
-    prec_mz[10] = 500f0
-    center_mz = Vector{Union{Missing, Float32}}(missing, 104)
-    isolation_width_mz = Vector{Union{Missing, Float32}}(missing, 104)
-    center_mz[101] = 500.5f0
-    center_mz[102] = 500.5f0
-    center_mz[103] = 502.0f0
-    center_mz[104] = 502.0f0
-    isolation_width_mz[101:104] .= 2.0f0
     rank_table = fill(UInt16(99), 256)
     rank_table[0x01 + 1] = UInt16(8)
 
@@ -167,17 +133,11 @@ end
         psms,
         trues(nrow(psms));
         bitvec_rank_table = rank_table,
-        prec_charge = prec_charge,
-        prec_mz = prec_mz,
-        centerMz = center_mz,
-        isolationWidthMz = isolation_width_mz,
     )
 
     @test best.precursor_idx == UInt32[10]
-    @test best.n_scans_other_traces == UInt32[2]
-    @test best.trace_other_weight_corr ≈ Float32[1.0]
-    @test best.trace_other_frag_sum_corr ≈ Float32[1.0]
-    @test best.trace_other_apex_delta_irt ≈ Float32[0.2]
+    @test all(feature -> !(feature in Pioneer.ADVANCED_FEATURE_SET), other_trace_features)
+    @test all(feature -> !hasproperty(best, feature), other_trace_features)
     @test best.n_frags_detected_union == UInt8[1]
     @test best.n_frags_detected_intersection == UInt8[1]
     @test best.n_frags_detected_union_bitvec_rank == UInt16[8]

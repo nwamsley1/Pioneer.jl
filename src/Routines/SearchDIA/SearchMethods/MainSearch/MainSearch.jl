@@ -378,10 +378,6 @@ function process_search_results!(
         psms,
         trace_pass_mask;
         bitvec_rank_table = bitvec_rank_table,
-        prec_charge = getCharge(precursors),
-        prec_mz = getMz(precursors),
-        centerMz = getCenterMzs(spectra),
-        isolationWidthMz = getIsolationWidthMzs(spectra),
     )
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()

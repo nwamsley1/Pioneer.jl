@@ -42,6 +42,20 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # and :irt_fwhm that exist on best-per-precursor rows but not per-scan
 # rows). Lists kept separate due to load-order constraint in
 # importScripts.jl — PrecursorScoringSearch loads before MainSearch.
+const WIDE_WINDOW_FEATURES = [
+    :wide_ms1_m0_candidate_fraction,
+    :wide_frag_candidate_fraction,
+    :wide_ms1_frag_sum_corr,
+    :wide_frag_corr_mean,
+    :wide_n_correlated_fragments,
+    :wide_n_correlated_fragments_bitvec_rank,
+    :wide_frag_corr_strength,
+    :wide_frag_corr_effective_n,
+    :wide_frag_corr_best_m0,
+    :wide_signal_support,
+    :wide_core_n_scans,
+]
+
 const ADVANCED_FEATURE_SET = [
     # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
@@ -70,10 +84,7 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_union_bitvec_rank,
     :n_frags_detected_intersection_bitvec_rank,
     :precursor_fraction_transmitted,
-    :n_scans_other_traces,
-    :trace_other_weight_corr,
-    :trace_other_frag_sum_corr,
-    :trace_other_apex_delta_irt,
+    WIDE_WINDOW_FEATURES...,
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
