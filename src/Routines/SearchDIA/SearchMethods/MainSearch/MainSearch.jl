@@ -316,28 +316,6 @@ function process_search_results!(
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
 
-    t_trace = @elapsed begin
-        get_isotopes_captured!(
-            psms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            psms[!, :scan_idx],
-            getCharge(precursors),
-            getMz(precursors),
-            getSulfurCount(precursors),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-        trace_pass_mask = _mainsearch_pep_pass_mask(
-            psms[!, :lgbm_score],
-            psms[!, :target],
-        )
-        add_trace_other_features!(
-            best_psms,
-            psms,
-            trace_pass_mask,
-        )
-    end
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
 
@@ -377,10 +355,34 @@ function process_search_results!(
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
     t_recal = time()
 
+    trace_pass_mask = _mainsearch_pep_pass_mask(
+        psms[!, :lgbm_score],
+        psms[!, :target],
+    )
+    add_precursor_fraction_transmitted!(
+        best_psms,
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        getCharge(precursors),
+        getMz(precursors),
+        getSulfurCount(precursors),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra),
+    )
+
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
-    add_fragment_detection_features!(best_psms, psms; bitvec_rank_table = bitvec_rank_table)
+    add_trace_and_fragment_features!(
+        best_psms,
+        psms,
+        trace_pass_mask;
+        bitvec_rank_table = bitvec_rank_table,
+        prec_charge = getCharge(precursors),
+        prec_mz = getMz(precursors),
+        centerMz = getCenterMzs(spectra),
+        isolationWidthMz = getIsolationWidthMzs(spectra),
+    )
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 
@@ -404,7 +406,7 @@ function process_search_results!(
     # it distinct from the recal-duration we compute below.
     t_recal_end = t_recal
     t_total = t_write - t_start
-    dur_features  = t_prepare + t_competition + t_apex + t_ms1 + t_trace
+    dur_features  = t_prepare + t_competition + t_apex + t_ms1
     dur_lgbm      = t_lgbm_end - t_lgbm_start   # train_cv + best-per-precursor
     dur_pep       = t_pep_end - t_pep_start
     dur_recal     = t_recal_end - t_recal_start
@@ -416,7 +418,7 @@ function process_search_results!(
     r = s -> round(s, digits=2)
     @debug_l1 "  MainSearch process_search_results! (file_idx=$ms_file_idx, $file_name): " *
                "$n_total_psms PSMs → $(nrow(best_psms)) precursors  total=$(r(t_total))s\n" *
-               "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s trace=$(r(t_trace))s]\n" *
+               "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s]\n" *
                "    lgbm=$(r(dur_lgbm))s [train_cv=$(r(lgbm_timings.train_cv))s best_per_prec=$(r(lgbm_timings.best))s]  " *
                "pep_filter=$(r(dur_pep))s\n" *
                "    recal=$(r(dur_recal))s  phase2=$(r(dur_phase2))s  write=$(r(dur_write))s  " *

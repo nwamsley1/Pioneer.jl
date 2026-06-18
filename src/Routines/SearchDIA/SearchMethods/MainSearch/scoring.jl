@@ -550,79 +550,70 @@ end
 const TRACE_OTHER_CORR_SENTINEL = -1.0f0
 const TRACE_OTHER_APEX_DELTA_SENTINEL = 100.0f0
 
-@inline function _trace_push_cycle_sum!(
-    cycles::Vector{UInt32},
-    values::Vector{Float32},
-    cycle::UInt32,
-    value::Float32,
-)
-    @inbounds for i in eachindex(cycles)
-        if cycles[i] == cycle
-            values[i] += value
-            return nothing
-        end
-    end
-    push!(cycles, cycle)
-    push!(values, value)
-    return nothing
-end
-
-@inline function _trace_value_at(cycles::Vector{UInt32}, values::Vector{Float32}, cycle::UInt32)
-    @inbounds for i in eachindex(cycles)
-        cycles[i] == cycle && return values[i]
-    end
-    return 0f0
-end
-
-@inline function _trace_add_union_cycle!(union_cycles::Vector{UInt32}, cycle::UInt32)
-    @inbounds for c in union_cycles
-        c == cycle && return nothing
-    end
-    push!(union_cycles, cycle)
-    return nothing
-end
-
-function _trace_aligned_corr!(
-    union_cycles::Vector{UInt32},
+function _trace_aligned_corr_sorted(
     cycles_a::Vector{UInt32},
     values_a::Vector{Float32},
     cycles_b::Vector{UInt32},
     values_b::Vector{Float32},
 )
-    empty!(union_cycles)
-    sizehint!(union_cycles, length(cycles_a) + length(cycles_b))
-    @inbounds for c in cycles_a
-        _trace_add_union_cycle!(union_cycles, c)
-    end
-    @inbounds for c in cycles_b
-        _trace_add_union_cycle!(union_cycles, c)
-    end
-
-    n = length(union_cycles)
-    n < 2 && return 0f0
-
+    n_cycles_a = length(cycles_a)
+    n_cycles_b = length(cycles_b)
+    n_aligned_cycles = 0
     mean_a = 0f0
     mean_b = 0f0
-    @inbounds for cycle in union_cycles
-        mean_a += _trace_value_at(cycles_a, values_a, cycle)
-        mean_b += _trace_value_at(cycles_b, values_b, cycle)
-    end
-    inv_n = 1f0 / Float32(n)
-    mean_a *= inv_n
-    mean_b *= inv_n
 
-    ss_a = 0f0
-    ss_b = 0f0
-    ss_ab = 0f0
-    @inbounds for cycle in union_cycles
-        da = _trace_value_at(cycles_a, values_a, cycle) - mean_a
-        db = _trace_value_at(cycles_b, values_b, cycle) - mean_b
-        ss_a += da * da
-        ss_b += db * db
-        ss_ab += da * db
+    index_a = 1
+    index_b = 1
+    @inbounds while index_a <= n_cycles_a || index_b <= n_cycles_b
+        if index_b > n_cycles_b || (index_a <= n_cycles_a && cycles_a[index_a] < cycles_b[index_b])
+            mean_a += values_a[index_a]
+            index_a += 1
+        elseif index_a > n_cycles_a || cycles_b[index_b] < cycles_a[index_a]
+            mean_b += values_b[index_b]
+            index_b += 1
+        else
+            mean_a += values_a[index_a]
+            mean_b += values_b[index_b]
+            index_a += 1
+            index_b += 1
+        end
+        n_aligned_cycles += 1
     end
-    denom = sqrt(ss_a * ss_b)
-    return denom > 0f0 ? Float32(ss_ab / denom) : 0f0
+
+    n_aligned_cycles < 2 && return 0f0
+    inv_aligned_cycles = 1f0 / Float32(n_aligned_cycles)
+    mean_a *= inv_aligned_cycles
+    mean_b *= inv_aligned_cycles
+
+    sum_sq_a = 0f0
+    sum_sq_b = 0f0
+    sum_cross = 0f0
+    index_a = 1
+    index_b = 1
+    @inbounds while index_a <= n_cycles_a || index_b <= n_cycles_b
+        value_a = 0f0
+        value_b = 0f0
+        if index_b > n_cycles_b || (index_a <= n_cycles_a && cycles_a[index_a] < cycles_b[index_b])
+            value_a = values_a[index_a]
+            index_a += 1
+        elseif index_a > n_cycles_a || cycles_b[index_b] < cycles_a[index_a]
+            value_b = values_b[index_b]
+            index_b += 1
+        else
+            value_a = values_a[index_a]
+            value_b = values_b[index_b]
+            index_a += 1
+            index_b += 1
+        end
+        delta_a = value_a - mean_a
+        delta_b = value_b - mean_b
+        sum_sq_a += delta_a * delta_a
+        sum_sq_b += delta_b * delta_b
+        sum_cross += delta_a * delta_b
+    end
+
+    denom = sqrt(sum_sq_a * sum_sq_b)
+    return denom > 0f0 ? Float32(sum_cross / denom) : 0f0
 end
 
 @inline function _trace_frag_sum(row::Int, frag_cols)
@@ -633,224 +624,155 @@ end
     return s
 end
 
-function _mainsearch_trace_other_agreement(
-    group_start::Int,
-    group_stop::Int,
-    best_row::Int,
-    pass_mask::AbstractVector{Bool},
-    isotope_traces::Vector{Tuple{Int8, Int8}},
-    cycle_idxs,
-    weights::Vector{Float32},
-    irt_obs::Vector{Float32},
-    frag_cols,
-    selected_weight_cycles::Vector{UInt32},
-    selected_weight_values::Vector{Float32},
-    selected_frag_cycles::Vector{UInt32},
-    selected_frag_values::Vector{Float32},
-    seen_other_traces::Vector{Tuple{Int8, Int8}},
-    other_weight_cycles::Vector{UInt32},
-    other_weight_values::Vector{Float32},
-    other_frag_cycles::Vector{UInt32},
-    other_frag_values::Vector{Float32},
-    union_cycles::Vector{UInt32},
+@inline function _trace_push_cycle_pair_sum!(
+    cycles::Vector{UInt32},
+    values_a::Vector{Float32},
+    values_b::Vector{Float32},
+    cycle::UInt32,
+    value_a::Float32,
+    value_b::Float32,
 )
-    selected_trace = isotope_traces[best_row]
-    empty!(selected_weight_cycles)
-    empty!(selected_weight_values)
-    empty!(selected_frag_cycles)
-    empty!(selected_frag_values)
-    empty!(seen_other_traces)
-    selected_apex_weight = typemin(Float32)
-    selected_apex_irt = NaN32
-
-    group_len = group_stop - group_start + 1
-    sizehint!(selected_weight_cycles, group_len)
-    sizehint!(selected_weight_values, group_len)
-    sizehint!(selected_frag_cycles, group_len)
-    sizehint!(selected_frag_values, group_len)
-
-    @inbounds for row in group_start:group_stop
-        pass_mask[row] || continue
-        trace = isotope_traces[row]
-        if trace == selected_trace
-            cycle = UInt32(cycle_idxs[row])
-            w = weights[row]
-            _trace_push_cycle_sum!(selected_weight_cycles, selected_weight_values, cycle, w)
-            _trace_push_cycle_sum!(selected_frag_cycles, selected_frag_values, cycle, _trace_frag_sum(row, frag_cols))
-            if w > selected_apex_weight
-                selected_apex_weight = w
-                selected_apex_irt = irt_obs[row]
-            end
-        elseif !(trace in seen_other_traces)
-            push!(seen_other_traces, trace)
-        end
+    len = length(cycles)
+    if len == 0 || cycle > cycles[end]
+        push!(cycles, cycle)
+        push!(values_a, value_a)
+        push!(values_b, value_b)
+        return nothing
+    elseif cycle == cycles[end]
+        values_a[end] += value_a
+        values_b[end] += value_b
+        return nothing
     end
 
-    if isempty(seen_other_traces) || isempty(selected_weight_cycles) || !isfinite(selected_apex_irt)
-        return (
-            weight_corr = TRACE_OTHER_CORR_SENTINEL,
-            frag_sum_corr = TRACE_OTHER_CORR_SENTINEL,
-            apex_delta_irt = TRACE_OTHER_APEX_DELTA_SENTINEL,
-        )
+    i = 1
+    @inbounds while i <= len && cycles[i] < cycle
+        i += 1
     end
-
-    best_weight_corr = TRACE_OTHER_CORR_SENTINEL
-    best_frag_corr = TRACE_OTHER_CORR_SENTINEL
-    best_apex_delta = TRACE_OTHER_APEX_DELTA_SENTINEL
-
-    for other_trace in seen_other_traces
-        empty!(other_weight_cycles)
-        empty!(other_weight_values)
-        empty!(other_frag_cycles)
-        empty!(other_frag_values)
-        other_apex_weight = typemin(Float32)
-        other_apex_irt = NaN32
-
-        @inbounds for row in group_start:group_stop
-            pass_mask[row] || continue
-            isotope_traces[row] == other_trace || continue
-            cycle = UInt32(cycle_idxs[row])
-            w = weights[row]
-            _trace_push_cycle_sum!(other_weight_cycles, other_weight_values, cycle, w)
-            _trace_push_cycle_sum!(other_frag_cycles, other_frag_values, cycle, _trace_frag_sum(row, frag_cols))
-            if w > other_apex_weight
-                other_apex_weight = w
-                other_apex_irt = irt_obs[row]
-            end
-        end
-
-        isempty(other_weight_cycles) && continue
-        best_weight_corr = max(best_weight_corr, _trace_aligned_corr!(
-            union_cycles,
-            selected_weight_cycles,
-            selected_weight_values,
-            other_weight_cycles,
-            other_weight_values,
-        ))
-        best_frag_corr = max(best_frag_corr, _trace_aligned_corr!(
-            union_cycles,
-            selected_frag_cycles,
-            selected_frag_values,
-            other_frag_cycles,
-            other_frag_values,
-        ))
-        if isfinite(other_apex_irt)
-            best_apex_delta = min(best_apex_delta, abs(selected_apex_irt - other_apex_irt))
-        end
+    if i <= len && cycles[i] == cycle
+        values_a[i] += value_a
+        values_b[i] += value_b
+    else
+        insert!(cycles, i, cycle)
+        insert!(values_a, i, value_a)
+        insert!(values_b, i, value_b)
     end
+    return nothing
+end
 
-    return (
-        weight_corr = best_weight_corr,
-        frag_sum_corr = best_frag_corr,
-        apex_delta_irt = best_apex_delta,
+mutable struct MainSearchTraceFeatureScratch
+    selected_cycles::Vector{UInt32}
+    selected_weight_values::Vector{Float32}
+    selected_frag_values::Vector{Float32}
+    other_traces::Vector{Tuple{Int8, Int8}}
+    other_cycles::Vector{Vector{UInt32}}
+    other_weight_values::Vector{Vector{Float32}}
+    other_frag_values::Vector{Vector{Float32}}
+    other_apex_weight::Vector{Float32}
+    other_apex_irt::Vector{Float32}
+end
+
+function MainSearchTraceFeatureScratch()
+    return MainSearchTraceFeatureScratch(
+        UInt32[],
+        Float32[],
+        Float32[],
+        Tuple{Int8, Int8}[],
+        Vector{UInt32}[],
+        Vector{Float32}[],
+        Vector{Float32}[],
+        Float32[],
+        Float32[],
     )
 end
 
-function add_trace_other_features!(
-    best_psms::DataFrame,
-    psms::DataFrame,
-    pass_mask::AbstractVector{Bool},
+function _reset_trace_feature_scratch!(scratch::MainSearchTraceFeatureScratch)
+    empty!(scratch.selected_cycles)
+    empty!(scratch.selected_weight_values)
+    empty!(scratch.selected_frag_values)
+    empty!(scratch.other_traces)
+    @inbounds for cycles in scratch.other_cycles
+        empty!(cycles)
+    end
+    @inbounds for values in scratch.other_weight_values
+        empty!(values)
+    end
+    @inbounds for values in scratch.other_frag_values
+        empty!(values)
+    end
+    empty!(scratch.other_apex_weight)
+    empty!(scratch.other_apex_irt)
+    return nothing
+end
+
+function _trace_other_index!(
+    scratch::MainSearchTraceFeatureScratch,
+    trace::Tuple{Int8, Int8},
 )
-    best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
-    best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
-
-    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
-    scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
-    isotope_traces = psms[!, :isotopes_captured]::Vector{Tuple{Int8, Int8}}
-    precursor_fraction_transmitted = psms[!, :precursor_fraction_transmitted]::Vector{Float32}
-    cycle_idxs = psms[!, :cycle_idx]
-    weights = psms[!, :weight]::Vector{Float32}
-    irt_obs = psms[!, :irt_obs]::Vector{Float32}
-    frag_cols = ntuple(
-        i -> psms[!, MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS[i]],
-        length(MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS),
-    )
-
-    n_best = nrow(best_psms)
-    out_precursor_fraction_transmitted = Vector{Float32}(undef, n_best)
-    out_n_scans_other_traces = Vector{UInt32}(undef, n_best)
-    out_trace_other_weight_corr = Vector{Float32}(undef, n_best)
-    out_trace_other_frag_sum_corr = Vector{Float32}(undef, n_best)
-    out_trace_other_apex_delta_irt = Vector{Float32}(undef, n_best)
-
-    selected_weight_cycles = UInt32[]
-    selected_weight_values = Float32[]
-    selected_frag_cycles = UInt32[]
-    selected_frag_values = Float32[]
-    seen_other_traces = Tuple{Int8, Int8}[]
-    other_weight_cycles = UInt32[]
-    other_weight_values = Float32[]
-    other_frag_cycles = UInt32[]
-    other_frag_values = Float32[]
-    union_cycles = UInt32[]
-
-    row = 1
-    n = nrow(psms)
-    @inbounds for i in 1:n_best
-        pid = best_prec_ids[i]
-        while prec_ids[row] < pid
-            row += 1
-        end
-        group_start = row
-        while row <= n && prec_ids[row] == pid
-            row += 1
-        end
-        group_stop = row - 1
-
-        selected_scan = best_scan_idxs[i]
-        selected_row = group_start
-        while scan_idxs[selected_row] != selected_scan
-            selected_row += 1
-        end
-
-        selected_trace = isotope_traces[selected_row]
-        out_precursor_fraction_transmitted[i] = precursor_fraction_transmitted[selected_row]
-
-        n_other = UInt32(0)
-        for group_row in group_start:group_stop
-            pass_mask[group_row] || continue
-            isotope_traces[group_row] == selected_trace && continue
-            n_other += UInt32(1)
-        end
-        out_n_scans_other_traces[i] = n_other
-
-        if n_other == UInt32(0)
-            out_trace_other_weight_corr[i] = TRACE_OTHER_CORR_SENTINEL
-            out_trace_other_frag_sum_corr[i] = TRACE_OTHER_CORR_SENTINEL
-            out_trace_other_apex_delta_irt[i] = TRACE_OTHER_APEX_DELTA_SENTINEL
-        else
-            agreement = _mainsearch_trace_other_agreement(
-                group_start,
-                group_stop,
-                selected_row,
-                pass_mask,
-                isotope_traces,
-                cycle_idxs,
-                weights,
-                irt_obs,
-                frag_cols,
-                selected_weight_cycles,
-                selected_weight_values,
-                selected_frag_cycles,
-                selected_frag_values,
-                seen_other_traces,
-                other_weight_cycles,
-                other_weight_values,
-                other_frag_cycles,
-                other_frag_values,
-                union_cycles,
-            )
-            out_trace_other_weight_corr[i] = agreement.weight_corr
-            out_trace_other_frag_sum_corr[i] = agreement.frag_sum_corr
-            out_trace_other_apex_delta_irt[i] = agreement.apex_delta_irt
-        end
+    @inbounds for i in eachindex(scratch.other_traces)
+        scratch.other_traces[i] == trace && return i
     end
 
-    best_psms[!, :precursor_fraction_transmitted] = out_precursor_fraction_transmitted
-    best_psms[!, :n_scans_other_traces] = out_n_scans_other_traces
-    best_psms[!, :trace_other_weight_corr] = out_trace_other_weight_corr
-    best_psms[!, :trace_other_frag_sum_corr] = out_trace_other_frag_sum_corr
-    best_psms[!, :trace_other_apex_delta_irt] = out_trace_other_apex_delta_irt
+    idx = length(scratch.other_traces) + 1
+    push!(scratch.other_traces, trace)
+    if idx > length(scratch.other_cycles)
+        push!(scratch.other_cycles, UInt32[])
+        push!(scratch.other_weight_values, Float32[])
+        push!(scratch.other_frag_values, Float32[])
+    end
+    push!(scratch.other_apex_weight, typemin(Float32))
+    push!(scratch.other_apex_irt, NaN32)
+    return idx
+end
+
+@inline function _trace_for_scan(
+    precursor_idx::UInt32,
+    scan_idx::UInt32,
+    prec_charge::AbstractArray{UInt8},
+    prec_mz::AbstractArray{Float32},
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}},
+)
+    mz = prec_mz[precursor_idx]
+    charge = prec_charge[precursor_idx]
+    low_mz, high_mz, _, _ = _compute_scan_window(scan_idx, centerMz, isolationWidthMz)
+    lo, hi = getPrecursorIsotopeSet(mz, charge, low_mz, high_mz)
+    return (Int8(lo), Int8(hi))
+end
+
+function add_precursor_fraction_transmitted!(
+    best_psms::DataFrame,
+    quad_transmission_model::QuadTransmissionModel,
+    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+    prec_charge::AbstractArray{UInt8},
+    prec_mz::AbstractArray{Float32},
+    sulfur_count::AbstractArray{UInt8},
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}},
+)
+    prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
+    n = nrow(best_psms)
+    out_fraction = Vector{Float32}(undef, n)
+    iso_splines = getIsoSplines(search_data[1])
+    precursor_transmission = zeros(Float32, 5)
+
+    @inbounds for i in 1:n
+        pid = prec_ids[i]
+        scan_id = scan_idxs[i]
+        _, _, scan_mz, window_width = _compute_scan_window(scan_id, centerMz, isolationWidthMz)
+        out_fraction[i] = _compute_fraction_transmitted(
+            iso_splines,
+            quad_transmission_model,
+            prec_mz[pid],
+            prec_charge[pid],
+            sulfur_count[pid],
+            scan_mz,
+            window_width,
+            precursor_transmission,
+        )
+    end
+
+    best_psms[!, :precursor_fraction_transmitted] = out_fraction
     return best_psms
 end
 
@@ -871,26 +793,37 @@ const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
     return mask
 end
 
-"""
-    add_fragment_detection_features!(best_psms, psms; bitvec_rank_table)
-
-Attach fragment-support features to the post-filter best-per-precursor rows.
-`psms` and `best_psms` are expected to be sorted by `:precursor_idx`.
-"""
-function add_fragment_detection_features!(
+function add_trace_and_fragment_features!(
     best_psms::DataFrame,
-    psms::DataFrame;
+    psms::DataFrame,
+    pass_mask::AbstractVector{Bool};
     bitvec_rank_table,
+    prec_charge::AbstractArray{UInt8},
+    prec_mz::AbstractArray{Float32},
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}},
 )
     best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
+
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
+    cycle_idxs = psms[!, :cycle_idx]
+    weights = psms[!, :weight]::Vector{Float32}
+    irt_obs = psms[!, :irt_obs]::Vector{Float32}
     frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
 
     n_best = nrow(best_psms)
+    out_n_scans_other_traces = Vector{UInt32}(undef, n_best)
+    out_trace_other_weight_corr = Vector{Float32}(undef, n_best)
+    out_trace_other_frag_sum_corr = Vector{Float32}(undef, n_best)
+    out_trace_other_apex_delta_irt = Vector{Float32}(undef, n_best)
     out_union = Vector{UInt8}(undef, n_best)
     out_intersection = Vector{UInt8}(undef, n_best)
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
+
+    scratch = MainSearchTraceFeatureScratch()
 
     row = 1
     n = nrow(psms)
@@ -899,24 +832,121 @@ function add_fragment_detection_features!(
         while prec_ids[row] < pid
             row += 1
         end
+        group_start = row
+        while row <= n && prec_ids[row] == pid
+            row += 1
+        end
+        group_stop = row - 1
+
+        selected_trace = _trace_for_scan(
+            pid,
+            best_scan_idxs[i],
+            prec_charge,
+            prec_mz,
+            centerMz,
+            isolationWidthMz,
+        )
+        _reset_trace_feature_scratch!(scratch)
 
         union_mask = UInt16(0)
         intersection_mask = UInt16(0x00ff)
-        group_row = row
-        while group_row <= n && prec_ids[group_row] == pid
+        n_other = UInt32(0)
+        selected_apex_weight = typemin(Float32)
+        selected_apex_irt = NaN32
+
+        for group_row in group_start:group_stop
             mask = _mainsearch_fragment_presence_mask(group_row, frag_cols)
             union_mask |= mask
             intersection_mask &= mask
-            group_row += 1
+
+            pass_mask[group_row] || continue
+            trace = _trace_for_scan(
+                pid,
+                scan_idxs[group_row],
+                prec_charge,
+                prec_mz,
+                centerMz,
+                isolationWidthMz,
+            )
+            cycle = UInt32(cycle_idxs[group_row])
+            w = weights[group_row]
+            frag_sum = _trace_frag_sum(group_row, frag_cols)
+
+            if trace == selected_trace
+                _trace_push_cycle_pair_sum!(
+                    scratch.selected_cycles,
+                    scratch.selected_weight_values,
+                    scratch.selected_frag_values,
+                    cycle,
+                    w,
+                    frag_sum,
+                )
+                if w > selected_apex_weight
+                    selected_apex_weight = w
+                    selected_apex_irt = irt_obs[group_row]
+                end
+            else
+                n_other += UInt32(1)
+                other_idx = _trace_other_index!(scratch, trace)
+                _trace_push_cycle_pair_sum!(
+                    scratch.other_cycles[other_idx],
+                    scratch.other_weight_values[other_idx],
+                    scratch.other_frag_values[other_idx],
+                    cycle,
+                    w,
+                    frag_sum,
+                )
+                if w > scratch.other_apex_weight[other_idx]
+                    scratch.other_apex_weight[other_idx] = w
+                    scratch.other_apex_irt[other_idx] = irt_obs[group_row]
+                end
+            end
         end
-        row = group_row
 
         out_union[i] = UInt8(count_ones(union_mask))
         out_intersection[i] = UInt8(count_ones(intersection_mask))
         out_union_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, union_mask)
         out_intersection_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, intersection_mask)
+        out_n_scans_other_traces[i] = n_other
+
+        if n_other == UInt32(0) || isempty(scratch.selected_cycles) || !isfinite(selected_apex_irt)
+            out_trace_other_weight_corr[i] = TRACE_OTHER_CORR_SENTINEL
+            out_trace_other_frag_sum_corr[i] = TRACE_OTHER_CORR_SENTINEL
+            out_trace_other_apex_delta_irt[i] = TRACE_OTHER_APEX_DELTA_SENTINEL
+        else
+            best_weight_corr = TRACE_OTHER_CORR_SENTINEL
+            best_frag_corr = TRACE_OTHER_CORR_SENTINEL
+            best_apex_delta = TRACE_OTHER_APEX_DELTA_SENTINEL
+            for other_idx in eachindex(scratch.other_traces)
+                other_cycles = scratch.other_cycles[other_idx]
+                isempty(other_cycles) && continue
+                best_weight_corr = max(best_weight_corr, _trace_aligned_corr_sorted(
+                    scratch.selected_cycles,
+                    scratch.selected_weight_values,
+                    other_cycles,
+                    scratch.other_weight_values[other_idx],
+                ))
+                best_frag_corr = max(best_frag_corr, _trace_aligned_corr_sorted(
+                    scratch.selected_cycles,
+                    scratch.selected_frag_values,
+                    other_cycles,
+                    scratch.other_frag_values[other_idx],
+                ))
+                other_apex_irt = scratch.other_apex_irt[other_idx]
+                if isfinite(other_apex_irt)
+                    best_apex_delta = min(best_apex_delta, abs(selected_apex_irt - other_apex_irt))
+                end
+            end
+            out_trace_other_weight_corr[i] = best_weight_corr
+            out_trace_other_frag_sum_corr[i] = best_frag_corr
+            out_trace_other_apex_delta_irt[i] = best_apex_delta
+        end
     end
 
+    best_psms[!, :n_scans_other_traces] = out_n_scans_other_traces
+    best_psms[!, :trace_other_weight_corr] = out_trace_other_weight_corr
+    best_psms[!, :trace_other_frag_sum_corr] = out_trace_other_frag_sum_corr
+    best_psms[!, :trace_other_apex_delta_irt] = out_trace_other_apex_delta_irt
     best_psms[!, :n_frags_detected_union] = out_union
     best_psms[!, :n_frags_detected_intersection] = out_intersection
     best_psms[!, :n_frags_detected_union_bitvec_rank] = out_union_rank
