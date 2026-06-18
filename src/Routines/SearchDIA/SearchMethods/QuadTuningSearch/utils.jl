@@ -67,6 +67,7 @@ function score_psms!(
     nmisses::Int64,
     spectra::MassSpecData,
     last_val::Int64,
+    ms_file_idx::Int64,
     cycle_idx::Int64;
     mem::AbstractMassErrorModel = SimpleMassErrorModel(0f0, (0f0, 0f0))
 )
@@ -76,6 +77,7 @@ function score_psms!(
         getMainSearchSpectralScores(search_data),
         getTempWeights(search_data),
         getIdToCol(search_data),
+        ms_file_idx,
         cycle_idx,
         nmatches / (nmatches + nmisses),
         last_val,
@@ -1367,5 +1369,4 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
     )
     return fitted_params, initial_params
 end
-
 

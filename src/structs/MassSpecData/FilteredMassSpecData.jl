@@ -27,6 +27,7 @@ mutable struct FilteredMassSpecData{T<:AbstractFloat} <: MassSpecData
     isolation_widths::Vector{T}
     precursor_charges::Vector{Int8}
     ms_orders::Vector{UInt8}
+    cycle_idxs::Vector{UInt32}
     center_mzs::Vector{T}
     TICs::Vector{T}
     low_mzs::Vector{T}
@@ -229,6 +230,7 @@ function FilteredMassSpecData(
     isolation_widths = Vector{T}(undef, n_sampled)
     precursor_charges = Vector{Int8}(undef, n_sampled)
     ms_orders = Vector{UInt8}(undef, n_sampled)
+    cycle_idxs = Vector{UInt32}(undef, n_sampled)
     center_mzs = Vector{T}(undef, n_sampled)
     TICs = Vector{T}(undef, n_sampled)
     low_mzs = Vector{T}(undef, n_sampled)
@@ -259,6 +261,7 @@ function FilteredMassSpecData(
         isolation_widths[i] = T(coalesce(getIsolationWidthMz(original, oi), zero(T)))
         precursor_charges[i] = Int8(0)
         ms_orders[i] = getMsOrder(original, oi)
+        cycle_idxs[i] = getCycleIdx(original, oi)
         center_mzs[i] = T(coalesce(getCenterMz(original, oi), zero(T)))
         TICs[i] = T(getTIC(original, oi))
         low_mzs[i] = T(getLowMz(original, oi))
@@ -270,7 +273,7 @@ function FilteredMassSpecData(
         mz_arrays, intensity_arrays,
         scan_headers, scan_numbers, base_peak_mzs, base_peak_intensities,
         injection_times, retention_times, precursor_mzs, isolation_widths,
-        precursor_charges, ms_orders, center_mzs, TICs,
+        precursor_charges, ms_orders, cycle_idxs, center_mzs, TICs,
         low_mzs, high_mzs, isolation_width_mzs,
         scan_indices_to_sample, original, topn, min_intensity_typed,
         max_scans, target_ms_order, rng, scan_priority_order,
@@ -348,6 +351,7 @@ getRetentionTime(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = 
 getPrecursorMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.precursor_mzs[scan_idx]
 getIsolationWidthMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.isolation_width_mzs[scan_idx]
 getMsOrder(ms_data::FilteredMassSpecData, scan_idx::Integer) = ms_data.ms_orders[scan_idx]
+getCycleIdx(ms_data::FilteredMassSpecData, scan_idx::Integer) = ms_data.cycle_idxs[scan_idx]
 getCenterMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.center_mzs[scan_idx]
 getTIC(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.TICs[scan_idx]
 getLowMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.low_mzs[scan_idx]
@@ -364,6 +368,7 @@ getTICs(ms_data::FilteredMassSpecData) = ms_data.TICs
 getCenterMzs(ms_data::FilteredMassSpecData{T}) where T = convert(Vector{Union{Missing, T}}, ms_data.center_mzs)
 getIsolationWidthMzs(ms_data::FilteredMassSpecData) = ms_data.isolation_width_mzs
 getMsOrders(ms_data::FilteredMassSpecData) = ms_data.ms_orders
+getCycleIdxs(ms_data::FilteredMassSpecData) = ms_data.cycle_idxs
 
 # ============================================================================
 # Index Mapping
@@ -421,6 +426,7 @@ function Base.append!(
         push!(filtered.isolation_widths, T(coalesce(getIsolationWidthMz(original, oi), zero(T))))
         push!(filtered.precursor_charges, Int8(0))
         push!(filtered.ms_orders, getMsOrder(original, oi))
+        push!(filtered.cycle_idxs, getCycleIdx(original, oi))
         push!(filtered.center_mzs, T(coalesce(getCenterMz(original, oi), zero(T))))
         push!(filtered.TICs, T(getTIC(original, oi)))
         push!(filtered.low_mzs, T(getLowMz(original, oi)))

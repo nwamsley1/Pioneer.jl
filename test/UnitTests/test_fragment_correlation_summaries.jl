@@ -90,3 +90,35 @@ end
     @test best.n_frags_detected_union_bitvec_rank == UInt16[11, 44]
     @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 55]
 end
+
+@testset "other isotope trace agreement summaries" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[101, 102, 103, 104],
+        lgbm_score = Float32[0.8, 0.9, 0.7, 0.6],
+        weight = Float32[1, 2, 2, 4],
+        irt_obs = Float32[1.0, 2.0, 1.2, 2.2],
+        rt = Float32[10, 11, 12, 13],
+        cycle_idx = UInt32[1, 2, 1, 2],
+        isotopes_captured = Tuple{Int8, Int8}[(0, 1), (0, 1), (1, 2), (1, 2)],
+        precursor_fraction_transmitted = Float32[0.8, 0.9, 0.7, 0.6],
+        frag1_int = Float32[1, 2, 2, 4],
+        frag2_int = zeros(Float32, 4),
+        frag3_int = zeros(Float32, 4),
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+    )
+
+    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    Pioneer.add_trace_other_features!(best, psms, trues(nrow(psms)))
+
+    @test best.precursor_idx == UInt32[10]
+    @test best.precursor_fraction_transmitted == Float32[0.9]
+    @test best.n_scans_other_traces == UInt32[2]
+    @test best.trace_other_weight_corr ≈ Float32[1.0]
+    @test best.trace_other_frag_sum_corr ≈ Float32[1.0]
+    @test best.trace_other_apex_delta_irt ≈ Float32[0.2]
+end

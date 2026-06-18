@@ -159,6 +159,7 @@ function library_search(
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
+                ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end

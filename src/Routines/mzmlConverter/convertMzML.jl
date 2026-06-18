@@ -166,6 +166,41 @@ struct PioneerScanElement
     collisionEnergyField::Union{Missing, Float32}
     collisionEnergyEvField::Union{Missing, Float32}
     msOrder::UInt8
+    cycle_idx::Int32
+end
+
+mutable struct MzMLCycleIndexTracker
+    cycle_idx::Int32
+    has_first_ms2_window::Bool
+    first_ms2_center_mz::Float32
+    first_ms2_isolation_width_mz::Float32
+end
+
+MzMLCycleIndexTracker() = MzMLCycleIndexTracker(Int32(1), false, 0.0f0, 0.0f0)
+
+function get_cycle_idx!(
+    tracker::MzMLCycleIndexTracker,
+    ms_order::UInt8,
+    center_mz,
+    isolation_width_mz,
+)::Int32
+    ms_order == UInt8(2) || return tracker.cycle_idx
+
+    center = _cycle_idx_value(center_mz)
+    width = _cycle_idx_value(isolation_width_mz)
+    if !tracker.has_first_ms2_window
+        tracker.has_first_ms2_window = true
+        tracker.first_ms2_center_mz = center
+        tracker.first_ms2_isolation_width_mz = width
+        return tracker.cycle_idx
+    end
+
+    if abs(center - tracker.first_ms2_center_mz) <= CYCLE_IDX_ISOLATION_WINDOW_TOLERANCE_MZ &&
+       abs(width - tracker.first_ms2_isolation_width_mz) <= CYCLE_IDX_ISOLATION_WINDOW_TOLERANCE_MZ
+        tracker.cycle_idx += Int32(1)
+    end
+
+    return tracker.cycle_idx
 end
 
 # PSI-MS activation terms we support when parsing precursor collision energy.
@@ -282,7 +317,8 @@ function parseScanDictToScanElement(
     scan_number::Int64,
     mz_array::Vector{Float32},
     intensity_array::Vector{Float32},
-    skip_scan_header::Bool)::PioneerScanElement
+    skip_scan_header::Bool,
+    cycle_tracker::MzMLCycleIndexTracker)::PioneerScanElement
 
     centerMz,isolationWidthMz = missing, missing
     scanHeader = ""
@@ -312,6 +348,7 @@ function parseScanDictToScanElement(
         spectrum_dict,
         "collision energy"
     )
+    cycle_idx = get_cycle_idx!(cycle_tracker, msOrder, centerMz, isolationWidthMz)
     return PioneerScanElement(
         allowmissing(mz_array), 
         allowmissing(intensity_array),
@@ -326,7 +363,8 @@ function parseScanDictToScanElement(
         isolationWidthMz,
         collisionEnergyField,
         zero(Float32),
-        msOrder
+        msOrder,
+        cycle_idx
     )
 end
 
@@ -418,7 +456,8 @@ function parseSpectrumElement!(
     spectrum_dict::Dict{String, String},
     spectrumElement::EzXML.Node,
     scanIndex::Int,
-    skip_scan_header::Bool)
+    skip_scan_header::Bool,
+    cycle_tracker::MzMLCycleIndexTracker)
     mz_array, intensity_array = missing, missing
     for scanElement in eachelement(spectrumElement)
         if scanElement.name=="binaryDataArrayList"
@@ -442,7 +481,8 @@ function parseSpectrumElement!(
                                 scanIndex,
                                 mz_array,
                                 intensity_array,
-                                skip_scan_header)
+                                skip_scan_header,
+                                cycle_tracker)
 
 end
 
@@ -579,14 +619,17 @@ function readMzML(
     run_element = findfirst("//ms:run", mzML, ns)
     spectrum_list = findfirst("//ms:spectrumList", run_element, ns)
 
-    pairedSpectra = Vector{PioneerScanElement}(undef, length(collect(eachelement(spectrum_list))))
-    for (i, spectrum_element) in enumerate(collect(eachelement(spectrum_list)))
+    spectrum_elements = collect(eachelement(spectrum_list))
+    pairedSpectra = Vector{PioneerScanElement}(undef, length(spectrum_elements))
+    cycle_tracker = MzMLCycleIndexTracker()
+    for (i, spectrum_element) in enumerate(spectrum_elements)
         try
             pairedSpectra[i] = parseSpectrumElement!(
                                             init_spectrum_dict(),
                                             spectrum_element, 
                                             i,
-                                            skip_scan_header
+                                            skip_scan_header,
+                                            cycle_tracker
             )
         catch err
             if err isa ProfileModeMzMLError
