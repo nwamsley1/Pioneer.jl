@@ -9,6 +9,11 @@ end
 const LightGBMModelVector = Vector{LightGBMModel}
 const LightGBMModelWrapper = LightGBMModel
 
+# Serializes every entry into LightGBM's C API. LightGBM's bundled OpenMP
+# (libomp) aborts in __kmpc_end_serialized_parallel when predict is entered
+# concurrently from multiple Julia threads (pass1_oom.jl's parallel_foreach!).
+const LGBM_C_LOCK = ReentrantLock()
+
 """
     feature_matrix(df, features) -> Matrix{Float32}
 
