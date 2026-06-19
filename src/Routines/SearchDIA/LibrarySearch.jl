@@ -136,6 +136,29 @@ function library_search(
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
     # Applies RT and precursor m/z filtering (same as selectTransitions!) for realistic counts.
+    # --- 2a. Pre-filter: require sufficient precursor isolation ---
+    min_fraction_transmitted = getMinFractionTransmitted(params)
+    if min_fraction_transmitted > 0f0
+        n_before_fraction = length(precursors_passed)
+        precursors_passed = filter_min_fraction_transmitted!(
+            scan_to_prec_idx,
+            precursors_passed,
+            all_scan_idxs,
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra),
+            qtm,
+            getIsoSplines(search_data[1]),
+            getCharge(precursors),
+            getMz(precursors),
+            getSulfurCount(precursors),
+            min_fraction_transmitted,
+        )
+        n_filtered_fraction = n_before_fraction - length(precursors_passed)
+        @debug_l1 "Fraction-transmitted pre-filter: filtered $n_filtered_fraction candidates " *
+                  "($n_before_fraction → $(length(precursors_passed)); " *
+                  "$(round(100*n_filtered_fraction/max(1,n_before_fraction), digits=1))% removed)"
+    end
+
     # --- 2b. Pre-filter: require candidates to appear in ≥ N scans ---
     prefilter_n = getPrefilterMinScanCount(params)
     if prefilter_n > 1
@@ -195,6 +218,140 @@ function library_search(
     end
 
     return result
+end
+
+function _filter_scan_candidates_by_window!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    scan_idxs::AbstractVector{<:Integer},
+    center_mzs::AbstractVector,
+    isolation_widths::AbstractVector,
+    max_precursor_idx::Integer,
+    prepare_window::P,
+    keep_candidate::F,
+) where {P,F}
+    window_to_group = Dict{Tuple{Float32, Float32}, Int}()
+    window_keys = Tuple{Float32, Float32}[]
+    window_scans = Vector{Vector{Int}}()
+    group_input_counts = Int[]
+
+    @inbounds for scan_idx in scan_idxs
+        range = scan_to_prec_idx[scan_idx]
+        ismissing(range) && continue
+        key = (Float32(center_mzs[scan_idx]), Float32(isolation_widths[scan_idx]))
+        group_idx = get(window_to_group, key, 0)
+        if group_idx == 0
+            push!(window_keys, key)
+            push!(window_scans, Int[])
+            push!(group_input_counts, 0)
+            group_idx = length(window_keys)
+            window_to_group[key] = group_idx
+        end
+        push!(window_scans[group_idx], Int(scan_idx))
+        group_input_counts[group_idx] += length(range)
+    end
+
+    n_groups = length(window_keys)
+    group_passed = [UInt32[] for _ in 1:n_groups]
+    group_scan_counts = [Vector{Int}(undef, length(window_scans[group_idx])) for group_idx in 1:n_groups]
+
+    parallel_foreach!(n_groups; tasks_per_thread=1) do group_chunk
+        seen_epoch = zeros(UInt32, max_precursor_idx)
+        pass_cache = falses(max_precursor_idx)
+        epoch = UInt32(0)
+
+        @inbounds for group_idx in group_chunk
+            epoch += UInt32(1)
+            center_mz, isolation_width = window_keys[group_idx]
+            window_state = prepare_window(center_mz, isolation_width)
+            local_passed = UInt32[]
+            sizehint!(local_passed, group_input_counts[group_idx])
+            scan_counts = group_scan_counts[group_idx]
+
+            for (scan_pos, scan_idx) in pairs(window_scans[group_idx])
+                range = scan_to_prec_idx[scan_idx]
+                kept = 0
+                for i in range
+                    pid = precursors_passed[i]
+                    pid_idx = Int(pid)
+                    if seen_epoch[pid_idx] != epoch
+                        pass_cache[pid_idx] = keep_candidate(pid, window_state)
+                        seen_epoch[pid_idx] = epoch
+                    end
+                    if pass_cache[pid_idx]
+                        push!(local_passed, pid)
+                        kept += 1
+                    end
+                end
+                scan_counts[scan_pos] = kept
+            end
+            group_passed[group_idx] = local_passed
+        end
+    end
+
+    total = sum(length, group_passed)
+    new_passed = Vector{UInt32}(undef, total)
+    next_out = 1
+
+    @inbounds for group_idx in 1:n_groups
+        local_passed = group_passed[group_idx]
+        n_local = length(local_passed)
+        n_local > 0 && copyto!(new_passed, next_out, local_passed, 1, n_local)
+
+        scan_start = next_out
+        scan_counts = group_scan_counts[group_idx]
+        for (scan_pos, scan_idx) in pairs(window_scans[group_idx])
+            kept = scan_counts[scan_pos]
+            if kept == 0
+                scan_to_prec_idx[scan_idx] = missing
+            else
+                scan_stop = scan_start + kept - 1
+                scan_to_prec_idx[scan_idx] = scan_start:scan_stop
+                scan_start = scan_stop + 1
+            end
+        end
+        next_out += n_local
+    end
+    return new_passed
+end
+
+function filter_min_fraction_transmitted!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    scan_idxs::AbstractVector{<:Integer},
+    center_mzs::AbstractVector,
+    isolation_widths::AbstractVector,
+    qtm::Q,
+    iso_splines::IsotopeSplineModel{40, Float32},
+    prec_charge::AbstractArray{UInt8},
+    prec_mz::AbstractArray{Float32},
+    sulfur_count::AbstractArray{UInt8},
+    min_fraction_transmitted::Float32,
+) where {Q<:QuadTransmissionModel}
+    return _filter_scan_candidates_by_window!(
+        scan_to_prec_idx,
+        precursors_passed,
+        scan_idxs,
+        center_mzs,
+        isolation_widths,
+        length(prec_mz),
+        (center_mz, isolation_width) -> (
+            quad_func = getQuadTransmissionFunction(qtm, center_mz, isolation_width),
+            precursor_transmission = zeros(Float32, 5),
+        ),
+        function (pid, window_state)
+            fraction_transmitted = getPrecursorFractionTransmitted!(
+                window_state.precursor_transmission,
+                iso_splines,
+                (1, 5),
+                window_state.quad_func,
+                prec_mz[pid],
+                prec_charge[pid],
+                sulfur_count[pid],
+            )
+            return fraction_transmitted >= min_fraction_transmitted
+        end
+    )
 end
 
 """
