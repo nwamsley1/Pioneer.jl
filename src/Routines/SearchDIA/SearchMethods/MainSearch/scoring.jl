@@ -34,6 +34,13 @@ const SHARED_LGBM_HP = (num_iterations=50, learning_rate=0.20, max_depth=8,
                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=true,
                         max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
 
+# Lightweight per-file MainSearch model (config C): smaller trees + coarser bins.
+# Applies ONLY to the MainSearch per-file best-scan/PEP-gate model
+# (train_lgbm_and_select_best) — NOT pass1_oom, the FTR model, or ScoringSearch,
+# which keep SHARED_LGBM_HP / SCORING_LGBM_HP. Matches the env-sweep "C" arm.
+const MAINSEARCH_LGBM_HP = merge(SHARED_LGBM_HP,
+    (max_depth = 4, num_leaves = 15, max_bin = 63))
+
 # Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
 # Same shape as SHARED_LGBM_HP but lower learning rate × more iterations:
 # the slower lr lets boosting refine more decision boundaries on the
@@ -433,7 +440,7 @@ Returns:
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    lgbm_hp = SHARED_LGBM_HP,
+    lgbm_hp = MAINSEARCH_LGBM_HP,
     center_mzs = nothing,
     isolation_widths = nothing,
 )
