@@ -25,9 +25,10 @@ const _pack_meta               = Pioneer.pack_meta
 # stress tests below.
 # ---------------------------------------------------------------------------
 function _make_single_col_H(nzval::Vector{Float32}, x::Vector{Float32},
-                            matched::Vector{Bool})
+                            matched::Vector{Bool};
+                            ranks::Vector{UInt8}=zeros(UInt8, length(nzval)))
     n = length(nzval)
-    @assert length(x) == n && length(matched) == n
+    @assert length(x) == n && length(matched) == n && length(ranks) == n
     H = _SparseArrayFused(UInt32(max(n, 1)))
     H.n_vals = n
     H.m = n
@@ -37,6 +38,7 @@ function _make_single_col_H(nzval::Vector{Float32}, x::Vector{Float32},
         H.nzval[i]  = nzval[i]
         H.x[i]      = x[i]
         H.meta[i]   = _pack_meta(matched[i], UInt8(0))
+        H.rank[i]   = ranks[i]
     end
     # colptr layout: [start_of_col_1, start_of_col_2, ..., n_vals+1]
     resize!(H.colptr, 2)
@@ -45,11 +47,12 @@ function _make_single_col_H(nzval::Vector{Float32}, x::Vector{Float32},
     H
 end
 
-function _score_single(w_val::Float32, nzval, x, matched)
-    H = _make_single_col_H(nzval, x, matched)
+function _score_single(w_val::Float32, nzval, x, matched;
+                       ranks=zeros(UInt8, length(nzval)))
+    H = _make_single_col_H(nzval, x, matched; ranks=ranks)
     w = Float32[w_val]
     r = zeros(Float32, H.m)
-    spectral_scores = Vector{_SpectralScoresMainSearch{Float16}}(undef, 1)
+    spectral_scores = Vector{_SpectralScoresMainSearch{Float16, Float32}}(undef, 1)
     _getDistanceMetrics(w, r, H, spectral_scores)
     spectral_scores[1]
 end
@@ -175,6 +178,18 @@ end
         @test isfinite(s.fitted_manhattan_distance)
         @test isfinite(s.fitted_hellinger)
     end
+
+    s = _score_single(1.0f0,
+                      Float32[2.0, 5.0, 7.0],
+                      Float32[1.0, 6.0, 3.0],
+                      Bool[true, true, true];
+                      ranks=UInt8[1, 2, 1])
+    @test s.fitted_frag1_int == 9.0f0
+    @test s.fitted_frag2_int == 5.0f0
+    @test s.shadow_frag1_int == 4.0f0
+    @test s.shadow_frag2_int == 6.0f0
+    @test s.fitted_frag3_int == 0.0f0
+    @test s.shadow_frag3_int == 0.0f0
 end
 
 @testset "Feature finiteness — log2 floors at the PSM emission site" begin

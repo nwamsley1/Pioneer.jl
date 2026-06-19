@@ -89,6 +89,26 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     fitted_hellinger::L
 
+    # Per-rank fitted and shadow intensities from the deconvolved design
+    # matrix. These are temporary helper columns for selected-PSM cross-run
+    # features and are dropped after the scalar summaries are computed.
+    fitted_frag1_int::H
+    fitted_frag2_int::H
+    fitted_frag3_int::H
+    fitted_frag4_int::H
+    fitted_frag5_int::H
+    fitted_frag6_int::H
+    fitted_frag7_int::H
+    fitted_frag8_int::H
+    shadow_frag1_int::H
+    shadow_frag2_int::H
+    shadow_frag3_int::H
+    shadow_frag4_int::H
+    shadow_frag5_int::H
+    shadow_frag6_int::H
+    shadow_frag7_int::H
+    shadow_frag8_int::H
+
     # Rank feature carried from MainUnscoredPSM. Added 2026-05-11 so the
     # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
     # signal as the per-file LightGBM (previously dropped by Score!).
@@ -128,7 +148,7 @@ function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_si
 end
 function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 unscored_PSMs::Vector{MainUnscoredPSM{H}},
-                spectral_scores::Vector{SpectralScoresMainSearch{L}},
+                spectral_scores::Vector{SpectralScoresMainSearch{S,I}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
                 ms_file_idx::Int64,
@@ -140,7 +160,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 scan_idx::Int64;
                 block_size::Int64 = 10000,
                 default_top3_ll::Float32 = Float32(0)
-                ) where {L,H<:AbstractFloat}
+                ) where {L,H<:AbstractFloat,S<:AbstractFloat,I<:AbstractFloat}
 
     getPoisson(lam, observed) = psm_getPoisson(lam, observed)
     start_idx = last_val
@@ -176,13 +196,30 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
             Float16(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
-            spectral_scores[scores_idx].gof,
-            spectral_scores[scores_idx].max_matched_residual,
-            spectral_scores[scores_idx].max_unmatched_residual,
-            spectral_scores[scores_idx].fitted_manhattan_distance,
+            L(spectral_scores[scores_idx].gof),
+            L(spectral_scores[scores_idx].max_matched_residual),
+            L(spectral_scores[scores_idx].max_unmatched_residual),
+            L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
-            spectral_scores[scores_idx].fitted_hellinger,
+            L(spectral_scores[scores_idx].fitted_hellinger),
+
+            H(spectral_scores[scores_idx].fitted_frag1_int),
+            H(spectral_scores[scores_idx].fitted_frag2_int),
+            H(spectral_scores[scores_idx].fitted_frag3_int),
+            H(spectral_scores[scores_idx].fitted_frag4_int),
+            H(spectral_scores[scores_idx].fitted_frag5_int),
+            H(spectral_scores[scores_idx].fitted_frag6_int),
+            H(spectral_scores[scores_idx].fitted_frag7_int),
+            H(spectral_scores[scores_idx].fitted_frag8_int),
+            H(spectral_scores[scores_idx].shadow_frag1_int),
+            H(spectral_scores[scores_idx].shadow_frag2_int),
+            H(spectral_scores[scores_idx].shadow_frag3_int),
+            H(spectral_scores[scores_idx].shadow_frag4_int),
+            H(spectral_scores[scores_idx].shadow_frag5_int),
+            H(spectral_scores[scores_idx].shadow_frag6_int),
+            H(spectral_scores[scores_idx].shadow_frag7_int),
+            H(spectral_scores[scores_idx].shadow_frag8_int),
 
             unscored_PSMs[i].best_rank,
 
@@ -257,7 +294,7 @@ end
 
 function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
                 unscored_PSMs::Vector{TuningUnscoredPSM{H}},
-                spectral_scores::Vector{SpectralScoresMainSearch{L}},
+                spectral_scores::Vector{SpectralScoresMainSearch{S,I}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
                 ms_file_idx::Int64,
@@ -269,7 +306,7 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
                 scan_idx::Int64;
                 block_size::Int64 = 10000,
                 default_top3_ll::Float32 = Float32(0)
-                ) where {L,H<:AbstractFloat}
+                ) where {L,H<:AbstractFloat,S<:AbstractFloat,I<:AbstractFloat}
 
     getPoisson(lam, observed) = psm_getPoisson(lam, observed)
     start_idx = last_val
@@ -302,13 +339,13 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
             L(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
             L(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
-            spectral_scores[scores_idx].gof,
-            spectral_scores[scores_idx].max_matched_residual,
-            spectral_scores[scores_idx].max_unmatched_residual,
-            spectral_scores[scores_idx].fitted_manhattan_distance,
+            L(spectral_scores[scores_idx].gof),
+            L(spectral_scores[scores_idx].max_matched_residual),
+            L(spectral_scores[scores_idx].max_unmatched_residual),
+            L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
-            spectral_scores[scores_idx].fitted_hellinger,
+            L(spectral_scores[scores_idx].fitted_hellinger),
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(ms_file_idx),

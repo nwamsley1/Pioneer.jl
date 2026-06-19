@@ -56,15 +56,25 @@ const FLANKING_WINDOW_FEATURES = [
     :frag_apex_gt2x_flank_bitvec_rank,
 ]
 
-const FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS = (
-    :flanking_core_frag1_smooth_intensity,
-    :flanking_core_frag2_smooth_intensity,
-    :flanking_core_frag3_smooth_intensity,
-    :flanking_core_frag4_smooth_intensity,
-    :flanking_core_frag5_smooth_intensity,
-    :flanking_core_frag6_smooth_intensity,
-    :flanking_core_frag7_smooth_intensity,
-    :flanking_core_frag8_smooth_intensity,
+const SMOOTHED_FRAGMENT_INTENSITY_COLUMNS = (
+    :frag1_smoothed_intensity,
+    :frag2_smoothed_intensity,
+    :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity,
+    :frag5_smoothed_intensity,
+    :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity,
+    :frag8_smoothed_intensity,
+)
+
+const FITTED_FRAGMENT_INTENSITY_COLUMNS = (
+    :fitted_frag1_int, :fitted_frag2_int, :fitted_frag3_int, :fitted_frag4_int,
+    :fitted_frag5_int, :fitted_frag6_int, :fitted_frag7_int, :fitted_frag8_int,
+)
+
+const SHADOW_FRAGMENT_INTENSITY_COLUMNS = (
+    :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
+    :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
 )
 
 const ADVANCED_FEATURE_SET = [
@@ -82,7 +92,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_isotope_dotp_m0_m1_m2,
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
-    FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS...,
+    SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...,
+    # :smoothed_shadow_hellinger,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,

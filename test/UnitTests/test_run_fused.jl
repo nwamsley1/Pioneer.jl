@@ -11,6 +11,7 @@
 
 using Test
 using Pioneer
+using Pioneer: parseIsoXML
 
 const FusedStandard          = Pioneer.FusedStandard
 const FusedRTIndexed         = Pioneer.FusedRTIndexed
@@ -27,10 +28,6 @@ const CompactFrag            = Pioneer.CompactFrag
 const PiecewiseNceModel      = Pioneer.PiecewiseNceModel
 const SquareQuadFunction     = Pioneer.SquareQuadFunction
 const SimpleMassErrorModel   = Pioneer.SimpleMassErrorModel
-# parseIsoXML is already imported into Main via runtests.jl
-# (`using Pioneer: parseIsoXML`); re-`const`-declaring it is a hard error
-# under Julia 1.12 — same issue as the C13_C12_MASS_DIFF case in
-# test_fused_prec_filters.jl.
 const run_fused!             = Pioneer.run_fused!
 
 # Load the real isotope splines once (small XML, fast parse).
@@ -585,8 +582,8 @@ end
         # row, not 2. (The two scratch entries are collapsed into one Hs row.)
         # Stresses dedup logic in finalize_column! and confirms iso_anchor /
         # lower advancement does NOT block fragment B from re-finding the peak.
-        frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(0)),
-                 (UInt32(1), 200.0f0,  900.0f0, UInt8(0))]
+        frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(1)),
+                 (UInt32(1), 200.0f0,  900.0f0, UInt8(2))]
         fx = make_fused_fixture(
             frags = frags,
             prec_frag_ranges = UInt64[1, 3],
@@ -600,6 +597,7 @@ end
         @test fx.Hs.rowval[1] == UInt32(1)
         # Predicted intensities summed: pred_int_A + pred_int_B.
         @test fx.Hs.nzval[1] > Float32(1000) # > either fragment alone
+        @test Pioneer.rank_at(fx.Hs, 1) == UInt8(2)
     end
 
     # ------------------------------------------------------------

@@ -716,6 +716,36 @@ function _mainsearch_radius1_smooth_fragments!(
     return nothing
 end
 
+function _mainsearch_radius1_shadow_hellinger(
+    apex_row::Int,
+    left_row::Int,
+    right_row::Int,
+    fitted_cols,
+    shadow_cols,
+)
+    smooth_denom = 2f0
+    left_row > 0 && (smooth_denom += 1f0)
+    right_row > 0 && (smooth_denom += 1f0)
+
+    sum_fitted = 0f0
+    sum_shadow = 0f0
+    bc_sum = 0f0
+    @inbounds for rank in 1:8
+        fitted = max(Float32(fitted_cols[rank][apex_row]), 0f0)
+        shadow = 2f0 * max(Float32(shadow_cols[rank][apex_row]), 0f0)
+        left_row > 0 && (shadow += max(Float32(shadow_cols[rank][left_row]), 0f0))
+        right_row > 0 && (shadow += max(Float32(shadow_cols[rank][right_row]), 0f0))
+        shadow = Float32(shadow / smooth_denom)
+        sum_fitted += fitted
+        sum_shadow += shadow
+        bc_sum += sqrt(fitted * shadow)
+    end
+
+    denom = sqrt(sum_fitted * sum_shadow)
+    hellinger_sq = denom > 0f0 ? 1f0 - bc_sum / denom : 1f0
+    return Float32(-log2(max(hellinger_sq, 1f-10)))
+end
+
 function add_trace_and_fragment_features!(
     best_psms::DataFrame,
     psms::DataFrame,
@@ -730,6 +760,8 @@ function add_trace_and_fragment_features!(
     cycle_idxs = psms[!, :cycle_idx]
     ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
     frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
+    fitted_frag_cols = Tuple(psms[!, c] for c in FITTED_FRAGMENT_INTENSITY_COLUMNS)
+    shadow_frag_cols = Tuple(psms[!, c] for c in SHADOW_FRAGMENT_INTENSITY_COLUMNS)
 
     n_best = nrow(best_psms)
     out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)
@@ -742,6 +774,7 @@ function add_trace_and_fragment_features!(
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
     out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
+    out_shadow_hellinger = Vector{Float32}(undef, n_best)
 
     flanking_core_order = Int[]
 
@@ -779,6 +812,13 @@ function add_trace_and_fragment_features!(
             flanking_core.right_row,
             frag_cols,
         )
+        out_shadow_hellinger[i] = _mainsearch_radius1_shadow_hellinger(
+            flanking_core.best_row,
+            flanking_core.left_row,
+            flanking_core.right_row,
+            fitted_frag_cols,
+            shadow_frag_cols,
+        )
 
         core_ms1_m0_signal = 0f0
         core_frag_signal = 0f0
@@ -813,8 +853,13 @@ function add_trace_and_fragment_features!(
     best_psms[!, :n_frags_detected_union_bitvec_rank] = out_union_rank
     best_psms[!, :n_frags_detected_intersection_bitvec_rank] = out_intersection_rank
     @inbounds for rank in 1:8
-        best_psms[!, FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS[rank]] = out_smooth_frag_cols[rank]
+        best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
     end
+    best_psms[!, :smoothed_shadow_hellinger] = out_shadow_hellinger
+    select!(best_psms, Not([
+        FITTED_FRAGMENT_INTENSITY_COLUMNS...,
+        SHADOW_FRAGMENT_INTENSITY_COLUMNS...,
+    ]))
     return best_psms
 end
 

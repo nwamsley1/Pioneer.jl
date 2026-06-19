@@ -693,14 +693,14 @@ written into the scored PSM stays bit-identical.
     (theoretical_mz - observed_mz) / (theoretical_mz * 1f-6)
 
 """
-    push_match!(scratch, peak_row, pred_int, int_obs, iso_idx)
+    push_match!(scratch, peak_row, pred_int, int_obs, iso_idx, rank)
 
 Append a matched-peak entry into `FusedScratch`, growing the backing arrays
 if necessary. Mirrors the inline form: row=UInt32(peak), nzval=pred_int,
-x=int_obs, isotope=UInt8(iso_idx).
+x=int_obs, isotope=UInt8(iso_idx), rank=UInt8(rank).
 """
 @inline function push_match!(scratch::FusedScratch, peak_row::Integer,
-        pred_int::Float32, int_obs::Float32, iso_idx::Integer)
+        pred_int::Float32, int_obs::Float32, iso_idx::Integer, rank::Integer)
     if scratch.n + 1 > length(scratch.row)
         grow_fused_scratch!(scratch, scratch.n + 1)
     end
@@ -710,18 +710,20 @@ x=int_obs, isotope=UInt8(iso_idx).
         scratch.nzval[scratch.n]   = pred_int
         scratch.x[scratch.n]       = int_obs
         scratch.isotope[scratch.n] = UInt8(iso_idx)
+        scratch.rank[scratch.n]    = UInt8(rank)
     end
     return nothing
 end
 
 """
-    push_miss!(scratch, pred_int, iso_idx)
+    push_miss!(scratch, pred_int, iso_idx, rank)
 
 Append a miss entry (no observed peak) into `FusedScratch`, growing the
 backing arrays if necessary. Stores only `nzval = pred_int` and
-`isotope = UInt8(iso_idx)` — misses don't carry a row index.
+`isotope = UInt8(iso_idx)` plus rank — misses don't carry a row index.
 """
-@inline function push_miss!(scratch::FusedScratch, pred_int::Float32, iso_idx::Integer)
+@inline function push_miss!(scratch::FusedScratch, pred_int::Float32, iso_idx::Integer,
+        rank::Integer)
     if scratch.miss_n + 1 > length(scratch.miss_nzval)
         grow_fused_scratch!(scratch, scratch.miss_n + 1)
     end
@@ -729,6 +731,7 @@ backing arrays if necessary. Stores only `nzval = pred_int` and
     @inbounds begin
         scratch.miss_nzval[scratch.miss_n]   = pred_int
         scratch.miss_isotope[scratch.miss_n] = UInt8(iso_idx)
+        scratch.miss_rank[scratch.miss_n]    = UInt8(rank)
     end
     return nothing
 end
@@ -862,7 +865,8 @@ function run_fused!(
 
             @inbounds for frag_idx in frag_range
                 frag = fragments[frag_idx]
-                getRank(frag) > rank_thr && continue
+                rank = getRank(frag)
+                rank > rank_thr && continue
 
                 getFragIsotopes!(
                     prec_est, isotopes_buf, prec_trans_buf,
@@ -910,7 +914,7 @@ function run_fused!(
                             col_started = true
                         end
 
-                        push_match!(scratch, best_peak, pred_int, int_obs, iso_idx)
+                        push_match!(scratch, best_peak, pred_int, int_obs, iso_idx, rank)
 
                         ppm_err = compute_ppm_err(iso_mz, best_mz)
                         trace_intensity_match = capture_trace_intensity &&
@@ -924,7 +928,7 @@ function run_fused!(
                         end
                     else
                         nmisses += 1
-                        push_miss!(scratch, pred_int, iso_idx)
+                        push_miss!(scratch, pred_int, iso_idx, rank)
                     end
                 end  # iso_idx
 

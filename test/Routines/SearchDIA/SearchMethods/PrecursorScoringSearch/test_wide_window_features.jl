@@ -17,6 +17,33 @@ const TEST_FLANKING_WINDOW_FEATURES = [
     :frag_apex_gt2x_flank_bitvec_rank,
 ]
 
+function _add_shadow_peak_helper_columns!(psms::DataFrame)
+    n = nrow(psms)
+    for col in Pioneer.FITTED_FRAGMENT_INTENSITY_COLUMNS
+        psms[!, col] = zeros(Float32, n)
+    end
+    for col in Pioneer.SHADOW_FRAGMENT_INTENSITY_COLUMNS
+        psms[!, col] = zeros(Float32, n)
+    end
+    return psms
+end
+
+function _reference_shadow_hellinger(fitted::AbstractVector, shadow::AbstractVector)
+    sum_fitted = 0f0
+    sum_shadow = 0f0
+    bc_sum = 0f0
+    @inbounds for i in eachindex(fitted, shadow)
+        f = max(Float32(fitted[i]), 0f0)
+        s = max(Float32(shadow[i]), 0f0)
+        sum_fitted += f
+        sum_shadow += s
+        bc_sum += sqrt(f * s)
+    end
+    denom = sqrt(sum_fitted * sum_shadow)
+    hsq = denom > 0f0 ? 1f0 - bc_sum / denom : 1f0
+    return Float32(-log2(max(hsq, 1f-10)))
+end
+
 function _reference_flanking_pcor(x::AbstractVector, y::AbstractVector)
     n = length(x)
     n < 2 && return 0f0
@@ -171,16 +198,6 @@ end
     @test collect(Pioneer.FLANKING_WINDOW_FEATURES) == TEST_FLANKING_WINDOW_FEATURES
 end
 
-@testset "cross-run model uses smoothed top-8 fragment intensities" begin
-    raw_fragment_features = collect(Pioneer.MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
-    smoothed_fragment_features = collect(Pioneer.FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS)
-
-    @test all(feature -> feature in Pioneer.PRESCORE_FEATURES, raw_fragment_features)
-    @test all(feature -> !(feature in Pioneer.ADVANCED_FEATURE_SET), raw_fragment_features)
-    @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, smoothed_fragment_features)
-    @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), smoothed_fragment_features)
-end
-
 @testset "flanking-core bounds use contiguous passing cycles around the selected PSM" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
@@ -199,6 +216,7 @@ end
         frag7_int = zeros(Float32, 4),
         frag8_int = zeros(Float32, 4),
     )
+    _add_shadow_peak_helper_columns!(psms)
     best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
     rank_table = fill(UInt16(99), 256)
     rank_table[0x00 + 1] = UInt16(1)
@@ -223,7 +241,7 @@ end
     @test best.flanking_core_frag_signal == Float32[11]
 end
 
-@testset "flanking core fragment values use radius-one triangular smoothing" begin
+@testset "smoothed fragment values use radius-one triangular smoothing" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
         scan_idx = UInt32[101, 102, 103, 104],
@@ -241,6 +259,7 @@ end
         frag7_int = zeros(Float32, 4),
         frag8_int = zeros(Float32, 4),
     )
+    _add_shadow_peak_helper_columns!(psms)
     best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
     rank_table = fill(UInt16(99), 256)
 
@@ -252,9 +271,52 @@ end
     )
 
     @test best.scan_idx == UInt32[103]
-    @test best.flanking_core_frag1_smooth_intensity == Float32[2]
-    @test best.flanking_core_frag2_smooth_intensity == Float32[5]
-    @test best.flanking_core_frag3_smooth_intensity == Float32[2]
+    @test best.frag1_smoothed_intensity == Float32[2]
+    @test best.frag2_smoothed_intensity == Float32[5]
+    @test best.frag3_smoothed_intensity == Float32[2]
+end
+
+@testset "smoothed shadow Hellinger smooths per-rank shadow peaks" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[101, 102, 103, 104],
+        cycle_idx = UInt32[1, 2, 3, 4],
+        lgbm_score = Float32[0.7, 0.9, 0.8, 0.1],
+        weight = Float32[1, 1, 10, 1],
+        irt_obs = Float32[1, 2, 3, 4],
+        ms1_m0_intensity = Float32[1, 2, 3, 4],
+        frag1_int = Float32[9, 9, 9, 9],
+        frag2_int = Float32[9, 9, 9, 9],
+        frag3_int = zeros(Float32, 4),
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+    )
+    _add_shadow_peak_helper_columns!(psms)
+    psms[!, :fitted_frag1_int] = Float32[1, 2, 2, 1]
+    psms[!, :fitted_frag2_int] = Float32[1, 10, 10, 1]
+    psms[!, :shadow_frag1_int] = Float32[99, 0, 0, 8]
+    psms[!, :shadow_frag2_int] = Float32[99, 4, 8, 0]
+
+    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    rank_table = fill(UInt16(99), 256)
+
+    Pioneer.add_trace_and_fragment_features!(
+        best,
+        psms,
+        Bool[true, true, true, true];
+        bitvec_rank_table = rank_table,
+    )
+
+    expected_shadow = Float32[2, 5, 0, 0, 0, 0, 0, 0]
+    expected_fitted = Float32[2, 10, 0, 0, 0, 0, 0, 0]
+    @test best.scan_idx == UInt32[103]
+    @test best.smoothed_shadow_hellinger[1] ≈
+        _reference_shadow_hellinger(expected_fitted, expected_shadow)
+    @test all(col -> !hasproperty(best, col), Pioneer.FITTED_FRAGMENT_INTENSITY_COLUMNS)
+    @test all(col -> !hasproperty(best, col), Pioneer.SHADOW_FRAGMENT_INTENSITY_COLUMNS)
 end
 
 @testset "flanking-window scans exclude core scans" begin

@@ -153,38 +153,42 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
         s = FusedScratch(4)
         @test s.n == 0 && s.miss_n == 0
 
-        push_match!(s, 7, 1.5f0, 1000.0f0, 0)
+        push_match!(s, 7, 1.5f0, 1000.0f0, 0, 3)
         @test s.n == 1
         @test s.row[1]     === UInt32(7)
         @test s.nzval[1]   === 1.5f0
         @test s.x[1]       === 1000.0f0
         @test s.isotope[1] === UInt8(0)
+        @test s.rank[1]    === UInt8(3)
 
-        push_miss!(s, 0.25f0, 2)
+        push_miss!(s, 0.25f0, 2, 4)
         @test s.miss_n == 1
         @test s.miss_nzval[1]   === 0.25f0
         @test s.miss_isotope[1] === UInt8(2)
+        @test s.miss_rank[1]    === UInt8(4)
 
         # Force grow on the match buffer (capacity 4 → push 5).
         for k in 2:5
-            push_match!(s, k * 10, Float32(k), Float32(k * 100), k - 1)
+            push_match!(s, k * 10, Float32(k), Float32(k * 100), k - 1, k)
         end
         @test s.n == 5
         @test length(s.row) >= 5
         @test s.row[5]     === UInt32(50)
         @test s.isotope[5] === UInt8(4)
+        @test s.rank[5]    === UInt8(5)
 
         # Independent buffers — pushing matches doesn't change miss state.
         @test s.miss_n == 1
 
         # Force grow on the miss buffer.
         for k in 2:6
-            push_miss!(s, Float32(k) * 0.1f0, k)
+            push_miss!(s, Float32(k) * 0.1f0, k, k + 1)
         end
         @test s.miss_n == 6
         @test length(s.miss_nzval) >= 6
         @test s.miss_nzval[6]   === 0.6f0
         @test s.miss_isotope[6] === UInt8(6)
+        @test s.miss_rank[6]    === UInt8(7)
     end
 
     @testset "bit-identical to inline original" begin

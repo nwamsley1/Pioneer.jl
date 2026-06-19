@@ -8,6 +8,17 @@ function _test_fragment_rank_weights(n_frags::Integer)
     return Float32.(weights .* scale)
 end
 
+function _add_shadow_peak_helper_columns_fragment_tests!(psms::DataFrame)
+    n = nrow(psms)
+    for col in Pioneer.FITTED_FRAGMENT_INTENSITY_COLUMNS
+        psms[!, col] = zeros(Float32, n)
+    end
+    for col in Pioneer.SHADOW_FRAGMENT_INTENSITY_COLUMNS
+        psms[!, col] = zeros(Float32, n)
+    end
+    return psms
+end
+
 @testset "fragment chromatogram positive correlation summaries" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10],
@@ -78,6 +89,7 @@ end
         frag7_int = zeros(Float32, 6),
         frag8_int = zeros(Float32, 6),
     )
+    _add_shadow_peak_helper_columns_fragment_tests!(psms)
     rank_table = fill(UInt16(99), 256)
     rank_table[0x07 + 1] = UInt16(11)
     rank_table[0x00 + 1] = UInt16(22)
@@ -126,6 +138,7 @@ end
         frag7_int = zeros(Float32, 4),
         frag8_int = zeros(Float32, 4),
     )
+    _add_shadow_peak_helper_columns_fragment_tests!(psms)
     rank_table = fill(UInt16(99), 256)
     rank_table[0x01 + 1] = UInt16(8)
 
