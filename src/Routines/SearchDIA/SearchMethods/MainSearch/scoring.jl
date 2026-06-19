@@ -663,7 +663,6 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     end
 
     # Reusable buffers
-    p75_buf = Vector{Float32}(undef, 128)
     smooth_w_buf  = Vector{Float32}(undef, 128)  # weights sorted by rt
     smooth_rt_buf = Vector{Float32}(undef, 128)  # rt sorted ascending
     smooth_ord_buf = Vector{Int}(undef, 128)     # per-group sort permutation
@@ -700,18 +699,11 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             end
         end
 
-        # --- Sub-pass 1b: p75 re-selection by weight ---
-        if weights !== nothing && group_len >= 4
-            if length(p75_buf) < group_len
-                resize!(p75_buf, group_len)
-            end
-            @inbounds for k in 0:(group_len - 1)
-                p75_buf[k + 1] = scores[perm[group_start + k]]
-            end
-            p75_idx = ceil(Int, 0.75 * group_len)
-            partialsort!(view(p75_buf, 1:group_len), p75_idx)
-            score_threshold = p75_buf[p75_idx]
-
+        # --- Sub-pass 1b (Method 1: score-margin 0.1): among scans scoring
+        # within 0.1 of the max score, pick the highest-weight one. Falls back
+        # to the max-score row (best_row) when only that row qualifies. ---
+        if weights !== nothing
+            score_threshold = best_s - 0.1f0
             best_w = typemin(Float32)
             @inbounds for k in 0:(group_len - 1)
                 row = perm[group_start + k]
