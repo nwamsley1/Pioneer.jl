@@ -906,19 +906,31 @@ end
 Per-precursor chromatogram-feature passes (MS1 + MS2-fragment). Calls
 `_add_ms1_chromatogram_features!` (uses :ms1_m0_intensity, :ms1_m1_intensity)
 and `_add_fragment_chromatogram_features!` (uses :frag1..8_int) over the
-shared per-precursor group structure built once via `_build_precursor_groups`.
+shared group structure built once. When `spectra` is supplied, groups are split
+by both precursor and isolation window.
 
 **PRECONDITION**: requires psms to be sorted by :precursor_idx (the
 `_build_precursor_groups` fast path), AND requires
 `add_ms1_lookup_features!` to have already populated the :ms1_m0_intensity
 / :ms1_m1_intensity columns.
 """
-function add_chromatogram_features!(psms::DataFrame; bitvec_rank_table = nothing)
+function add_chromatogram_features!(
+    psms::DataFrame,
+    spectra::Union{Nothing, MassSpecData} = nothing;
+    bitvec_rank_table = nothing,
+)
     n = nrow(psms)
     n == 0 && return
-    # Build precursor grouping (perm + starts/ends) once; reuse across both passes.
+    # Build grouping (perm + starts/ends) once; reuse across both passes.
     t_groups = @elapsed groups = hasproperty(psms, :precursor_idx) ?
-        _build_precursor_groups(psms.precursor_idx) :
+        (spectra === nothing ?
+            _build_precursor_groups(psms.precursor_idx) :
+            _build_precursor_window_groups(
+                psms.precursor_idx,
+                psms.scan_idx,
+                getCenterMzs(spectra),
+                getIsolationWidthMzs(spectra),
+            )) :
         nothing
     t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
     t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(
@@ -1121,6 +1133,88 @@ function _build_precursor_groups(prec_col::AbstractVector)
             i += 1
         end
     end
+    return perm, starts, ends
+end
+
+@inline function _scan_window_key(
+    scan_idx::Integer,
+    center_mzs::AbstractVector,
+    isolation_widths::AbstractVector,
+)
+    return (
+        Float32(coalesce(center_mzs[scan_idx], 0f0)),
+        Float32(coalesce(isolation_widths[scan_idx], 0f0)),
+    )
+end
+
+function _build_precursor_window_groups(
+    prec_col::AbstractVector,
+    scan_col::AbstractVector{UInt32},
+    center_mzs::AbstractVector,
+    isolation_widths::AbstractVector,
+)
+    n = length(prec_col)
+    if n == 0
+        return Vector{Int}(), Vector{UInt32}(), Vector{UInt32}()
+    end
+
+    base_perm, base_starts, base_ends = _build_precursor_groups(prec_col)
+    perm = Vector{Int}(undef, n)
+    starts = UInt32[]
+    ends = UInt32[]
+    sizehint!(starts, length(base_starts))
+    sizehint!(ends, length(base_starts))
+
+    out_pos = 1
+    @inbounds for group_idx in eachindex(base_starts)
+        group_start = Int(base_starts[group_idx])
+        group_stop = Int(base_ends[group_idx])
+        first_row = base_perm[group_start]
+        first_key = _scan_window_key(scan_col[first_row], center_mzs, isolation_widths)
+        single_window = true
+        for i in (group_start + 1):group_stop
+            row = base_perm[i]
+            if _scan_window_key(scan_col[row], center_mzs, isolation_widths) != first_key
+                single_window = false
+                break
+            end
+        end
+
+        if single_window
+            start_out = out_pos
+            for i in group_start:group_stop
+                perm[out_pos] = base_perm[i]
+                out_pos += 1
+            end
+            push!(starts, UInt32(start_out))
+            push!(ends, UInt32(out_pos - 1))
+        else
+            window_to_group = Dict{Tuple{Float32, Float32}, Int}()
+            window_rows = Vector{Vector{Int}}()
+            for i in group_start:group_stop
+                row = base_perm[i]
+                key = _scan_window_key(scan_col[row], center_mzs, isolation_widths)
+                local_group = get(window_to_group, key, 0)
+                if local_group == 0
+                    push!(window_rows, Int[])
+                    local_group = length(window_rows)
+                    window_to_group[key] = local_group
+                end
+                push!(window_rows[local_group], row)
+            end
+
+            for rows in window_rows
+                start_out = out_pos
+                for row in rows
+                    perm[out_pos] = row
+                    out_pos += 1
+                end
+                push!(starts, UInt32(start_out))
+                push!(ends, UInt32(out_pos - 1))
+            end
+        end
+    end
+
     return perm, starts, ends
 end
 

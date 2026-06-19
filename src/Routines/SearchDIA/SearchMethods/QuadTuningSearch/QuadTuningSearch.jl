@@ -83,7 +83,6 @@ Configures deconvolution and quad model fitting.
 struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_fraction_transmitted::Float32
     min_index_search_score::UInt8
     min_log2_matched_ratio::Float32
     min_spectral_contrast::Float32
@@ -111,7 +110,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
 
         new{typeof(prec_estimation)}(
             (UInt8(0), UInt8(0)),                                          # isotope_err_bounds
-            0.0f0,                                                          # min_fraction_transmitted; quad fitting should not pre-filter by the model being fitted
             UInt8(maximum(TUNING_MIN_SCORE)),                              # min_index_search_score (formerly derived from fragment_index_search.min_score=15 → max(TUNING_MIN_SCORE))
             typemin(Float32),                                              # min_log2_matched_ratio
             TUNING_MIN_SPECTRAL_CONTRAST,                                  # min_spectral_contrast

@@ -71,6 +71,65 @@ end
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
 end
 
+@testset "fragment chromatogram summaries group by precursor and isolation window" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[1, 2, 3, 4],
+        frag1_int = Float32[1, 2, 10, 1],
+        frag2_int = Float32[2, 4, 10, 1],
+        frag3_int = zeros(Float32, 4),
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+        weight = Float32[1, 2, 1, 2],
+        irt_obs = Float32[1, 2, 3, 4],
+        ms1_m0_intensity = Float32[1, 2, 1, 2],
+    )
+    center_mzs = Union{Missing, Float32}[500, 500, 600, 600]
+    isolation_widths = Union{Missing, Float32}[4, 4, 4, 4]
+    groups = Pioneer._build_precursor_window_groups(
+        psms.precursor_idx,
+        psms.scan_idx,
+        center_mzs,
+        isolation_widths,
+    )
+
+    Pioneer._add_fragment_chromatogram_features!(psms; groups=groups)
+
+    @test psms.n_scans == UInt32[2, 2, 2, 2]
+    @test psms.n_correlated_fragments == UInt8[2, 2, 0, 0]
+    @test psms.frag_corr_strength[1] > psms.frag_corr_strength[3]
+end
+
+@testset "selected precursor shape features use selected isolation window" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[1, 2, 3, 4],
+        lgbm_score = Float32[0.8, 0.9, 0.1, 0.2],
+        weight = Float32[10, 20, 100, 100],
+        irt_obs = Float32[1, 2, 100, 200],
+        rt = Float32[10, 20, 1000, 2000],
+    )
+    center_mzs = Union{Missing, Float32}[500, 500, 600, 600]
+    isolation_widths = Union{Missing, Float32}[4, 4, 4, 4]
+
+    best = Pioneer.select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
+
+    @test best.scan_idx == UInt32[2]
+    @test best.n_above_hm == UInt16[2]
+    @test best.irt_fwhm == Float32[1]
+    @test best.rt_fwhm == Float32[10]
+    @test best.best_rt == Float32[20]
+    @test best.smoothness ≈ Float32[0.0225]
+end
+
 @testset "post-filter fragment union and intersection bitvec ranks" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 20, 30, 30],

@@ -434,6 +434,8 @@ function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
     lgbm_hp = SHARED_LGBM_HP,
+    center_mzs = nothing,
+    isolation_widths = nothing,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -478,7 +480,12 @@ function train_lgbm_and_select_best(
     end
 
     # Select best scan per precursor by LightGBM score
-    psms = select_best_per_precursor!(psms, :lgbm_score)
+    psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
 
     # Extract scores for best PSMs
     scores = psms[!, :lgbm_score]
@@ -507,7 +514,9 @@ end
 
 function reapply_psm_classifier_and_select_best!(
     psms::DataFrame,
-    predictor,
+    predictor;
+    center_mzs = nothing,
+    isolation_widths = nothing,
 )
     t0 = time()
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
@@ -521,7 +530,12 @@ function reapply_psm_classifier_and_select_best!(
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    best_psms = select_best_per_precursor!(psms, :lgbm_score)
+    best_psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     scores = best_psms[!, :lgbm_score]
     t_best = time()
 
@@ -591,20 +605,20 @@ const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
 
 function _mainsearch_flanking_core_bounds!(
     order::Vector{Int},
-    group_start::Int,
-    group_stop::Int,
+    group_rows::Vector{Int},
+    group_len::Int,
     scan_idxs::AbstractVector{UInt32},
     cycle_idxs::AbstractVector,
     pass_mask::AbstractVector{Bool},
     selected_scan::UInt32,
 )
-    group_len = group_stop - group_start + 1
     if length(order) < group_len
         resize!(order, group_len)
     end
 
-    best_row = group_start
-    @inbounds for (i, row) in enumerate(group_start:group_stop)
+    best_row = group_rows[1]
+    @inbounds for i in 1:group_len
+        row = group_rows[i]
         order[i] = row
         if scan_idxs[row] == selected_scan
             best_row = row
@@ -751,6 +765,8 @@ function add_trace_and_fragment_features!(
     psms::DataFrame,
     pass_mask::AbstractVector{Bool};
     bitvec_rank_table,
+    center_mzs = nothing,
+    isolation_widths = nothing,
 )
     best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
     best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
@@ -777,6 +793,8 @@ function add_trace_and_fragment_features!(
     out_shadow_hellinger = Vector{Float32}(undef, n_best)
 
     flanking_core_order = Int[]
+    selected_window_rows = Int[]
+    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
 
     row = 1
     n = nrow(psms)
@@ -791,10 +809,21 @@ function add_trace_and_fragment_features!(
         end
         group_stop = row - 1
 
+        empty!(selected_window_rows)
+        selected_window_key = use_window_groups ?
+            _scan_window_key(best_scan_idxs[i], center_mzs, isolation_widths) :
+            (0f0, 0f0)
+        for group_row in group_start:group_stop
+            if !use_window_groups ||
+               _scan_window_key(scan_idxs[group_row], center_mzs, isolation_widths) == selected_window_key
+                push!(selected_window_rows, group_row)
+            end
+        end
+
         flanking_core = _mainsearch_flanking_core_bounds!(
             flanking_core_order,
-            group_start,
-            group_stop,
+            selected_window_rows,
+            length(selected_window_rows),
             scan_idxs,
             cycle_idxs,
             pass_mask,
@@ -825,7 +854,7 @@ function add_trace_and_fragment_features!(
         union_mask = UInt16(0)
         intersection_mask = UInt16(0x00ff)
 
-        for group_row in group_start:group_stop
+        for group_row in selected_window_rows
             mask = _mainsearch_fragment_presence_mask(group_row, frag_cols)
             union_mask |= mask
             intersection_mask &= mask
@@ -869,11 +898,20 @@ end
 Keeps one row per precursor_idx. Uses sortperm for contiguous group processing:
 per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥4 PSMs),
 otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
-weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` per precursor.
+weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt`. When scan
+window arrays are supplied, those shape features use only the selected PSM's
+isolation window.
 """
-function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
+function select_best_per_precursor!(
+    psms::DataFrame,
+    score_col::Symbol;
+    center_mzs = nothing,
+    isolation_widths = nothing,
+)
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
+    scan_idxs = use_window_groups ? psms[!, :scan_idx]::Vector{UInt32} : nothing
     has_irt = hasproperty(psms, :irt_obs)
     has_weight = hasproperty(psms, :weight)
     has_rt = hasproperty(psms, :rt)
@@ -985,13 +1023,29 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             end
         end
 
+        selected_window_key = use_window_groups ?
+            _scan_window_key(scan_idxs[best_row], center_mzs, isolation_widths) :
+            (0f0, 0f0)
+        window_mw = mw
+        if use_window_groups && weights !== nothing
+            window_mw = 0f0
+            @inbounds for k in 0:(group_len - 1)
+                row = perm[group_start + k]
+                _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                w = weights[row]
+                if w > window_mw
+                    window_mw = w
+                end
+            end
+        end
+
         push!(keep_rows, best_row)
 
         # --- Sub-pass 2: FWHM bounds. irt_fwhm is a LGBM feature;
         # n_above_hm + rt_fwhm are not LGBM features but are still consumed
         # by prescore_aggregation.jl. ---
         if compute_fwhm
-            half_max = 0.5f0 * mw
+            half_max = 0.5f0 * window_mw
             irt_lo = typemax(Float32)
             irt_hi = typemin(Float32)
             rt_lo = typemax(Float32)
@@ -1000,6 +1054,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
 
             @inbounds for k in 0:(group_len - 1)
                 row = perm[group_start + k]
+                if use_window_groups
+                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                end
                 weights[row] >= half_max || continue
                 n_hm += UInt8(1)
                 irt = irt_obs[row]
@@ -1021,27 +1078,41 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
 
         # --- Sub-pass 3: smoothness (squared second-derivative of weight chrom) ---
         if out_smoothness !== nothing
-            if length(smooth_w_buf) < group_len
-                resize!(smooth_w_buf,  group_len)
-                resize!(smooth_rt_buf, group_len)
-                resize!(smooth_ord_buf, group_len)
+            smooth_len = group_len
+            if use_window_groups
+                smooth_len = 0
+                @inbounds for k in 0:(group_len - 1)
+                    row = perm[group_start + k]
+                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                    smooth_len += 1
+                end
             end
-            # Populate buffers and sort by RT
-            @inbounds for k in 0:(group_len - 1)
-                row = perm[group_start + k]
-                smooth_w_buf[k+1]  = weights[row]
-                smooth_rt_buf[k+1] = rt_vals[row]
-                smooth_ord_buf[k+1] = k + 1
+            if length(smooth_w_buf) < smooth_len
+                resize!(smooth_w_buf,  smooth_len)
+                resize!(smooth_rt_buf, smooth_len)
+                resize!(smooth_ord_buf, smooth_len)
             end
-            sort!(view(smooth_ord_buf, 1:group_len), by = ki -> smooth_rt_buf[ki])
+            @inbounds let j = 0
+                for k in 0:(group_len - 1)
+                    row = perm[group_start + k]
+                    if use_window_groups
+                        _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                    end
+                    j += 1
+                    smooth_w_buf[j] = weights[row]
+                    smooth_rt_buf[j] = rt_vals[row]
+                    smooth_ord_buf[j] = j
+                end
+            end
+            sort!(view(smooth_ord_buf, 1:smooth_len), by = ki -> smooth_rt_buf[ki])
             # Compute the roughness sum
             rough = 0f0
-            if mw > 0f0
-                if group_len == 1
+            if window_mw > 0f0
+                if smooth_len == 1
                     # Single point — original code: rough = (−2w/w_apex)² = 4
                     rough = 4f0
                 else
-                    @inbounds for k in 1:group_len
+                    @inbounds for k in 1:smooth_len
                         ki = smooth_ord_buf[k]
                         w_i = smooth_w_buf[ki]
                         if k == 1
@@ -1049,13 +1120,13 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
                             dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
                             d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
                             d_l = dt_r > 0 ? (-w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / mw)^2
-                        elseif k == group_len
+                            rough += ((d_l + d_r) / window_mw)^2
+                        elseif k == smooth_len
                             ki_l = smooth_ord_buf[k-1]
                             dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
                             d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
                             d_r = dt_l > 0 ? (-w_i) / dt_l : 0f0
-                            rough += ((d_l + d_r) / mw)^2
+                            rough += ((d_l + d_r) / window_mw)^2
                         else
                             ki_l = smooth_ord_buf[k-1]
                             ki_r = smooth_ord_buf[k+1]
@@ -1063,7 +1134,7 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
                             dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
                             d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
                             d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / mw)^2
+                            rough += ((d_l + d_r) / window_mw)^2
                         end
                     end
                 end

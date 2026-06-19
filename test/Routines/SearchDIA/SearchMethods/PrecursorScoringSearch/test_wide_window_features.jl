@@ -241,6 +241,54 @@ end
     @test best.flanking_core_frag_signal == Float32[11]
 end
 
+@testset "post-filter trace features use selected isolation window only" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[101, 102, 103, 104],
+        cycle_idx = UInt32[1, 2, 3, 4],
+        lgbm_score = Float32[0.1, 0.9, 0.8, 0.2],
+        weight = ones(Float32, 4),
+        irt_obs = Float32[1, 2, 3, 4],
+        ms1_m0_intensity = Float32[1, 10, 20, 40],
+        frag1_int = Float32[1, 3, 5, 9],
+        frag2_int = Float32[0, 1, 2, 9],
+        frag3_int = Float32[0, 0, 0, 9],
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+    )
+    _add_shadow_peak_helper_columns!(psms)
+    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    center_mzs = Vector{Union{Missing, Float32}}(fill(missing, 104))
+    isolation_widths = Vector{Union{Missing, Float32}}(fill(missing, 104))
+    center_mzs[101:103] .= 500.0f0
+    center_mzs[104] = 600.0f0
+    isolation_widths[101:104] .= 4.0f0
+    rank_table = fill(UInt16(99), 256)
+    rank_table[0x03 + 1] = UInt16(8)
+
+    Pioneer.add_trace_and_fragment_features!(
+        best,
+        psms,
+        trues(nrow(psms));
+        bitvec_rank_table = rank_table,
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
+
+    @test best.scan_idx == UInt32[102]
+    @test best.n_contiguous_scans == UInt16[3]
+    @test best.flanking_core_scan_min == UInt32[101]
+    @test best.flanking_core_scan_max == UInt32[103]
+    @test best.flanking_core_ms1_m0_signal == Float32[31]
+    @test best.flanking_core_frag_signal == Float32[12]
+    @test best.n_frags_detected_union == UInt8[2]
+    @test best.n_frags_detected_intersection == UInt8[1]
+    @test best.n_frags_detected_union_bitvec_rank == UInt16[8]
+end
+
 @testset "smoothed fragment values use radius-one triangular smoothing" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
