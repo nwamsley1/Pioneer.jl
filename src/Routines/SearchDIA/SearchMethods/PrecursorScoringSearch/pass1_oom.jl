@@ -318,7 +318,9 @@ function _predict_pass1_to_sidecar(
         # competing for 10 physical cores (oversubscription). With
         # num_threads=1 each predict is single-threaded internally and
         # parallelism comes from the Julia-level file loop.
-        raw = LightGBM.predict(cls, X_fold; num_threads=1)
+        raw = lock(LGBM_C_LOCK) do
+            LightGBM.predict(cls, X_fold; num_threads=1)
+        end
         s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
         return clamp.(Float32.(s), 1f-6, 1f0 - 1f-4)
     end
