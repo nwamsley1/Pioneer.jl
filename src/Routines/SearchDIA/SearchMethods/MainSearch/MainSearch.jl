@@ -364,7 +364,7 @@ function process_search_results!(
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
     t_recal = time()
 
-    trace_pass_mask = _mainsearch_pep_pass_mask(
+    trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
         psms[!, :lgbm_score],
         psms[!, :target],
     )
@@ -389,6 +389,7 @@ function process_search_results!(
         bitvec_rank_table = bitvec_rank_table,
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
+        pep_values = trace_peps,
     )
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()

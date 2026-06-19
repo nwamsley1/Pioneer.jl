@@ -172,32 +172,39 @@ end
     @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 55]
 end
 
-@testset "trace feature pass skips slow other-trace summaries" begin
-    other_trace_features = (
-        :n_scans_other_traces,
-        :trace_other_weight_corr,
-        :trace_other_frag_sum_corr,
-        :trace_other_apex_delta_irt,
+@testset "other-window trace agreement summaries use lowest-PEP other window" begin
+    other_window_features = (
+        :n_scans_other_windows,
+        :other_window_weight_corr,
+        :other_window_frag_sum_corr,
+        :other_window_apex_delta_irt,
     )
     psms = DataFrame(
-        precursor_idx = UInt32[10, 10, 10, 10],
-        scan_idx = UInt32[101, 102, 103, 104],
-        lgbm_score = Float32[0.8, 0.9, 0.7, 0.6],
-        weight = Float32[1, 2, 2, 4],
-        irt_obs = Float32[1.0, 2.0, 1.2, 2.2],
-        rt = Float32[10, 11, 12, 13],
-        cycle_idx = UInt32[1, 2, 1, 2],
-        ms1_m0_intensity = Float32[1, 2, 2, 4],
-        frag1_int = Float32[1, 2, 2, 4],
-        frag2_int = zeros(Float32, 4),
-        frag3_int = zeros(Float32, 4),
-        frag4_int = zeros(Float32, 4),
-        frag5_int = zeros(Float32, 4),
-        frag6_int = zeros(Float32, 4),
-        frag7_int = zeros(Float32, 4),
-        frag8_int = zeros(Float32, 4),
+        precursor_idx = fill(UInt32(10), 6),
+        scan_idx = UInt32[101, 102, 201, 202, 301, 302],
+        lgbm_score = Float32[0.8, 0.9, 0.7, 0.6, 0.5, 0.4],
+        weight = Float32[1, 2, 2, 4, 100, 1],
+        irt_obs = Float32[1.0, 2.0, 2.2, 3.2, 9.0, 10.0],
+        rt = Float32[10, 11, 12, 13, 14, 15],
+        cycle_idx = UInt32[1, 2, 1, 2, 1, 2],
+        ms1_m0_intensity = Float32[1, 2, 2, 4, 100, 1],
+        frag1_int = Float32[1, 2, 2, 4, 100, 1],
+        frag2_int = zeros(Float32, 6),
+        frag3_int = zeros(Float32, 6),
+        frag4_int = zeros(Float32, 6),
+        frag5_int = zeros(Float32, 6),
+        frag6_int = zeros(Float32, 6),
+        frag7_int = zeros(Float32, 6),
+        frag8_int = zeros(Float32, 6),
     )
     _add_shadow_peak_helper_columns_fragment_tests!(psms)
+    center_mzs = Vector{Union{Missing, Float32}}(fill(missing, 302))
+    isolation_widths = Vector{Union{Missing, Float32}}(fill(missing, 302))
+    center_mzs[101:102] .= 500.0f0
+    center_mzs[201:202] .= 502.0f0
+    center_mzs[301:302] .= 504.0f0
+    isolation_widths[[101, 102, 201, 202, 301, 302]] .= 2.0f0
+    peps = Float32[0.2, 0.1, 0.03, 0.04, 0.5, 0.6]
     rank_table = fill(UInt16(99), 256)
     rank_table[0x01 + 1] = UInt16(8)
 
@@ -207,11 +214,17 @@ end
         psms,
         trues(nrow(psms));
         bitvec_rank_table = rank_table,
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+        pep_values = peps,
     )
 
     @test best.precursor_idx == UInt32[10]
-    @test all(feature -> !(feature in Pioneer.ADVANCED_FEATURE_SET), other_trace_features)
-    @test all(feature -> !hasproperty(best, feature), other_trace_features)
+    @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, other_window_features)
+    @test best.n_scans_other_windows == UInt32[4]
+    @test best.other_window_weight_corr ≈ Float32[1.0]
+    @test best.other_window_frag_sum_corr ≈ Float32[1.0]
+    @test best.other_window_apex_delta_irt ≈ Float32[1.2]
     @test best.n_frags_detected_union == UInt8[1]
     @test best.n_frags_detected_intersection == UInt8[1]
     @test best.n_frags_detected_union_bitvec_rank == UInt16[8]
