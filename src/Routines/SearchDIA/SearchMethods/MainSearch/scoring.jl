@@ -595,8 +595,8 @@ function _mainsearch_flanking_core_bounds!(
     group_stop::Int,
     scan_idxs::AbstractVector{UInt32},
     cycle_idxs::AbstractVector,
-    scores::AbstractVector{Float32},
     pass_mask::AbstractVector{Bool},
+    selected_scan::UInt32,
 )
     group_len = group_stop - group_start + 1
     if length(order) < group_len
@@ -604,18 +604,22 @@ function _mainsearch_flanking_core_bounds!(
     end
 
     best_row = group_start
-    best_score = scores[group_start]
     @inbounds for (i, row) in enumerate(group_start:group_stop)
         order[i] = row
-        score = scores[row]
-        if score > best_score
-            best_score = score
+        if scan_idxs[row] == selected_scan
             best_row = row
         end
     end
 
     best_scan = scan_idxs[best_row]
-    pass_mask[best_row] || return (scan_min = best_scan, scan_max = best_scan, n_scans = UInt16(1))
+    pass_mask[best_row] || return (
+        scan_min = best_scan,
+        scan_max = best_scan,
+        n_scans = UInt16(1),
+        best_row = best_row,
+        left_row = 0,
+        right_row = 0,
+    )
 
     ord = view(order, 1:group_len)
     sort!(
@@ -661,7 +665,14 @@ function _mainsearch_flanking_core_bounds!(
         scan_max = max(scan_max, scan)
     end
     n_scans = UInt16(min(hi - lo + 1, Int(typemax(UInt16))))
-    return (scan_min = scan_min, scan_max = scan_max, n_scans = n_scans)
+    return (
+        scan_min = scan_min,
+        scan_max = scan_max,
+        n_scans = n_scans,
+        best_row = best_row,
+        left_row = best_pos > lo ? ord[best_pos - 1] : 0,
+        right_row = best_pos < hi ? ord[best_pos + 1] : 0,
+    )
 end
 
 @inline function _mainsearch_fragment_presence_mask(row::Int, frag_cols)
@@ -684,6 +695,27 @@ end
     return total
 end
 
+function _mainsearch_radius1_smooth_fragments!(
+    out_cols,
+    out_row::Int,
+    apex_row::Int,
+    left_row::Int,
+    right_row::Int,
+    frag_cols,
+)
+    denom = 2f0
+    left_row > 0 && (denom += 1f0)
+    right_row > 0 && (denom += 1f0)
+
+    @inbounds for rank in 1:8
+        signal = 2f0 * max(Float32(frag_cols[rank][apex_row]), 0f0)
+        left_row > 0 && (signal += max(Float32(frag_cols[rank][left_row]), 0f0))
+        right_row > 0 && (signal += max(Float32(frag_cols[rank][right_row]), 0f0))
+        out_cols[rank][out_row] = Float32(signal / denom)
+    end
+    return nothing
+end
+
 function add_trace_and_fragment_features!(
     best_psms::DataFrame,
     psms::DataFrame,
@@ -691,11 +723,11 @@ function add_trace_and_fragment_features!(
     bitvec_rank_table,
 )
     best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
 
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
     scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
     cycle_idxs = psms[!, :cycle_idx]
-    scores = psms[!, :lgbm_score]::Vector{Float32}
     ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
     frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
 
@@ -709,6 +741,7 @@ function add_trace_and_fragment_features!(
     out_intersection = Vector{UInt8}(undef, n_best)
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
+    out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
 
     flanking_core_order = Int[]
 
@@ -731,12 +764,21 @@ function add_trace_and_fragment_features!(
             group_stop,
             scan_idxs,
             cycle_idxs,
-            scores,
             pass_mask,
+            best_scan_idxs[i],
         )
         out_flanking_core_scan_min[i] = flanking_core.scan_min
         out_flanking_core_scan_max[i] = flanking_core.scan_max
         out_n_contiguous_scans[i] = flanking_core.n_scans
+
+        _mainsearch_radius1_smooth_fragments!(
+            out_smooth_frag_cols,
+            i,
+            flanking_core.best_row,
+            flanking_core.left_row,
+            flanking_core.right_row,
+            frag_cols,
+        )
 
         core_ms1_m0_signal = 0f0
         core_frag_signal = 0f0
@@ -770,6 +812,9 @@ function add_trace_and_fragment_features!(
     best_psms[!, :n_frags_detected_intersection] = out_intersection
     best_psms[!, :n_frags_detected_union_bitvec_rank] = out_union_rank
     best_psms[!, :n_frags_detected_intersection_bitvec_rank] = out_intersection_rank
+    @inbounds for rank in 1:8
+        best_psms[!, FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS[rank]] = out_smooth_frag_cols[rank]
+    end
     return best_psms
 end
 

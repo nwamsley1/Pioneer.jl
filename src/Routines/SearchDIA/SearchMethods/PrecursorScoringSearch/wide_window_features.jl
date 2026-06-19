@@ -692,7 +692,7 @@ function add_wide_window_features_to_fold_file!(
     flanking_core_scan_max = tbl[!, :flanking_core_scan_max]::Vector{UInt32}
     flanking_core_ms1_m0_signal = tbl[!, :flanking_core_ms1_m0_signal]::Vector{Float32}
     flanking_core_frag_signal = tbl[!, :flanking_core_frag_signal]::Vector{Float32}
-    fragment_intensity_cols = Tuple(tbl[!, col]::Vector{Float32} for col in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
+    core_fragment_cols = Tuple(tbl[!, col]::Vector{Float32} for col in FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS)
     scan_index = _wide_window_index_spectra(spectra)
     ms1_mem = getMs1MassErrorModel(search_context, ms_file_idx)
     ms1_ppm_tol = Float32(max(10f0, getLeftTol(ms1_mem), getRightTol(ms1_mem)))
@@ -753,7 +753,7 @@ function add_wide_window_features_to_fold_file!(
 
         prec_mz = Float32(prec_mzs[pid])
         prec_charge = UInt8(prec_charges[pid])
-        core_fragments = ntuple(rank -> Float32(fragment_intensity_cols[rank][group_start]), 8)
+        core_fragments = ntuple(rank -> Float32(core_fragment_cols[rank][group_start]), 8)
         fragment_idxs = _wide_top_fragment_idxs(
             frag_lookup,
             frag_list,

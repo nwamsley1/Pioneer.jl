@@ -171,7 +171,17 @@ end
     @test collect(Pioneer.FLANKING_WINDOW_FEATURES) == TEST_FLANKING_WINDOW_FEATURES
 end
 
-@testset "flanking-core bounds use contiguous passing cycles around the best score" begin
+@testset "cross-run model uses smoothed top-8 fragment intensities" begin
+    raw_fragment_features = collect(Pioneer.MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
+    smoothed_fragment_features = collect(Pioneer.FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS)
+
+    @test all(feature -> feature in Pioneer.PRESCORE_FEATURES, raw_fragment_features)
+    @test all(feature -> !(feature in Pioneer.ADVANCED_FEATURE_SET), raw_fragment_features)
+    @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, smoothed_fragment_features)
+    @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), smoothed_fragment_features)
+end
+
+@testset "flanking-core bounds use contiguous passing cycles around the selected PSM" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
         scan_idx = UInt32[101, 102, 103, 104],
@@ -211,6 +221,40 @@ end
     @test best.n_contiguous_scans == UInt16[2]
     @test best.flanking_core_ms1_m0_signal == Float32[30]
     @test best.flanking_core_frag_signal == Float32[11]
+end
+
+@testset "flanking core fragment values use radius-one triangular smoothing" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 10],
+        scan_idx = UInt32[101, 102, 103, 104],
+        cycle_idx = UInt32[1, 2, 3, 4],
+        lgbm_score = Float32[0.7, 0.9, 0.8, 0.1],
+        weight = Float32[1, 1, 10, 1],
+        irt_obs = Float32[1, 2, 3, 4],
+        ms1_m0_intensity = Float32[1, 2, 3, 4],
+        frag1_int = Float32[99, 0, 0, 8],
+        frag2_int = Float32[99, 4, 8, 0],
+        frag3_int = Float32[99, 0, 4, 0],
+        frag4_int = zeros(Float32, 4),
+        frag5_int = zeros(Float32, 4),
+        frag6_int = zeros(Float32, 4),
+        frag7_int = zeros(Float32, 4),
+        frag8_int = zeros(Float32, 4),
+    )
+    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    rank_table = fill(UInt16(99), 256)
+
+    Pioneer.add_trace_and_fragment_features!(
+        best,
+        psms,
+        Bool[true, true, true, true];
+        bitvec_rank_table = rank_table,
+    )
+
+    @test best.scan_idx == UInt32[103]
+    @test best.flanking_core_frag1_smooth_intensity == Float32[2]
+    @test best.flanking_core_frag2_smooth_intensity == Float32[5]
+    @test best.flanking_core_frag3_smooth_intensity == Float32[2]
 end
 
 @testset "flanking-window scans exclude core scans" begin

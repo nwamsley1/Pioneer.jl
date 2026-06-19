@@ -37,11 +37,10 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # they were always silently filtered out by the hasproperty guard in
 # pass1_oom.jl. Removed to make the design intent explicit.
 #
-# Conceptually ADVANCED_FEATURE_SET == PRESCORE_FEATURES at training
-# time (modulo a few per-precursor aggregate features like :smoothness
-# and :irt_fwhm that exist on best-per-precursor rows but not per-scan
-# rows). Lists kept separate due to load-order constraint in
-# importScripts.jl — PrecursorScoringSearch loads before MainSearch.
+# ADVANCED_FEATURE_SET mostly tracks PRESCORE_FEATURES, but it can use
+# best-per-precursor features that MainSearch cannot use for scan selection.
+# Lists are kept separate due to load-order constraint in importScripts.jl:
+# PrecursorScoringSearch loads before MainSearch.
 const FLANKING_WINDOW_FEATURES = [
     :flanking_ms1_m0_candidate_fraction,
     :flanking_frag_candidate_fraction,
@@ -57,8 +56,20 @@ const FLANKING_WINDOW_FEATURES = [
     :frag_apex_gt2x_flank_bitvec_rank,
 ]
 
+const FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS = (
+    :flanking_core_frag1_smooth_intensity,
+    :flanking_core_frag2_smooth_intensity,
+    :flanking_core_frag3_smooth_intensity,
+    :flanking_core_frag4_smooth_intensity,
+    :flanking_core_frag5_smooth_intensity,
+    :flanking_core_frag6_smooth_intensity,
+    :flanking_core_frag7_smooth_intensity,
+    :flanking_core_frag8_smooth_intensity,
+)
+
 const ADVANCED_FEATURE_SET = [
-    # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
+    # Kept close to PRESCORE_FEATURES (MainSearch/features.jl), with
+    # cross-run-only substitutions where the selected best PSM is known.
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
@@ -71,8 +82,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_isotope_dotp_m0_m1_m2,
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
-    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
-    :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    FLANKING_CORE_SMOOTHED_FRAGMENT_COLUMNS...,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
