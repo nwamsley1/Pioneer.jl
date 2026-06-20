@@ -37,13 +37,54 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # they were always silently filtered out by the hasproperty guard in
 # pass1_oom.jl. Removed to make the design intent explicit.
 #
-# Conceptually ADVANCED_FEATURE_SET == PRESCORE_FEATURES at training
-# time (modulo a few per-precursor aggregate features like :smoothness
-# and :irt_fwhm that exist on best-per-precursor rows but not per-scan
-# rows). Lists kept separate due to load-order constraint in
-# importScripts.jl — PrecursorScoringSearch loads before MainSearch.
+# ADVANCED_FEATURE_SET mostly tracks PRESCORE_FEATURES, but it can use
+# best-per-precursor features that MainSearch cannot use for scan selection.
+# Lists are kept separate due to load-order constraint in importScripts.jl:
+# PrecursorScoringSearch loads before MainSearch.
+const SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD = 0.03f0
+const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
+const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
+const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
+
+const FLANKING_WINDOW_FEATURES = [
+    :flanking_ms1_m0_candidate_fraction,
+    :flanking_frag_candidate_fraction,
+    :flanking_ms1_frag_sum_corr,
+    :flanking_frag_corr_mean,
+    :flanking_n_correlated_fragments,
+    :flanking_n_correlated_fragments_bitvec_rank,
+    :flanking_frag_corr_strength,
+    :flanking_frag_corr_effective_n,
+    :flanking_frag_corr_best_m0,
+    :flanking_signal_support,
+    :n_contiguous_scans,
+    :frag_apex_gt2x_flank_bitvec_rank,
+]
+
+const SMOOTHED_FRAGMENT_INTENSITY_COLUMNS = (
+    :frag1_smoothed_intensity,
+    :frag2_smoothed_intensity,
+    :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity,
+    :frag5_smoothed_intensity,
+    :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity,
+    :frag8_smoothed_intensity,
+)
+
+const FITTED_FRAGMENT_INTENSITY_COLUMNS = (
+    :fitted_frag1_int, :fitted_frag2_int, :fitted_frag3_int, :fitted_frag4_int,
+    :fitted_frag5_int, :fitted_frag6_int, :fitted_frag7_int, :fitted_frag8_int,
+)
+
+const SHADOW_FRAGMENT_INTENSITY_COLUMNS = (
+    :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
+    :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
+)
+
 const ADVANCED_FEATURE_SET = [
-    # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
+    # Kept close to PRESCORE_FEATURES (MainSearch/features.jl), with
+    # cross-run-only substitutions where the selected best PSM is known.
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
@@ -56,8 +97,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_isotope_dotp_m0_m1_m2,
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
-    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
-    :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...,
+    :smoothed_2d_shadow_hellinger,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
@@ -69,6 +110,11 @@ const ADVANCED_FEATURE_SET = [
     :n_frags_detected_intersection,
     :n_frags_detected_union_bitvec_rank,
     :n_frags_detected_intersection_bitvec_rank,
+    :precursor_fraction_transmitted,
+    :n_scans_other_windows,
+    :other_window_weight_corr,
+    :other_window_apex_delta_irt,
+    FLANKING_WINDOW_FEATURES...,
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,

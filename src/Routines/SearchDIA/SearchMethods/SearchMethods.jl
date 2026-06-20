@@ -282,7 +282,7 @@ function initSimpleSearchContext(
         iso_splines,
         [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),
-        Vector{SpectralScoresMainSearch{Float16}}(undef, 5000),
+        Vector{SpectralScoresMainSearch{Float16, Float32}}(undef, 5000),
         # Tuning buffers — slim PSM variants for ParameterTuning/QuadTuning/Integrate paths.
         [TuningUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{TuningScoredPSM{Float32, Float16}}(undef, 5000),

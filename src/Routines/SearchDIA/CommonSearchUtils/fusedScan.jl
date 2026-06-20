@@ -25,10 +25,12 @@ mutable struct FusedScratch
     nzval::Vector{Float32}
     x::Vector{Float32}
     isotope::Vector{UInt8}
+    rank::Vector{UInt8}
     # Miss entries: buffered here and flushed alongside matches in finalize.
     # Misses from a precursor with zero matches are discarded.
     miss_nzval::Vector{Float32}
     miss_isotope::Vector{UInt8}
+    miss_rank::Vector{UInt8}
     n::Int
     miss_n::Int
 end
@@ -39,7 +41,9 @@ function FusedScratch(max_per_prec::Int)
         Vector{Float32}(undef, max_per_prec),
         Vector{Float32}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
+        Vector{UInt8}(undef, max_per_prec),
         Vector{Float32}(undef, max_per_prec),
+        Vector{UInt8}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
         0, 0,
     )
@@ -63,8 +67,10 @@ function grow_fused_scratch!(s::FusedScratch, needed::Int)
         append!(s.nzval,        zeros(Float32, extra))
         append!(s.x,            zeros(Float32, extra))
         append!(s.isotope,      zeros(UInt8, extra))
+        append!(s.rank,         zeros(UInt8, extra))
         append!(s.miss_nzval,   zeros(Float32, extra))
         append!(s.miss_isotope, zeros(UInt8, extra))
+        append!(s.miss_rank,    zeros(UInt8, extra))
     end
     return
 end
@@ -173,16 +179,17 @@ sequence turns out to be non-monotonic (rare in practice).
 """
 @inline function insertion_sort_scratch!(s::FusedScratch, n::Int)
     @inbounds for i in 2:n
-        r = s.row[i]; nv = s.nzval[i]; xv = s.x[i]; iv = s.isotope[i]
+        r = s.row[i]; nv = s.nzval[i]; xv = s.x[i]; iv = s.isotope[i]; rv = s.rank[i]
         j = i - 1
         while j >= 1 && s.row[j] > r
             s.row[j+1]     = s.row[j]
             s.nzval[j+1]   = s.nzval[j]
             s.x[j+1]       = s.x[j]
             s.isotope[j+1] = s.isotope[j]
+            s.rank[j+1]    = s.rank[j]
             j -= 1
         end
-        s.row[j+1] = r; s.nzval[j+1] = nv; s.x[j+1] = xv; s.isotope[j+1] = iv
+        s.row[j+1] = r; s.nzval[j+1] = nv; s.x[j+1] = xv; s.isotope[j+1] = iv; s.rank[j+1] = rv
     end
     nothing
 end
@@ -232,12 +239,14 @@ function finalize_column!(H::SparseArrayFused{Ti,T}, col::UInt16,
         if r == prev_row && prev_entry > 0
             H.nzval[prev_entry] += s.nzval[i]
             H.meta[prev_entry]   = pack_meta(true, s.isotope[i])
+            H.rank[prev_entry]   = s.rank[i]
         else
             entry += 1
             H.rowval[entry] = Ti(r)
             H.nzval[entry]  = s.nzval[i]
             H.x[entry]      = s.x[i]
             H.meta[entry]   = pack_meta(true, s.isotope[i])
+            H.rank[entry]   = s.rank[i]
             prev_row = r
             prev_entry = entry
         end
@@ -252,6 +261,7 @@ function finalize_column!(H::SparseArrayFused{Ti,T}, col::UInt16,
         H.nzval[entry]  = s.miss_nzval[i]
         H.x[entry]      = zero(T)
         H.meta[entry]   = pack_meta(false, s.miss_isotope[i])
+        H.rank[entry]   = s.miss_rank[i]
     end
 
     return (entry, miss_row)

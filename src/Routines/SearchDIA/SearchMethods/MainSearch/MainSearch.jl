@@ -241,6 +241,8 @@ function process_search_results!(
     t_start = time()
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
+    center_mzs = getCenterMzs(spectra)
+    isolation_widths = getIsolationWidthMzs(spectra)
 
     # Compute prescore features
     t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
@@ -273,10 +275,11 @@ function process_search_results!(
     t_apex = 0.0
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
-    # Only the precursor-grouped chromatogram features still run here.
+    # Only the precursor/window chromatogram features still run here.
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     t_ms1 = @elapsed add_chromatogram_features!(
-        psms;
+        psms,
+        spectra;
         bitvec_rank_table = bitvec_rank_table,
     )
 
@@ -285,7 +288,11 @@ function process_search_results!(
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
     best_psms, scores, lgbm_timings, lgbm_predictor =
-        train_lgbm_and_select_best(psms)
+        train_lgbm_and_select_best(
+            psms;
+            center_mzs = center_mzs,
+            isolation_widths = isolation_widths,
+        )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
@@ -303,7 +310,9 @@ function process_search_results!(
     if irt_refinement_result.refined
         best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
             psms,
-            lgbm_predictor,
+            lgbm_predictor;
+            center_mzs = center_mzs,
+            isolation_widths = isolation_widths,
         )
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
@@ -315,6 +324,7 @@ function process_search_results!(
                    "($(length(irt_refinement_result.training_target_precursors)) " *
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
+
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
 
@@ -354,22 +364,33 @@ function process_search_results!(
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
     t_recal = time()
 
-    # Compute isotopes_captured and filter by quad transmission
-    get_isotopes_captured!(
+    trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
+        psms[!, :lgbm_score],
+        psms[!, :target],
+    )
+    add_precursor_fraction_transmitted!(
         best_psms,
         getQuadTransmissionModel(search_context, ms_file_idx),
         getSearchData(search_context),
-        best_psms[!, :scan_idx],
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getMz(getPrecursors(getSpecLib(search_context))),
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
+        getCharge(precursors),
+        getMz(precursors),
+        getSulfurCount(precursors),
+        center_mzs,
+        isolation_widths,
     )
+
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
-    add_fragment_detection_features!(best_psms, psms; bitvec_rank_table = bitvec_rank_table)
+    add_trace_and_fragment_features!(
+        best_psms,
+        psms,
+        trace_pass_mask;
+        bitvec_rank_table = bitvec_rank_table,
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+        pep_values = trace_peps,
+    )
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 

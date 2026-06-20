@@ -68,14 +68,10 @@ function score_precursor_isotope_traces(
     end
 end
 
-const SCORING_SEMISUPERVISED_QVALUE_THRESHOLD = 0.01f0
-const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
-const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
-
 function _scoring_semisupervised_train_mask(
     targets::AbstractVector{Bool},
     q_values::AbstractVector{<:Real};
-    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
 )
     n = length(targets)
     mask = Vector{Bool}(undef, n)
@@ -88,7 +84,8 @@ end
 function _scoring_semisupervised_metrics_and_mask(
     scores::AbstractVector{<:Real},
     targets::AbstractVector{Bool};
-    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+    train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
+    stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
 )
     n = length(scores)
     order = sortperm(scores; rev = true, alg = QuickSort)
@@ -107,17 +104,18 @@ function _scoring_semisupervised_metrics_and_mask(
         prefix_decoys = total_decoys - suffix_decoys
         raw_q = prefix_targets == 0 ? Inf32 : Float32(prefix_decoys) / Float32(prefix_targets)
         min_q = min(min_q, raw_q)
-        q_pass = min_q <= q_threshold
+        train_q_pass = min_q <= train_q_threshold
+        stop_q_pass = min_q <= stop_q_threshold
         is_target = targets[i]
 
-        if q_pass
+        if stop_q_pass
             if is_target
                 target_q01 += 1
             else
                 decoy_q01 += 1
             end
         end
-        training_mask[i] = !is_target || q_pass
+        training_mask[i] = !is_target || train_q_pass
 
         if is_target
             suffix_targets += 1
@@ -188,7 +186,8 @@ function _train_scoring_classifier_semisupervised(
     features::Vector{Symbol},
     lgbm_hp = SCORING_LGBM_HP,
     max_train::Int = SCORING_LGBM_MAX_TRAIN,
-    q_threshold::Float32 = SCORING_SEMISUPERVISED_QVALUE_THRESHOLD,
+    train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
+    stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
     max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
 )
@@ -214,7 +213,8 @@ function _train_scoring_classifier_semisupervised(
         metrics = _scoring_semisupervised_metrics_and_mask(
             scores,
             targets;
-            q_threshold = q_threshold,
+            train_q_threshold = train_q_threshold,
+            stop_q_threshold = stop_q_threshold,
         )
         current_state = (
             scores = scores,

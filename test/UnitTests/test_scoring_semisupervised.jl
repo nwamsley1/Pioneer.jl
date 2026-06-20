@@ -9,11 +9,11 @@ using Pioneer: get_qvalues!
 @testset "ScoringSearch semi-supervised helpers" begin
     @testset "post-first-iteration training keeps all decoys and q-value passing targets" begin
         mask = _scoring_semisupervised_train_mask(
-            Bool[true, false, true, false, true],
-            Float32[0.005, 0.8, 0.02, 0.5, 0.01],
+            Bool[true, false, true, false, true, true, true],
+            Float32[0.005, 0.8, 0.02, 0.5, 0.01, 0.03, 0.031],
         )
 
-        @test mask == Bool[true, true, false, true, true]
+        @test mask == Bool[true, true, true, true, true, true, false]
     end
 
     @testset "stopping requires configured target gain" begin
@@ -35,7 +35,7 @@ using Pioneer: get_qvalues!
         @test _scoring_better_iteration_state(current, previous).iter == 2
     end
 
-    @testset "fused metrics and mask match q-value utility" begin
+    @testset "fused metrics use separate training and stopping q-value thresholds" begin
         scores = Float32[0.91, 0.88, 0.70, 0.60, 0.55, 0.20]
         targets = Bool[true, false, true, true, false, false]
         qvals = Vector{Float32}(undef, length(scores))
@@ -44,12 +44,14 @@ using Pioneer: get_qvalues!
         metrics = _scoring_semisupervised_metrics_and_mask(
             scores,
             targets;
-            q_threshold = 0.75f0,
+            train_q_threshold = 0.75f0,
+            stop_q_threshold = 0.50f0,
         )
-        q_pass = qvals .<= 0.75f0
+        train_q_pass = qvals .<= 0.75f0
+        stop_q_pass = qvals .<= 0.50f0
 
-        @test metrics.training_mask == BitVector((.!targets) .| q_pass)
-        @test metrics.target_q01 == count(q_pass .& targets)
-        @test metrics.decoy_q01 == count(q_pass .& .!targets)
+        @test metrics.training_mask == BitVector((.!targets) .| train_q_pass)
+        @test metrics.target_q01 == count(stop_q_pass .& targets)
+        @test metrics.decoy_q01 == count(stop_q_pass .& .!targets)
     end
 end

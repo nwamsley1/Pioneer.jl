@@ -136,7 +136,7 @@ function library_search(
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
     # Applies RT and precursor m/z filtering (same as selectTransitions!) for realistic counts.
-    # --- 2b. Pre-filter: require candidates to appear in ≥ N scans ---
+    # --- 2a. Pre-filter: require candidates to appear in ≥ N scans ---
     prefilter_n = getPrefilterMinScanCount(params)
     if prefilter_n > 1
         n_before = length(precursors_passed)
@@ -146,7 +146,7 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
-    # --- 2c. Build precursor index ---
+    # --- 2b. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -159,6 +159,7 @@ function library_search(
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
+                ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end

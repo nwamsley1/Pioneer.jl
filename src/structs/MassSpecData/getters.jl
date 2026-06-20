@@ -22,6 +22,7 @@ getTIC(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getTICs(ms_d
 getCenterMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getCenterMzs(ms_data)[scan_idx]
 getIsolationWidthMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getIsolationWidthMzs(ms_data)[scan_idx]
 getMsOrder(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMsOrders(ms_data)[scan_idx]
+getCycleIdx(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = UInt32(getCycleIdxs(ms_data)[scan_idx])
 
 # Aliases used by BuildSpecLib
 getPrecursorMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getCenterMz(ms_data, scan_idx)
@@ -45,3 +46,5 @@ getTICs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:TIC]
 getCenterMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:centerMz]
 getIsolationWidthMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:isolationWidthMz]
 getMsOrders(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:msOrder]
+getCycleIdxs(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.cycle_idxs === nothing ? ms_data.data[:cycle_idx] : ms_data.cycle_idxs

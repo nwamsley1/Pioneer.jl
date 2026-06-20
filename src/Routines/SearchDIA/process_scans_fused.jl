@@ -22,6 +22,7 @@ function process_scans_fused!(
     scan_range::Vector{Int64},
     spectra::MassSpecData,
     prec_index::PI,
+    ms_file_idx::Int64,
     search_data::SearchDataStructures,
     params::P,
     precursors::LibraryPrecursors,
@@ -60,17 +61,15 @@ function process_scans_fused!(
     kind = FusedStandard(prec_estimation, UInt8(max_frag_rank))
 
     last_val  = 0
-    cycle_idx = 0
+    cycle_idxs = getCycleIdxs(spectra)
 
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
 
         msn = getMsOrder(spectra, scan_idx)
-        if msn < 2
-            cycle_idx += 1
-        end
         msn ∉ getSpecOrder(params) && continue
         ismissing(get_prec_range(prec_index, scan_idx)) && continue
+        cycle_idx = Int64(cycle_idxs[scan_idx])
 
         scan_rt = Float32(getRetentionTime(spectra, scan_idx))
         scan_irt = Float32(rt_to_irt_spline(scan_rt))
@@ -122,7 +121,7 @@ function process_scans_fused!(
             end
             compute_distance_metrics!(Hs, search_data, params)
             new_last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                                  spectra, last_val, cycle_idx; mem=mem)
+                                  spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
             reset_scan_arrays!(id_to_col, Hs, unscored_psms)
             return new_last_val
         end

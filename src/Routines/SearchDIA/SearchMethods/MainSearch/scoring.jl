@@ -434,6 +434,8 @@ function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
     lgbm_hp = SHARED_LGBM_HP,
+    center_mzs = nothing,
+    isolation_widths = nothing,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -478,7 +480,12 @@ function train_lgbm_and_select_best(
     end
 
     # Select best scan per precursor by LightGBM score
-    psms = select_best_per_precursor!(psms, :lgbm_score)
+    psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
 
     # Extract scores for best PSMs
     scores = psms[!, :lgbm_score]
@@ -507,7 +514,9 @@ end
 
 function reapply_psm_classifier_and_select_best!(
     psms::DataFrame,
-    predictor,
+    predictor;
+    center_mzs = nothing,
+    isolation_widths = nothing,
 )
     t0 = time()
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
@@ -521,7 +530,12 @@ function reapply_psm_classifier_and_select_best!(
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    best_psms = select_best_per_precursor!(psms, :lgbm_score)
+    best_psms = select_best_per_precursor!(
+        psms,
+        :lgbm_score;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     scores = best_psms[!, :lgbm_score]
     t_best = time()
 
@@ -532,10 +546,334 @@ function reapply_psm_classifier_and_select_best!(
     return best_psms, Vector{Float32}(scores), timings
 end
 
+function _mainsearch_peps_and_pass_mask(
+    scores::AbstractVector{<:Real},
+    targets::AbstractVector{Bool};
+    pep_threshold::Float32 = MAIN_PEP_FILTER_THR,
+)
+    n = length(scores)
+    if pep_threshold >= 1.0f0
+        return zeros(Float32, n), trues(n)
+    end
+    score_f32 = scores isa AbstractVector{Float32} ? scores : Float32.(scores)
+    peps = Vector{Float32}(undef, n)
+    get_PEP!(score_f32, targets, peps; doSort = true, fdr_scale_factor = 1.0f0)
+    return peps, peps .<= pep_threshold
+end
+
+function add_precursor_fraction_transmitted!(
+    best_psms::DataFrame,
+    quad_transmission_model::QuadTransmissionModel,
+    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+    prec_charge::AbstractArray{UInt8},
+    prec_mz::AbstractArray{Float32},
+    sulfur_count::AbstractArray{UInt8},
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}},
+)
+    prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
+    n = nrow(best_psms)
+    out_fraction = Vector{Float32}(undef, n)
+    iso_splines = getIsoSplines(search_data[1])
+    precursor_transmission = zeros(Float32, 5)
+
+    @inbounds for i in 1:n
+        pid = prec_ids[i]
+        scan_id = scan_idxs[i]
+        _, _, scan_mz, window_width = _compute_scan_window(scan_id, centerMz, isolationWidthMz)
+        out_fraction[i] = _compute_fraction_transmitted(
+            iso_splines,
+            quad_transmission_model,
+            prec_mz[pid],
+            prec_charge[pid],
+            sulfur_count[pid],
+            scan_mz,
+            window_width,
+            precursor_transmission,
+        )
+    end
+
+    best_psms[!, :precursor_fraction_transmitted] = out_fraction
+    return best_psms
+end
+
 const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
     :frag1_int, :frag2_int, :frag3_int, :frag4_int,
     :frag5_int, :frag6_int, :frag7_int, :frag8_int,
 )
+
+const OTHER_WINDOW_CORR_SENTINEL = -1.0f0
+const OTHER_WINDOW_APEX_DELTA_SENTINEL = 100.0f0
+
+mutable struct MainSearchOtherWindowScratch
+    selected_cycles::Vector{UInt32}
+    selected_weight_values::Vector{Float32}
+    window_to_idx::Dict{Tuple{Float32, Float32}, Int}
+    window_best_peps::Vector{Float32}
+    window_cycles::Vector{Vector{UInt32}}
+    window_weight_values::Vector{Vector{Float32}}
+    window_apex_weight::Vector{Float32}
+    window_apex_irt::Vector{Float32}
+    window_smooth_prev_row::Vector{Int}
+    window_smooth_same_row::Vector{Int}
+    window_smooth_next_row::Vector{Int}
+end
+
+function MainSearchOtherWindowScratch()
+    return MainSearchOtherWindowScratch(
+        UInt32[],
+        Float32[],
+        Dict{Tuple{Float32, Float32}, Int}(),
+        Float32[],
+        Vector{UInt32}[],
+        Vector{Float32}[],
+        Float32[],
+        Float32[],
+        Int[],
+        Int[],
+        Int[],
+    )
+end
+
+function _reset_other_window_scratch!(scratch::MainSearchOtherWindowScratch)
+    empty!(scratch.selected_cycles)
+    empty!(scratch.selected_weight_values)
+    empty!(scratch.window_to_idx)
+    empty!(scratch.window_best_peps)
+    @inbounds for cycles in scratch.window_cycles
+        empty!(cycles)
+    end
+    @inbounds for values in scratch.window_weight_values
+        empty!(values)
+    end
+    empty!(scratch.window_apex_weight)
+    empty!(scratch.window_apex_irt)
+    empty!(scratch.window_smooth_prev_row)
+    empty!(scratch.window_smooth_same_row)
+    empty!(scratch.window_smooth_next_row)
+    return nothing
+end
+
+function _other_window_idx!(
+    scratch::MainSearchOtherWindowScratch,
+    key::Tuple{Float32, Float32},
+)
+    idx = get(scratch.window_to_idx, key, 0)
+    idx != 0 && return idx
+
+    idx = length(scratch.window_best_peps) + 1
+    scratch.window_to_idx[key] = idx
+    push!(scratch.window_best_peps, Inf32)
+    if idx > length(scratch.window_cycles)
+        push!(scratch.window_cycles, UInt32[])
+        push!(scratch.window_weight_values, Float32[])
+    end
+    push!(scratch.window_apex_weight, typemin(Float32))
+    push!(scratch.window_apex_irt, NaN32)
+    push!(scratch.window_smooth_prev_row, 0)
+    push!(scratch.window_smooth_same_row, 0)
+    push!(scratch.window_smooth_next_row, 0)
+    return idx
+end
+
+@inline function _store_other_window_smooth_row!(
+    scratch::MainSearchOtherWindowScratch,
+    other_idx::Int,
+    cycle::UInt32,
+    center_cycle::UInt32,
+    row::Int,
+)
+    if center_cycle > UInt32(1) && cycle == center_cycle - UInt32(1)
+        scratch.window_smooth_prev_row[other_idx] = row
+    elseif cycle == center_cycle
+        scratch.window_smooth_same_row[other_idx] = row
+    elseif cycle == center_cycle + UInt32(1)
+        scratch.window_smooth_next_row[other_idx] = row
+    end
+    return nothing
+end
+
+@inline function _trace_push_cycle_sum!(
+    cycles::Vector{UInt32},
+    values::Vector{Float32},
+    cycle::UInt32,
+    value::Float32,
+)
+    len = length(cycles)
+    if len == 0 || cycle > cycles[end]
+        push!(cycles, cycle)
+        push!(values, value)
+        return nothing
+    elseif cycle == cycles[end]
+        values[end] += value
+        return nothing
+    end
+
+    i = 1
+    @inbounds while i <= len && cycles[i] < cycle
+        i += 1
+    end
+    if i <= len && cycles[i] == cycle
+        values[i] += value
+    else
+        insert!(cycles, i, cycle)
+        insert!(values, i, value)
+    end
+    return nothing
+end
+
+function _trace_aligned_corr_sorted(
+    cycles_a::Vector{UInt32},
+    values_a::Vector{Float32},
+    cycles_b::Vector{UInt32},
+    values_b::Vector{Float32},
+)
+    n_cycles_a = length(cycles_a)
+    n_cycles_b = length(cycles_b)
+    n_aligned_cycles = 0
+    mean_a = 0f0
+    mean_b = 0f0
+
+    index_a = 1
+    index_b = 1
+    @inbounds while index_a <= n_cycles_a || index_b <= n_cycles_b
+        if index_b > n_cycles_b || (index_a <= n_cycles_a && cycles_a[index_a] < cycles_b[index_b])
+            mean_a += values_a[index_a]
+            index_a += 1
+        elseif index_a > n_cycles_a || cycles_b[index_b] < cycles_a[index_a]
+            mean_b += values_b[index_b]
+            index_b += 1
+        else
+            mean_a += values_a[index_a]
+            mean_b += values_b[index_b]
+            index_a += 1
+            index_b += 1
+        end
+        n_aligned_cycles += 1
+    end
+
+    n_aligned_cycles < 2 && return 0f0
+    inv_aligned_cycles = 1f0 / Float32(n_aligned_cycles)
+    mean_a *= inv_aligned_cycles
+    mean_b *= inv_aligned_cycles
+
+    sum_sq_a = 0f0
+    sum_sq_b = 0f0
+    sum_cross = 0f0
+    index_a = 1
+    index_b = 1
+    @inbounds while index_a <= n_cycles_a || index_b <= n_cycles_b
+        value_a = 0f0
+        value_b = 0f0
+        if index_b > n_cycles_b || (index_a <= n_cycles_a && cycles_a[index_a] < cycles_b[index_b])
+            value_a = values_a[index_a]
+            index_a += 1
+        elseif index_a > n_cycles_a || cycles_b[index_b] < cycles_a[index_a]
+            value_b = values_b[index_b]
+            index_b += 1
+        else
+            value_a = values_a[index_a]
+            value_b = values_b[index_b]
+            index_a += 1
+            index_b += 1
+        end
+        delta_a = value_a - mean_a
+        delta_b = value_b - mean_b
+        sum_sq_a += delta_a * delta_a
+        sum_sq_b += delta_b * delta_b
+        sum_cross += delta_a * delta_b
+    end
+
+    denom = sqrt(sum_sq_a * sum_sq_b)
+    return denom > 0f0 ? Float32(sum_cross / denom) : 0f0
+end
+
+function _mainsearch_flanking_core_bounds!(
+    order::Vector{Int},
+    group_rows::Vector{Int},
+    group_len::Int,
+    scan_idxs::AbstractVector{UInt32},
+    cycle_idxs::AbstractVector,
+    pass_mask::AbstractVector{Bool},
+    selected_scan::UInt32,
+)
+    if length(order) < group_len
+        resize!(order, group_len)
+    end
+
+    best_row = group_rows[1]
+    @inbounds for i in 1:group_len
+        row = group_rows[i]
+        order[i] = row
+        if scan_idxs[row] == selected_scan
+            best_row = row
+        end
+    end
+
+    best_scan = scan_idxs[best_row]
+    pass_mask[best_row] || return (
+        scan_min = best_scan,
+        scan_max = best_scan,
+        n_scans = UInt16(1),
+        best_row = best_row,
+        left_row = 0,
+        right_row = 0,
+    )
+
+    ord = view(order, 1:group_len)
+    sort!(
+        ord;
+        lt = (a, b) -> begin
+            ca = UInt32(cycle_idxs[a])
+            cb = UInt32(cycle_idxs[b])
+            ca == cb ? scan_idxs[a] < scan_idxs[b] : ca < cb
+        end,
+    )
+
+    best_pos = 1
+    @inbounds for i in 1:group_len
+        if ord[i] == best_row
+            best_pos = i
+            break
+        end
+    end
+
+    lo = best_pos
+    @inbounds while lo > 1
+        current = ord[lo]
+        previous = ord[lo - 1]
+        pass_mask[previous] || break
+        UInt32(cycle_idxs[previous]) == UInt32(cycle_idxs[current]) - UInt32(1) || break
+        lo -= 1
+    end
+
+    hi = best_pos
+    @inbounds while hi < group_len
+        current = ord[hi]
+        next_row = ord[hi + 1]
+        pass_mask[next_row] || break
+        UInt32(cycle_idxs[next_row]) == UInt32(cycle_idxs[current]) + UInt32(1) || break
+        hi += 1
+    end
+
+    scan_min = typemax(UInt32)
+    scan_max = UInt32(0)
+    @inbounds for i in lo:hi
+        scan = scan_idxs[ord[i]]
+        scan_min = min(scan_min, scan)
+        scan_max = max(scan_max, scan)
+    end
+    n_scans = UInt16(min(hi - lo + 1, Int(typemax(UInt16))))
+    return (
+        scan_min = scan_min,
+        scan_max = scan_max,
+        n_scans = n_scans,
+        best_row = best_row,
+        left_row = best_pos > lo ? ord[best_pos - 1] : 0,
+        right_row = best_pos < hi ? ord[best_pos + 1] : 0,
+    )
+end
 
 @inline function _mainsearch_fragment_presence_mask(row::Int, frag_cols)
     mask = UInt16(0)
@@ -549,26 +887,117 @@ const MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS = (
     return mask
 end
 
-"""
-    add_fragment_detection_features!(best_psms, psms; bitvec_rank_table)
+@inline function _mainsearch_fragment_intensity_sum(row::Int, frag_cols)
+    total = 0f0
+    @inbounds for col in frag_cols
+        total += max(Float32(col[row]), 0f0)
+    end
+    return total
+end
 
-Attach fragment-support features to the post-filter best-per-precursor rows.
-`psms` and `best_psms` are expected to be sorted by `:precursor_idx`.
-"""
-function add_fragment_detection_features!(
+function _mainsearch_radius1_smooth_fragments!(
+    out_cols,
+    out_row::Int,
+    apex_row::Int,
+    left_row::Int,
+    right_row::Int,
+    frag_cols,
+)
+    denom = 2f0
+    left_row > 0 && (denom += 1f0)
+    right_row > 0 && (denom += 1f0)
+
+    @inbounds for rank in 1:8
+        signal = 2f0 * max(Float32(frag_cols[rank][apex_row]), 0f0)
+        left_row > 0 && (signal += max(Float32(frag_cols[rank][left_row]), 0f0))
+        right_row > 0 && (signal += max(Float32(frag_cols[rank][right_row]), 0f0))
+        out_cols[rank][out_row] = Float32(signal / denom)
+    end
+    return nothing
+end
+
+function _mainsearch_radius1_2d_shadow_hellinger(
+    apex_row::Int,
+    left_row::Int,
+    right_row::Int,
+    other_prev_row::Int,
+    other_same_row::Int,
+    other_next_row::Int,
+    fitted_cols,
+    shadow_cols,
+)
+    smooth_denom = 2f0
+    left_row > 0 && (smooth_denom += 1f0)
+    right_row > 0 && (smooth_denom += 1f0)
+    other_prev_row > 0 && (smooth_denom += 0.5f0)
+    other_same_row > 0 && (smooth_denom += 1f0)
+    other_next_row > 0 && (smooth_denom += 0.5f0)
+
+    sum_fitted = 0f0
+    sum_shadow = 0f0
+    bc_sum = 0f0
+    @inbounds for rank in 1:8
+        fitted = max(Float32(fitted_cols[rank][apex_row]), 0f0)
+        shadow = 2f0 * max(Float32(shadow_cols[rank][apex_row]), 0f0)
+        left_row > 0 && (shadow += max(Float32(shadow_cols[rank][left_row]), 0f0))
+        right_row > 0 && (shadow += max(Float32(shadow_cols[rank][right_row]), 0f0))
+        other_prev_row > 0 && (shadow += 0.5f0 * max(Float32(shadow_cols[rank][other_prev_row]), 0f0))
+        other_same_row > 0 && (shadow += max(Float32(shadow_cols[rank][other_same_row]), 0f0))
+        other_next_row > 0 && (shadow += 0.5f0 * max(Float32(shadow_cols[rank][other_next_row]), 0f0))
+        shadow = Float32(shadow / smooth_denom)
+        sum_fitted += fitted
+        sum_shadow += shadow
+        bc_sum += sqrt(fitted * shadow)
+    end
+
+    denom = sqrt(sum_fitted * sum_shadow)
+    hellinger_sq = denom > 0f0 ? 1f0 - bc_sum / denom : 1f0
+    return Float32(-log2(max(hellinger_sq, 1f-10)))
+end
+
+function add_trace_and_fragment_features!(
     best_psms::DataFrame,
-    psms::DataFrame;
+    psms::DataFrame,
+    pass_mask::AbstractVector{Bool};
     bitvec_rank_table,
+    center_mzs = nothing,
+    isolation_widths = nothing,
+    pep_values = nothing,
 )
     best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
+
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
+    cycle_idxs = psms[!, :cycle_idx]
+    weights = psms[!, :weight]::Vector{Float32}
+    irt_obs = psms[!, :irt_obs]::Vector{Float32}
+    ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
     frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
+    fitted_frag_cols = Tuple(psms[!, c] for c in FITTED_FRAGMENT_INTENSITY_COLUMNS)
+    shadow_frag_cols = Tuple(psms[!, c] for c in SHADOW_FRAGMENT_INTENSITY_COLUMNS)
 
     n_best = nrow(best_psms)
+    out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)
+    out_flanking_core_scan_max = Vector{UInt32}(undef, n_best)
+    out_n_contiguous_scans = Vector{UInt16}(undef, n_best)
+    out_flanking_core_ms1_m0_signal = Vector{Float32}(undef, n_best)
+    out_flanking_core_frag_signal = Vector{Float32}(undef, n_best)
     out_union = Vector{UInt8}(undef, n_best)
     out_intersection = Vector{UInt8}(undef, n_best)
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
+    out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
+    out_2d_shadow_hellinger = Vector{Float32}(undef, n_best)
+    out_n_scans_other_windows = Vector{UInt32}(undef, n_best)
+    out_other_window_weight_corr = Vector{Float32}(undef, n_best)
+    out_other_window_apex_delta_irt = Vector{Float32}(undef, n_best)
+
+    flanking_core_order = Int[]
+    selected_window_rows = Int[]
+    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
+    compute_other_windows = use_window_groups && pep_values !== nothing
+    other_window_scratch = MainSearchOtherWindowScratch()
 
     row = 1
     n = nrow(psms)
@@ -577,28 +1006,198 @@ function add_fragment_detection_features!(
         while prec_ids[row] < pid
             row += 1
         end
+        group_start = row
+        while row <= n && prec_ids[row] == pid
+            row += 1
+        end
+        group_stop = row - 1
 
+        empty!(selected_window_rows)
+        selected_window_key = use_window_groups ?
+            _scan_window_key(best_scan_idxs[i], center_mzs, isolation_widths) :
+            (0f0, 0f0)
+        for group_row in group_start:group_stop
+            if !use_window_groups ||
+               _scan_window_key(scan_idxs[group_row], center_mzs, isolation_widths) == selected_window_key
+                push!(selected_window_rows, group_row)
+            end
+        end
+
+        flanking_core = _mainsearch_flanking_core_bounds!(
+            flanking_core_order,
+            selected_window_rows,
+            length(selected_window_rows),
+            scan_idxs,
+            cycle_idxs,
+            pass_mask,
+            best_scan_idxs[i],
+        )
+        out_flanking_core_scan_min[i] = flanking_core.scan_min
+        out_flanking_core_scan_max[i] = flanking_core.scan_max
+        out_n_contiguous_scans[i] = flanking_core.n_scans
+
+        _mainsearch_radius1_smooth_fragments!(
+            out_smooth_frag_cols,
+            i,
+            flanking_core.best_row,
+            flanking_core.left_row,
+            flanking_core.right_row,
+            frag_cols,
+        )
+        smoothed_2d_shadow_hellinger = _mainsearch_radius1_2d_shadow_hellinger(
+            flanking_core.best_row,
+            flanking_core.left_row,
+            flanking_core.right_row,
+            0,
+            0,
+            0,
+            fitted_frag_cols,
+            shadow_frag_cols,
+        )
+
+        core_ms1_m0_signal = 0f0
+        core_frag_signal = 0f0
         union_mask = UInt16(0)
         intersection_mask = UInt16(0x00ff)
-        group_row = row
-        while group_row <= n && prec_ids[group_row] == pid
+
+        for group_row in selected_window_rows
             mask = _mainsearch_fragment_presence_mask(group_row, frag_cols)
             union_mask |= mask
             intersection_mask &= mask
-            group_row += 1
+            if flanking_core.scan_min <= scan_idxs[group_row] <= flanking_core.scan_max
+                core_ms1_m0_signal += max(ms1_m0_intensities[group_row], 0f0)
+                core_frag_signal += _mainsearch_fragment_intensity_sum(group_row, frag_cols)
+            end
         end
-        row = group_row
 
+        out_flanking_core_ms1_m0_signal[i] = core_ms1_m0_signal
+        out_flanking_core_frag_signal[i] = core_frag_signal
         out_union[i] = UInt8(count_ones(union_mask))
         out_intersection[i] = UInt8(count_ones(intersection_mask))
         out_union_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, union_mask)
         out_intersection_rank[i] = _bitvec_pattern_rank(bitvec_rank_table, intersection_mask)
+
+        n_scans_other_windows = UInt32(0)
+        other_window_weight_corr = OTHER_WINDOW_CORR_SENTINEL
+        other_window_apex_delta_irt = OTHER_WINDOW_APEX_DELTA_SENTINEL
+
+        if compute_other_windows
+            _reset_other_window_scratch!(other_window_scratch)
+            selected_apex_weight = typemin(Float32)
+            selected_apex_irt = NaN32
+            center_cycle = UInt32(cycle_idxs[flanking_core.best_row])
+
+            for group_row in group_start:group_stop
+                pass_mask[group_row] || continue
+                w = max(weights[group_row], 0f0)
+                cycle = UInt32(cycle_idxs[group_row])
+                group_window_key = _scan_window_key(scan_idxs[group_row], center_mzs, isolation_widths)
+
+                if group_window_key == selected_window_key
+                    _trace_push_cycle_sum!(
+                        other_window_scratch.selected_cycles,
+                        other_window_scratch.selected_weight_values,
+                        cycle,
+                        w,
+                    )
+                    if w > selected_apex_weight
+                        selected_apex_weight = w
+                        selected_apex_irt = irt_obs[group_row]
+                    end
+                else
+                    n_scans_other_windows += UInt32(1)
+                    other_idx = _other_window_idx!(other_window_scratch, group_window_key)
+                    other_window_scratch.window_best_peps[other_idx] =
+                        min(other_window_scratch.window_best_peps[other_idx], Float32(pep_values[group_row]))
+                    _store_other_window_smooth_row!(
+                        other_window_scratch,
+                        other_idx,
+                        cycle,
+                        center_cycle,
+                        group_row,
+                    )
+                    _trace_push_cycle_sum!(
+                        other_window_scratch.window_cycles[other_idx],
+                        other_window_scratch.window_weight_values[other_idx],
+                        cycle,
+                        w,
+                    )
+                    if w > other_window_scratch.window_apex_weight[other_idx]
+                        other_window_scratch.window_apex_weight[other_idx] = w
+                        other_window_scratch.window_apex_irt[other_idx] = irt_obs[group_row]
+                    end
+                end
+            end
+
+            if n_scans_other_windows > UInt32(0) &&
+               !isempty(other_window_scratch.selected_cycles) &&
+               isfinite(selected_apex_irt)
+                chosen_other_idx = 0
+                chosen_other_pep = Inf32
+                @inbounds for other_idx in eachindex(other_window_scratch.window_best_peps)
+                    pep = other_window_scratch.window_best_peps[other_idx]
+                    if pep < chosen_other_pep
+                        chosen_other_pep = pep
+                        chosen_other_idx = other_idx
+                    end
+                end
+
+                if chosen_other_idx != 0
+                    other_window_weight_corr = _trace_aligned_corr_sorted(
+                        other_window_scratch.selected_cycles,
+                        other_window_scratch.selected_weight_values,
+                        other_window_scratch.window_cycles[chosen_other_idx],
+                        other_window_scratch.window_weight_values[chosen_other_idx],
+                    )
+                    other_prev_row = other_window_scratch.window_smooth_prev_row[chosen_other_idx]
+                    other_same_row = other_window_scratch.window_smooth_same_row[chosen_other_idx]
+                    other_next_row = other_window_scratch.window_smooth_next_row[chosen_other_idx]
+                    if other_prev_row != 0 || other_same_row != 0 || other_next_row != 0
+                        smoothed_2d_shadow_hellinger = _mainsearch_radius1_2d_shadow_hellinger(
+                            flanking_core.best_row,
+                            flanking_core.left_row,
+                            flanking_core.right_row,
+                            other_prev_row,
+                            other_same_row,
+                            other_next_row,
+                            fitted_frag_cols,
+                            shadow_frag_cols,
+                        )
+                    end
+                    other_apex_irt = other_window_scratch.window_apex_irt[chosen_other_idx]
+                    if isfinite(other_apex_irt)
+                        other_window_apex_delta_irt = abs(selected_apex_irt - other_apex_irt)
+                    end
+                end
+            end
+        end
+
+        out_2d_shadow_hellinger[i] = smoothed_2d_shadow_hellinger
+        out_n_scans_other_windows[i] = n_scans_other_windows
+        out_other_window_weight_corr[i] = other_window_weight_corr
+        out_other_window_apex_delta_irt[i] = other_window_apex_delta_irt
     end
 
+    best_psms[!, :flanking_core_scan_min] = out_flanking_core_scan_min
+    best_psms[!, :flanking_core_scan_max] = out_flanking_core_scan_max
+    best_psms[!, :n_contiguous_scans] = out_n_contiguous_scans
+    best_psms[!, :flanking_core_ms1_m0_signal] = out_flanking_core_ms1_m0_signal
+    best_psms[!, :flanking_core_frag_signal] = out_flanking_core_frag_signal
     best_psms[!, :n_frags_detected_union] = out_union
     best_psms[!, :n_frags_detected_intersection] = out_intersection
     best_psms[!, :n_frags_detected_union_bitvec_rank] = out_union_rank
     best_psms[!, :n_frags_detected_intersection_bitvec_rank] = out_intersection_rank
+    best_psms[!, :n_scans_other_windows] = out_n_scans_other_windows
+    best_psms[!, :other_window_weight_corr] = out_other_window_weight_corr
+    best_psms[!, :other_window_apex_delta_irt] = out_other_window_apex_delta_irt
+    @inbounds for rank in 1:8
+        best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
+    end
+    best_psms[!, :smoothed_2d_shadow_hellinger] = out_2d_shadow_hellinger
+    select!(best_psms, Not([
+        FITTED_FRAGMENT_INTENSITY_COLUMNS...,
+        SHADOW_FRAGMENT_INTENSITY_COLUMNS...,
+    ]))
     return best_psms
 end
 
@@ -608,11 +1207,20 @@ end
 Keeps one row per precursor_idx. Uses sortperm for contiguous group processing:
 per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥4 PSMs),
 otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
-weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` per precursor.
+weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt`. When scan
+window arrays are supplied, those shape features use only the selected PSM's
+isolation window.
 """
-function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
+function select_best_per_precursor!(
+    psms::DataFrame,
+    score_col::Symbol;
+    center_mzs = nothing,
+    isolation_widths = nothing,
+)
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
+    scan_idxs = use_window_groups ? psms[!, :scan_idx]::Vector{UInt32} : nothing
     has_irt = hasproperty(psms, :irt_obs)
     has_weight = hasproperty(psms, :weight)
     has_rt = hasproperty(psms, :rt)
@@ -724,13 +1332,29 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             end
         end
 
+        selected_window_key = use_window_groups ?
+            _scan_window_key(scan_idxs[best_row], center_mzs, isolation_widths) :
+            (0f0, 0f0)
+        window_mw = mw
+        if use_window_groups && weights !== nothing
+            window_mw = 0f0
+            @inbounds for k in 0:(group_len - 1)
+                row = perm[group_start + k]
+                _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                w = weights[row]
+                if w > window_mw
+                    window_mw = w
+                end
+            end
+        end
+
         push!(keep_rows, best_row)
 
         # --- Sub-pass 2: FWHM bounds. irt_fwhm is a LGBM feature;
         # n_above_hm + rt_fwhm are not LGBM features but are still consumed
         # by prescore_aggregation.jl. ---
         if compute_fwhm
-            half_max = 0.5f0 * mw
+            half_max = 0.5f0 * window_mw
             irt_lo = typemax(Float32)
             irt_hi = typemin(Float32)
             rt_lo = typemax(Float32)
@@ -739,6 +1363,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
 
             @inbounds for k in 0:(group_len - 1)
                 row = perm[group_start + k]
+                if use_window_groups
+                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                end
                 weights[row] >= half_max || continue
                 n_hm += UInt8(1)
                 irt = irt_obs[row]
@@ -760,27 +1387,41 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
 
         # --- Sub-pass 3: smoothness (squared second-derivative of weight chrom) ---
         if out_smoothness !== nothing
-            if length(smooth_w_buf) < group_len
-                resize!(smooth_w_buf,  group_len)
-                resize!(smooth_rt_buf, group_len)
-                resize!(smooth_ord_buf, group_len)
+            smooth_len = group_len
+            if use_window_groups
+                smooth_len = 0
+                @inbounds for k in 0:(group_len - 1)
+                    row = perm[group_start + k]
+                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                    smooth_len += 1
+                end
             end
-            # Populate buffers and sort by RT
-            @inbounds for k in 0:(group_len - 1)
-                row = perm[group_start + k]
-                smooth_w_buf[k+1]  = weights[row]
-                smooth_rt_buf[k+1] = rt_vals[row]
-                smooth_ord_buf[k+1] = k + 1
+            if length(smooth_w_buf) < smooth_len
+                resize!(smooth_w_buf,  smooth_len)
+                resize!(smooth_rt_buf, smooth_len)
+                resize!(smooth_ord_buf, smooth_len)
             end
-            sort!(view(smooth_ord_buf, 1:group_len), by = ki -> smooth_rt_buf[ki])
+            @inbounds let j = 0
+                for k in 0:(group_len - 1)
+                    row = perm[group_start + k]
+                    if use_window_groups
+                        _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                    end
+                    j += 1
+                    smooth_w_buf[j] = weights[row]
+                    smooth_rt_buf[j] = rt_vals[row]
+                    smooth_ord_buf[j] = j
+                end
+            end
+            sort!(view(smooth_ord_buf, 1:smooth_len), by = ki -> smooth_rt_buf[ki])
             # Compute the roughness sum
             rough = 0f0
-            if mw > 0f0
-                if group_len == 1
+            if window_mw > 0f0
+                if smooth_len == 1
                     # Single point — original code: rough = (−2w/w_apex)² = 4
                     rough = 4f0
                 else
-                    @inbounds for k in 1:group_len
+                    @inbounds for k in 1:smooth_len
                         ki = smooth_ord_buf[k]
                         w_i = smooth_w_buf[ki]
                         if k == 1
@@ -788,13 +1429,13 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
                             dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
                             d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
                             d_l = dt_r > 0 ? (-w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / mw)^2
-                        elseif k == group_len
+                            rough += ((d_l + d_r) / window_mw)^2
+                        elseif k == smooth_len
                             ki_l = smooth_ord_buf[k-1]
                             dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
                             d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
                             d_r = dt_l > 0 ? (-w_i) / dt_l : 0f0
-                            rough += ((d_l + d_r) / mw)^2
+                            rough += ((d_l + d_r) / window_mw)^2
                         else
                             ki_l = smooth_ord_buf[k-1]
                             ki_r = smooth_ord_buf[k+1]
@@ -802,7 +1443,7 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
                             dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
                             d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
                             d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / mw)^2
+                            rough += ((d_l + d_r) / window_mw)^2
                         end
                     end
                 end
