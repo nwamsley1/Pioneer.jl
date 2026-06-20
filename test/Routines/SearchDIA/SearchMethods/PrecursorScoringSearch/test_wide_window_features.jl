@@ -325,6 +325,8 @@ end
 end
 
 @testset "smoothed shadow Hellinger smooths per-rank shadow peaks" begin
+    @test :smoothed_shadow_hellinger in Pioneer.ADVANCED_FEATURE_SET
+
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10],
         scan_idx = UInt32[101, 102, 103, 104],

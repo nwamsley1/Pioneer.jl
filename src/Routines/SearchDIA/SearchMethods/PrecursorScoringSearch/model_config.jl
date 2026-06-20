@@ -93,7 +93,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_m1_m2_window_fraction, :ms1_ms2_explained_delta,
     :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
     SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...,
-    # :smoothed_shadow_hellinger,
+    :smoothed_shadow_hellinger,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
@@ -108,7 +108,6 @@ const ADVANCED_FEATURE_SET = [
     :precursor_fraction_transmitted,
     :n_scans_other_windows,
     :other_window_weight_corr,
-    :other_window_frag_sum_corr,
     :other_window_apex_delta_irt,
     FLANKING_WINDOW_FEATURES...,
     :ms1_m0_peak_frag_intensity_fraction,

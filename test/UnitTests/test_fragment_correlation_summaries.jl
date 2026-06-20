@@ -172,11 +172,10 @@ end
     @test best.n_frags_detected_intersection_bitvec_rank == UInt16[22, 55]
 end
 
-@testset "other-window trace agreement summaries use lowest-PEP other window" begin
+@testset "other-window summaries use lowest-PEP other window" begin
     other_window_features = (
         :n_scans_other_windows,
         :other_window_weight_corr,
-        :other_window_frag_sum_corr,
         :other_window_apex_delta_irt,
     )
     psms = DataFrame(
@@ -223,7 +222,6 @@ end
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, other_window_features)
     @test best.n_scans_other_windows == UInt32[4]
     @test best.other_window_weight_corr ≈ Float32[1.0]
-    @test best.other_window_frag_sum_corr ≈ Float32[1.0]
     @test best.other_window_apex_delta_irt ≈ Float32[1.2]
     @test best.n_frags_detected_union == UInt8[1]
     @test best.n_frags_detected_intersection == UInt8[1]

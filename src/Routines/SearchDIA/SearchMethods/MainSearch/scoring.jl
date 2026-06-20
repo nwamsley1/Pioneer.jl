@@ -609,13 +609,10 @@ const OTHER_WINDOW_APEX_DELTA_SENTINEL = 100.0f0
 mutable struct MainSearchOtherWindowScratch
     selected_cycles::Vector{UInt32}
     selected_weight_values::Vector{Float32}
-    selected_frag_values::Vector{Float32}
     window_to_idx::Dict{Tuple{Float32, Float32}, Int}
-    window_counts::Vector{UInt32}
     window_best_peps::Vector{Float32}
     window_cycles::Vector{Vector{UInt32}}
     window_weight_values::Vector{Vector{Float32}}
-    window_frag_values::Vector{Vector{Float32}}
     window_apex_weight::Vector{Float32}
     window_apex_irt::Vector{Float32}
 end
@@ -624,12 +621,9 @@ function MainSearchOtherWindowScratch()
     return MainSearchOtherWindowScratch(
         UInt32[],
         Float32[],
-        Float32[],
         Dict{Tuple{Float32, Float32}, Int}(),
-        UInt32[],
         Float32[],
         Vector{UInt32}[],
-        Vector{Float32}[],
         Vector{Float32}[],
         Float32[],
         Float32[],
@@ -639,17 +633,12 @@ end
 function _reset_other_window_scratch!(scratch::MainSearchOtherWindowScratch)
     empty!(scratch.selected_cycles)
     empty!(scratch.selected_weight_values)
-    empty!(scratch.selected_frag_values)
     empty!(scratch.window_to_idx)
-    empty!(scratch.window_counts)
     empty!(scratch.window_best_peps)
     @inbounds for cycles in scratch.window_cycles
         empty!(cycles)
     end
     @inbounds for values in scratch.window_weight_values
-        empty!(values)
-    end
-    @inbounds for values in scratch.window_frag_values
         empty!(values)
     end
     empty!(scratch.window_apex_weight)
@@ -664,37 +653,31 @@ function _other_window_idx!(
     idx = get(scratch.window_to_idx, key, 0)
     idx != 0 && return idx
 
-    idx = length(scratch.window_counts) + 1
+    idx = length(scratch.window_best_peps) + 1
     scratch.window_to_idx[key] = idx
-    push!(scratch.window_counts, UInt32(0))
     push!(scratch.window_best_peps, Inf32)
     if idx > length(scratch.window_cycles)
         push!(scratch.window_cycles, UInt32[])
         push!(scratch.window_weight_values, Float32[])
-        push!(scratch.window_frag_values, Float32[])
     end
     push!(scratch.window_apex_weight, typemin(Float32))
     push!(scratch.window_apex_irt, NaN32)
     return idx
 end
 
-@inline function _trace_push_cycle_pair_sum!(
+@inline function _trace_push_cycle_sum!(
     cycles::Vector{UInt32},
-    values_a::Vector{Float32},
-    values_b::Vector{Float32},
+    values::Vector{Float32},
     cycle::UInt32,
-    value_a::Float32,
-    value_b::Float32,
+    value::Float32,
 )
     len = length(cycles)
     if len == 0 || cycle > cycles[end]
         push!(cycles, cycle)
-        push!(values_a, value_a)
-        push!(values_b, value_b)
+        push!(values, value)
         return nothing
     elseif cycle == cycles[end]
-        values_a[end] += value_a
-        values_b[end] += value_b
+        values[end] += value
         return nothing
     end
 
@@ -703,12 +686,10 @@ end
         i += 1
     end
     if i <= len && cycles[i] == cycle
-        values_a[i] += value_a
-        values_b[i] += value_b
+        values[i] += value
     else
         insert!(cycles, i, cycle)
-        insert!(values_a, i, value_a)
-        insert!(values_b, i, value_b)
+        insert!(values, i, value)
     end
     return nothing
 end
@@ -972,7 +953,6 @@ function add_trace_and_fragment_features!(
     out_shadow_hellinger = Vector{Float32}(undef, n_best)
     out_n_scans_other_windows = Vector{UInt32}(undef, n_best)
     out_other_window_weight_corr = Vector{Float32}(undef, n_best)
-    out_other_window_frag_sum_corr = Vector{Float32}(undef, n_best)
     out_other_window_apex_delta_irt = Vector{Float32}(undef, n_best)
 
     flanking_core_order = Int[]
@@ -1058,7 +1038,6 @@ function add_trace_and_fragment_features!(
 
         n_scans_other_windows = UInt32(0)
         other_window_weight_corr = OTHER_WINDOW_CORR_SENTINEL
-        other_window_frag_sum_corr = OTHER_WINDOW_CORR_SENTINEL
         other_window_apex_delta_irt = OTHER_WINDOW_APEX_DELTA_SENTINEL
 
         if compute_other_windows
@@ -1069,18 +1048,15 @@ function add_trace_and_fragment_features!(
             for group_row in group_start:group_stop
                 pass_mask[group_row] || continue
                 w = max(weights[group_row], 0f0)
-                frag_sum = _mainsearch_fragment_intensity_sum(group_row, frag_cols)
                 cycle = UInt32(cycle_idxs[group_row])
                 group_window_key = _scan_window_key(scan_idxs[group_row], center_mzs, isolation_widths)
 
                 if group_window_key == selected_window_key
-                    _trace_push_cycle_pair_sum!(
+                    _trace_push_cycle_sum!(
                         other_window_scratch.selected_cycles,
                         other_window_scratch.selected_weight_values,
-                        other_window_scratch.selected_frag_values,
                         cycle,
                         w,
-                        frag_sum,
                     )
                     if w > selected_apex_weight
                         selected_apex_weight = w
@@ -1089,16 +1065,13 @@ function add_trace_and_fragment_features!(
                 else
                     n_scans_other_windows += UInt32(1)
                     other_idx = _other_window_idx!(other_window_scratch, group_window_key)
-                    other_window_scratch.window_counts[other_idx] += UInt32(1)
                     other_window_scratch.window_best_peps[other_idx] =
                         min(other_window_scratch.window_best_peps[other_idx], Float32(pep_values[group_row]))
-                    _trace_push_cycle_pair_sum!(
+                    _trace_push_cycle_sum!(
                         other_window_scratch.window_cycles[other_idx],
                         other_window_scratch.window_weight_values[other_idx],
-                        other_window_scratch.window_frag_values[other_idx],
                         cycle,
                         w,
-                        frag_sum,
                     )
                     if w > other_window_scratch.window_apex_weight[other_idx]
                         other_window_scratch.window_apex_weight[other_idx] = w
@@ -1112,7 +1085,7 @@ function add_trace_and_fragment_features!(
                isfinite(selected_apex_irt)
                 chosen_other_idx = 0
                 chosen_other_pep = Inf32
-                @inbounds for other_idx in eachindex(other_window_scratch.window_counts)
+                @inbounds for other_idx in eachindex(other_window_scratch.window_best_peps)
                     pep = other_window_scratch.window_best_peps[other_idx]
                     if pep < chosen_other_pep
                         chosen_other_pep = pep
@@ -1127,12 +1100,6 @@ function add_trace_and_fragment_features!(
                         other_window_scratch.window_cycles[chosen_other_idx],
                         other_window_scratch.window_weight_values[chosen_other_idx],
                     )
-                    other_window_frag_sum_corr = _trace_aligned_corr_sorted(
-                        other_window_scratch.selected_cycles,
-                        other_window_scratch.selected_frag_values,
-                        other_window_scratch.window_cycles[chosen_other_idx],
-                        other_window_scratch.window_frag_values[chosen_other_idx],
-                    )
                     other_apex_irt = other_window_scratch.window_apex_irt[chosen_other_idx]
                     if isfinite(other_apex_irt)
                         other_window_apex_delta_irt = abs(selected_apex_irt - other_apex_irt)
@@ -1143,7 +1110,6 @@ function add_trace_and_fragment_features!(
 
         out_n_scans_other_windows[i] = n_scans_other_windows
         out_other_window_weight_corr[i] = other_window_weight_corr
-        out_other_window_frag_sum_corr[i] = other_window_frag_sum_corr
         out_other_window_apex_delta_irt[i] = other_window_apex_delta_irt
     end
 
@@ -1158,7 +1124,6 @@ function add_trace_and_fragment_features!(
     best_psms[!, :n_frags_detected_intersection_bitvec_rank] = out_intersection_rank
     best_psms[!, :n_scans_other_windows] = out_n_scans_other_windows
     best_psms[!, :other_window_weight_corr] = out_other_window_weight_corr
-    best_psms[!, :other_window_frag_sum_corr] = out_other_window_frag_sum_corr
     best_psms[!, :other_window_apex_delta_irt] = out_other_window_apex_delta_irt
     @inbounds for rank in 1:8
         best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
