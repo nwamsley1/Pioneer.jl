@@ -426,9 +426,10 @@ function train_and_predict_pass1_oom!(
     k_per_fold::Int = default_pass1_oom_k_per_fold(),
     rng::AbstractRNG = MersenneTwister(1776),
     semisupervised::Bool = false,
-    semisupervised_q_threshold::Float32 = 0.01f0,
-    semisupervised_min_gain::Float32 = 0.01f0,
-    semisupervised_max_iterations::Int = 8,
+    semisupervised_train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
+    semisupervised_stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    semisupervised_min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
+    semisupervised_max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
 )
     t_total_start = time()
 
@@ -516,7 +517,8 @@ function train_and_predict_pass1_oom!(
         metrics = _scoring_semisupervised_metrics_and_mask(
             scores_buffer,
             targets_buffer;
-            q_threshold = semisupervised_q_threshold,
+            train_q_threshold = semisupervised_train_q_threshold,
+            stop_q_threshold = semisupervised_stop_q_threshold,
         )
         @debug_l1 "  ScoringSearch semi-supervised iter $iter_idx (Pass-1 OOM): " *
                    "train targets=$n_train_targets decoys=$n_train_decoys; " *
