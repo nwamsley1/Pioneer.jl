@@ -324,31 +324,37 @@ end
     @test best.frag3_smoothed_intensity == Float32[2]
 end
 
-@testset "smoothed shadow Hellinger smooths per-rank shadow peaks" begin
-    @test :smoothed_shadow_hellinger in Pioneer.ADVANCED_FEATURE_SET
+@testset "2D smoothed shadow Hellinger borrows from lowest-PEP other window" begin
+    @test :smoothed_2d_shadow_hellinger in Pioneer.ADVANCED_FEATURE_SET
 
     psms = DataFrame(
-        precursor_idx = UInt32[10, 10, 10, 10],
-        scan_idx = UInt32[101, 102, 103, 104],
-        cycle_idx = UInt32[1, 2, 3, 4],
-        lgbm_score = Float32[0.7, 0.9, 0.8, 0.1],
-        weight = Float32[1, 1, 10, 1],
-        irt_obs = Float32[1, 2, 3, 4],
-        ms1_m0_intensity = Float32[1, 2, 3, 4],
-        frag1_int = Float32[9, 9, 9, 9],
-        frag2_int = Float32[9, 9, 9, 9],
-        frag3_int = zeros(Float32, 4),
-        frag4_int = zeros(Float32, 4),
-        frag5_int = zeros(Float32, 4),
-        frag6_int = zeros(Float32, 4),
-        frag7_int = zeros(Float32, 4),
-        frag8_int = zeros(Float32, 4),
+        precursor_idx = fill(UInt32(10), 6),
+        scan_idx = UInt32[101, 102, 103, 201, 202, 203],
+        cycle_idx = UInt32[1, 2, 3, 1, 2, 3],
+        lgbm_score = Float32[0.4, 0.9, 0.3, 0.2, 0.2, 0.2],
+        weight = Float32[1, 10, 1, 2, 4, 2],
+        irt_obs = Float32[1, 2, 3, 1.2, 2.2, 3.2],
+        ms1_m0_intensity = ones(Float32, 6),
+        frag1_int = ones(Float32, 6),
+        frag2_int = ones(Float32, 6),
+        frag3_int = zeros(Float32, 6),
+        frag4_int = zeros(Float32, 6),
+        frag5_int = zeros(Float32, 6),
+        frag6_int = zeros(Float32, 6),
+        frag7_int = zeros(Float32, 6),
+        frag8_int = zeros(Float32, 6),
     )
     _add_shadow_peak_helper_columns!(psms)
-    psms[!, :fitted_frag1_int] = Float32[1, 2, 2, 1]
-    psms[!, :fitted_frag2_int] = Float32[1, 10, 10, 1]
-    psms[!, :shadow_frag1_int] = Float32[99, 0, 0, 8]
-    psms[!, :shadow_frag2_int] = Float32[99, 4, 8, 0]
+    psms[!, :fitted_frag1_int] = Float32[1, 5, 1, 1, 1, 1]
+    psms[!, :fitted_frag2_int] = Float32[1, 7, 1, 1, 1, 1]
+    psms[!, :shadow_frag1_int] = Float32[0, 6, 0, 12, 12, 0]
+    psms[!, :shadow_frag2_int] = Float32[6, 6, 6, 0, 12, 12]
+
+    center_mzs = Vector{Union{Missing, Float32}}(fill(missing, 203))
+    isolation_widths = Vector{Union{Missing, Float32}}(fill(missing, 203))
+    center_mzs[101:103] .= 500.0f0
+    center_mzs[201:203] .= 502.0f0
+    isolation_widths[[101, 102, 103, 201, 202, 203]] .= 2.0f0
 
     best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
     rank_table = fill(UInt16(99), 256)
@@ -356,15 +362,18 @@ end
     Pioneer.add_trace_and_fragment_features!(
         best,
         psms,
-        Bool[true, true, true, true];
+        trues(nrow(psms));
         bitvec_rank_table = rank_table,
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+        pep_values = Float32[0.2, 0.1, 0.2, 0.03, 0.02, 0.03],
     )
 
-    expected_shadow = Float32[2, 5, 0, 0, 0, 0, 0, 0]
-    expected_fitted = Float32[2, 10, 0, 0, 0, 0, 0, 0]
-    @test best.scan_idx == UInt32[103]
-    @test best.smoothed_shadow_hellinger[1] ≈
-        _reference_shadow_hellinger(expected_fitted, expected_shadow)
+    expected_fitted = Float32[5, 7, 0, 0, 0, 0, 0, 0]
+    expected_2d_shadow = Float32[5, 7, 0, 0, 0, 0, 0, 0]
+    @test best.scan_idx == UInt32[102]
+    @test best.smoothed_2d_shadow_hellinger[1] ≈
+        _reference_shadow_hellinger(expected_fitted, expected_2d_shadow)
     @test all(col -> !hasproperty(best, col), Pioneer.FITTED_FRAGMENT_INTENSITY_COLUMNS)
     @test all(col -> !hasproperty(best, col), Pioneer.SHADOW_FRAGMENT_INTENSITY_COLUMNS)
 end

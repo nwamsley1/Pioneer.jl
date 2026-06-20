@@ -615,6 +615,9 @@ mutable struct MainSearchOtherWindowScratch
     window_weight_values::Vector{Vector{Float32}}
     window_apex_weight::Vector{Float32}
     window_apex_irt::Vector{Float32}
+    window_smooth_prev_row::Vector{Int}
+    window_smooth_same_row::Vector{Int}
+    window_smooth_next_row::Vector{Int}
 end
 
 function MainSearchOtherWindowScratch()
@@ -627,6 +630,9 @@ function MainSearchOtherWindowScratch()
         Vector{Float32}[],
         Float32[],
         Float32[],
+        Int[],
+        Int[],
+        Int[],
     )
 end
 
@@ -643,6 +649,9 @@ function _reset_other_window_scratch!(scratch::MainSearchOtherWindowScratch)
     end
     empty!(scratch.window_apex_weight)
     empty!(scratch.window_apex_irt)
+    empty!(scratch.window_smooth_prev_row)
+    empty!(scratch.window_smooth_same_row)
+    empty!(scratch.window_smooth_next_row)
     return nothing
 end
 
@@ -662,7 +671,27 @@ function _other_window_idx!(
     end
     push!(scratch.window_apex_weight, typemin(Float32))
     push!(scratch.window_apex_irt, NaN32)
+    push!(scratch.window_smooth_prev_row, 0)
+    push!(scratch.window_smooth_same_row, 0)
+    push!(scratch.window_smooth_next_row, 0)
     return idx
+end
+
+@inline function _store_other_window_smooth_row!(
+    scratch::MainSearchOtherWindowScratch,
+    other_idx::Int,
+    cycle::UInt32,
+    center_cycle::UInt32,
+    row::Int,
+)
+    if center_cycle > UInt32(1) && cycle == center_cycle - UInt32(1)
+        scratch.window_smooth_prev_row[other_idx] = row
+    elseif cycle == center_cycle
+        scratch.window_smooth_same_row[other_idx] = row
+    elseif cycle == center_cycle + UInt32(1)
+        scratch.window_smooth_next_row[other_idx] = row
+    end
+    return nothing
 end
 
 @inline function _trace_push_cycle_sum!(
@@ -887,16 +916,22 @@ function _mainsearch_radius1_smooth_fragments!(
     return nothing
 end
 
-function _mainsearch_radius1_shadow_hellinger(
+function _mainsearch_radius1_2d_shadow_hellinger(
     apex_row::Int,
     left_row::Int,
     right_row::Int,
+    other_prev_row::Int,
+    other_same_row::Int,
+    other_next_row::Int,
     fitted_cols,
     shadow_cols,
 )
     smooth_denom = 2f0
     left_row > 0 && (smooth_denom += 1f0)
     right_row > 0 && (smooth_denom += 1f0)
+    other_prev_row > 0 && (smooth_denom += 0.5f0)
+    other_same_row > 0 && (smooth_denom += 1f0)
+    other_next_row > 0 && (smooth_denom += 0.5f0)
 
     sum_fitted = 0f0
     sum_shadow = 0f0
@@ -906,6 +941,9 @@ function _mainsearch_radius1_shadow_hellinger(
         shadow = 2f0 * max(Float32(shadow_cols[rank][apex_row]), 0f0)
         left_row > 0 && (shadow += max(Float32(shadow_cols[rank][left_row]), 0f0))
         right_row > 0 && (shadow += max(Float32(shadow_cols[rank][right_row]), 0f0))
+        other_prev_row > 0 && (shadow += 0.5f0 * max(Float32(shadow_cols[rank][other_prev_row]), 0f0))
+        other_same_row > 0 && (shadow += max(Float32(shadow_cols[rank][other_same_row]), 0f0))
+        other_next_row > 0 && (shadow += 0.5f0 * max(Float32(shadow_cols[rank][other_next_row]), 0f0))
         shadow = Float32(shadow / smooth_denom)
         sum_fitted += fitted
         sum_shadow += shadow
@@ -950,7 +988,7 @@ function add_trace_and_fragment_features!(
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
     out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
-    out_shadow_hellinger = Vector{Float32}(undef, n_best)
+    out_2d_shadow_hellinger = Vector{Float32}(undef, n_best)
     out_n_scans_other_windows = Vector{UInt32}(undef, n_best)
     out_other_window_weight_corr = Vector{Float32}(undef, n_best)
     out_other_window_apex_delta_irt = Vector{Float32}(undef, n_best)
@@ -1006,10 +1044,13 @@ function add_trace_and_fragment_features!(
             flanking_core.right_row,
             frag_cols,
         )
-        out_shadow_hellinger[i] = _mainsearch_radius1_shadow_hellinger(
+        smoothed_2d_shadow_hellinger = _mainsearch_radius1_2d_shadow_hellinger(
             flanking_core.best_row,
             flanking_core.left_row,
             flanking_core.right_row,
+            0,
+            0,
+            0,
             fitted_frag_cols,
             shadow_frag_cols,
         )
@@ -1044,6 +1085,7 @@ function add_trace_and_fragment_features!(
             _reset_other_window_scratch!(other_window_scratch)
             selected_apex_weight = typemin(Float32)
             selected_apex_irt = NaN32
+            center_cycle = UInt32(cycle_idxs[flanking_core.best_row])
 
             for group_row in group_start:group_stop
                 pass_mask[group_row] || continue
@@ -1067,6 +1109,13 @@ function add_trace_and_fragment_features!(
                     other_idx = _other_window_idx!(other_window_scratch, group_window_key)
                     other_window_scratch.window_best_peps[other_idx] =
                         min(other_window_scratch.window_best_peps[other_idx], Float32(pep_values[group_row]))
+                    _store_other_window_smooth_row!(
+                        other_window_scratch,
+                        other_idx,
+                        cycle,
+                        center_cycle,
+                        group_row,
+                    )
                     _trace_push_cycle_sum!(
                         other_window_scratch.window_cycles[other_idx],
                         other_window_scratch.window_weight_values[other_idx],
@@ -1100,6 +1149,21 @@ function add_trace_and_fragment_features!(
                         other_window_scratch.window_cycles[chosen_other_idx],
                         other_window_scratch.window_weight_values[chosen_other_idx],
                     )
+                    other_prev_row = other_window_scratch.window_smooth_prev_row[chosen_other_idx]
+                    other_same_row = other_window_scratch.window_smooth_same_row[chosen_other_idx]
+                    other_next_row = other_window_scratch.window_smooth_next_row[chosen_other_idx]
+                    if other_prev_row != 0 || other_same_row != 0 || other_next_row != 0
+                        smoothed_2d_shadow_hellinger = _mainsearch_radius1_2d_shadow_hellinger(
+                            flanking_core.best_row,
+                            flanking_core.left_row,
+                            flanking_core.right_row,
+                            other_prev_row,
+                            other_same_row,
+                            other_next_row,
+                            fitted_frag_cols,
+                            shadow_frag_cols,
+                        )
+                    end
                     other_apex_irt = other_window_scratch.window_apex_irt[chosen_other_idx]
                     if isfinite(other_apex_irt)
                         other_window_apex_delta_irt = abs(selected_apex_irt - other_apex_irt)
@@ -1108,6 +1172,7 @@ function add_trace_and_fragment_features!(
             end
         end
 
+        out_2d_shadow_hellinger[i] = smoothed_2d_shadow_hellinger
         out_n_scans_other_windows[i] = n_scans_other_windows
         out_other_window_weight_corr[i] = other_window_weight_corr
         out_other_window_apex_delta_irt[i] = other_window_apex_delta_irt
@@ -1128,7 +1193,7 @@ function add_trace_and_fragment_features!(
     @inbounds for rank in 1:8
         best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
     end
-    best_psms[!, :smoothed_shadow_hellinger] = out_shadow_hellinger
+    best_psms[!, :smoothed_2d_shadow_hellinger] = out_2d_shadow_hellinger
     select!(best_psms, Not([
         FITTED_FRAGMENT_INTENSITY_COLUMNS...,
         SHADOW_FRAGMENT_INTENSITY_COLUMNS...,
