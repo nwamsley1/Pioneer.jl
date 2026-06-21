@@ -153,13 +153,14 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
         s = FusedScratch(4)
         @test s.n == 0 && s.miss_n == 0
 
-        push_match!(s, 7, 1.5f0, 1000.0f0, 0, 3)
+        push_match!(s, 7, 1.5f0, 1000.0f0, 0, 3, 0.25f0)
         @test s.n == 1
         @test s.row[1]     === UInt32(7)
         @test s.nzval[1]   === 1.5f0
         @test s.x[1]       === 1000.0f0
         @test s.isotope[1] === UInt8(0)
         @test s.rank[1]    === UInt8(3)
+        @test s.mass_risk[1] === 0.25f0
 
         push_miss!(s, 0.25f0, 2, 4)
         @test s.miss_n == 1
@@ -169,13 +170,14 @@ Pioneer.getPrecMaxBound(q::FixedQuadFunc) = q.hi
 
         # Force grow on the match buffer (capacity 4 → push 5).
         for k in 2:5
-            push_match!(s, k * 10, Float32(k), Float32(k * 100), k - 1, k)
+            push_match!(s, k * 10, Float32(k), Float32(k * 100), k - 1, k, Float32(k) / 10f0)
         end
         @test s.n == 5
         @test length(s.row) >= 5
         @test s.row[5]     === UInt32(50)
         @test s.isotope[5] === UInt8(4)
         @test s.rank[5]    === UInt8(5)
+        @test s.mass_risk[5] === 0.5f0
 
         # Independent buffers — pushing matches doesn't change miss state.
         @test s.miss_n == 1

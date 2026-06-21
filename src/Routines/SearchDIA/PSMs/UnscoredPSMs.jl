@@ -48,6 +48,14 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag6_int::T
     frag7_int::T
     frag8_int::T
+    frag1_peak_idx::UInt32
+    frag2_peak_idx::UInt32
+    frag3_peak_idx::UInt32
+    frag4_peak_idx::UInt32
+    frag5_peak_idx::UInt32
+    frag6_peak_idx::UInt32
+    frag7_peak_idx::UInt32
+    frag8_peak_idx::UInt32
     # E7 (Batch E, 2026-05-12): top-3 fragment ppm-error capture. Accumulates
     # |ppm_err| for M0 matches at ranks 1-3 only; mean computed in Score!.
     top3_abs_ppm_err_sum::T
@@ -56,6 +64,8 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     # ALL matched M0 fragments (any rank). Paired with b_int + y_int to give
     # matched_ratio = log2((obs matched) / (pred matched)) in Score!.
     pred_int_sum_m0::T
+    expected_missing_pred_int_sum_m0::T
+    mass_missing_hellinger::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
@@ -67,7 +77,11 @@ MainUnscoredPSM{Float32}() = MainUnscoredPSM{Float32}(
     zero(UInt8), zero(UInt8), Float32(0),
     Float32(0), Float32(0), Float32(0), Float32(0),
     Float32(0), Float32(0), Float32(0), Float32(0),
+    UInt32(0), UInt32(0), UInt32(0), UInt32(0),
+    UInt32(0), UInt32(0), UInt32(0), UInt32(0),
     Float32(0), zero(UInt8), Float32(0),
+    Float32(0),
+    Float32(0),
     UInt32(0), UInt32(0),
 )
 
