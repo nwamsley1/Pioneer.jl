@@ -26,6 +26,7 @@ mutable struct FusedScratch
     x::Vector{Float32}
     isotope::Vector{UInt8}
     rank::Vector{UInt8}
+    mass_risk::Vector{Float32}
     # Miss entries: buffered here and flushed alongside matches in finalize.
     # Misses from a precursor with zero matches are discarded.
     miss_nzval::Vector{Float32}
@@ -42,6 +43,7 @@ function FusedScratch(max_per_prec::Int)
         Vector{Float32}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
+        Vector{Float32}(undef, max_per_prec),
         Vector{Float32}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
         Vector{UInt8}(undef, max_per_prec),
@@ -68,6 +70,7 @@ function grow_fused_scratch!(s::FusedScratch, needed::Int)
         append!(s.x,            zeros(Float32, extra))
         append!(s.isotope,      zeros(UInt8, extra))
         append!(s.rank,         zeros(UInt8, extra))
+        append!(s.mass_risk,    zeros(Float32, extra))
         append!(s.miss_nzval,   zeros(Float32, extra))
         append!(s.miss_isotope, zeros(UInt8, extra))
         append!(s.miss_rank,    zeros(UInt8, extra))
