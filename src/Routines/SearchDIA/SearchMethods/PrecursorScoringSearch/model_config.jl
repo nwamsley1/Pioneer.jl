@@ -51,8 +51,6 @@ const FLANKING_WINDOW_FEATURES = [
     :flanking_frag_candidate_fraction,
     :flanking_ms1_frag_sum_corr,
     :flanking_frag_corr_mean,
-    :flanking_n_correlated_fragments,
-    :flanking_n_correlated_fragments_bitvec_rank,
     :flanking_frag_corr_strength,
     :flanking_frag_corr_effective_n,
     :flanking_frag_corr_best_m0,
