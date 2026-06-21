@@ -1,3 +1,5 @@
+using DataFrames
+
 @testset "MS1 isolation-window helper features" begin
     @test Pioneer._ms1_m0_m1_m2_window_fraction(10f0, 5f0, 0f0, 100f0) == 0.15f0
     @test Pioneer._ms1_m0_m1_m2_window_fraction(10f0, 5f0, 0f0, 0f0) == 0f0
@@ -16,6 +18,26 @@
     @test Pioneer._ms2_explained_fraction(-1f0) ≈ 0.5f0
     @test Pioneer._ms2_explained_fraction(Inf32) == 0f0
     @test Pioneer._ms1_ms2_explained_delta(0.75f0, -1f0) ≈ 0.25f0
+end
+
+@testset "fragment peak competition uses scan-local unique precursor counts" begin
+    psms = DataFrame(
+        scan_idx = UInt32[10, 10, 10, 11],
+        precursor_idx = UInt32[1, 2, 1, 3],
+        frag1_peak_idx = UInt32[100, 100, 100, 200],
+        frag2_peak_idx = UInt32[101, 102, 103, 201],
+        frag3_peak_idx = UInt32[100, 0, 0, 0],
+        frag4_peak_idx = zeros(UInt32, 4),
+        frag5_peak_idx = zeros(UInt32, 4),
+        frag6_peak_idx = zeros(UInt32, 4),
+        frag7_peak_idx = zeros(UInt32, 4),
+        frag8_peak_idx = zeros(UInt32, 4),
+    )
+
+    Pioneer._add_fragment_peak_competition_features!(psms)
+
+    @test psms.frag_competition_num_unique_fragments == UInt8[2, 2, 2, 2]
+    @test psms.frag_competition_mean_candidates ≈ Float32[1.5, 1.5, 1.5, 1.0]
 end
 
 @testset "MS1 peak lookup advances from previous cursor" begin
