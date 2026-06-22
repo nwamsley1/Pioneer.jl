@@ -962,11 +962,33 @@ function _mainsearch_radius1_2d_shadow_hellinger(
     return Float32(-log2(max(hellinger_sq, 1f-10)))
 end
 
+@inline function _mainsearch_fragment_annotation_key(frag)
+    family = isY(frag) ? UInt16(1) : (isB(frag) ? UInt16(2) : (isP(frag) ? UInt16(3) : UInt16(0)))
+    return UInt16((family << 8) | (UInt16(getFragCharge(frag)) << 6) | UInt16(getIonPosition(frag)))
+end
+
+function _mainsearch_fill_fragment_annotation_keys!(
+    out_cols,
+    out_row::Integer,
+    fragment_lookup::LibraryFragmentLookup,
+    pid::UInt32,
+)
+    frag_list = getFragments(fragment_lookup)
+    @inbounds for frag_idx in getPrecFragRange(fragment_lookup, pid)
+        frag = frag_list[Int(frag_idx)]
+        rank = Int(getRank(frag))
+        1 <= rank <= 8 || continue
+        out_cols[rank][out_row] = _mainsearch_fragment_annotation_key(frag)
+    end
+    return nothing
+end
+
 function add_trace_and_fragment_features!(
     best_psms::DataFrame,
     psms::DataFrame,
     pass_mask::AbstractVector{Bool};
     bitvec_rank_table,
+    fragment_lookup::LibraryFragmentLookup,
     center_mzs = nothing,
     isolation_widths = nothing,
     pep_values = nothing,
@@ -995,6 +1017,7 @@ function add_trace_and_fragment_features!(
     out_union_rank = Vector{UInt16}(undef, n_best)
     out_intersection_rank = Vector{UInt16}(undef, n_best)
     out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
+    out_fragment_annotation_key_cols = ntuple(_ -> zeros(UInt16, n_best), 8)
     out_2d_shadow_hellinger = Vector{Float32}(undef, n_best)
     out_n_scans_other_windows = Vector{UInt32}(undef, n_best)
     out_other_window_weight_corr = Vector{Float32}(undef, n_best)
@@ -1018,6 +1041,13 @@ function add_trace_and_fragment_features!(
             row += 1
         end
         group_stop = row - 1
+
+        _mainsearch_fill_fragment_annotation_keys!(
+            out_fragment_annotation_key_cols,
+            i,
+            fragment_lookup,
+            pid,
+        )
 
         empty!(selected_window_rows)
         selected_window_key = use_window_groups ?
@@ -1199,6 +1229,7 @@ function add_trace_and_fragment_features!(
     best_psms[!, :other_window_apex_delta_irt] = out_other_window_apex_delta_irt
     @inbounds for rank in 1:8
         best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
+        best_psms[!, FRAGMENT_ANNOTATION_KEY_COLUMNS[rank]] = out_fragment_annotation_key_cols[rank]
     end
     best_psms[!, :smoothed_2d_shadow_hellinger] = out_2d_shadow_hellinger
     select!(best_psms, Not([

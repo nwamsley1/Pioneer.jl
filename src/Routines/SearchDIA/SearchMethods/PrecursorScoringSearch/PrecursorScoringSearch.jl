@@ -197,6 +197,7 @@ function summarize_results!(
     end
 
     add_wide_window_features_to_fold_files!(search_context, Int.(valid_file_indices))
+    add_empirical_smoothed_spectrum_features_to_fold_files!(valid_fold_paths)
 
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))

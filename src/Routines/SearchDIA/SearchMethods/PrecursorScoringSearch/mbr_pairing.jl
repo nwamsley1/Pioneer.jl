@@ -5,22 +5,24 @@
 
 # MBR pairing.
 #
-# Builds the experiment-global counterfactual-partner map used by MBR
+# Builds experiment-global counterfactual-partner candidates used by MBR
 # Batch F. For every unique `precursor_idx` observed across the per-file
-# second-pass Arrow tables, assigns exactly one partner of the OPPOSITE
-# target/decoy class — the one whose predicted iRT is closest within the
-# same (cv_fold × prec_mz decile) stratum.
+# second-pass Arrow tables, stores a short ranked list of OPPOSITE-class
+# partners ordered by tier (same cv_fold × prec_mz decile, same fold, global)
+# and then nearest predicted iRT.
 #
-# The result is a `Dict{UInt32, UInt32}` (pid → partner_pid) consumed by
-# the MBR streaming feature compute as the lookup for each row's _false
-# donor (see mbr_streaming.jl). Nothing here mutates the spectral library
-# or any PSM column.
+# The result is a zero-padded `Matrix{UInt32}` with rows = candidate rank
+# and columns = precursor_idx. MBR streaming chooses the first candidate
+# with a donor row from a file other than the receiver file. Nothing here
+# mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
 # a concatenated PSM DataFrame. Only (:precursor_idx, :target, :cv_fold)
 # columns are touched; everything else (mz, irt) comes from the library.
 
 using Statistics
+
+const MBR_COUNTERFACTUAL_MAX_PARTNER_CANDIDATES = 8
 
 # Streams the per-file Arrow tables, projects just the three columns we
 # need, and returns one entry per unique pid: target flag, library mz +
@@ -136,75 +138,107 @@ function _build_global_pool(fold_pools::Dict{Int, _IrtPool})::_IrtPool
     return _sort_to_pool(pairs)
 end
 
-# Binary-search the pool for the pid whose irt is closest to `target_irt`.
-# Returns UInt32(0) if the pool is empty.
-@inline function _nearest_pid(pool::_IrtPool, target_irt::Float32)
-    n = length(pool.irts)
-    n == 0 && return UInt32(0)
-    idx = searchsortedfirst(pool.irts, target_irt)
-    if idx > n
-        return pool.pids[n]
-    elseif idx == 1
-        return pool.pids[1]
-    else
-        d_left  = abs(target_irt - pool.irts[idx - 1])
-        d_right = abs(pool.irts[idx] - target_irt)
-        return d_left <= d_right ? pool.pids[idx - 1] : pool.pids[idx]
+# Binary-search a sorted iRT pool, then expand outward to append nearest
+# unmatched pids into `candidate_mat[:, col]`.
+@inline function _candidate_already_added(
+    candidate_mat::Matrix{UInt32},
+    col::Int,
+    n_added::Int,
+    pid::UInt32,
+)
+    @inbounds for row in 1:n_added
+        candidate_mat[row, col] == pid && return true
     end
+    return false
 end
 
-# Three-tier nearest-iRT fallback: in-stratum → same fold (any mz) →
-# experiment-global. Returns (partner_pid, tier) where tier ∈ (:stratum,
-# :fb_fold, :fb_global). Throws if no opposite-class precursor exists
-# anywhere — that experiment is degenerate.
-function _assign_partner_with_fallback(
-    my_pid::UInt32, my_irt::Float32, my_fold::Int, my_mz::Int, is_target::Bool,
-    pools_t::Dict, pools_d::Dict,
-    fold_pool_t::Dict, fold_pool_d::Dict,
-    global_pool_t::_IrtPool, global_pool_d::_IrtPool,
+function _push_nearest_partner_candidates!(
+    candidate_mat::Matrix{UInt32},
+    col::Int,
+    n_added::Int,
+    pool::_IrtPool,
+    target_irt::Float32,
 )
-    opp_local  = is_target ?
+    max_candidates = size(candidate_mat, 1)
+    n = length(pool.irts)
+    n == 0 && return n_added
+
+    right = searchsortedfirst(pool.irts, target_irt)
+    left = right - 1
+    @inbounds while n_added < max_candidates && (left >= 1 || right <= n)
+        use_left = if right > n
+            true
+        elseif left < 1
+            false
+        else
+            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
+        end
+        pool_idx = use_left ? left : right
+        use_left ? (left -= 1) : (right += 1)
+        pid = pool.pids[pool_idx]
+        _candidate_already_added(candidate_mat, col, n_added, pid) && continue
+        n_added += 1
+        candidate_mat[n_added, col] = pid
+    end
+    return n_added
+end
+
+function _assign_partner_candidates_with_fallback!(
+    candidate_mat::Matrix{UInt32},
+    col::Int,
+    my_pid::UInt32,
+    my_irt::Float32,
+    my_fold::Int,
+    my_mz::Int,
+    is_target::Bool,
+    pools_t::Dict,
+    pools_d::Dict,
+    fold_pool_t::Dict,
+    fold_pool_d::Dict,
+    global_pool_t::_IrtPool,
+    global_pool_d::_IrtPool,
+)
+    n_added = 0
+
+    opp_local = is_target ?
         get(pools_d, (my_fold, my_mz), _empty_pool()) :
         get(pools_t, (my_fold, my_mz), _empty_pool())
-    partner = _nearest_pid(opp_local, my_irt)
-    partner != UInt32(0) && return (partner, :stratum)
+    n_added = _push_nearest_partner_candidates!(candidate_mat, col, n_added, opp_local, my_irt)
 
     opp_fold = is_target ? fold_pool_d[my_fold] : fold_pool_t[my_fold]
-    partner = _nearest_pid(opp_fold, my_irt)
-    partner != UInt32(0) && return (partner, :fb_fold)
+    n_added = _push_nearest_partner_candidates!(candidate_mat, col, n_added, opp_fold, my_irt)
 
     opp_global = is_target ? global_pool_d : global_pool_t
-    partner = _nearest_pid(opp_global, my_irt)
-    partner == UInt32(0) && error(
-        "build_counterfactual_partner_map: no opposite-class partner anywhere " *
+    n_added = _push_nearest_partner_candidates!(candidate_mat, col, n_added, opp_global, my_irt)
+
+    n_added == 0 && error(
+        "build_counterfactual_partner_candidate_matrix: no opposite-class partner anywhere " *
         "for pid=$my_pid (target=$is_target)."
     )
-    return (partner, :fb_global)
+    return n_added
 end
 
 """
-    build_counterfactual_partner_map(file_paths, precursors) -> Dict{UInt32, UInt32}
+    build_counterfactual_partner_candidate_matrix(file_paths, precursors; max_candidates=8) -> Matrix{UInt32}
 
-MBR Batch F: build the experiment-global pid → counterfactual_partner_pid
-map by streaming the per-file Arrow tables (no DataFrame materialised).
+MBR Batch F: build a zero-padded precursor-indexed matrix of ranked
+counterfactual partner candidates by streaming the per-file Arrow tables
+(no DataFrame materialised).
 
-For every unique `precursor_idx` observed across `file_paths`, the partner
-is the OPPOSITE-class precursor whose predicted iRT is closest within the
-same (cv_fold × prec_mz decile) stratum. Falls back to same-fold-any-mz
-and then experiment-global if a stratum is one-sided. Errors if no
-opposite-class precursor exists anywhere.
-
-Returns the partner map (consumed by mbr_streaming.jl for each row's
-_false donor lookup). Hard requirement: every observed pid gets a
-partner (asserted).
+For every unique `precursor_idx` observed across `file_paths`, candidates
+are OPPOSITE-class precursors ordered by nearest predicted iRT within the
+same (cv_fold × prec_mz decile) stratum, then same-fold-any-mz fallback,
+then experiment-global fallback.
 """
-function build_counterfactual_partner_map(
+function build_counterfactual_partner_candidate_matrix(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    max_candidates::Int = MBR_COUNTERFACTUAL_MAX_PARTNER_CANDIDATES,
 )
-    t0 = time()
     unique = _collect_unique_precursors_streaming(file_paths, precursors)
     n_precs = length(unique.pids)
+    max_candidates > 0 || error("max counterfactual partner candidates must be positive")
+    n_precs == 0 && return zeros(UInt32, max_candidates, 0)
 
     bin_mz = _compute_mz_deciles(unique.mz)
     pools_t, pools_d = _build_stratum_pools(
@@ -224,36 +258,18 @@ function build_counterfactual_partner_map(
     global_pool_t = _build_global_pool(fold_pool_t)
     global_pool_d = _build_global_pool(fold_pool_d)
 
-    pid_to_partner = Dict{UInt32, UInt32}()
-    sizehint!(pid_to_partner, n_precs)
-    n_stratum = 0; n_fb_fold = 0; n_fb_global = 0
+    partner_candidates = zeros(UInt32, max_candidates, Int(maximum(unique.pids)))
     @inbounds for i in 1:n_precs
-        partner, tier = _assign_partner_with_fallback(
-            unique.pids[i], unique.irt[i],
+        _assign_partner_candidates_with_fallback!(
+            partner_candidates,
+            Int(unique.pids[i]),
+            unique.pids[i],
+            unique.irt[i],
             Int(unique.fold[i]), bin_mz[i], unique.target[i],
             pools_t, pools_d, fold_pool_t, fold_pool_d,
             global_pool_t, global_pool_d,
         )
-        pid_to_partner[unique.pids[i]] = partner
-        tier === :stratum   ? (n_stratum   += 1) :
-        tier === :fb_fold   ? (n_fb_fold   += 1) : (n_fb_global += 1)
     end
 
-    elapsed = time() - t0
-    pct_strat = round(100 * n_stratum   / max(n_precs, 1), digits = 2)
-    pct_fbf   = round(100 * n_fb_fold   / max(n_precs, 1), digits = 3)
-    pct_fbg   = round(100 * n_fb_global / max(n_precs, 1), digits = 3)
-
-    @debug_l1 "MBR Batch F (iRT-NN) — counterfactual partner map:"
-    @debug_l1 "  unique precursors: $n_precs"
-    @debug_l1 "  partner = closest-pred-iRT opposite within (cv_fold × mz_decile)"
-    @debug_l1 "  in stratum:                     $n_stratum ($pct_strat%)"
-    @debug_l1 "  fallback (cv_fold, any mz):     $n_fb_fold ($pct_fbf%)"
-    @debug_l1 "  fallback (experiment-global):   $n_fb_global ($pct_fbg%)"
-    @debug_l1 "  total partnered: $(length(pid_to_partner)) / $n_precs"
-    @debug_l1 "  build_counterfactual_partner_map elapsed: $(round(elapsed, digits = 2))s"
-
-    @assert length(pid_to_partner) == n_precs "Counterfactual partner map missing $(n_precs - length(pid_to_partner)) precursors"
-
-    return pid_to_partner
+    return partner_candidates
 end
