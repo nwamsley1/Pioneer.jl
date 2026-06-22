@@ -9,11 +9,6 @@
 @inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
 @inline _count_mox(::Missing)            = zero(UInt8)
 
-const FRAGMENT_PEAK_INDEX_COLUMNS = (
-    :frag1_peak_idx, :frag2_peak_idx, :frag3_peak_idx, :frag4_peak_idx,
-    :frag5_peak_idx, :frag6_peak_idx, :frag7_peak_idx, :frag8_peak_idx,
-)
-
 """
     add_psm_features!(psms, search_context, spectra, ms_file_idx)
 
@@ -574,90 +569,6 @@ function _scan_run_starts(scan::Vector{UInt32})
     end
     push!(starts, n + 1)
     return starts
-end
-
-function _add_fragment_peak_competition_features!(psms::DataFrame)
-    n = nrow(psms)
-    num_unique_out = zeros(UInt8, n)
-    mean_candidates_out = zeros(Float32, n)
-    psms[!, :frag_competition_num_unique_fragments] = num_unique_out
-    psms[!, :frag_competition_mean_candidates] = mean_candidates_out
-    n == 0 && return
-
-    precursor_idx::Vector{UInt32} = psms[!, :precursor_idx]
-    scan::Vector{UInt32} = psms[!, :scan_idx]
-    peak_cols = (
-        psms[!, :frag1_peak_idx]::Vector{UInt32},
-        psms[!, :frag2_peak_idx]::Vector{UInt32},
-        psms[!, :frag3_peak_idx]::Vector{UInt32},
-        psms[!, :frag4_peak_idx]::Vector{UInt32},
-        psms[!, :frag5_peak_idx]::Vector{UInt32},
-        psms[!, :frag6_peak_idx]::Vector{UInt32},
-        psms[!, :frag7_peak_idx]::Vector{UInt32},
-        psms[!, :frag8_peak_idx]::Vector{UInt32},
-    )
-
-    starts = _scan_run_starts(scan)
-    n_runs = length(starts) - 1
-    parallel_foreach!(n_runs) do chunk
-        peak_counts = Dict{UInt32, UInt16}()
-        seen_peak_precursors = Set{UInt64}()
-        row_peaks = UInt32[]
-        sizehint!(row_peaks, 8)
-
-        @inbounds for run_idx in chunk
-            empty!(peak_counts)
-            empty!(seen_peak_precursors)
-            run_start = starts[run_idx]
-            run_stop = starts[run_idx + 1] - 1
-
-            for row in run_start:run_stop
-                pid = precursor_idx[row]
-                for peak_col in peak_cols
-                    peak = peak_col[row]
-                    peak == UInt32(0) && continue
-                    seen_key = (UInt64(peak) << 32) | UInt64(pid)
-                    if !(seen_key in seen_peak_precursors)
-                        push!(seen_peak_precursors, seen_key)
-                        prev = get(peak_counts, peak, UInt16(0))
-                        peak_counts[peak] = prev == typemax(UInt16) ? prev : prev + UInt16(1)
-                    end
-                end
-            end
-
-            for row in run_start:run_stop
-                empty!(row_peaks)
-                for peak_col in peak_cols
-                    peak = peak_col[row]
-                    peak == UInt32(0) && continue
-                    seen = false
-                    for row_peak in row_peaks
-                        if row_peak == peak
-                            seen = true
-                            break
-                        end
-                    end
-                    seen || push!(row_peaks, peak)
-                end
-
-                n_unique = length(row_peaks)
-                n_unique == 0 && continue
-
-                sum_candidates = UInt32(0)
-                for peak in row_peaks
-                    sum_candidates += UInt32(get(peak_counts, peak, UInt16(0)))
-                end
-                num_unique_out[row] = UInt8(n_unique)
-                mean_candidates_out[row] = Float32(sum_candidates) / Float32(n_unique)
-            end
-        end
-    end
-    return
-end
-
-function drop_fragment_peak_index_columns!(psms::DataFrame)
-    select!(psms, Not(collect(FRAGMENT_PEAK_INDEX_COLUMNS)))
-    return psms
 end
 
 function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
