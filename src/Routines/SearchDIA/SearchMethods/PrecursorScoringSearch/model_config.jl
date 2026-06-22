@@ -80,6 +80,10 @@ const SHADOW_FRAGMENT_INTENSITY_COLUMNS = (
     :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
 )
 
+const EMPIRICAL_SMOOTHED_SPECTRUM_FEATURES = [
+    :empirical_smoothed_frag_hellinger,
+]
+
 const ADVANCED_FEATURE_SET = [
     # Kept close to PRESCORE_FEATURES (MainSearch/features.jl), with
     # cross-run-only substitutions where the selected best PSM is known.
@@ -116,6 +120,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
+    EMPIRICAL_SMOOTHED_SPECTRUM_FEATURES...,
     :top3_ms2_mass_error_mean,
     :expected_predicted_missing_fraction,
     :mass_missing_hellinger,
