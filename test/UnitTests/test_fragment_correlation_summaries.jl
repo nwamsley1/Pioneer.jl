@@ -19,6 +19,34 @@ function _add_shadow_peak_helper_columns_fragment_tests!(psms::DataFrame)
     return psms
 end
 
+function _test_fragment_lookup_for_precursors(pids = UInt32[10, 20, 30])
+    frags = Pioneer.CompactFrag{Float32}[]
+    ranges = fill(UInt64(1), Int(maximum(pids)) + 1)
+    next_start = UInt64(1)
+    for pid in sort(pids)
+        ranges[Int(pid)] = next_start
+        for rank in 1:8
+            push!(frags, Pioneer.CompactFrag(
+                pid,
+                Float32(100 + rank),
+                Float16(1),
+                true,
+                false,
+                false,
+                false,
+                UInt8(1),
+                UInt8(rank),
+                UInt8(2),
+                UInt8(rank),
+                UInt8(0),
+            ))
+        end
+        next_start += UInt64(8)
+        ranges[Int(pid) + 1] = next_start
+    end
+    return Pioneer.StandardFragmentLookup(frags, ranges)
+end
+
 @testset "fragment chromatogram positive correlation summaries" begin
     psms = DataFrame(
         precursor_idx = UInt32[10, 10, 10],
@@ -163,6 +191,7 @@ end
         psms,
         falses(nrow(psms));
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursors(),
     )
 
     @test best.precursor_idx == UInt32[10, 30]
@@ -213,6 +242,7 @@ end
         psms,
         trues(nrow(psms));
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursors(UInt32[10]),
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
         pep_values = peps,

@@ -3,12 +3,22 @@ using Arrow
 using DataFrames
 using Test
 
+struct MBRMockPrecursors <: Pioneer.LibraryPrecursors
+    mz::Vector{Float32}
+    irt::Vector{Float32}
+end
+
+Pioneer.getMz(p::MBRMockPrecursors) = p.mz
+Pioneer.getIrt(p::MBRMockPrecursors) = p.irt
+
 function _mbr_smoothed_main_table(;
     precursor_idx,
     scan_idx,
     ms_file_idx,
     frag1,
     frag2,
+    frag1_key = fill(UInt16(1), length(precursor_idx)),
+    frag2_key = fill(UInt16(2), length(precursor_idx)),
 )
     n = length(precursor_idx)
     return DataFrame(
@@ -29,6 +39,14 @@ function _mbr_smoothed_main_table(;
         frag6_smoothed_intensity = zeros(Float32, n),
         frag7_smoothed_intensity = zeros(Float32, n),
         frag8_smoothed_intensity = zeros(Float32, n),
+        frag1_annotation_key = UInt16.(frag1_key),
+        frag2_annotation_key = UInt16.(frag2_key),
+        frag3_annotation_key = zeros(UInt16, n),
+        frag4_annotation_key = zeros(UInt16, n),
+        frag5_annotation_key = zeros(UInt16, n),
+        frag6_annotation_key = zeros(UInt16, n),
+        frag7_annotation_key = zeros(UInt16, n),
+        frag8_annotation_key = zeros(UInt16, n),
     )
 end
 
@@ -87,9 +105,113 @@ end
     end
 end
 
-@testset "MBR smoothed spectrum FTR features map true to false positionally" begin
-    true_idx = findfirst(==(:MBR_smoothed_frag_hellinger_true), Pioneer.FTR_FEATURES_F_TRUE)
+@testset "MBR smoothed spectrum Hellinger aligns fragments by annotation key" begin
+    mktempdir() do dir
+        f1 = joinpath(dir, "run1_fold0.arrow")
+        f2 = joinpath(dir, "run2_fold0.arrow")
 
-    @test true_idx !== nothing
-    @test Pioneer.FTR_FEATURES_F_FALSE[true_idx] == :MBR_smoothed_frag_hellinger_false
+        Arrow.write(f1, _mbr_smoothed_main_table(
+            precursor_idx = [30],
+            scan_idx = [3001],
+            ms_file_idx = 1,
+            frag1 = [100],
+            frag2 = [0],
+            frag1_key = [0x0011],
+            frag2_key = [0x0021],
+        ))
+        Arrow.write(f1 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
+            precursor_idx = [30],
+            scan_idx = [3001],
+            score = [0.95],
+        ))
+
+        Arrow.write(f2, _mbr_smoothed_main_table(
+            precursor_idx = [30],
+            scan_idx = [3002],
+            ms_file_idx = 2,
+            frag1 = [0],
+            frag2 = [100],
+            frag1_key = [0x0021],
+            frag2_key = [0x0011],
+        ))
+        Arrow.write(f2 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
+            precursor_idx = [30],
+            scan_idx = [3002],
+            score = [0.90],
+        ))
+
+        donors = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(f1, donors, zeros(UInt32, 30))
+        mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
+
+        @test isapprox(mbr.MBR_smoothed_frag_hellinger_true[1], 0.0f0; atol = 1.0f-6)
+    end
+end
+
+@testset "MBR false donor selection uses alternate partner with cross-file donor" begin
+    mktempdir() do dir
+        f1 = joinpath(dir, "run1_fold0.arrow")
+        f2 = joinpath(dir, "run2_fold0.arrow")
+
+        Arrow.write(f1, _mbr_smoothed_main_table(
+            precursor_idx = [40, 41],
+            scan_idx = [4001, 4002],
+            ms_file_idx = 1,
+            frag1 = [100, 0],
+            frag2 = [0, 100],
+        ))
+        Arrow.write(f1 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
+            precursor_idx = [40, 41],
+            scan_idx = [4001, 4002],
+            score = [0.40, 0.95],
+        ))
+
+        Arrow.write(f2, _mbr_smoothed_main_table(
+            precursor_idx = [40, 42],
+            scan_idx = [5001, 5002],
+            ms_file_idx = 2,
+            frag1 = [100, 100],
+            frag2 = [0, 0],
+        ))
+        Arrow.write(f2 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
+            precursor_idx = [40, 42],
+            scan_idx = [5001, 5002],
+            score = [0.90, 0.88],
+        ))
+
+        partner_candidates = zeros(UInt32, 2, 42)
+        partner_candidates[1, 40] = UInt32(41)
+        partner_candidates[2, 40] = UInt32(42)
+
+        donors = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            f1,
+            donors,
+            partner_candidates,
+        )
+        mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
+
+        @test mbr.MBR_is_missing_false[1] == false
+        @test mbr.MBR_max_pair_prob_false[1] == Float32(0.88)
+    end
+end
+
+@testset "MBR counterfactual partner candidate matrix ranks nearest iRT partners" begin
+    mktempdir() do dir
+        f1 = joinpath(dir, "run1_fold0.arrow")
+        Arrow.write(f1, DataFrame(
+            precursor_idx = UInt32[1, 2, 3],
+            target = Bool[true, false, false],
+            cv_fold = UInt8[0, 0, 0],
+        ))
+        precursors = MBRMockPrecursors(
+            Float32[500, 500, 500],
+            Float32[10, 11, 30],
+        )
+
+        candidates = Pioneer.build_counterfactual_partner_candidate_matrix([f1], precursors, 2)
+
+        @test candidates[1, 1] == UInt32(2)
+        @test candidates[2, 1] == UInt32(3)
+    end
 end

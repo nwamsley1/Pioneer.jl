@@ -387,6 +387,7 @@ function process_search_results!(
         psms,
         trace_pass_mask;
         bitvec_rank_table = bitvec_rank_table,
+        fragment_lookup = getFragmentLookupTable(getSpecLib(search_context)),
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
         pep_values = trace_peps,

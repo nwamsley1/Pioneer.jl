@@ -26,6 +26,29 @@ function _add_shadow_peak_helper_columns!(psms::DataFrame)
     return psms
 end
 
+function _test_fragment_lookup_for_precursor(pid::UInt32 = UInt32(10))
+    frags = [
+        Pioneer.CompactFrag(
+            pid,
+            Float32(100 + rank),
+            Float16(1),
+            true,
+            false,
+            false,
+            false,
+            UInt8(1),
+            UInt8(rank),
+            UInt8(2),
+            UInt8(rank),
+            UInt8(0),
+        )
+        for rank in 1:8
+    ]
+    ranges = fill(UInt64(1), Int(pid) + 1)
+    ranges[Int(pid) + 1] = UInt64(length(frags) + 1)
+    return Pioneer.StandardFragmentLookup(frags, ranges)
+end
+
 function _reference_shadow_hellinger(fitted::AbstractVector, shadow::AbstractVector)
     sum_fitted = 0f0
     sum_shadow = 0f0
@@ -216,6 +239,7 @@ end
         psms,
         Bool[false, true, true, false];
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursor(),
     )
 
     @test hasproperty(best, :flanking_core_scan_min)
@@ -229,6 +253,8 @@ end
     @test best.n_contiguous_scans == UInt16[2]
     @test best.flanking_core_ms1_m0_signal == Float32[30]
     @test best.flanking_core_frag_signal == Float32[11]
+    @test best.frag1_annotation_key == UInt16[0x0141]
+    @test best.frag2_annotation_key == UInt16[0x0142]
 end
 
 @testset "post-filter trace features use selected isolation window only" begin
@@ -264,6 +290,7 @@ end
         psms,
         trues(nrow(psms));
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursor(),
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
     )
@@ -306,6 +333,7 @@ end
         psms,
         Bool[true, true, true, true];
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursor(),
     )
 
     @test best.scan_idx == UInt32[103]
@@ -354,6 +382,7 @@ end
         psms,
         trues(nrow(psms));
         bitvec_rank_table = rank_table,
+        fragment_lookup = _test_fragment_lookup_for_precursor(),
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
         pep_values = Float32[0.2, 0.1, 0.2, 0.03, 0.02, 0.03],
