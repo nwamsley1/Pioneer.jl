@@ -124,14 +124,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag6_int::H
     frag7_int::H
     frag8_int::H
-    frag1_peak_idx::UInt32
-    frag2_peak_idx::UInt32
-    frag3_peak_idx::UInt32
-    frag4_peak_idx::UInt32
-    frag5_peak_idx::UInt32
-    frag6_peak_idx::UInt32
-    frag7_peak_idx::UInt32
-    frag8_peak_idx::UInt32
 
     # E7 (Batch E, 2026-05-12): mean |ppm_err| over matched M0 fragments at
     # ranks 1-3. Zero if no top-3 matches in this scan.
@@ -241,15 +233,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag6_int,
             unscored_PSMs[i].frag7_int,
             unscored_PSMs[i].frag8_int,
-
-            unscored_PSMs[i].frag1_peak_idx,
-            unscored_PSMs[i].frag2_peak_idx,
-            unscored_PSMs[i].frag3_peak_idx,
-            unscored_PSMs[i].frag4_peak_idx,
-            unscored_PSMs[i].frag5_peak_idx,
-            unscored_PSMs[i].frag6_peak_idx,
-            unscored_PSMs[i].frag7_peak_idx,
-            unscored_PSMs[i].frag8_peak_idx,
 
             H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
