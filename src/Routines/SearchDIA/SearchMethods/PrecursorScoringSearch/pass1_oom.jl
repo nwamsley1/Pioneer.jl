@@ -312,13 +312,11 @@ function _predict_pass1_to_sidecar(
         if cls isa NamedTuple && cls.kind == :constant
             return fill(clamp(Float32(cls.value), 1f-6, 1f0 - 1f-4), length(rows))
         end
-        # num_threads=1: this function runs inside a parallel_foreach! over
-        # files (one Julia task per file). Letting LightGBM's internal
-        # OpenMP fan out to all cores per call → 8 files × 10 OpenMP threads
-        # competing for 10 physical cores (oversubscription). With
-        # num_threads=1 each predict is single-threaded internally and
-        # parallelism comes from the Julia-level file loop.
-        raw = LightGBM.predict(cls, X_fold; num_threads=1)
+        # Design A: Pass-3 runs SEQUENTIALLY on the main thread (see
+        # _predict_pass1_files below), so the predict can safely use all cores.
+        # libomp is only ever entered from the main thread (never a worker), so
+        # no lock and no crash/corruption. Multi-threaded predict per file.
+        raw = LightGBM.predict(cls, X_fold; num_threads=Threads.nthreads())
         s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
         return clamp.(Float32.(s), 1f-6, 1f0 - 1f-4)
     end
@@ -379,24 +377,26 @@ function _predict_pass1_files(
     collect_results = !direct_output && !write_sidecars
     result_type = NamedTuple{(:scores, :targets), Tuple{Vector{Float32}, Vector{Bool}}}
     results = collect_results ? Vector{result_type}(undef, length(file_paths)) : nothing
-    parallel_foreach!(length(file_paths)) do chunk
-        for f_idx in chunk
-            first_row = direct_output ? file_offsets[f_idx] + 1 : 1
-            last_row = direct_output ? file_offsets[f_idx + 1] : 0
-            score_slice = scores_out === nothing ? nothing : @view scores_out[first_row:last_row]
-            target_slice = targets_out === nothing ? nothing : @view targets_out[first_row:last_row]
-            result = _predict_pass1_to_sidecar(
-                file_paths[f_idx],
-                features,
-                cls_trained_on,
-                compute_infold,
-                write_sidecars;
-                scores_out = score_slice,
-                targets_out = target_slice,
-                return_predictions = collect_results,
-            )
-            collect_results && (results[f_idx] = result)
-        end
+    # Design A: sequential on the main thread. The dominant cost (the LightGBM
+    # predict) is recovered via multi-threaded predict per file (_predict_block),
+    # which is only safe because it runs on the main thread here. Matrix build +
+    # sidecar write lose across-file parallelism (acceptable if predict-bound).
+    for f_idx in 1:length(file_paths)
+        first_row = direct_output ? file_offsets[f_idx] + 1 : 1
+        last_row = direct_output ? file_offsets[f_idx + 1] : 0
+        score_slice = scores_out === nothing ? nothing : @view scores_out[first_row:last_row]
+        target_slice = targets_out === nothing ? nothing : @view targets_out[first_row:last_row]
+        result = _predict_pass1_to_sidecar(
+            file_paths[f_idx],
+            features,
+            cls_trained_on,
+            compute_infold,
+            write_sidecars;
+            scores_out = score_slice,
+            targets_out = target_slice,
+            return_predictions = collect_results,
+        )
+        collect_results && (results[f_idx] = result)
     end
     return results
 end
