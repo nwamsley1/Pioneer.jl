@@ -197,8 +197,6 @@ function process_file!(
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
     t_scan_comp = @elapsed add_scan_competition_features!(psms)
-    _add_fragment_peak_competition_features!(psms)
-    drop_fragment_peak_index_columns!(psms)
 
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
     # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
