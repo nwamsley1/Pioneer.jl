@@ -116,8 +116,6 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
-    :frag_competition_num_unique_fragments,
-    :frag_competition_mean_candidates,
     :top3_ms2_mass_error_mean,
     :expected_predicted_missing_fraction,
     :mass_missing_hellinger,

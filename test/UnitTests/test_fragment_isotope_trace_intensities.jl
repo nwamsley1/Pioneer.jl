@@ -9,11 +9,11 @@ using Pioneer
     unscored = [Pioneer.MainUnscoredPSM{Float32}()]
 
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(0), 100.0f0, 0.0f0, 3, UInt32(1), 1.0f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(0), 100.0f0, 0.0f0, 3, UInt32(1), 1.0f0, 10.0f0, true)
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(1), 50.0f0, 0.0f0, 3, UInt32(1), 0.3f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(1), 50.0f0, 0.0f0, 3, UInt32(1), 0.3f0, 10.0f0, true)
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(2), 80.0f0, 0.0f0, 3, UInt32(1), 0.1f0, 10.0f0, UInt32(0), false, false)
+        unscored, 1, frag, UInt8(2), 80.0f0, 0.0f0, 3, UInt32(1), 0.1f0, 10.0f0, false)
 
     psm = unscored[1]
     @test psm.frag1_int === 150.0f0
@@ -31,11 +31,11 @@ end
     unscored = [Pioneer.MainUnscoredPSM{Float32}()]
 
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(0), 100.0f0, 5.0f0, 3, UInt32(1), 4.0f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(0), 100.0f0, 5.0f0, 3, UInt32(1), 4.0f0, 10.0f0, true)
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(0), 100.0f0, 20.0f0, 3, UInt32(1), 6.0f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(0), 100.0f0, 20.0f0, 3, UInt32(1), 6.0f0, 10.0f0, true)
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(1), 100.0f0, 10.0f0, 3, UInt32(1), 100.0f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(1), 100.0f0, 10.0f0, 3, UInt32(1), 100.0f0, 10.0f0, true)
     scratch = Pioneer.FusedScratch(2)
     Pioneer.push_match!(scratch, 1, 4.0f0, 100.0f0, 0, 1, 0.25f0)
     Pioneer.push_match!(scratch, 2, 6.0f0, 100.0f0, 0, 1, 1.0f0)
@@ -90,7 +90,7 @@ end
     unscored = [Pioneer.MainUnscoredPSM{Float32}()]
 
     Pioneer.apply_main_scoring!(
-        unscored, 1, frag, UInt8(0), 42.0f0, 0.0f0, 3, UInt32(1), 1.0f0, 10.0f0, UInt32(0), true, false)
+        unscored, 1, frag, UInt8(0), 42.0f0, 0.0f0, 3, UInt32(1), 1.0f0, 10.0f0, true)
 
     @test unscored[1].frag8_int === 42.0f0
 end
