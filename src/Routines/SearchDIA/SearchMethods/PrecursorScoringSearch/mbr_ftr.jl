@@ -75,6 +75,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
     # ~5,900 gain at rank #6 in rtv4 alongside trace_prob_infold.
     # Don't drop without first restoring the in-fold score context.
     :MBR_best_rt_diff_true,
+    :MBR_smoothed_frag_hellinger_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -100,6 +101,7 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :
+    f === :MBR_smoothed_frag_hellinger_true ? :MBR_smoothed_frag_hellinger_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]

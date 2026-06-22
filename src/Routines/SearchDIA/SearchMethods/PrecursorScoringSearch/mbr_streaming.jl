@@ -45,11 +45,65 @@ struct _MBRDonorEntry
     irt_obs::Float32       # raw observed iRT of the donor row
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
     rt_obs::Float32        # literal scan RT (minutes) of the donor row
+    smoothed_frag_sqrt::NTuple{8, Float32}
     ms_file_idx::UInt32
     is_decoy::Bool
 end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
+const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
+
+@inline function _mbr_smoothed_fragment_intensity(frag_cols, row::Integer, frag_idx::Integer)
+    value = Float32(frag_cols[frag_idx][row])
+    return isfinite(value) ? max(value, 0.0f0) : 0.0f0
+end
+
+@inline function _mbr_smoothed_spectrum_sqrt_tuple(frag_cols, row::Integer)
+    f1 = _mbr_smoothed_fragment_intensity(frag_cols, row, 1)
+    f2 = _mbr_smoothed_fragment_intensity(frag_cols, row, 2)
+    f3 = _mbr_smoothed_fragment_intensity(frag_cols, row, 3)
+    f4 = _mbr_smoothed_fragment_intensity(frag_cols, row, 4)
+    f5 = _mbr_smoothed_fragment_intensity(frag_cols, row, 5)
+    f6 = _mbr_smoothed_fragment_intensity(frag_cols, row, 6)
+    f7 = _mbr_smoothed_fragment_intensity(frag_cols, row, 7)
+    f8 = _mbr_smoothed_fragment_intensity(frag_cols, row, 8)
+    frag_sum = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
+    frag_sum > 0.0f0 || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+
+    inv_sum = 1.0f0 / frag_sum
+    return (
+        sqrt(f1 * inv_sum),
+        sqrt(f2 * inv_sum),
+        sqrt(f3 * inv_sum),
+        sqrt(f4 * inv_sum),
+        sqrt(f5 * inv_sum),
+        sqrt(f6 * inv_sum),
+        sqrt(f7 * inv_sum),
+        sqrt(f8 * inv_sum),
+    )
+end
+
+@inline function _mbr_smoothed_spectrum_sqrt_is_valid(frag_sqrt::NTuple{8, Float32})
+    @inbounds for i in 1:8
+        frag_sqrt[i] > 0.0f0 && return true
+    end
+    return false
+end
+
+@inline function _mbr_smoothed_spectrum_hellinger_from_sqrt(
+    recipient_sqrt::NTuple{8, Float32},
+    donor_sqrt::NTuple{8, Float32},
+)
+    (_mbr_smoothed_spectrum_sqrt_is_valid(recipient_sqrt) &&
+     _mbr_smoothed_spectrum_sqrt_is_valid(donor_sqrt)) || return 1.0f0
+
+    dist2 = 0.0f0
+    @inbounds for i in 1:8
+        delta = recipient_sqrt[i] - donor_sqrt[i]
+        dist2 += delta * delta
+    end
+    return sqrt(max(0.0f0, 0.5f0 * dist2))
+end
 
 # Columns the donor dict reads from each (main + pass1 sidecar) pair.
 # Listed once so reader and consumer stay in sync. `is_decoy` is hardcoded
@@ -57,7 +111,7 @@ const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
-    :ms_file_idx)
+    :ms_file_idx, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -70,6 +124,8 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
+    :MBR_smoothed_frag_hellinger_true,
+    :MBR_smoothed_frag_hellinger_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -198,6 +254,7 @@ end
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
     rt_c::Union{Nothing, AbstractVector{Float32}},
+    smoothed_frag_cols,
     fidx_c::AbstractVector{UInt32},
     side_path::String,
 )
@@ -216,6 +273,7 @@ end
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
+            _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -258,6 +316,7 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             main.irt_pred, main.irt_obs,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
+            ntuple(i -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[i]), 8),
             main.ms_file_idx,
             side_path,
         )
@@ -290,6 +349,8 @@ end
     out_miss_t::BitVector,      out_miss_f::BitVector,
     out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
     out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
+    out_smoothed_hellinger_t::Vector{Float32},
+    out_smoothed_hellinger_f::Vector{Float32},
     pid_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
@@ -298,6 +359,7 @@ end
     irto_v::AbstractVector{Float32},
     logby_v::Union{Nothing, AbstractVector{Float16}},
     rt_v::Union{Nothing, AbstractVector{Float32}},
+    smoothed_frag_cols,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_col::Vector{UInt32},
 )
@@ -309,6 +371,8 @@ end
         my_file = file_v[i]
         my_pid  = pid_v[i]
         my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
+        recipient_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+        has_recipient_sqrt = false
 
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
         if donor_t !== nothing
@@ -325,6 +389,13 @@ end
             if has_rt
                 out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
             end
+            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            has_recipient_sqrt = true
+            out_smoothed_hellinger_t[i] =
+                _mbr_smoothed_spectrum_hellinger_from_sqrt(
+                    recipient_sqrt,
+                    donor_t.smoothed_frag_sqrt,
+                )
             out_miss_t[i] = false
         end
         if my_partner != UInt32(0)
@@ -343,6 +414,14 @@ end
                 if has_rt
                     out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
                 end
+                if !has_recipient_sqrt
+                    recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+                end
+                out_smoothed_hellinger_f[i] =
+                    _mbr_smoothed_spectrum_hellinger_from_sqrt(
+                        recipient_sqrt,
+                        donor_f.smoothed_frag_sqrt,
+                    )
                 out_miss_f[i] = false
             end
         end
@@ -374,6 +453,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     irto_v  = main.irt_obs
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
+    smoothed_frag_cols = ntuple(i -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[i]), 8)
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -387,14 +467,16 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
+    out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
         out_le_t, out_le_f, out_ir_t, out_ir_f,
         out_miss_t, out_miss_f,
         out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
+        out_smoothed_h_t, out_smoothed_h_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
-        logby_v, rt_v,
+        logby_v, rt_v, smoothed_frag_cols,
         donor_dict, partner_col,
     )
 
@@ -416,6 +498,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_log_by_diff_false          = out_log_by_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
+        MBR_smoothed_frag_hellinger_true  = out_smoothed_h_t,
+        MBR_smoothed_frag_hellinger_false = out_smoothed_h_f,
     )
     writeArrow(side_path, side_df)
     return side_path
@@ -592,4 +676,3 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
     @debug_l1 "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
-
