@@ -34,7 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
@@ -196,7 +196,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
@@ -329,7 +329,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
@@ -435,7 +435,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
