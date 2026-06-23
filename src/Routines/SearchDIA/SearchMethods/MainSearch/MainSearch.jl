@@ -167,6 +167,26 @@ function permute_psms_by_precursor_idx!(psms::DataFrame)
 end
 
 """
+    @alloc_bucket(label, expr)
+
+Evaluate `expr`; when `PIONEER_DIAG_ALLOC` is set, print the heap bytes it
+allocated (process-global counter delta — sums across all threads, so it is
+valid for the multithreaded deconv). Beyond two `gc_bytes()` reads it adds no
+overhead when the env var is unset.
+"""
+macro alloc_bucket(label, ex)
+    quote
+        local _b0 = Base.gc_bytes()
+        local _r = $(esc(ex))
+        if haskey(ENV, "PIONEER_DIAG_ALLOC")
+            @user_print string("[ALLOC] ", $(esc(label)), ": ",
+                               round((Base.gc_bytes() - _b0) / 1e9, digits=3), " GB")
+        end
+        _r
+    end
+end
+
+"""
     _log_psm_table_footprint(psms, label, ms_file_idx)
 
 Diagnostic: report the in-memory footprint of the post-deconv PSMs table
@@ -206,7 +226,7 @@ function process_file!(
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
 
-    psms = library_search(spectra, search_context, params, ms_file_idx)
+    psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -222,7 +242,7 @@ function process_file!(
     # contiguous-by-scan invariant: linear sweep for run boundaries
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
-    t_scan_comp = @elapsed add_scan_competition_features!(psms)
+    t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
     # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
@@ -232,7 +252,7 @@ function process_file!(
     # precursor-sorted input. The per-precursor chromatogram-feature passes
     # (ms1_corr_*, frag_*) run later in process_search_results! after the
     # precursor sort, since they group by :precursor_idx.
-    t_ms1 = @elapsed add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+    t_ms1 = @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
 
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
     # passes (chrom features, best-per-precursor) can then fast-path their
@@ -240,7 +260,7 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed permute_psms_by_precursor_idx!(psms)
+    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
 
     results.psms[] = psms
 
@@ -273,7 +293,7 @@ function process_search_results!(
     isolation_widths = getIsolationWidthMzs(spectra)
 
     # Compute prescore features
-    t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
+    t_prepare = @elapsed @alloc_bucket "prepare_psm_features" prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
     t_features = time()
 
     if nrow(psms) == 0
@@ -305,7 +325,7 @@ function process_search_results!(
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
-    t_ms1 = @elapsed add_chromatogram_features!(
+    t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
         bitvec_rank_table = bitvec_rank_table,
@@ -317,7 +337,7 @@ function process_search_results!(
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
     best_psms, scores, lgbm_timings, lgbm_predictor =
-        train_lgbm_and_select_best(
+        @alloc_bucket "train_lgbm_and_select_best" train_lgbm_and_select_best(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
