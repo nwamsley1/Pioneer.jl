@@ -184,7 +184,11 @@ function library_search(
     t_deconv = time() - t_deconv_start
 
     t_post_start = time()
-    result = vcat(all_results...)
+    # Single NCE model is the common case; `vcat(all_results...)` would copy the
+    # whole (large) PSM table for nothing. all_results[1] is already the
+    # materialized per-NCE table (from the inner vcat(fetched...)), so return it
+    # directly. Only concatenate when there are multiple NCE models.
+    result = length(all_results) == 1 ? all_results[1] : vcat(all_results...)
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
