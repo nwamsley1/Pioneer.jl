@@ -167,6 +167,32 @@ function permute_psms_by_precursor_idx!(psms::DataFrame)
 end
 
 """
+    _log_psm_table_footprint(psms, label, ms_file_idx)
+
+Diagnostic: report the in-memory footprint of the post-deconv PSMs table
+(rows x cols, per-column type + bytes, total). Gated behind the
+`PIONEER_DIAG_PSM_FOOTPRINT` env var so it costs nothing when off. Lets us
+compare the *irreducible* data size against the phase's cumulative allocation
+to gauge how much of Main Search's allocation is avoidable churn.
+"""
+function _log_psm_table_footprint(psms::DataFrame, label::AbstractString, ms_file_idx)
+    haskey(ENV, "PIONEER_DIAG_PSM_FOOTPRINT") || return nothing
+    n = nrow(psms)
+    total = 0
+    @user_print "[PSM FOOTPRINT] file=$ms_file_idx $label: $n rows x $(ncol(psms)) cols"
+    for nm in names(psms)
+        col = psms[!, nm]
+        et = eltype(col)
+        b = isbitstype(et) ? n * sizeof(et) : Base.summarysize(col)
+        total += b
+        @user_print "    $(rpad(nm, 34)) $(rpad(string(et), 26)) $(round(b / 1e6, digits=2)) MB"
+    end
+    @user_print "[PSM FOOTPRINT] file=$ms_file_idx total table = $(round(total / 1e9, digits=3)) GB " *
+                "($(round(total / max(n,1)))  bytes/row)"
+    return nothing
+end
+
+"""
 Process a single file: load fragment index matches and deconvolve with prescore settings.
 """
 function process_file!(
@@ -217,6 +243,8 @@ function process_file!(
     t_sort = @elapsed permute_psms_by_precursor_idx!(psms)
 
     results.psms[] = psms
+
+    _log_psm_table_footprint(psms, "post-deconv (before best-per-precursor)", ms_file_idx)
 
     @debug_l1 "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
@@ -285,6 +313,7 @@ function process_search_results!(
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
+    _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
     best_psms, scores, lgbm_timings, lgbm_predictor =
