@@ -290,7 +290,11 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         end
 
         # Solves in-place; result lives in ws.z[1:active_length]
-        whitsmddw!(ws, x, b, w, active_length, λ)
+        if WH_ORDER3_LAMBDA[] > 0f0 && active_length >= 4
+            whsmooth_order3_dense!(ws, x, b, w, active_length, WH_ORDER3_LAMBDA[])
+        else
+            whitsmddw!(ws, x, b, w, active_length, λ)
+        end
         return nothing
     end
 

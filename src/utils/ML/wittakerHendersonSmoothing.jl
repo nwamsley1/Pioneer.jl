@@ -217,3 +217,60 @@ function whitsmddw!(ws::WHWorkspace,
 
     return @view z[1:n]
 end
+
+# Experimental: when > 0, WHSmooth! uses a pure 3rd-order difference penalty with
+# this λ (dense solve) instead of the default 2nd-order pentadiagonal smoother.
+# Set via `Pioneer.WH_ORDER3_LAMBDA[] = 5f-7` before SearchDIA. 0 = disabled.
+const WH_ORDER3_LAMBDA = Ref{Float32}(0f0)
+
+"""
+    whsmooth_order3_dense!(ws, x, b, w, n, λ)
+
+Whittaker-Henderson smoother with a pure 3rd-order difference penalty, solved
+densely. Mirrors `whitsmddw!` (solves (W + λ D₃'D₃) z = W b, clamps z ≥ 0) but
+with the 4-point 3rd divided-difference operator instead of the 3-point 2nd.
+Result written to ws.z[1:n]. O(n³) dense solve — for small chromatograms.
+"""
+function whsmooth_order3_dense!(ws::WHWorkspace,
+                                x::AbstractVector{Float32},
+                                b::AbstractVector{Float32},
+                                w::AbstractVector{Float32},
+                                n::Int,
+                                λ::Float32)
+    M = zeros(Float64, n, n)
+    @inbounds for i in 1:n
+        M[i, i] = Float64(w[i])
+    end
+    λ64 = Float64(λ)
+    @inbounds for j in 1:n-3
+        h0 = Float64(x[j+1]) - Float64(x[j])
+        h1 = Float64(x[j+2]) - Float64(x[j+1])
+        h2 = Float64(x[j+3]) - Float64(x[j+2])
+        e = (
+            -1.0 / (h0 * (h0 + h1) * (h0 + h1 + h2)),
+             1.0 / (h0 * h1 * (h1 + h2)),
+            -1.0 / ((h0 + h1) * h1 * h2),
+             1.0 / ((h0 + h1 + h2) * (h1 + h2) * h2),
+        )
+        for a in 1:4, c in 1:4
+            M[j + a - 1, j + c - 1] += λ64 * e[a] * e[c]
+        end
+    end
+    rhs = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+        rhs[i] = Float64(w[i]) * Float64(b[i])
+    end
+    local z
+    try
+        z = M \ rhs
+    catch
+        @inbounds for i in 1:n
+            M[i, i] += 1e-6
+        end
+        z = M \ rhs
+    end
+    @inbounds for i in 1:n
+        ws.z[i] = max(Float32(z[i]), 0f0)
+    end
+    return nothing
+end
