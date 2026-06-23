@@ -72,15 +72,16 @@ end
 const _IRT_K_MODC = 21          # C|Unimod:4
 const _IRT_K_MODM = 22          # M|Unimod:35
 const N_IRT_TOKENS = 66         # 22 residue tokens + 22 NTERM + 22 CTERM
-const _IRT_MOD_REGEX = r"\((\d+),([A-Z]|[nc]),([^,\)]+)\)"
 
-# Reusable per-thread scratch: token counts indexed by id, plus the list of
-# touched ids so reset/iteration is O(peptide length), not O(N_IRT_TOKENS).
+# Reusable per-thread scratch: token counts indexed by id, the list of touched
+# ids (so reset/iteration is O(peptide length), not O(N_IRT_TOKENS)), and a
+# residue-position -> mod-code buffer filled by the structural_mods parser.
 struct IrtCountScratch
     counts::Vector{Float32}
     touched::Vector{Int}
+    mod_at_pos::Vector{Int8}    # 0 none, 1 Unimod:4, 2 Unimod:35, -1 unrecognized
 end
-IrtCountScratch() = IrtCountScratch(zeros(Float32, N_IRT_TOKENS), Int[])
+IrtCountScratch() = IrtCountScratch(zeros(Float32, N_IRT_TOKENS), Int[], Int8[])
 
 @inline function _reset!(s::IrtCountScratch)
     @inbounds for id in s.touched
@@ -99,15 +100,76 @@ end
     return
 end
 
+# Compare the codeunit range str[lo:hi] against a literal, allocation-free.
+@inline function _name_is(str, lo::Int, hi::Int, lit::String)
+    ncodeunits(lit) == (hi - lo + 1) || return false
+    @inbounds for k in 1:ncodeunits(lit)
+        codeunit(str, lo + k - 1) != codeunit(lit, k) && return false
+    end
+    return true
+end
+
+# Mod-name codeunit range -> code (1 Unimod:4, 2 Unimod:35, -1 otherwise).
+@inline function _mod_name_code(str, lo::Int, hi::Int)
+    _name_is(str, lo, hi, "Unimod:4")  && return Int8(1)
+    _name_is(str, lo, hi, "Unimod:35") && return Int8(2)
+    return Int8(-1)
+end
+
+# Parse `structural_mods` ("(pos,site,modname)...") into scratch.mod_at_pos[1:L]
+# by scanning codeunits — no regex, no per-mod String/Dict allocation. Terminal
+# (n/c) mods are ignored (warned). A second mod at one position -> -1 (matches the
+# old multi-mod path: no combined token exists, so it is treated as unrecognized).
+function _parse_residue_mods!(s::IrtCountScratch, structural_mods, L::Int)
+    length(s.mod_at_pos) < L && resize!(s.mod_at_pos, L)
+    @inbounds for i in 1:L
+        s.mod_at_pos[i] = Int8(0)
+    end
+    (ismissing(structural_mods) || isempty(structural_mods)) && return
+    str = structural_mods
+    n = ncodeunits(str)
+    i = 1
+    @inbounds while i <= n
+        if codeunit(str, i) != UInt8('(')
+            i += 1
+            continue
+        end
+        i += 1
+        pos = 0
+        while i <= n && (b = codeunit(str, i)) >= UInt8('0') && b <= UInt8('9')
+            pos = pos * 10 + Int(b - UInt8('0'))
+            i += 1
+        end
+        (i <= n && codeunit(str, i) == UInt8(',')) || break
+        i += 1
+        site = codeunit(str, i); i += 1
+        (i <= n && codeunit(str, i) == UInt8(',')) || break
+        i += 1
+        mstart = i
+        while i <= n && codeunit(str, i) != UInt8(')')
+            i += 1
+        end
+        mend = i - 1
+        i += 1   # past ')'
+        if site == UInt8('n') || site == UInt8('c')
+            @warn "iRT refinement: unhandled terminal modification (ignored)" maxlog = 1
+        elseif 1 <= pos <= L
+            code = _mod_name_code(str, mstart, mend)
+            s.mod_at_pos[pos] = (s.mod_at_pos[pos] == 0) ? code : Int8(-1)
+        end
+    end
+    return
+end
+
 # Residue-token index k (1..22), or 0 if the residue/modification is unrecognized.
-@inline function _residue_token_k(aa::Char, mods_here)
-    if mods_here === nothing || isempty(mods_here)
+@inline function _residue_token_k(aa::Char, code::Integer)
+    if code == 0
         b = UInt32(aa)
         return b <= 0x7f ? @inbounds(_IRT_AA_K[b + 1]) : 0
-    elseif length(mods_here) == 1
-        mn = mods_here[1]
-        aa == 'C' && mn == "Unimod:4"  && return _IRT_K_MODC
-        aa == 'M' && mn == "Unimod:35" && return _IRT_K_MODM
+    elseif code == 1
+        return aa == 'C' ? _IRT_K_MODC : 0
+    elseif code == 2
+        return aa == 'M' ? _IRT_K_MODM : 0
     end
     return 0
 end
@@ -119,29 +181,15 @@ function count_token_ids!(
     structural_mods::Union{Missing, AbstractString},
 )
     _reset!(scratch)
-
-    # Allocated lazily: only sequences with residue-localized modifications need it.
-    position_mods = nothing
-    if !ismissing(structural_mods) && !isempty(structural_mods)
-        for m in eachmatch(_IRT_MOD_REGEX, structural_mods)
-            position = parse(Int, m.captures[1])
-            site = only(m.captures[2])
-            mod_name = m.captures[3]
-            if site == 'n' || site == 'c'
-                @warn "iRT refinement: unhandled terminal modification token $(site)|$(mod_name) (ignored)" maxlog = 1
-            elseif 1 <= position <= length(sequence)
-                position_mods === nothing && (position_mods = Dict{Int, Vector{String}}())
-                push!(get!(position_mods, position, String[]), String(mod_name))
-            end
-        end
-    end
+    L = length(sequence)
+    _parse_residue_mods!(scratch, structural_mods, L)
 
     first_k = 0
     last_k = 0
     have_any = false
     for (position, aa) in enumerate(sequence)
-        mods_here = position_mods === nothing ? nothing : get(position_mods, position, nothing)
-        k = _residue_token_k(aa, mods_here)
+        code = position <= length(scratch.mod_at_pos) ? scratch.mod_at_pos[position] : Int8(0)
+        k = _residue_token_k(aa, code)
         if k == 0
             @warn "iRT refinement: unhandled residue token for '$(aa)' (ignored)" maxlog = 1
             continue
