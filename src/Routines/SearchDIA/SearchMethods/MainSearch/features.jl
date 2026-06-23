@@ -987,6 +987,16 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
         groups
     n_prec = length(starts)
 
+    # Per-thread scratch reused across precursors (matches the fragment path):
+    # avoids 4 fresh Vector allocations per precursor (millions of small allocs).
+    # maxthreadid() (not nthreads()) because threadid() can exceed the default
+    # pool size; safe under :static where threadid() is stable within the body.
+    nthr = Threads.maxthreadid()
+    vm0_scratch  = [Float32[] for _ in 1:nthr]
+    vm1_scratch  = [Float32[] for _ in 1:nthr]
+    vw_scratch   = [Float32[] for _ in 1:nthr]
+    virt_scratch = [Float32[] for _ in 1:nthr]
+
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
@@ -994,11 +1004,13 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             npts    = i_end - i_start + 1
             npts < 2 && continue
 
-            # Extract per-precursor chromatograms (m0, m1, weight, iRT)
-            v_m0  = Vector{Float32}(undef, npts)
-            v_m1  = Vector{Float32}(undef, npts)
-            v_w   = Vector{Float32}(undef, npts)
-            v_irt = Vector{Float32}(undef, npts)
+            # Extract per-precursor chromatograms (m0, m1, weight, iRT) into
+            # reused per-thread scratch.
+            tid = Threads.threadid()
+            v_m0  = vm0_scratch[tid];  resize!(v_m0, npts)
+            v_m1  = vm1_scratch[tid];  resize!(v_m1, npts)
+            v_w   = vw_scratch[tid];   resize!(v_w, npts)
+            v_irt = virt_scratch[tid]; resize!(v_irt, npts)
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 v_m0[k]  = m0[i_orig]
