@@ -483,9 +483,52 @@ struct FlankingWindowGroupBuffer
     core_frag_signal::Float32
     core_fragments::NTuple{8, Float32}
     ms1_target::Float32
-    fragment_idxs::Vector{UInt64}
+    # Top-8 fragments precomputed once at group-build time and sorted by m/z so
+    # the per-scan fill can thread a monotonic bsearch cursor (Opt 1). Each entry
+    # s maps to original intensity-rank `sorted_ranks[s]` (the column to write).
+    sorted_ranks::Vector{Int}
+    sorted_targets::Vector{Float32}
+    sorted_lows::Vector{Float32}
+    sorted_highs::Vector{Float32}
     ms1_m0::Vector{Float32}
     fragments::Matrix{Float32}
+end
+
+"""
+    _wide_group_fragment_windows(frag_idxs, frag_list, mem)
+
+From the rank-indexed `frag_idxs` (0 = absent), build the match windows for the
+valid fragments and return them sorted by ascending target m/z. `mem` supplies
+the (m/z-only, scan-invariant) half-width, so `(target, low, high)` are computed
+once per group instead of once per (scan x fragment). Returns parallel vectors
+`(ranks, targets, lows, highs)` where `ranks[s]` is the original intensity rank.
+"""
+function _wide_group_fragment_windows(
+    frag_idxs::Vector{UInt64},
+    frag_list,
+    mem::AbstractMassErrorModel,
+)
+    ranks = Int[]
+    targets = Float32[]
+    @inbounds for rank in 1:8
+        fi = frag_idxs[rank]
+        fi > 0 || continue
+        push!(ranks, rank)
+        push!(targets, Float32(getMz(frag_list[Int(fi)])))
+    end
+    order = sortperm(targets)
+    sorted_ranks = ranks[order]
+    sorted_targets = targets[order]
+    n = length(sorted_targets)
+    sorted_lows = Vector{Float32}(undef, n)
+    sorted_highs = Vector{Float32}(undef, n)
+    @inbounds for s in 1:n
+        hw = conservative_half_width(mem, sorted_targets[s])
+        lo, hi = match_window(sorted_targets[s], hw)
+        sorted_lows[s] = lo
+        sorted_highs[s] = hi
+    end
+    return sorted_ranks, sorted_targets, sorted_lows, sorted_highs
 end
 
 function _wide_add_group_ms2_work!(
@@ -566,20 +609,34 @@ function _wide_fill_scan_centric_fragments!(
 
         @inbounds for (group_idx, flank_pos) in work_items
             group = groups[group_idx]
-            fragment_idxs = group.fragment_idxs
+            sorted_ranks = group.sorted_ranks
+            sorted_targets = group.sorted_targets
+            sorted_lows = group.sorted_lows
+            sorted_highs = group.sorted_highs
             fragments = group.fragments
-            for rank in 1:8
-                frag_idx = fragment_idxs[rank]
-                frag_idx > 0 || continue
-                fragments[flank_pos, rank] = _wide_fragment_mono_peak_intensity(
+            # Fragments are sorted by ascending m/z, so each successive bsearch
+            # can start from the previous fragment's first-peak index: the search
+            # range only ever shrinks, and the result is identical to searching
+            # [1, n_peaks] every time (low_{s+1} >= low_s).
+            start_idx = 1
+            for s in eachindex(sorted_targets)
+                start_idx = bsearch_hybrid(
+                    scan_corrected_mz, sorted_lows[s], start_idx, n_peaks,
+                )
+                best_peak, _, _ = scan_for_nearest_in_window(
                     scan_corrected_mz,
                     scan_obs_low,
                     scan_obs_high,
-                    intensities,
+                    start_idx,
                     n_peaks,
-                    frag_list[Int(frag_idx)],
-                    frag_mem,
+                    sorted_targets[s],
+                    sorted_highs[s],
                 )
+                if best_peak != 0
+                    intensity = intensities[best_peak]
+                    fragments[flank_pos, sorted_ranks[s]] =
+                        ismissing(intensity) ? 0f0 : Float32(intensity)
+                end
             end
         end
     end
@@ -762,6 +819,8 @@ function add_wide_window_features_to_fold_file!(
             prec_charge,
             prec_mz,
         )
+        sorted_ranks, sorted_targets, sorted_lows, sorted_highs =
+            _wide_group_fragment_windows(fragment_idxs, frag_list, frag_mem)
         ms1_m0 = zeros(Float32, length(flank_scans))
         ms1_target = prec_mz * (1f0 + ms1_ppm_offset * 1f-6)
         fragments = zeros(Float32, length(flank_scans), 8)
@@ -774,7 +833,10 @@ function add_wide_window_features_to_fold_file!(
                 core_frag_signal,
                 core_fragments,
                 ms1_target,
-                fragment_idxs,
+                sorted_ranks,
+                sorted_targets,
+                sorted_lows,
+                sorted_highs,
                 ms1_m0,
                 fragments,
             ),
