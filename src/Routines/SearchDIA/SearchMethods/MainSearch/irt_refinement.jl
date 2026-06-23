@@ -32,13 +32,23 @@ end
     return x, x * x
 end
 
+# Cached single-character residue tokens. `sequence` carries plain amino acids
+# (modifications live in `structural_mods`), so each residue token is one ASCII
+# byte from a tiny alphabet. Caching avoids a fresh `string(aa)` heap allocation
+# for every residue of every precursor (previously the single hottest alloc site).
+const _AA_TOKEN    = String[string(Char(c)) for c in 0:127]
+const _NTERM_TOKEN = String["NTERM|" * string(Char(c)) for c in 0:127]
+const _CTERM_TOKEN = String["CTERM|" * string(Char(c)) for c in 0:127]
+@inline _aa_token(aa::Char) = (b = UInt32(aa); b < 0x80 ? @inbounds(_AA_TOKEN[b + 1]) : string(aa))
+
 function _precursor_token_counts(
     sequence::AbstractString,
     structural_mods::Union{Missing, AbstractString},
 )
     counts = Dict{String, Float32}()
-    position_mods = Dict{Int, Vector{String}}()
-    residue_tokens = String[]
+    sizehint!(counts, length(sequence) + 4)
+    # Allocated lazily: only sequences with residue-localized modifications need it.
+    position_mods = nothing
 
     if !ismissing(structural_mods) && !isempty(structural_mods)
         mod_regex = r"\((\d+),([A-Z]|[nc]),([^,\)]+)\)"
@@ -51,25 +61,37 @@ function _precursor_token_counts(
                 token = string(site, "|", mod_name)
                 counts[token] = get(counts, token, 0.0f0) + 1.0f0
             elseif 1 <= position <= length(sequence)
+                position_mods === nothing && (position_mods = Dict{Int, Vector{String}}())
                 push!(get!(position_mods, position, String[]), mod_name)
             end
         end
     end
 
+    # Only the first and last residue tokens are needed (for the NTERM/CTERM
+    # tokens), so we track them directly instead of materializing a vector of
+    # every residue token.
+    first_token = ""
+    last_token = ""
+    have_any = false
     for (position, aa) in enumerate(sequence)
-        mods_here = get(position_mods, position, nothing)
+        mods_here = position_mods === nothing ? nothing : get(position_mods, position, nothing)
         token = if isnothing(mods_here) || isempty(mods_here)
-            string(aa)
+            _aa_token(aa)
         else
             string(aa, "|", join(sort(mods_here), "&"))
         end
-        push!(residue_tokens, token)
+        have_any || (first_token = token; have_any = true)
+        last_token = token
         counts[token] = get(counts, token, 0.0f0) + 1.0f0
     end
 
-    if !isempty(residue_tokens)
-        counts["NTERM|" * first(residue_tokens)] = get(counts, "NTERM|" * first(residue_tokens), 0.0f0) + 1.0f0
-        counts["CTERM|" * last(residue_tokens)] = get(counts, "CTERM|" * last(residue_tokens), 0.0f0) + 1.0f0
+    if have_any
+        nterm = ncodeunits(first_token) == 1 ?
+            @inbounds(_NTERM_TOKEN[codeunit(first_token, 1) + 1]) : "NTERM|" * first_token
+        cterm = ncodeunits(last_token) == 1 ?
+            @inbounds(_CTERM_TOKEN[codeunit(last_token, 1) + 1]) : "CTERM|" * last_token
+        counts[nterm] = get(counts, nterm, 0.0f0) + 1.0f0
+        counts[cterm] = get(counts, cterm, 0.0f0) + 1.0f0
     end
 
     return counts
