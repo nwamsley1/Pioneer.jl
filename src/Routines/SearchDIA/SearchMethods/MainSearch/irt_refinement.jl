@@ -13,8 +13,10 @@ struct MainSearchIrtCorrectionModel
     coefficients::Dict{String, Float32}
 end
 
-struct MainSearchIrtRefinement{P<:LibraryPrecursors}
+struct MainSearchIrtRefinement{P<:LibraryPrecursors, S, M}
     precursors::P
+    sequences::S          # getSequence(precursors), fetched once (vs per-precursor)
+    structural_mods::M    # getStructuralMods(precursors), fetched once
     q_value_threshold::Float32
     min_precursors::Int
 end
@@ -24,7 +26,13 @@ function MainSearchIrtRefinement(
     q_value_threshold::Float32 = PRESCORE_QVALUE_THRESHOLD,
     min_precursors::Int = 250,
 )
-    return MainSearchIrtRefinement(precursors, q_value_threshold, min_precursors)
+    return MainSearchIrtRefinement(
+        precursors,
+        getSequence(precursors),
+        getStructuralMods(precursors),
+        q_value_threshold,
+        min_precursors,
+    )
 end
 
 @inline function _irt_pred_basis(current_irt_pred::Float32)
@@ -106,8 +114,11 @@ function precursor_token_counts(
     precursor_idx::Integer,
 )
     pid = UInt32(precursor_idx)
-    sequence = String(getSequence(strategy.precursors)[pid])
-    structural_mods = getStructuralMods(strategy.precursors)[pid]
+    # Index the columns cached on the strategy (fetched once at construction)
+    # rather than re-fetching getSequence/getStructuralMods per precursor. The
+    # element is already an AbstractString, so no String() copy is needed.
+    sequence = strategy.sequences[pid]
+    structural_mods = strategy.structural_mods[pid]
     return _precursor_token_counts(sequence, structural_mods)
 end
 
