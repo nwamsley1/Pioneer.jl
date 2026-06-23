@@ -10,7 +10,7 @@ struct MainSearchIrtCorrectionModel
     intercept::Float32
     irt_pred_coefficient::Float32
     irt_pred_squared_coefficient::Float32
-    coefficients::Dict{String, Float32}
+    coefficients::Vector{Float32}   # indexed by token id (1..N_IRT_TOKENS); 0 if absent from the fit
 end
 
 struct MainSearchIrtRefinement{P<:LibraryPrecursors, S, M}
@@ -40,86 +40,131 @@ end
     return x, x * x
 end
 
-# Cached single-character residue tokens. `sequence` carries plain amino acids
-# (modifications live in `structural_mods`), so each residue token is one ASCII
-# byte from a tiny alphabet. Caching avoids a fresh `string(aa)` heap allocation
-# for every residue of every precursor (previously the single hottest alloc site).
-const _AA_TOKEN    = String[string(Char(c)) for c in 0:127]
-const _NTERM_TOKEN = String["NTERM|" * string(Char(c)) for c in 0:127]
-const _CTERM_TOKEN = String["CTERM|" * string(Char(c)) for c in 0:127]
-@inline _aa_token(aa::Char) = (b = UInt32(aa); b < 0x80 ? @inbounds(_AA_TOKEN[b + 1]) : string(aa))
+# ============================================================================
+# Hardcoded peptide-composition token table for iRT refinement.
+#
+# `sequence` holds the 20 canonical amino acids; the only modifications the
+# library admits are carbamidomethyl on C (Unimod:4) and oxidation on M
+# (Unimod:35). The entire token universe is therefore a fixed set of 66 ids, so
+# token counting is pure integer arithmetic — no per-precursor Dict, no token
+# strings (previously the single largest allocation cluster in SearchDIA). The
+# id scheme was verified to reproduce the previous string-keyed counts for every
+# precursor in the benchmark library.
+#
+# Layout (k = residue-token index, 1..22):
+#   1..20  plain residue, alphabetical: A C D E F G H I K L M N P Q R S T V W Y
+#   21     C|Unimod:4          22     M|Unimod:35
+#   NTERM token id = 22 + k         CTERM token id = 44 + k
+#
+# Column order in the design matrix is the ascending id of tokens present in a
+# fold — fixed by this table, not by Dict hash order, so the fit is
+# deterministic (no hash-layout sensitivity). If the library ever admits new
+# residues/mods, extend _IRT_AA_K / _residue_token_k and N_IRT_TOKENS;
+# unrecognized tokens are dropped (and warned once) rather than misbinned.
+# ============================================================================
+const _IRT_AA_LETTERS = collect("ACDEFGHIKLMNPQRSTVWY")
+const _IRT_AA_K = let v = zeros(Int, 128)
+    for (i, c) in enumerate(_IRT_AA_LETTERS)
+        v[Int(c) + 1] = i
+    end
+    v
+end
+const _IRT_K_MODC = 21          # C|Unimod:4
+const _IRT_K_MODM = 22          # M|Unimod:35
+const N_IRT_TOKENS = 66         # 22 residue tokens + 22 NTERM + 22 CTERM
+const _IRT_MOD_REGEX = r"\((\d+),([A-Z]|[nc]),([^,\)]+)\)"
 
-function _precursor_token_counts(
+# Reusable per-thread scratch: token counts indexed by id, plus the list of
+# touched ids so reset/iteration is O(peptide length), not O(N_IRT_TOKENS).
+struct IrtCountScratch
+    counts::Vector{Float32}
+    touched::Vector{Int}
+end
+IrtCountScratch() = IrtCountScratch(zeros(Float32, N_IRT_TOKENS), Int[])
+
+@inline function _reset!(s::IrtCountScratch)
+    @inbounds for id in s.touched
+        s.counts[id] = 0.0f0
+    end
+    empty!(s.touched)
+    return s
+end
+
+@inline function _add!(s::IrtCountScratch, id::Int)
+    (id < 1 || id > N_IRT_TOKENS) && return
+    @inbounds begin
+        s.counts[id] == 0.0f0 && push!(s.touched, id)
+        s.counts[id] += 1.0f0
+    end
+    return
+end
+
+# Residue-token index k (1..22), or 0 if the residue/modification is unrecognized.
+@inline function _residue_token_k(aa::Char, mods_here)
+    if mods_here === nothing || isempty(mods_here)
+        b = UInt32(aa)
+        return b <= 0x7f ? @inbounds(_IRT_AA_K[b + 1]) : 0
+    elseif length(mods_here) == 1
+        mn = mods_here[1]
+        aa == 'C' && mn == "Unimod:4"  && return _IRT_K_MODC
+        aa == 'M' && mn == "Unimod:35" && return _IRT_K_MODM
+    end
+    return 0
+end
+
+# Fill `scratch` with token-id counts for one peptide; returns `scratch`.
+function count_token_ids!(
+    scratch::IrtCountScratch,
     sequence::AbstractString,
     structural_mods::Union{Missing, AbstractString},
 )
-    # NOTE: deliberately no sizehint! here. Downstream (`fit_irt_refinement_model`)
-    # assigns design-matrix columns by `keys(counts)` iteration order, so the dict's
-    # hash-slot layout is load-bearing — sizehint! changes the capacity and thus the
-    # iteration order, which permutes X's columns and perturbs the least-squares fit
-    # (verified: ~0.8% PSM-count shift on YeastStandard3M). Keep default growth.
-    counts = Dict{String, Float32}()
+    _reset!(scratch)
+
     # Allocated lazily: only sequences with residue-localized modifications need it.
     position_mods = nothing
-
     if !ismissing(structural_mods) && !isempty(structural_mods)
-        mod_regex = r"\((\d+),([A-Z]|[nc]),([^,\)]+)\)"
-        for m in eachmatch(mod_regex, structural_mods)
+        for m in eachmatch(_IRT_MOD_REGEX, structural_mods)
             position = parse(Int, m.captures[1])
             site = only(m.captures[2])
             mod_name = m.captures[3]
-
             if site == 'n' || site == 'c'
-                token = string(site, "|", mod_name)
-                counts[token] = get(counts, token, 0.0f0) + 1.0f0
+                @warn "iRT refinement: unhandled terminal modification token $(site)|$(mod_name) (ignored)" maxlog = 1
             elseif 1 <= position <= length(sequence)
                 position_mods === nothing && (position_mods = Dict{Int, Vector{String}}())
-                push!(get!(position_mods, position, String[]), mod_name)
+                push!(get!(position_mods, position, String[]), String(mod_name))
             end
         end
     end
 
-    # Only the first and last residue tokens are needed (for the NTERM/CTERM
-    # tokens), so we track them directly instead of materializing a vector of
-    # every residue token.
-    first_token = ""
-    last_token = ""
+    first_k = 0
+    last_k = 0
     have_any = false
     for (position, aa) in enumerate(sequence)
         mods_here = position_mods === nothing ? nothing : get(position_mods, position, nothing)
-        token = if isnothing(mods_here) || isempty(mods_here)
-            _aa_token(aa)
-        else
-            string(aa, "|", join(sort(mods_here), "&"))
+        k = _residue_token_k(aa, mods_here)
+        if k == 0
+            @warn "iRT refinement: unhandled residue token for '$(aa)' (ignored)" maxlog = 1
+            continue
         end
-        have_any || (first_token = token; have_any = true)
-        last_token = token
-        counts[token] = get(counts, token, 0.0f0) + 1.0f0
+        _add!(scratch, k)
+        have_any || (first_k = k; have_any = true)
+        last_k = k
     end
-
     if have_any
-        nterm = ncodeunits(first_token) == 1 ?
-            @inbounds(_NTERM_TOKEN[codeunit(first_token, 1) + 1]) : "NTERM|" * first_token
-        cterm = ncodeunits(last_token) == 1 ?
-            @inbounds(_CTERM_TOKEN[codeunit(last_token, 1) + 1]) : "CTERM|" * last_token
-        counts[nterm] = get(counts, nterm, 0.0f0) + 1.0f0
-        counts[cterm] = get(counts, cterm, 0.0f0) + 1.0f0
+        _add!(scratch, 22 + first_k)   # NTERM|<first residue token>
+        _add!(scratch, 44 + last_k)    # CTERM|<last residue token>
     end
-
-    return counts
+    return scratch
 end
 
-function precursor_token_counts(
+# Fill `scratch` for a library precursor (columns cached on the strategy).
+@inline function count_token_ids!(
+    scratch::IrtCountScratch,
     strategy::MainSearchIrtRefinement,
     precursor_idx::Integer,
 )
     pid = UInt32(precursor_idx)
-    # Index the columns cached on the strategy (fetched once at construction)
-    # rather than re-fetching getSequence/getStructuralMods per precursor. The
-    # element is already an AbstractString, so no String() copy is needed.
-    sequence = strategy.sequences[pid]
-    structural_mods = strategy.structural_mods[pid]
-    return _precursor_token_counts(sequence, structural_mods)
+    return count_token_ids!(scratch, strategy.sequences[pid], strategy.structural_mods[pid])
 end
 
 function _unique_sorted_precursor_ids(precursor_idx::AbstractVector)
@@ -176,33 +221,40 @@ function fit_irt_refinement_model(
         return nothing
     end
 
-    token_to_col = Dict{String, Int}()
-    precursor_counts = Vector{Dict{String, Float32}}(undef, n)
+    scratch = IrtCountScratch()
 
-    for i in eachindex(precursor_ids)
-        counts = precursor_token_counts(strategy, precursor_ids[i])
-        precursor_counts[i] = counts
-        for token in keys(counts)
-            if !haskey(token_to_col, token)
-                token_to_col[token] = length(token_to_col) + 1
-            end
+    # Pass 1: which token ids occur in this fold. Column order is the ascending
+    # id (capacity-independent, deterministic) of the tokens that actually
+    # appear, so X has no all-zero columns and the solve stays well-posed.
+    present = falses(N_IRT_TOKENS)
+    for pid in precursor_ids
+        count_token_ids!(scratch, strategy, pid)
+        for id in scratch.touched
+            present[id] = true
         end
     end
-    isempty(token_to_col) && return nothing
+    present_ids = findall(present)
+    isempty(present_ids) && return nothing
+    col_of = zeros(Int, N_IRT_TOKENS)
+    for (j, id) in enumerate(present_ids)
+        col_of[id] = j
+    end
 
+    # Pass 2: build the design matrix (counting is allocation-free, so recomputing
+    # per precursor is cheap relative to the least-squares solve).
     use_quadratic_basis = n >= 3
     irt_basis_cols = use_quadratic_basis ? 2 : 1
-    X = zeros(Float64, n, length(token_to_col) + 1 + irt_basis_cols)
+    X = zeros(Float64, n, length(present_ids) + 1 + irt_basis_cols)
     X[:, 1] .= 1.0
-
-    for i in eachindex(precursor_counts)
+    for i in eachindex(precursor_ids)
         linear_term, quadratic_term = _irt_pred_basis(irt_pred_inputs[i])
         X[i, 2] = linear_term
         if use_quadratic_basis
             X[i, 3] = quadratic_term
         end
-        for (token, count) in precursor_counts[i]
-            X[i, token_to_col[token] + 1 + irt_basis_cols] = Float64(count)
+        count_token_ids!(scratch, strategy, precursor_ids[i])
+        for id in scratch.touched
+            X[i, col_of[id] + 1 + irt_basis_cols] = Float64(scratch.counts[id])
         end
     end
 
@@ -213,9 +265,10 @@ function fit_irt_refinement_model(
         return nothing
     end
 
-    coefficients = Dict{String, Float32}()
-    for (token, col_idx) in token_to_col
-        coefficients[token] = Float32(beta[col_idx + 1 + irt_basis_cols])
+    # Dense coefficient vector indexed by token id; 0 for ids absent from this fold.
+    coefficients = zeros(Float32, N_IRT_TOKENS)
+    for (j, id) in enumerate(present_ids)
+        coefficients[id] = Float32(beta[j + 1 + irt_basis_cols])
     end
 
     return MainSearchIrtCorrectionModel(
@@ -228,30 +281,29 @@ end
 
 function predict_irt_refinement(
     model::MainSearchIrtCorrectionModel,
-    counts::Dict{String, Float32},
+    scratch::IrtCountScratch,
     current_irt_pred::Float32,
 )
     linear_term, quadratic_term = _irt_pred_basis(current_irt_pred)
     prediction = model.intercept +
                  model.irt_pred_coefficient * Float32(linear_term) +
                  model.irt_pred_squared_coefficient * Float32(quadratic_term)
-    for (token, count) in counts
-        prediction += get(model.coefficients, token, 0.0f0) * count
+    coef = model.coefficients
+    @inbounds for id in scratch.touched
+        prediction += coef[id] * scratch.counts[id]
     end
     return prediction
 end
 
 function predict_irt_refinement(
+    scratch::IrtCountScratch,
     strategy::MainSearchIrtRefinement,
     model::MainSearchIrtCorrectionModel,
     precursor_idx::Integer,
     current_irt_pred::Float32,
 )
-    return predict_irt_refinement(
-        model,
-        precursor_token_counts(strategy, precursor_idx),
-        current_irt_pred,
-    )
+    count_token_ids!(scratch, strategy, precursor_idx)
+    return predict_irt_refinement(model, scratch, current_irt_pred)
 end
 
 function _refresh_predicted_irt_dependent_features!(psms::DataFrame)
@@ -283,10 +335,12 @@ function apply_mainsearch_irt_refinement_model!(
     n = nrow(psms)
     nt = Threads.nthreads()
     chunk = max(1, cld(n, nt))
+    scratches = [IrtCountScratch() for _ in 1:nt]   # one reusable buffer per task
     @sync for t in 1:nt
         c_start = (t - 1) * chunk + 1
         c_start > n && break
         c_end = min(t * chunk, n)
+        scratch = scratches[t]
         Threads.@spawn begin
             last_pid = UInt32(0)
             last_corr = 0f0
@@ -294,7 +348,7 @@ function apply_mainsearch_irt_refinement_model!(
             @inbounds for row_idx in c_start:c_end
                 pid = UInt32(prec_idx[row_idx])
                 if pid != last_pid || !have_corr
-                    corr = predict_irt_refinement(strategy, model, pid, current_pred[row_idx])
+                    corr = predict_irt_refinement(scratch, strategy, model, pid, current_pred[row_idx])
                     last_corr = isfinite(corr) ? Float32(corr) : 0f0
                     last_pid = pid
                     have_corr = true
@@ -329,11 +383,13 @@ function apply_mainsearch_irt_refinement_model!(
     n = nrow(psms)
     nt = Threads.nthreads()
     chunk = max(1, cld(n, nt))
+    scratches = [IrtCountScratch() for _ in 1:nt]   # one reusable buffer per task
     t_loop = time()
     @sync for t in 1:nt
         c_start = (t - 1) * chunk + 1
         c_start > n && break
         c_end = min(t * chunk, n)
+        scratch = scratches[t]
         Threads.@spawn begin
             last_pid = UInt32(0)
             last_corr = 0f0
@@ -345,7 +401,7 @@ function apply_mainsearch_irt_refinement_model!(
                     if isnothing(model)
                         last_corr = 0f0
                     else
-                        corr = predict_irt_refinement(strategy, model, pid, current_pred[row_idx])
+                        corr = predict_irt_refinement(scratch, strategy, model, pid, current_pred[row_idx])
                         last_corr = isfinite(corr) ? Float32(corr) : 0f0
                     end
                     last_pid = pid
