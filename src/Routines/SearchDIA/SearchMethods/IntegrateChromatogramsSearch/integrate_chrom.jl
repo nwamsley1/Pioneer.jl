@@ -303,9 +303,10 @@ function getIntegrationBounds!(u2::Vector{Float32},
 
     #return pad_start:pad_end
 
-    # initialise search bounds (clamp to valid padded range)
-    start = max(apex_padded - 1, pad_start)
-    stop  = min(apex_padded + 1, pad_end)
+    # initialise search bounds (clamp to valid padded range). Start the boundary
+    # search at apex ± 2 (not ± 1) so the integrated peak is at least 5 scans wide.
+    start = max(apex_padded - 2, pad_start)
+    stop  = min(apex_padded + 2, pad_end)
 
     # ──────────────── search to the right (RH boundary) ────────────────
     # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
