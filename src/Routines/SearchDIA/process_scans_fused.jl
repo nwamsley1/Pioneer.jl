@@ -90,10 +90,12 @@ function process_scans_fused!(
         prec_range = get_prec_range(prec_index, scan_idx)
         precs_vec  = get_precursors(prec_index)
 
-        # Run deconv pipeline for one prec subset (per-scan slice).
-        # Returns updated last_val. The PSMs from this call accumulate in scored_psms.
-        function _run_subset!(sub_indices)
-            isempty(sub_indices) && return last_val
+        # Run deconv pipeline for this scan's precursor subset. Inlined: this was
+        # previously a closure (`_run_subset!`) defined inside the loop and called
+        # once per scan, which allocated a capture object every iteration and boxed
+        # the reassigned `last_val`. Inlining preserves the exact control flow.
+        sub_indices = collect(Int64, prec_range)
+        if !isempty(sub_indices)
             nmatches, nmisses = run_fused!(
                 kind,
                 Hs, unscored_psms, id_to_col, fused_scratch,
@@ -111,22 +113,19 @@ function process_scans_fused!(
             )
             if nmatches ≤ 2
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)
-                return last_val
+            else
+                resize_if_needed!(search_data, params)
+                converged = post_design_matrix!(search_data, Hs, params)
+                if !converged
+                    reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                else
+                    compute_distance_metrics!(Hs, search_data, params)
+                    last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
+                                          spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
+                    reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                end
             end
-            resize_if_needed!(search_data, params)
-            converged = post_design_matrix!(search_data, Hs, params)
-            if !converged
-                reset_scan_arrays!(id_to_col, Hs, unscored_psms)
-                return last_val
-            end
-            compute_distance_metrics!(Hs, search_data, params)
-            new_last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                                  spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
-            reset_scan_arrays!(id_to_col, Hs, unscored_psms)
-            return new_last_val
         end
-
-        last_val = _run_subset!(collect(Int64, prec_range))
     end
 
     return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
