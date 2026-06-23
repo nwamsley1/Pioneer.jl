@@ -45,8 +45,12 @@ function _precursor_token_counts(
     sequence::AbstractString,
     structural_mods::Union{Missing, AbstractString},
 )
+    # NOTE: deliberately no sizehint! here. Downstream (`fit_irt_refinement_model`)
+    # assigns design-matrix columns by `keys(counts)` iteration order, so the dict's
+    # hash-slot layout is load-bearing — sizehint! changes the capacity and thus the
+    # iteration order, which permutes X's columns and perturbs the least-squares fit
+    # (verified: ~0.8% PSM-count shift on YeastStandard3M). Keep default growth.
     counts = Dict{String, Float32}()
-    sizehint!(counts, length(sequence) + 4)
     # Allocated lazily: only sequences with residue-localized modifications need it.
     position_mods = nothing
 
