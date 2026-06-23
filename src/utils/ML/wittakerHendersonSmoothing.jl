@@ -268,7 +268,7 @@ end
     whitsm_order3!(ws, x, b, w, n, λ)
 
 Zero-allocation Whittaker-Henderson smoother with a pure 3rd-order difference
-penalty via heptadiagonal (bandwidth-3) LDL' factorization. Numerically equal to
+penalty via heptadiagonal (bandwidth-3) LDL' factorization. 
 `whsmooth_order3_dense!` but O(n) and allocation-free. Result clamped ≥ 0 in ws.z.
 Requires n ≥ 4 (caller guards this).
 """
