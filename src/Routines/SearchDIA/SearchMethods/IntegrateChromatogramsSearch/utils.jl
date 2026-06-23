@@ -1178,9 +1178,10 @@ function process_final_psms!(
     file_name = Vector{String}(undef, n)
     psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
 
+    accession_col = getAccessionNumbers(precursors)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
-        accession_numbers[i] = getAccessionNumbers(precursors)[pid]
+        accession_numbers[i] = accession_col[pid]
     end
     psms[!, :accession_numbers] = accession_numbers
 
@@ -1191,16 +1192,21 @@ function process_final_psms!(
     # column at this stage isn't possible anyway.
 
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    proteome_col = getProteomeIdentifiers(precursors)
+    structural_mods_col = getStructuralMods(precursors)
+    isotopic_mods_col = getIsotopicMods(precursors)
+    charge_col = getCharge(precursors)
+    sequence_col = getSequence(precursors)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        species[i] = join(sort(unique(split(coalesce(getProteomeIdentifiers(precursors)[pid], ""),';'))),';')
+        species[i] = join(sort(unique(split(coalesce(proteome_col[pid], ""),';'))),';')
         peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
-        structural_mods[i] = getStructuralMods(precursors)[pid]
-        isotopic_mods[i] = getIsotopicMods(precursors)[pid]
-        charge[i] = getCharge(precursors)[pid]
-        sequence[i] = getSequence(precursors)[pid]
+        structural_mods[i] = structural_mods_col[pid]
+        isotopic_mods[i] = isotopic_mods_col[pid]
+        charge[i] = charge_col[pid]
+        sequence[i] = sequence_col[pid]
         file_name[i] = parsed_fname
     end
 
