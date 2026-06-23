@@ -306,9 +306,9 @@ end
 """
 Emit to pattern accumulator for BitVecCalibration. Applies prec_mz + iRT filtering.
 """
-struct EmitToAccumulator <: FragIndexEmitStrategy
-    acc::PatternAccumulator
-    precursor_irts::AbstractVector{Float32}
+struct EmitToAccumulator{A<:PatternAccumulator, V<:AbstractVector{Float32}} <: FragIndexEmitStrategy
+    acc::A
+    precursor_irts::V               # concrete element/array type: avoids per-candidate boxing in emit_candidates!
     irt_tol::Float32
 end
 
