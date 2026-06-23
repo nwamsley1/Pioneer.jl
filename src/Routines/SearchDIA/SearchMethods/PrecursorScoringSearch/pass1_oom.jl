@@ -162,21 +162,36 @@ function _sample_both_folds(
     # of thread, so all threads write disjoint matrix locations.
     Threads.@threads for j in 1:nfeat
         for file_idx in 1:n_files
-            col = all_feat_cols[file_idx][j]
-            p0 = plan0[file_idx]
-            @inbounds for k in eachindex(p0)
-                src_i, dst_i = p0[k]
-                X0[dst_i, j] = Float32(col[src_i])
-            end
-            p1 = plan1[file_idx]
-            @inbounds for k in eachindex(p1)
-                src_i, dst_i = p1[k]
-                X1[dst_i, j] = Float32(col[src_i])
-            end
+            # Function barrier: `all_feat_cols[file_idx]` is a Vector{AbstractVector}
+            # (heterogeneous feature column types), so `col` has an abstract static
+            # type and indexing it boxes a value per element. Passing it to a method
+            # specializes the copy loop on the concrete column type, eliminating the
+            # per-element boxing in this hot loop.
+            _copy_sampled_column!(X0, X1, all_feat_cols[file_idx][j],
+                                  plan0[file_idx], plan1[file_idx], j)
         end
     end
 
     return X0, y0, X1, y1
+end
+
+# Copy planned (src_row -> dst_row) values from one feature column into the
+# sampled fold matrices. Isolated as its own method to act as a function barrier:
+# `col` is specialized to its concrete type here, so `Float32(col[src_i])` does
+# not box (see caller).
+@inline function _copy_sampled_column!(
+    X0::Matrix{Float32}, X1::Matrix{Float32}, col::AbstractVector,
+    p0::Vector{Tuple{Int32, Int32}}, p1::Vector{Tuple{Int32, Int32}}, j::Int,
+)
+    @inbounds for k in eachindex(p0)
+        src_i, dst_i = p0[k]
+        X0[dst_i, j] = Float32(col[src_i])
+    end
+    @inbounds for k in eachindex(p1)
+        src_i, dst_i = p1[k]
+        X1[dst_i, j] = Float32(col[src_i])
+    end
+    return
 end
 
 # Fit a LightGBM classifier on the sampled (X, y). Returns the booster.
