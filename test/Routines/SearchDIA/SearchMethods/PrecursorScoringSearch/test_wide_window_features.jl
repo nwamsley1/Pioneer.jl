@@ -253,8 +253,8 @@ end
     @test best.n_contiguous_scans == UInt16[2]
     @test best.flanking_core_ms1_m0_signal == Float32[30]
     @test best.flanking_core_frag_signal == Float32[11]
-    @test best.frag1_annotation_key == UInt16[0x0141]
-    @test best.frag2_annotation_key == UInt16[0x0142]
+    @test !hasproperty(best, :frag1_annotation_key)
+    @test !hasproperty(best, :frag2_annotation_key)
 end
 
 @testset "post-filter trace features use selected isolation window only" begin

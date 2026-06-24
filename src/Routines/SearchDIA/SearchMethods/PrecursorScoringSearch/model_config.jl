@@ -70,17 +70,6 @@ const SMOOTHED_FRAGMENT_INTENSITY_COLUMNS = (
     :frag8_smoothed_intensity,
 )
 
-const FRAGMENT_ANNOTATION_KEY_COLUMNS = (
-    :frag1_annotation_key,
-    :frag2_annotation_key,
-    :frag3_annotation_key,
-    :frag4_annotation_key,
-    :frag5_annotation_key,
-    :frag6_annotation_key,
-    :frag7_annotation_key,
-    :frag8_annotation_key,
-)
-
 const FITTED_FRAGMENT_INTENSITY_COLUMNS = (
     :fitted_frag1_int, :fitted_frag2_int, :fitted_frag3_int, :fitted_frag4_int,
     :fitted_frag5_int, :fitted_frag6_int, :fitted_frag7_int, :fitted_frag8_int,
@@ -90,10 +79,6 @@ const SHADOW_FRAGMENT_INTENSITY_COLUMNS = (
     :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
     :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
 )
-
-const EMPIRICAL_SMOOTHED_SPECTRUM_FEATURES = [
-    :empirical_smoothed_frag_hellinger,
-]
 
 const ADVANCED_FEATURE_SET = [
     # Kept close to PRESCORE_FEATURES (MainSearch/features.jl), with
@@ -131,7 +116,6 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_peak_frag_intensity_fraction,
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
-    EMPIRICAL_SMOOTHED_SPECTRUM_FEATURES...,
     :top3_ms2_mass_error_mean,
     :expected_predicted_missing_fraction,
     :mass_missing_hellinger,

@@ -17,8 +17,6 @@ function _mbr_smoothed_main_table(;
     ms_file_idx,
     frag1,
     frag2,
-    frag1_key = fill(UInt16(1), length(precursor_idx)),
-    frag2_key = fill(UInt16(2), length(precursor_idx)),
 )
     n = length(precursor_idx)
     return DataFrame(
@@ -39,15 +37,42 @@ function _mbr_smoothed_main_table(;
         frag6_smoothed_intensity = zeros(Float32, n),
         frag7_smoothed_intensity = zeros(Float32, n),
         frag8_smoothed_intensity = zeros(Float32, n),
-        frag1_annotation_key = UInt16.(frag1_key),
-        frag2_annotation_key = UInt16.(frag2_key),
-        frag3_annotation_key = zeros(UInt16, n),
-        frag4_annotation_key = zeros(UInt16, n),
-        frag5_annotation_key = zeros(UInt16, n),
-        frag6_annotation_key = zeros(UInt16, n),
-        frag7_annotation_key = zeros(UInt16, n),
-        frag8_annotation_key = zeros(UInt16, n),
     )
+end
+
+function _mbr_test_fragment_lookup(rank_positions_by_pid::Dict{UInt32, Vector{UInt8}})
+    max_pid = maximum(keys(rank_positions_by_pid))
+    frags = Pioneer.CompactFrag{Float32}[]
+    ranges = Vector{UInt64}(undef, Int(max_pid) + 1)
+    next_idx = UInt64(1)
+    @inbounds for pid in UInt32(1):max_pid
+        ranges[Int(pid)] = next_idx
+        positions = get(rank_positions_by_pid, pid, UInt8[])
+        for (rank, ion_position) in enumerate(positions)
+            push!(frags, Pioneer.CompactFrag(
+                pid,
+                Float32(100 + Int(pid) + rank),
+                Float16(1),
+                true,
+                false,
+                false,
+                false,
+                UInt8(1),
+                ion_position,
+                UInt8(2),
+                UInt8(rank),
+                UInt8(0),
+            ))
+            next_idx += UInt64(1)
+        end
+    end
+    ranges[Int(max_pid) + 1] = next_idx
+    return Pioneer.StandardFragmentLookup(frags, ranges)
+end
+
+function _mbr_test_annotation_keys(rank_positions_by_pid::Dict{UInt32, Vector{UInt8}})
+    lookup = _mbr_test_fragment_lookup(rank_positions_by_pid)
+    return Pioneer._mbr_fragment_annotation_key_table(lookup, maximum(keys(rank_positions_by_pid)))
 end
 
 function _mbr_smoothed_pass1_table(; precursor_idx, scan_idx, score)
@@ -93,9 +118,19 @@ end
 
         partner_col = zeros(UInt32, 22)
         partner_col[20] = UInt32(21)
+        annotation_keys = _mbr_test_annotation_keys(Dict(
+            UInt32(20) => UInt8[1, 2],
+            UInt32(21) => UInt8[1, 2],
+            UInt32(22) => UInt8[1, 2],
+        ))
 
         donors = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
-        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(f1, donors, partner_col)
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            f1,
+            donors,
+            partner_col,
+            annotation_keys,
+        )
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
         @test isapprox(mbr.MBR_smoothed_frag_hellinger_true[1], 0.0f0; atol = 1.0f-6)
@@ -105,7 +140,7 @@ end
     end
 end
 
-@testset "MBR smoothed spectrum Hellinger aligns fragments by annotation key" begin
+@testset "MBR smoothed spectrum Hellinger aligns counterfactual fragments by library annotation key" begin
     mktempdir() do dir
         f1 = joinpath(dir, "run1_fold0.arrow")
         f2 = joinpath(dir, "run2_fold0.arrow")
@@ -116,8 +151,6 @@ end
             ms_file_idx = 1,
             frag1 = [100],
             frag2 = [0],
-            frag1_key = [0x0011],
-            frag2_key = [0x0021],
         ))
         Arrow.write(f1 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
             precursor_idx = [30],
@@ -126,25 +159,35 @@ end
         ))
 
         Arrow.write(f2, _mbr_smoothed_main_table(
-            precursor_idx = [30],
+            precursor_idx = [31],
             scan_idx = [3002],
             ms_file_idx = 2,
             frag1 = [0],
             frag2 = [100],
-            frag1_key = [0x0021],
-            frag2_key = [0x0011],
         ))
         Arrow.write(f2 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_smoothed_pass1_table(
-            precursor_idx = [30],
+            precursor_idx = [31],
             scan_idx = [3002],
             score = [0.90],
         ))
 
+        partner_col = zeros(UInt32, 31)
+        partner_col[30] = UInt32(31)
+        annotation_keys = _mbr_test_annotation_keys(Dict(
+            UInt32(30) => UInt8[1, 2],
+            UInt32(31) => UInt8[2, 1],
+        ))
+
         donors = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
-        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(f1, donors, zeros(UInt32, 30))
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            f1,
+            donors,
+            partner_col,
+            annotation_keys,
+        )
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
-        @test isapprox(mbr.MBR_smoothed_frag_hellinger_true[1], 0.0f0; atol = 1.0f-6)
+        @test isapprox(mbr.MBR_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
     end
 end
 
@@ -182,12 +225,18 @@ end
         partner_candidates = zeros(UInt32, 2, 42)
         partner_candidates[1, 40] = UInt32(41)
         partner_candidates[2, 40] = UInt32(42)
+        annotation_keys = _mbr_test_annotation_keys(Dict(
+            UInt32(40) => UInt8[1, 2],
+            UInt32(41) => UInt8[1, 2],
+            UInt32(42) => UInt8[1, 2],
+        ))
 
         donors = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
         Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
             f1,
             donors,
             partner_candidates,
+            annotation_keys,
         )
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 

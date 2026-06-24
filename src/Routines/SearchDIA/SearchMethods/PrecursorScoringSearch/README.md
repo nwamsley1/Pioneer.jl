@@ -104,12 +104,10 @@ score_precursor_isotope_traces(
     second_pass_folder,
     file_paths,
     precursors,
-    match_between_runs,
-    max_q_value_lightgbm_rescore,
-    max_q_value_mbr_itr,
-    min_PEP_neg_threshold_itr,
+    fragment_lookup,
     max_psms_in_memory,
-    q_value_threshold
+    q_value_threshold;
+    match_between_runs = true
 )
 ```
 
