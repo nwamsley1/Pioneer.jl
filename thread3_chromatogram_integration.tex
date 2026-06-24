@@ -1,0 +1,115 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{hi}{RGB}{0,120,0}
+\definecolor{lo}{RGB}{170,0,0}
+\definecolor{hdr}{RGB}{30,30,90}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\callout}[1]{%
+  \begin{center}\fcolorbox{hdr}{blue!4}{%
+  \begin{minipage}{0.95\textwidth}\vspace{2pt}#1\vspace{2pt}\end{minipage}}\end{center}}
+
+\title{\vspace{-1.5em}\textbf{Thread 3 --- Chromatogram Integration: allocation analysis}\\[0.3em]
+\large Why it is not a quick allocation win, unlike Quant \& Output}
+\author{}
+\date{2026-06-24 \quad\textbar\quad branch \code{perf/runtime-profiling}}
+
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+
+\callout{
+\textbf{Bottom line.} The Chromatogram Integration phase ($\sim$3.4\,GB cumulative
+allocation, warm 2-file MTAC) is dominated by the \emph{actual chromatogram signal}
+being materialized, plus one structure-of-arrays conversion copy. Unlike Quant \&
+Output --- whose 3.9\,GB win came from skipping \emph{redundant} string churn (99.5\%
+duplicate accessions) --- Integration's allocation is mostly \emph{necessary numeric
+data} that cannot be skipped. The single reducible item (the conversion copy) needs a
+moderate refactor, so it does \emph{not} clear the ``no excessive complexity'' bar as a
+quick win. Recommendation: measure the copy precisely before deciding.
+}
+
+\section{What the phase does}
+Three stages, in order:
+\begin{enumerate}
+  \item \textbf{\code{build\_chromatograms}} (\code{utils.jl:707}) --- walks the scan
+  range, runs the fused deconvolution kernel per scan, and \textbf{emits one
+  \code{MS2ChromObject} per (precursor, scan) chromatogram point} into a
+  \code{Vector\{MS2ChromObject\}} (pre-sized to \code{n\_scans}$\times$100). It returns
+  \code{DataFrame(@view(chromatograms[1:rt\_idx]))} (\code{utils.jl:878}).
+  \item \textbf{\code{integrate\_precursors}} (\code{utils.jl:399}) --- groups the
+  chromatogram table by precursor and integrates each peak.
+  \item \textbf{\code{integrate\_chrom}} (\code{integrate\_chrom.jl}) --- per precursor:
+  Whittaker--Henderson smoothing $\rightarrow$ second-derivative bounds $\rightarrow$
+  baseline-subtracted trapezoidal area.
+\end{enumerate}
+
+\section{Where the 3.4\,GB is --- and is not}
+\textbf{The integration loop is already allocation-lean.} \code{integrate\_precursors}
+(stages 2--3) was written to reuse memory:
+\begin{itemize}
+  \item per-thread \code{WHWorkspace} and \code{Chromatogram} state are pre-allocated
+  once (\code{utils.jl:431--432}) and reused across all precursors;
+  \item every chromatogram slice is passed as an \code{@view} (\code{utils.jl:464--467})
+  --- no per-precursor copies;
+  \item results are written into caller-provided output vectors (\code{peak\_area},
+  \code{new\_best\_scan}, \code{points\_integrated}).
+\end{itemize}
+So the per-precursor smoothing/integration is \emph{not} the allocator. (The line
+profiler agreed: \code{WHSmooth!}~$\approx$0.11\,GB, \code{build\_chromatograms}
+leaf~$\approx$0.15\,GB --- small.)
+
+\textbf{The allocation lives in stage 1, and it is mostly real data:}
+\begin{itemize}
+  \item \textcolor{lo}{\textbf{the \code{Vector\{MS2ChromObject\}} of chromatogram
+  points}} --- this \emph{is} the signal being integrated (every (precursor, scan)
+  intensity in each precursor's RT window). It scales with the data, not with waste.
+  \item \textcolor{lo}{\textbf{the AoS$\rightarrow$DataFrame conversion copy}}
+  (\code{DataFrame(@view(...))}, \code{utils.jl:878}) --- the array-of-structs
+  \code{MS2ChromObject} vector is copied field-by-field into the \code{DataFrame}'s
+  columns; the original vector is then discarded. This is a transient $\sim$1$\times$
+  duplicate of the chromatogram data, analogous to the Main Search
+  \code{df\_materialize} (0.78\,GB there).
+\end{itemize}
+
+\section{Why this is unlike the Quant \& Output wins}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+ & \textbf{Quant \& Output (Thread 2)} & \textbf{Chrom Integration (Thread 3)} \\
+\midrule
+What allocates & per-row \code{split} + \code{String} interning & chromatogram signal + AoS$\to$DF copy \\
+Nature & \textcolor{lo}{redundant} (99.5\% duplicate rows) & \textcolor{hi}{necessary} (numeric data) \\
+Fix & memoize \& skip repeats & emit columns (SoA) instead of copy \\
+Complexity & low (a \code{Set}/cache) & moderate (restructure emit path) \\
+Result & \textbf{$-$92\% / $-$55\%, bit-identical} & only the copy is reducible \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent Thread 2 worked because the allocation was \emph{repeated work over duplicate
+strings} --- skippable with a tiny memo. Thread 3 has no such redundancy: the
+chromatogram points are distinct measured intensities. The only thing we are paying
+\emph{twice} for is the AoS vector plus its DataFrame copy.
+
+\section{The one available lever, and the recommendation}
+Avoiding the conversion copy means having \code{build\_chromatograms} write directly
+into column vectors (\code{rt}, \code{scan\_idx}, \code{intensity},
+\code{precursor\_fraction\_transmitted}, \ldots) --- a structure-of-arrays emit path ---
+and constructing the \code{DataFrame} from those columns with no per-element copy. That
+removes the duplicate but is a \textbf{moderate refactor} of the emit hot loop (and must
+stay bit-identical and not regress speed).
+
+\callout{
+\textbf{Recommendation.} Before refactoring, \emph{measure}: add \code{gc\_bytes}
+sub-attribution (same method as the Main Search \code{MSLOOP} pass) to split the 3.4\,GB
+into (a) the chromatogram \code{Vector}, (b) the DataFrame conversion copy, and (c)
+everything else. Refactor \emph{only} if the copy is a clean $\gtrsim$1\,GB and the SoA
+emit stays simple. Otherwise, conclude Thread 3: the phase is near its necessary-data
+floor and further cuts would trade real complexity for little memory.
+}
+
+\end{document}
