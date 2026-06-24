@@ -29,6 +29,19 @@ function add_psm_features!(psms::DataFrame,
                            search_context::SearchContext,
                            spectra::MassSpecData,
                            ms_file_idx::Integer)
+    # Function barrier: rt_to_irt is an abstract RtConversionModel (per-file
+    # polymorphic), so calling it inside the per-PSM closure dynamically dispatches
+    # and boxes the result every row. Resolve it once here, then run the body in a
+    # method specialized on the concrete model type.
+    rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
+    return _add_psm_features!(psms, search_context, spectra, ms_file_idx, rt_to_irt)
+end
+
+function _add_psm_features!(psms::DataFrame,
+                            search_context::SearchContext,
+                            spectra::MassSpecData,
+                            ms_file_idx::Integer,
+                            rt_to_irt::RtConversionModel)
     precursors_lib   = getPrecursors(getSpecLib(search_context))
     prec_is_decoy    = getIsDecoy(precursors_lib)
     prec_charge      = getCharge(precursors_lib)
@@ -39,7 +52,6 @@ function add_psm_features!(psms::DataFrame,
     prec_missed_clv  = getMissedCleavages(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
     masses           = getMzArrays(spectra)
-    rt_to_irt        = getRtIrtModel(search_context, ms_file_idx)
 
     N = nrow(psms)
 
