@@ -131,12 +131,36 @@ floor and further cuts would trade real complexity for little memory.
 \callout{
 \textbf{Corrected conclusion.} The AoS$\rightarrow$DataFrame copy is only \textbf{74\,MB} ---
 the measure-first guard worked, the SoA refactor is \emph{not} worth it. The real targets
-are \code{integrate\_chrom} (0.72\,GB, $\sim$2.4\,KB/precursor across $\sim$300k passing
-PSMs; it defines 9 nested helper functions --- a possible per-call closure-capture cost,
-same pattern the team fixed in \code{process\_scans\_fused}) and the \code{extract}
-Vector build (0.59\,GB, partly the necessary signal). Next step: drill into
-\code{integrate\_chrom} the same way before any fix --- do \emph{not} assume the closures
-are the cause until measured.
+are \code{integrate\_chrom} (0.72\,GB) and the \code{extract} Vector build (0.59\,GB).
+}
+
+\section{\texorpdfstring{\code{integrate\_chrom}}{integrate\_chrom} drill-down --- real but unattributed}
+\code{integrate\_chrom} internal \code{gc\_bytes} buckets: \code{WHSmooth!}~0.277,
+\code{subtractBaseline!}~0.149, \code{getIntegrationBounds!}~0.128,
+\code{fillState!}+trapezoid~0.099\,GB --- \textbf{distributed}, no single hotspot. A
+direct \code{@allocated} micro-benchmark confirms \textbf{$\sim$34\,KB per call} (real,
+substantial). But the mechanism resisted every attribution:
+\begin{itemize}
+  \item \textbf{Not type instability} --- JET \code{@report\_opt} on the real
+  specialization: \textbf{0 reports}; typing \code{WHSmooth!}'s abstract \code{::AbstractVector}
+  args to \code{::AbstractVector\{Float32\}} changed the allocation by \emph{exactly zero} bytes.
+  \item \textbf{Not captured-variable boxing} --- \code{@code\_warntype}: \textbf{0 \code{Core.Box}}.
+  \item \textbf{Not explicit temporaries} --- the WH solve chain (\code{whitsmddw!},
+  \code{build\_DtD\_bands!}) is fully in-place on the preallocated \code{WHWorkspace};
+  body grep finds no \code{zeros}/\code{similar}/broadcast (only two empty \code{Float32[]} debug stubs).
+\end{itemize}
+The allocation profiler attributes it to plain in-place loop lines (e.g. \code{x[i] /= rt\_width})
+that cannot self-allocate --- consistent with a per-call cost of the \textbf{9 nested helper
+functions} (closure objects storing captured immutable refs do \emph{not} show as
+\code{Core.Box}) that none of the surface diagnostics expose.
+\callout{
+\textbf{Recommendation.} This is \emph{not} a quick win and exceeds the
+``no excessive complexity'' bar. Confirming and fixing it means \textbf{hoisting the 9
+nested helpers to module scope} (the proven \code{\_run\_subset!} pattern) and
+re-measuring --- a dedicated, separately bit-identical-verified refactor, worth
+$\sim$1.3\,GB phase + likely a speedup if it lands. Until then, Thread 3 is concluded:
+the integration phase is near its necessary-data floor on every \emph{attributable}
+allocator.
 }
 
 \end{document}
