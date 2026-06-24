@@ -112,4 +112,31 @@ emit stays simple. Otherwise, conclude Thread 3: the phase is near its necessary
 floor and further cuts would trade real complexity for little memory.
 }
 
+\section{Sub-attribution results (measured) --- the hypothesis was wrong}
+\code{gc\_bytes} bucketing (env \code{PIONEER\_DIAG\_CHROM}, single-thread, 1-file MTAC,
+2{,}726{,}965 chromatogram rows):
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+\textbf{Step} & \textbf{GB} & \textbf{Note} \\
+\midrule
+\code{integrate\_precursors} & 0.724 & \textbf{largest} --- inside \code{integrate\_chrom} (per precursor) \\
+\code{extract\_chromatograms} (Vector build) & 0.592 & per-scan deconv + the \code{MS2ChromObject} signal \\
+\code{sort\_chromatograms\_for\_integration!} & 0.189 & \code{sortperm} \\
+\code{df\_convert} (AoS$\rightarrow$DataFrame copy) & \textcolor{lo}{\textbf{0.074}} & \textcolor{lo}{\textbf{the hypothesized target --- negligible}} \\
+\code{get\_isotopes\_captured!} & 0.018 & small \\
+\bottomrule
+\end{tabular}
+\end{center}
+\callout{
+\textbf{Corrected conclusion.} The AoS$\rightarrow$DataFrame copy is only \textbf{74\,MB} ---
+the measure-first guard worked, the SoA refactor is \emph{not} worth it. The real targets
+are \code{integrate\_chrom} (0.72\,GB, $\sim$2.4\,KB/precursor across $\sim$300k passing
+PSMs; it defines 9 nested helper functions --- a possible per-call closure-capture cost,
+same pattern the team fixed in \code{process\_scans\_fused}) and the \code{extract}
+Vector build (0.59\,GB, partly the necessary signal). Next step: drill into
+\code{integrate\_chrom} the same way before any fix --- do \emph{not} assume the closures
+are the cause until measured.
+}
+
 \end{document}
