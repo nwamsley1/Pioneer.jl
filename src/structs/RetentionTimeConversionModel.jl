@@ -34,8 +34,11 @@ struct SplineRtConversionModel <: RtConversionModel
 end
 (s::SplineRtConversionModel)(x::AbstractFloat) = s.model(x)
 
-struct InterpolationRtConversionModel <: RtConversionModel
-    model::Interpolations.Extrapolation
+# Parametrized on the concrete extrapolation type: an abstract
+# `model::Interpolations.Extrapolation` field made `s.model(x)` type-unstable,
+# boxing a value on every RT->iRT conversion (millions per file).
+struct InterpolationRtConversionModel{M<:Interpolations.Extrapolation} <: RtConversionModel
+    model::M
 end
 (s::InterpolationRtConversionModel)(x::AbstractFloat) = s.model(x)
 
