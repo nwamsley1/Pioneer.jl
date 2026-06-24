@@ -101,8 +101,12 @@ function process_scans_fused!(
         # previously a closure (`_run_subset!`) defined inside the loop and called
         # once per scan, which allocated a capture object every iteration and boxed
         # the reassigned `last_val`. Inlining preserves the exact control flow.
+        # Pass the precursor range directly. `prec_range` is a UnitRange{Int64}
+        # (non-missing guaranteed by the ismissing guard above); run_fused! only
+        # iterates it, so the previous `collect(Int64, ...)` per-scan Vector was
+        # pure waste (~0.2 GB/file). Type-assert narrows the Union for dispatch.
         _b = DIAG ? Base.gc_bytes() : 0
-        sub_indices = collect(Int64, prec_range)
+        sub_indices = prec_range::UnitRange{Int64}
         DIAG && (d_coll += Base.gc_bytes() - _b)
         if !isempty(sub_indices)
             _b = DIAG ? Base.gc_bytes() : 0
