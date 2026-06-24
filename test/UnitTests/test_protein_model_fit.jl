@@ -16,7 +16,7 @@ using Random
 using LinearAlgebra
 using Distributions: Normal, cdf
 
-using Pioneer: fit_probit_model, calculate_probit_scores
+using Pioneer: fit_probit_model, calculate_probit_scores, log_probit_feature_importance
 
 @testset "ProteinScoring/model_fit pure-numerics" begin
 
@@ -105,6 +105,45 @@ using Pioneer: fit_probit_model, calculate_probit_scores
         # Same features × large negative β → probs near 0
         β_neg = [0.0, -10.0]
         @test all(calculate_probit_scores(X, β_neg) .< 0.01)
+    end
+
+    @testset "log_probit_feature_importance emits ranked debug coefficients" begin
+        tmp = mktempdir()
+        debug_path = joinpath(tmp, "debug.log")
+        debug_file = open(debug_path, "w")
+
+        old_level = Pioneer.DEBUG_CONSOLE_LEVEL[]
+        old_debug_file = Pioneer.DEBUG_FILE[]
+        try
+            Pioneer.DEBUG_CONSOLE_LEVEL[] = 1
+            Pioneer.DEBUG_FILE[] = debug_file
+
+            X = [
+                1.0  2.0;
+                2.0  3.0;
+                3.0  4.0;
+            ]
+            β = [0.1, 0.2, -0.3]
+            log_probit_feature_importance(
+                Symbol[:feature_a, :feature_b],
+                β,
+                X;
+                context = "protein_probit_test",
+                emit_user_info = false
+            )
+            flush(debug_file)
+
+            debug_text = read(debug_path, String)
+            @test occursin("[DEBUG1] Protein probit model coefficients", debug_text)
+            @test occursin("context=protein_probit_test", debug_text)
+            @test occursin("feature=feature_a", debug_text)
+            @test occursin("coefficient=0.2", debug_text)
+            @test occursin("abs_one_sigma_effect", debug_text)
+        finally
+            Pioneer.DEBUG_CONSOLE_LEVEL[] = old_level
+            Pioneer.DEBUG_FILE[] = old_debug_file
+            close(debug_file)
+        end
     end
 
 end

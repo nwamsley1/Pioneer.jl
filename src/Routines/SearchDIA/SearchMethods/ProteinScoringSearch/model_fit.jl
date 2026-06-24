@@ -24,7 +24,8 @@ function log_probit_feature_importance(
     feature_names::Vector{Symbol},
     β_fitted::AbstractVector{<:Real},
     X::Matrix{Float64};
-    context::String = "protein_probit"
+    context::String = "protein_probit",
+    emit_user_info::Bool = true
 )
     n_coefficients = max(length(β_fitted) - 1, 0)
     n_features = min(length(feature_names), size(X, 2), n_coefficients)
@@ -35,7 +36,10 @@ function log_probit_feature_importance(
     end
 
     intercept = Float64(β_fitted[1])
-    @user_info "Protein probit model coefficients context=$(context) intercept=$(round(intercept, digits=6)) n_features=$(n_features) importance_metric=abs(coefficient*feature_std)"
+    header = "Protein probit model coefficients context=$(context) " *
+             "intercept=$(round(intercept, digits=6)) n_features=$(n_features) " *
+             "importance_metric=abs(coefficient*feature_std)"
+    emit_user_info && @user_info header
 
     feature_summaries = NamedTuple[]
     for j in 1:n_features
@@ -57,9 +61,19 @@ function log_probit_feature_importance(
 
     sort!(feature_summaries, by = x -> x.abs_one_sigma_effect, rev = true)
 
+    debug_lines = String[header]
     for (rank, summary) in enumerate(feature_summaries)
-        @user_info "Protein probit feature importance context=$(context) rank=$(rank) feature=$(summary.feature) coefficient=$(round(summary.coefficient, digits=6)) feature_std=$(round(summary.feature_std, digits=6)) one_sigma_effect=$(round(summary.one_sigma_effect, digits=6)) abs_one_sigma_effect=$(round(summary.abs_one_sigma_effect, digits=6))"
+        line = "Protein probit feature importance context=$(context) " *
+               "rank=$(rank) feature=$(summary.feature) " *
+               "coefficient=$(round(summary.coefficient, digits=6)) " *
+               "abs_coefficient=$(round(summary.abs_coefficient, digits=6)) " *
+               "feature_std=$(round(summary.feature_std, digits=6)) " *
+               "one_sigma_effect=$(round(summary.one_sigma_effect, digits=6)) " *
+               "abs_one_sigma_effect=$(round(summary.abs_one_sigma_effect, digits=6))"
+        push!(debug_lines, line)
+        emit_user_info && @user_info line
     end
+    @debug_l1 join(debug_lines, "\n")
 
     return
 end
@@ -652,6 +666,13 @@ function perform_probit_analysis_multifold(
                 context = context,
                 iteration_debug_callback = iteration_debug_callback,
                 feature_importance_logger = feature_importance_logger
+            )
+            log_probit_feature_importance(
+                feature_names,
+                β_fitted,
+                X_train;
+                context = context * "_final",
+                emit_user_info = false
             )
             models[test_fold] = β_fitted
         end

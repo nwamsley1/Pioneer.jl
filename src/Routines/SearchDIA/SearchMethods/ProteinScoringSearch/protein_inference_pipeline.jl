@@ -20,6 +20,7 @@ Pipeline Operations for Protein Inference
 ==========================================================#
 
 const PREFIX_SHAPE_CONFIDENCE_PIVOT = 0.5f0
+
 @inline function _shape_confidence(
     shape_strength::Float32,
     shape_confidence_scale::Float32
@@ -390,6 +391,44 @@ end
         return PROTEIN_ROLLUP_PROB_EPS
     end
     return Float32(clamp(exp(log_none_sum), Float64(PROTEIN_ROLLUP_PROB_EPS), 1.0))
+end
+
+"""
+    _protein_mbr_summary(gdf, quant_mask)
+
+Summarize MBR-recovered precursor support for a protein group. These features
+are used by protein probit rescoring only; they do not change precursor-level
+probabilities or q-values.
+"""
+function _protein_mbr_summary(
+    gdf::AbstractDataFrame,
+    quant_mask::AbstractVector{Bool}
+)
+    n_quant_precursors = count(quant_mask)
+    if n_quant_precursors == 0 || !hasproperty(gdf, :mbr_recovered)
+        return (
+            recovered_peptides = Int64(0),
+            only_protein = false
+        )
+    end
+
+    recovered_peptides = Set{String}()
+    recovered_precursors = 0
+
+    @inbounds for i in eachindex(quant_mask)
+        quant_mask[i] || continue
+
+        recovered = !ismissing(gdf.mbr_recovered[i]) && Bool(gdf.mbr_recovered[i])
+        recovered || continue
+
+        recovered_precursors += 1
+        push!(recovered_peptides, String(gdf.sequence[i]))
+    end
+
+    return (
+        recovered_peptides = Int64(length(recovered_peptides)),
+        only_protein = recovered_precursors == n_quant_precursors
+    )
 end
 
 @inline function _score_from_log_none_sum(log_none_sum::Float64)::Float32
@@ -1096,7 +1135,9 @@ function group_psms_by_protein(
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
-            precursor_consensus_prefix_shape = Float32[]
+            precursor_consensus_prefix_shape = Float32[],
+            mbr_recovered_peptides = Int64[],
+            mbr_only_protein = Bool[]
         )
     end
 
@@ -1112,7 +1153,9 @@ function group_psms_by_protein(
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
-            precursor_consensus_prefix_shape = Float32[]
+            precursor_consensus_prefix_shape = Float32[],
+            mbr_recovered_peptides = Int64[],
+            mbr_only_protein = Bool[]
         )
     end
 
@@ -1124,6 +1167,7 @@ function group_psms_by_protein(
     protein_groups = combine(grouped) do gdf
         quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
         rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+        mbr_summary = _protein_mbr_summary(gdf, quant_mask)
         n_peptides = rollup.n_peptides
         pg_score = rollup.pg_score
         top_pep_peak_area = rollup.top_pep_peak_area
@@ -1162,7 +1206,9 @@ function group_psms_by_protein(
             pg_score = pg_score,
             any_common_peps = has_common,
             top_pep_peak_area = top_pep_peak_area,
-            precursor_consensus_prefix_shape = precursor_consensus_prefix_shape
+            precursor_consensus_prefix_shape = precursor_consensus_prefix_shape,
+            mbr_recovered_peptides = mbr_summary.recovered_peptides,
+            mbr_only_protein = mbr_summary.only_protein
         )
     end
 
