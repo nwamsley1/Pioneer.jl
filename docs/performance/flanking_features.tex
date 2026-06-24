@@ -199,6 +199,91 @@ Map an 8-bit fragment pattern mask to a learned rank (file-specific table).
 \code{WIDE\_WINDOW\_CORR\_THRESHOLD}$=0.7$ (correlated-fragment cutoff);
 \code{FLANKING\_SCAN\_CENTRIC\_BATCH\_SIZE}$=50000$ (groups per scan-extraction batch).
 
+\section{The two LGBM feature sets}
+Pioneer trains two gradient-boosted classifiers with different feature sets. The flanking
+features belong only to the second one.
+
+\subsection{MainSearch per-file LGBM --- \code{PRESCORE\_FEATURES} (49 features)}
+Trained per file on \emph{all} (scan, precursor) PSMs, \emph{before} best-per-precursor
+selection (\code{features.jl:144}); used to pick the best scan per precursor and for the
+global prescore aggregation.
+\begin{lstlisting}
+# Core PSM / sequence (13)
+fitted_manhattan_distance, irt_error, poisson, err_norm, total_ions,
+missed_cleavage, y_count, weight, gof, Mox, spectrum_peak_count,
+sequence_length, fitted_hellinger
+# Cross-precursor at-scan (2)
+weight_ratio_at_scan, weight_rank_at_scan
+# MS1 (11)
+ms1_m0_mass_err_ppm, ms1_weight_apex_to_m0_apex_irt, ms1_m0_intensity,
+ms1_m1_intensity, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred,
+ms1_isotope_dotp_m0_m1_m2, ms1_m0_m1_m2_window_fraction,
+ms1_ms2_explained_delta, ms1_m0_m1_m2_window_fraction_pc,
+ms1_ms2_explained_delta_pc
+# Top-8 fragment trace intensities, RAW (8)
+frag1_int, frag2_int, frag3_int, frag4_int,
+frag5_int, frag6_int, frag7_int, frag8_int
+# Fragment-chromatogram correlations (6)
+frag_apex_dispersion_irt, n_correlated_fragments,
+n_correlated_fragments_bitvec_rank, frag_corr_strength,
+frag_corr_effective_n, frag_corr_best_m0
+# Misc (4)
+top3_ms2_mass_error_mean, delta_frame_peak_center, log_by_ratio_m0, n_scans
+# Backported from ADVANCED (5)
+prec_mz, irt_fwhm, smoothness, log2_intensity_explained, longest_y
+\end{lstlisting}
+
+\subsection{ScoringSearch (Pass-1) LGBM --- \code{ADVANCED\_FEATURE\_SET} (73 features)}
+Trained \emph{after} best-per-precursor selection, cross-run (\code{model\_config.jl:85}; both
+the MBR and no-MBR paths use it, \code{score\_psms.jl:270/362}). It mirrors
+\code{PRESCORE\_FEATURES} but (i) substitutes the raw \code{frag*\_int} with the smoothed apex
+\code{frag*\_smoothed\_intensity} (the best PSM is now known), and (ii) adds the
+fragment-detection, cross-window, and flanking-window families that require the selected best
+scan.
+\begin{lstlisting}
+# Core PSM / sequence (13)  -- same as PRESCORE
+fitted_manhattan_distance, irt_error, poisson, err_norm, total_ions,
+missed_cleavage, y_count, weight, gof, Mox, spectrum_peak_count,
+sequence_length, fitted_hellinger
+# Cross-precursor at-scan (2)
+weight_ratio_at_scan, weight_rank_at_scan
+# MS1 (11)  -- same as PRESCORE
+ms1_m0_mass_err_ppm, ms1_weight_apex_to_m0_apex_irt, ms1_m0_intensity,
+ms1_m1_intensity, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred,
+ms1_isotope_dotp_m0_m1_m2, ms1_m0_m1_m2_window_fraction,
+ms1_ms2_explained_delta, ms1_m0_m1_m2_window_fraction_pc,
+ms1_ms2_explained_delta_pc
+# Top-8 fragment apex, SMOOTHED (8)  -- substitutes frag*_int
+frag1_smoothed_intensity .. frag8_smoothed_intensity
+smoothed_2d_shadow_hellinger                                    # (1)
+# Fragment-chromatogram correlations (6)  -- same as PRESCORE
+frag_apex_dispersion_irt, n_correlated_fragments,
+n_correlated_fragments_bitvec_rank, frag_corr_strength,
+frag_corr_effective_n, frag_corr_best_m0
+# Fragment-detection union/intersection (4)
+n_frags_detected_union, n_frags_detected_intersection,
+n_frags_detected_union_bitvec_rank, n_frags_detected_intersection_bitvec_rank
+# Cross-window / transmission (4)
+precursor_fraction_transmitted, n_scans_other_windows,
+other_window_weight_corr, other_window_apex_delta_irt
+# Flanking-window features (12)  -- FLANKING_WINDOW_FEATURES (this document)
+flanking_ms1_m0_candidate_fraction, flanking_frag_candidate_fraction,
+flanking_ms1_frag_sum_corr, flanking_frag_corr_mean,
+flanking_n_correlated_fragments, flanking_n_correlated_fragments_bitvec_rank,
+flanking_frag_corr_strength, flanking_frag_corr_effective_n,
+flanking_frag_corr_best_m0, flanking_signal_support,
+n_contiguous_scans, frag_apex_gt2x_flank_bitvec_rank
+# MS1-peak / window-precursor counts (3)
+ms1_m0_peak_frag_intensity_fraction, ms1_m0_peak_n_precursors,
+scan_prec_mz_n_precursors
+# Misc (3)
+top3_ms2_mass_error_mean, delta_frame_peak_center, log_by_ratio_m0
+# RT / shape / explained (6)
+n_scans, prec_mz, irt_fwhm, smoothness, log2_intensity_explained, longest_y
+\end{lstlisting}
+\noindent (A separate second-pass MBR-FTR model adds match-between-runs features when MBR is
+enabled; those are out of scope here.)
+
 \section{Consumption}
 The features are appended to the per-fold second-pass PSM Arrow files and feed the ScoringSearch
 second-pass LightGBM (\code{FLANKING\_WINDOW\_FEATURES}). They are most informative on
