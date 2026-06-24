@@ -1,0 +1,183 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{hi}{RGB}{0,120,0}
+\definecolor{lo}{RGB}{170,0,0}
+\definecolor{hdr}{RGB}{30,30,90}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\callout}[1]{%
+  \begin{center}\fcolorbox{hdr}{blue!4}{%
+  \begin{minipage}{0.95\textwidth}\vspace{2pt}#1\vspace{2pt}\end{minipage}}\end{center}}
+
+\title{\vspace{-1.5em}\textbf{Pioneer.jl SearchDIA --- Allocation Attribution}\\[0.3em]
+\large Current state, per-phase / per-function / per-line breakdown, and next targets}
+\author{}
+\date{2026-06-24 \quad\textbar\quad branch \code{perf/runtime-profiling} @ \code{3651b1da9}}
+
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+
+\callout{
+\textbf{TL;DR}\\[0.3em]
+The allocation-reduction effort has cut warm 2-file MTAC total allocation
+\textbf{146.94\,GB $\rightarrow$ 58.10\,GB ($-60\%$)} and runtime
+\textbf{101.95\,s $\rightarrow$ 91.30\,s ($-10\%$)}, with results bit-identical.
+The two heavily-optimized phases (Main Search, Precursor Scoring) are no longer
+dwarfing everything, which \emph{promotes} three previously-ignored phases ---
+\textbf{Quantification \& Output, Protein Scoring, Spectral Library Loading} ---
+to the top of the remaining list. The two largest reusable per-thread buffers
+(fragment-index scratch, scored-PSM buffer) are \emph{already} reused across
+files; they are not the remaining allocators. The best next targets are the
+\textbf{serial $O(\text{library})$ map-builds} in Quant \& Output and Protein
+Scoring (\(\sim\)3.9\,GB combined, single-threaded, so also a latency win).
+}
+
+\section{Methodology \& confidence}
+Two independent measurements, used for different things:
+\begin{itemize}
+  \item \textbf{Phase magnitudes} --- Pioneer's own per-phase accounting
+  (\code{Mem Alloc (GB)} column), warm run (2nd \code{SearchDIA} in-process),
+  2-file MTAC\_3P, 8 threads. This is the \emph{ground truth for magnitude}.
+  \item \textbf{Within-phase line/function ranking} --- \code{Profile.Allocs}
+  sampling profiler, single-thread, 1-file MTAC, sample rate $2\times10^{-4}$.
+  Reliable for \emph{which} lines allocate; absolute GB trustworthy only for
+  high-sample-count lines. Single-thread totals do not match the 8-thread phase
+  table and must not be read as magnitudes.
+\end{itemize}
+\textbf{Caveat (read before trusting any single line):} the sampling profiler's
+top two leaf frames --- \code{process\_scans\_fused.jl:131} (92\,GB from \emph{7}
+samples) and \code{scoring.jl:1459 select\_best\_per\_precursor!} (22\,GB from
+\emph{1} sample) --- are low-sample, high-variance extrapolations. They correctly
+\emph{point} at the per-scan fused deconv/score loop (Main Search) and best-PSM
+selection (Precursor Scoring) as hotspots, but their GB figures are noise: the
+phase table caps Precursor Scoring at 7.4\,GB total, so ``22\,GB'' cannot be real.
+Magnitudes below are anchored to the phase table, not these extrapolations.
+
+\section{Phase-level attribution (warm, 2-file MTAC, 8 threads)}
+\begin{center}
+\begin{tabular}{lrrrl}
+\toprule
+\textbf{Phase} & \textbf{Baseline} & \textbf{Current} & \textbf{$\Delta$} & \textbf{Status} \\
+ & (GB) & (GB) & & \\
+\midrule
+Spectral Library Loading      & 4.16  & 4.16  & \textcolor{black}{0\%}    & untouched \\
+Parameter Tuning              & 3.37  & 1.50  & \textcolor{hi}{$-55\%$}   & optimized \\
+Quadrupole Tuning             & 0.20  & 0.18  & --                        & small \\
+BitVec Calibration            & 6.08  & 1.05  & \textcolor{hi}{$-83\%$}   & optimized \\
+Main Search                   & 59.64 & 29.43 & \textcolor{hi}{$-51\%$}   & \textbf{still \#1} \\
+Precursor Scoring             & 58.90 & 7.37  & \textcolor{hi}{$-87\%$}   & optimized \\
+Huber Calibration             & 0.30  & 0.30  & --                        & small \\
+Chromatogram Integration      & 3.56  & 3.36  & \textcolor{black}{$-6\%$} & lightly touched \\
+Protein Inference             & 0.48  & 0.48  & --                        & small \\
+Protein Scoring               & 4.19  & 4.20  & \textcolor{black}{0\%}    & \textbf{untouched} \\
+Quantification \& Output      & 5.97  & 5.97  & \textcolor{black}{0\%}    & \textbf{untouched} \\
+\midrule
+\textbf{TOTAL}                & \textbf{146.94} & \textbf{58.10} & \textcolor{hi}{\textbf{$-60\%$}} & \\
+\textbf{Runtime (s)}          & \textbf{101.95} & \textbf{91.30}  & \textcolor{hi}{\textbf{$-10\%$}} & \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\footnotesize ``Current'' = combined-allocations state. The just-landed
+\code{est\_per\_thread/n\_threads} commit (\code{3651b1da9}) trims Main-Search
+scratch further --- measured $-3.45$\,GB on 3-file SCP (where it matters most),
+$\sim$\,$-0.35$\,GB on this MTAC config --- not yet folded into the table above.
+\normalsize
+
+\section{Within-phase function / line attribution}
+Ranked by reliable (high-sample) contribution; phase magnitude in brackets.
+
+\subsection*{Main Search [29.4 GB --- still the largest]}
+\begin{itemize}
+  \item \code{process\_scans\_fused.jl:131} \code{process\_scans\_fused!} ---
+  the per-scan fused deconvolution+scoring loop. \emph{Bulk of the phase flows
+  through here} (transient sparse design-matrix work, per-scan feature accumulation,
+  and copy-out of per-file PSM rows). Profiler magnitude unreliable (7 samples);
+  needs finer sub-attribution before acting.
+  \item \code{precursors.jl:18/33/35} \code{StandardLibraryPrecursors} getters
+  --- $\sim$0.81\,GB. Library-precursor accessors hit per candidate.
+  \item \code{features.jl} macro-expansion lines (\code{:1043--1046}, \code{:1469--1475})
+  --- $\sim$0.55\,GB. Per-scan feature-row writes.
+  \item \code{features.jl:728/737} \code{\_ms1\_lookup\_scan\_runs!} --- $\sim$0.22\,GB.
+  \item \code{irt\_refinement.jl:215} \code{count\_token\_ids!} --- 0.15\,GB.
+\end{itemize}
+
+\subsection*{Precursor Scoring [7.4 GB]}
+\begin{itemize}
+  \item \code{scoring.jl:1459} \code{select\_best\_per\_precursor!} --- best-PSM
+  selection (sort/group). Profiler over-extrapolates (1 sample); real cost bounded
+  by the 7.4\,GB phase total.
+  \item \code{wide\_window\_features.jl} (\code{:99/461/558/840/844}) --- $\sim$0.38\,GB,
+  flanking-window feature construction.
+\end{itemize}
+
+\subsection*{Quantification \& Output [6.0 GB --- untouched]}
+\begin{itemize}
+  \item \textcolor{lo}{\textbf{\code{maxLFQ.jl:653--660} \code{build\_accession\_to\_species} --- $\sim$2.3\,GB.}}
+  Serial $O(\text{library})$ accession$\rightarrow$species map rebuilt during output.
+  High sample count $\Rightarrow$ trustworthy. \textbf{Top easy target.}
+  \item \code{MergeOperations.jl:67} \code{fillColumn!} --- 0.18\,GB; merge/output column fills.
+\end{itemize}
+
+\subsection*{Protein Scoring [4.2 GB --- untouched]}
+\begin{itemize}
+  \item \textcolor{lo}{\textbf{\code{run\_protein\_scoring.jl:39/44/48} \code{count\_protein\_peptides} --- $\sim$1.6\,GB.}}
+  Serial $O(\text{library})$ peptide-per-protein counting. High sample count
+  $\Rightarrow$ trustworthy. \textbf{Second easy target.}
+\end{itemize}
+
+\subsection*{Chromatogram Integration [3.4 GB] \& Spectral Library Loading [4.2 GB]}
+\begin{itemize}
+  \item \code{utils.jl:854} \code{build\_chromatograms} (0.15\,GB),
+  \code{integrate\_chrom.jl:273/279} \code{WHSmooth!} ($\sim$0.11\,GB).
+  \item Library loading is dominated by \code{serialization.jl} deserialize
+  ($\sim$1.2\,GB sampled) --- one-time, hard to avoid.
+\end{itemize}
+
+\section{Reusable-buffer status (answered)}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Buffer} & \textbf{Reused across files?} & \textbf{Mechanism} \\
+\midrule
+Frag-index emit scratch & \textcolor{hi}{\textbf{Yes}} & \code{SearchContext.frag\_index\_scratch}, grow-only \code{prepare!} \\
+Per-thread counters/int bufs & \textcolor{hi}{\textbf{Yes}} & same \code{FragIndexScratch} \\
+Scored-PSM buffer & \textcolor{hi}{\textbf{Yes}} & \code{SearchData.main\_search\_scored\_psms}; \\
+ & & alloc once (5000), grow-only, capacity retained \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent Both large per-thread buffers live on the per-run \code{SearchContext}
+and are grown once to a high-water-mark, then reused with zero further allocation
+(Julia never shrinks array capacity on \code{resize!}-down). The residual
+Main-Search allocation is \emph{not} these buffers --- it is the per-file
+\emph{materialization} of PSM rows (the inner \code{vcat} that decouples the
+result from the reused buffer before the next file overwrites it), which is
+legitimate output, plus the per-scan work in the fused loop.
+
+\section{Recommended next targets (priority order)}
+\begin{enumerate}
+  \item \textbf{\code{build\_accession\_to\_species} ($\sim$2.3\,GB, Quant \& Output).}
+  Serial, $O(\text{library})$, rebuilt at output time. Build once and cache on the
+  spec-lib / search context, or restructure to avoid the per-call dict. Also a
+  single-threaded latency win.
+  \item \textbf{\code{count\_protein\_peptides} ($\sim$1.6\,GB, Protein Scoring).}
+  Same shape --- serial $O(\text{library})$ count. Precompute/reuse.
+  \item \textbf{Main Search fused loop ($\sim$29\,GB, hardest, biggest).}
+  Needs finer sub-attribution (the 7-sample 92\,GB frame is too coarse). Likely
+  split across: transient sparse design-matrix growth, per-scan feature rows, and
+  PSM materialization. Instrument with \code{@alloc\_bucket} inside the loop before
+  committing to a fix.
+  \item \textbf{\code{StandardLibraryPrecursors} getters ($\sim$0.8\,GB).} Check for
+  residual type-instability / boxed accessor returns (same class as the earlier
+  \code{getMzArray} fix).
+\end{enumerate}
+\noindent Targets 1--2 are independent, low-risk, and together remove $\sim$3.9\,GB
+from phases that have seen \emph{zero} optimization. Target 3 is the big fish but
+demands measurement first.
+
+\end{document}
