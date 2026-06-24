@@ -58,6 +58,13 @@ selection (Precursor Scoring) as hotspots, but their GB figures are noise: the
 phase table caps Precursor Scoring at 7.4\,GB total, so ``22\,GB'' cannot be real.
 Magnitudes below are anchored to the phase table, not these extrapolations.
 
+\textbf{Update --- Main Search resolved by deterministic bucketing.} The
+\code{process\_scans\_fused.jl:131} mystery was settled with \code{gc\_bytes()}
+sub-attribution (env \code{PIONEER\_DIAG\_MSLOOP}, single-thread, 1-file MTAC,
+4{,}612{,}759 PSMs) --- see the Main Search subsection. The 92\,GB extrapolation
+was an artifact; the real in-loop total is $\sim$3.8\,GB, dominated by one-time
+buffer-growth churn, not the deconvolution.
+
 \section{Phase-level attribution (warm, 2-file MTAC, 8 threads)}
 \begin{center}
 \begin{tabular}{lrrrl}
@@ -91,20 +98,45 @@ $\sim$\,$-0.35$\,GB on this MTAC config --- not yet folded into the table above.
 \section{Within-phase function / line attribution}
 Ranked by reliable (high-sample) contribution; phase magnitude in brackets.
 
-\subsection*{Main Search [29.4 GB --- still the largest]}
+\subsection*{Main Search [29.4 GB] --- sub-attributed via \code{gc\_bytes} bucketing}
+Deterministic per-sub-step measurement of the fused scan loop (single-thread,
+1-file MTAC, 4{,}612{,}759 PSMs). This replaces the unreliable 7-sample profiler
+frame. In-loop total $\sim$3.8\,GB:
+\begin{center}
+\begin{tabular}{lrll}
+\toprule
+\textbf{Sub-step} & \textbf{GB} & \textbf{Nature} & \textbf{Scales with} \\
+\midrule
+\code{score} (\code{score\_psms!}) & 2.752 & one-time buffer-growth churn & run (amortizes) \\
+\code{df\_materialize}             & 0.778 & per-file output DataFrame     & files \\
+\code{collect} (\code{sub\_indices}) & 0.204 & per-scan temp Vector \textbf{[FIXED]} & scans $\times$ files \\
+\code{post\_dm}                    & 0.077 & per-scan, small               & scans \\
+\code{prep}                        & 0.019 & per-scan, small               & scans \\
+\code{run\_fused} / \code{dist} / \code{reset} & $\sim$0.001 & negligible & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
 \begin{itemize}
-  \item \code{process\_scans\_fused.jl:131} \code{process\_scans\_fused!} ---
-  the per-scan fused deconvolution+scoring loop. \emph{Bulk of the phase flows
-  through here} (transient sparse design-matrix work, per-scan feature accumulation,
-  and copy-out of per-file PSM rows). Profiler magnitude unreliable (7 samples);
-  needs finer sub-attribution before acting.
-  \item \code{precursors.jl:18/33/35} \code{StandardLibraryPrecursors} getters
-  --- $\sim$0.81\,GB. Library-precursor accessors hit per candidate.
-  \item \code{features.jl} macro-expansion lines (\code{:1043--1046}, \code{:1469--1475})
-  --- $\sim$0.55\,GB. Per-scan feature-row writes.
-  \item \code{features.jl:728/737} \code{\_ms1\_lookup\_scan\_runs!} --- $\sim$0.22\,GB.
-  \item \code{irt\_refinement.jl:215} \code{count\_token\_ids!} --- 0.15\,GB.
+  \item \textbf{\code{score} = 2.75\,GB is \code{growScoredPSMs!} block(500k)
+  reallocation churn} --- copying the $\sim$46-field struct array as it grows
+  $5\text{k}\rightarrow4.6\text{M}$ on the \emph{first} file (the $\sim$2.5$\times$
+  copying overhead). Buffer capacity is retained across files, so this is
+  \textbf{one-time per run} and amortizes to nothing on multi-file runs. Consistent
+  with keeping block(500k).
+  \item \textcolor{hi}{\textbf{\code{collect} = 0.20\,GB --- FIXED}} (\code{31d334c63}).
+  \code{sub\_indices = collect(Int64, prec\_range)} allocated a fresh \code{Vector}
+  every scan; \code{prec\_range} is already a \code{UnitRange\{Int64\}} and
+  \code{run\_fused!} only iterates it, so it was pure waste. Now passed directly via
+  type-assert. Per-scan $\Rightarrow$ scales with scans$\times$files ($\sim$4\,GB on
+  a 20-file run); output byte-identical, PSM count unchanged.
+  \item \textbf{The deconvolution itself barely allocates} (\code{run\_fused},
+  \code{dist}, \code{post\_dm} $\approx$ 0). The loop is already lean --- the big
+  numbers are one-time growth + unavoidable per-file output.
 \end{itemize}
+\noindent Profiler residuals also seen (smaller, partly compile-time in the
+single-thread profile): \code{features.jl} per-scan feature-row writes
+($\sim$0.55\,GB), \code{\_ms1\_lookup\_scan\_runs!} ($\sim$0.22\,GB),
+\code{irt\_refinement.jl} \code{count\_token\_ids!} (0.15\,GB).
 
 \subsection*{Precursor Scoring [7.4 GB]}
 \begin{itemize}
@@ -161,23 +193,26 @@ legitimate output, plus the per-scan work in the fused loop.
 
 \section{Recommended next targets (priority order)}
 \begin{enumerate}
+  \item \textcolor{hi}{\textbf{[DONE \code{31d334c63}] Main Search \code{collect}
+  ($\sim$0.2\,GB/file).}} Per-scan \code{Vector} removed; bit-identical. The only
+  clearly-wasteful per-scan allocation in the fused loop.
   \item \textbf{\code{build\_accession\_to\_species} ($\sim$2.3\,GB, Quant \& Output).}
   Serial, $O(\text{library})$, rebuilt at output time. Build once and cache on the
   spec-lib / search context, or restructure to avoid the per-call dict. Also a
-  single-threaded latency win.
+  single-threaded latency win. \emph{One-time per run --- amortizes across files.}
   \item \textbf{\code{count\_protein\_peptides} ($\sim$1.6\,GB, Protein Scoring).}
   Same shape --- serial $O(\text{library})$ count. Precompute/reuse.
-  \item \textbf{Main Search fused loop ($\sim$29\,GB, hardest, biggest).}
-  Needs finer sub-attribution (the 7-sample 92\,GB frame is too coarse). Likely
-  split across: transient sparse design-matrix growth, per-scan feature rows, and
-  PSM materialization. Instrument with \code{@alloc\_bucket} inside the loop before
-  committing to a fix.
-  \item \textbf{\code{StandardLibraryPrecursors} getters ($\sim$0.8\,GB).} Check for
-  residual type-instability / boxed accessor returns (same class as the earlier
-  \code{getMzArray} fix).
+  \emph{Also one-time per run.}
 \end{enumerate}
-\noindent Targets 1--2 are independent, low-risk, and together remove $\sim$3.9\,GB
-from phases that have seen \emph{zero} optimization. Target 3 is the big fish but
-demands measurement first.
+\noindent\textbf{Diminishing returns ahead.} With \code{collect} fixed, the Main
+Search per-scan path is lean --- its remaining allocation is one-time buffer
+growth (\code{score}, 2.75\,GB, amortizes) plus unavoidable per-file output
+(\code{df\_materialize}, 0.78\,GB). The \code{StandardLibraryPrecursors}
+constructor ($\sim$0.8\,GB) was investigated and found to be inherent one-time
+Arrow string materialization over 6.8\,M precursors (the getters themselves do
+\emph{not} allocate). So the remaining targets (2--3) are all $O(\text{library})$
+\emph{one-time} costs that look large on 1--2 file profiling configs but amortize
+on production multi-file runs. The allocation that genuinely scales with dataset
+size --- the per-file Main Search loop --- has been brought to near-minimal.
 
 \end{document}
