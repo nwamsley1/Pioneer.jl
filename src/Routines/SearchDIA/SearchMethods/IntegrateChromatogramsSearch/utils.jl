@@ -875,7 +875,11 @@ function build_chromatograms(
         reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
-    return DataFrame(@view(chromatograms[1:rt_idx]))
+    _diag = haskey(ENV, "PIONEER_DIAG_CHROM")
+    _db = _diag ? Base.gc_bytes() : 0
+    _df = DataFrame(@view(chromatograms[1:rt_idx]))
+    _diag && @user_print "[CHROM]   build_chromatograms df_convert=$(round((Base.gc_bytes()-_db)/1e9, digits=3)) GB  (rows=$rt_idx, AoS->DataFrame copy)"
+    return _df
 end
 
 # MS1 chromatogram extraction is currently unwired (the ms1_quant knob

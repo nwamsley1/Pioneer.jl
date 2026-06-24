@@ -255,6 +255,10 @@ function process_file!(
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
 
     # Extract chromatograms for all passing PSMs
+    # ── env-gated allocation sub-attribution (PIONEER_DIAG_CHROM) ──────────
+    DIAG_CHROM = haskey(ENV, "PIONEER_DIAG_CHROM")
+    c_extract = 0; c_iso = 0; c_sort = 0; c_integ = 0
+    _cb = DIAG_CHROM ? Base.gc_bytes() : 0
     chromatograms = extract_chromatograms(
         spectra,
         passing_psms,
@@ -264,6 +268,7 @@ function process_file!(
         ms_file_idx,
         MS2CHROM(),
     )
+    DIAG_CHROM && (c_extract = Base.gc_bytes() - _cb)
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
@@ -274,6 +279,7 @@ function process_file!(
         # WH smoothing uses precursor transmission as both a correction factor
         # and an observation weight. Separate-trace mode also uses isotope
         # labels for chromatogram grouping.
+        _cb = DIAG_CHROM ? Base.gc_bytes() : 0
         get_isotopes_captured!(
             chromatograms,
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -286,8 +292,11 @@ function process_file!(
             getIsolationWidthMzs(spectra),
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
+        DIAG_CHROM && (c_iso = Base.gc_bytes() - _cb)
     end
+    _cb = DIAG_CHROM ? Base.gc_bytes() : 0
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    DIAG_CHROM && (c_sort = Base.gc_bytes() - _cb)
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
@@ -303,6 +312,7 @@ function process_file!(
             )
             psm_isotopes_captured = passing_psms[!, :isotopes_captured]
         end
+        _cb = DIAG_CHROM ? Base.gc_bytes() : 0
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -315,6 +325,7 @@ function process_file!(
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
+        DIAG_CHROM && (c_integ = Base.gc_bytes() - _cb)
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(
                 chromatograms,
@@ -327,6 +338,13 @@ function process_file!(
             )
         end
     end
+    if DIAG_CHROM
+        g(x) = round(x/1e9, digits=3)
+        n_chrom = chromatograms === nothing ? 0 : nrow(chromatograms)
+        @user_print "[CHROM] file=$ms_file_idx rows=$n_chrom  extract=$(g(c_extract))  " *
+            "isotopes=$(g(c_iso))  sort=$(g(c_sort))  integrate=$(g(c_integ))  (GB)"
+    end
+
     # MS1 integration disabled — see extract_chromatograms call above.
     # Clear chromatograms to free memory
     chromatograms = nothing
