@@ -1,0 +1,253 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  numbers=left, numberstyle=\tiny\color{gray},
+}
+
+\title{Proposal: reduce per-group allocation in \texttt{\_build\_protein\_rollup}}
+\author{branch \texttt{perf/alloc-diagnostics}}
+\date{2026-06-24}
+
+\begin{document}
+\maketitle
+
+\section{Summary}
+\texttt{\_build\_protein\_rollup} (in
+\texttt{src/Routines/SearchDIA/SearchMethods/ProteinScoringSearch/protein\_inference\_pipeline.jl})
+is called \textbf{once per protein group} inside two \texttt{groupby} loops. Each
+call allocates \textbf{14 \texttt{Dict}s plus several row vectors}; over all groups
+$\times$ files this is $\sim$0.6\,GB on the YeastStandard3M benchmark (the largest
+single site in the Protein Scoring phase, which totals 1.98\,GB).
+
+The fix is to (a) replace the 14 \texttt{Dict}s with \textbf{3 dedup \texttt{Dict}s +
+reusable parallel arrays}, and (b) hoist that scratch out of the per-group function
+so it is \textbf{allocated once and reused} across groups. Net per-group allocation
+drops from ``14 Dicts + vectors'' to ``the returned output rows only''.
+
+\textbf{Caveat (please note):} the current function emits its rows in
+\texttt{Dict}-hash iteration order, and \texttt{pg\_score} is an
+\emph{order-sensitive} \texttt{Float32} sum (\S\ref{sec:fragility}). The new design
+iterates in deterministic first-seen order instead, so this is a \textbf{deliberate,
+one-time protein-scoring rebaseline} (a few protein groups may shift, same class as
+the approved iRT-refinement rebaseline). It also \emph{removes} the latent
+order-fragility permanently. Verification plan in \S\ref{sec:verify}.
+
+\section{Where it is called (per protein group)}
+Loop 1 --- \texttt{protein\_inference\_pipeline.jl:664--666}:
+\begin{lstlisting}[firstnumber=664]
+for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
+    quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
+    rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+\end{lstlisting}
+Loop 2 --- \texttt{:1124--1126} (inside \texttt{combine(grouped) do gdf ... end}):
+\begin{lstlisting}[firstnumber=1124]
+protein_groups = combine(grouped) do gdf
+    quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
+    rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+\end{lstlisting}
+Both call once per \texttt{(inferred\_protein\_group, target, entrap\_id)} group, for
+each run/file. Both loops are sequential (a plain \texttt{for}, and DataFrames
+\texttt{combine}, which is single-threaded), so a single reusable scratch instance
+per loop is safe.
+
+\section{Current implementation (the 14 Dicts)}
+\subsection*{Per-precursor level --- 7 Dicts (\texttt{:427--459})}
+\begin{lstlisting}[firstnumber=427]
+prob_by_precursor            = Dict{UInt32, Float32}()
+best_peak_area_by_precursor  = Dict{UInt32, Float32}()
+base_pep_id_by_precursor     = Dict{UInt32, UInt32}()
+sequence_by_precursor        = Dict{UInt32, String}()
+charge_by_precursor          = Dict{UInt32, UInt8}()
+structural_mods_by_precursor = Dict{UInt32, String}()
+isotopic_mods_by_precursor   = Dict{UInt32, String}()
+
+@inbounds for i in eachindex(quant_mask)
+    quant_mask[i] || continue
+    precursor_idx = UInt32(gdf.precursor_idx[i])
+    prob_val      = _sanitize_rollup_probability(gdf[!, prob_col][i])
+    peak_area_val = Float32(gdf.peak_area[i])
+    if haskey(prob_by_precursor, precursor_idx)
+        prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)
+        if peak_area_val > best_peak_area_by_precursor[precursor_idx]
+            best_peak_area_by_precursor[precursor_idx] = peak_area_val
+        end
+    else
+        prob_by_precursor[precursor_idx]           = prob_val
+        best_peak_area_by_precursor[precursor_idx] = peak_area_val
+        base_pep_id_by_precursor[precursor_idx]    = UInt32(gdf.base_pep_id[i])
+        sequence_by_precursor[precursor_idx]       = String(gdf.sequence[i])
+        charge_by_precursor[precursor_idx]         = hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0)
+        structural_mods_by_precursor[precursor_idx] = ...   # String or ""
+        isotopic_mods_by_precursor[precursor_idx]   = ...   # String or ""
+    end
+end
+\end{lstlisting}
+The output rows are then built by iterating \texttt{keys(prob\_by\_precursor)}
+(\textbf{:463}) --- i.e.\ in \texttt{Dict}-hash order.
+
+\subsection*{Per-modified-peptide level --- 4 Dicts (\texttt{:493--496})}
+\begin{lstlisting}[firstnumber=493]
+modified_log_none_sum   = Dict{Tuple{UInt32, String, String}, Float64}()
+modified_best_peak_area = Dict{Tuple{UInt32, String, String}, Float32}()
+modified_sequence       = Dict{Tuple{UInt32, String, String}, String}()
+modified_precursor_count= Dict{Tuple{UInt32, String, String}, Int32}()
+\end{lstlisting}
+\subsection*{Per-peptide level --- 3 Dicts (\texttt{:529--531})}
+\begin{lstlisting}[firstnumber=529]
+peptide_log_none_sum   = Dict{String, Float64}()
+peptide_best_peak_area = Dict{String, Float32}()
+peptide_modified_count = Dict{String, Int32}()
+\end{lstlisting}
+Total: \textbf{7 + 4 + 3 = 14 Dicts allocated per call}. Measured contribution
+(\texttt{Profile.Allocs}, sampled): $\sim$0.6\,GB across lines 438--540.
+
+\section{The order fragility}\label{sec:fragility}
+\texttt{pg\_score} is a \texttt{Float32} sum over \texttt{peptide\_rows}
+(\textbf{:556}):
+\begin{lstlisting}[firstnumber=556]
+pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
+\end{lstlisting}
+\texttt{peptide\_rows} is built by iterating \texttt{keys(peptide\_log\_none\_sum)}
+(\textbf{:545}), i.e.\ \texttt{Dict}-hash order. Floating-point summation is not
+associative, so the iteration order changes \texttt{pg\_score} in the last bits.
+\texttt{pg\_score} feeds protein-group FDR, so a last-bit change can flip a borderline
+protein near the q-value threshold. \emph{This is why naive scratch reuse
+(\texttt{empty!} changes a Dict's capacity, hence its iteration order) is not
+byte-for-byte result-neutral} --- the same mechanism as the iRT \texttt{sizehint!}
+issue. (\texttt{peptide\_list} at :558 is \texttt{sort!}'d so it is already
+order-independent; \texttt{top\_pep\_peak\_area} is a \texttt{maximum}, also fine.)
+
+\section{Why not merge the Dicts into one struct-valued Dict?}
+A natural idea is \texttt{Dict\{UInt32, PrecAccum\}}. It does not help: the per-precursor
+record holds \texttt{String} fields (\texttt{sequence}, \texttt{structural\_mods},
+\texttt{isotopic\_mods}), so \texttt{PrecAccum} is not \texttt{isbits} and the \texttt{Dict}
+would box one struct \emph{per precursor} --- worse than 7 scalar/String Dicts.
+
+\section{Proposed change}\label{sec:proposal}
+Use \textbf{one dedup \texttt{Dict} per level} (precursor\_idx / mod-key / sequence
+$\rightarrow$ a row index) plus \textbf{parallel arrays} for the fields, pushed in
+\textbf{first-seen order}. Iterate the arrays by position (deterministic,
+capacity-independent). Hold all of this in a \texttt{ProteinRollupScratch} that the
+caller allocates once and passes in; \texttt{\_reset!} it (\texttt{empty!} the 3
+Dicts + the arrays, keeping their capacity) at the start of each call.
+
+\subsection*{Scratch type (allocated once per loop, reused)}
+\begin{lstlisting}
+mutable struct ProteinRollupScratch
+    # precursor level (dedup by precursor_idx; parallel arrays, first-seen order)
+    prec_pos    :: Dict{UInt32, Int}
+    prec_id     :: Vector{UInt32}
+    prec_prob   :: Vector{Float32}
+    prec_peak   :: Vector{Float32}
+    prec_basepep:: Vector{UInt32}
+    prec_seq    :: Vector{String}
+    prec_charge :: Vector{UInt8}
+    prec_smods  :: Vector{String}
+    prec_imods  :: Vector{String}
+    # modified-peptide level (dedup by (base_pep_id, structural_mods, isotopic_mods))
+    mod_pos     :: Dict{Tuple{UInt32,String,String}, Int}
+    mod_key     :: Vector{Tuple{UInt32,String,String}}
+    mod_logsum  :: Vector{Float64}
+    mod_peak    :: Vector{Float32}
+    mod_seq     :: Vector{String}
+    mod_count   :: Vector{Int32}
+    # peptide level (dedup by sequence)
+    pep_pos     :: Dict{String, Int}
+    pep_seq     :: Vector{String}
+    pep_logsum  :: Vector{Float64}
+    pep_peak    :: Vector{Float32}
+    pep_count   :: Vector{Int32}
+end
+\end{lstlisting}
+
+\subsection*{Per-precursor accumulation (replaces :427--459)}
+\begin{lstlisting}
+_reset!(s)   # empty! the 3 Dicts and all arrays (capacity retained for reuse)
+@inbounds for i in eachindex(quant_mask)
+    quant_mask[i] || continue
+    pid       = UInt32(gdf.precursor_idx[i])
+    prob_val  = _sanitize_rollup_probability(gdf[!, prob_col][i])
+    peak_val  = Float32(gdf.peak_area[i])
+    pos = get(s.prec_pos, pid, 0)
+    if pos == 0                              # first time we see this precursor
+        push!(s.prec_id, pid)
+        push!(s.prec_prob, prob_val)
+        push!(s.prec_peak, peak_val)
+        push!(s.prec_basepep, UInt32(gdf.base_pep_id[i]))
+        push!(s.prec_seq, String(gdf.sequence[i]))
+        push!(s.prec_charge, hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0))
+        push!(s.prec_smods, _mods_or_empty(gdf, :structural_mods, i))
+        push!(s.prec_imods, _mods_or_empty(gdf, :isotopic_mods, i))
+        s.prec_pos[pid] = length(s.prec_id) # row index in the parallel arrays
+    else                                     # seen before: update aggregates only
+        s.prec_prob[pos] = max(s.prec_prob[pos], prob_val)
+        if peak_val > s.prec_peak[pos]; s.prec_peak[pos] = peak_val; end
+    end
+end
+# build precursor_rows by iterating 1:length(s.prec_id)  (first-seen order)
+\end{lstlisting}
+The modified-peptide and peptide levels follow the identical pattern (one dedup
+\texttt{Dict} + parallel arrays each). The returned
+\texttt{precursor\_rows / modified\_peptide\_rows / peptide\_rows} are still built
+(they are the output the callers consume) --- only the \emph{intermediate} 14 Dicts
+become 3 reused dedup Dicts + reused arrays.
+
+\subsection*{Caller change (allocate scratch once)}
+\begin{lstlisting}
+scratch = ProteinRollupScratch()                     # once, before the loop
+for gdf in groupby(df, [...])
+    quant_mask = _protein_rollup_quant_mask(gdf; ...)
+    rollup = _build_protein_rollup(gdf, quant_mask, prob_col, scratch)   # 4-arg
+end
+\end{lstlisting}
+A 3-arg method \texttt{\_build\_protein\_rollup(gdf, quant\_mask, prob\_col)} is kept
+(allocates a fresh scratch then calls the 4-arg form) so the existing signature and
+any tests keep working.
+
+\section{Allocation impact (expected)}
+Per group: \textbf{14 Dict allocations $\rightarrow$ 0} (3 dedup Dicts + 14 arrays
+all reused from the scratch). The only remaining per-group allocations are the
+returned output row vectors (necessary). Expected saving on YeastStandard3M:
+$\sim$0.3--0.5\,GB of the 0.6\,GB (to be confirmed by the
+\texttt{@alloc\_bucket}/\texttt{Profile.Allocs} re-run).
+
+\section{Correctness, rebaseline, and verification}\label{sec:verify}
+\begin{itemize}
+  \item \textbf{Aggregates unchanged:} \texttt{max}/\texttt{sum}/\texttt{count} per
+        precursor/peptide are identical regardless of iteration order; only the
+        \emph{order} in which rows are emitted changes (Dict-hash $\rightarrow$
+        first-seen).
+  \item \textbf{Deliberate rebaseline:} because \texttt{pg\_score} sums in row order,
+        the new first-seen order changes \texttt{pg\_score} in the last bits, so a
+        few borderline protein groups may cross the FDR threshold. This is a one-time
+        rebaseline (and removes the latent order-fragility for good --- the result
+        becomes a deterministic function of the input, not of Dict capacity).
+  \item \textbf{Verification:} fresh-process determinism (the new protein-group /
+        precursor counts must be \emph{reproducible} across runs); confirm the change
+        vs the current baseline is small ($\lesssim$1\,\%, like the iRT rebaseline)
+        --- a large change would signal a bug. Re-run \texttt{@alloc\_bucket} /
+        \texttt{Profile.Allocs} to confirm the allocation drop and no Protein Scoring
+        time regression. Existing ProteinScoringSearch unit tests must pass.
+\end{itemize}
+
+\section{Optional follow-on (not in this change)}
+The returned \texttt{*\_rows} \texttt{Vector\{NamedTuple\}} are still allocated per
+group. If the callers consumed the scratch parallel arrays directly, those could be
+avoided too --- but that touches the caller contract and is left out to keep this
+change focused.
+
+\end{document}

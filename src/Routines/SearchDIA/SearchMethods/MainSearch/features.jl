@@ -29,6 +29,19 @@ function add_psm_features!(psms::DataFrame,
                            search_context::SearchContext,
                            spectra::MassSpecData,
                            ms_file_idx::Integer)
+    # Function barrier: rt_to_irt is an abstract RtConversionModel (per-file
+    # polymorphic), so calling it inside the per-PSM closure dynamically dispatches
+    # and boxes the result every row. Resolve it once here, then run the body in a
+    # method specialized on the concrete model type.
+    rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
+    return _add_psm_features!(psms, search_context, spectra, ms_file_idx, rt_to_irt)
+end
+
+function _add_psm_features!(psms::DataFrame,
+                            search_context::SearchContext,
+                            spectra::MassSpecData,
+                            ms_file_idx::Integer,
+                            rt_to_irt::RtConversionModel)
     precursors_lib   = getPrecursors(getSpecLib(search_context))
     prec_is_decoy    = getIsDecoy(precursors_lib)
     prec_charge      = getCharge(precursors_lib)
@@ -39,7 +52,6 @@ function add_psm_features!(psms::DataFrame,
     prec_missed_clv  = getMissedCleavages(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
     masses           = getMzArrays(spectra)
-    rt_to_irt        = getRtIrtModel(search_context, ms_file_idx)
 
     N = nrow(psms)
 
@@ -600,7 +612,7 @@ function _ms1_lookup_scan_runs!(psms, spectra,
                                 competition_inputs)
     scan_idxs::Vector{UInt32} = psms[!, :scan_idx]
     precursor_idxs::Vector{UInt32} = psms[!, :precursor_idx]
-    log2_intensity_explained = psms[!, :log2_intensity_explained]
+    log2_intensity_explained::Vector{Float16} = psms[!, :log2_intensity_explained]
 
     ms1_m0_mass_err_ppm::Vector{Float32} = psms[!, :ms1_m0_mass_err_ppm]
     ms1_m0_intensity::Vector{Float32} = psms[!, :ms1_m0_intensity]
@@ -1037,13 +1049,19 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             irt_apex_w  = v_irt[ai_w]
             weight_apex_to_m0 = abs(irt_apex_w - irt_apex_m0)
 
-            # Scatter outputs back to original row indices
+            # Scatter outputs back to original row indices. Bind the columns to
+            # typed locals first — `psms.col` is type-unstable, so writing through
+            # it boxes a value per row.
+            out_wm0  = psms.ms1_corr_weight_m0::Vector{Float32}
+            out_m01  = psms.ms1_corr_m0_m1::Vector{Float32}
+            out_aoff = psms.ms1_apex_offset_irt::Vector{Float32}
+            out_w2m0 = psms.ms1_weight_apex_to_m0_apex_irt::Vector{Float32}
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
-                psms.ms1_corr_weight_m0[i_orig]             = c_wm0
-                psms.ms1_corr_m0_m1[i_orig]                 = c_m01
-                psms.ms1_apex_offset_irt[i_orig]            = abs(v_irt[k] - irt_apex_m0)
-                psms.ms1_weight_apex_to_m0_apex_irt[i_orig] = weight_apex_to_m0
+                out_wm0[i_orig]  = c_wm0
+                out_m01[i_orig]  = c_m01
+                out_aoff[i_orig] = abs(v_irt[k] - irt_apex_m0)
+                out_w2m0[i_orig] = weight_apex_to_m0
             end
         end
     end
@@ -1463,16 +1481,25 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 end
             end
 
-            # Scatter outputs to original row indices
+            # Scatter outputs to original row indices. Bind the columns to typed
+            # locals first — `psms.col` is type-unstable, so writing through it
+            # boxes a value per row.
+            out_disp   = psms.frag_apex_dispersion_irt::Vector{Float32}
+            out_ncorr  = psms.n_correlated_fragments::Vector{UInt8}
+            out_rank   = psms.n_correlated_fragments_bitvec_rank::Vector{UInt16}
+            out_str    = psms.frag_corr_strength::Vector{Float32}
+            out_effn   = psms.frag_corr_effective_n::Vector{Float32}
+            out_bestm0 = psms.frag_corr_best_m0::Vector{Float32}
+            out_dframe = psms.delta_frame_peak_center::Vector{Float32}
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
-                psms.frag_apex_dispersion_irt[i_orig] = apex_disp
-                psms.n_correlated_fragments[i_orig]    = n_corr_70
-                psms.n_correlated_fragments_bitvec_rank[i_orig] = corr_rank
-                psms.frag_corr_strength[i_orig]        = corr_strength
-                psms.frag_corr_effective_n[i_orig]     = corr_effective_n
-                psms.frag_corr_best_m0[i_orig]         = c_best_m0
-                psms.delta_frame_peak_center[i_orig]   = delta_frame
+                out_disp[i_orig]   = apex_disp
+                out_ncorr[i_orig]  = n_corr_70
+                out_rank[i_orig]   = corr_rank
+                out_str[i_orig]    = corr_strength
+                out_effn[i_orig]   = corr_effective_n
+                out_bestm0[i_orig] = c_best_m0
+                out_dframe[i_orig] = delta_frame
             end
         end
     end

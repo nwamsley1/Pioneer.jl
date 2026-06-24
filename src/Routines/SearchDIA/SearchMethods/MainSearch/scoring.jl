@@ -124,7 +124,10 @@ function train_psm_classifier_with_fallback(
     available_features = filter(f -> hasproperty(psms, f), features)
 
     # Build feature matrix
+    _diag_lgbm = haskey(ENV, "PIONEER_DIAG_LGBM")
+    _gb_mat = Base.gc_bytes()
     X_all = feature_matrix(psms, available_features)
+    _b_matrix = Base.gc_bytes() - _gb_mat
 
     # Two-fold cross-validation using existing cv_fold column
     cv_fold = psms[!, :cv_fold]
@@ -285,7 +288,12 @@ function train_psm_classifier_with_fallback(
 
     # Always run the default-HP LGBM (single source of truth for big datasets
     # and the safest fallback for small ones).
+    _gb_cv = Base.gc_bytes()
     lgbm_scores, lgbm_infold_scores, lgbm_predictors, last_classifier, lgbm_timings = _lgbm_cv()
+    if _diag_lgbm
+        @user_print "[LGBM ALLOC] feature_matrix=$(round(_b_matrix/1e9, digits=3)) GB  " *
+                    "cv(slices+fit_jl+predict)=$(round((Base.gc_bytes()-_gb_cv)/1e9, digits=3)) GB"
+    end
     @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s " *
                "fit=$(round(lgbm_timings.fit, digits=2))s " *
                "predict=$(round(lgbm_timings.predict, digits=2))s"
@@ -487,12 +495,16 @@ function train_lgbm_and_select_best(
     end
 
     # Select best scan per precursor by LightGBM score
+    _gb_best = Base.gc_bytes()
     psms = select_best_per_precursor!(
         psms,
         :lgbm_score;
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
     )
+    if haskey(ENV, "PIONEER_DIAG_LGBM")
+        @user_print "[LGBM ALLOC] select_best_per_precursor=$(round((Base.gc_bytes()-_gb_best)/1e9, digits=3)) GB"
+    end
 
     # Extract scores for best PSMs
     scores = psms[!, :lgbm_score]
