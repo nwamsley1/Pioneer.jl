@@ -411,7 +411,12 @@ function searchFragmentIndexPartitionMajorHinted(
     partition_to_scans = _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, n_scans)
 
     # ── 3. Per-thread buffers (reused via FragIndexScratch when supplied) ──
-    est_per_thread = max(n_scans * 200, 100_000)
+    # Per-thread initial guess: n_scans*200 estimates TOTAL emitted candidates,
+    # but each thread only handles a fraction, so divide by n_threads. The emit
+    # buffers grow in place (doubling) if a thread exceeds this, and FragIndexScratch
+    # is grow-only across files, so a low first-file guess self-corrects to the
+    # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
+    est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
     int_buf_size = max_peaks > 0 ?
         maximum(si -> length(getMzArray(spectra, all_scan_idxs[si])),
