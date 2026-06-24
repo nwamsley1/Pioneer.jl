@@ -81,14 +81,14 @@ Accumulates bitmask pattern counts (target/decoy × 256 bins) directly in the
 fragment index scoring loop. One pair of vectors per thread to avoid contention.
 Created once, reused across files — no per-scan allocation.
 """
-struct PatternAccumulator
+struct PatternAccumulator{D<:AbstractVector{Bool}}
     thread_tc::Vector{Vector{Int}}  # thread_tc[tid][score+1]
     thread_dc::Vector{Vector{Int}}
-    is_decoy::AbstractVector{Bool}  # indexed by global precursor_idx
+    is_decoy::D                     # indexed by global precursor_idx (concrete: avoids boxing in accumulate!)
     min_score::UInt8
 
     function PatternAccumulator(n_threads::Int, is_decoy::AbstractVector{Bool}; min_score::UInt8 = UInt8(2))
-        new(
+        new{typeof(is_decoy)}(
             [zeros(Int, 256) for _ in 1:n_threads],
             [zeros(Int, 256) for _ in 1:n_threads],
             is_decoy, min_score)

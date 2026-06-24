@@ -144,7 +144,10 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     scan_idx::UInt32
 end
 function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
-    scored_psms = append!(scored_psms, Vector{MainSearchScoredPSM{H,L}}(undef, block_size))
+    # Grow in place (geometric buffer growth) without allocating a throwaway
+    # `Vector(undef, block_size)` temp each call. New elements are undef, same
+    # as the previous append! — they get overwritten by subsequent scores.
+    resize!(scored_psms, length(scored_psms) + block_size)
 end
 function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 unscored_PSMs::Vector{MainUnscoredPSM{H}},
@@ -289,7 +292,7 @@ struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 end
 
 function growScoredPSMs!(scored_psms::Vector{TuningScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
-    scored_psms = append!(scored_psms, Vector{TuningScoredPSM{H,L}}(undef, block_size))
+    resize!(scored_psms, length(scored_psms) + block_size)
 end
 
 function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},

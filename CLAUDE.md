@@ -60,6 +60,36 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Julia Performance & Memory Discipline
+
+**Pioneer is performance- and allocation-critical (per-scan/per-precursor hot loops, threaded deconvolution). When editing Pioneer code, follow Julia's official guidance:**
+- Performance Tips: https://docs.julialang.org/en/v1/manual/performance-tips/
+- Memory Management: https://docs.julialang.org/en/v1/manual/memory-management/
+
+Apply these *especially in hot paths* (anything inside per-scan, per-precursor, or per-fragment loops). Outside hot paths, prefer clarity (§2) — don't micro-optimize where the profiler doesn't point.
+
+**Type stability**
+- Functions should return a single concrete type; avoid code where a variable's type changes. Verify hot functions with `@code_warntype` (no red `Any`/`Union`).
+- Use function barriers to isolate unavoidable instability (e.g. reading untyped data) from the hot kernel.
+
+**Concrete types**
+- No abstract field types in structs and no abstract element types in containers (`Vector{AbstractFoo}` dispatches dynamically and boxes). Use concrete or parametric types.
+- Module-level globals used in hot code must be `const` (or a `Ref`/typed constant).
+
+**Allocation (the usual win here)**
+- Don't allocate in hot loops. Pre-allocate buffers/workspaces once and reuse them (per-thread where threaded); prefer in-place `!` functions.
+- Use `@view`/`view(...)` instead of array slices (`a[1:n]` copies).
+- Small fixed-size collections (≤ ~16) → `NTuple` or `StaticArrays.MVector` (stack, alloc-free), not heap `Vector`. Mark the producing function `@inline` so non-escaping stack scratch elides.
+- Know stack vs heap: `isbits`/immutable values are stack-allocated and allocation-free; mutable/heap types allocate and add GC pressure.
+
+**Measure, don't guess**
+- Use `@time`/`@allocated`/`@btime`. Distinguish *cumulative* allocation (`@allocated`, `@timed.bytes` — process-global, sums across threads) from *peak working set* (RSS): a large cumulative number against a small RSS means avoidable churn, not a large footprint.
+- `@allocated` on a standalone call is pessimistic (forces a non-inlined boundary); measure the realistic call pattern (e.g. amortized over a loop) before concluding a function still allocates.
+- Profile first; optimize where the data points. State the before/after allocation or timing number when claiming a perf win.
+
+**Safety**
+- Only add `@inbounds`/`@simd` when bounds are provably safe, and verify results are bit-identical to the unoptimized version.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

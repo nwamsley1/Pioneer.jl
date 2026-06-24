@@ -987,6 +987,16 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
         groups
     n_prec = length(starts)
 
+    # Per-thread scratch reused across precursors (matches the fragment path):
+    # avoids 4 fresh Vector allocations per precursor (millions of small allocs).
+    # maxthreadid() (not nthreads()) because threadid() can exceed the default
+    # pool size; safe under :static where threadid() is stable within the body.
+    nthr = Threads.maxthreadid()
+    vm0_scratch  = [Float32[] for _ in 1:nthr]
+    vm1_scratch  = [Float32[] for _ in 1:nthr]
+    vw_scratch   = [Float32[] for _ in 1:nthr]
+    virt_scratch = [Float32[] for _ in 1:nthr]
+
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
@@ -994,11 +1004,13 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             npts    = i_end - i_start + 1
             npts < 2 && continue
 
-            # Extract per-precursor chromatograms (m0, m1, weight, iRT)
-            v_m0  = Vector{Float32}(undef, npts)
-            v_m1  = Vector{Float32}(undef, npts)
-            v_w   = Vector{Float32}(undef, npts)
-            v_irt = Vector{Float32}(undef, npts)
+            # Extract per-precursor chromatograms (m0, m1, weight, iRT) into
+            # reused per-thread scratch.
+            tid = Threads.threadid()
+            v_m0  = vm0_scratch[tid];  resize!(v_m0, npts)
+            v_m1  = vm1_scratch[tid];  resize!(v_m1, npts)
+            v_w   = vw_scratch[tid];   resize!(v_w, npts)
+            v_irt = virt_scratch[tid]; resize!(v_irt, npts)
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 v_m0[k]  = m0[i_orig]
@@ -1322,10 +1334,25 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     n_prec = length(starts)
     rank_weights = _fragment_rank_weights(8)
 
+    # Per-thread reusable scratch (resized per precursor) so the per-precursor
+    # chromatogram extraction below does not allocate ~10 small vectors on every
+    # iteration. Safe under :static scheduling: threadid() is stable within an
+    # iteration and no two concurrent iterations share a thread. Size by
+    # maxthreadid() (not nthreads()) because threadid() can exceed the default
+    # pool size when an interactive threadpool is present.
+    nthr = Threads.maxthreadid()
+    F_scratch    = [[Float32[] for _ in 1:8] for _ in 1:nthr]
+    W_scratch    = [Float32[] for _ in 1:nthr]
+    IRT_scratch  = [Float32[] for _ in 1:nthr]
+    cfw_scratch  = [Vector{Float32}(undef, 8) for _ in 1:nthr]
+    vm0_scratch  = [Float32[] for _ in 1:nthr]
+    apex_scratch = [Float32[] for _ in 1:nthr]
+
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the output columns; all input arrays are read-only.
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
+            tid = Threads.threadid()
             i_start = Int(starts[p])
             i_end   = Int(ends[p])
             npts    = i_end - i_start + 1
@@ -1339,17 +1366,19 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             end
             npts < 2 && continue
 
-            # Extract chromatograms for the 8 fragments + weight + iRT
-            F = Vector{Vector{Float32}}(undef, 8)
+            # Extract chromatograms for the 8 fragments + weight + iRT into
+            # per-thread scratch (resized to this precursor's npts, fully
+            # overwritten below — no stale data is read).
+            F = F_scratch[tid]
             for r in 1:8
-                v = Vector{Float32}(undef, npts)
+                v = F[r]
+                resize!(v, npts)
                 for k in 1:npts
                     v[k] = Float32(f[r][perm[i_start + k - 1]])
                 end
-                F[r] = v
             end
-            W   = Vector{Float32}(undef, npts)
-            IRT = Vector{Float32}(undef, npts)
+            W   = W_scratch[tid];   resize!(W, npts)
+            IRT = IRT_scratch[tid]; resize!(IRT, npts)
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 W[k]   = Float32(weight[i_orig])
@@ -1359,7 +1388,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             has_signal = ntuple(r -> maximum(F[r]) > 0, 8)
 
             # Apex dispersion across fragments with signal (also feeds delta_frame).
-            apex_irts = Float32[]
+            apex_irts = apex_scratch[tid]; empty!(apex_irts)
             for r in 1:8
                 has_signal[r] || continue
                 ai = 1; vmax = F[r][1]
@@ -1389,7 +1418,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             # 2026-05-15: replaced n_correlated_fragments_90 (>0.9) — 0.7 threshold
             # was ~11× more informative in ScoringSearch Pass-1 LGBM gain on
             # 23-file Olsen.
-            c_fw = Vector{Float32}(undef, 8)
+            c_fw = cfw_scratch[tid]   # length 8, fully overwritten below
             for r in 1:8
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
             end
@@ -1425,7 +1454,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             end
             c_best_m0 = 0f0
             if best_r > 0 && has_m0
-                v_m0 = Vector{Float32}(undef, npts)
+                v_m0 = vm0_scratch[tid]; resize!(v_m0, npts)
                 for k in 1:npts
                     v_m0[k] = Float32(m0_int[perm[i_start + k - 1]])
                 end

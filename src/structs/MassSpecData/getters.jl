@@ -13,8 +13,8 @@
 Singular getters (per-scan access)
 ==========================================================#
 
-getMzArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMzArrays(ms_data)[scan_idx]
-getIntensityArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getIntensityArrays(ms_data)[scan_idx]
+getMzArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMzArrays(ms_data)[scan_idx]::SubArray{Union{Missing,T},1,Arrow.Primitive{Union{Missing,T},Vector{T}},Tuple{UnitRange{Int64}},true}
+getIntensityArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getIntensityArrays(ms_data)[scan_idx]::SubArray{Union{Missing,T},1,Arrow.Primitive{Union{Missing,T},Vector{T}},Tuple{UnitRange{Int64}},true}
 getRetentionTime(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getRetentionTimes(ms_data)[scan_idx]
 getLowMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getLowMzs(ms_data)[scan_idx]
 getHighMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getHighMzs(ms_data)[scan_idx]
