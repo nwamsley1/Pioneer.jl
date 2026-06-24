@@ -1,9 +1,6 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath}
-\usepackage{booktabs}
-\usepackage{longtable}
-\usepackage{array}
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{hyperref}
@@ -11,6 +8,9 @@
 \definecolor{codebg}{rgb}{0.96,0.96,0.96}
 \lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{codebg},breaklines=true,frame=single,columns=fullflexible}
 \newcommand{\code}[1]{\texttt{#1}}
+% One feature block: name (typewriter, own line) + type on the right, description follows below.
+\newcommand{\feat}[2]{\par\medskip\noindent\rule{\linewidth}{0.2pt}\par\nopagebreak
+  \noindent{\ttfamily\bfseries #1}\hfill{\footnotesize\textsf{[#2]}}\par\nopagebreak\noindent\ignorespaces}
 
 \title{Pioneer.jl Flanking-Window Features}
 \author{Feature reference}
@@ -21,177 +21,178 @@
 
 \section{Motivation: wide-isolation-window DIA}
 In data-independent acquisition with \emph{wide} quadrupole isolation windows, a single
-MS2 window co-isolates many precursors. A confident identification therefore needs evidence
-that the precursor's signal is real and not bleed-through from a co-isolated neighbor or
-chromatographic interference.
-
-The \textbf{flanking-window features} provide this evidence by contrasting two regions of the
-\emph{same} isolation window:
+MS2 window co-isolates many precursors, so a confident identification needs evidence that the
+signal is real and not bleed-through from a co-isolated neighbor or chromatographic
+interference. The \textbf{flanking-window features} provide this by contrasting two regions of
+the \emph{same} isolation window:
 \begin{itemize}
-  \item the \textbf{core}: the contiguous run of MS2 cycles, centered on the precursor's
-        apex scan, where the precursor passes the search threshold;
+  \item the \textbf{core}: the contiguous run of MS2 cycles, centered on the precursor's apex
+        scan, where the precursor passes the search threshold (it is PSM-backed by
+        construction --- one MS2 scan per cycle per window);
   \item the \textbf{flank}: scans of the same isolation window in the cycles immediately
-        \emph{flanking} the core (just outside the core's scan range).
+        \emph{flanking} the core, where the precursor has \emph{no} passing PSM.
 \end{itemize}
-A genuine precursor has its MS1 and fragment signal concentrated in the core, with fragments
-that co-elute; interference tends to smear signal into the flank or to show fragments that do
-not track the precursor. The features quantify the core-vs-flank contrast and the
-flanking-scan co-elution structure.
+A genuine precursor concentrates MS1 and fragment signal in the core with co-eluting
+fragments; interference smears into the flank or shows fragments that do not track the
+precursor.
 
 \section{Where they are computed (two pipeline stages)}
 \begin{enumerate}
   \item \textbf{MainSearch} (\code{SearchMethods/MainSearch/scoring.jl}) --- after
-        best-per-precursor selection, \code{\_mainsearch\_flanking\_core\_bounds!} (\code{:811})
-        determines the \emph{core} window and the per-precursor loop (\code{:1045--1093})
-        writes the intermediate ``core'' columns into the best-PSM table, which are persisted
-        in the fold Arrow files:
+        best-per-precursor selection, \code{\_mainsearch\_flanking\_core\_bounds!}
+        (\code{:811}) finds the core window, and the per-precursor loop (\code{:1045--1097})
+        writes the intermediate ``core'' columns into the fold Arrow files:
         \code{flanking\_core\_scan\_min}, \code{flanking\_core\_scan\_max},
         \code{n\_contiguous\_scans}, \code{flanking\_core\_ms1\_m0\_signal},
-        \code{flanking\_core\_frag\_signal}.
-  \item \textbf{PrecursorScoringSearch} (\code{PrecursorScoringSearch.jl:199} calls
-        \code{add\_wide\_window\_features\_to\_fold\_files!}, which calls
-        \code{add\_wide\_window\_features\_to\_fold\_file!} once per fold file per MS run, in
-        \code{wide\_window\_features.jl}). It reads the core columns, gathers the flanking
-        scans, extracts MS1 + fragment intensities from the raw spectra, computes the 11
-        flanking feature values in \code{\_wide\_flank\_feature\_values} (\code{:58}), and
-        writes them back to the fold Arrow file. The two \code{*\_signal} core columns are
-        intermediate and dropped afterward (\code{:893}).
+        \code{flanking\_core\_frag\_signal}, plus the smoothed apex columns
+        \code{frag1..8\_smoothed\_intensity}.
+  \item \textbf{PrecursorScoringSearch} (\code{PrecursorScoringSearch.jl:199} $\to$
+        \code{add\_wide\_window\_features\_to\_fold\_file!} in \code{wide\_window\_features.jl})
+        --- reads the core columns, gathers the flank scans, extracts MS1 + fragment
+        intensities from the raw spectra, computes the 11 flank feature values in
+        \code{\_wide\_flank\_feature\_values} (\code{:58}), and writes them back. The two
+        \code{*\_signal} core columns are intermediate and dropped afterward (\code{:893}).
 \end{enumerate}
-The final feature set (the canonical list \code{FLANKING\_WINDOW\_FEATURES},
-\code{model\_config.jl:49}) is then consumed by the second-pass LightGBM in ScoringSearch.
+The final list \code{FLANKING\_WINDOW\_FEATURES} (\code{model\_config.jl:49}) feeds the
+second-pass ScoringSearch LightGBM.
 
-\section{Defining the core (MainSearch)}
-\code{\_mainsearch\_flanking\_core\_bounds!} takes the rows of one precursor group (all scans
-where the precursor was scored), sorts them by \code{(cycle\_idx, scan\_idx)}, locates the
-\emph{best} (selected/apex) scan, and walks outward while each neighbor (a) passes the mask
-and (b) is in the immediately adjacent cycle ($\pm 1$):
+\section{Defining the core, and what is raw vs smoothed (MainSearch)}
+\code{\_mainsearch\_flanking\_core\_bounds!} sorts a precursor's scored rows by
+\code{(cycle, scan)}, finds the apex (selected) scan, and walks outward while each neighbor
+both passes and is in the immediately adjacent cycle ($\pm 1$):
 \begin{lstlisting}
-# walk left while passing & cycle is exactly one less
-while lo>1 && pass_mask[prev] && cycle[prev]==cycle[cur]-1; lo-=1; end
-# walk right while passing & cycle is exactly one greater
-while hi<len && pass_mask[next] && cycle[next]==cycle[cur]+1; hi+=1; end
+while lo>1 && pass_mask[prev] && cycle[prev]==cycle[cur]-1; lo-=1; end   # left
+while hi<len && pass_mask[next] && cycle[next]==cycle[cur]+1; hi+=1; end # right
 \end{lstlisting}
-It returns \code{scan\_min}/\code{scan\_max} (the core scan range), \code{n\_scans}
-($=$\code{n\_contiguous\_scans}), and the boundary rows. The core MS1 and fragment
-\emph{signals} are then summed over rows whose \code{scan\_idx} lies in
-$[\text{scan\_min},\text{scan\_max}]$ (\code{scoring.jl:1086--1093}):
+It returns the core scan range \code{scan\_min}/\code{scan\_max}, \code{n\_contiguous\_scans},
+and the apex/left/right boundary rows.
+
+\paragraph{Core \emph{signals} are summed from RAW intensities.} Over the core scans
+(\code{scoring.jl:1082--1093}):
 \[
 \text{core\_ms1\_m0\_signal} = \!\!\sum_{\text{core scans}}\!\! \text{ms1\_m0}, \qquad
-\text{core\_frag\_signal} = \!\!\sum_{\text{core scans}}\!\! \big(\textstyle\sum_{r=1}^{8}\text{frag}_r^{\text{smoothed}}\big).
+\text{core\_frag\_signal} = \!\!\sum_{\text{core scans}}\ \sum_{r=1}^{8} \text{frag}_r^{\text{raw}} .
 \]
-The 8 core fragment intensities are the smoothed fragment-chromatogram apex values
-\code{frag1..8\_smoothed\_intensity} (\code{SMOOTHED\_FRAGMENT\_INTENSITY\_COLUMNS}).
+Here $\text{frag}_r^{\text{raw}}$ are the matched per-scan intensities
+(\code{MAINSEARCH\_FRAGMENT\_INTENSITY\_COLUMNS}); \textbf{no smoothing is applied to the sum.}
+
+\paragraph{The smoothed values are a separate, per-fragment APEX height.}
+\code{\_mainsearch\_radius1\_smooth\_fragments!} (\code{:917}) computes, for each of the 8
+fragments, a radius-1 weighted average over the apex scan and its two adjacent core scans:
+\[
+\text{frag}_r^{\text{smoothed}} \;=\; \frac{2\,a_r + l_r + r_r}{\text{denom}},
+\]
+where $a_r,l_r,r_r$ are the raw apex/left/right intensities and \code{denom} counts the
+present neighbors. This is \emph{not} summed --- it is a denoised \emph{peak height}. A
+single-scan raw apex is spiky; the 3-point weighted average is a stabler estimate of the true
+peak. These \code{frag*\_smoothed\_intensity} values are used (i) directly as LightGBM
+features and (ii) as the core apex in the flanking \code{frag\_apex\_gt2x} feature below.
+\emph{So smoothing benefits the apex/peak-height comparison, not the sum.}
 
 \section{Gathering the flank and extracting signal (PrecursorScoringSearch)}
 \begin{itemize}
   \item \code{\_wide\_window\_index\_spectra} (\code{:286}) indexes every MS2 scan by its
-        isolation window key \code{(center\_mz, isolation\_width)}, giving the set of scans
-        belonging to the same wide window across all cycles.
-  \item \code{\_wide\_group\_flank\_window\_scans\_from\_core!} (\code{:420}) collects, for the
-        precursor group, the same-window scans in cycles flanking the core (outside
+        isolation window key \code{(center\_mz, isolation\_width)} --- one scan per cycle.
+  \item \code{\_wide\_group\_flank\_window\_scans\_from\_core!} (\code{:420}) collects the
+        same-window scans in cycles flanking the core (outside
         $[\text{scan\_min},\text{scan\_max}]$, within \code{WIDE\_WINDOW\_CYCLE\_MARGIN}$=3$
-        cycles). If there are no flank scans, all features take their zero/default values
-        (\code{\_wide\_window\_zero\_feature\_values}).
-  \item \code{\_wide\_top\_fragment\_idxs} + \code{\_wide\_group\_fragment\_windows} pick the
-        precursor's top-8 library fragments and their m/z tolerance windows.
-  \item Scan-centric extraction (\code{\_wide\_fill\_scan\_centric\_ms1\_m0!},
-        \code{\_wide\_fill\_scan\_centric\_fragments!}, batched at
-        \code{FLANKING\_SCAN\_CENTRIC\_BATCH\_SIZE}$=50000$ groups via
-        \code{\_wide\_flush\_scan\_centric\_group\_batch!}) reads each flank scan once and
-        fills \code{flank\_ms1\_m0} (length $=$ \#flank scans) and \code{flank\_fragments}
-        (\#flank scans $\times$ 8).
+        cycles). No flank scans $\Rightarrow$ zero/default feature values.
+  \item \code{\_wide\_top\_fragment\_idxs} / \code{\_wide\_group\_fragment\_windows} pick the
+        top-8 library fragments and m/z windows; scan-centric extraction
+        (\code{\_wide\_fill\_scan\_centric\_\{ms1\_m0,fragments\}!}, batched at $50000$ groups)
+        fills the \emph{raw} flank vectors \code{flank\_ms1\_m0} and \code{flank\_fragments}
+        ($\#\text{flank scans}\times 8$).
 \end{itemize}
 
-\section{The feature computations (\code{\_wide\_flank\_feature\_values}, line 58)}
-Let the inputs be: core scalars $c_{m0}$ (\code{core\_ms1\_m0\_signal}) and $c_f$
-(\code{core\_frag\_signal}); the 8 core apex fragment intensities $a_r$
-(\code{core\_fragments}); the flank MS1 vector $\mathbf{m}$ (\code{flank\_ms1\_m0}, one value
-per flank scan); and the flank fragment matrix $F$ (\code{flank\_fragments}, scan $\times$
-fragment). All intensities are floored at $0$. Define $s_j=\sum_{r} F_{j,r}$ (summed fragment
-signal in flank scan $j$), and let $\rho(\cdot,\cdot)$ be Pearson correlation
-(\code{\_wide\_window\_pcor}, returns $0$ for $<2$ points or zero variance).
+\section{The features (\code{\_wide\_flank\_feature\_values}, line 58)}
+Let $c_{m0},c_f$ be the core MS1-m0 / fragment signals (raw sums); $a_r$ the smoothed core
+apex of fragment $r$; $\mathbf{m}$ the raw flank MS1-m0 vector (one per flank scan); $F$ the
+raw flank fragment matrix (scan $\times$ fragment). Floor all intensities at $0$; let
+$s_j=\sum_r F_{j,r}$, and $\rho(\cdot,\cdot)$ be Pearson correlation
+(\code{\_wide\_window\_pcor}; $0$ for $<2$ points or zero variance).
 
-\renewcommand{\arraystretch}{1.35}
-\begin{longtable}{>{\raggedright}p{4.4cm} c >{\raggedright\arraybackslash}p{8.2cm}}
-\toprule
-\textbf{Feature} & \textbf{Type} & \textbf{Definition \& intuition} \\
-\midrule
-\endhead
-\code{flanking\_ms1\_m0\_candidate\_fraction} & Float32 &
+\feat{flanking\_ms1\_m0\_candidate\_fraction}{Float32}
 $\dfrac{c_{m0}}{c_{m0}+\sum_j \mathbf{m}_j}$ --- fraction of the precursor's MS1 monoisotopic
-(m0) signal that sits in the core vs.\ spread into flank scans. $\to 1$ for a clean precursor. \\
-\code{flanking\_frag\_candidate\_fraction} & Float32 &
-$\dfrac{c_f}{c_f+\sum_j s_j}$ --- same core-vs-flank fraction for summed fragment signal. \\
-\code{flanking\_ms1\_frag\_sum\_corr} & Float32 &
-$\rho(\mathbf{m},\,\mathbf{s})$ over flank scans --- do the MS1 precursor and the fragment sum
-co-vary across the flank? (co-elution sanity check off-apex). \\
-\code{flanking\_frag\_corr\_mean} & Float32 &
-mean of all pairwise $\rho(F_{:,a},F_{:,b})$ over flank scans, among fragments that have signal
---- average fragment-fragment co-elution in the flank. \\
-\code{flanking\_n\_correlated\_fragments} & UInt8 &
-count of fragments whose leave-one-out correlation $\rho\!\big(F_{:,r},\,\mathbf{s}-F_{:,r}\big)
-> 0.7$ (\code{WIDE\_WINDOW\_CORR\_THRESHOLD}) --- how many fragments track the rest. \\
-\code{flanking\_n\_correlated\_fragments\_bitvec\_rank} & UInt16 &
-\code{\_bitvec\_pattern\_rank} of the 8-bit mask of \emph{which} fragments exceeded $0.7$ ---
-a learned categorical encoding of the correlated-fragment \emph{pattern} (not just the count). \\
-\code{flanking\_frag\_corr\_strength} & Float32 &
-$\sum_r \max(\min(\rho_r,1),0)$ where $\rho_r$ is the leave-one-out correlation --- continuous
-total correlation strength across the 8 fragments. \\
-\code{flanking\_frag\_corr\_effective\_n} & Float32 &
-$\dfrac{(\sum_r \rho_r^{+})^2}{\sum_r (\rho_r^{+})^2}$ (participation ratio of the positive
-leave-one-out corrs) --- effective number of co-eluting fragments. \\
-\code{flanking\_frag\_corr\_best\_m0} & Float32 &
-$\rho(F_{:,b^\*},\,\mathbf{m})$ where $b^\*$ is the fragment with the highest mean pairwise
-correlation (the ``anchor'') --- does the best fragment track the MS1 precursor across the
-flank? \\
-\code{flanking\_signal\_support} & Float32 &
-$\dfrac{\#\{j: \mathbf{m}_j>0 \text{ or } s_j>0\}}{\#\text{flank scans}}$ --- fraction of flank
-scans carrying any signal. \\
-\code{frag\_apex\_gt2x\_flank\_bitvec\_rank} & UInt16 &
-\code{\_bitvec\_pattern\_rank} of the 8-bit mask of fragments whose \emph{core apex}
-$a_r \ge 2\times$ their flank average $\bar F_{:,r}$ --- which fragments genuinely peak at the
-apex rather than being flat/interference. \\
-\midrule
-\code{n\_contiguous\_scans} & UInt16 &
-(from the core bounds, not \code{\_wide\_flank\_feature\_values}) the number of contiguous
-cycles in the core run --- how many cycles the precursor persisted. \\
-\bottomrule
-\end{longtable}
+(m0) signal sitting in the core vs.\ spread into flank scans. $\to 1$ for a clean precursor.
 
-\noindent The 11 values returned by \code{\_wide\_flank\_feature\_values} plus
-\code{n\_contiguous\_scans} make up the 12-entry \code{FLANKING\_WINDOW\_FEATURES} list.
+\feat{flanking\_frag\_candidate\_fraction}{Float32}
+$\dfrac{c_f}{c_f+\sum_j s_j}$ --- the same core-vs-flank fraction for summed fragment signal.
+
+\feat{flanking\_ms1\_frag\_sum\_corr}{Float32}
+$\rho(\mathbf{m},\mathbf{s})$ across flank scans --- do the MS1 precursor and the fragment sum
+co-vary off-apex? (co-elution sanity check in the flank).
+
+\feat{flanking\_frag\_corr\_mean}{Float32}
+mean of all pairwise $\rho(F_{:,a},F_{:,b})$ over flank scans, among fragments with signal ---
+average fragment-fragment co-elution in the flank.
+
+\feat{flanking\_n\_correlated\_fragments}{UInt8}
+count of fragments whose leave-one-out correlation
+$\rho\!\big(F_{:,r},\,\mathbf{s}-F_{:,r}\big) > 0.7$ (\code{WIDE\_WINDOW\_CORR\_THRESHOLD}) ---
+how many fragments track the rest.
+
+\feat{flanking\_n\_correlated\_fragments\_bitvec\_rank}{UInt16}
+\code{\_bitvec\_pattern\_rank} of the 8-bit mask of \emph{which} fragments exceeded $0.7$ ---
+a learned categorical encoding of the correlated-fragment \emph{pattern}, not just the count.
+
+\feat{flanking\_frag\_corr\_strength}{Float32}
+$\sum_r \max(\min(\rho_r,1),0)$ over the leave-one-out correlations $\rho_r$ --- continuous
+total correlation strength across the 8 fragments.
+
+\feat{flanking\_frag\_corr\_effective\_n}{Float32}
+$\dfrac{\big(\sum_r \rho_r^{+}\big)^2}{\sum_r (\rho_r^{+})^2}$ (participation ratio of the
+positive leave-one-out correlations) --- the effective number of co-eluting fragments.
+
+\feat{flanking\_frag\_corr\_best\_m0}{Float32}
+$\rho(F_{:,b^\*},\mathbf{m})$ where $b^\*$ is the fragment with the highest mean pairwise
+correlation (the ``anchor'') --- does the best fragment track the MS1 precursor across the flank?
+
+\feat{flanking\_signal\_support}{Float32}
+$\dfrac{\#\{j:\mathbf{m}_j>0 \text{ or } s_j>0\}}{\#\text{flank scans}}$ --- fraction of flank
+scans carrying any signal.
+
+\feat{frag\_apex\_gt2x\_flank\_bitvec\_rank}{UInt16}
+\code{\_bitvec\_pattern\_rank} of the 8-bit mask of fragments whose smoothed \emph{core apex}
+$a_r \ge 2\times$ their flank average $\bar F_{:,r}$ --- which fragments genuinely peak at the
+apex rather than being flat/interference. (This is the one feature that uses the smoothed apex.)
+
+\feat{n\_contiguous\_scans}{UInt16}
+(from the core bounds, not \code{\_wide\_flank\_feature\_values}) the number of contiguous
+cycles in the core run --- how many cycles the precursor persisted.
+
+\medskip
+\noindent The 11 values from \code{\_wide\_flank\_feature\_values} plus
+\code{n\_contiguous\_scans} make up the 12-entry \code{FLANKING\_WINDOW\_FEATURES}.
 
 \section{Helper functions}
-\begin{longtable}{>{\raggedright}p{6.3cm} >{\raggedright\arraybackslash}p{8.5cm}}
-\toprule
-\textbf{Function (\code{wide\_window\_features.jl} / \code{scoring.jl})} & \textbf{Role} \\
-\midrule
-\endhead
-\code{\_mainsearch\_flanking\_core\_bounds!} (scoring.jl:811) & Find the contiguous-cycle core
-window around the apex; return scan\_min/max, n\_scans, boundary rows. \\
-\code{\_wide\_window\_pcor} (:5) & Single-pass Float32 Pearson correlation; $0$ if $<2$ points
-or zero variance. \\
-\code{\_wide\_candidate\_signal\_fraction} (:32) & $\text{core}/(\text{core}+\text{flank})$,
-guarding divide-by-zero. \\
-\code{\_wide\_window\_zero\_feature\_values} (:37) & Default feature tuple when there are no
-flank scans (fractions still computed from the core signal). \\
-\code{\_wide\_flank\_feature\_values} (:58) & Compute the 11 flank features from core +
-flank arrays. \\
-\code{\_wide\_window\_index\_spectra} (:286) & Index scans by isolation window
-\code{(center\_mz, isolation\_width)}. \\
-\code{\_wide\_group\_flank\_window\_scans\_from\_core!} (:420) & Collect same-window scans in
-cycles flanking the core (margin = 3 cycles). \\
-\code{\_wide\_top\_fragment\_idxs} / \code{\_wide\_group\_fragment\_windows} (:453/:511) &
-Select the top-8 library fragments and their m/z extraction windows. \\
-\code{\_wide\_fill\_scan\_centric\_ms1\_m0!} / \code{\_wide\_fill\_scan\_centric\_fragments!}
-(:578/:601) & Read raw-spectra MS1 m0 and fragment intensities at each flank scan (scan-centric,
-batched). \\
-\code{\_wide\_scatter\_features!} (:706) & Write the computed feature tuple to every row of the
-precursor group. \\
-\code{\_bitvec\_pattern\_rank} & Map an 8-bit fragment pattern mask to a learned rank
-(file-specific table, \code{getBitVecExcessRanks}). \\
-\bottomrule
-\end{longtable}
+\feat{\_mainsearch\_flanking\_core\_bounds! (scoring.jl:811)}{MainSearch}
+Find the contiguous-cycle core window around the apex; return scan\_min/max, n\_scans, and the
+apex/left/right boundary rows.
+
+\feat{\_mainsearch\_radius1\_smooth\_fragments! (scoring.jl:917)}{MainSearch}
+Radius-1 weighted apex smoothing $(2a+l+r)/\text{denom}$ producing
+\code{frag*\_smoothed\_intensity}.
+
+\feat{\_wide\_window\_pcor (:5)}{wide\_window\_features.jl}
+Single-pass Float32 Pearson correlation; $0$ if $<2$ points or zero variance.
+
+\feat{\_wide\_candidate\_signal\_fraction (:32)}{wide\_window\_features.jl}
+$\text{core}/(\text{core}+\text{flank})$, guarding divide-by-zero.
+
+\feat{\_wide\_flank\_feature\_values (:58)}{wide\_window\_features.jl}
+Compute the 11 flank features from the core scalars/apex and the raw flank arrays.
+
+\feat{\_wide\_window\_index\_spectra (:286)}{wide\_window\_features.jl}
+Index scans by isolation window \code{(center\_mz, isolation\_width)}.
+
+\feat{\_wide\_group\_flank\_window\_scans\_from\_core! (:420)}{wide\_window\_features.jl}
+Collect same-window scans in cycles flanking the core (margin $=3$ cycles).
+
+\feat{\_wide\_fill\_scan\_centric\_\{ms1\_m0,fragments\}! (:578/:601)}{wide\_window\_features.jl}
+Read raw-spectra MS1 m0 and fragment intensities at each flank scan (scan-centric, batched).
+
+\feat{\_bitvec\_pattern\_rank}{shared}
+Map an 8-bit fragment pattern mask to a learned rank (file-specific table).
 
 \section{Constants}
 \code{WIDE\_WINDOW\_CYCLE\_MARGIN}$=3$ (flank reaches up to 3 cycles either side);
@@ -199,7 +200,8 @@ precursor group. \\
 \code{FLANKING\_SCAN\_CENTRIC\_BATCH\_SIZE}$=50000$ (groups per scan-extraction batch).
 
 \section{Consumption}
-The features are appended to the per-fold second-pass PSM Arrow files and become inputs to the
-ScoringSearch second-pass LightGBM (via \code{FLANKING\_WINDOW\_FEATURES}). They are most
-informative on wide-window instruments (e.g.\ Sciex SWATH), where co-isolation is heaviest.
+The features are appended to the per-fold second-pass PSM Arrow files and feed the ScoringSearch
+second-pass LightGBM (\code{FLANKING\_WINDOW\_FEATURES}). They are most informative on
+wide-window instruments (e.g.\ Sciex SWATH), where co-isolation is heaviest, and near-constant
+on narrow-window data.
 \end{document}
