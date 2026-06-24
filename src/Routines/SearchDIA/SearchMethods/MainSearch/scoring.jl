@@ -808,6 +808,11 @@ function _trace_aligned_corr_sorted(
     return denom > 0f0 ? Float32(sum_cross / denom) : 0f0
 end
 
+# Max number of consecutive missing/non-passing cycles bridged when growing the
+# contiguous-PSM core around the apex. 0 = strict contiguity (original behavior);
+# 1 = allow a single-cycle dropout.
+const MAINSEARCH_CORE_MAX_GAP = UInt32(1)
+
 function _mainsearch_flanking_core_bounds!(
     order::Vector{Int},
     group_rows::Vector{Int},
@@ -858,22 +863,35 @@ function _mainsearch_flanking_core_bounds!(
         end
     end
 
+    # Core = run of passing cycles around the apex, allowing a single-cycle gap:
+    # one missing/non-passing cycle is bridged (e.g. 11_apex_1101), but a gap of
+    # >= 2 cycles stops the core (e.g. 11_apex_11 for 11_apex_110010). Non-passing
+    # entries are skipped; the next passing cycle is accepted iff it is within
+    # MAINSEARCH_CORE_MAX_GAP+1 cycles of the last accepted passing cycle.
+    n_core = 1
+
     lo = best_pos
-    @inbounds while lo > 1
-        current = ord[lo]
-        previous = ord[lo - 1]
-        pass_mask[previous] || break
-        UInt32(cycle_idxs[previous]) == UInt32(cycle_idxs[current]) - UInt32(1) || break
-        lo -= 1
+    first_cycle = UInt32(cycle_idxs[ord[lo]])
+    @inbounds for j in (best_pos - 1):-1:1
+        cand = ord[j]
+        pass_mask[cand] || continue
+        cand_cycle = UInt32(cycle_idxs[cand])
+        (first_cycle - cand_cycle <= UInt32(1) + MAINSEARCH_CORE_MAX_GAP) || break
+        lo = j
+        first_cycle = cand_cycle
+        n_core += 1
     end
 
     hi = best_pos
-    @inbounds while hi < group_len
-        current = ord[hi]
-        next_row = ord[hi + 1]
-        pass_mask[next_row] || break
-        UInt32(cycle_idxs[next_row]) == UInt32(cycle_idxs[current]) + UInt32(1) || break
-        hi += 1
+    last_cycle = UInt32(cycle_idxs[ord[hi]])
+    @inbounds for j in (best_pos + 1):group_len
+        cand = ord[j]
+        pass_mask[cand] || continue
+        cand_cycle = UInt32(cycle_idxs[cand])
+        (cand_cycle - last_cycle <= UInt32(1) + MAINSEARCH_CORE_MAX_GAP) || break
+        hi = j
+        last_cycle = cand_cycle
+        n_core += 1
     end
 
     scan_min = typemax(UInt32)
@@ -883,7 +901,7 @@ function _mainsearch_flanking_core_bounds!(
         scan_min = min(scan_min, scan)
         scan_max = max(scan_max, scan)
     end
-    n_scans = UInt16(min(hi - lo + 1, Int(typemax(UInt16))))
+    n_scans = UInt16(min(n_core, Int(typemax(UInt16))))
     return (
         scan_min = scan_min,
         scan_max = scan_max,
