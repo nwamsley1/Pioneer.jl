@@ -284,6 +284,42 @@ n_scans, prec_mz, irt_fwhm, smoothness, log2_intensity_explained, longest_y
 \noindent (A separate second-pass MBR-FTR model adds match-between-runs features when MBR is
 enabled; those are out of scope here.)
 
+\section{Proposed refactor: gather the core in PrecursorScoringSearch}
+The core-bounds, core-signal, and radius-1 smoothing are currently computed in \emph{MainSearch}
+(\code{scoring.jl}, \code{\_mainsearch\_flanking\_core\_bounds!}), then carried forward as columns;
+the flank is computed later in \emph{PrecursorScoringSearch} (PSS). Two facts argue for moving the
+core computation into PSS, next to the flank:
+\begin{enumerate}
+  \item \textbf{Only ScoringSearch consumes these features.} None of the core/flanking/smoothed
+        columns appear in \code{PRESCORE\_FEATURES} (the MainSearch per-file LGBM). They exist
+        \emph{solely} for the ScoringSearch \code{ADVANCED\_FEATURE\_SET}. So the MainSearch
+        best-PSM selection gains nothing from computing them.
+  \item \textbf{The core is raw-matched, not deconvolved.} The core fragment signal and the
+        radius-1 smoothed apex are built from \code{MAINSEARCH\_FRAGMENT\_INTENSITY\_COLUMNS}
+        (\code{frag1\_int..frag8\_int}) --- the \emph{matched observed} intensities, the same kind
+        of value the flank extracts raw from the spectrum. (The deconvolved \code{fitted\_frag*\_int}
+        feed only \code{smoothed\_2d\_shadow\_hellinger}.) So a PSS-side raw extraction of the core
+        scans would be of the \emph{same nature} as the current core --- no deconvolution is lost.
+\end{enumerate}
+
+\paragraph{Why it lives in MainSearch today.} Data locality, not quality. The core spans several
+cycles, but the fold Arrow files retain only one best row per precursor; the per-core-scan matched
+intensities exist only \emph{during} MainSearch (before the reduction to best-per-precursor), so
+the multi-scan sum and smoothing are done there and the results carried forward.
+
+\paragraph{The refactor.} In PSS, extract the core scans from the raw spectra exactly as the flank
+is extracted (same isolation window, adjacent cycles --- incremental to the flank read), then smooth
+those values there. Net effect: work shifts MainSearch$\rightarrow$PSS (roughly compute-neutral),
+the carried \code{flanking\_core\_*} columns are dropped, all flanking logic is consolidated in one
+place, and --- a real win --- the candidate-fraction and \code{frag\_apex\_gt2x} comparisons become
+apples-to-apples (core and flank both from the same PSS extraction, instead of today's
+matched-core vs.\ raw-flank scale mix).
+
+\paragraph{Caveat.} The search's matched intensities are not bit-identical to PSS's
+\code{\_wide\_fragment\_peak\_intensity} extraction (different peak-pick / tolerance / isotope
+summation), so this is a deliberate \emph{rebaseline} --- validate ID/PG counts on the standard
+datasets, like any results-changing change.
+
 \section{Consumption}
 The features are appended to the per-fold second-pass PSM Arrow files and feed the ScoringSearch
 second-pass LightGBM (\code{FLANKING\_WINDOW\_FEATURES}). They are most informative on
