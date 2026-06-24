@@ -183,15 +183,23 @@ function apply_mbr_filter_paired!(
     # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
     # Bottom half: same candidates with _false MBR values swapped in. Label = false.
     sub = psms[cand_idx, :]
-    available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
+    # Env-gated A/B: append the donor↔acceptor smoothed-apex fragment cosine
+    # (paired _true/_false) to the FTR feature set. Off by default → baseline
+    # feature list is byte-identical. The hasproperty filter below also drops it
+    # gracefully if the sidecar didn't produce the columns.
+    add_sm_cos = get(ENV, "PIONEER_FTR_ADD_SMOOTHED_COSINE", "0") == "1"
+    ftr_true  = add_sm_cos ? vcat(FTR_FEATURES_F_TRUE,  :MBR_frag_smoothed_cosine_true)  : FTR_FEATURES_F_TRUE
+    ftr_false = add_sm_cos ? vcat(FTR_FEATURES_F_FALSE, :MBR_frag_smoothed_cosine_false) : FTR_FEATURES_F_FALSE
+    add_sm_cos && @user_info "FTR: PIONEER_FTR_ADD_SMOOTHED_COSINE=1 — adding MBR_frag_smoothed_cosine"
+    available_true  = filter(f -> hasproperty(sub, f), ftr_true)
     # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
     # cols are identical between TRUE and FALSE lists, so available_true tells
     # us which non-MBR cols actually exist).
     feat_to_idx = Dict{Symbol, Int}()
-    for (i, f) in enumerate(FTR_FEATURES_F_TRUE); feat_to_idx[f] = i; end
+    for (i, f) in enumerate(ftr_true); feat_to_idx[f] = i; end
     available_false = Symbol[]
     for f in available_true
-        push!(available_false, FTR_FEATURES_F_FALSE[feat_to_idx[f]])
+        push!(available_false, ftr_false[feat_to_idx[f]])
     end
     X_true  = feature_matrix(sub, available_true)
     X_false = feature_matrix(sub, available_false)

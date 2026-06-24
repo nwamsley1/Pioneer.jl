@@ -47,6 +47,29 @@ struct _MBRDonorEntry
     rt_obs::Float32        # literal scan RT (minutes) of the donor row
     ms_file_idx::UInt32
     is_decoy::Bool
+    # Donor smoothed-apex fragment vector (top-8, library predicted-intensity
+    # rank order — same ranking as the acceptor, so comparable element-wise).
+    # Used by the env-gated MBR_frag_smoothed_cosine feature.
+    sm::NTuple{8,Float32}
+end
+
+const _MBR_ZERO8 = ntuple(_ -> 0f0, 8)
+
+# Read row i of 8 smoothed-intensity columns into a stack NTuple (constant
+# tuple indices keep this type-stable).
+@inline _mbr_sm8(sc::NTuple{8,AbstractVector{Float32}}, i::Int) =
+    (Float32(sc[1][i]), Float32(sc[2][i]), Float32(sc[3][i]), Float32(sc[4][i]),
+     Float32(sc[5][i]), Float32(sc[6][i]), Float32(sc[7][i]), Float32(sc[8][i]))
+
+# Cosine similarity (spectral angle) between two 8-vectors. Scale-invariant, so
+# no pre-normalization is needed; returns 0 if either vector has no signal.
+@inline function _mbr_cosine8(p::NTuple{8,Float32}, q::NTuple{8,Float32})
+    dot = 0f0; np2 = 0f0; nq2 = 0f0
+    @inbounds for k in 1:8
+        dot += p[k]*q[k]; np2 += p[k]^2; nq2 += q[k]^2
+    end
+    d = sqrt(np2*nq2)
+    d > 0f0 ? Float32(dot/d) : 0f0
 end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
@@ -57,7 +80,11 @@ const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
-    :ms_file_idx)
+    :ms_file_idx,
+    # smoothed-apex fragment vector for MBR_frag_smoothed_cosine (env-gated)
+    :frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity, :frag8_smoothed_intensity)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -70,6 +97,7 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
+    :MBR_frag_smoothed_cosine_true, :MBR_frag_smoothed_cosine_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -199,6 +227,7 @@ end
     logby_c::Union{Nothing, AbstractVector{Float16}},
     rt_c::Union{Nothing, AbstractVector{Float32}},
     fidx_c::AbstractVector{UInt32},
+    sm_cols::Union{Nothing, NTuple{8, AbstractVector{Float32}}},
     side_path::String,
 )
     n = length(pid_c)
@@ -210,13 +239,14 @@ end
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
             error("Pass-1 sidecar misaligned at row $i of $side_path")
         pid = pid_c[i]
+        sm = sm_cols === nothing ? _MBR_ZERO8 : _mbr_sm8(sm_cols, i)
         e = _MBRDonorEntry(
             score_c[i], w_c[i], Float32(l2ie_c[i]),
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
-            fidx_c[i], false,
+            fidx_c[i], false, sm,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
         if length(entries) < K
@@ -238,6 +268,12 @@ end
 # `trace_prob_prepass` from the Pass-1 sidecar (rather than expecting it
 # in the main file). All other donor columns come from the main file.
 # Alignment between main and sidecar is asserted via (:precursor_idx, :scan_idx).
+# The 8 smoothed-apex fragment columns as a tuple, or nothing if any is absent.
+@inline function _mbr_smoothed_cols(tbl)
+    all(c -> hasproperty(tbl, c), SMOOTHED_FRAGMENT_INTENSITY_COLUMNS) || return nothing
+    return ntuple(k -> getproperty(tbl, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[k])::AbstractVector{Float32}, 8)
+end
+
 function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
@@ -259,6 +295,7 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
             main.ms_file_idx,
+            _mbr_smoothed_cols(main),
             side_path,
         )
     end
@@ -350,6 +387,35 @@ end
     return nothing
 end
 
+# Donor↔acceptor smoothed-apex fragment cosine (env-gated MBR feature). Kept in
+# its own pass so the established `_compute_mbr_inner!` kernel is untouched; when
+# the FTR gate is off these two columns are produced but simply go unused.
+@inline function _compute_mbr_frag_cosine!(
+    out_cos_t::Vector{Float32}, out_cos_f::Vector{Float32},
+    pid_v::AbstractVector{UInt32}, file_v::AbstractVector{UInt32},
+    sm_self::NTuple{8, AbstractVector{Float32}},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_col::Vector{UInt32},
+)
+    n = length(pid_v)
+    plen = length(partner_col)
+    @inbounds for i in 1:n
+        v_self = _mbr_sm8(sm_self, i)
+        (v_self[1]+v_self[2]+v_self[3]+v_self[4]+
+         v_self[5]+v_self[6]+v_self[7]+v_self[8]) > 0f0 || continue
+        my_file = file_v[i]
+        my_pid  = pid_v[i]
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        donor_t !== nothing && (out_cos_t[i] = _mbr_cosine8(v_self, donor_t.sm))
+        my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
+        if my_partner != UInt32(0)
+            donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
+            donor_f !== nothing && (out_cos_f[i] = _mbr_cosine8(v_self, donor_f.sm))
+        end
+    end
+    return nothing
+end
+
 # Per-file MBR feature compute + sidecar write, reading trace_prob_prepass
 # from the Pass-1 sidecar. Mirrors compute_mbr_features_per_file_to_sidecar!
 # but for the streaming-with-Pass-1 flow.
@@ -387,6 +453,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
+    out_cos_t = fill(-1f0, n); out_cos_f = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
@@ -396,6 +463,11 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v, rt_v,
         donor_dict, partner_col,
+    )
+
+    sm_self = _mbr_smoothed_cols(main)
+    sm_self !== nothing && _compute_mbr_frag_cosine!(
+        out_cos_t, out_cos_f, pid_v, file_v, sm_self, donor_dict, partner_col,
     )
 
     side_path = main_path * MBR_SIDECAR_SUFFIX
@@ -416,6 +488,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_log_by_diff_false          = out_log_by_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
+        MBR_frag_smoothed_cosine_true  = out_cos_t,
+        MBR_frag_smoothed_cosine_false = out_cos_f,
     )
     writeArrow(side_path, side_df)
     return side_path
