@@ -469,6 +469,13 @@ function searchFragmentIndexPartitionMajorHinted(
     fetch.(tasks)
     t_parallel = time() - t_parallel_start
 
+    if haskey(ENV, "PIONEER_DIAG_FRAGEST")
+        tc = thread_counts; mx = maximum(tc); mn = minimum(tc); av = sum(tc) / max(length(tc), 1)
+        @user_print "[FRAGEST] emit/thread: max=$mx min=$mn mean=$(round(Int, av))  " *
+                    "imbalance=$(round(mx/max(av,1), digits=2))x  est_per_thread=$est_per_thread  " *
+                    "(est/actual_max=$(round(est_per_thread/max(mx,1), digits=2))x)"
+    end
+
     # ── 6. Collect results via counting sort ───────────────────────────────
     precursors_passed, total = _collect_frag_index_results!(
         scan_to_prec_idx, thread_si_bufs, thread_pid_bufs, thread_counts,

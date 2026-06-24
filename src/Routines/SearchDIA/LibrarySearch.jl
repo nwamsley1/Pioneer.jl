@@ -191,6 +191,13 @@ function library_search(
     result = length(all_results) == 1 ? all_results[1] : vcat(all_results...)
     t_vcat = time() - t_post_start
 
+    if haskey(ENV, "PIONEER_DIAG_FRAGEST") && params isa MainSearchParameters
+        nc = length(precursors_passed); ns = length(all_scan_idxs); np = nrow(result)
+        @user_print "[FRAGEST] n_scans=$ns  candidates=$nc  cand/scan=$(round(nc/max(ns,1), digits=1))  " *
+                    "scored_psms=$np  survival=$(round(100*np/max(nc,1), digits=1))%  " *
+                    "presize_to_candidates=$(round(nc/max(np,1), digits=2))x  nthreads=$(Threads.nthreads())"
+    end
+
     if params isa MainSearchParameters
         @debug_l1 "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
                    "deconv=$(round(t_deconv, digits=2))s  " *

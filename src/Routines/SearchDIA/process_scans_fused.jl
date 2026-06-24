@@ -63,6 +63,11 @@ function process_scans_fused!(
     last_val  = 0
     cycle_idxs = getCycleIdxs(spectra)
 
+    # ── env-gated allocation sub-attribution (PIONEER_DIAG_MSLOOP) ──────────
+    # gc_bytes deltas per sub-step; run single-thread for clean attribution.
+    DIAG = haskey(ENV, "PIONEER_DIAG_MSLOOP")
+    d_prep = 0; d_coll = 0; d_fused = 0; d_pdm = 0; d_dist = 0; d_score = 0; d_reset = 0
+
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
 
@@ -71,6 +76,7 @@ function process_scans_fused!(
         ismissing(get_prec_range(prec_index, scan_idx)) && continue
         cycle_idx = Int64(cycle_idxs[scan_idx])
 
+        _b = DIAG ? Base.gc_bytes() : 0
         scan_rt = Float32(getRetentionTime(spectra, scan_idx))
         scan_irt = Float32(rt_to_irt_spline(scan_rt))
 
@@ -89,13 +95,17 @@ function process_scans_fused!(
 
         prec_range = get_prec_range(prec_index, scan_idx)
         precs_vec  = get_precursors(prec_index)
+        DIAG && (d_prep += Base.gc_bytes() - _b)
 
         # Run deconv pipeline for this scan's precursor subset. Inlined: this was
         # previously a closure (`_run_subset!`) defined inside the loop and called
         # once per scan, which allocated a capture object every iteration and boxed
         # the reassigned `last_val`. Inlining preserves the exact control flow.
+        _b = DIAG ? Base.gc_bytes() : 0
         sub_indices = collect(Int64, prec_range)
+        DIAG && (d_coll += Base.gc_bytes() - _b)
         if !isempty(sub_indices)
+            _b = DIAG ? Base.gc_bytes() : 0
             nmatches, nmisses = run_fused!(
                 kind,
                 Hs, unscored_psms, id_to_col, fused_scratch,
@@ -111,22 +121,42 @@ function process_scans_fused!(
                 m_rank = last(getMinTopNofM(params)),
                 scan_idx = Int64(scan_idx)
             )
+            DIAG && (d_fused += Base.gc_bytes() - _b)
             if nmatches ≤ 2
+                _b = DIAG ? Base.gc_bytes() : 0
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                DIAG && (d_reset += Base.gc_bytes() - _b)
             else
                 resize_if_needed!(search_data, params)
+                _b = DIAG ? Base.gc_bytes() : 0
                 converged = post_design_matrix!(search_data, Hs, params)
+                DIAG && (d_pdm += Base.gc_bytes() - _b)
                 if !converged
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)
                 else
+                    _b = DIAG ? Base.gc_bytes() : 0
                     compute_distance_metrics!(Hs, search_data, params)
+                    DIAG && (d_dist += Base.gc_bytes() - _b)
+                    _b = DIAG ? Base.gc_bytes() : 0
                     last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
                                           spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
+                    DIAG && (d_score += Base.gc_bytes() - _b)
+                    _b = DIAG ? Base.gc_bytes() : 0
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                    DIAG && (d_reset += Base.gc_bytes() - _b)
                 end
             end
         end
     end
 
-    return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
+    _b = DIAG ? Base.gc_bytes() : 0
+    result = DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
+    if DIAG
+        d_df = Base.gc_bytes() - _b
+        g(x) = round(x/1e9, digits=3)
+        @user_print "[MSLOOP] file=$ms_file_idx last_val=$last_val  prep=$(g(d_prep))  " *
+            "collect=$(g(d_coll))  run_fused=$(g(d_fused))  post_dm=$(g(d_pdm))  " *
+            "dist=$(g(d_dist))  score=$(g(d_score))  reset=$(g(d_reset))  df_materialize=$(g(d_df))  (GB)"
+    end
+    return result
 end
