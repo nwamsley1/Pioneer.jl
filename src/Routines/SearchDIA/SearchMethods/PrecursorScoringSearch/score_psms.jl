@@ -391,6 +391,8 @@ function _score_precursor_isotope_traces_no_mbr(
     end
 
     write_scored_psms_to_files!(best_psms, file_paths)
+    best_psms = DataFrame()  # drop full-experiment table before returning (mirrors MBR path)
+    GC.gc()
     return nothing
 end
 

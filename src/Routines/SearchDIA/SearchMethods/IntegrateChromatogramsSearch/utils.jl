@@ -655,7 +655,7 @@ function extract_chromatograms(
 
     # Pre-create Sets for each thread to avoid concurrent DataFrame access
     # This eliminates race conditions when multiple threads call passing_psms[!, :precursor_idx]
-    precursor_sets = [Set(passing_psms[!, :precursor_idx]) for _ in 1:Threads.nthreads()]
+    precursor_set = Set(passing_psms[!, :precursor_idx])  # shared read-only across threads (was N copies)
 
     # Build precursor RT map for per-precursor symmetric window filtering
     _pids = passing_psms[!, :precursor_idx]::Vector{UInt32}
@@ -674,7 +674,7 @@ function extract_chromatograms(
             return build_chromatograms(
                 spectra,
                 last(thread_task),
-                precursor_sets[thread_id],
+                precursor_set,
                 precursor_rt_map,
                 rt_index,
                 search_context,
