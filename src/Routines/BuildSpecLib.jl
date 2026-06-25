@@ -339,6 +339,13 @@ function BuildSpecLib(params_path::String)
                 )
 
                 GC.gc()
+                # raw_fragments.arrow + precursors.arrow are fully consumed by this
+                # stage (parse_altimeter_fragments + the precursor DataFrame copy).
+                # Delete them now — before buildPionLib + File Verification — so they
+                # don't coexist on disk with the final .poin outputs. Cuts peak disk
+                # by ~(raw + precursors); safeRm = GC + retry for the Windows mmap lock.
+                safeRm(raw_fragments_arrow_path, nothing; force=true)
+                safeRm(precursors_arrow_path, nothing; force=true)
                 nothing
             end
             timings["Prediction Processing"] = process_timing
