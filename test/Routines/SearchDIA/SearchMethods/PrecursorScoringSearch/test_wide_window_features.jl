@@ -7,8 +7,6 @@ const TEST_FLANKING_WINDOW_FEATURES = [
     :flanking_frag_candidate_fraction,
     :flanking_ms1_frag_sum_corr,
     :flanking_frag_corr_mean,
-    :flanking_n_correlated_fragments,
-    :flanking_n_correlated_fragments_bitvec_rank,
     :flanking_frag_corr_strength,
     :flanking_frag_corr_effective_n,
     :flanking_frag_corr_best_m0,
@@ -128,8 +126,6 @@ function _reference_flanking_feature_values(
         end
     end
 
-    n_correlated = UInt8(0)
-    correlated_mask = UInt16(0)
     apex_mask = UInt16(0)
     corr_strength = 0f0
     corr_sumsq = 0f0
@@ -153,10 +149,6 @@ function _reference_flanking_feature_values(
         positive_corr = min(max(corr, 0f0), 1f0)
         corr_strength += positive_corr
         corr_sumsq += positive_corr * positive_corr
-        if corr > Pioneer.WIDE_WINDOW_CORR_THRESHOLD
-            n_correlated += UInt8(1)
-            correlated_mask |= UInt16(1) << (frag_i - 1)
-        end
     end
 
     best_frag = 0
@@ -182,8 +174,6 @@ function _reference_flanking_feature_values(
         flanking_frag_candidate_fraction = Pioneer._wide_candidate_signal_fraction(max(core_frag_signal, 0f0), frag_flank_signal),
         flanking_ms1_frag_sum_corr = _reference_flanking_pcor(flank_ms1_m0, frag_sum),
         flanking_frag_corr_mean = pair_count > 0 ? Float32(pair_sum / pair_count) : 0f0,
-        flanking_n_correlated_fragments = n_correlated,
-        flanking_n_correlated_fragments_bitvec_rank = Pioneer._bitvec_pattern_rank(bitvec_rank_table, correlated_mask),
         flanking_frag_corr_strength = corr_strength,
         flanking_frag_corr_effective_n = corr_sumsq > 0f0 ? Float32((corr_strength * corr_strength) / corr_sumsq) : 0f0,
         flanking_frag_corr_best_m0 = best_frag > 0 ? _reference_flanking_pcor(view(flank_fragments, :, best_frag), flank_ms1_m0) : 0f0,
@@ -196,6 +186,10 @@ end
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, TEST_FLANKING_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), TEST_FLANKING_WINDOW_FEATURES)
     @test collect(Pioneer.FLANKING_WINDOW_FEATURES) == TEST_FLANKING_WINDOW_FEATURES
+    @test :flanking_n_correlated_fragments ∉ Pioneer.FLANKING_WINDOW_FEATURES
+    @test :flanking_n_correlated_fragments_bitvec_rank ∉ Pioneer.FLANKING_WINDOW_FEATURES
+    @test :flanking_n_correlated_fragments ∉ Pioneer.ADVANCED_FEATURE_SET
+    @test :flanking_n_correlated_fragments_bitvec_rank ∉ Pioneer.ADVANCED_FEATURE_SET
 end
 
 @testset "flanking-core bounds use contiguous passing cycles around the selected PSM" begin
@@ -464,8 +458,6 @@ end
     @test features.flanking_frag_candidate_fraction ≈ Float32(28 / 34.5)
     @test features.flanking_ms1_frag_sum_corr > 0.9f0
     @test features.flanking_frag_corr_mean > 0.99f0
-    @test features.flanking_n_correlated_fragments == UInt8(2)
-    @test features.flanking_n_correlated_fragments_bitvec_rank == UInt16(7)
     @test features.flanking_frag_corr_strength > 1.9f0
     @test features.flanking_frag_corr_effective_n > 1.99f0
     @test features.flanking_frag_corr_best_m0 > 0.9f0

@@ -1,5 +1,4 @@
 const WIDE_WINDOW_CYCLE_MARGIN = 3
-const WIDE_WINDOW_CORR_THRESHOLD = 0.7f0
 const FLANKING_SCAN_CENTRIC_BATCH_SIZE = 50000
 
 @inline function _wide_window_pcor(x::AbstractVector, y::AbstractVector)
@@ -45,8 +44,6 @@ end
         flanking_frag_candidate_fraction = _wide_candidate_signal_fraction(core_frag_signal, 0f0),
         flanking_ms1_frag_sum_corr = 0f0,
         flanking_frag_corr_mean = 0f0,
-        flanking_n_correlated_fragments = UInt8(0),
-        flanking_n_correlated_fragments_bitvec_rank = UInt16(0),
         flanking_frag_corr_strength = 0f0,
         flanking_frag_corr_effective_n = 0f0,
         flanking_frag_corr_best_m0 = 0f0,
@@ -111,8 +108,6 @@ function _wide_flank_feature_values(
         end
     end
 
-    n_correlated = UInt8(0)
-    correlated_mask = UInt16(0)
     apex_mask = UInt16(0)
     corr_strength = 0f0
     corr_sumsq = 0f0
@@ -136,10 +131,6 @@ function _wide_flank_feature_values(
         positive_corr = min(max(corr, 0f0), 1f0)
         corr_strength += positive_corr
         corr_sumsq += positive_corr * positive_corr
-        if corr > WIDE_WINDOW_CORR_THRESHOLD
-            n_correlated += UInt8(1)
-            correlated_mask |= UInt16(1) << (frag_i - 1)
-        end
     end
 
     best_frag = 0
@@ -165,8 +156,6 @@ function _wide_flank_feature_values(
         flanking_frag_candidate_fraction = _wide_candidate_signal_fraction(core_frag_signal, frag_flank_signal),
         flanking_ms1_frag_sum_corr = _wide_window_pcor(flank_ms1_m0, frag_sum),
         flanking_frag_corr_mean = pair_count > 0 ? Float32(pair_sum / pair_count) : 0f0,
-        flanking_n_correlated_fragments = n_correlated,
-        flanking_n_correlated_fragments_bitvec_rank = _bitvec_pattern_rank(bitvec_rank_table, correlated_mask),
         flanking_frag_corr_strength = corr_strength,
         flanking_frag_corr_effective_n = corr_sumsq > 0f0 ? Float32((corr_strength * corr_strength) / corr_sumsq) : 0f0,
         flanking_frag_corr_best_m0 = best_frag > 0 ? _wide_window_pcor(view(flank_fragments, :, best_frag), flank_ms1_m0) : 0f0,
@@ -709,8 +698,6 @@ function _wide_scatter_features!(columns, group_start::Int, group_stop::Int, fea
         columns.frag_candidate[row] = features.flanking_frag_candidate_fraction
         columns.ms1_frag_corr[row] = features.flanking_ms1_frag_sum_corr
         columns.frag_corr_mean[row] = features.flanking_frag_corr_mean
-        columns.n_correlated[row] = features.flanking_n_correlated_fragments
-        columns.n_correlated_rank[row] = features.flanking_n_correlated_fragments_bitvec_rank
         columns.corr_strength[row] = features.flanking_frag_corr_strength
         columns.corr_effective_n[row] = features.flanking_frag_corr_effective_n
         columns.best_m0[row] = features.flanking_frag_corr_best_m0
@@ -736,8 +723,6 @@ function add_wide_window_features_to_fold_file!(
     flanking_frag_candidate_fraction = zeros(Float32, n)
     flanking_ms1_frag_sum_corr = zeros(Float32, n)
     flanking_frag_corr_mean = zeros(Float32, n)
-    flanking_n_correlated_fragments = zeros(UInt8, n)
-    flanking_n_correlated_fragments_bitvec_rank = zeros(UInt16, n)
     flanking_frag_corr_strength = zeros(Float32, n)
     flanking_frag_corr_effective_n = zeros(Float32, n)
     flanking_frag_corr_best_m0 = zeros(Float32, n)
@@ -748,8 +733,6 @@ function add_wide_window_features_to_fold_file!(
     tbl[!, :flanking_frag_candidate_fraction] = flanking_frag_candidate_fraction
     tbl[!, :flanking_ms1_frag_sum_corr] = flanking_ms1_frag_sum_corr
     tbl[!, :flanking_frag_corr_mean] = flanking_frag_corr_mean
-    tbl[!, :flanking_n_correlated_fragments] = flanking_n_correlated_fragments
-    tbl[!, :flanking_n_correlated_fragments_bitvec_rank] = flanking_n_correlated_fragments_bitvec_rank
     tbl[!, :flanking_frag_corr_strength] = flanking_frag_corr_strength
     tbl[!, :flanking_frag_corr_effective_n] = flanking_frag_corr_effective_n
     tbl[!, :flanking_frag_corr_best_m0] = flanking_frag_corr_best_m0
@@ -782,8 +765,6 @@ function add_wide_window_features_to_fold_file!(
         frag_candidate = flanking_frag_candidate_fraction,
         ms1_frag_corr = flanking_ms1_frag_sum_corr,
         frag_corr_mean = flanking_frag_corr_mean,
-        n_correlated = flanking_n_correlated_fragments,
-        n_correlated_rank = flanking_n_correlated_fragments_bitvec_rank,
         corr_strength = flanking_frag_corr_strength,
         corr_effective_n = flanking_frag_corr_effective_n,
         best_m0 = flanking_frag_corr_best_m0,
