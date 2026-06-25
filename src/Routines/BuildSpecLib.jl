@@ -299,6 +299,13 @@ function BuildSpecLib(params_path::String)
                 N_DECOYS  = sum(precursors_table[:decoy])
                 N_TARGETS = N_PRECURSORS - N_DECOYS
                 fragments_table = nothing
+                # raw_fragments.arrow is fully consumed by parse_altimeter_fragments
+                # (process_spline_batch! decode + rebuild_prec_to_frag_index!); its
+                # mmap handle (fragments_table) is released just above. Delete it now —
+                # before the precursor DataFrame work + precursors_table.arrow write —
+                # so raw no longer coexists with fragments_table.arrow at the peak.
+                GC.gc()
+                safeRm(raw_fragments_arrow_path, nothing; force=true)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -339,12 +346,11 @@ function BuildSpecLib(params_path::String)
                 )
 
                 GC.gc()
-                # raw_fragments.arrow + precursors.arrow are fully consumed by this
-                # stage (parse_altimeter_fragments + the precursor DataFrame copy).
-                # Delete them now — before buildPionLib + File Verification — so they
-                # don't coexist on disk with the final .poin outputs. Cuts peak disk
-                # by ~(raw + precursors); safeRm = GC + retry for the Windows mmap lock.
-                safeRm(raw_fragments_arrow_path, nothing; force=true)
+                # precursors.arrow is now fully materialized into precursors_table
+                # (DataFrame copy + Arrow.write above), so delete it before buildPionLib
+                # + File Verification. (raw_fragments.arrow was deleted earlier, right
+                # after parse_altimeter_fragments.) safeRm = GC + retry for the Windows
+                # mmap lock.
                 safeRm(precursors_arrow_path, nothing; force=true)
                 nothing
             end

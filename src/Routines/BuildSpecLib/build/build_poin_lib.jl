@@ -183,6 +183,19 @@ function buildPionLib(spec_lib_path::String,
     model_type
     );
 
+    # fragments_table.arrow + prec_to_frag.arrow are now fully consumed —
+    # getDetailedFrags above is their only reader (pid_to_fid replaces
+    # prec_to_frag; it is serialized as precursor_to_fragment_indices.jls).
+    # Release the mmap handles and delete them now, before we serialize
+    # detailed_fragments.jls + the two index .jls files, so the ~57 MB
+    # fragments_table.arrow never coexists on disk with the final outputs.
+    # Cuts peak disk ~58 MB. safeRm = GC + retry for the Windows mmap lock.
+    fragments_table = nothing
+    prec_to_frag = nothing
+    GC.gc()
+    safeRm(joinpath(spec_lib_path, "fragments_table.arrow"), nothing; force=true)
+    safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"), nothing; force=true)
+
     # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
     # See sort_detailed_fragments_by_mz! for why the order matters.
     precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
