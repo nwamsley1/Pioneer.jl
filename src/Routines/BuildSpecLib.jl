@@ -185,13 +185,16 @@ function BuildSpecLib(params_path::String)
                     3.0f0  # rt_bin_tol for precursor sorting (matches fragment index)
                 )
                 #println("precursors_arrow_path $precursors_arrow_path")
-                # Cleanup temporary files
+                # Cleanup temporary files. Use safeRm (GC + retry + rename
+                # fallback): on Windows the just-read Arrow files are still
+                # mmap-locked, so a plain rm() throws EACCES (GC.gc() alone is
+                # not enough to release the mapping).
                 GC.gc()
-                rm(chronologer_in_path, force=true)
-                rm(chronologer_out_path, force=true)
+                safeRm(chronologer_in_path, nothing; force=true)
+                safeRm(chronologer_out_path, nothing; force=true)
                 dir, filename = splitdir(precursors_arrow_path)
                 raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
-                rm(raw_fragments_arrow_path, force=true)
+                safeRm(raw_fragments_arrow_path, nothing; force=true)
                 nothing
             end
             timings["Chronologer Output Processing"] = parse_timing
