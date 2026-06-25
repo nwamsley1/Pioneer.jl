@@ -1,0 +1,236 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{hi}{RGB}{0,120,0}
+\definecolor{lo}{RGB}{170,0,0}
+\definecolor{hdr}{RGB}{30,30,90}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\callout}[1]{%
+  \begin{center}\fcolorbox{hdr}{blue!4}{%
+  \begin{minipage}{0.95\textwidth}\vspace{2pt}#1\vspace{2pt}\end{minipage}}\end{center}}
+
+\title{\vspace{-1.5em}\textbf{Pioneer.jl --- Optimization \& Cleanup Opportunities}\\[0.3em]
+\large with a detailed plan for the Scoring working-set reduction}
+\author{}
+\date{2026-06-25 \quad\textbar\quad surveyed against \code{origin/develop}}
+
+\begin{document}
+\maketitle
+\vspace{-2.2em}
+
+\callout{
+\textbf{Scope.} A survey of optimization / cleanup opportunities across five threads
+(performance, feature reduction, quant, organization, PackageCompiler), followed by a
+\textbf{detailed, sequenced implementation plan for Thread~2 --- cutting the
+$\sim$4.3\,GB Scoring working set} that dominates peak RSS. PackageCompiler is the other
+high-value target (quick blockers, removes the $\sim$4.5\,GB JIT overhead for end users)
+and is summarized at the end.
+}
+
+\section{Opportunity survey}
+
+\subsection*{1. PackageCompiler binary (high ROI --- quick blockers)}
+A relocatable app pipeline already exists (\code{.github/workflows/build\_app\_\{linux,
+macos,windows\}.yml} + \code{src/build/snoop.jl}). It fails on mundane blockers:
+\begin{itemize}
+  \item \textbf{Julia version mismatch} --- \code{Project.toml} pins \code{julia="1.12.5"}
+  but all three workflows install \textbf{1.11} $\Rightarrow$ \code{Pkg.instantiate()}
+  rejects before compiling. ($\sim$15\,min fix.)
+  \item \textbf{Missing entry point} --- the \code{executables} list references
+  \code{main\_ParseSpecLib}, which is not defined. \code{create\_app} errors. ($\sim$10\,min.)
+  \item \textbf{LightGBM relocatability} --- ``\code{lib\_lightgbm found in system dirs!}''
+  means it binds a host lib, not the bundled \code{LightGBM\_jll} artifact. Latent hazard;
+  half-day of build-iterate to pin to the JLL.
+\end{itemize}
+\emph{Verdict:} the two config fixes are an hour; a working \emph{sysimage} is reachable
+in a couple hours; a verified relocatable \emph{app} $\sim$1 day.
+
+\subsection*{2. The 4.3\,GB Scoring working set (this document's focus --- see \S2)}
+The live-heap high-water-mark we measured ($\sim$7.5\,GB) is $\sim$3.2\,GB library +
+$\sim$4.3\,GB scoring buffers. The 4.3\,GB is reducible (detailed plan below).
+
+\subsection*{3. Other performance / memory (not yet touched)}
+\begin{center}
+\begin{tabular}{p{0.52\textwidth}rl}
+\toprule
+\textbf{Opportunity} & \textbf{Win} & \textbf{Effort} \\
+\midrule
+Per-thread duplicated read-only \code{Set} of all precursors, rebuilt per file
+(\code{Integrate.../utils.jl:658}, \code{HuberTuning/utils.jl:79}) --- scales with
+\#threads ($\sim$97\% waste at 32 threads) & M--L mem & S \\
+\code{Float64} score buffers in LGBM CV downcast to \code{Float32} anyway
+(\code{MainSearch/scoring.jl:136--231}) & $\sim$0.2\,GB/vec & S\,$^\dagger$ \\
+\code{grouped\_catalog\_cache} / \code{species\_agg} rebuilt per file
+(\code{protein\_inference\_pipeline.jl:1278}, \code{maxLFQ.jl:778}) --- same dedup
+pattern as the wins already landed & S--M mem & S--M \\
+\code{vcat(parts...)} 2$\times$ transient peak (\code{mbr\_streaming.jl:464},
+\code{PrecursorScoringSearch.jl:249}) & S mem & S \\
+\bottomrule
+\end{tabular}
+\end{center}
+\footnotesize $^\dagger$ \textbf{not} bit-identical --- q-value/PEP computed from \code{Float32}
+vs \code{Float64} scores can shift IDs marginally; treat as an approximation change. \normalsize
+
+\subsection*{4. Feature reduction (your hypothesis --- partly right)}
+The flanking features don't make MainSearch columns \emph{redundant}; rather there is
+\textbf{independent dead weight} stored per-PSM across $\sim$14M rows:
+\begin{itemize}
+  \item \textbf{Dead scalar columns} in \code{MainSearchScoredPSM} absent from every final
+  model list: \code{matched\_ratio}, \code{max\_matched\_residual},
+  \code{max\_unmatched\_residual}, \code{total\_ions\_iso} ($\sim$112\,MB/file, near-zero
+  risk; \code{b\_count}/\code{best\_rank} after a probit-path confirm).
+  \item \textbf{The big one:} \code{fitted\_frag1..8\_int} + \code{shadow\_frag1..8\_int}
+  (16 cols) are stored on the full 14M-row table but consumed only on the $\sim$400k
+  best-per-precursor rows ($\sim$900\,MB/file). \emph{Caveat:} the consumer
+  (\code{\_mainsearch\_radius1\_2d\_shadow\_hellinger}) uses a \textbf{radius-1} window, so
+  it needs best rows \emph{plus their adjacent scans} --- see \S2 Stage~2.
+\end{itemize}
+The team already removed similar dead features (commit \code{ac9e0ea12}, a clean 5-site
+pattern); these reductions have been ID-neutral in prior sweeps.
+
+\subsection*{5. Organization / code-health}
+\begin{itemize}
+  \item \textbf{Dead MS1 \code{build\_chromatograms}} block-comment ($\sim$250 LOC,
+  \code{Integrate.../utils.jl:892--1143}) referencing soon-to-be-deleted APIs --- clean delete (S).
+  \item Oversized modules mixing concerns (\code{features.jl} 1613, \code{scoring.jl} 1477,
+  \code{QuadTuning/utils.jl} 1372 blends plotting+logic) --- mechanical splits (M each).
+  \item \textcolor{lo}{\textbf{Risk flag:}} the big feature/scoring math
+  (\code{features.jl}, \code{scoring.jl}, ParameterTuning, QuadTuning collection) has
+  \textbf{no unit tests} --- correctness rides on one ecoli end-to-end fixture. Worth
+  targeted unit tests \emph{before} feature-reduction work.
+\end{itemize}
+
+\subsection*{Quant ideas}
+The structural/perf explorations did not surface new quant \emph{algorithms} (out of scope);
+prior work already covers Huber / smoothing / group-lasso extensively. Quant innovation is a
+separate, open-ended R\&D track --- recommend treating it deliberately, not bundled here.
+
+\newpage
+\section{Detailed plan --- cut the 4.3\,GB Scoring working set}
+
+\callout{
+\textbf{Goal.} Reduce the live-heap high-water-mark during Precursor Scoring (and the
+upstream MainSearch table feeding it) so a run fits a lower RSS ceiling, \emph{without
+changing results}. Sequenced safest$\rightarrow$biggest. Each stage is independently
+shippable and verified before the next.
+}
+
+\subsection*{Verification methodology (applies to every stage)}
+\begin{itemize}
+  \item \textbf{Bit-identical class} (dead columns, shared \code{Set}s, free-after-write,
+  fitted/shadow restructuring \emph{if neighbors preserved}): run 1--2 file MTAC before/after,
+  byte-compare \code{precursors\_long.arrow} + \code{protein\_groups\_long.arrow}
+  (the harness we already use). Must be identical.
+  \item \textbf{ID-equivalent class} (no-MBR OOM reroute, any \code{Float32} buffer change):
+  scores may differ in the last bits, so byte-compare can fail legitimately. Instead compare
+  \textbf{ID counts at 1\% FDR} (precursor + protein-group) and the entrapment-EFDR, on MTAC
+  \emph{and} Exploris; require no regression. Keep the change behind a flag until confirmed.
+  \item Always re-check \code{origin/feature/reduce-allocations} / \code{develop} for
+  conflicts before each commit (these files are actively edited).
+\end{itemize}
+
+\subsection*{Stage 0 --- warm-ups (S, bit-identical, ship this week)}
+\begin{enumerate}
+  \item \textbf{Shared precursor \code{Set}.} \code{Integrate.../utils.jl:658} and
+  \code{HuberTuning/utils.jl:79} build \code{[Set(psms[!,:precursor\_idx]) for \_ in
+  1:nthreads()]} --- one full \code{Set} \emph{per thread}, rebuilt per file. Verified
+  read-only (membership only). \textbf{Build one \code{Set} before the spawn loop, pass the
+  shared instance to all tasks.} Win scales with thread count (biggest where peak RSS is
+  worst). Bit-identical.
+  \item \textbf{Free \code{best\_psms} in the no-MBR path.} The MBR path does
+  \code{psms = DataFrame(); GC.gc()} after writing
+  (\code{score\_psms.jl:343}); the no-MBR path
+  (\code{\_score\_precursor\_isotope\_traces\_no\_mbr}) returns without freeing the
+  full-experiment \code{best\_psms} after \code{write\_scored\_psms\_to\_files!}
+  ($\sim$line 395). Add the same free. Removes one full table from the peak.
+  \item \textbf{Drop 4 dead scalar columns} from \code{MainSearchScoredPSM}
+  (\code{ScoredPSMs.jl}): \code{matched\_ratio}, \code{max\_matched\_residual},
+  \code{max\_unmatched\_residual}, \code{total\_ions\_iso}. Remove from (a) the struct,
+  (b) the \code{Score!} constructor call, (c) any \code{\_COLUMNS} tuple --- the
+  \code{ac9e0ea12} 5-site pattern. $\sim$112\,MB/file off the 14M-row table. Bit-identical
+  (zero consumers); confirm with a grep for each name first. (\code{b\_count},
+  \code{best\_rank} as a follow-up after confirming no probit/MBR fallback reads them.)
+\end{enumerate}
+
+\subsection*{Stage 1 --- no-MBR streaming reroute (M, the biggest single memory win)}
+\textbf{Problem.} \code{\_score\_precursor\_isotope\_traces\_no\_mbr} calls
+\code{load\_psms\_for\_lightgbm}, which does
+\code{DataFrame(Tables.columntable(Arrow.Table(all\_fold\_files)))} --- it materializes the
+\emph{entire experiment-wide PSM set} into one in-memory \code{DataFrame}, detached from the
+mmap. This single object is the bulk of the 4.3\,GB on non-MBR runs.
+
+\textbf{Solution.} The MBR path already streams via \code{train\_and\_predict\_pass1\_oom!}
+(\code{pass1\_oom.jl:436}), which is \textbf{MBR-agnostic} --- it trains Pass-1 on whatever
+feature set it's given and writes per-file \code{.pass1\_sidecar.arrow} (OOF
+\code{trace\_prob\_prepass}). Route the no-MBR path through it:
+\begin{enumerate}
+  \item Call \code{train\_and\_predict\_pass1\_oom!(file\_paths, precursors; features =
+  ADVANCED\_FEATURE\_SET\,$\setminus$\,MBR-features, ...)} instead of the in-memory load+train.
+  \item For no-MBR, \textbf{skip} the MBR/recovery/FTR steps entirely; set
+  \code{trace\_prob = trace\_prob\_prepass} and \code{mbr\_recovered = false} (mirroring the
+  current no-MBR semantics) inside the per-file sidecar, then merge the Pass-1 sidecars into
+  each main file (a simpler merge than \code{merge\_mbr\_sidecars\_into\_main!} --- only the
+  Pass-1 columns).
+  \item Keep \code{\_score\_precursor\_isotope\_traces\_no\_mbr} as a fallback for tiny runs
+  (the OOM path has per-file overhead); dispatch on a size threshold or a flag.
+\end{enumerate}
+\textbf{Risk / verification.} Streaming/fold-ordering can perturb scores in the last bits
+$\Rightarrow$ \emph{ID-equivalent} class, not bit-identical. Gate behind a flag
+(\code{force\_oom} already exists at \code{score\_psms.jl:28}); compare 1\%-FDR ID counts +
+EFDR on MTAC and Exploris (non-MBR config) before/after. \textbf{Feasibility: confirmed} ---
+the trainer is already decoupled; the work is the simpler no-MBR sidecar merge plumbing.
+
+\subsection*{Stage 2 --- fitted/shadow frag restructuring (M--L, $\sim$900\,MB/file)}
+\textbf{Problem.} The 16 \code{fitted\_frag*\_int}/\code{shadow\_frag*\_int} columns
+(\code{ScoredPSMs.jl}) are written for \emph{every} of the 14M deconvolved PSM rows
+(\code{process\_scans\_fused.jl:157} materializes the whole struct), but are consumed only at
+\code{scoring.jl:996--1194} to compute \code{smoothed\_2d\_shadow\_hellinger} on the $\sim$400k
+best-per-precursor rows, then dropped (\code{select!(... Not([...]))}, \code{scoring.jl:1216}).
+
+\textbf{Key caveat (do not skip).} The consumer
+\code{\_mainsearch\_radius1\_2d\_shadow\_hellinger} uses a \textbf{radius-1} window --- for each
+best PSM it reads the fitted/shadow intensities of that PSM \emph{and its $\pm1$ adjacent scans}.
+So you cannot keep only the 400k best rows; you must preserve each best PSM's immediate
+chromatographic neighbors.
+
+\textbf{Approach (behavior-preserving).}
+\begin{enumerate}
+  \item Keep the 16 columns on the \emph{full} table through \code{select\_best\_per\_precursor!}
+  only long enough to compute the radius-1 hellinger \emph{there} (where the neighbor rows are
+  still present), then drop them \textbf{before} the table is widened with the rest of the
+  scoring features --- i.e. move the \code{smoothed\_2d\_shadow\_hellinger} computation earlier
+  and the \code{select!(Not(...))} drop right after it. This shortens the lifetime of the 16
+  columns from ``whole scoring phase'' to ``one pass'', cutting their peak contribution without
+  changing the result. \emph{(Lower-risk first step.)}
+  \item \emph{(Optional, larger)} Avoid storing them in \code{MainSearchScoredPSM} at all:
+  capture fitted/shadow intensities into a compact side buffer keyed by (precursor, scan) only
+  for scans within radius-1 of a best PSM, computed during best-PSM selection. Higher effort,
+  higher risk --- defer until Step~1 is measured.
+\end{enumerate}
+\textbf{Risk / verification.} Bit-identical \emph{iff} the same rows (best $\pm1$) feed the
+hellinger; verify by byte-compare. Step~1 is the safe, most of the win; Step~2 only if needed.
+
+\subsection*{Sequencing \& expected payoff}
+\begin{center}
+\begin{tabular}{llrl}
+\toprule
+\textbf{Stage} & \textbf{Item} & \textbf{Est. win} & \textbf{Class} \\
+\midrule
+0 & shared Set / free / 4 dead columns & 0.1--0.5\,GB + per-thread & bit-identical \\
+1 & no-MBR OOM streaming reroute & \textbf{bulk of 4.3\,GB} (non-MBR) & ID-equivalent \\
+2 (step 1) & fitted/shadow lifetime shortening & $\sim$0.9\,GB/file peak & bit-identical \\
+2 (step 2) & fitted/shadow side-buffer (optional) & more & bit-identical (verify) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent Ship Stage~0 immediately (low risk, includes the thread-scaling Set win). Stage~1 is
+the headline memory reduction but needs the ID-equivalent A/B and the no-MBR merge plumbing.
+Stage~2 step~1 is a safe, high-value lifetime change; step~2 only if the ceiling still isn't met.
+Re-measure peak RSS (the single-thread + multi-thread harness already built) after Stage~1 and
+Stage~2 to confirm the high-water-mark actually drops.
+
+\end{document}
