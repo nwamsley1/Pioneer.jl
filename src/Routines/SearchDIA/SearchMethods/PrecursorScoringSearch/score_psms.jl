@@ -350,35 +350,67 @@ end
 
 # Legacy in-memory path used only when match_between_runs = false. Kept for
 # small / non-MBR runs where the full best_psms easily fits in memory.
+# No-MBR Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
+# file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
+# into each main file ONE FILE AT A TIME — the full experiment is never materialised.
+# Reproduces the exact output columns the legacy in-memory path wrote:
+# `:accession_numbers`, `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
+# `:mbr_recovered` (= false).
+function _merge_pass1_into_main_no_mbr!(
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors;
+    cleanup::Bool = true,
+)
+    acc = getAccessionNumbers(precursors)
+    for path in file_paths
+        pass1_path = path * PASS1_SIDECAR_SUFFIX
+        isfile(pass1_path) || continue
+        # Materialise one file (Tables.columntable detaches from the mmap so the same
+        # path can be safely rewritten below).
+        main  = DataFrame(Tables.columntable(Arrow.Table(path)))
+        pass1 = Arrow.Table(pass1_path)
+        n = nrow(main)
+        length(pass1.precursor_idx) == n ||
+            error("_merge_pass1_into_main_no_mbr!: row-count mismatch at $path")
+        @inbounds for i in 1:n
+            (main.precursor_idx[i] == pass1.precursor_idx[i] &&
+             main.scan_idx[i]      == pass1.scan_idx[i]) ||
+                error("_merge_pass1_into_main_no_mbr!: sidecar misaligned at row $i of $path")
+        end
+        main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
+        main[!, :decoy]              = main[!, :target] .== false
+        main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
+        main[!, :trace_prob]         = main[!, :trace_prob_prepass]
+        main[!, :mbr_recovered]      = falses(n)
+        pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
+        writeArrow(path, main)
+        cleanup && safeRm(pass1_path, nothing; force=true)
+    end
+    return nothing
+end
+
+# MBR-off path. Streams Pass-1 LightGBM over the per-file Arrow tables via the same
+# OOM trainer the MBR path uses, instead of materialising the whole experiment into
+# one in-memory DataFrame (the legacy path's peak-RSS cost). ID-equivalent — not
+# bit-identical — to the legacy path: the OOM trainer reservoir-samples for training,
+# so scores differ in the last bits, but the full experiment is never held in RAM.
 function _score_precursor_isotope_traces_no_mbr(
     second_pass_folder::String,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
 )
-    best_psms = load_psms_for_lightgbm(second_pass_folder)
-    n_psms = nrow(best_psms)
-    @debug_l1 "PSM scoring (no MBR): $n_psms PSMs loaded for in-memory LightGBM"
-
     features = copy(ADVANCED_FEATURE_SET)
-
-    best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid]
-                                       for pid in best_psms[!, :precursor_idx]]
-    best_psms[!, :decoy] = best_psms[!, :target] .== false
-
-    all_scores, last_classifier, info, semisup_state = _train_scoring_classifier_semisupervised(
-        best_psms;
-        features = features,
-        lgbm_hp = SCORING_LGBM_HP,
-        max_train = SCORING_LGBM_MAX_TRAIN,
+    pass1 = train_and_predict_pass1_oom!(
+        file_paths;
+        features        = features,
+        compute_infold  = false,        # no MBR-FTR downstream consumes trace_prob_infold
+        lgbm_hp         = SCORING_LGBM_HP,
+        semisupervised  = true,
     )
-    best_psms[!, :trace_prob_prepass] = all_scores
-    best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
-    best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
-    @debug_l1 "Pass-1 (no MBR) trained on $(length(info.available_features)) features; " *
-               "selected semi-supervised iter $(semisup_state.iter)"
+    @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
 
-    if last_classifier !== nothing
-        lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
+    if pass1.last_classifier !== nothing
+        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
@@ -390,9 +422,7 @@ function _score_precursor_isotope_traces_no_mbr(
         end
     end
 
-    write_scored_psms_to_files!(best_psms, file_paths)
-    best_psms = DataFrame()  # drop full-experiment table before returning (mirrors MBR path)
-    GC.gc()
+    _merge_pass1_into_main_no_mbr!(file_paths, precursors)
     return nothing
 end
 
