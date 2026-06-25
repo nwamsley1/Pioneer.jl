@@ -131,6 +131,8 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
+                      detailed_frags = nothing,
+                      pid_to_fid = nothing,
                       )
     validate_fragment_index_filters(
         y_start_index, y_start,
@@ -138,63 +140,65 @@ function buildPionLib(spec_lib_path::String,
         include_p_index, include_p,
     )
 
-    fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
-    try
-        fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
-        prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
-        precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
-    catch e 
-        @error "could not find library..."
-        return nothing
+    # Fused path (production): detailed_frags + pid_to_fid are handed in from
+    # build_detailed_frags_from_raw — no fragments_table.arrow round-trip.
+    # Disk path (resume with predict_fragments=false, and the unit tests): read
+    # fragments_table.arrow + prec_to_frag.arrow and decode via getDetailedFrags.
+    if detailed_frags === nothing
+        fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
+        try
+            fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
+            prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
+            precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
+        catch e
+            @error "could not find library..."
+            return nothing
+        end
+
+        #println("Get full fragments list...")
+        detailed_frags, pid_to_fid = getDetailedFrags(
+        fragments_table[:mz],
+        fragments_table[:coefficients],
+        fragments_table[:intensity],
+        fragments_table[:is_y],
+        fragments_table[:is_b],
+        fragments_table[:is_p],
+        fragments_table[:fragment_index],
+        fragments_table[:charge],
+        fragments_table[:sulfur_count],
+        fragments_table[:ion_type],
+        fragments_table[:isotope],
+        fragments_table[:is_internal],
+        fragments_table[:is_immonium],
+        fragments_table[:has_neutral_diff],
+        precursors_table[:mz],
+        precursors_table[:prec_charge],#:precursor_charge],
+        precursors_table[:length],
+        prec_to_frag[:start_idx],
+        y_start,
+        b_start,
+        include_p,
+        include_isotope,
+        include_immonium,
+        include_internal,
+        include_neutral_diff,
+        max_frag_charge,
+        frag_bounds,
+        max_frag_rank,
+        length_to_frag_count_multiple,
+        min_frag_intensity,
+        model_type
+        );
+
+        # fragments_table.arrow + prec_to_frag.arrow are now fully consumed —
+        # getDetailedFrags above is their only reader. Release the mmap handles
+        # and delete them before serializing the .jls outputs.
+        fragments_table = nothing
+        prec_to_frag = nothing
+        GC.gc()
+        safeRm(joinpath(spec_lib_path, "fragments_table.arrow"), nothing; force=true)
+        safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"), nothing; force=true)
     end
-
-    #println("Get full fragments list...")
-    detailed_frags, pid_to_fid = getDetailedFrags(
-    fragments_table[:mz],
-    fragments_table[:coefficients],
-    fragments_table[:intensity],
-    fragments_table[:is_y],
-    fragments_table[:is_b],
-    fragments_table[:is_p],
-    fragments_table[:fragment_index],
-    fragments_table[:charge],
-    fragments_table[:sulfur_count],
-    fragments_table[:ion_type],
-    fragments_table[:isotope],
-    fragments_table[:is_internal],
-    fragments_table[:is_immonium],
-    fragments_table[:has_neutral_diff],
-    precursors_table[:mz],
-    precursors_table[:prec_charge],#:precursor_charge],
-    precursors_table[:length],
-    prec_to_frag[:start_idx],
-    y_start,
-    b_start,
-    include_p,
-    include_isotope,
-    include_immonium,
-    include_internal,
-    include_neutral_diff,
-    max_frag_charge,
-    frag_bounds,
-    max_frag_rank,
-    length_to_frag_count_multiple,
-    min_frag_intensity,
-    model_type
-    );
-
-    # fragments_table.arrow + prec_to_frag.arrow are now fully consumed —
-    # getDetailedFrags above is their only reader (pid_to_fid replaces
-    # prec_to_frag; it is serialized as precursor_to_fragment_indices.jls).
-    # Release the mmap handles and delete them now, before we serialize
-    # detailed_fragments.jls + the two index .jls files, so the ~57 MB
-    # fragments_table.arrow never coexists on disk with the final outputs.
-    # Cuts peak disk ~58 MB. safeRm = GC + retry for the Windows mmap lock.
-    fragments_table = nothing
-    prec_to_frag = nothing
-    GC.gc()
-    safeRm(joinpath(spec_lib_path, "fragments_table.arrow"), nothing; force=true)
-    safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"), nothing; force=true)
 
     # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
     # See sort_detailed_fragments_by_mz! for why the order matters.

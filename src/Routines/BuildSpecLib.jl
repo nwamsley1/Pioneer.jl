@@ -145,6 +145,11 @@ function BuildSpecLib(params_path::String)
         N_FRAGMENTS = 0
         N_TARGETS = 0
         N_DECOYS = 0
+        # In-memory handoff for the fused raw->detailed_frags path (set in the
+        # prediction block below). When predict_fragments is false (resume from
+        # existing files) they stay nothing and buildPionLib uses the disk path.
+        detailed_frags = nothing
+        pid_to_fid = nothing
         if params["predict_fragments"]
             # Fragment prediction workflow
             @user_info "Starting fragment prediction workflow..."
@@ -278,12 +283,15 @@ function BuildSpecLib(params_path::String)
                 )
                 ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
 
-                parse_altimeter_fragments(
+                # Fused: decode raw_fragments directly into the final
+                # Vector{SplineCompactFrag} + CSR, in memory, skipping the
+                # fragments_table.arrow re-encode/re-read. Handed to buildPionLib
+                # below without touching disk.
+                detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
                     precursors_table,
                     fragments_table,
                     frag_annotation_type,
                     ion_dictionary,
-                    10000,
                     asset_path("immonium.txt"),
                     lib_dir,
                     Dict{String, Int8}(),
@@ -359,7 +367,12 @@ function BuildSpecLib(params_path::String)
 
         # Verify required files
         verify_timing = @timed begin
-            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"]
+            # The fused path hands detailed_frags to buildPionLib in memory, so it
+            # needs only the precursor/protein tables. The disk path (resume with
+            # predict_fragments=false) still requires the fragment intermediates.
+            required_files = detailed_frags === nothing ?
+                ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"] :
+                ["precursors_table.arrow", "proteins_table.arrow"]
             if !all(isfile.(joinpath.(lib_dir, required_files)))
                 error("Missing required files in $lib_dir. Try running with predict_fragments=true")
             end
@@ -390,7 +403,9 @@ function BuildSpecLib(params_path::String)
                 Float32(get(_params.library_params, "frag_bin_tol_ppm", 0.0)),  # frag_bin_tol_ppm (0 = use mDa mode)
                 3.0f0,          # rt_bin_tol
                 koina_model_type;
-                frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0))
+                frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
+                detailed_frags = detailed_frags,
+                pid_to_fid = pid_to_fid
             )
 
             nothing

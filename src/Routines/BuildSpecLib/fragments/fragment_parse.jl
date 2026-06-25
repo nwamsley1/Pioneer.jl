@@ -655,3 +655,162 @@ function rebuild_prec_to_frag_index!(prec_to_frag_path::String,
     Arrow.write(prec_to_frag_path, DataFrame(start_idx = starts))
     return nothing
 end
+
+"""
+    build_detailed_frags_from_raw(precursor_table, fragment_table, annotation_type,
+        ion_dictionary, immonium_data_path, out_dir, mods_to_sulfur_diff,
+        iso_mod_to_mass, ::SplineCoefficientModel) -> (detailed_frags, prec_to_frag)
+
+Fused replacement for `parse_altimeter_fragments` + `getDetailedFrags`: decode the
+raw Koina fragment table directly into the final `Vector{SplineCompactFrag}` (plus
+the CSR precursor→fragment index) in a single pass, WITHOUT the intermediate
+`fragments_table.arrow` re-encode/re-read.
+
+It reproduces exactly the per-fragment work of `process_spline_batch!` (sulfur count
+over the fragment's sequence span, capped at the precursor sulfur count; isotope-mod
+m/z adjustment; ion-type flags) and the per-precursor positional rank of
+`getDetailedFrags`. `fragment_table` is assumed grouped by ascending `precursor_idx`
+(predict_fragments emits/filters in that order), so a single sequential pass yields
+contiguous per-precursor ranges; the CSR is built first-occurrence-only +
+right-back-filled, identical to `rebuild_prec_to_frag_index!`. `detailed_frags[fi]`
+is 1:1 with raw row `fi` (no filtering happens here — it already happened in
+`filter_fragments!`), so positions match the two-step path.
+
+Still serializes `frag_name_to_idx.jls` + `ion_annotations.jls` (as the two-step path
+did). Returns `(detailed_frags, prec_to_frag)` to be handed to `buildPionLib` in
+memory; nothing fragment-related is written to disk here.
+"""
+function build_detailed_frags_from_raw(
+    precursor_table::Arrow.Table,
+    fragment_table::Arrow.Table,
+    annotation_type::FragAnnotation,
+    ion_dictionary::Dict{Int32, String},
+    immonium_data_path::String,
+    out_dir::String,
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    ::SplineCoefficientModel
+)
+    # Annotation feature dict — identical to parse_altimeter_fragments.
+    immonium_to_sulfur_count = get_immonium_sulfur_dict(immonium_data_path)
+    ion_annotation_to_data_dict = Dict{Int32, PioneerFragAnnotation}()
+    atype = typeof(annotation_type)
+    for (ion_idx, ion_name) in ion_dictionary
+        ion_annotation_to_data_dict[ion_idx] = parse_fragment_annotation(
+            atype(ion_name); immonium_to_sulfur_count = immonium_to_sulfur_count)
+    end
+
+    coef_col = fragment_table[:coefficients]
+    coef_type = eltype(coef_col)
+    N = length(coef_type.parameters)
+    T = eltype(coef_type)
+    n_frags  = length(fragment_table[:mz])
+    n_precursors = length(precursor_table[1])
+    detailed = Vector{SplineCompactFrag{N, T}}(undef, n_frags)
+    prec_to_frag = fill(zero(UInt64), n_precursors + 1)
+
+    # Function barrier: the Arrow.Table columns are abstractly typed at this call
+    # site (Arrow.Table getindex returns Any), so pass them to a kernel that
+    # specializes on their concrete element types (ChainedVector{Int32}, ...) for
+    # a type-stable hot loop — the pattern getDetailedFrags gets from its signature.
+    _fill_detailed_from_raw!(
+        detailed, prec_to_frag,
+        fragment_table[:annotation], fragment_table[:precursor_idx],
+        fragment_table[:mz], coef_col,
+        precursor_table[:sequence], precursor_table[:mods],
+        precursor_table[:isotope_mods], precursor_table[:precursor_charge],
+        ion_annotation_to_data_dict, mods_to_sulfur_diff, iso_mod_to_mass,
+        n_frags, n_precursors)
+
+    serialize_to_jls(joinpath(out_dir, "frag_name_to_idx.jls"), ion_dictionary)
+    serialize_to_jls(joinpath(out_dir, "ion_annotations.jls"), ion_annotation_to_data_dict)
+    return detailed, prec_to_frag
+end
+
+# Type-stable kernel for build_detailed_frags_from_raw. Reproduces
+# process_spline_batch!'s per-fragment decode (sulfur over the fragment's sequence
+# span capped at the precursor sulfur; isotope-mod m/z shift; ion flags) and
+# getDetailedFrags's per-precursor positional rank, emitting SplineCompactFrag at
+# detailed[fi] (1:1 with raw row fi). Builds the CSR prec_to_frag first-occurrence-
+# only + right-back-filled, identical to rebuild_prec_to_frag_index!.
+function _fill_detailed_from_raw!(
+    detailed::Vector{SplineCompactFrag{N, T}},
+    prec_to_frag::Vector{UInt64},
+    frag_ann, frag_pid, frag_mzs, coef_col,
+    seqs, mods_col, iso_mod_col, charge_col,
+    ion_dict::Dict{Int32, PioneerFragAnnotation},
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    n_frags::Int, n_precursors::Int) where {N, T}
+
+    seq_idx_to_sulfur  = zeros(UInt8, 255)
+    seq_idx_to_iso_mod = zeros(Float32, 255)
+    last_pid = zero(UInt32)
+    prec_sulfur_count = 0
+    prec_length = zero(UInt8)
+    prec_charge = zero(UInt8)
+    rank = 0
+
+    @inbounds for fi in 1:n_frags
+        pid = frag_pid[fi]
+        if pid != last_pid
+            last_pid = pid
+            rank = 0
+            if prec_to_frag[pid] == 0
+                prec_to_frag[pid] = UInt64(fi)
+            end
+            fill!(seq_idx_to_sulfur, zero(UInt8))
+            fill!(seq_idx_to_iso_mod, zero(Float32))
+            seq = seqs[pid]
+            prec_sulfur_count = Int(count_sulfurs!(
+                seq_idx_to_sulfur, seq, parseMods(mods_col[pid]), mods_to_sulfur_diff))
+            fill_isotope_mods!(seq_idx_to_iso_mod, parseMods(iso_mod_col[pid]), iso_mod_to_mass)
+            prec_length = UInt8(length(seq))
+            prec_charge = UInt8(charge_col[pid])
+        end
+        rank += 1
+
+        frag_data = ion_dict[frag_ann[fi]]
+        start_idx, stop_idx = get_fragment_indices(
+            frag_data.base_type, frag_data.frag_index, prec_length)
+
+        sulfur_count = 0
+        if !frag_data.immonium
+            for i in start_idx:stop_idx
+                sulfur_count += seq_idx_to_sulfur[i]
+            end
+        end
+        sulfur_count += frag_data.sulfur_diff
+
+        frag_mz = frag_mzs[fi] + apply_isotope_mod(
+            frag_data.charge, seq_idx_to_iso_mod, start_idx, stop_idx)
+
+        detailed[fi] = SplineCompactFrag(
+            UInt32(pid),
+            frag_mz,
+            coef_col[fi],
+            frag_data.base_type == 'y',
+            frag_data.base_type == 'b',
+            frag_data.base_type == 'p',
+            frag_data.isotope > 0,
+            frag_data.charge,
+            frag_data.frag_index,
+            prec_charge,
+            UInt8(rank),
+            UInt8(min(sulfur_count, prec_sulfur_count)),
+        )
+    end
+
+    # CSR boundaries: final boundary + right-back-fill so empty precursors inherit
+    # the next non-empty start (identical to rebuild_prec_to_frag_index!).
+    prec_to_frag[end] = UInt64(n_frags + 1)
+    next = prec_to_frag[end]
+    for i in n_precursors:-1:1
+        if prec_to_frag[i] == 0
+            prec_to_frag[i] = next
+        else
+            next = prec_to_frag[i]
+        end
+    end
+    return nothing
+end
