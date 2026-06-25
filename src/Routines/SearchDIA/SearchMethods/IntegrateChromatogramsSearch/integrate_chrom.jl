@@ -146,6 +146,348 @@ function debug_save_chromatogram_integration_plot(
 end
 
 
+
+"""
+WHSmooth! — set up and solve the Whittaker-Henderson smoothing problem.
+All I/O goes through ws fields: ws.b (raw signal), ws.z (smoothed output),
+ws.u2 (zeroed), ws.w_tmp (weights), ws.x_tmp (RT positions).
+"""
+function WHSmooth!(ws::WHWorkspace,
+                    intensity_col::AbstractVector,
+                    fraction_col::AbstractVector,
+                    rt_col::AbstractVector,
+                    m::Int,
+                    n_pad::Int64,
+                    min_fraction_transmitted::Float32,
+                    λ::Float32)
+
+    b  = ws.b
+    u2 = ws.u2
+    n  = ws.n_max
+
+    # Reset b and second derivative
+    @inbounds for i in range(1, n)
+        b[i] = zero(Float32)
+        u2[i] = zero(Float32)
+    end
+
+    # Copy transmission-corrected data to b
+    max_isolation = 0.0f0
+    @inbounds for i in range(1, m)
+        frac = fraction_col[i]
+        if frac >= min_fraction_transmitted
+            b[i + n_pad] = intensity_col[i] / frac
+            max_isolation = max(max_isolation, frac)
+        else
+            b[i + n_pad] = 0.0f0
+        end
+    end
+
+    # Create weight vector using workspace (no allocation)
+    w = ws.w_tmp
+    @inbounds for i in range(1, n)
+        w[i] = max(max_isolation, 1.0f0)
+    end
+    @inbounds for i in range(1, m)
+        frac = fraction_col[i]
+        w[i+n_pad] = frac >= min_fraction_transmitted ? frac : 0.0f0
+    end
+
+    # Get RT spacing using workspace (no allocation)
+    x = ws.x_tmp
+    start_rt = rt_col[1]
+    last_rt = rt_col[end]
+    default_spacing = m < 2 ? 1.0f0 : rt_col[2] - start_rt
+
+    # left padding
+    for i in range(1, n_pad)
+        x[i] = start_rt - (default_spacing * ((n_pad - i) + 1))
+    end
+    # real values
+    for i in range(1, m)
+        x[i + n_pad] = rt_col[i]
+    end
+    # right padding
+    for i in range(n_pad+m+1, n)
+        x[i] = last_rt + (default_spacing * (i - (n_pad + m)))
+    end
+
+    # normalize by RT width in-place
+    rt_width = last_rt-start_rt
+    @inbounds for i in range(1, n)
+        x[i] /= rt_width
+    end
+
+    active_length = m + (2*n_pad)
+
+    if m <= 1 || active_length < 3
+        # No smoothing possible — copy raw data into ws.z
+        @inbounds for i in 1:active_length
+            ws.z[i] = b[i]
+        end
+        return nothing
+    end
+
+    # Solves in-place; result lives in ws.z[1:active_length]
+    whitsmddw!(ws, x, b, w, active_length, λ)
+    return nothing
+end
+
+function fillU2!(
+    u2::Vector{Float32},
+    u::Vector{Float32},
+    t::Vector{Float32},
+    n::Int
+)
+    u2[1] = 0.0f0
+    u2[n] = 0.0f0
+    @inbounds @fastmath for i in 2:(n - 1)
+        dt1 = t[i] - t[i - 1]
+        dt2 = t[i + 1] - t[i]
+        dt_total = t[i + 1] - t[i - 1]
+        a = (u[i + 1] - u[i]) / dt2
+        b = (u[i] - u[i - 1]) / dt1
+        u2[i] = 2f0 / dt_total * (a - b)
+    end
+end
+
+function getApexScan(
+    apex_scan::Int64,
+    n_pad::Int64,
+    intensities::Vector{Float32},
+    N::Int)
+
+    apex_idx = apex_scan + n_pad
+
+    # Walk right: climb while next scan is strictly higher
+    right_apex = apex_idx
+    while right_apex < N && intensities[right_apex + 1] > intensities[right_apex]
+        right_apex += 1
+    end
+
+    # Walk left: climb while next scan is strictly higher
+    left_apex = apex_idx
+    while left_apex > 1 && intensities[left_apex - 1] > intensities[left_apex]
+        left_apex -= 1
+    end
+
+    # Pick whichever local maximum is greater
+    best = intensities[right_apex] >= intensities[left_apex] ? right_apex : left_apex
+    return best - n_pad
+end
+
+"""
+getIntegrationBounds!(u2, u, N, apex_scan, n_pad) -> UnitRange
+
+Find the start/stop scan indices of a chromatographic peak whose apex
+(in the *unpadded* region) is at `apex_scan`.
+
+* `u2` - second-derivative-like array (length = n_pad + N + n_pad)
+* `u`  - intensity array (same length as `u2`)
+* `N`  - length of the **central** window (without padding)
+* `apex_scan` - 1-based apex position inside the central window
+* `n_pad` - number of padded samples on each side
+
+Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).
+"""
+function getIntegrationBounds!(u2::Vector{Float32},
+                            u::Vector{Float32},
+                            N::Int,
+                            apex_scan::Int,
+                            n_pad::Int)::UnitRange{Int}
+
+    # indices in the *padded* coordinate system
+    pad_start   = n_pad + 1                   # first index of the real window
+    pad_end     = n_pad + N
+    apex_padded = n_pad + apex_scan           # apex index in padded coords
+
+    #return pad_start:pad_end
+
+    # initialise search bounds (clamp to valid padded range)
+    start = max(apex_padded - 1, pad_start)
+    stop  = min(apex_padded + 1, pad_end)
+
+    # ──────────────── search to the right (RH boundary) ────────────────
+    # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
+    @inbounds @fastmath for i in stop:pad_end-1
+        if (u2[i-1] < u2[i]) && (u2[i+1] < u2[i])
+            stop = i
+            break
+        end
+    end
+    # 2. keep going while the intensity is still near its running minimum
+    #    (tolerate small noise bumps up to 15% above the min seen so far)
+    #    Always snap the boundary to the running min position.
+    running_min = u[stop]
+    running_min_idx = stop
+    @inbounds @fastmath for i in stop:pad_end-1
+        if u[i] < running_min
+            running_min = u[i]
+            running_min_idx = i
+        end
+        if u[i+1] > running_min * 1.15f0
+            break
+        end
+    end
+    stop = running_min_idx
+
+    # ──────────────── search to the left  (LH boundary) ────────────────
+    # 1. first local maximum of u2 when scanning left
+    @inbounds @fastmath for i in reverse(pad_start+1:start)
+        if (u2[i] > u2[i-1]) && (u2[i+1] < u2[i])
+            start = i
+            break
+        end
+    end
+    # 2. keep going left while intensity is near its running minimum
+    running_min = u[start]
+    running_min_idx = start
+    @inbounds @fastmath for i in reverse(pad_start+1:start)
+        if u[i] < running_min
+            running_min = u[i]
+            running_min_idx = i
+        end
+        if u[i-1] > running_min * 1.15f0
+            break
+        end
+    end
+    start = running_min_idx
+
+    # convert from padded indices back to 1…N
+    start_mid = max(start - n_pad, 1)
+    stop_mid  = min(stop  - n_pad, N)
+
+    return start_mid:stop_mid
+end
+
+function ensureMinimumScanRange(scan_range::UnitRange{Int}, apex_scan::Int, N::Int; min_points::Int = 3)
+    N <= 0 && return scan_range
+    target_points = min(min_points, N)
+    start = clamp(first(scan_range), 1, N)
+    stop = clamp(last(scan_range), 1, N)
+    start, stop = minmax(start, stop)
+
+    if apex_scan < start
+        start = apex_scan
+    elseif apex_scan > stop
+        stop = apex_scan
+    end
+    start = clamp(start, 1, N)
+    stop = clamp(stop, 1, N)
+
+    while stop - start + 1 < target_points
+        left_span = apex_scan - start
+        right_span = stop - apex_scan
+        if start > 1 && (left_span <= right_span || stop == N)
+            start -= 1
+        elseif stop < N
+            stop += 1
+        elseif start > 1
+            start -= 1
+        else
+            break
+        end
+    end
+
+    return start:stop
+end
+
+function getForcedBoundaryRange(
+    scan_idx_col::AbstractVector{<:Integer},
+    start_scan::UInt32,
+    stop_scan::UInt32,
+)
+    (start_scan == 0 || stop_scan == 0) && return nothing
+    start_idx = find_nearest_scan(scan_idx_col, start_scan)
+    stop_idx = find_nearest_scan(scan_idx_col, stop_scan)
+    start_idx, stop_idx = minmax(start_idx, stop_idx)
+    return start_idx:stop_idx
+end
+
+
+function fillState!(state::Chromatogram,
+                    u::Vector{Float32},
+                    rt::AbstractVector{Float32},
+                    start::Int64,
+                    stop::Int64,
+                    apex_scan::Int64,
+                    n_pad::Int64
+                    )
+
+    start_rt = rt[start]
+    best_rt = rt[apex_scan]
+    #start_rt, best_rt = rt[start], rt[best_scan]
+    rt_width = rt[stop] - start_rt
+
+    norm_factor = u[apex_scan+n_pad]
+
+    #Write data to state
+    #Normalize so that maximum intensity is 1
+    #And time difference from start to finish is 1.
+    @inbounds @fastmath for i in range(1, stop - start + 1)
+        n = start + i - 1
+        state.t[i] = (rt[n] - start_rt)/rt_width
+        state.data[i] = u[n+n_pad]/norm_factor
+    end
+
+    state.max_index = stop - start + 1
+    best_rt = Float32((best_rt - start_rt)/rt_width)
+    return norm_factor, start_rt, rt_width, best_rt
+end
+
+function subtractBaseline!(
+    x::Vector{Float32},  # time (or x-axis values)
+    u::Vector{Float32},  # smoothed signal values
+    _apex_scan::Int,     # retained for call-site compatibility
+    scan_range::UnitRange{Int},
+    n_pad::Int
+)
+    # Apply pad offset
+    scan_start = first(scan_range) + n_pad
+    scan_stop  = last(scan_range) + n_pad
+
+    lmin = u[scan_start]
+    rmin = u[scan_stop]
+    x_left = x[scan_start]
+    x_right = x[scan_stop]
+    dx = x_right - x_left
+    if dx == 0
+        u[scan_start] = 0.0f0
+        return nothing
+    end
+
+    slope = (rmin - lmin) / dx
+
+    @inbounds @fastmath for i in scan_start:scan_stop
+        xi = x[i]
+        baseline = lmin + (xi - x_left) * slope
+        u[i] = max(0, u[i] - baseline)
+    end
+
+    return nothing
+end
+
+
+function integrateTrapezoidal(state::Chromatogram, avg_cycle_time::Float32)
+    if state.max_index == 1
+        # Special case: 1 point only, treat like a triangle on each side
+        height = state.data[1]
+        return avg_cycle_time * height
+    elseif state.max_index >= 2
+        retval = 0.0f0
+        retval += avg_cycle_time * (state.data[1] + state.data[state.max_index]) # triangle area on each side
+        @inbounds @fastmath for i in 1:(state.max_index - 1)
+            dt = state.t[i + 1] - state.t[i]
+            retval += dt * (state.data[i] + state.data[i + 1])
+        end
+        return 0.5f0 * retval
+    else
+        # No points, no area
+        return 0.0f0
+    end
+end
+
+
 """
     integrate_chrom(chrom::SubDataFrame, apex_scan::Int64,
                    ws::WHWorkspace, state::Chromatogram,
@@ -203,350 +545,9 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 forced_boundary_stop_scan::UInt32 = UInt32(0))
 
     m = length(rt_col)
-
-    #########
-    #Helper Functions
-    #########
-
-    """
-    WHSmooth! — set up and solve the Whittaker-Henderson smoothing problem.
-    All I/O goes through ws fields: ws.b (raw signal), ws.z (smoothed output),
-    ws.u2 (zeroed), ws.w_tmp (weights), ws.x_tmp (RT positions).
-    """
-    function WHSmooth!(ws::WHWorkspace,
-                        intensity_col::AbstractVector,
-                        fraction_col::AbstractVector,
-                        rt_col::AbstractVector,
-                        m::Int,
-                        n_pad::Int64,
-                        min_fraction_transmitted::Float32,
-                        λ::Float32)
-
-        b  = ws.b
-        u2 = ws.u2
-        n  = ws.n_max
-
-        # Reset b and second derivative
-        @inbounds for i in range(1, n)
-            b[i] = zero(Float32)
-            u2[i] = zero(Float32)
-        end
-
-        # Copy transmission-corrected data to b
-        max_isolation = 0.0f0
-        @inbounds for i in range(1, m)
-            frac = fraction_col[i]
-            if frac >= min_fraction_transmitted
-                b[i + n_pad] = intensity_col[i] / frac
-                max_isolation = max(max_isolation, frac)
-            else
-                b[i + n_pad] = 0.0f0
-            end
-        end
-
-        # Create weight vector using workspace (no allocation)
-        w = ws.w_tmp
-        @inbounds for i in range(1, n)
-            w[i] = max(max_isolation, 1.0f0)
-        end
-        @inbounds for i in range(1, m)
-            frac = fraction_col[i]
-            w[i+n_pad] = frac >= min_fraction_transmitted ? frac : 0.0f0
-        end
-
-        # Get RT spacing using workspace (no allocation)
-        x = ws.x_tmp
-        start_rt = rt_col[1]
-        last_rt = rt_col[end]
-        default_spacing = m < 2 ? 1.0f0 : rt_col[2] - start_rt
-
-        # left padding
-        for i in range(1, n_pad)
-            x[i] = start_rt - (default_spacing * ((n_pad - i) + 1))
-        end
-        # real values
-        for i in range(1, m)
-            x[i + n_pad] = rt_col[i]
-        end
-        # right padding
-        for i in range(n_pad+m+1, n)
-            x[i] = last_rt + (default_spacing * (i - (n_pad + m)))
-        end
-
-        # normalize by RT width in-place
-        rt_width = last_rt-start_rt
-        @inbounds for i in range(1, n)
-            x[i] /= rt_width
-        end
-
-        active_length = m + (2*n_pad)
-
-        if m <= 1 || active_length < 3
-            # No smoothing possible — copy raw data into ws.z
-            @inbounds for i in 1:active_length
-                ws.z[i] = b[i]
-            end
-            return nothing
-        end
-
-        # Solves in-place; result lives in ws.z[1:active_length]
-        whitsmddw!(ws, x, b, w, active_length, λ)
-        return nothing
-    end
-
-    function fillU2!(
-        u2::Vector{Float32},
-        u::Vector{Float32},
-        t::Vector{Float32},
-        n::Int
-    )
-        u2[1] = 0.0f0
-        u2[n] = 0.0f0
-        @inbounds @fastmath for i in 2:(n - 1)
-            dt1 = t[i] - t[i - 1]
-            dt2 = t[i + 1] - t[i]
-            dt_total = t[i + 1] - t[i - 1]
-            a = (u[i + 1] - u[i]) / dt2
-            b = (u[i] - u[i - 1]) / dt1
-            u2[i] = 2f0 / dt_total * (a - b)
-        end
-    end
-
-    function getApexScan(
-        apex_scan::Int64,
-        n_pad::Int64,
-        intensities::Vector{Float32},
-        N::Int)
-
-        apex_idx = apex_scan + n_pad
-
-        # Walk right: climb while next scan is strictly higher
-        right_apex = apex_idx
-        while right_apex < N && intensities[right_apex + 1] > intensities[right_apex]
-            right_apex += 1
-        end
-
-        # Walk left: climb while next scan is strictly higher
-        left_apex = apex_idx
-        while left_apex > 1 && intensities[left_apex - 1] > intensities[left_apex]
-            left_apex -= 1
-        end
-
-        # Pick whichever local maximum is greater
-        best = intensities[right_apex] >= intensities[left_apex] ? right_apex : left_apex
-        return best - n_pad
-    end
-
-    """
-    getIntegrationBounds!(u2, u, N, apex_scan, n_pad) -> UnitRange
-
-    Find the start/stop scan indices of a chromatographic peak whose apex
-    (in the *unpadded* region) is at `apex_scan`.
-
-    * `u2` - second-derivative-like array (length = n_pad + N + n_pad)
-    * `u`  - intensity array (same length as `u2`)
-    * `N`  - length of the **central** window (without padding)
-    * `apex_scan` - 1-based apex position inside the central window
-    * `n_pad` - number of padded samples on each side
-
-    Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).
-    """
-    function getIntegrationBounds!(u2::Vector{Float32},
-                                u::Vector{Float32},
-                                N::Int,
-                                apex_scan::Int,
-                                n_pad::Int)::UnitRange{Int}
-
-        # indices in the *padded* coordinate system
-        pad_start   = n_pad + 1                   # first index of the real window
-        pad_end     = n_pad + N
-        apex_padded = n_pad + apex_scan           # apex index in padded coords
-
-        #return pad_start:pad_end
-
-        # initialise search bounds (clamp to valid padded range)
-        start = max(apex_padded - 1, pad_start)
-        stop  = min(apex_padded + 1, pad_end)
-
-        # ──────────────── search to the right (RH boundary) ────────────────
-        # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
-        @inbounds @fastmath for i in stop:pad_end-1
-            if (u2[i-1] < u2[i]) && (u2[i+1] < u2[i])
-                stop = i
-                break
-            end
-        end
-        # 2. keep going while the intensity is still near its running minimum
-        #    (tolerate small noise bumps up to 15% above the min seen so far)
-        #    Always snap the boundary to the running min position.
-        running_min = u[stop]
-        running_min_idx = stop
-        @inbounds @fastmath for i in stop:pad_end-1
-            if u[i] < running_min
-                running_min = u[i]
-                running_min_idx = i
-            end
-            if u[i+1] > running_min * 1.15f0
-                break
-            end
-        end
-        stop = running_min_idx
-
-        # ──────────────── search to the left  (LH boundary) ────────────────
-        # 1. first local maximum of u2 when scanning left
-        @inbounds @fastmath for i in reverse(pad_start+1:start)
-            if (u2[i] > u2[i-1]) && (u2[i+1] < u2[i])
-                start = i
-                break
-            end
-        end
-        # 2. keep going left while intensity is near its running minimum
-        running_min = u[start]
-        running_min_idx = start
-        @inbounds @fastmath for i in reverse(pad_start+1:start)
-            if u[i] < running_min
-                running_min = u[i]
-                running_min_idx = i
-            end
-            if u[i-1] > running_min * 1.15f0
-                break
-            end
-        end
-        start = running_min_idx
-
-        # convert from padded indices back to 1…N
-        start_mid = max(start - n_pad, 1)
-        stop_mid  = min(stop  - n_pad, N)
-
-        return start_mid:stop_mid
-    end
-
-    function ensureMinimumScanRange(scan_range::UnitRange{Int}, apex_scan::Int, N::Int; min_points::Int = 3)
-        N <= 0 && return scan_range
-        target_points = min(min_points, N)
-        start = clamp(first(scan_range), 1, N)
-        stop = clamp(last(scan_range), 1, N)
-        start, stop = minmax(start, stop)
-
-        if apex_scan < start
-            start = apex_scan
-        elseif apex_scan > stop
-            stop = apex_scan
-        end
-        start = clamp(start, 1, N)
-        stop = clamp(stop, 1, N)
-
-        while stop - start + 1 < target_points
-            left_span = apex_scan - start
-            right_span = stop - apex_scan
-            if start > 1 && (left_span <= right_span || stop == N)
-                start -= 1
-            elseif stop < N
-                stop += 1
-            elseif start > 1
-                start -= 1
-            else
-                break
-            end
-        end
-
-        return start:stop
-    end
-
-    function getForcedBoundaryRange(
-        scan_idx_col::AbstractVector{<:Integer},
-        start_scan::UInt32,
-        stop_scan::UInt32,
-    )
-        (start_scan == 0 || stop_scan == 0) && return nothing
-        start_idx = find_nearest_scan(scan_idx_col, start_scan)
-        stop_idx = find_nearest_scan(scan_idx_col, stop_scan)
-        start_idx, stop_idx = minmax(start_idx, stop_idx)
-        return start_idx:stop_idx
-    end
-
-
-    function fillState!(state::Chromatogram,
-                        u::Vector{Float32},
-                        rt::AbstractVector{Float32},
-                        start::Int64,
-                        stop::Int64,
-                        apex_scan::Int64,
-                        n_pad::Int64
-                        )
-
-        start_rt = rt[start]
-        best_rt = rt[apex_scan]
-        #start_rt, best_rt = rt[start], rt[best_scan]
-        rt_width = rt[stop] - start_rt
-
-        norm_factor = u[apex_scan+n_pad]
-
-        #Write data to state
-        #Normalize so that maximum intensity is 1
-        #And time difference from start to finish is 1.
-        @inbounds @fastmath for i in range(1, stop - start + 1)
-            n = start + i - 1
-            state.t[i] = (rt[n] - start_rt)/rt_width
-            state.data[i] = u[n+n_pad]/norm_factor
-        end
-
-        state.max_index = stop - start + 1
-        best_rt = Float32((best_rt - start_rt)/rt_width)
-        return norm_factor, start_rt, rt_width, best_rt
-    end
-
-    function subtractBaseline!(
-        x::Vector{Float32},  # time (or x-axis values)
-        u::Vector{Float32},  # smoothed signal values
-        _apex_scan::Int,     # retained for call-site compatibility
-        scan_range::UnitRange{Int},
-        n_pad::Int
-    )
-        # Apply pad offset
-        scan_start = first(scan_range) + n_pad
-        scan_stop  = last(scan_range) + n_pad
-
-        lmin = u[scan_start]
-        rmin = u[scan_stop]
-        x_left = x[scan_start]
-        x_right = x[scan_stop]
-        dx = x_right - x_left
-        if dx == 0
-            u[scan_start] = 0.0f0
-            return nothing
-        end
-
-        slope = (rmin - lmin) / dx
-
-        @inbounds @fastmath for i in scan_start:scan_stop
-            xi = x[i]
-            baseline = lmin + (xi - x_left) * slope
-            u[i] = max(0, u[i] - baseline)
-        end
-
-        return nothing
-    end
-
-
-    function integrateTrapezoidal(state::Chromatogram, avg_cycle_time::Float32)
-        if state.max_index == 1
-            # Special case: 1 point only, treat like a triangle on each side
-            height = state.data[1]
-            return avg_cycle_time * height
-        elseif state.max_index >= 2
-            retval = 0.0f0
-            retval += avg_cycle_time * (state.data[1] + state.data[state.max_index]) # triangle area on each side
-            @inbounds @fastmath for i in 1:(state.max_index - 1)
-                dt = state.t[i + 1] - state.t[i]
-                retval += dt * (state.data[i] + state.data[i + 1])
-            end
-            return 0.5f0 * retval
-        else
-            # No points, no area
-            return 0.0f0
-        end
-    end
+    # Helper functions (WHSmooth!, fillU2!, getApexScan, getIntegrationBounds!,
+    # ensureMinimumScanRange, getForcedBoundaryRange, fillState!, subtractBaseline!,
+    # integrateTrapezoidal) are defined at module scope above to avoid closure boxing.
 
     # Whittaker-Henderson smoothing. `fraction_col` corrects transmitted
     # precursor signal and controls observation weights.
