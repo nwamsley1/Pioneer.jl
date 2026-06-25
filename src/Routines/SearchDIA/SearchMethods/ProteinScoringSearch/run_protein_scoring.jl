@@ -35,17 +35,30 @@ function count_protein_peptides(precursors::LibraryPrecursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
     n_precursors = length(all_accession_numbers)
 
+    # Each precursor's sequence must be added to its protein(s)' peptide set, so rows
+    # can't be skipped wholesale — but the (accession_string, target, entrap_id) tuple
+    # repeats across the ~6.8M precursors (only ~tens of thousands are distinct). Cache
+    # the destination Set vector per distinct tuple: a cache hit skips the split, the
+    # per-token String() interning, and the NamedTuple-key dict lookups, leaving only
+    # the unavoidable push! of the sequence. Bit-identical (same sets, same members).
+    set_cache = Dict{Tuple{String, Bool, UInt8}, Vector{Set{String}}}()
     for i in 1:n_precursors
-        protein_names = split(all_accession_numbers[i], ';')
         is_decoy = all_decoys[i]
         entrap_id = all_entrap_ids[i]
+        target = !is_decoy
 
-        for protein_name in protein_names
-            key = (protein_name = String(protein_name), target = !is_decoy, entrap_id = entrap_id)
-            if !haskey(protein_to_possible_peptides, key)
-                protein_to_possible_peptides[key] = Set{String}()
+        target_sets = get!(set_cache, (all_accession_numbers[i], target, entrap_id)) do
+            sets = Vector{Set{String}}()
+            for protein_name in split(all_accession_numbers[i], ';')
+                key = (protein_name = String(protein_name), target = target, entrap_id = entrap_id)
+                push!(sets, get!(() -> Set{String}(), protein_to_possible_peptides, key))
             end
-            push!(protein_to_possible_peptides[key], all_sequences[i])
+            sets
+        end
+
+        seq = all_sequences[i]
+        for s in target_sets
+            push!(s, seq)
         end
     end
 

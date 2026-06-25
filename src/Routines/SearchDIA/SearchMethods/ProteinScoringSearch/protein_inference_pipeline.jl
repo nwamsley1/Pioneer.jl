@@ -403,16 +403,78 @@ end
 end
 
 """
-    _build_protein_rollup(gdf, quant_mask, prob_col)
+Reusable scratch for `_build_protein_rollup`. One dedup `Dict` per roll-up level
+(precursor_idx / mod-key / sequence -> row index) plus parallel arrays for the
+fields, all reused across protein groups via `_reset_rollup_scratch!` (so the
+14 `Dict`s previously allocated per group become 3 reused dedup `Dict`s + reused
+arrays). The dedup `Dict`s are used only for lookup, never iterated, so output
+order is the deterministic first-seen (array) order — independent of `Dict`
+capacity, hence stable across runs.
+"""
+mutable struct ProteinRollupScratch
+    # precursor level (dedup by precursor_idx)
+    prec_pos::Dict{UInt32, Int}
+    prec_id::Vector{UInt32}
+    prec_prob::Vector{Float32}
+    prec_peak::Vector{Float32}
+    prec_basepep::Vector{UInt32}
+    prec_seq::Vector{String}
+    prec_charge::Vector{UInt8}
+    prec_smods::Vector{String}
+    prec_imods::Vector{String}
+    # modified-peptide level (dedup by (base_pep_id, structural_mods, isotopic_mods))
+    mod_pos::Dict{Tuple{UInt32, String, String}, Int}
+    mod_key::Vector{Tuple{UInt32, String, String}}
+    mod_logsum::Vector{Float64}
+    mod_peak::Vector{Float32}
+    mod_seq::Vector{String}
+    mod_count::Vector{Int32}
+    # peptide level (dedup by sequence)
+    pep_pos::Dict{String, Int}
+    pep_seq::Vector{String}
+    pep_logsum::Vector{Float64}
+    pep_peak::Vector{Float32}
+    pep_count::Vector{Int32}
+end
+
+ProteinRollupScratch() = ProteinRollupScratch(
+    Dict{UInt32, Int}(), UInt32[], Float32[], Float32[], UInt32[], String[], UInt8[], String[], String[],
+    Dict{Tuple{UInt32, String, String}, Int}(), Tuple{UInt32, String, String}[], Float64[], Float32[], String[], Int32[],
+    Dict{String, Int}(), String[], Float64[], Float32[], Int32[],
+)
+
+function _reset_rollup_scratch!(s::ProteinRollupScratch)
+    empty!(s.prec_pos); empty!(s.prec_id); empty!(s.prec_prob); empty!(s.prec_peak)
+    empty!(s.prec_basepep); empty!(s.prec_seq); empty!(s.prec_charge)
+    empty!(s.prec_smods); empty!(s.prec_imods)
+    empty!(s.mod_pos); empty!(s.mod_key); empty!(s.mod_logsum)
+    empty!(s.mod_peak); empty!(s.mod_seq); empty!(s.mod_count)
+    empty!(s.pep_pos); empty!(s.pep_seq); empty!(s.pep_logsum)
+    empty!(s.pep_peak); empty!(s.pep_count)
+    return s
+end
+
+@inline function _rollup_mods_or_empty(gdf, col::Symbol, i::Int)
+    (hasproperty(gdf, col) && !ismissing(gdf[!, col][i])) ? String(gdf[!, col][i]) : ""
+end
+
+"""
+    _build_protein_rollup(gdf, quant_mask, prob_col[, scratch])
 
 Roll up precursor-level probability evidence to modified peptides, then
 peptides, and return the peptide-level protein score plus reusable
-intermediate rows.
+intermediate rows. Output rows are emitted in first-seen (deterministic) order.
+The 3-arg form allocates a fresh `ProteinRollupScratch`; pass a reused one (4-arg)
+to avoid per-group allocation.
 """
+_build_protein_rollup(gdf::AbstractDataFrame, quant_mask::AbstractVector{Bool}, prob_col::Symbol) =
+    _build_protein_rollup(gdf, quant_mask, prob_col, ProteinRollupScratch())
+
 function _build_protein_rollup(
     gdf::AbstractDataFrame,
     quant_mask::AbstractVector{Bool},
-    prob_col::Symbol
+    prob_col::Symbol,
+    s::ProteinRollupScratch,
 )
     if !hasproperty(gdf, prob_col)
         error("Missing required $(prob_col) column for protein roll-up")
@@ -424,14 +486,9 @@ function _build_protein_rollup(
         error("Missing required :base_pep_id column for protein roll-up")
     end
 
-    prob_by_precursor = Dict{UInt32, Float32}()
-    best_peak_area_by_precursor = Dict{UInt32, Float32}()
-    base_pep_id_by_precursor = Dict{UInt32, UInt32}()
-    sequence_by_precursor = Dict{UInt32, String}()
-    charge_by_precursor = Dict{UInt32, UInt8}()
-    structural_mods_by_precursor = Dict{UInt32, String}()
-    isotopic_mods_by_precursor = Dict{UInt32, String}()
+    _reset_rollup_scratch!(s)
 
+    # Precursor level: dedup by precursor_idx into parallel arrays (first-seen order).
     @inbounds for i in eachindex(quant_mask)
         quant_mask[i] || continue
 
@@ -439,42 +496,43 @@ function _build_protein_rollup(
         prob_val = _sanitize_rollup_probability(gdf[!, prob_col][i])
         peak_area_val = Float32(gdf.peak_area[i])
 
-        if haskey(prob_by_precursor, precursor_idx)
-            prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)
-            if peak_area_val > best_peak_area_by_precursor[precursor_idx]
-                best_peak_area_by_precursor[precursor_idx] = peak_area_val
-            end
+        pos = get(s.prec_pos, precursor_idx, 0)
+        if pos == 0
+            push!(s.prec_id, precursor_idx)
+            push!(s.prec_prob, prob_val)
+            push!(s.prec_peak, peak_area_val)
+            push!(s.prec_basepep, UInt32(gdf.base_pep_id[i]))
+            push!(s.prec_seq, String(gdf.sequence[i]))
+            push!(s.prec_charge, hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0))
+            push!(s.prec_smods, _rollup_mods_or_empty(gdf, :structural_mods, i))
+            push!(s.prec_imods, _rollup_mods_or_empty(gdf, :isotopic_mods, i))
+            s.prec_pos[precursor_idx] = length(s.prec_id)
         else
-            prob_by_precursor[precursor_idx] = prob_val
-            best_peak_area_by_precursor[precursor_idx] = peak_area_val
-            base_pep_id_by_precursor[precursor_idx] = UInt32(gdf.base_pep_id[i])
-            sequence_by_precursor[precursor_idx] = String(gdf.sequence[i])
-            charge_by_precursor[precursor_idx] =
-                hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0)
-            structural_mods_by_precursor[precursor_idx] =
-                hasproperty(gdf, :structural_mods) && !ismissing(gdf.structural_mods[i]) ? String(gdf.structural_mods[i]) : ""
-            isotopic_mods_by_precursor[precursor_idx] =
-                hasproperty(gdf, :isotopic_mods) && !ismissing(gdf.isotopic_mods[i]) ? String(gdf.isotopic_mods[i]) : ""
+            s.prec_prob[pos] = max(s.prec_prob[pos], prob_val)
+            if peak_area_val > s.prec_peak[pos]
+                s.prec_peak[pos] = peak_area_val
+            end
         end
     end
 
+    nprec = length(s.prec_id)
     precursor_rows = ProteinRollupPrecursorRow[]
-    sizehint!(precursor_rows, length(prob_by_precursor))
-    for precursor_idx in keys(prob_by_precursor)
-        prob_val = prob_by_precursor[precursor_idx]
+    sizehint!(precursor_rows, nprec)
+    @inbounds for p in 1:nprec
+        prob_val = s.prec_prob[p]
         none_prob_val = Float32(1.0f0 - prob_val)
         score_val = Float32(-log(none_prob_val))
         push!(precursor_rows, (
-            precursor_idx = precursor_idx,
-            base_pep_id = base_pep_id_by_precursor[precursor_idx],
-            sequence = sequence_by_precursor[precursor_idx],
-            charge = charge_by_precursor[precursor_idx],
-            structural_mods = structural_mods_by_precursor[precursor_idx],
-            isotopic_mods = isotopic_mods_by_precursor[precursor_idx],
+            precursor_idx = s.prec_id[p],
+            base_pep_id = s.prec_basepep[p],
+            sequence = s.prec_seq[p],
+            charge = s.prec_charge[p],
+            structural_mods = s.prec_smods[p],
+            isotopic_mods = s.prec_imods[p],
             pep = none_prob_val,
             prob = prob_val,
             score = score_val,
-            best_peak_area = best_peak_area_by_precursor[precursor_idx]
+            best_peak_area = s.prec_peak[p]
         ))
     end
 
@@ -490,67 +548,83 @@ function _build_protein_rollup(
         )
     end
 
-    modified_log_none_sum = Dict{Tuple{UInt32, String, String}, Float64}()
-    modified_best_peak_area = Dict{Tuple{UInt32, String, String}, Float32}()
-    modified_sequence = Dict{Tuple{UInt32, String, String}, String}()
-    modified_precursor_count = Dict{Tuple{UInt32, String, String}, Int32}()
-
+    # Modified-peptide level: dedup by (base_pep_id, structural_mods, isotopic_mods).
     for precursor_row in precursor_rows
         mod_key = (
             precursor_row.base_pep_id,
             precursor_row.structural_mods,
             precursor_row.isotopic_mods
         )
-        modified_log_none_sum[mod_key] = get(modified_log_none_sum, mod_key, 0.0) + _precursor_log_none_for_rollup(precursor_row.prob)
-        modified_best_peak_area[mod_key] = max(
-            get(modified_best_peak_area, mod_key, 0.0f0),
-            precursor_row.best_peak_area
-        )
-        modified_sequence[mod_key] = precursor_row.sequence
-        modified_precursor_count[mod_key] = get(modified_precursor_count, mod_key, Int32(0)) + Int32(1)
+        log_none = _precursor_log_none_for_rollup(precursor_row.prob)
+        mpos = get(s.mod_pos, mod_key, 0)
+        if mpos == 0
+            push!(s.mod_key, mod_key)
+            push!(s.mod_logsum, log_none)
+            push!(s.mod_peak, precursor_row.best_peak_area)
+            push!(s.mod_seq, precursor_row.sequence)
+            push!(s.mod_count, Int32(1))
+            s.mod_pos[mod_key] = length(s.mod_key)
+        else
+            s.mod_logsum[mpos] += log_none
+            if precursor_row.best_peak_area > s.mod_peak[mpos]
+                s.mod_peak[mpos] = precursor_row.best_peak_area
+            end
+            s.mod_seq[mpos] = precursor_row.sequence
+            s.mod_count[mpos] += Int32(1)
+        end
     end
 
+    nmod = length(s.mod_key)
     modified_peptide_rows = ProteinRollupModifiedPeptideRow[]
-    sizehint!(modified_peptide_rows, length(modified_log_none_sum))
-    for (mod_key, log_none_sum) in modified_log_none_sum
+    sizehint!(modified_peptide_rows, nmod)
+    @inbounds for m in 1:nmod
+        log_none_sum = s.mod_logsum[m]
         push!(modified_peptide_rows, (
-            base_pep_id = mod_key[1],
-            sequence = modified_sequence[mod_key],
-            structural_mods = mod_key[2],
-            isotopic_mods = mod_key[3],
+            base_pep_id = s.mod_key[m][1],
+            sequence = s.mod_seq[m],
+            structural_mods = s.mod_key[m][2],
+            isotopic_mods = s.mod_key[m][3],
             log_none_sum = log_none_sum,
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
             score = _score_from_log_none_sum(log_none_sum),
-            best_peak_area = modified_best_peak_area[mod_key],
-            precursor_count = modified_precursor_count[mod_key]
+            best_peak_area = s.mod_peak[m],
+            precursor_count = s.mod_count[m]
         ))
     end
-    peptide_log_none_sum = Dict{String, Float64}()
-    peptide_best_peak_area = Dict{String, Float32}()
-    peptide_modified_count = Dict{String, Int32}()
 
+    # Peptide level: dedup by sequence.
     for modified_row in modified_peptide_rows
         peptide_key = modified_row.sequence
-        peptide_log_none_sum[peptide_key] = get(peptide_log_none_sum, peptide_key, 0.0) + modified_row.log_none_sum
-        peptide_best_peak_area[peptide_key] = max(
-            get(peptide_best_peak_area, peptide_key, 0.0f0),
-            modified_row.best_peak_area
-        )
-        peptide_modified_count[peptide_key] = get(peptide_modified_count, peptide_key, Int32(0)) + Int32(1)
+        ppos = get(s.pep_pos, peptide_key, 0)
+        if ppos == 0
+            push!(s.pep_seq, peptide_key)
+            push!(s.pep_logsum, modified_row.log_none_sum)
+            push!(s.pep_peak, modified_row.best_peak_area)
+            push!(s.pep_count, Int32(1))
+            s.pep_pos[peptide_key] = length(s.pep_seq)
+        else
+            s.pep_logsum[ppos] += modified_row.log_none_sum
+            if modified_row.best_peak_area > s.pep_peak[ppos]
+                s.pep_peak[ppos] = modified_row.best_peak_area
+            end
+            s.pep_count[ppos] += Int32(1)
+        end
     end
 
+    npep = length(s.pep_seq)
     peptide_rows = ProteinRollupPeptideRow[]
-    sizehint!(peptide_rows, length(peptide_log_none_sum))
-    for (sequence, log_none_sum) in peptide_log_none_sum
+    sizehint!(peptide_rows, npep)
+    @inbounds for q in 1:npep
+        log_none_sum = s.pep_logsum[q]
         push!(peptide_rows, (
-            sequence = sequence,
+            sequence = s.pep_seq[q],
             log_none_sum = log_none_sum,
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
             score = _score_from_log_none_sum(log_none_sum),
-            best_peak_area = peptide_best_peak_area[sequence],
-            modified_peptide_count = peptide_modified_count[sequence]
+            best_peak_area = s.pep_peak[q],
+            modified_peptide_count = s.pep_count[q]
         ))
     end
     pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
@@ -652,6 +726,7 @@ function build_precursor_consensus(
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
     protein_observed_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
     max_candidate_runs = _consensus_candidate_runs_to_keep(length(psm_refs))
+    rollup_scratch = ProteinRollupScratch()   # reused across all groups (sequential loop)
 
     for (run_order, psm_ref) in enumerate(psm_refs)
         if !exists(psm_ref)
@@ -663,7 +738,7 @@ function build_precursor_consensus(
 
         for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
             quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
-            rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+            rollup = _build_protein_rollup(gdf, quant_mask, prob_col, rollup_scratch)
 
             if isempty(rollup.precursor_rows)
                 continue
@@ -1119,11 +1194,16 @@ function group_psms_by_protein(
     prob_col = _protein_group_probability_column(df)
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
-    
-    # Aggregate to protein groups
+
+    # Aggregate to protein groups. combine() runs the do-block multi-threaded
+    # (threads=true default), so use one scratch per thread. The do-block is pure
+    # compute (no yield/I/O), so the task does not migrate threads and threadid()
+    # is stable for the call; sized by maxthreadid() (threadid() can exceed
+    # nthreads() with an interactive threadpool).
+    rollup_scratches = [ProteinRollupScratch() for _ in 1:Threads.maxthreadid()]
     protein_groups = combine(grouped) do gdf
         quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
-        rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+        rollup = _build_protein_rollup(gdf, quant_mask, prob_col, rollup_scratches[Threads.threadid()])
         n_peptides = rollup.n_peptides
         pg_score = rollup.pg_score
         top_pep_peak_area = rollup.top_pep_peak_area

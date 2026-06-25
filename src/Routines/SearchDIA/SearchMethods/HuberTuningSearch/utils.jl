@@ -76,7 +76,7 @@ function perform_huber_calibration_search(
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 2)
     scan_to_prec = huber_scan_precursor_mapping(calibration_psms)
     precursor_rt_map = huber_precursor_rt_map(calibration_psms)
-    precursor_sets = [Set(calibration_psms[!, :precursor_idx]) for _ in 1:Threads.nthreads()]
+    precursor_set = Set(calibration_psms[!, :precursor_idx])  # shared read-only across threads (was N copies)
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -84,7 +84,7 @@ function perform_huber_calibration_search(
             search_data = getSearchData(search_context)[thread_id]
             return process_huber_calibration_scans!(
                 last(thread_task),
-                precursor_sets[thread_id],
+                precursor_set,
                 precursor_rt_map,
                 scan_to_prec,
                 rt_index,

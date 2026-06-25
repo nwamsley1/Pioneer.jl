@@ -649,17 +649,28 @@ function build_accession_to_species(precursors)
     accs = getAccessionNumbers(precursors)
     proteomes = getProteomeIdentifiers(precursors)
     accession_to_species = Dict{String, String}()
+    # 6.8M precursors map to only ~tens of thousands of distinct accession strings,
+    # so memoize processed strings and skip duplicates wholesale — avoids re-splitting
+    # and re-interning for the ~99.5% of rows that repeat. Bit-identical: a repeated
+    # accession string yields the same tokens, and get!/first-wins means re-processing
+    # cannot change the dict. `haskey` on a SubString is allocation-free, so tokens are
+    # interned only on genuine insert. `seen` is updated only after the length guard
+    # passes, so a row first seen with a mismatched proteome string can still be
+    # processed later with a matching one.
+    seen = Set{String}()
     @inbounds for i in eachindex(accs, proteomes)
-        a_str = String(accs[i])
-        p_str = String(proteomes[i])
+        a_str = accs[i]
+        (a_str in seen) && continue
+        p_str = proteomes[i]
         a_toks = split(a_str, ';')
         p_toks = split(p_str, ';')
         length(a_toks) == length(p_toks) || continue
+        push!(seen, String(a_str))
         for k in eachindex(a_toks)
-            ak = String(a_toks[k])
-            pk = String(p_toks[k])
+            ak = a_toks[k]
             isempty(ak) && continue
-            get!(accession_to_species, ak, pk)
+            haskey(accession_to_species, ak) && continue
+            accession_to_species[String(ak)] = String(p_toks[k])
         end
     end
     return accession_to_species
