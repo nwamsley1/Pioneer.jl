@@ -134,14 +134,14 @@ function prepare_chronologer_input(
         )
         append!(protein_entries, parsed)
         append!(fasta_entries,
-            digest_fasta(
+            _bdiag!("chron_digest_fasta", @timed digest_fasta(
                 parsed,
                 proteome_name,
                 regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
                 max_length = _params.fasta_digest_params["max_length"],
                 min_length = _params.fasta_digest_params["min_length"],
                 missed_cleavages = _params.fasta_digest_params["missed_cleavages"]
-            )
+            ))
         )
     end
 
@@ -154,25 +154,25 @@ function prepare_chronologer_input(
     use_sequence_decoys = _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
 
     # Step 1: Combine shared peptides (I/L equivalence)
-    fasta_entries = combine_shared_peptides(fasta_entries)
-    
+    fasta_entries = _bdiag!("chron_combine_shared", @timed combine_shared_peptides(fasta_entries))
+
     # Step 2: Add modifications (creates peptide variants before entrapment)
-    fasta_entries = add_mods(
-        fasta_entries, 
-        fixed_mods, 
+    fasta_entries = _bdiag!("chron_add_mods", @timed add_mods(
+        fasta_entries,
+        fixed_mods,
         var_mods,
-        _params.fasta_digest_params["max_var_mods"])
+        _params.fasta_digest_params["max_var_mods"]))
 
     # Step 3: Assign base_pep_id for peptide tracking (after modifications)
     pep_entries_processed = assign_base_pep_ids!(fasta_entries)
 
     # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
-    fasta_entries = add_entrapment_sequences_grouped(
+    fasta_entries = _bdiag!("chron_add_entrapment", @timed add_entrapment_sequences_grouped(
         fasta_entries,
         UInt8(_params.fasta_digest_params["entrapment_r"]);
         entrapment_method = entrapment_method
-    )
+    ))
 
     # Step 5: Assign base_target_id values for entrapment grouping
     assign_base_target_ids!(fasta_entries)
@@ -182,41 +182,42 @@ function prepare_chronologer_input(
     # by apply_diann_decoy_style!() which shifts target fragment m/z values
     if use_sequence_decoys
         @user_info "Generating grouped decoy sequences (method=$decoy_method)"
-        fasta_entries = add_decoy_sequences_grouped(
+        fasta_entries = _bdiag!("chron_add_decoy", @timed add_decoy_sequences_grouped(
             fasta_entries;
             decoy_method = decoy_method
-        )
+        ))
     end
         
     # Step 7: Add charges (creates precursor variants)
-    fasta_entries = add_charge(
+    fasta_entries = _bdiag!("chron_add_charge", @timed add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
-    )
+    ))
 
     # Build chronologer input dataframe (one row per peptide × charge state)
-    fasta_df = build_fasta_df(
+    fasta_df = _bdiag!("chron_build_fasta_df", @timed build_fasta_df(
         fasta_entries,
         mod_to_mass_dict = mod_to_mass_dict,
         nce = _params.nce_params["nce"]
-    )
+    ))
     # Calculate precursor m/z values
-    fasta_df[!, :mz] = getMZs(
+    fasta_df[!, :mz] = _bdiag!("chron_getMZs", @timed getMZs(
         fasta_df[!, :sequence],
         fasta_df[!, :mods],
         fasta_df[!, :precursor_charge],
         mod_to_mass_float
-    )
+    ))
 
     # Add length and missed cleavages columns
-    fasta_df[!, :length] = UInt8.(length.(fasta_df[!, :sequence]))
-    fasta_df[!, :missed_cleavages] = zeros(UInt8, size(fasta_df, 1))
-    cleavage_regex = Regex(_params.fasta_digest_params["cleavage_regex"])
-    
-    for i in 1:size(fasta_df, 1)
-        fasta_df[i, :missed_cleavages] = count(cleavage_regex, fasta_df[i, :sequence])
-    end
+    _bdiag!("chron_length_missed_cleavages", @timed begin
+        fasta_df[!, :length] = UInt8.(length.(fasta_df[!, :sequence]))
+        fasta_df[!, :missed_cleavages] = zeros(UInt8, size(fasta_df, 1))
+        cleavage_regex = Regex(_params.fasta_digest_params["cleavage_regex"])
+        for i in 1:size(fasta_df, 1)
+            fasta_df[i, :missed_cleavages] = count(cleavage_regex, fasta_df[i, :sequence])
+        end
+    end)
 
     # Filter by mass rang
     filter!(x -> (x.mz >= prec_mz_min) & (x.mz <= prec_mz_max), fasta_df)
