@@ -2,6 +2,9 @@
     "comment_output": "=== Output library path ===",
     "library_path": "/path/to/output/my_library",
 
+    "comment_seed": "=== RNG seed for decoy/entrapment shuffling. Fixed seed => fully reproducible library; different seed => different shuffled decoy/entrapment sequences. ===",
+    "seed": 1844,
+
     "comment_calibration": "=== Calibration file for automatic detection of fragment and precursor m/z ranges (optional) ===",
     "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
     "calibration_raw_file": "/path/to/calibration/file.arrow",

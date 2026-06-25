@@ -58,13 +58,19 @@ Output:
 function BuildSpecLib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
-    Random.seed!(1844)
     timings = Dict{String, Any}()
 
     # Read and validate parameters
     params_timing = @timed begin
         params_string = read(params_path, String)
         params = check_params_bsp(params_string)
+
+        # Deterministic RNG for decoy/entrapment shuffling. Configurable via the
+        # `seed` build param (default 1844, backward-compatible): a fixed seed
+        # makes the library fully reproducible; a different seed produces
+        # different shuffled decoy/entrapment sequences.
+        build_seed = Int(get(params, "seed", 1844))
+        Random.seed!(build_seed)
 
         # Get library directory (already has .poin extension added in check_params)
         lib_dir = params["_lib_dir"]
@@ -99,6 +105,7 @@ function BuildSpecLib(params_path::String)
         @user_print repeat("=", 90)
         @user_info "\nStarting library build at: $(Dates.now())"
         @user_info "Output directory: $lib_dir"
+        @user_info "RNG seed: $build_seed"
 
         # Create temporary chronologer directory
         setup_timing = @timed begin
