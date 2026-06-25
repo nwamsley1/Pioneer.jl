@@ -259,6 +259,9 @@ Removes the following files if they exist:
 - `nothing`
 """
 function cleanUpLibrary(spec_lib_path::String)
+    # Debug toggle: keep build intermediates (raw_fragments/fragments_table/
+    # prec_to_frag) for disk-usage analysis. Off by default.
+    haskey(ENV, "PIONEER_KEEP_BUILD_TEMP") && return nothing
     GC.gc()
     for fname in ["raw_fragments.arrow", "fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
         fpath = joinpath(spec_lib_path, fname)
