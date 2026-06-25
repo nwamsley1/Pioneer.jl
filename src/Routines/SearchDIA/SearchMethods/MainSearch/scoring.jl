@@ -1213,8 +1213,11 @@ function add_trace_and_fragment_features!(
         best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
     end
     best_psms[!, :smoothed_2d_shadow_hellinger] = out_2d_shadow_hellinger
+    # NOTE (experiment/mbr-smoothed-fragvec): FITTED columns are kept (persisted to
+    # the fold files) so the MBR step can build an interference-removed magnitude
+    # feature (fitted_*). SHADOW is still dropped. Revert to dropping both if the
+    # fitted MBR feature is not adopted.
     select!(best_psms, Not([
-        FITTED_FRAGMENT_INTENSITY_COLUMNS...,
         SHADOW_FRAGMENT_INTENSITY_COLUMNS...,
     ]))
     return best_psms

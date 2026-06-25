@@ -49,8 +49,11 @@ struct _MBRDonorEntry
     is_decoy::Bool
     # Donor smoothed-apex fragment vector (top-8, library predicted-intensity
     # rank order — same ranking as the acceptor, so comparable element-wise).
-    # Used by the env-gated MBR_frag_smoothed_cosine feature.
+    # Used by the env-gated MBR_frag_smoothed_* features.
     sm::NTuple{8,Float32}
+    # Donor FITTED (deconvolved, interference-removed) fragment vector, same
+    # rank order. Used by the env-gated MBR_fitfrag_* features.
+    ft::NTuple{8,Float32}
 end
 
 const _MBR_ZERO8 = ntuple(_ -> 0f0, 8)
@@ -103,7 +106,10 @@ const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     # smoothed-apex fragment vector for MBR_frag_smoothed_cosine (env-gated)
     :frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
     :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
-    :frag7_smoothed_intensity, :frag8_smoothed_intensity)
+    :frag7_smoothed_intensity, :frag8_smoothed_intensity,
+    # fitted (deconvolved, interference-removed) fragment vector for MBR_fitfrag_* (env-gated)
+    :fitted_frag1_int, :fitted_frag2_int, :fitted_frag3_int, :fitted_frag4_int,
+    :fitted_frag5_int, :fitted_frag6_int, :fitted_frag7_int, :fitted_frag8_int)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -122,6 +128,11 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_frag_ratio_disp_true,      :MBR_frag_ratio_disp_false,
     :MBR_frag_codetect_true,        :MBR_frag_codetect_false,
     :MBR_donor_weight_true,         :MBR_donor_weight_false,
+    :MBR_fitfrag_cosine_true,       :MBR_fitfrag_cosine_false,
+    :MBR_fitfrag_sum_log_ratio_true,:MBR_fitfrag_sum_log_ratio_false,
+    :MBR_fitfrag_top1_log_ratio_true,:MBR_fitfrag_top1_log_ratio_false,
+    :MBR_fitfrag_ratio_disp_true,   :MBR_fitfrag_ratio_disp_false,
+    :MBR_fitfrag_codetect_true,     :MBR_fitfrag_codetect_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -252,6 +263,7 @@ end
     rt_c::Union{Nothing, AbstractVector{Float32}},
     fidx_c::AbstractVector{UInt32},
     sm_cols::Union{Nothing, NTuple{8, AbstractVector{Float32}}},
+    ft_cols::Union{Nothing, NTuple{8, AbstractVector{Float32}}},
     side_path::String,
 )
     n = length(pid_c)
@@ -264,13 +276,14 @@ end
             error("Pass-1 sidecar misaligned at row $i of $side_path")
         pid = pid_c[i]
         sm = sm_cols === nothing ? _MBR_ZERO8 : _mbr_sm8(sm_cols, i)
+        ft = ft_cols === nothing ? _MBR_ZERO8 : _mbr_sm8(ft_cols, i)
         e = _MBRDonorEntry(
             score_c[i], w_c[i], Float32(l2ie_c[i]),
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
-            fidx_c[i], false, sm,
+            fidx_c[i], false, sm, ft,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
         if length(entries) < K
@@ -298,6 +311,13 @@ end
     return ntuple(k -> getproperty(tbl, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[k])::AbstractVector{Float32}, 8)
 end
 
+# The 8 fitted (deconvolved) fragment columns as a tuple, or nothing if any is
+# absent (e.g. an older fold file produced before they were persisted).
+@inline function _mbr_fitted_cols(tbl)
+    all(c -> hasproperty(tbl, c), FITTED_FRAGMENT_INTENSITY_COLUMNS) || return nothing
+    return ntuple(k -> getproperty(tbl, FITTED_FRAGMENT_INTENSITY_COLUMNS[k])::AbstractVector{Float32}, 8)
+end
+
 function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
@@ -320,6 +340,7 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             hasproperty(main, :rt) ? main.rt : nothing,
             main.ms_file_idx,
             _mbr_smoothed_cols(main),
+            _mbr_fitted_cols(main),
             side_path,
         )
     end
@@ -456,6 +477,42 @@ end
     return nothing
 end
 
+# Same as _compute_mbr_frag_metrics! but on the FITTED (deconvolved,
+# interference-removed) vectors — acceptor fitted vs donor.ft. No donor_weight
+# here (already emitted by the smoothed pass). Separate pass keeps the working
+# smoothed kernel untouched.
+@inline function _compute_mbr_fitted_metrics!(
+    cos_t, slr_t, t1_t, disp_t, cod_t,
+    cos_f, slr_f, t1_f, disp_f, cod_f,
+    pid_v::AbstractVector{UInt32}, file_v::AbstractVector{UInt32},
+    ft_self::NTuple{8, AbstractVector{Float32}},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_col::Vector{UInt32},
+)
+    n = length(pid_v)
+    plen = length(partner_col)
+    @inbounds for i in 1:n
+        v = _mbr_sm8(ft_self, i)
+        (v[1]+v[2]+v[3]+v[4]+v[5]+v[6]+v[7]+v[8]) > 0f0 || continue
+        my_file = file_v[i]
+        my_pid  = pid_v[i]
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        if donor_t !== nothing
+            (cos_t[i], slr_t[i], t1_t[i], disp_t[i], cod_t[i]) =
+                _mbr_frag_metrics(v, donor_t.ft)
+        end
+        my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
+        if my_partner != UInt32(0)
+            donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
+            if donor_f !== nothing
+                (cos_f[i], slr_f[i], t1_f[i], disp_f[i], cod_f[i]) =
+                    _mbr_frag_metrics(v, donor_f.ft)
+            end
+        end
+    end
+    return nothing
+end
+
 # Per-file MBR feature compute + sidecar write, reading trace_prob_prepass
 # from the Pass-1 sidecar. Mirrors compute_mbr_features_per_file_to_sidecar!
 # but for the streaming-with-Pass-1 flow.
@@ -499,6 +556,11 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_disp_t = fill(-1f0, n); out_disp_f = fill(-1f0, n)
     out_cod_t  = fill(-1f0, n); out_cod_f  = fill(-1f0, n)
     out_dw_t   = fill(-1f0, n); out_dw_f   = fill(-1f0, n)
+    out_fcos_t  = fill(-1f0, n); out_fcos_f  = fill(-1f0, n)
+    out_fslr_t  = fill(-1f0, n); out_fslr_f  = fill(-1f0, n)
+    out_ft1_t   = fill(-1f0, n); out_ft1_f   = fill(-1f0, n)
+    out_fdisp_t = fill(-1f0, n); out_fdisp_f = fill(-1f0, n)
+    out_fcod_t  = fill(-1f0, n); out_fcod_f  = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
@@ -515,6 +577,13 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_cos_t, out_slr_t, out_t1_t, out_disp_t, out_cod_t, out_dw_t,
         out_cos_f, out_slr_f, out_t1_f, out_disp_f, out_cod_f, out_dw_f,
         pid_v, file_v, sm_self, donor_dict, partner_col,
+    )
+
+    ft_self = _mbr_fitted_cols(main)
+    ft_self !== nothing && _compute_mbr_fitted_metrics!(
+        out_fcos_t, out_fslr_t, out_ft1_t, out_fdisp_t, out_fcod_t,
+        out_fcos_f, out_fslr_f, out_ft1_f, out_fdisp_f, out_fcod_f,
+        pid_v, file_v, ft_self, donor_dict, partner_col,
     )
 
     side_path = main_path * MBR_SIDECAR_SUFFIX
@@ -547,6 +616,16 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_frag_codetect_false        = out_cod_f,
         MBR_donor_weight_true          = out_dw_t,
         MBR_donor_weight_false         = out_dw_f,
+        MBR_fitfrag_cosine_true        = out_fcos_t,
+        MBR_fitfrag_cosine_false       = out_fcos_f,
+        MBR_fitfrag_sum_log_ratio_true = out_fslr_t,
+        MBR_fitfrag_sum_log_ratio_false= out_fslr_f,
+        MBR_fitfrag_top1_log_ratio_true = out_ft1_t,
+        MBR_fitfrag_top1_log_ratio_false= out_ft1_f,
+        MBR_fitfrag_ratio_disp_true    = out_fdisp_t,
+        MBR_fitfrag_ratio_disp_false   = out_fdisp_f,
+        MBR_fitfrag_codetect_true      = out_fcod_t,
+        MBR_fitfrag_codetect_false     = out_fcod_f,
     )
     writeArrow(side_path, side_df)
     return side_path
