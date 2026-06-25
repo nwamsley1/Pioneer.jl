@@ -262,8 +262,8 @@ end
 function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String}, precursors::LibraryPrecursors,
 )
-    # 1. pid → counterfactual_partner_pid map (streaming over Arrow tables).
-    cf_partner_dict = build_counterfactual_partner_map(file_paths, precursors)
+    # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
+    cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
 
     # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
     # out, so no quantile-binned features need pre-computing.
@@ -294,49 +294,43 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    # 5. Collapse the partner Dict to a pid-indexed Vector. The MBR feature
-    # compute does a Vector index per inner-loop iteration; that's cheaper
-    # than a Dict.get and the Vector is bounded by max observed pid (few MB).
-    max_pid = isempty(cf_partner_dict) ? UInt32(0) : maximum(keys(cf_partner_dict))
-    cf_partner_vec = zeros(UInt32, Int(max_pid))
-    for (pid, partner) in cf_partner_dict
-        cf_partner_vec[Int(pid)] = partner
-    end
-    cf_partner_dict = Dict{UInt32, UInt32}()
-
-    # 6. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
+    # 5. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
     @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
     # Parallelize the per-file MBR feature compute + sidecar write across
-    # files. donor_dict and cf_partner_vec are read-only across this loop
+    # files. donor_dict and cf_partner_pools are read-only across this loop
     # (built before, not mutated by the per-file function), and each file
     # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
     @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
     parallel_foreach!(length(file_paths)) do chunk
         for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(file_paths[f_idx], donor_dict, cf_partner_vec)
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                file_paths[f_idx],
+                donor_dict,
+                cf_partner_pools,
+            )
         end
     end
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    cf_partner_vec = UInt32[]
+    cf_partner_pools = nothing
     GC.gc()
 
-    # 7. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
+    # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
     # only as wide as the FTR controller needs.
     @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
     psms = load_ftr_slim_dataframe(file_paths)
     @debug_l1 "  slim FTR rows: $(nrow(psms))"
 
-    # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
+    # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
     psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
 
-    # 9. Paired-counterfactual FTR.
+    # 8. Paired-counterfactual FTR.
     apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
 
-    # 10. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
+    # 9. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
     # back into each main file in one pass.
     @debug_l1 "MBR Batch F: writing recovery sidecars..."
     write_recovery_sidecars(psms, file_paths)

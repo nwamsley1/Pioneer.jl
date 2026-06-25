@@ -14,10 +14,10 @@
 #
 # Two main-file sweeps drive MBR feature compute:
 #   Sweep 1 (build_mbr_donor_dict_streaming_with_pass1)
-#     Streams each (main + pass1 sidecar) pair to build the top-2 donor dict
-#     keyed by precursor_idx. Top-2 (not top-1) covers the same-file fallback
-#     in `_donor_for` — top-1 might be the recipient's own file.
-#     Memory: ~50k pids × 2 entries × ~40 B ≈ a few MB.
+#     Streams each (main + pass1 sidecar) pair to build the donor dict keyed
+#     by precursor_idx. Each pid keeps the two best donor rows from distinct
+#     files, sorted by score, so `_donor_for_pid` can choose the best cross-file
+#     donor without storage growing with file count.
 #
 #   Sweep 2 (compute_mbr_features_per_file_to_sidecar_with_pass1!)
 #     Loads ONE file's main + pass1 sidecar at a time, computes the MBR_*
@@ -35,8 +35,7 @@
 
 # A single cross-run donor entry: one row's score + the per-row donor
 # features we need to compute MBR features for a recipient row in
-# another file. Holds the bare minimum so the donor dict stays small
-# (each entry is ~40 bytes; ~50k pids × 2 ≈ a few MB).
+# another file. Holds the bare minimum so the donor dict stays small.
 struct _MBRDonorEntry
     trace_prob::Float32
     weight::Float32
@@ -50,6 +49,7 @@ struct _MBRDonorEntry
 end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
+const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 
 # Columns the donor dict reads from each (main + pass1 sidecar) pair.
 # Listed once so reader and consumer stay in sync. `is_decoy` is hardcoded
@@ -181,6 +181,21 @@ function write_pass1_score_sidecars!(best_psms::DataFrame, file_paths::Vector{St
     return n_written
 end
 
+function _insert_sorted_donor_entry!(
+    entries::Vector{_MBRDonorEntry},
+    entry::_MBRDonorEntry,
+)
+    insert_idx = length(entries) + 1
+    @inbounds for idx in eachindex(entries)
+        if entry.trace_prob > entries[idx].trace_prob
+            insert_idx = idx
+            break
+        end
+    end
+    insert!(entries, insert_idx, entry)
+    return nothing
+end
+
 # Inner per-file row loop for build_mbr_donor_dict_streaming_with_pass1.
 # Extracted so Julia specializes on the concrete Arrow column types and the
 # Union{Nothing, ...} branch on logby_c / rt_c becomes a one-time call-site
@@ -202,7 +217,6 @@ end
     side_path::String,
 )
     n = length(pid_c)
-    K = 2
     has_logby = logby_c !== nothing
     has_rt    = rt_c    !== nothing
     @inbounds for i in 1:n
@@ -219,17 +233,19 @@ end
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
-        if length(entries) < K
-            push!(entries, e)
-            if length(entries) > 1 && entries[end-1].trace_prob < e.trace_prob
-                entries[end-1], entries[end] = entries[end], entries[end-1]
-            end
-        elseif e.trace_prob > entries[end].trace_prob
-            entries[end] = e
-            if entries[1].trace_prob < e.trace_prob
-                entries[1], entries[end] = entries[end], entries[1]
+        same_file_idx = 0
+        for idx in eachindex(entries)
+            if entries[idx].ms_file_idx == e.ms_file_idx
+                same_file_idx = idx
+                break
             end
         end
+        if same_file_idx != 0
+            e.trace_prob > entries[same_file_idx].trace_prob || continue
+            deleteat!(entries, same_file_idx)
+        end
+        _insert_sorted_donor_entry!(entries, e)
+        length(entries) > MBR_MAX_DONOR_FILES_PER_PRECURSOR && pop!(entries)
     end
     return nothing
 end
@@ -277,6 +293,84 @@ end
     return nothing
 end
 
+@inline function _nearest_cross_file_donor(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pool::_IrtPool,
+    target_irt::Float32,
+    my_file::UInt32,
+)
+    n = length(pool.irts)
+    n == 0 && return nothing
+
+    right = searchsortedfirst(pool.irts, target_irt)
+    left = right - 1
+    @inbounds while left >= 1 || right <= n
+        use_left = if right > n
+            true
+        elseif left < 1
+            false
+        else
+            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
+        end
+        pool_idx = use_left ? left : right
+        use_left ? (left -= 1) : (right += 1)
+        donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
+        donor !== nothing && return donor
+    end
+    return nothing
+end
+
+@inline function _resolve_false_donor_for_pid(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    my_pid::UInt32,
+    my_file::UInt32,
+)
+    pid_idx = Int(my_pid)
+    my_irt = partner_pools.irt_by_pid[pid_idx]
+    my_fold = Int(partner_pools.fold_by_pid[pid_idx])
+    my_mz = Int(partner_pools.mz_bin_by_pid[pid_idx])
+
+    if partner_pools.target_by_pid[pid_idx]
+        donor = _nearest_cross_file_donor(
+            donor_dict,
+            get(partner_pools.pools_d, (my_fold, my_mz), _empty_pool()),
+            my_irt,
+            my_file,
+        )
+        donor !== nothing && return donor
+        donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool_d[my_fold], my_irt, my_file)
+        donor !== nothing && return donor
+        return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool_d, my_irt, my_file)
+    else
+        donor = _nearest_cross_file_donor(
+            donor_dict,
+            get(partner_pools.pools_t, (my_fold, my_mz), _empty_pool()),
+            my_irt,
+            my_file,
+        )
+        donor !== nothing && return donor
+        donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool_t[my_fold], my_irt, my_file)
+        donor !== nothing && return donor
+        return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool_t, my_irt, my_file)
+    end
+end
+
+@inline function _false_donor_for_pid(
+    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    my_pid::UInt32,
+    my_file::UInt32,
+)
+    if haskey(false_donor_cache, my_pid)
+        return false_donor_cache[my_pid]
+    end
+    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
+    false_donor_cache[my_pid] = donor
+    return donor
+end
+
 # Inner per-row MBR-feature compute. Extracted from
 # compute_mbr_features_per_file_to_sidecar_with_pass1! so Julia specializes
 # on the concrete column types (Arrow.Primitive{T} or Vector{T}) and the
@@ -299,16 +393,15 @@ end
     logby_v::Union{Nothing, AbstractVector{Float16}},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    partner_col::Vector{UInt32},
+    partner_pools::_CounterfactualPartnerPools,
+    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
 )
     n = length(pid_v)
-    plen = length(partner_col)
     has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
     @inbounds for i in 1:n
         my_file = file_v[i]
         my_pid  = pid_v[i]
-        my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
 
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
         if donor_t !== nothing
@@ -327,24 +420,22 @@ end
             end
             out_miss_t[i] = false
         end
-        if my_partner != UInt32(0)
-            donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
-            if donor_f !== nothing
-                out_max_f[i] = donor_f.trace_prob
-                wi = weight_v[i]
-                if donor_f.weight > 0 && wi > 0
-                    out_lw_f[i] = log2(wi / donor_f.weight)
-                end
-                out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
-                out_ir_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
-                if has_logby
-                    out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
-                end
-                if has_rt
-                    out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
-                end
-                out_miss_f[i] = false
+        donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, my_pid, my_file)
+        if donor_f !== nothing
+            out_max_f[i] = donor_f.trace_prob
+            wi = weight_v[i]
+            if donor_f.weight > 0 && wi > 0
+                out_lw_f[i] = log2(wi / donor_f.weight)
             end
+            out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
+            out_ir_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
+            if has_logby
+                out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
+            end
+            if has_rt
+                out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
+            end
+            out_miss_f[i] = false
         end
     end
     return nothing
@@ -356,7 +447,7 @@ end
 function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         main_path::AbstractString,
         donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-        partner_col::Vector{UInt32})
+        partner_pools::_CounterfactualPartnerPools)
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -387,6 +478,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
+    false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
@@ -395,7 +487,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v, rt_v,
-        donor_dict, partner_col,
+        donor_dict, partner_pools, false_donor_cache,
     )
 
     side_path = main_path * MBR_SIDECAR_SUFFIX
@@ -592,4 +684,3 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
     @debug_l1 "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
-
