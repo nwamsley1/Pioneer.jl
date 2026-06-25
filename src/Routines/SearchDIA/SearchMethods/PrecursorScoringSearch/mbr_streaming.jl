@@ -61,15 +61,34 @@ const _MBR_ZERO8 = ntuple(_ -> 0f0, 8)
     (Float32(sc[1][i]), Float32(sc[2][i]), Float32(sc[3][i]), Float32(sc[4][i]),
      Float32(sc[5][i]), Float32(sc[6][i]), Float32(sc[7][i]), Float32(sc[8][i]))
 
-# Cosine similarity (spectral angle) between two 8-vectors. Scale-invariant, so
-# no pre-normalization is needed; returns 0 if either vector has no signal.
-@inline function _mbr_cosine8(p::NTuple{8,Float32}, q::NTuple{8,Float32})
-    dot = 0f0; np2 = 0f0; nq2 = 0f0
+# Fragment-vector comparison metrics between an acceptor smoothed 8-vector `p`
+# and a donor smoothed 8-vector `q` (library-rank aligned). Returns a 5-tuple;
+# -1f0 is the "no comparison" sentinel (matches the other MBR features).
+#   cosine     : spectral angle (scale-invariant — magnitude-weighted shape)
+#   sum_lr     : log2 ratio of total fragment signal (Σp / Σq)
+#   top1_lr    : log2 ratio of the rank-1 fragment (p1 / q1)
+#   disp       : std of per-fragment log2 ratios over co-detected ranks — low =
+#                all fragments agree on one scale (real); high = inconsistent.
+#                Equal-weights every fragment (unlike cosine), so it sees the
+#                minor fragments cosine ignores. Sentinel if < 2 co-detected.
+#   codetect   : number of ranks where both vectors are > 0 (0..8)
+@inline function _mbr_frag_metrics(p::NTuple{8,Float32}, q::NTuple{8,Float32})
+    eps = 1f-6
+    dot = 0f0; np2 = 0f0; nq2 = 0f0; sp = 0f0; sq = 0f0
+    n_cod = 0; m = 0f0; m2 = 0f0
     @inbounds for k in 1:8
-        dot += p[k]*q[k]; np2 += p[k]^2; nq2 += q[k]^2
+        pk = p[k]; qk = q[k]
+        dot += pk*qk; np2 += pk^2; nq2 += qk^2; sp += pk; sq += qk
+        if pk > 0f0 && qk > 0f0
+            r = log2(pk/qk); n_cod += 1; m += r; m2 += r*r
+        end
     end
     d = sqrt(np2*nq2)
-    d > 0f0 ? Float32(dot/d) : 0f0
+    cosine  = d  > 0f0 ? Float32(dot/d) : -1f0
+    sum_lr  = (sp > 0f0 && sq > 0f0) ? log2((sp+eps)/(sq+eps)) : -1f0
+    top1_lr = (p[1] > 0f0 && q[1] > 0f0) ? log2((p[1]+eps)/(q[1]+eps)) : -1f0
+    disp    = n_cod >= 2 ? sqrt(max(m2/n_cod - (m/n_cod)^2, 0f0)) : -1f0
+    return (cosine, sum_lr, top1_lr, disp, Float32(n_cod))
 end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
@@ -98,6 +117,10 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
     :MBR_frag_smoothed_cosine_true, :MBR_frag_smoothed_cosine_false,
+    :MBR_frag_sum_log_ratio_true,   :MBR_frag_sum_log_ratio_false,
+    :MBR_frag_top1_log_ratio_true,  :MBR_frag_top1_log_ratio_false,
+    :MBR_frag_ratio_disp_true,      :MBR_frag_ratio_disp_false,
+    :MBR_frag_codetect_true,        :MBR_frag_codetect_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -387,11 +410,14 @@ end
     return nothing
 end
 
-# Donor↔acceptor smoothed-apex fragment cosine (env-gated MBR feature). Kept in
-# its own pass so the established `_compute_mbr_inner!` kernel is untouched; when
-# the FTR gate is off these two columns are produced but simply go unused.
-@inline function _compute_mbr_frag_cosine!(
-    out_cos_t::Vector{Float32}, out_cos_f::Vector{Float32},
+# Donor↔acceptor smoothed-apex fragment-vector metrics (env-gated MBR features).
+# Kept in its own pass so the established `_compute_mbr_inner!` kernel is
+# untouched; when no fragvec feature is gated on these columns simply go unused.
+# Fills paired _true (real donor) / _false (counterfactual donor) arrays for the
+# five metrics from `_mbr_frag_metrics`.
+@inline function _compute_mbr_frag_metrics!(
+    cos_t, slr_t, t1_t, disp_t, cod_t,
+    cos_f, slr_f, t1_f, disp_f, cod_f,
     pid_v::AbstractVector{UInt32}, file_v::AbstractVector{UInt32},
     sm_self::NTuple{8, AbstractVector{Float32}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
@@ -406,11 +432,17 @@ end
         my_file = file_v[i]
         my_pid  = pid_v[i]
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
-        donor_t !== nothing && (out_cos_t[i] = _mbr_cosine8(v_self, donor_t.sm))
+        if donor_t !== nothing
+            (cos_t[i], slr_t[i], t1_t[i], disp_t[i], cod_t[i]) =
+                _mbr_frag_metrics(v_self, donor_t.sm)
+        end
         my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
         if my_partner != UInt32(0)
             donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
-            donor_f !== nothing && (out_cos_f[i] = _mbr_cosine8(v_self, donor_f.sm))
+            if donor_f !== nothing
+                (cos_f[i], slr_f[i], t1_f[i], disp_f[i], cod_f[i]) =
+                    _mbr_frag_metrics(v_self, donor_f.sm)
+            end
         end
     end
     return nothing
@@ -453,7 +485,11 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_cos_t = fill(-1f0, n); out_cos_f = fill(-1f0, n)
+    out_cos_t  = fill(-1f0, n); out_cos_f  = fill(-1f0, n)
+    out_slr_t  = fill(-1f0, n); out_slr_f  = fill(-1f0, n)
+    out_t1_t   = fill(-1f0, n); out_t1_f   = fill(-1f0, n)
+    out_disp_t = fill(-1f0, n); out_disp_f = fill(-1f0, n)
+    out_cod_t  = fill(-1f0, n); out_cod_f  = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
@@ -466,8 +502,10 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     )
 
     sm_self = _mbr_smoothed_cols(main)
-    sm_self !== nothing && _compute_mbr_frag_cosine!(
-        out_cos_t, out_cos_f, pid_v, file_v, sm_self, donor_dict, partner_col,
+    sm_self !== nothing && _compute_mbr_frag_metrics!(
+        out_cos_t, out_slr_t, out_t1_t, out_disp_t, out_cod_t,
+        out_cos_f, out_slr_f, out_t1_f, out_disp_f, out_cod_f,
+        pid_v, file_v, sm_self, donor_dict, partner_col,
     )
 
     side_path = main_path * MBR_SIDECAR_SUFFIX
@@ -490,6 +528,14 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_best_rt_diff_false         = out_rt_f,
         MBR_frag_smoothed_cosine_true  = out_cos_t,
         MBR_frag_smoothed_cosine_false = out_cos_f,
+        MBR_frag_sum_log_ratio_true    = out_slr_t,
+        MBR_frag_sum_log_ratio_false   = out_slr_f,
+        MBR_frag_top1_log_ratio_true   = out_t1_t,
+        MBR_frag_top1_log_ratio_false  = out_t1_f,
+        MBR_frag_ratio_disp_true       = out_disp_t,
+        MBR_frag_ratio_disp_false      = out_disp_f,
+        MBR_frag_codetect_true         = out_cod_t,
+        MBR_frag_codetect_false        = out_cod_f,
     )
     writeArrow(side_path, side_df)
     return side_path

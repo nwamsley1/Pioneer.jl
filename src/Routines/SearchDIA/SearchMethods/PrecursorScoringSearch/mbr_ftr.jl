@@ -183,14 +183,34 @@ function apply_mbr_filter_paired!(
     # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
     # Bottom half: same candidates with _false MBR values swapped in. Label = false.
     sub = psms[cand_idx, :]
-    # Env-gated A/B: append the donor↔acceptor smoothed-apex fragment cosine
-    # (paired _true/_false) to the FTR feature set. Off by default → baseline
-    # feature list is byte-identical. The hasproperty filter below also drops it
-    # gracefully if the sidecar didn't produce the columns.
-    add_sm_cos = get(ENV, "PIONEER_FTR_ADD_SMOOTHED_COSINE", "0") == "1"
-    ftr_true  = add_sm_cos ? vcat(FTR_FEATURES_F_TRUE,  :MBR_frag_smoothed_cosine_true)  : FTR_FEATURES_F_TRUE
-    ftr_false = add_sm_cos ? vcat(FTR_FEATURES_F_FALSE, :MBR_frag_smoothed_cosine_false) : FTR_FEATURES_F_FALSE
-    add_sm_cos && @user_info "FTR: PIONEER_FTR_ADD_SMOOTHED_COSINE=1 — adding MBR_frag_smoothed_cosine"
+    # Env-gated A/B: append donor↔acceptor smoothed-fragment-vector metric(s) to
+    # the FTR feature set (paired _true/_false). PIONEER_FTR_FRAGVEC is a comma
+    # list of metric keys; empty (default) → baseline feature list is byte-
+    # identical. The hasproperty filter below also drops any key gracefully if
+    # the sidecar didn't produce the columns.
+    ftr_true  = copy(FTR_FEATURES_F_TRUE)
+    ftr_false = copy(FTR_FEATURES_F_FALSE)
+    fragvec = strip(get(ENV, "PIONEER_FTR_FRAGVEC", ""))
+    if !isempty(fragvec)
+        keymap = Dict(
+            "cosine"         => :MBR_frag_smoothed_cosine,
+            "sum_log_ratio"  => :MBR_frag_sum_log_ratio,
+            "top1_log_ratio" => :MBR_frag_top1_log_ratio,
+            "ratio_disp"     => :MBR_frag_ratio_disp,
+            "codetect"       => :MBR_frag_codetect,
+        )
+        for k in split(fragvec, ',')
+            key = strip(String(k)); isempty(key) && continue
+            base = get(keymap, key, nothing)
+            if base === nothing
+                @user_info "FTR: unknown PIONEER_FTR_FRAGVEC key '$key' — skipping"
+                continue
+            end
+            push!(ftr_true,  Symbol(base, :_true))
+            push!(ftr_false, Symbol(base, :_false))
+        end
+        @user_info "FTR: PIONEER_FTR_FRAGVEC=$fragvec — FTR feature set now $(length(ftr_true)) features"
+    end
     available_true  = filter(f -> hasproperty(sub, f), ftr_true)
     # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
     # cols are identical between TRUE and FALSE lists, so available_true tells
