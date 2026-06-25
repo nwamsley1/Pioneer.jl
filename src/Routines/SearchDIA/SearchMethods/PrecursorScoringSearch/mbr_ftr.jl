@@ -198,6 +198,7 @@ function apply_mbr_filter_paired!(
             "top1_log_ratio" => :MBR_frag_top1_log_ratio,
             "ratio_disp"     => :MBR_frag_ratio_disp,
             "codetect"       => :MBR_frag_codetect,
+            "donor_weight"   => :MBR_donor_weight,
         )
         for k in split(fragvec, ',')
             key = strip(String(k)); isempty(key) && continue

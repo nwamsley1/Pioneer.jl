@@ -121,6 +121,7 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_frag_top1_log_ratio_true,  :MBR_frag_top1_log_ratio_false,
     :MBR_frag_ratio_disp_true,      :MBR_frag_ratio_disp_false,
     :MBR_frag_codetect_true,        :MBR_frag_codetect_false,
+    :MBR_donor_weight_true,         :MBR_donor_weight_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -416,8 +417,8 @@ end
 # Fills paired _true (real donor) / _false (counterfactual donor) arrays for the
 # five metrics from `_mbr_frag_metrics`.
 @inline function _compute_mbr_frag_metrics!(
-    cos_t, slr_t, t1_t, disp_t, cod_t,
-    cos_f, slr_f, t1_f, disp_f, cod_f,
+    cos_t, slr_t, t1_t, disp_t, cod_t, dw_t,
+    cos_f, slr_f, t1_f, disp_f, cod_f, dw_f,
     pid_v::AbstractVector{UInt32}, file_v::AbstractVector{UInt32},
     sm_self::NTuple{8, AbstractVector{Float32}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
@@ -426,22 +427,29 @@ end
     n = length(pid_v)
     plen = length(partner_col)
     @inbounds for i in 1:n
-        v_self = _mbr_sm8(sm_self, i)
-        (v_self[1]+v_self[2]+v_self[3]+v_self[4]+
-         v_self[5]+v_self[6]+v_self[7]+v_self[8]) > 0f0 || continue
         my_file = file_v[i]
         my_pid  = pid_v[i]
+        v_self = _mbr_sm8(sm_self, i)
+        self_sig = (v_self[1]+v_self[2]+v_self[3]+v_self[4]+
+                    v_self[5]+v_self[6]+v_self[7]+v_self[8]) > 0f0
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
         if donor_t !== nothing
-            (cos_t[i], slr_t[i], t1_t[i], disp_t[i], cod_t[i]) =
-                _mbr_frag_metrics(v_self, donor_t.sm)
+            # donor weight: log2-scaled (heavy-tailed); needs no acceptor signal
+            dw_t[i] = donor_t.weight > 0f0 ? log2(donor_t.weight) : -1f0
+            if self_sig
+                (cos_t[i], slr_t[i], t1_t[i], disp_t[i], cod_t[i]) =
+                    _mbr_frag_metrics(v_self, donor_t.sm)
+            end
         end
         my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
         if my_partner != UInt32(0)
             donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
             if donor_f !== nothing
-                (cos_f[i], slr_f[i], t1_f[i], disp_f[i], cod_f[i]) =
-                    _mbr_frag_metrics(v_self, donor_f.sm)
+                dw_f[i] = donor_f.weight > 0f0 ? log2(donor_f.weight) : -1f0
+                if self_sig
+                    (cos_f[i], slr_f[i], t1_f[i], disp_f[i], cod_f[i]) =
+                        _mbr_frag_metrics(v_self, donor_f.sm)
+                end
             end
         end
     end
@@ -490,6 +498,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_t1_t   = fill(-1f0, n); out_t1_f   = fill(-1f0, n)
     out_disp_t = fill(-1f0, n); out_disp_f = fill(-1f0, n)
     out_cod_t  = fill(-1f0, n); out_cod_f  = fill(-1f0, n)
+    out_dw_t   = fill(-1f0, n); out_dw_f   = fill(-1f0, n)
 
     _compute_mbr_inner!(
         out_max_t, out_max_f, out_lw_t, out_lw_f,
@@ -503,8 +512,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
 
     sm_self = _mbr_smoothed_cols(main)
     sm_self !== nothing && _compute_mbr_frag_metrics!(
-        out_cos_t, out_slr_t, out_t1_t, out_disp_t, out_cod_t,
-        out_cos_f, out_slr_f, out_t1_f, out_disp_f, out_cod_f,
+        out_cos_t, out_slr_t, out_t1_t, out_disp_t, out_cod_t, out_dw_t,
+        out_cos_f, out_slr_f, out_t1_f, out_disp_f, out_cod_f, out_dw_f,
         pid_v, file_v, sm_self, donor_dict, partner_col,
     )
 
@@ -536,6 +545,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_frag_ratio_disp_false      = out_disp_f,
         MBR_frag_codetect_true         = out_cod_t,
         MBR_frag_codetect_false        = out_cod_f,
+        MBR_donor_weight_true          = out_dw_t,
+        MBR_donor_weight_false         = out_dw_f,
     )
     writeArrow(side_path, side_df)
     return side_path
