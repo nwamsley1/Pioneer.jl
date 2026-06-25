@@ -23,7 +23,7 @@ Fragment index search, spectral deconvolution, and LightGBM prescore search.
 Pipeline:
 1. process_file!: Run fragment index search, deconvolve with prescore fragment settings
 2. process_search_results!: Compute prescore features, train LightGBM, select best scan per precursor
-3. summarize_results!: Global prescore aggregation, write fold-split second_pass_psms for ScoringSearch
+3. summarize_results!: Global prescore aggregation, register fold-split second_pass_psms for ScoringSearch
 """
 # Per-file PEP threshold applied to best-per-precursor PSMs. Precursors with
 # PEP > MAIN_PEP_FILTER_THR are dropped before being written to the second-pass
@@ -446,13 +446,28 @@ function process_search_results!(
     # Drop vector columns that can't be serialized to Arrow
     dropVectorColumns!(best_psms)
 
-    # Write per-fold main_search_psms (used by both aggregate_prescore_globally! and summarize_results!)
     precursors = getPrecursors(getSpecLib(search_context))
+    frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
+    nce_model = getNceModel(search_context, ms_file_idx)
+    add_wide_window_features_to_table!(
+        best_psms,
+        spectra,
+        search_context,
+        ms_file_idx,
+        precursors,
+        frag_lookup,
+        nce_model,
+    )
+
+    # Write per-fold main_search_psms.
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
-        any(fold_mask) && writeArrow(joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow"), best_psms[fold_mask, :])
+        if any(fold_mask)
+            fold_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
+            writeArrow(fold_path, best_psms[fold_mask, :])
+        end
     end
     t_write = time()
 
@@ -478,7 +493,7 @@ function process_search_results!(
                "    features=$(r(dur_features))s [prep=$(r(t_prepare))s competition=$(r(t_competition))s ms1=$(r(t_ms1))s]\n" *
                "    lgbm=$(r(dur_lgbm))s [train_cv=$(r(lgbm_timings.train_cv))s best_per_prec=$(r(lgbm_timings.best))s]  " *
                "pep_filter=$(r(dur_pep))s\n" *
-               "    recal=$(r(dur_recal))s  phase2=$(r(dur_phase2))s  write=$(r(dur_write))s  " *
+               "    recal=$(r(dur_recal))s  phase2=$(r(dur_phase2))s  fold_write+flanking=$(r(dur_write))s  " *
                "overhead=$(r(dur_overhead))s"
 
     return nothing

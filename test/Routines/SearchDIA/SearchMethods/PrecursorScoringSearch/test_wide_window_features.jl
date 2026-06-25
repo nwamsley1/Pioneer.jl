@@ -182,6 +182,58 @@ function _reference_flanking_feature_values(
     )
 end
 
+function _test_flanking_columns(n_rows::Int)
+    return (
+        ms1_candidate = zeros(Float32, n_rows),
+        frag_candidate = zeros(Float32, n_rows),
+        ms1_frag_corr = zeros(Float32, n_rows),
+        frag_corr_mean = zeros(Float32, n_rows),
+        corr_strength = zeros(Float32, n_rows),
+        corr_effective_n = zeros(Float32, n_rows),
+        best_m0 = zeros(Float32, n_rows),
+        signal_support = zeros(Float32, n_rows),
+        apex_gt2x_rank = zeros(UInt16, n_rows),
+    )
+end
+
+function _test_flanking_group(
+    group_start::Int,
+    group_stop::Int,
+    core_ms1::Float32,
+    core_frag_signal::Float32,
+    core_fragments::NTuple{8, Float32},
+    ms1_m0::Vector{Float32},
+    fragments::Matrix{Float32},
+)
+    return Pioneer.FlankingWindowGroupBuffer(
+        group_start,
+        group_stop,
+        core_ms1,
+        core_frag_signal,
+        core_fragments,
+        0f0,
+        8,
+        ntuple(identity, 8),
+        ntuple(_ -> 0f0, 8),
+        ntuple(_ -> 0f0, 8),
+        ntuple(_ -> 0f0, 8),
+        ms1_m0,
+        fragments,
+    )
+end
+
+function _test_rows_match_features(columns, rows, expected)
+    @test all(columns.ms1_candidate[rows] .≈ expected.flanking_ms1_m0_candidate_fraction)
+    @test all(columns.frag_candidate[rows] .≈ expected.flanking_frag_candidate_fraction)
+    @test all(columns.ms1_frag_corr[rows] .≈ expected.flanking_ms1_frag_sum_corr)
+    @test all(columns.frag_corr_mean[rows] .≈ expected.flanking_frag_corr_mean)
+    @test all(columns.corr_strength[rows] .≈ expected.flanking_frag_corr_strength)
+    @test all(columns.corr_effective_n[rows] .≈ expected.flanking_frag_corr_effective_n)
+    @test all(columns.best_m0[rows] .≈ expected.flanking_frag_corr_best_m0)
+    @test all(columns.signal_support[rows] .≈ expected.flanking_signal_support)
+    @test all(columns.apex_gt2x_rank[rows] .== expected.frag_apex_gt2x_flank_bitvec_rank)
+end
+
 @testset "flanking-window features are cross-run only" begin
     @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, TEST_FLANKING_WINDOW_FEATURES)
     @test all(feature -> !(feature in Pioneer.PRESCORE_FEATURES), TEST_FLANKING_WINDOW_FEATURES)
@@ -190,6 +242,67 @@ end
     @test :flanking_n_correlated_fragments_bitvec_rank ∉ Pioneer.FLANKING_WINDOW_FEATURES
     @test :flanking_n_correlated_fragments ∉ Pioneer.ADVANCED_FEATURE_SET
     @test :flanking_n_correlated_fragments_bitvec_rank ∉ Pioneer.ADVANCED_FEATURE_SET
+end
+
+@testset "flanking-window table helper mutates rows before Arrow write" begin
+    tbl = DataFrame(
+        precursor_idx = UInt32[],
+        scan_idx = UInt32[],
+        flanking_core_scan_min = UInt32[],
+        flanking_core_scan_max = UInt32[],
+        n_contiguous_scans = UInt16[],
+        flanking_core_ms1_m0_signal = Float32[],
+        flanking_core_frag_signal = Float32[],
+    )
+    for col in Pioneer.SMOOTHED_FRAGMENT_INTENSITY_COLUMNS
+        tbl[!, col] = Float32[]
+    end
+
+    n = Pioneer.add_wide_window_features_to_table!(
+        tbl,
+        nothing,
+        nothing,
+        1,
+        nothing,
+        nothing,
+        nothing,
+    )
+
+    @test n == 0
+    @test all(feature -> hasproperty(tbl, feature), TEST_FLANKING_WINDOW_FEATURES)
+    @test !hasproperty(tbl, :flanking_core_scan_min)
+    @test !hasproperty(tbl, :flanking_core_scan_max)
+    @test !hasproperty(tbl, :flanking_core_ms1_m0_signal)
+    @test !hasproperty(tbl, :flanking_core_frag_signal)
+end
+
+@testset "flanking-window group reduction scatters disjoint row ranges" begin
+    columns = _test_flanking_columns(5)
+    core_fragments_1 = (12f0, 10f0, 8f0, 6f0, 4f0, 2f0, 1f0, 0.5f0)
+    ms1_m0_1 = Float32[4, 8, 12]
+    fragments_1 = Float32[
+        1 2 3 4 5 6 7 8
+        2 4 6 8 10 12 14 16
+        3 6 9 12 15 18 21 24
+    ]
+    core_fragments_2 = (2f0, 4f0, 6f0, 8f0, 10f0, 12f0, 14f0, 16f0)
+    ms1_m0_2 = Float32[5, 0, 10]
+    fragments_2 = Float32[
+        4 0 2 0 1 0 3 0
+        0 0 0 0 0 0 0 0
+        8 0 4 0 2 0 6 0
+    ]
+    groups = Pioneer.FlankingWindowGroupBuffer[
+        _test_flanking_group(1, 2, 20f0, 40f0, core_fragments_1, ms1_m0_1, fragments_1),
+        _test_flanking_group(3, 5, 10f0, 15f0, core_fragments_2, ms1_m0_2, fragments_2),
+    ]
+
+    Pioneer._wide_reduce_scan_centric_group_batch!(columns, groups, nothing)
+
+    expected_1 = _reference_flanking_feature_values(20f0, 40f0, core_fragments_1, ms1_m0_1, fragments_1)
+    expected_2 = _reference_flanking_feature_values(10f0, 15f0, core_fragments_2, ms1_m0_2, fragments_2)
+    _test_rows_match_features(columns, 1:2, expected_1)
+    _test_rows_match_features(columns, 3:5, expected_2)
 end
 
 @testset "flanking-core bounds use contiguous passing cycles around the selected PSM" begin

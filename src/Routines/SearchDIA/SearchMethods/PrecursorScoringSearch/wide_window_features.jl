@@ -1,5 +1,11 @@
 const WIDE_WINDOW_CYCLE_MARGIN = 3
 const FLANKING_SCAN_CENTRIC_BATCH_SIZE = 50000
+const FLANKING_WINDOW_TEMP_COLUMNS = [
+    :flanking_core_scan_min,
+    :flanking_core_scan_max,
+    :flanking_core_ms1_m0_signal,
+    :flanking_core_frag_signal,
+]
 
 @inline function _wide_window_pcor(x::AbstractVector, y::AbstractVector)
     n = length(x)
@@ -570,7 +576,10 @@ function _wide_fill_scan_centric_ms1_m0!(
     spectra,
     ms1_ppm_tol::Float32,
 )
-    for (ms1_i32, work_items) in ms1_work
+    ms1_keys = collect(keys(ms1_work))
+    Threads.@threads for key_idx in eachindex(ms1_keys)
+        ms1_i32 = ms1_keys[key_idx]
+        work_items = ms1_work[ms1_i32]
         mz = getMzArray(spectra, Int(ms1_i32))
         intensities = getIntensityArray(spectra, Int(ms1_i32))
 
@@ -594,19 +603,24 @@ function _wide_fill_scan_centric_fragments!(
     frag_list,
     frag_mem::AbstractMassErrorModel,
 )
-    scan_corrected_mz = Float32[]
-    scan_obs_low = Float32[]
-    scan_obs_high = Float32[]
+    scan_keys = collect(keys(ms2_work))
+    max_thread_id = Threads.maxthreadid()
+    scan_corrected_mz = [Float32[] for _ in 1:max_thread_id]
+    scan_obs_low = [Float32[] for _ in 1:max_thread_id]
+    scan_obs_high = [Float32[] for _ in 1:max_thread_id]
 
-    for (scan_i32, work_items) in ms2_work
+    Threads.@threads for key_idx in eachindex(scan_keys)
+        scan_i32 = scan_keys[key_idx]
+        work_items = ms2_work[scan_i32]
         scan_idx = Int(scan_i32)
         mz = getMzArray(spectra, scan_idx)
         intensities = getIntensityArray(spectra, scan_idx)
         scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+        thread_idx = Threads.threadid()
         n_peaks = prepare_scan_peaks!(
-            scan_corrected_mz,
-            scan_obs_low,
-            scan_obs_high,
+            scan_corrected_mz[thread_idx],
+            scan_obs_low[thread_idx],
+            scan_obs_high[thread_idx],
             frag_mem,
             mz,
             intensities,
@@ -628,12 +642,12 @@ function _wide_fill_scan_centric_fragments!(
             start_idx = 1
             for s in 1:n_frags
                 start_idx = bsearch_hybrid(
-                    scan_corrected_mz, sorted_lows[s], start_idx, n_peaks,
+                    scan_corrected_mz[thread_idx], sorted_lows[s], start_idx, n_peaks,
                 )
                 best_peak, _, _ = scan_for_nearest_in_window(
-                    scan_corrected_mz,
-                    scan_obs_low,
-                    scan_obs_high,
+                    scan_corrected_mz[thread_idx],
+                    scan_obs_low[thread_idx],
+                    scan_obs_high[thread_idx],
                     start_idx,
                     n_peaks,
                     sorted_targets[s],
@@ -646,6 +660,22 @@ function _wide_fill_scan_centric_fragments!(
                 end
             end
         end
+    end
+    return nothing
+end
+
+function _wide_reduce_scan_centric_group_batch!(columns, groups, bitvec_rank_table)
+    Threads.@threads for group_idx in eachindex(groups)
+        group = groups[group_idx]
+        features = _wide_flank_feature_values(
+            group.core_ms1_m0_signal,
+            group.core_frag_signal,
+            group.core_fragments,
+            group.ms1_m0,
+            group.fragments;
+            bitvec_rank_table = bitvec_rank_table,
+        )
+        _wide_scatter_features!(columns, group.group_start, group.group_stop, features)
     end
     return nothing
 end
@@ -675,17 +705,7 @@ function _wide_flush_scan_centric_group_batch!(
         frag_mem,
     )
 
-    @inbounds for group in groups
-        features = _wide_flank_feature_values(
-            group.core_ms1_m0_signal,
-            group.core_frag_signal,
-            group.core_fragments,
-            group.ms1_m0,
-            group.fragments;
-            bitvec_rank_table = bitvec_rank_table,
-        )
-        _wide_scatter_features!(columns, group.group_start, group.group_stop, features)
-    end
+    _wide_reduce_scan_centric_group_batch!(columns, groups, bitvec_rank_table)
     empty!(groups)
     empty!(ms1_work)
     empty!(ms2_work)
@@ -707,16 +727,15 @@ function _wide_scatter_features!(columns, group_start::Int, group_stop::Int, fea
     return nothing
 end
 
-function add_wide_window_features_to_fold_file!(
-    fpath::String,
+function add_wide_window_features_to_table!(
+    tbl::DataFrame,
     spectra,
-    search_context::SearchContext,
+    search_context,
     ms_file_idx::Integer,
-    precursors::LibraryPrecursors,
-    frag_lookup::LibraryFragmentLookup,
+    precursors,
+    frag_lookup,
     nce_model,
 )
-    tbl = DataFrame(Tables.columntable(Arrow.Table(fpath)); copycols = true)
     n = nrow(tbl)
 
     flanking_ms1_m0_candidate_fraction = zeros(Float32, n)
@@ -740,7 +759,7 @@ function add_wide_window_features_to_fold_file!(
     tbl[!, :frag_apex_gt2x_flank_bitvec_rank] = frag_apex_gt2x_flank_bitvec_rank
 
     if n == 0
-        writeArrow(fpath, tbl)
+        select!(tbl, Not(FLANKING_WINDOW_TEMP_COLUMNS))
         return n
     end
 
@@ -871,44 +890,6 @@ function add_wide_window_features_to_fold_file!(
         bitvec_rank_table,
     )
 
-    select!(tbl, Not([:flanking_core_ms1_m0_signal, :flanking_core_frag_signal]))
-    writeArrow(fpath, tbl)
+    select!(tbl, Not(FLANKING_WINDOW_TEMP_COLUMNS))
     return n
-end
-
-function add_wide_window_features_to_fold_files!(
-    search_context::SearchContext,
-    valid_file_indices::Vector{Int},
-)
-    isempty(valid_file_indices) && return nothing
-
-    ms_ref = getMSData(search_context)
-    spec_lib = getSpecLib(search_context)
-    precursors = getPrecursors(spec_lib)
-    frag_lookup = getFragmentLookupTable(spec_lib)
-    n_files = 0
-    n_rows = 0
-
-    for ms_file_idx in valid_file_indices
-        spectra = getMSData(ms_ref, ms_file_idx)
-        nce_model = getNceModel(search_context, ms_file_idx)
-        for fold in UInt8[0, 1]
-            fpath = getSecondPassPsmsFold(ms_ref, ms_file_idx, fold)
-            (isempty(fpath) || !isfile(fpath)) && continue
-            n_rows += add_wide_window_features_to_fold_file!(
-                fpath,
-                spectra,
-                search_context,
-                ms_file_idx,
-                precursors,
-                frag_lookup,
-                nce_model,
-            )
-            n_files += 1
-        end
-    end
-
-    @debug_l1 "Flanking-window cross-run features: added $(length(FLANKING_WINDOW_FEATURES)) features " *
-              "to $n_files fold files ($n_rows rows)"
-    return nothing
 end
