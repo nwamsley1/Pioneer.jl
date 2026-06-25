@@ -128,6 +128,8 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # E7 (Batch E, 2026-05-12): mean |ppm_err| over matched M0 fragments at
     # ranks 1-3. Zero if no top-3 matches in this scan.
     top3_ms2_mass_error_mean::H
+    expected_predicted_missing_fraction::H
+    mass_missing_hellinger::H
 
     # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
     # peptides have characteristic b/y intensity ratios; chimeric hits don't.
@@ -238,6 +240,12 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
                 zero(H)),
+
+            H(unscored_PSMs[i].pred_int_sum_m0 > 0 ?
+                unscored_PSMs[i].expected_missing_pred_int_sum_m0 / unscored_PSMs[i].pred_int_sum_m0 :
+                zero(H)),
+
+            H(unscored_PSMs[i].mass_missing_hellinger),
 
             L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
               log(Float32(unscored_PSMs[i].y_int) + 1f0)),

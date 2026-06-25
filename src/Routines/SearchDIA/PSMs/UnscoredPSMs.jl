@@ -56,6 +56,8 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     # ALL matched M0 fragments (any rank). Paired with b_int + y_int to give
     # matched_ratio = log2((obs matched) / (pred matched)) in Score!.
     pred_int_sum_m0::T
+    expected_missing_pred_int_sum_m0::T
+    mass_missing_hellinger::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
@@ -68,6 +70,7 @@ MainUnscoredPSM{Float32}() = MainUnscoredPSM{Float32}(
     Float32(0), Float32(0), Float32(0), Float32(0),
     Float32(0), Float32(0), Float32(0), Float32(0),
     Float32(0), zero(UInt8), Float32(0),
+    Float32(0), Float32(0),
     UInt32(0), UInt32(0),
 )
 

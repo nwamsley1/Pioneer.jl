@@ -175,6 +175,8 @@ const PRESCORE_FEATURES = [
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
     :top3_ms2_mass_error_mean,
+    :expected_predicted_missing_fraction,
+    :mass_missing_hellinger,
     :delta_frame_peak_center,
     :log_by_ratio_m0,
 

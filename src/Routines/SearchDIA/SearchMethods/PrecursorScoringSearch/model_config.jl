@@ -117,6 +117,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m0_peak_n_precursors,
     :scan_prec_mz_n_precursors,
     :top3_ms2_mass_error_mean,
+    :expected_predicted_missing_fraction,
+    :mass_missing_hellinger,
     :delta_frame_peak_center,
     :log_by_ratio_m0,
     :n_scans,
