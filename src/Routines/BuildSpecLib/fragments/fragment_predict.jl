@@ -175,7 +175,9 @@ function predict_fragments_batch(
 
     for (i, response) in enumerate(responses)
         batch_result = _bdiag!("parse_koina_batch", @timed parse_koina_batch(model, response))
-        start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
+        # Keep precursor_idx UInt32 (not Int64) — it is a precursor row index; the
+        # +1-1 cancels. Halves this per-fragment column on disk (8 B -> 4 B).
+        start_idx = first_prec_idx + UInt32((i-1) * batch_size)
 
         batch_df = batch_result.fragments
         n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
@@ -303,7 +305,7 @@ function filter_fragments!(df::DataFrame, model::SplineCoefficientModel,
     # ::Vector{T} assertions restore type stability (and act as a schema guard).
     annotations = df[!, :annotation]::Vector{Int32}
     mzs         = df[!, :mz]::Vector{Float32}
-    pids        = df[!, :precursor_idx]::Vector{Int64}
+    pids        = df[!, :precursor_idx]::Vector{UInt32}
 
     keep = trues(n_rows)
 
