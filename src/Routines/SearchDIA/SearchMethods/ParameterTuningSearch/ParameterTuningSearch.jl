@@ -692,15 +692,13 @@ function process_file!(
                         @debug_l1 "  MS1 diag failed: $(sprint(showerror, ms1_err))"
                     end
 
-                    # NCE sweep: reuse collected PSMs (skip fragment index)
+                    # NCE sweep: reuse collected PSMs (skip fragment index).
+                    # Plots are accumulated for the combined NCE PDF written
+                    # by summarize_results!; the redundant per-file PDF was
+                    # dropped 2026-06-26 (same rationale as the mass-error PDF).
                     nce_result = fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
                     if nce_result !== nothing
-                        nce_file_plots = nce_result[2]
-                        nce_dir = joinpath(getDataOutDir(search_context), "qc_plots", "collision_energy_alignment", "per_file")
-                        mkpath(nce_dir)
-                        parsed_fname_nce = getParsedFileName(search_context, ms_file_idx)
-                        save_multipage_pdf(nce_file_plots, joinpath(nce_dir, "$(parsed_fname_nce).pdf"))
-                        append!(results.nce_plot_objects, nce_file_plots)
+                        append!(results.nce_plot_objects, nce_result[2])
                     end
 
                     iteration_state.best_psms = rt_psms
@@ -930,11 +928,11 @@ function process_search_results!(
             append!(results.mass_plot_objects, file_mass_plots)
         end
 
-        # RT per-file PDF
+        # Accumulate RT plots for the combined RT-alignment PDF written by
+        # summarize_results!. The per-file RT PDF was dropped 2026-06-26 (same
+        # rationale as the mass-error PDF: the combined PDF already paginates
+        # per file, so no diagnostic info is lost).
         if !isempty(file_rt_plots)
-            per_file_rt_dir = joinpath(getRtAlignPlotFolder(search_context), "per_file")
-            mkpath(per_file_rt_dir)
-            save_multipage_pdf(file_rt_plots, joinpath(per_file_rt_dir, "$(parsed_fname).pdf"))
             append!(results.rt_plot_objects, file_rt_plots)
         end
 
