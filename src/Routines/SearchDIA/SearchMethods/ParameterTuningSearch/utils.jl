@@ -793,7 +793,7 @@ function generate_intensity_model_plots(
         push!(bin_med_raw, median(mda_errs[idx]))
     end
 
-    p_mz_bias = plot(size=(900, 900), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
+    p_mz_bias = plot(size=(600, 600), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
     scatter!(p_mz_bias, mz_f64, mda_errs,
              alpha=0.08, markersize=1, color=:gray, label=nothing)
     scatter!(p_mz_bias, bin_mz_c, bin_med_raw,
@@ -822,7 +822,7 @@ function generate_intensity_model_plots(
     end
 
     log2I_range = range(minimum(log2I), maximum(log2I), length=200)
-    p_int_bias = plot(size=(900, 900), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
+    p_int_bias = plot(size=(600, 600), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
     scatter!(p_int_bias, log2I, mz_resid_mda,
              alpha=0.08, markersize=1, color=:gray, label=nothing)
     scatter!(p_int_bias, bin_log2I_c, bin_med_resid,
@@ -853,7 +853,7 @@ function generate_intensity_model_plots(
     rt_range = range(minimum(rt_raw), maximum(rt_raw), length=200)
     rt_fit = [Float64(_rt_bias_da(model, Float32(x))) * 1e3
               for x in rt_range]
-    p_rt_bias = plot(size=(900, 900), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
+    p_rt_bias = plot(size=(600, 600), bottommargin=10Plots.mm, leftmargin=10Plots.mm)
     scatter!(p_rt_bias, rt_raw, mz_int_resid_mda,
              alpha=0.08, markersize=1, color=:gray, label=nothing)
     scatter!(p_rt_bias, bin_rt_c, bin_med_rt_resid,
@@ -880,7 +880,7 @@ function generate_intensity_model_plots(
     log2I_range_local = range(minimum(log2I), maximum(log2I), length=200)
     spread_fit_mda = [Float64(_laplace_scale_mda(model, Float32(x))) for x in log2I_range_local]
 
-    p_spread = plot(size=(900, 900),
+    p_spread = plot(size=(600, 600),
         plot_title=_split_title(fname, "Spread (mDa) vs log2(I)"))
     scatter!(p_spread, I_centers_mda, I_b_mda,
         xlabel="log2(intensity)", ylabel="MAD-based spread (mDa)",
@@ -906,7 +906,7 @@ function generate_intensity_model_plots(
     frac_within_env = round(100.0 * n_within_env / n, digits=1)
 
     n_scatter = length(scatter_idx)
-    p_envelope = plot(size=(900, 900),
+    p_envelope = plot(size=(600, 600),
         plot_title=_split_title(fname, "Spread envelope") * "\n(n=$n, $(frac_within_env)% within k×σ boundary)")
 
     scatter!(p_envelope, log2I[scatter_idx], corrected_mda[scatter_idx],
@@ -953,7 +953,7 @@ function generate_intensity_model_plots(
     model_corr = [Float64(_mz_spread_correction(model, Float32(mz))) for mz in mz_fit_range]
     model_label = "model: correction spline ($(length(model.mz_spread_spline.coeffs)) coeffs)"
 
-    p_corr = plot(size=(900, 900),
+    p_corr = plot(size=(600, 600),
         plot_title=_split_title(fname, "m/z-dependent spread correction"),
         bottommargin=10Plots.mm, leftmargin=10Plots.mm)
     scatter!(p_corr, bin_mz_centers, bin_correction;
@@ -976,7 +976,7 @@ function generate_intensity_model_plots(
         ylabel="log2(intensity)",
         title=_split_title(fname, "Fitted tolerance heatmap") *
               "\ncolor = k*sigma tolerance half-width (mDa)",
-        size=(900, 900),
+        size=(600, 600),
         color=:viridis,
         rightmargin=12Plots.mm,
         bottommargin=10Plots.mm,

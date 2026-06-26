@@ -542,7 +542,7 @@ function generate_wide_scout_plot(wide_frags, scout_model, parsed_fname)
         alpha=0.1, markersize=1.5, color=:steelblue, label=nothing,
         xlabel="Fragment m/z", ylabel="Raw error (mDa)",
         title="$(parsed_fname)\nWide scout m/z bias (n=$(length(wide_frags)), tol=±$(round(tol_mda, digits=1)) mDa)",
-        size=(900, 900), topmargin=10Plots.mm)
+        size=(600, 600), topmargin=10Plots.mm)
     Plots.plot!(p, mz_range, bias_mda, lw=2.5, color=:red, label="m/z bias (robust linear)")
     Plots.plot!(p, mz_range, bias_mda .+ tol_mda, lw=1.5, ls=:dash, color=:red,
         label="collection tol: ±$(round(tol_mda, digits=1)) mDa")
@@ -868,7 +868,7 @@ function process_search_results!(
                 ylabel="Indexed Retention Time iRT (min)",
                 title=parsed_fname * "\n⚠️ Insufficient PSMs for RT model " *
                       "($(iteration_state.best_psm_count) PSMs, need 750)",
-                size=(900, 900))
+                size=(600, 600))
             push!(file_rt_plots, p)
         else
             fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
