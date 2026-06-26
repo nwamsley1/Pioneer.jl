@@ -4,12 +4,14 @@ using Pioneer
 function _test_mbr_donor(prob::Float32, file_idx::UInt32)
     return Pioneer._MBRDonorEntry(
         prob,
+        UInt32(1),
         1.0f0,
         0.25f0,
         0.5f0,
         12.0f0,
         0.1f0,
         24.0f0,
+        Pioneer.MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT,
         file_idx,
         false,
     )
@@ -56,6 +58,7 @@ end
         Float32[11, 11, 11, 11, 11],
         nothing,
         nothing,
+        ntuple(_ -> zeros(Float32, 5), 8),
         UInt32[10, 10, 20, 30, 40],
         "unit-test",
     )

@@ -24,8 +24,9 @@ and the low-data probit fallback.
 
 """
     score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
-                                    max_psms_in_memory, q_value_threshold,
-                                    force_oom; match_between_runs=true)
+                                    fragment_lookup, max_psms_in_memory,
+                                    q_value_threshold, force_oom;
+                                    match_between_runs=true)
 
 Score PSMs experiment-wide with the same LightGBM classifier the per-file
 MainSearch uses (`SHARED_LGBM_HP` in `MainSearch/scoring.jl`). Loads PSMs
@@ -38,6 +39,8 @@ to the per-file Arrow files.
 - `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to
   write the scored output back to.
 - `precursors`: Library precursor metadata (used to add `:accession_numbers`).
+- `fragment_lookup`: Library fragment metadata used by MBR empirical-spectrum
+  features.
 - `max_psms_in_memory`: Memory budget; surfaced for backward compatibility,
   currently unused (in-memory always; per-fold sub-sampling inside the
   shared helper handles large datasets).
@@ -51,6 +54,7 @@ function score_precursor_isotope_traces(
     second_pass_folder::String,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup,
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
@@ -60,7 +64,7 @@ function score_precursor_isotope_traces(
     # MBR features, FTR recovery) — best_psms is never materialised as the
     # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors)
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
     else
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
@@ -260,10 +264,13 @@ end
 # the only DataFrame ever materialised is the slim FTR table (10 cols)
 # reconstructed from sidecars right before the FTR controller runs.
 function _score_precursor_isotope_traces_mbr(
-    file_paths::Vector{String}, precursors::LibraryPrecursors,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup,
 )
     # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
     cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
+    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
 
     # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
     # out, so no quantile-binned features need pre-computing.
@@ -310,12 +317,14 @@ function _score_precursor_isotope_traces_mbr(
                 file_paths[f_idx],
                 donor_dict,
                 cf_partner_pools,
+                fragment_keys,
             )
         end
     end
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
     cf_partner_pools = nothing
+    fragment_keys = nothing
     GC.gc()
 
     # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
