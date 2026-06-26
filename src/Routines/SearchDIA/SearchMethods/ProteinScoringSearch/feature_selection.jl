@@ -82,7 +82,9 @@ function protein_probit_feature_names()
         :peptide_coverage_logit,
         :any_common_peps,
         :coverage_log_ratio,
-        :precursor_consensus_prefix_shape
+        :precursor_consensus_prefix_shape,
+        :mbr_recovered_peptides,
+        :mbr_only_protein
     ]
 end
 
