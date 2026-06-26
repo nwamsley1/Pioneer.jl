@@ -191,7 +191,7 @@
             @test result.prec_mz_max == 1300.0
         end
         
-        rm(temp_dir, recursive=true)
+        safe_rmdir(temp_dir)
     end
     
     @testset "FragBoundModel usage" begin

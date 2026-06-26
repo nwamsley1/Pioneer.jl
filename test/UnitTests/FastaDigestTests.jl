@@ -210,8 +210,8 @@
         @test all(e -> get_proteome(e) == "mouse", entries_gz)
         
         # Clean up
-        rm(temp_fasta)
-        rm(temp_fasta_gz)
+        safe_rmdir(temp_fasta)
+        safe_rmdir(temp_fasta_gz)
         
         # Test invalid file extension
         @test_throws ErrorException parse_fasta(tempname() * ".txt", "human")
@@ -250,7 +250,7 @@
         @test get_gene(entries[2]) == "FAM168B"
         @test get_organism(entries[2]) == "Homo sapiens"
 
-        rm(temp_fasta)
+        safe_rmdir(temp_fasta)
     end
     
     #==========================================================================

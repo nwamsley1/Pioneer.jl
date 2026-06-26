@@ -117,7 +117,7 @@ This test file covers:
         end
         
         # Clean up
-        rm(temp_dir, recursive=true)
+        safe_rmdir(temp_dir)
     end
     
     @testset "filter_by_multiple_thresholds Tests" begin
@@ -271,7 +271,7 @@ This test file covers:
         end
         
         # Clean up
-        rm(temp_dir, recursive=true)
+        safe_rmdir(temp_dir)
     end
     
     @testset "Helper Functions Tests" begin
@@ -371,7 +371,7 @@ This test file covers:
         @test issorted(result_df.score, rev=true)
         
         # Clean up
-        rm(temp_dir, recursive=true)
+        safe_rmdir(temp_dir)
     end
     
     @testset "Performance with Large Datasets" begin
@@ -414,6 +414,6 @@ This test file covers:
         @test elapsed < 2.0  # Should complete in under 2 seconds for complex filter
         
         # Clean up
-        rm(temp_dir, recursive=true)
+        safe_rmdir(temp_dir)
     end
 end

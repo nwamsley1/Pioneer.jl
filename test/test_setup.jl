@@ -73,3 +73,28 @@ Pioneer.DEBUG_CONSOLE_LEVEL[] = 0
 
 # Test-specific directory paths.
 const main_dir = joinpath(@__DIR__, "../src")
+
+# Windows-robust recursive removal for test cleanup. BuildSpecLib tests leave
+# memory-mapped Arrow/.jls files (inside .poin dirs) whose OS handles Windows
+# keeps open until GC runs the finalizers, so a plain `rm(...; recursive=true)`
+# throws ENOTEMPTY/EACCES and turns into a spurious test *error* that aborts the
+# whole test part. GC to release the mmaps, retry with backoff, and on final
+# failure warn (never throw) so cleanup can never fail the suite. On POSIX the
+# first rm succeeds immediately.
+function safe_rmdir(path::AbstractString; max_tries::Int=5)
+    (isdir(path) || isfile(path)) || return nothing
+    for i in 1:max_tries
+        try
+            GC.gc(); GC.gc()
+            rm(path; recursive=true, force=true)
+            return nothing
+        catch err
+            if i == max_tries
+                @warn "safe_rmdir: could not remove $path after $max_tries attempts" err
+                return nothing
+            end
+            sleep(0.2 * i)
+        end
+    end
+    return nothing
+end
