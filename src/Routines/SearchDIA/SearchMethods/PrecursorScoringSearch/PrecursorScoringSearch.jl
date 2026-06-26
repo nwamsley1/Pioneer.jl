@@ -203,6 +203,7 @@ function summarize_results!(
             main_search_psms_folder,
             valid_fold_paths,
             getPrecursors(getSpecLib(search_context)),
+            getFragmentLookupTable(getSpecLib(search_context)),
             max_psms,
             params.q_value_threshold,
             FORCE_OOM;
