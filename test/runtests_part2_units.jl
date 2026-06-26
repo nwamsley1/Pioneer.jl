@@ -53,6 +53,7 @@ include("./UnitTests/test_solve_poisson_mm.jl")
 include("./UnitTests/test_scoring_workspace_coverage.jl")
 include("./UnitTests/test_rt_alignment_utils.jl")
 include("./UnitTests/test_protein_model_fit.jl")
+include("./UnitTests/test_protein_mbr_features.jl")
 
 # Coverage data is normally flushed to .cov files by an atexit hook
 # that `_exit` skips. Flush it explicitly before terminating, otherwise
