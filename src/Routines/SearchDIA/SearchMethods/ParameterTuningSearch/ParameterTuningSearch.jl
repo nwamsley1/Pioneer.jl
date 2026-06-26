@@ -921,11 +921,12 @@ function process_search_results!(
             end
         end
 
-        # Save per-file PDF and accumulate Plot objects for combined PDF
+        # Accumulate Plot objects for the combined mass-error PDF written by
+        # summarize_results!. The per-file mass-error PDF was dropped 2026-06-26:
+        # writing it took ~2.4 s per file (Plots.jl PDF backend; ~15 s of the
+        # ~44 s warm Param Tuning stage on 6-file Olsen). The combined PDF
+        # already paginates per file, so no diagnostic info is lost.
         if !isempty(file_mass_plots)
-            per_file_dir = joinpath(getMassErrPlotFolder(search_context), "per_file")
-            mkpath(per_file_dir)
-            save_multipage_pdf(file_mass_plots, joinpath(per_file_dir, "$(parsed_fname).pdf"))
             append!(results.mass_plot_objects, file_mass_plots)
         end
 
