@@ -103,7 +103,7 @@ using Pioneer: FragBoundModel, SplineCoefficientModel, buildPionLib, serialize_t
         @test frag_bins.highs[1:2] == Float32[140.0, 230.0]
         @test UInt8[Pioneer.getScore(f) for f in indexed_fragments] == UInt8[1, 2]
     finally
-        rm(test_dir; recursive=true, force=true)
+        safe_rmdir(test_dir)
     end
 end
 

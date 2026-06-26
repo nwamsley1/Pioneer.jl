@@ -19,7 +19,7 @@ using Pioneer
     @test isfile(build_params)
 
     # Clean any previous output so the test is deterministic.
-    isdir(lib_path) && rm(lib_path; recursive=true, force=true)
+    safe_rmdir(lib_path)
 
     cd(repo_root) do
         Pioneer.with_koina_client(Pioneer.SyntheticKoinaClient()) do
@@ -36,5 +36,5 @@ using Pioneer
     end
 
     # Cleanup
-    isdir(lib_path) && rm(lib_path; recursive=true, force=true)
+    safe_rmdir(lib_path)
 end

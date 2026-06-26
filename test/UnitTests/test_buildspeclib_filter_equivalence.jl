@@ -26,18 +26,27 @@
 
 using Test
 using Pioneer
+import JSON
 
 @testset "BuildSpecLib early-filter equivalence (keap1, synthetic)" begin
     repo_root = abspath(joinpath(@__DIR__, "..", ".."))
-    build_params = joinpath(repo_root, "test", "integration", "build_keap1.json")
-    lib_path     = joinpath(repo_root, "test", "integration", "keap1_lib.poin")
-    ref_dir      = joinpath(repo_root, "test", "integration", "keap1_reference")
+    base_params = joinpath(repo_root, "test", "integration", "build_keap1.json")
+    ref_dir     = joinpath(repo_root, "test", "integration", "keap1_reference")
 
-    @test isfile(build_params)
+    @test isfile(base_params)
     @test isfile(joinpath(ref_dir, "detailed_fragments.jls"))
 
-    # Clean stale build output so the test runs from scratch.
-    isdir(lib_path) && rm(lib_path; recursive=true, force=true)
+    # Build into a private temp dir, NOT the shared ./test/integration/keap1_lib.poin
+    # that the synthetic-build test also targets. Two builds to the same .poin path
+    # in one process leave mmap'd Arrow files locked on Windows, so the second build
+    # fails ("Invalid argument"). A unique out_dir decouples the two tests.
+    out_dir = mktempdir()
+    cfg = JSON.parsefile(base_params)
+    cfg["out_dir"]      = out_dir
+    cfg["library_path"] = joinpath(out_dir, "keap1_lib")
+    build_params = joinpath(out_dir, "build_keap1.json")
+    open(io -> JSON.print(io, cfg), build_params, "w")
+    lib_path = joinpath(out_dir, "keap1_lib.poin")
 
     cd(repo_root) do
         Pioneer.with_koina_client(Pioneer.SyntheticKoinaClient()) do
@@ -57,5 +66,5 @@ using Pioneer
           read(joinpath(lib_path, "detailed_fragments.jls"))
 
     # Cleanup
-    isdir(lib_path) && rm(lib_path; recursive=true, force=true)
+    safe_rmdir(out_dir)
 end

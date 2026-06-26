@@ -179,7 +179,7 @@
     end
     
     # Clean up test directory
-    rm(test_dir, recursive=true)
+    safe_rmdir(test_dir)
 end
 
 @testset "BuildPionLib" begin
@@ -308,8 +308,8 @@ end
 
 
         # Clean up
-        rm(test_dir, recursive=true)
-        rm(spline_test_dir, recursive=true)
+        safe_rmdir(test_dir)
+        safe_rmdir(spline_test_dir)
     end
     
     #==========================================================================
@@ -347,7 +347,7 @@ end
         @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
         
         # Clean up
-        rm(test_dir, recursive=true)
+        safe_rmdir(test_dir)
     end
     
     #==========================================================================
@@ -954,7 +954,7 @@ end
         @test length(presearch_rt_bins.FragIndexBin) <= length(standard_rt_bins.FragIndexBin)
         
         # Clean up
-        rm(test_dir, recursive=true)
+        safe_rmdir(test_dir)
     end
 
     # The "getDetailedFrags with SplineCoefficientModel" @testset (~190 lines)

@@ -63,6 +63,27 @@ end
 
 Fragment prediction dispatcher for the Altimeter (SplineCoefficientModel) Koina endpoint.
 """
+# ── Env-gated fragment-prediction sub-step diagnostics (PIONEER_DIAG_BUILD=1) ──
+# Accumulates @timed (seconds, bytes) per labelled sub-step; printed at the end of
+# predict_fragments. Zero behavior change; only active when the env var is set.
+const _BUILD_DIAG = Dict{String, Vector{Float64}}()
+@inline _bdiag_on() = get(ENV, "PIONEER_DIAG_BUILD", "0") != "0"
+@inline function _bdiag!(label::String, r)
+    if _bdiag_on()
+        v = get!(_BUILD_DIAG, label, [0.0, 0.0])
+        v[1] += r.time; v[2] += r.bytes
+    end
+    return r.value
+end
+function _bdiag_report()
+    (_bdiag_on() && !isempty(_BUILD_DIAG)) || return
+    @user_info "[BUILD DIAG] fragment-prediction sub-steps (cumulative):"
+    for (k, v) in sort(collect(_BUILD_DIAG), by = x -> -x[2][2])
+        @user_info "  $(rpad(k, 26)) $(round(v[1], digits=2)) s   $(round(v[2]/1e9, digits=2)) GB"
+    end
+    empty!(_BUILD_DIAG)
+end
+
 function predict_fragments(
     peptide_table_path::String,
     frags_out_path::String,
@@ -123,9 +144,10 @@ function predict_fragments(
                 Arrow.write(io, frags_out; file=false, metadata=metadata)
             end
         else
-            Arrow.append(frags_out_path, frags_out)
+            _bdiag!("arrow_append", @timed Arrow.append(frags_out_path, frags_out))
         end
     end
+    _bdiag_report()
 end
 
 """
@@ -140,31 +162,33 @@ function predict_fragments_batch(
     concurrent_koina_requests::Int,
     first_prec_idx::UInt32
 )::Tuple{DataFrame, Vector{Float32}}
-    json_batches = prepare_koina_batch(
+    json_batches = _bdiag!("prepare_koina_batch", @timed prepare_koina_batch(
         model,
         peptides_df,
         batch_size=batch_size
-    )
+    ))
 
-    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests)
+    responses = _bdiag!("koina_request", @timed make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests))
 
     batch_dfs = []
     knot_vectors = []
 
     for (i, response) in enumerate(responses)
-        batch_result = parse_koina_batch(model, response)
-        start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
+        batch_result = _bdiag!("parse_koina_batch", @timed parse_koina_batch(model, response))
+        # Keep precursor_idx UInt32 (not Int64) — it is a precursor row index; the
+        # +1-1 cancels. Halves this per-fragment column on disk (8 B -> 4 B).
+        start_idx = first_prec_idx + UInt32((i-1) * batch_size)
 
         batch_df = batch_result.fragments
         n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
         batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
                                                 inner=batch_result.frags_per_precursor)
-        filter_fragments!(batch_df, model, filter_ctx)
+        _bdiag!("filter_fragments", @timed filter_fragments!(batch_df, model, filter_ctx))
         push!(batch_dfs, batch_df)
         push!(knot_vectors, batch_result.extra_data)  # Store knot vectors
     end
 
-    fragments_df = vcat(batch_dfs...)
+    fragments_df = _bdiag!("vcat_batch_dfs", @timed vcat(batch_dfs...))
 
     # Verify knot vectors are consistent
     if !all(k == first(knot_vectors) for k in knot_vectors)
@@ -276,9 +300,12 @@ function filter_fragments!(df::DataFrame, model::SplineCoefficientModel,
     n_rows = nrow(df)
     n_rows == 0 && return df
 
-    annotations = df[!, :annotation]
-    mzs         = df[!, :mz]
-    pids        = df[!, :precursor_idx]
+    # Concrete column types: df[!, :col] is inferred as AbstractVector, so col[i]
+    # in the hot per-fragment loop below returns Any and boxes every read. The
+    # ::Vector{T} assertions restore type stability (and act as a schema guard).
+    annotations = df[!, :annotation]::Vector{Int32}
+    mzs         = df[!, :mz]::Vector{Float32}
+    pids        = df[!, :precursor_idx]::Vector{UInt32}
 
     keep = trues(n_rows)
 

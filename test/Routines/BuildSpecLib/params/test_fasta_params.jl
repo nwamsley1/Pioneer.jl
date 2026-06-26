@@ -15,7 +15,7 @@ using CodecZlib
     if isdir(test_data_dir)
         for item in readdir(test_data_dir, join=true)
             if endswith(item, ".json") || isdir(item)
-                rm(item, force=true, recursive=true)
+                safe_rmdir(item)
             end
         end
     else

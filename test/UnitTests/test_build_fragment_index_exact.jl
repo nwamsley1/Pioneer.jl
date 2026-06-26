@@ -45,6 +45,6 @@ using Pioneer: SimpleFrag, buildFragmentIndex!
             (UInt32(4), 520.0f0, UInt8(40), UInt8(2)),
         ]
     finally
-        rm(test_dir; recursive=true, force=true)
+        safe_rmdir(test_dir)
     end
 end
