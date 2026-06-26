@@ -728,6 +728,13 @@ const KOINA_URLS = Dict(
 function __init__()
     # Don't initialize gr() immediately - let it be initialized when first used
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
+    # Force GR's off-screen workstation so plot creation never opens a gksqt
+    # window. Plots are rendered to in-memory bits and then combined into the
+    # multi-page PDFs by save_multipage_pdf — opening Qt windows here both
+    # slows down PDF writes substantially and disrupts the user's desktop
+    # during long searches. Set both legacy and modern env var names.
+    get!(ENV, "GKSwstype", "100")
+    get!(ENV, "GKS_WSTYPE", "100")
 end
 
 export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML,
