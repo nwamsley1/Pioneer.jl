@@ -306,10 +306,12 @@ function process_file!(
                                                            initial_model=razo_initial_model))
         end
 
-        per_file_dir = joinpath(results.quad_plot_dir, "per_file")
-        mkpath(per_file_dir)
+        # Accumulate plot objects for the combined quad-transmission PDF
+        # written by summarize_results!. The per-file PDF was dropped
+        # 2026-06-26 (same rationale as the ParameterTuningSearch mass-error
+        # PDF: the combined PDF paginates per file, so no diagnostic info is
+        # lost, and writing it doubled the QuadTuning plot I/O cost).
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        save_multipage_pdf(file_plots, joinpath(per_file_dir, "$(parsed_fname).pdf"))
         append!(results.quad_plot_objects, file_plots)
         push!(results.per_file_models, (parsed_fname, active_model, Float64(window_width)))
 

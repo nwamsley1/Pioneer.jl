@@ -542,7 +542,7 @@ function generate_wide_scout_plot(wide_frags, scout_model, parsed_fname)
         alpha=0.1, markersize=1.5, color=:steelblue, label=nothing,
         xlabel="Fragment m/z", ylabel="Raw error (mDa)",
         title="$(parsed_fname)\nWide scout m/z bias (n=$(length(wide_frags)), tol=±$(round(tol_mda, digits=1)) mDa)",
-        size=(900, 900), topmargin=10Plots.mm)
+        size=(600, 600), topmargin=10Plots.mm)
     Plots.plot!(p, mz_range, bias_mda, lw=2.5, color=:red, label="m/z bias (robust linear)")
     Plots.plot!(p, mz_range, bias_mda .+ tol_mda, lw=1.5, ls=:dash, color=:red,
         label="collection tol: ±$(round(tol_mda, digits=1)) mDa")
@@ -692,15 +692,13 @@ function process_file!(
                         @debug_l1 "  MS1 diag failed: $(sprint(showerror, ms1_err))"
                     end
 
-                    # NCE sweep: reuse collected PSMs (skip fragment index)
+                    # NCE sweep: reuse collected PSMs (skip fragment index).
+                    # Plots are accumulated for the combined NCE PDF written
+                    # by summarize_results!; the redundant per-file PDF was
+                    # dropped 2026-06-26 (same rationale as the mass-error PDF).
                     nce_result = fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
                     if nce_result !== nothing
-                        nce_file_plots = nce_result[2]
-                        nce_dir = joinpath(getDataOutDir(search_context), "qc_plots", "collision_energy_alignment", "per_file")
-                        mkpath(nce_dir)
-                        parsed_fname_nce = getParsedFileName(search_context, ms_file_idx)
-                        save_multipage_pdf(nce_file_plots, joinpath(nce_dir, "$(parsed_fname_nce).pdf"))
-                        append!(results.nce_plot_objects, nce_file_plots)
+                        append!(results.nce_plot_objects, nce_result[2])
                     end
 
                     iteration_state.best_psms = rt_psms
@@ -870,7 +868,7 @@ function process_search_results!(
                 ylabel="Indexed Retention Time iRT (min)",
                 title=parsed_fname * "\n⚠️ Insufficient PSMs for RT model " *
                       "($(iteration_state.best_psm_count) PSMs, need 750)",
-                size=(900, 900))
+                size=(600, 600))
             push!(file_rt_plots, p)
         else
             fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
@@ -921,19 +919,20 @@ function process_search_results!(
             end
         end
 
-        # Save per-file PDF and accumulate Plot objects for combined PDF
+        # Accumulate Plot objects for the combined mass-error PDF written by
+        # summarize_results!. The per-file mass-error PDF was dropped 2026-06-26:
+        # writing it took ~2.4 s per file (Plots.jl PDF backend; ~15 s of the
+        # ~44 s warm Param Tuning stage on 6-file Olsen). The combined PDF
+        # already paginates per file, so no diagnostic info is lost.
         if !isempty(file_mass_plots)
-            per_file_dir = joinpath(getMassErrPlotFolder(search_context), "per_file")
-            mkpath(per_file_dir)
-            save_multipage_pdf(file_mass_plots, joinpath(per_file_dir, "$(parsed_fname).pdf"))
             append!(results.mass_plot_objects, file_mass_plots)
         end
 
-        # RT per-file PDF
+        # Accumulate RT plots for the combined RT-alignment PDF written by
+        # summarize_results!. The per-file RT PDF was dropped 2026-06-26 (same
+        # rationale as the mass-error PDF: the combined PDF already paginates
+        # per file, so no diagnostic info is lost).
         if !isempty(file_rt_plots)
-            per_file_rt_dir = joinpath(getRtAlignPlotFolder(search_context), "per_file")
-            mkpath(per_file_rt_dir)
-            save_multipage_pdf(file_rt_plots, joinpath(per_file_rt_dir, "$(parsed_fname).pdf"))
             append!(results.rt_plot_objects, file_rt_plots)
         end
 
