@@ -1,16 +1,19 @@
 # MBR streaming pipeline. Replaces an older in-memory chain that held a single
-# big best_psms DataFrame across MBR feature compute. We instead emit three
-# per-file sidecar Arrow files and merge them back into the main file at the
-# end (see score_psms.jl::score_precursor_isotope_traces for the orchestrator).
+# big best_psms DataFrame across MBR feature compute. Normal rows are narrowed
+# to candidate-only FTR rows before MBR donor features are computed; only the
+# final recovery decisions are expanded back to per-file sidecars.
 #
-# Three sidecar types per main file `<f>.arrow`:
+# Two sidecar types per normal main file `<f>.arrow`:
 #   <f>.pass1_sidecar.arrow      Pass-1 LightGBM scores (trace_prob_prepass +
 #                                trace_prob_infold). Written first so best_psms
 #                                can be freed before the heavy MBR stage.
-#   <f>.mbr_sidecar.arrow        Per-row MBR_* features (the _true/_false donor
-#                                comparisons fed to the FTR LightGBM).
 #   <f>.recovery_sidecar.arrow   FTR controller output (mbr_recovered, ftr_qval,
 #                                ftr_pep, MBR_transfer_candidate).
+#
+# Rescue files skip dense Pass-1/MBR/recovery sidecars. They are streamed into
+# candidate-only FTR rows once the normal-row donor dict and donor score floor
+# are known, and only recovered rescue rows are written back as
+# `<f>.arrow.mbr_recovered.arrow` for the final fold merge.
 #
 # Two main-file sweeps drive MBR feature compute:
 #   Sweep 1 (build_mbr_donor_dict_streaming_with_pass1)
@@ -19,19 +22,20 @@
 #     files, sorted by score, so `_donor_for_pid` can choose the best cross-file
 #     donor without storage growing with file count.
 #
-#   Sweep 2 (compute_mbr_features_per_file_to_sidecar_with_pass1!)
-#     Loads ONE file's main + pass1 sidecar at a time, computes the MBR_*
-#     features using `donor_dict`, writes the per-file MBR sidecar.
-#     Main file is never rewritten during sweeps.
+#   Sweep 2 (load_normal_mbr_candidate_slim_dataframe)
+#     Computes pre-MBR row q-values from Pass-1 scores, keeps only rows that
+#     failed that first q-value gate and have both cross-file donors, then
+#     computes MBR_* donor features for those sparse candidates.
 #
 # Alignment invariant: row N of every sidecar ↔ row N of the main file
 # (positional join). `:precursor_idx` and `:scan_idx` are written into each
 # sidecar redundantly and asserted equal at every read/merge, so any sort or
 # filter that breaks alignment fails loud rather than silently corrupting data.
 #
-# merge_mbr_sidecars_into_main! at the end folds all three sidecars back into
-# the main file and deletes them, restoring the per-file Arrow as the single
-# source of truth for downstream stages.
+# merge_mbr_sidecars_into_main! at the end folds the normal sidecars into
+# a single mbr_outputs sidecar and deletes the intermediates. Sparse rescue
+# recovered files are already full rows and are consumed directly by the final
+# fold merge.
 
 # A single cross-run donor entry: one row's score + the per-row donor
 # features we need to compute MBR features for a recipient row in
@@ -44,13 +48,11 @@ struct _MBRDonorEntry
     irt_residual::Float32  # irt_pred − irt_obs of the donor row
     irt_obs::Float32       # raw observed iRT of the donor row
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
-    rt_obs::Float32        # literal scan RT (minutes) of the donor row
     smoothed_frag_sqrt::NTuple{8, Float32}
     ms_file_idx::UInt32
     is_decoy::Bool
 end
 
-const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 
@@ -171,7 +173,7 @@ end
 # false on donor entries (the field is unused downstream), so we don't read
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
-    :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
+    :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0,
     :ms_file_idx, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
@@ -184,7 +186,6 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
-    :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
     :MBR_smoothed_frag_hellinger_true,
     :MBR_smoothed_frag_hellinger_false,
 )
@@ -193,6 +194,12 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
 # pipeline. All sidecars carry (:precursor_idx, :scan_idx) as alignment keys.
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
+
+@inline function _mbr_main_pep_confidence(pep)
+    p = Float64(pep)
+    isfinite(p) || return 0.0f0
+    return Float32(round(clamp(1.0 - p, 0.0, 1.0), digits = 6))
+end
 
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
 # sidecar at `side_path`. Concrete `AbstractVector{T}` signatures force Julia
@@ -232,6 +239,111 @@ function _emit_pass1_sidecar!(
                               view(infold_v, rng),
     )
     writeArrow(side_path, side_df)
+    return nothing
+end
+
+function _empty_mbr_rescue_candidate_slim_dataframe()
+    return DataFrame(
+        precursor_idx = UInt32[],
+        scan_idx = UInt32[],
+        ms_file_idx = UInt32[],
+        cv_fold = UInt8[],
+        target = Bool[],
+        decoy = Bool[],
+        mbr_rescue_candidate = Bool[],
+        trace_prob_prepass = Float32[],
+        trace_prob_infold = Float32[],
+        _mbr_normal_file_idx = UInt32[],
+        _mbr_normal_row_idx = UInt32[],
+        _mbr_rescue_file_idx = UInt32[],
+        _mbr_rescue_row_idx = UInt32[],
+        MBR_max_pair_prob_true = Float32[],
+        MBR_max_pair_prob_false = Float32[],
+        MBR_log2_weight_ratio_true = Float32[],
+        MBR_log2_weight_ratio_false = Float32[],
+        MBR_log2_explained_ratio_true = Float32[],
+        MBR_log2_explained_ratio_false = Float32[],
+        MBR_best_irt_diff_true = Float32[],
+        MBR_best_irt_diff_false = Float32[],
+        MBR_is_missing_true = Bool[],
+        MBR_is_missing_false = Bool[],
+        MBR_log_by_diff_true = Float32[],
+        MBR_log_by_diff_false = Float32[],
+        MBR_smoothed_frag_hellinger_true = Float32[],
+        MBR_smoothed_frag_hellinger_false = Float32[],
+    )
+end
+
+function _append_mbr_candidate_row!(
+    out::DataFrame,
+    normal_file_idx::UInt32,
+    normal_row_idx::UInt32,
+    rescue_file_idx::UInt32,
+    rescue_row_idx::UInt32,
+    is_rescue::Bool,
+    pid::UInt32,
+    scan_idx::UInt32,
+    ms_file_idx::UInt32,
+    cv_fold::UInt8,
+    target::Bool,
+    score::Float32,
+    weight::Float32,
+    log2_intensity_explained::Float32,
+    irt_residual::Float32,
+    log_by_ratio::Float32,
+    recipient_sqrt::NTuple{8, Float32},
+    donor_t::_MBRDonorEntry,
+    donor_f::_MBRDonorEntry,
+    fragment_keys::_MBRFragmentAnnotationKeys,
+)
+    log2_weight_ratio_t = -1.0f0
+    log2_weight_ratio_f = -1.0f0
+    if weight > 0.0f0
+        donor_t.weight > 0.0f0 && (log2_weight_ratio_t = log2(weight / donor_t.weight))
+        donor_f.weight > 0.0f0 && (log2_weight_ratio_f = log2(weight / donor_f.weight))
+    end
+
+    push!(out, (
+        precursor_idx = pid,
+        scan_idx = scan_idx,
+        ms_file_idx = ms_file_idx,
+        cv_fold = cv_fold,
+        target = target,
+        decoy = !target,
+        mbr_rescue_candidate = is_rescue,
+        trace_prob_prepass = score,
+        trace_prob_infold = score,
+        _mbr_normal_file_idx = normal_file_idx,
+        _mbr_normal_row_idx = normal_row_idx,
+        _mbr_rescue_file_idx = rescue_file_idx,
+        _mbr_rescue_row_idx = rescue_row_idx,
+        MBR_max_pair_prob_true = donor_t.trace_prob,
+        MBR_max_pair_prob_false = donor_f.trace_prob,
+        MBR_log2_weight_ratio_true = log2_weight_ratio_t,
+        MBR_log2_weight_ratio_false = log2_weight_ratio_f,
+        MBR_log2_explained_ratio_true = log2_intensity_explained - donor_t.log2_intensity_explained,
+        MBR_log2_explained_ratio_false = log2_intensity_explained - donor_f.log2_intensity_explained,
+        MBR_best_irt_diff_true = abs(irt_residual - donor_t.irt_residual),
+        MBR_best_irt_diff_false = abs(irt_residual - donor_f.irt_residual),
+        MBR_is_missing_true = false,
+        MBR_is_missing_false = false,
+        MBR_log_by_diff_true = log_by_ratio - donor_t.log_by_ratio,
+        MBR_log_by_diff_false = log_by_ratio - donor_f.log_by_ratio,
+        MBR_smoothed_frag_hellinger_true = _mbr_smoothed_spectrum_hellinger_from_sqrt(
+            recipient_sqrt,
+            donor_t.smoothed_frag_sqrt,
+            fragment_keys,
+            pid,
+            donor_t.precursor_idx,
+        ),
+        MBR_smoothed_frag_hellinger_false = _mbr_smoothed_spectrum_hellinger_from_sqrt(
+            recipient_sqrt,
+            donor_f.smoothed_frag_sqrt,
+            fragment_keys,
+            pid,
+            donor_f.precursor_idx,
+        ),
+    ))
     return nothing
 end
 
@@ -315,7 +427,7 @@ end
 
 # Inner per-file row loop for build_mbr_donor_dict_streaming_with_pass1.
 # Extracted so Julia specializes on the concrete Arrow column types and the
-# Union{Nothing, ...} branch on logby_c / rt_c becomes a one-time call-site
+# Union{Nothing, ...} branch on logby_c becomes a one-time call-site
 # decision instead of per-row dispatch.
 @inline function _accumulate_donor_entries!(
     all_entries::Dict{UInt32, Vector{_MBRDonorEntry}},
@@ -329,14 +441,12 @@ end
     irtp_c::AbstractVector{Float32},
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
-    rt_c::Union{Nothing, AbstractVector{Float32}},
     smoothed_frag_cols,
     fidx_c::AbstractVector{UInt32},
     side_path::String,
 )
     n = length(pid_c)
     has_logby = logby_c !== nothing
-    has_rt    = rt_c    !== nothing
     @inbounds for i in 1:n
         # Sanity-check alignment (cheap: one cmp per row)
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
@@ -347,7 +457,6 @@ end
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
-            has_rt    ? rt_c[i]             : 0f0,
             _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
             fidx_c[i], false,
         )
@@ -392,7 +501,6 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             main.log2_intensity_explained,
             main.irt_pred, main.irt_obs,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
-            hasproperty(main, :rt) ? main.rt : nothing,
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
             main.ms_file_idx,
             side_path,
@@ -491,314 +599,313 @@ end
     return donor
 end
 
-# Inner per-row MBR-feature compute. Extracted from
-# compute_mbr_features_per_file_to_sidecar_with_pass1! so Julia specializes
-# on the concrete column types (Arrow.Primitive{T} or Vector{T}) and the
-# Union{Nothing, ...} branch on logby_v / rt_v becomes a one-time call-site
-# decision instead of per-row dispatch.
-@inline function _compute_mbr_inner!(
-    out_max_t::Vector{Float32}, out_max_f::Vector{Float32},
-    out_lw_t::Vector{Float32},  out_lw_f::Vector{Float32},
-    out_le_t::Vector{Float32},  out_le_f::Vector{Float32},
-    out_ir_t::Vector{Float32},  out_ir_f::Vector{Float32},
-    out_miss_t::BitVector,      out_miss_f::BitVector,
-    out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
-    out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
-    out_smoothed_hellinger_t::Vector{Float32},
-    out_smoothed_hellinger_f::Vector{Float32},
-    pid_v::AbstractVector{UInt32},
-    file_v::AbstractVector{UInt32},
-    weight_v::AbstractVector{Float32},
-    l2ie_v::AbstractVector{Float16},
-    irtp_v::AbstractVector{Float32},
-    irto_v::AbstractVector{Float32},
-    logby_v::Union{Nothing, AbstractVector{Float16}},
-    rt_v::Union{Nothing, AbstractVector{Float32}},
-    smoothed_frag_cols,
-    fragment_keys::_MBRFragmentAnnotationKeys,
+function _normal_mbr_prepass_qvals_and_threshold(
+    file_paths::Vector{String};
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+)
+    scores = Float32[]
+    targets = Bool[]
+    row_counts = Int[]
+
+    for main_path in file_paths
+        pass1_path = main_path * PASS1_SIDECAR_SUFFIX
+        isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
+        main = Arrow.Table(main_path)
+        pass1 = Arrow.Table(pass1_path)
+        n = length(main.precursor_idx)
+        n == length(pass1.precursor_idx) ||
+            error("Pass-1 sidecar row count mismatch at $pass1_path")
+        push!(row_counts, n)
+        @inbounds for i in 1:n
+            (main.precursor_idx[i] == pass1.precursor_idx[i] &&
+             main.scan_idx[i] == pass1.scan_idx[i]) ||
+                error("Pass-1 sidecar misaligned at row $i of $pass1_path")
+            push!(scores, Float32(pass1.trace_prob_prepass[i]))
+            push!(targets, Bool(main.target[i]))
+        end
+    end
+
+    qvals = fill(1.0f0, length(scores))
+    if !isempty(scores)
+        get_qvalues!(scores, targets, qvals)
+    end
+    donor_target_pass = (qvals .<= donor_q_threshold) .& targets
+    prob_thresh = any(donor_target_pass) ? minimum(scores[donor_target_pass]) : Float32(Inf)
+    return (
+        scores = scores,
+        qvals = qvals,
+        row_counts = row_counts,
+        prob_thresh = prob_thresh,
+    )
+end
+
+function load_normal_mbr_candidate_slim_dataframe(
+    file_paths::Vector{String},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
-    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
+    fragment_keys::_MBRFragmentAnnotationKeys;
+    q_thresh::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
 )
-    n = length(pid_v)
-    has_logby = logby_v !== nothing
-    has_rt    = rt_v    !== nothing
-    @inbounds for i in 1:n
-        my_file = file_v[i]
-        my_pid  = pid_v[i]
-        recipient_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
-        has_recipient_spectrum = false
-
-        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
-        if donor_t !== nothing
-            out_max_t[i] = donor_t.trace_prob
-            wi = weight_v[i]
-            if donor_t.weight > 0 && wi > 0
-                out_lw_t[i] = log2(wi / donor_t.weight)
-            end
-            out_le_t[i] = Float32(l2ie_v[i]) - donor_t.log2_intensity_explained
-            out_ir_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
-            if has_logby
-                out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
-            end
-            if has_rt
-                out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
-            end
-            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
-            has_recipient_spectrum = true
-            out_smoothed_hellinger_t[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
-                recipient_sqrt,
-                donor_t.smoothed_frag_sqrt,
-                fragment_keys,
-                my_pid,
-                donor_t.precursor_idx,
-            )
-            out_miss_t[i] = false
-        end
-        donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, my_pid, my_file)
-        if donor_f !== nothing
-            out_max_f[i] = donor_f.trace_prob
-            wi = weight_v[i]
-            if donor_f.weight > 0 && wi > 0
-                out_lw_f[i] = log2(wi / donor_f.weight)
-            end
-            out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
-            out_ir_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
-            if has_logby
-                out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
-            end
-            if has_rt
-                out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
-            end
-            if !has_recipient_spectrum
-                recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
-            end
-            out_smoothed_hellinger_f[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
-                recipient_sqrt,
-                donor_f.smoothed_frag_sqrt,
-                fragment_keys,
-                my_pid,
-                donor_f.precursor_idx,
-            )
-            out_miss_f[i] = false
-        end
-    end
-    return nothing
-end
-
-# Per-file MBR feature compute + sidecar write, reading trace_prob_prepass
-# from the Pass-1 sidecar. Mirrors compute_mbr_features_per_file_to_sidecar!
-# but for the streaming-with-Pass-1 flow.
-function compute_mbr_features_per_file_to_sidecar_with_pass1!(
-        main_path::AbstractString,
-        donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-        partner_pools::_CounterfactualPartnerPools,
-        fragment_keys::_MBRFragmentAnnotationKeys)
-    pass1_path = main_path * PASS1_SIDECAR_SUFFIX
-    isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
-    main = Arrow.Table(main_path)
-    pass1 = Arrow.Table(pass1_path)
-    n = length(main.precursor_idx)
-    n == length(pass1.precursor_idx) ||
-        error("Pass-1 sidecar row count mismatch at $pass1_path")
-
-    pid_v   = main.precursor_idx
-    scan_v  = main.scan_idx
-    file_v  = main.ms_file_idx
-    weight_v= main.weight
-    l2ie_v  = main.log2_intensity_explained
-    irtp_v  = main.irt_pred
-    irto_v  = main.irt_obs
-    logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
-    rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
-
-    @inbounds for i in 1:n
-        (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
-            error("Pass-1 sidecar misaligned at row $i of $pass1_path")
-    end
-
-    out_max_t = fill(-1f0, n); out_max_f = fill(-1f0, n)
-    out_lw_t  = fill(-1f0, n); out_lw_f  = fill(-1f0, n)
-    out_le_t  = fill(-1f0, n); out_le_f  = fill(-1f0, n)
-    out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
-    out_miss_t = trues(n);     out_miss_f = trues(n)
-    out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
-    out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = fill(-1f0, n)
-    false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
-
-    _compute_mbr_inner!(
-        out_max_t, out_max_f, out_lw_t, out_lw_f,
-        out_le_t, out_le_f, out_ir_t, out_ir_f,
-        out_miss_t, out_miss_f,
-        out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
-        out_smoothed_h_t, out_smoothed_h_f,
-        pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
-        logby_v, rt_v, smoothed_frag_cols, fragment_keys,
-        donor_dict, partner_pools, false_donor_cache,
+    prepass = _normal_mbr_prepass_qvals_and_threshold(
+        file_paths;
+        donor_q_threshold = donor_q_threshold,
     )
+    out = _empty_mbr_rescue_candidate_slim_dataframe()
+    offset = 0
 
-    side_path = main_path * MBR_SIDECAR_SUFFIX
-    side_df = DataFrame(
-        precursor_idx                  = collect(UInt32.(pid_v)),
-        scan_idx                       = collect(UInt32.(scan_v)),
-        MBR_max_pair_prob_true         = out_max_t,
-        MBR_max_pair_prob_false        = out_max_f,
-        MBR_log2_weight_ratio_true     = out_lw_t,
-        MBR_log2_weight_ratio_false    = out_lw_f,
-        MBR_log2_explained_ratio_true  = out_le_t,
-        MBR_log2_explained_ratio_false = out_le_f,
-        MBR_best_irt_diff_true         = out_ir_t,
-        MBR_best_irt_diff_false        = out_ir_f,
-        MBR_is_missing_true            = out_miss_t,
-        MBR_is_missing_false           = out_miss_f,
-        MBR_log_by_diff_true           = out_log_by_t,
-        MBR_log_by_diff_false          = out_log_by_f,
-        MBR_best_rt_diff_true          = out_rt_t,
-        MBR_best_rt_diff_false         = out_rt_f,
-        MBR_smoothed_frag_hellinger_true  = out_smoothed_h_t,
-        MBR_smoothed_frag_hellinger_false = out_smoothed_h_f,
-    )
-    writeArrow(side_path, side_df)
-    return side_path
-end
-
-# Slim DataFrame loader for the FTR controller: pulls only the columns
-# apply_mbr_filter_paired! needs, from main + Pass-1 sidecar + MBR sidecar,
-# in main-file row order across all files. Substantially smaller than
-# best_psms (≈20 cols vs ≈80).
-function load_ftr_slim_dataframe(file_paths::Vector{String})
-    parts = DataFrame[]
-    for path in file_paths
-        pass1_path = path * PASS1_SIDECAR_SUFFIX
-        mbr_path   = path * MBR_SIDECAR_SUFFIX
-        isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
-        isfile(mbr_path)   || error("Missing MBR sidecar at $mbr_path")
-        main  = Arrow.Table(path)
+    for (file_idx, main_path) in pairs(file_paths)
+        pass1_path = main_path * PASS1_SIDECAR_SUFFIX
+        main = Arrow.Table(main_path)
         pass1 = Arrow.Table(pass1_path)
-        mbr   = Arrow.Table(mbr_path)
-        n = length(main.precursor_idx)
-        n == length(pass1.precursor_idx) || error("Pass-1 sidecar size mismatch at $pass1_path")
-        n == length(mbr.precursor_idx)   || error("MBR sidecar size mismatch at $mbr_path")
+        n = prepass.row_counts[file_idx]
+        n == 0 && continue
+
+        pid_v = main.precursor_idx
+        scan_v = main.scan_idx
+        file_v = main.ms_file_idx
+        fold_v = main.cv_fold
+        target_v = main.target
+        weight_v = main.weight
+        l2ie_v = main.log2_intensity_explained
+        irtp_v = main.irt_pred
+        irto_v = main.irt_obs
+        logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
+        has_logby = logby_v !== nothing
+        smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+        false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
+
         @inbounds for i in 1:n
-            (main.precursor_idx[i] == pass1.precursor_idx[i] == mbr.precursor_idx[i] &&
-             main.scan_idx[i]      == pass1.scan_idx[i]      == mbr.scan_idx[i]) ||
-                error("Sidecar misaligned at row $i for $path")
+            global_row = offset + i
+            prepass.qvals[global_row] > q_thresh || continue
+            pid = UInt32(pid_v[i])
+            ms_file_idx = UInt32(file_v[i])
+            donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
+            donor_t === nothing && continue
+            donor_t.trace_prob >= prepass.prob_thresh || continue
+            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
+            donor_f === nothing && continue
+
+            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            _append_mbr_candidate_row!(
+                out,
+                UInt32(file_idx),
+                UInt32(i),
+                UInt32(0),
+                UInt32(0),
+                false,
+                pid,
+                UInt32(scan_v[i]),
+                ms_file_idx,
+                UInt8(fold_v[i]),
+                Bool(target_v[i]),
+                Float32(pass1.trace_prob_prepass[i]),
+                Float32(weight_v[i]),
+                Float32(l2ie_v[i]),
+                Float32(irtp_v[i]) - Float32(irto_v[i]),
+                has_logby ? Float32(logby_v[i]) : 0.0f0,
+                recipient_sqrt,
+                donor_t,
+                donor_f,
+                fragment_keys,
+            )
+            out.trace_prob_infold[end] = Float32(pass1.trace_prob_infold[i])
         end
-        d = DataFrame(
-            precursor_idx       = collect(UInt32.(main.precursor_idx)),
-            scan_idx            = collect(UInt32.(main.scan_idx)),
-            ms_file_idx         = collect(UInt32.(main.ms_file_idx)),
-            cv_fold             = collect(UInt8.(main.cv_fold)),
-            target              = collect(Bool.(main.target)),
-            decoy               = .!collect(Bool.(main.target)),
-            trace_prob_prepass  = collect(Float32.(pass1.trace_prob_prepass)),
-            trace_prob_infold   = collect(Float32.(pass1.trace_prob_infold)),
-        )
-        # Pull all MBR_* columns from the MBR sidecar.
-        for c in _MBR_SIDECAR_OUT_COLS
-            c === :precursor_idx && continue
-            c === :scan_idx      && continue
-            d[!, c] = collect(Tables.getcolumn(mbr, c))
-        end
-        push!(parts, d)
+        offset += n
     end
-    return vcat(parts...)
+
+    return (
+        candidates = out,
+        prob_thresh = prepass.prob_thresh,
+        n_rows = length(prepass.scores),
+    )
 end
 
-# After apply_mbr_filter_paired! adds the four recovery columns to the slim
-# DataFrame, distribute them back to per-file recovery sidecars in the SAME
-# row order as the main files.
-function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
-    # Build (ms_file_idx, cv_fold) → main path map.
-    is_fold_split = any(p -> occursin("_fold", p), file_paths)
-    key_to_path = if is_fold_split
-        d = Dict{Tuple{UInt32, UInt8}, String}()
-        for fpath in file_paths
-            fold_match = match(r"_fold(\d)\.arrow$", fpath)
-            fold_match === nothing && continue
-            fold_num = parse(UInt8, fold_match.captures[1])
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[(UInt32(first(orig.ms_file_idx)), fold_num)] = fpath
-        end
-        d
-    else
-        d = Dict{UInt32, String}()
-        for fpath in file_paths
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[UInt32(first(orig.ms_file_idx))] = fpath
-        end
-        d
-    end
+function load_mbr_rescue_candidate_slim_dataframe(
+    file_paths::Vector{String},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    fragment_keys::_MBRFragmentAnnotationKeys,
+    prob_thresh::Float32,
+)
+    out = _empty_mbr_rescue_candidate_slim_dataframe()
+    for (file_idx, main_path) in pairs(file_paths)
+        isfile(main_path) || continue
+        main = Arrow.Table(main_path)
+        hasproperty(main, :main_pep) ||
+            error("MBR rescue file $main_path is missing required :main_pep column")
+        n = length(main.precursor_idx)
+        n == 0 && continue
 
-    n_written = 0
-    if is_fold_split && hasproperty(slim_df, :cv_fold)
-        for (key, g) in pairs(groupby(slim_df, [:ms_file_idx, :cv_fold]))
-            lookup_key = (UInt32(key[:ms_file_idx]), UInt8(key[:cv_fold]))
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * RECOVERY_SIDECAR_SUFFIX
-            d = DataFrame(
-                precursor_idx          = collect(UInt32.(g[!, :precursor_idx])),
-                scan_idx               = collect(UInt32.(g[!, :scan_idx])),
-                mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
-                MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
-                ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
-                ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
+        pid_v = main.precursor_idx
+        scan_v = main.scan_idx
+        file_v = main.ms_file_idx
+        fold_v = main.cv_fold
+        target_v = main.target
+        pep_v = main.main_pep
+        weight_v = main.weight
+        l2ie_v = main.log2_intensity_explained
+        irtp_v = main.irt_pred
+        irto_v = main.irt_obs
+        logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
+        has_logby = logby_v !== nothing
+        smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+        false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
+
+        @inbounds for i in 1:n
+            pid = UInt32(pid_v[i])
+            ms_file_idx = UInt32(file_v[i])
+            donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
+            donor_t === nothing && continue
+            donor_t.trace_prob >= prob_thresh || continue
+            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
+            donor_f === nothing && continue
+
+            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            _append_mbr_candidate_row!(
+                out,
+                UInt32(0),
+                UInt32(0),
+                UInt32(file_idx),
+                UInt32(i),
+                true,
+                pid,
+                UInt32(scan_v[i]),
+                ms_file_idx,
+                UInt8(fold_v[i]),
+                Bool(target_v[i]),
+                _mbr_main_pep_confidence(pep_v[i]),
+                Float32(weight_v[i]),
+                Float32(l2ie_v[i]),
+                Float32(irtp_v[i]) - Float32(irto_v[i]),
+                has_logby ? Float32(logby_v[i]) : 0.0f0,
+                recipient_sqrt,
+                donor_t,
+                donor_f,
+                fragment_keys,
             )
-            writeArrow(side_path, d)
-            n_written += 1
-        end
-    else
-        for (key, g) in pairs(groupby(slim_df, :ms_file_idx))
-            lookup_key = UInt32(key[:ms_file_idx])
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * RECOVERY_SIDECAR_SUFFIX
-            d = DataFrame(
-                precursor_idx          = collect(UInt32.(g[!, :precursor_idx])),
-                scan_idx               = collect(UInt32.(g[!, :scan_idx])),
-                mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
-                MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
-                ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
-                ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
-            )
-            writeArrow(side_path, d)
-            n_written += 1
         end
     end
-    @debug_l1 "  Wrote $n_written recovery sidecars"
-    return n_written
+    return out
 end
 
-# Per-file merge step: read main + Pass-1 sidecar + MBR sidecar + recovery
-# sidecar, write back the augmented main file (matching what
-# write_scored_psms_to_files! produces in the in-memory path). The :decoy
-# column is added defensively (some downstream code reads it). Cleans up
-# all three sidecars on success.
+function write_sparse_normal_recovery_sidecars!(slim_df::DataFrame, file_paths::Vector{String})
+    rows_by_file = Dict{UInt32, Vector{Int}}()
+    @inbounds for row in 1:nrow(slim_df)
+        file_idx = UInt32(slim_df._mbr_normal_file_idx[row])
+        file_idx == UInt32(0) && continue
+        1 <= Int(file_idx) <= length(file_paths) ||
+            error("write_sparse_normal_recovery_sidecars!: invalid normal file index $file_idx")
+        push!(get!(() -> Int[], rows_by_file, file_idx), row)
+    end
+
+    n_files_written = 0
+    n_rows_written = 0
+    for file_idx in eachindex(file_paths)
+        main_path = file_paths[file_idx]
+        main = Arrow.Table(main_path)
+        n = length(main.precursor_idx)
+        n == 0 && continue
+
+        mbr_recovered = falses(n)
+        transfer_candidate = falses(n)
+        ftr_qval = fill(NaN32, n)
+        ftr_pep = fill(NaN32, n)
+
+        for row in get(rows_by_file, UInt32(file_idx), Int[])
+            source_row = Int(slim_df._mbr_normal_row_idx[row])
+            1 <= source_row <= n ||
+                error("write_sparse_normal_recovery_sidecars!: invalid row $source_row for $main_path")
+            (UInt32(main.precursor_idx[source_row]) == UInt32(slim_df.precursor_idx[row]) &&
+             UInt32(main.scan_idx[source_row]) == UInt32(slim_df.scan_idx[row])) ||
+                error("write_sparse_normal_recovery_sidecars!: slim_df misaligned at row $row for $main_path")
+            mbr_recovered[source_row] = Bool(slim_df.mbr_recovered[row])
+            transfer_candidate[source_row] = Bool(slim_df.MBR_transfer_candidate[row])
+            ftr_qval[source_row] = Float32(slim_df.ftr_qval_true[row])
+            ftr_pep[source_row] = Float32(slim_df.ftr_pep_true[row])
+        end
+
+        side_path = main_path * RECOVERY_SIDECAR_SUFFIX
+        writeArrow(side_path, DataFrame(
+            precursor_idx = collect(UInt32.(main.precursor_idx)),
+            scan_idx = collect(UInt32.(main.scan_idx)),
+            mbr_recovered = mbr_recovered,
+            MBR_transfer_candidate = transfer_candidate,
+            ftr_qval_true = ftr_qval,
+            ftr_pep_true = ftr_pep,
+        ))
+        n_files_written += 1
+        n_rows_written += n
+    end
+    return (n_files = n_files_written, n_rows = n_rows_written)
+end
+
+function write_mbr_rescue_recovered_files!(slim_df::DataFrame, file_paths::Vector{String})
+    rows_by_file = Dict{UInt32, Vector{Int}}()
+    n_rows = nrow(slim_df)
+    if n_rows == 0
+        for main_path in file_paths
+            safeRm(mbr_rescue_recovered_path(main_path), nothing; force = true)
+        end
+        return (n_files = 0, n_rows = 0)
+    end
+
+    @inbounds for row in 1:n_rows
+        Bool(slim_df.mbr_recovered[row]) || continue
+        file_idx = UInt32(slim_df._mbr_rescue_file_idx[row])
+        1 <= Int(file_idx) <= length(file_paths) ||
+            error("write_mbr_rescue_recovered_files!: invalid rescue file index $file_idx")
+        push!(get!(() -> Int[], rows_by_file, file_idx), row)
+    end
+
+    n_files_written = 0
+    n_recovered_rows = 0
+    for file_idx in eachindex(file_paths)
+        main_path = file_paths[file_idx]
+        rows = get(rows_by_file, UInt32(file_idx), Int[])
+        if isempty(rows)
+            safeRm(mbr_rescue_recovered_path(main_path), nothing; force = true)
+            continue
+        end
+        main = DataFrame(Arrow.Table(main_path))
+        source_rows = Int[slim_df._mbr_rescue_row_idx[row] for row in rows]
+        recovered = main[source_rows, :]
+        recovered[!, :trace_prob_prepass] = Float32[slim_df.trace_prob_prepass[row] for row in rows]
+        recovered[!, :trace_prob_infold] = Float32[slim_df.trace_prob_infold[row] for row in rows]
+        recovered[!, :trace_prob] = copy(recovered[!, :trace_prob_prepass])
+        recovered[!, :mbr_recovered] = Bool[slim_df.mbr_recovered[row] for row in rows]
+        recovered[!, :MBR_transfer_candidate] = Bool[slim_df.MBR_transfer_candidate[row] for row in rows]
+        recovered[!, :ftr_qval_true] = Float32[slim_df.ftr_qval_true[row] for row in rows]
+        recovered[!, :ftr_pep_true] = Float32[slim_df.ftr_pep_true[row] for row in rows]
+
+        writeArrow(mbr_rescue_recovered_path(main_path), recovered)
+        n_files_written += 1
+        n_recovered_rows += nrow(recovered)
+    end
+    return (n_files = n_files_written, n_rows = n_recovered_rows)
+end
+
+# Per-file merge step: read main + Pass-1 sidecar + recovery sidecar and write
+# the downstream MBR output sidecar. MBR feature sidecars are intentionally not
+# required here: FTR consumes sparse candidate rows directly, and the MBR
+# feature columns are not needed after FTR scoring.
 function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool = true)
     n_merged = 0
     for path in file_paths
         pass1_path = path * PASS1_SIDECAR_SUFFIX
-        mbr_path   = path * MBR_SIDECAR_SUFFIX
         rec_path   = path * RECOVERY_SIDECAR_SUFFIX
-        all(isfile, (pass1_path, mbr_path, rec_path)) || continue
+        all(isfile, (pass1_path, rec_path)) || continue
 
         main  = Arrow.Table(path)
         pass1 = Arrow.Table(pass1_path)
-        mbr   = Arrow.Table(mbr_path)
         rec   = Arrow.Table(rec_path)
         n = length(main.precursor_idx)
         (length(pass1.precursor_idx) == n &&
-         length(mbr.precursor_idx)   == n &&
          length(rec.precursor_idx)   == n) ||
             error("Sidecar row-count mismatch at $path")
         @inbounds for i in 1:n
-            (main.precursor_idx[i] == pass1.precursor_idx[i] == mbr.precursor_idx[i] == rec.precursor_idx[i] &&
-             main.scan_idx[i]      == pass1.scan_idx[i]      == mbr.scan_idx[i]      == rec.scan_idx[i]) ||
+            (main.precursor_idx[i] == pass1.precursor_idx[i] == rec.precursor_idx[i] &&
+             main.scan_idx[i]      == pass1.scan_idx[i]      == rec.scan_idx[i]) ||
                 error("Sidecar misaligned at row $i of $path")
         end
 
@@ -824,11 +931,11 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
             # Release the Arrow mmap handles before deleting: on Windows a raw
             # rm() of a memory-mapped file throws EACCES until the mapping is
             # released. Mirror the safeRm pattern used elsewhere in this module.
-            main = nothing; pass1 = nothing; mbr = nothing; rec = nothing
+            main = nothing; pass1 = nothing; rec = nothing
             GC.gc(false)
             safeRm(pass1_path, nothing; force=true)
-            safeRm(mbr_path, nothing; force=true)
             safeRm(rec_path, nothing; force=true)
+            safeRm(path * ".mbr_sidecar.arrow", nothing; force=true)
         end
         n_merged += 1
     end

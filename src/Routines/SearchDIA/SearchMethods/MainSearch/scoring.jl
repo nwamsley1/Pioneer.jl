@@ -962,6 +962,76 @@ function _mainsearch_radius1_2d_shadow_hellinger(
     return Float32(-log2(max(hellinger_sq, 1f-10)))
 end
 
+function add_smoothed_fragment_intensities!(
+    best_psms::DataFrame,
+    psms::DataFrame,
+    pass_mask::AbstractVector{Bool};
+    center_mzs = nothing,
+    isolation_widths = nothing,
+)
+    best_prec_ids = best_psms[!, :precursor_idx]::Vector{UInt32}
+    best_scan_idxs = best_psms[!, :scan_idx]::Vector{UInt32}
+
+    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
+    cycle_idxs = psms[!, :cycle_idx]
+    frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
+
+    n_best = nrow(best_psms)
+    out_smooth_frag_cols = ntuple(_ -> Vector{Float32}(undef, n_best), 8)
+    flanking_core_order = Int[]
+    selected_window_rows = Int[]
+    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
+
+    row = 1
+    n = nrow(psms)
+    @inbounds for i in 1:n_best
+        pid = best_prec_ids[i]
+        while prec_ids[row] < pid
+            row += 1
+        end
+        group_start = row
+        while row <= n && prec_ids[row] == pid
+            row += 1
+        end
+        group_stop = row - 1
+
+        empty!(selected_window_rows)
+        selected_window_key = use_window_groups ?
+            _scan_window_key(best_scan_idxs[i], center_mzs, isolation_widths) :
+            (0f0, 0f0)
+        for group_row in group_start:group_stop
+            if !use_window_groups ||
+               _scan_window_key(scan_idxs[group_row], center_mzs, isolation_widths) == selected_window_key
+                push!(selected_window_rows, group_row)
+            end
+        end
+
+        flanking_core = _mainsearch_flanking_core_bounds!(
+            flanking_core_order,
+            selected_window_rows,
+            length(selected_window_rows),
+            scan_idxs,
+            cycle_idxs,
+            pass_mask,
+            best_scan_idxs[i],
+        )
+        _mainsearch_radius1_smooth_fragments!(
+            out_smooth_frag_cols,
+            i,
+            flanking_core.best_row,
+            flanking_core.left_row,
+            flanking_core.right_row,
+            frag_cols,
+        )
+    end
+
+    @inbounds for rank in 1:8
+        best_psms[!, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]] = out_smooth_frag_cols[rank]
+    end
+    return best_psms
+end
+
 function add_trace_and_fragment_features!(
     best_psms::DataFrame,
     psms::DataFrame,

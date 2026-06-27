@@ -63,7 +63,7 @@ end
 
 # 10 mz-quantile deciles. Returns Int8 bin index ∈ 1..10 for each input
 # value. Non-finite mz lands in bin 5 (the median bin).
-function _compute_mz_deciles(mzs::Vector{Float32})
+function _compute_mz_decile_edges(mzs::Vector{Float32})
     finite = filter(isfinite, mzs)
     edges = isempty(finite) ? Float32[0f0, 1f0] :
                 Float32.(unique(quantile(finite, 0:0.1:1)))
@@ -71,12 +71,20 @@ function _compute_mz_deciles(mzs::Vector{Float32})
         mn, mx = isempty(finite) ? (0f0, 1f0) : extrema(finite)
         edges = collect(Float32, LinRange(mn, mx, 11))
     end
+    return edges
+end
+
+function _assign_mz_deciles(mzs::Vector{Float32}, edges::Vector{Float32})
     bins = Vector{Int}(undef, length(mzs))
     @inbounds for i in eachindex(mzs)
         v = mzs[i]
         bins[i] = isfinite(v) ? clamp(searchsortedlast(edges, v), 1, 10) : 5
     end
     return bins
+end
+
+function _compute_mz_deciles(mzs::Vector{Float32})
+    return _assign_mz_deciles(mzs, _compute_mz_decile_edges(mzs))
 end
 
 # A pool is a (pids, irts) NamedTuple with irts sorted ascending so we
@@ -162,10 +170,16 @@ file, checking same (cv_fold × prec_mz decile), then same-fold, then global.
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    ;
+    receiver_file_paths::Vector{String} = file_paths,
 )
-    unique = _collect_unique_precursors_streaming(file_paths, precursors)
-    n_precs = length(unique.pids)
-    if n_precs == 0
+    pool_unique = _collect_unique_precursors_streaming(file_paths, precursors)
+    receiver_unique = receiver_file_paths == file_paths ?
+                      pool_unique :
+                      _collect_unique_precursors_streaming(receiver_file_paths, precursors)
+    n_pool_precs = length(pool_unique.pids)
+    n_receiver_precs = length(receiver_unique.pids)
+    if n_pool_precs == 0 && n_receiver_precs == 0
         empty_stratum = Dict{Tuple{Int, Int}, _IrtPool}()
         empty_fold = Dict{Int, _IrtPool}(0 => _empty_pool(), 1 => _empty_pool())
         return _CounterfactualPartnerPools(
@@ -176,9 +190,10 @@ function build_counterfactual_partner_pools(
         )
     end
 
-    bin_mz = _compute_mz_deciles(unique.mz)
+    mz_edges = _compute_mz_decile_edges(pool_unique.mz)
+    pool_bin_mz = _assign_mz_deciles(pool_unique.mz, mz_edges)
     pools_t, pools_d = _build_stratum_pools(
-        unique.pids, unique.target, unique.fold, bin_mz, unique.irt,
+        pool_unique.pids, pool_unique.target, pool_unique.fold, pool_bin_mz, pool_unique.irt,
     )
 
     # Pre-build per-fold and experiment-global fallback pools. Two folds
@@ -194,18 +209,19 @@ function build_counterfactual_partner_pools(
     global_pool_t = _build_global_pool(fold_pool_t)
     global_pool_d = _build_global_pool(fold_pool_d)
 
-    max_pid = Int(maximum(unique.pids))
+    max_pid = Int(maximum(receiver_unique.pids))
     target_by_pid = falses(max_pid)
     fold_by_pid = zeros(UInt8, max_pid)
     mz_bin_by_pid = zeros(UInt8, max_pid)
     irt_by_pid = zeros(Float32, max_pid)
 
-    @inbounds for i in 1:n_precs
-        pid = Int(unique.pids[i])
-        target_by_pid[pid] = unique.target[i]
-        fold_by_pid[pid] = unique.fold[i]
-        mz_bin_by_pid[pid] = UInt8(bin_mz[i])
-        irt_by_pid[pid] = unique.irt[i]
+    receiver_bin_mz = _assign_mz_deciles(receiver_unique.mz, mz_edges)
+    @inbounds for i in 1:n_receiver_precs
+        pid = Int(receiver_unique.pids[i])
+        target_by_pid[pid] = receiver_unique.target[i]
+        fold_by_pid[pid] = receiver_unique.fold[i]
+        mz_bin_by_pid[pid] = UInt8(receiver_bin_mz[i])
+        irt_by_pid[pid] = receiver_unique.irt[i]
     end
 
     return _CounterfactualPartnerPools(
