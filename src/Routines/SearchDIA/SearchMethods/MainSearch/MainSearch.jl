@@ -30,6 +30,22 @@ Pipeline:
 # arrows ScoringSearch reads. Set ≥ 1.0 to disable the filter entirely.
 const MAIN_PEP_FILTER_THR = 0.9f0
 
+# PEP ceiling for rows that fail the normal MainSearch gate but are retained
+# as MBR-only rescue candidates. Rows above this are discarded before the
+# cross-run rescue path.
+const MAIN_MBR_RESCUE_PEP_MAX = 0.98f0
+
+function _mainsearch_pep_partition(
+    peps::AbstractVector{Float32},
+    pep_filter_threshold::Float32,
+    mbr_rescue_pep_max::Float32,
+)
+    keep_mask = peps .<= pep_filter_threshold
+    rescue_mask = (peps .> pep_filter_threshold) .& (peps .<= mbr_rescue_pep_max)
+    discard_mask = peps .> mbr_rescue_pep_max
+    return (; keep_mask, rescue_mask, discard_mask)
+end
+
 # Minimum number of high-confidence target precursors required to fit the
 # cross-fold iRT refinement model. Files with fewer than this many high-
 # confidence target precursors skip the refinement pass.
@@ -380,25 +396,49 @@ function process_search_results!(
     # ============================================================
     # PER-FILE PEP FILTER (PEP ≤ MAIN_PEP_FILTER_THR).
     # Computed on best-per-precursor PSMs so each precursor gets one PEP value.
-    # Precursors with PEP > threshold never enter the second_pass arrow files
-    # and therefore can't reach ScoringSearch.
+    # Precursors with PEP > threshold skip the normal second_pass arrow files.
+    # Rows up to MAIN_MBR_RESCUE_PEP_MAX are retained separately for MBR-only
+    # rescue; rows above that rescue ceiling are discarded here.
     # ============================================================
+    rescue_psms = DataFrame()
     pep_filter_thr = MAIN_PEP_FILTER_THR
     if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
         peps_filt  = Vector{Float32}(undef, length(probs_filt))
         get_PEP!(probs_filt, is_t_filt, peps_filt; doSort=true, fdr_scale_factor=1.0f0)
-        keep = peps_filt .<= pep_filter_thr
+        best_psms[!, :main_pep] = peps_filt
+        pep_partition = _mainsearch_pep_partition(
+            peps_filt,
+            pep_filter_thr,
+            MAIN_MBR_RESCUE_PEP_MAX,
+        )
         n_before_pep = nrow(best_psms)
-        n_drop_t = count(.!keep .& is_t_filt)
-        n_drop_d = count(.!keep .& .!is_t_filt)
-        deleteat!(best_psms, .!keep)
+        n_drop_t = count(.!pep_partition.keep_mask .& is_t_filt)
+        n_drop_d = count(.!pep_partition.keep_mask .& .!is_t_filt)
+        n_rescue_t = count(pep_partition.rescue_mask .& is_t_filt)
+        n_rescue_d = count(pep_partition.rescue_mask .& .!is_t_filt)
+        n_discard_t = count(pep_partition.discard_mask .& is_t_filt)
+        n_discard_d = count(pep_partition.discard_mask .& .!is_t_filt)
+        if any(pep_partition.rescue_mask)
+            rescue_psms = best_psms[pep_partition.rescue_mask, :]
+            rescue_psms[!, :mbr_rescue_candidate] = trues(nrow(rescue_psms))
+        end
+        deleteat!(best_psms, .!pep_partition.keep_mask)
         @debug_l1 "  PEP filter (file_idx=$ms_file_idx, $file_name): PEP > $pep_filter_thr drops " *
                    "$n_drop_t targets + $n_drop_d decoys " *
                    "($n_before_pep → $(nrow(best_psms)) best-per-precursor PSMs)"
+        @debug_l1 "  PEP partition (file_idx=$ms_file_idx, $file_name): " *
+                   "normal PEP≤$pep_filter_thr=$(nrow(best_psms)); " *
+                   "MBR rescue $pep_filter_thr<PEP≤$MAIN_MBR_RESCUE_PEP_MAX=$(nrow(rescue_psms)) " *
+                   "($n_rescue_t targets + $n_rescue_d decoys); " *
+                   "discard PEP>$MAIN_MBR_RESCUE_PEP_MAX=$(n_discard_t + n_discard_d) " *
+                   "($n_discard_t targets + $n_discard_d decoys)"
         _summarize_psm_counts(best_psms, "after PEP filter", ms_file_idx, file_name)
     end
+    best_psms[!, :mbr_rescue_candidate] = falses(nrow(best_psms))
+    nrow(rescue_psms) > 0 && @debug_l1 "  MBR rescue pool (file_idx=$ms_file_idx, $file_name): " *
+        "$(nrow(rescue_psms)) PEP-filter loser rows preserved for MBR-only scoring"
     t_pep_end = time()
     t_recal_start = t_pep_end
     # ============================================================
@@ -411,6 +451,10 @@ function process_search_results!(
     new_rt_model = getRtIrtModel(search_context, ms_file_idx)
     best_psms[!, :irt_obs] .= new_rt_model.(best_psms[!, :rt])
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
+    if nrow(rescue_psms) > 0
+        rescue_psms[!, :irt_obs] .= new_rt_model.(rescue_psms[!, :rt])
+        rescue_psms[!, :irt_error] .= abs.(rescue_psms[!, :irt_obs] .- rescue_psms[!, :irt_pred])
+    end
     t_recal = time()
 
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
@@ -431,6 +475,31 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
+    if nrow(rescue_psms) > 0
+        add_precursor_fraction_transmitted!(
+            rescue_psms,
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            getCharge(precursors),
+            getMz(precursors),
+            getSulfurCount(precursors),
+            center_mzs,
+            isolation_widths,
+        )
+        to_remove_rescue = findall(rescue_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
+        deleteat!(rescue_psms, to_remove_rescue)
+        !isempty(to_remove_rescue) && @debug_l1 "  MBR rescue pool (file_idx=$ms_file_idx, $file_name): " *
+            "dropped $(length(to_remove_rescue)) rows below min_fraction_transmitted"
+        if nrow(rescue_psms) > 0
+            add_smoothed_fragment_intensities!(
+                rescue_psms,
+                psms,
+                trace_pass_mask;
+                center_mzs = center_mzs,
+                isolation_widths = isolation_widths,
+            )
+        end
+    end
     add_trace_and_fragment_features!(
         best_psms,
         psms,
@@ -441,10 +510,12 @@ function process_search_results!(
         pep_values = trace_peps,
     )
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+    nrow(rescue_psms) > 0 && (rescue_psms[!, :ms_file_idx] .= UInt32(ms_file_idx))
     t_phase2 = time()
 
     # Drop vector columns that can't be serialized to Arrow
     dropVectorColumns!(best_psms)
+    nrow(rescue_psms) > 0 && dropVectorColumns!(rescue_psms)
 
     precursors = getPrecursors(getSpecLib(search_context))
     frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
@@ -461,12 +532,24 @@ function process_search_results!(
 
     # Write per-fold main_search_psms.
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
+    mbr_rescue_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", MBR_RESCUE_PSMS_DIRNAME)
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
         if any(fold_mask)
             fold_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
             writeArrow(fold_path, best_psms[fold_mask, :])
+        end
+    end
+    if nrow(rescue_psms) > 0
+        mkpath(mbr_rescue_psms_dir)
+        rescue_cv_fold = UInt8[getCvFold(precursors, pid) for pid in rescue_psms.precursor_idx]
+        for fold in UInt8[0, 1]
+            fold_mask = rescue_cv_fold .== fold
+            if any(fold_mask)
+                rescue_path = joinpath(mbr_rescue_psms_dir, "$(file_name)_fold$(fold).arrow")
+                writeArrow(rescue_path, rescue_psms[fold_mask, :])
+            end
         end
     end
     t_write = time()
@@ -530,6 +613,41 @@ function _compute_phase2_columns!(
     return nothing
 end
 
+function _enrich_mainsearch_phase2_fold_file!(
+    psm_path::String,
+    prec_irt,
+    prec_mz_arr,
+    prec_pair_idxs,
+    entrap_group_ids,
+)
+    tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+    n_rows = nrow(tbl)
+    if n_rows == 0
+        safeRm(psm_path, nothing)
+        return (n_rows = 0, removed_empty = true)
+    end
+
+    irt_diff_col = Vector{Float32}(undef, n_rows)
+    prec_mz_col = Vector{Float32}(undef, n_rows)
+    pair_id_col = Vector{UInt32}(undef, n_rows)
+    entrap_col = Vector{UInt8}(undef, n_rows)
+    _compute_phase2_columns!(
+        tbl[!, :precursor_idx], tbl[!, :irt_obs], tbl[!, :irt_pred],
+        prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+        irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+    )
+    tbl[!, :irt_diff] = irt_diff_col
+    tbl[!, :prec_mz] = prec_mz_col
+    tbl[!, :pair_id] = pair_id_col
+    tbl[!, :entrapment_group_id] = entrap_col
+
+    sort!(tbl, :rt)
+    initialize_prob_group_features!(tbl)
+    dropVectorColumns!(tbl)
+    writeArrow(psm_path, tbl)
+    return (n_rows = n_rows, removed_empty = false)
+end
+
 function summarize_results!(
     results::MainSearchResults,
     params::P,
@@ -568,6 +686,7 @@ function summarize_results!(
     prec_mz_arr = getMz(precursors)
     prec_pair_idxs = getPairIdx(precursors)
     entrap_group_ids = getEntrapmentGroupId(precursors)
+    mbr_rescue_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", MBR_RESCUE_PSMS_DIRNAME)
 
     n_processed_files = 0
     n_total_precs = 0
@@ -589,49 +708,32 @@ function summarize_results!(
                 continue
             end
 
-            # Load this fold's main search PSMs into in-memory DataFrame
-            # (Tables.columntable + DataFrame materializes columns off the
-            # Arrow mmap so the subsequent in-place writeArrow is safe on
-            # Windows — same pattern as ArrowOperations.jl:68).
-            tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
-            n_before = nrow(tbl)
-            n_before_file += n_before
-            n_total_precs += n_before
-
-            n_after = nrow(tbl)
-            n_after_file += n_after
-            n_kept_precs += n_after
-
-            if n_after == 0
-                # Drop the on-disk file so downstream code skips this fold.
-                safeRm(psm_path, nothing)
-                continue
-            end
-
             # Add Phase 2 library-lookup columns (deferred from process_search_results!)
-            N = nrow(tbl)
-            irt_diff_col = Vector{Float32}(undef, N)
-            prec_mz_col = Vector{Float32}(undef, N)
-            pair_id_col = Vector{UInt32}(undef, N)
-            entrap_col = Vector{UInt8}(undef, N)
-            _compute_phase2_columns!(
-                tbl[!, :precursor_idx], tbl[!, :irt_obs], tbl[!, :irt_pred],
-                prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
-                irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+            enrich_result = _enrich_mainsearch_phase2_fold_file!(
+                psm_path,
+                prec_irt,
+                prec_mz_arr,
+                prec_pair_idxs,
+                entrap_group_ids,
             )
-            tbl[!, :irt_diff] = irt_diff_col
-            tbl[!, :prec_mz] = prec_mz_col
-            tbl[!, :pair_id] = pair_id_col
-            tbl[!, :entrapment_group_id] = entrap_col
+            n_before_file += enrich_result.n_rows
+            n_total_precs += enrich_result.n_rows
+            n_after_file += enrich_result.n_rows
+            n_kept_precs += enrich_result.n_rows
+            enrich_result.removed_empty && continue
 
-            sort!(tbl, :rt)
-            initialize_prob_group_features!(tbl)
-            dropVectorColumns!(tbl)
-
-            # Overwrite the same fold file in place. writeArrow handles the
-            # tempname → move dance internally for Windows safety.
-            writeArrow(psm_path, tbl)
             file_has_data = true
+
+            rescue_path = joinpath(mbr_rescue_psms_dir, "$(file_name)_fold$(fold).arrow")
+            if isfile(rescue_path)
+                _enrich_mainsearch_phase2_fold_file!(
+                    rescue_path,
+                    prec_irt,
+                    prec_mz_arr,
+                    prec_pair_idxs,
+                    entrap_group_ids,
+                )
+            end
         end
 
         if file_has_data

@@ -19,6 +19,33 @@
 PSM score merging and processing
 ==========================================================#
 
+const MBR_RESCUE_PSMS_DIRNAME = "mbr_rescue_psms"
+const MAIN_SEARCH_PSMS_DIRNAME = "main_search_psms"
+const MBR_RESCUE_RECOVERED_SUFFIX = ".mbr_recovered.arrow"
+
+function mbr_rescue_fold_path(main_fold_path::AbstractString)
+    parts = splitpath(String(main_fold_path))
+    idx = findlast(==(MAIN_SEARCH_PSMS_DIRNAME), parts)
+    idx === nothing && throw(ArgumentError(
+        "Expected a fold path under $MAIN_SEARCH_PSMS_DIRNAME, got $main_fold_path"
+    ))
+    parts[idx] = MBR_RESCUE_PSMS_DIRNAME
+    return joinpath(parts...)
+end
+
+function get_existing_mbr_rescue_fold_paths(main_fold_paths::Vector{String})
+    rescue_paths = String[]
+    for fpath in main_fold_paths
+        rescue_path = mbr_rescue_fold_path(fpath)
+        isfile(rescue_path) && push!(rescue_paths, rescue_path)
+    end
+    return rescue_paths
+end
+
+function mbr_rescue_recovered_path(rescue_fold_path::AbstractString)
+    return String(rescue_fold_path) * MBR_RESCUE_RECOVERED_SUFFIX
+end
+
 
 """
     get_pep_interpolation(merged_psms_path::String, score_col::Symbol;
@@ -183,4 +210,3 @@ function get_qvalue_spline(
     end
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
-

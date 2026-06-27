@@ -59,12 +59,18 @@ function score_precursor_isotope_traces(
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
     # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
     # MBR features, FTR recovery) — best_psms is never materialised as the
     # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
+        return _score_precursor_isotope_traces_mbr(
+            file_paths,
+            precursors,
+            fragment_lookup;
+            mbr_rescue_file_paths = mbr_rescue_file_paths,
+        )
     else
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
@@ -267,9 +273,18 @@ function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     fragment_lookup::LibraryFragmentLookup,
+    ;
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
+    rescue_file_paths = filter(isfile, mbr_rescue_file_paths)
+    all_mbr_file_paths = vcat(file_paths, rescue_file_paths)
+
     # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
-    cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
+    cf_partner_pools = build_counterfactual_partner_pools(
+        file_paths,
+        precursors;
+        receiver_file_paths = all_mbr_file_paths,
+    )
     fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
 
     # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
@@ -301,51 +316,78 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    # 5. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
+    # 5. MBR donor dict from normal rows. FTR features are computed only for
+    # candidate rows below, so no dense per-file MBR feature sidecars are
+    # written.
     @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
-    # Parallelize the per-file MBR feature compute + sidecar write across
-    # files. donor_dict and cf_partner_pools are read-only across this loop
-    # (built before, not mutated by the per-file function), and each file
-    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
-    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
-    parallel_foreach!(length(file_paths)) do chunk
-        for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(
-                file_paths[f_idx],
-                donor_dict,
-                cf_partner_pools,
-                fragment_keys,
-            )
+    # 6. Sparse FTR DataFrame: normal candidates are pre-gated from full
+    # Pass-1 q-values + donor availability; rescue candidates use the same
+    # donor score floor.
+    @debug_l1 "MBR Batch F: building sparse FTR candidate rows..."
+    normal_candidate_result = load_normal_mbr_candidate_slim_dataframe(
+        file_paths,
+        donor_dict,
+        cf_partner_pools,
+        fragment_keys;
+        q_thresh = 0.01f0,
+    )
+    psms = normal_candidate_result.candidates
+    normal_ftr_rows = nrow(psms)
+    rescue_psms = _empty_mbr_rescue_candidate_slim_dataframe()
+    if !isempty(rescue_file_paths)
+        rescue_psms = load_mbr_rescue_candidate_slim_dataframe(
+            rescue_file_paths,
+            donor_dict,
+            cf_partner_pools,
+            fragment_keys,
+            normal_candidate_result.prob_thresh,
+        )
+        if nrow(rescue_psms) > 0
+            psms = vcat(psms, rescue_psms; cols = :union)
         end
+        @debug_l1 "MBR rescue pool: sparse FTR candidates $(nrow(rescue_psms)) / " *
+                  "$(length(rescue_file_paths)) fold files"
     end
+    @debug_l1 "  sparse FTR rows: normal=$(normal_ftr_rows) rescue=$(nrow(rescue_psms))"
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
     cf_partner_pools = nothing
     fragment_keys = nothing
     GC.gc()
 
-    # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
-    # only as wide as the FTR controller needs.
-    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
-    psms = load_ftr_slim_dataframe(file_paths)
-    @debug_l1 "  slim FTR rows: $(nrow(psms))"
-
     # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
     psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
 
     # 8. Paired-counterfactual FTR.
-    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
+    apply_mbr_filter_paired!(
+        psms;
+        alpha = 0.01f0,
+        q_thresh = 0.01f0,
+        pregated = true,
+        pregated_prob_thresh = normal_candidate_result.prob_thresh,
+    )
 
-    # 9. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
+    # 9. Recovery sidecars + final merge — folds (Pass-1 + recovery)
     # back into each main file in one pass.
     @debug_l1 "MBR Batch F: writing recovery sidecars..."
-    write_recovery_sidecars(psms, file_paths)
+    write_sparse_normal_recovery_sidecars!(
+        psms[1:normal_ftr_rows, :],
+        file_paths,
+    )
+    if nrow(rescue_psms) > 0
+        rescue_recovery_stats = write_mbr_rescue_recovered_files!(
+            psms[(normal_ftr_rows + 1):nrow(psms), :],
+            rescue_file_paths,
+        )
+        @debug_l1 "MBR rescue pool: wrote $(rescue_recovery_stats.n_rows) recovered rows " *
+                  "across $(rescue_recovery_stats.n_files) fold files"
+    end
     psms = DataFrame()
     GC.gc()
-    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
+    @debug_l1 "MBR Batch F: merging Pass-1+recovery sidecars..."
     merge_mbr_sidecars_into_main!(file_paths)
 
     return nothing
