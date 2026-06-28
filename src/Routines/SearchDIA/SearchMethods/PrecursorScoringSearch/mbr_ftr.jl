@@ -53,11 +53,10 @@ const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 # interaction modeling. Dropping them gained +1,015 IDs (rtv3 doc)
 # and dropped Dennis FTR by 0.31 pp.
 #
-# rtv4 dropped `trace_prob_prepass` (OOF) too — the in-fold score
-# absorbs ~88% of the combined OOF+infold LGBM gain. The trace_prob_*
-# columns are still computed and used downstream (qval pipeline,
-# MBR top-K aggregation) — they just aren't exposed to the FTR LGBM
-# as features.
+# rtv4 dropped `trace_prob_prepass` (OOF) too — the in-fold score absorbs
+# most of the combined OOF+infold LGBM gain. FTR still keeps the per-run
+# main-search confidence as a separate feature so rescue rows can provide
+# local evidence even though they have no cross-run score.
 #
 # Dead features dropped (gain ≈ 0 across all rtv3/rtv4 runs):
 #   - MBR_is_missing_true (the -1 sentinel on every other MBR feature
@@ -65,7 +64,8 @@ const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 #   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
 #     both subsequently dropped along with the other M0 frag-6-vector features)
 const FTR_FEATURES_F_TRUE = Symbol[
-    :trace_prob_infold,                            # rtv3: in-fold Pass-1 score
+    :main_search_prob,                             # per-run 1 - main_search PEP
+    :trace_prob_infold,                            # in-fold cross-run score
     :MBR_max_pair_prob_true,
     :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true,
@@ -89,7 +89,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
 # bottom half of the doubled training frame. Each entry must mirror
 # FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
 # semantic feature columns in the same order. Row-level features
-# (trace_prob_infold) pass through the default `f` branch unchanged.
+# (main_search_prob, trace_prob_infold) pass through unchanged.
 const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :

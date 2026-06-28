@@ -15,6 +15,8 @@ end
 
 @testset "MBR rescue candidate helpers" begin
     @testset "main-search PEP partition bounds MBR rescue candidates" begin
+        @test Pioneer.MAIN_MBR_RESCUE_PEP_MAX == 0.95f0
+
         peps = Float32[0.0, 0.9, 0.9001, 0.95, 0.9501, 1.0]
 
         part = Pioneer._mainsearch_pep_partition(peps, 0.9f0, 0.95f0)
@@ -29,6 +31,13 @@ end
         @test :MBR_best_rt_diff_false ∉ Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_best_rt_diff_true ∉ Pioneer._MBR_SIDECAR_OUT_COLS
         @test :MBR_best_rt_diff_false ∉ Pioneer._MBR_SIDECAR_OUT_COLS
+    end
+
+    @testset "FTR includes per-run and cross-run probability features" begin
+        @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
+        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
+        @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
+        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin
@@ -105,7 +114,8 @@ end
             @test slim.precursor_idx == UInt32[1]
             @test slim.scan_idx == UInt32[10]
             @test slim.trace_prob_prepass == Float32[0.07]
-            @test slim.trace_prob_infold == Float32[0.07]
+            @test slim.main_search_prob == Float32[0.07]
+            @test slim.trace_prob_infold == Float32[0.0]
             @test slim.mbr_rescue_candidate == Bool[true]
             @test slim._mbr_rescue_file_idx == UInt32[1]
             @test slim._mbr_rescue_row_idx == UInt32[1]
@@ -210,6 +220,7 @@ end
                 :ms_file_idx => UInt32[1, 1, 1],
                 :cv_fold => UInt8[0, 0, 0],
                 :target => Bool[true, false, true],
+                :main_pep => Float32[0.42, 0.10, 0.01],
                 :weight => Float32[8, 4, 9],
                 :log2_intensity_explained => Float16[3, 2, 4],
                 :irt_pred => Float32[10, 20, 30],
@@ -263,6 +274,7 @@ end
             @test result.candidates.precursor_idx == UInt32[1]
             @test result.candidates.scan_idx == UInt32[10]
             @test result.candidates.trace_prob_prepass == Float32[0.80]
+            @test result.candidates.main_search_prob == Float32[0.58]
             @test result.candidates.trace_prob_infold == Float32[0.81]
             @test result.candidates.mbr_rescue_candidate == Bool[false]
             @test result.candidates._mbr_normal_file_idx == UInt32[1]

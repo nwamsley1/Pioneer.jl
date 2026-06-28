@@ -252,6 +252,7 @@ function _empty_mbr_rescue_candidate_slim_dataframe()
         decoy = Bool[],
         mbr_rescue_candidate = Bool[],
         trace_prob_prepass = Float32[],
+        main_search_prob = Float32[],
         trace_prob_infold = Float32[],
         _mbr_normal_file_idx = UInt32[],
         _mbr_normal_row_idx = UInt32[],
@@ -286,7 +287,9 @@ function _append_mbr_candidate_row!(
     ms_file_idx::UInt32,
     cv_fold::UInt8,
     target::Bool,
-    score::Float32,
+    prepass_score::Float32,
+    main_search_prob::Float32,
+    cross_run_prob::Float32,
     weight::Float32,
     log2_intensity_explained::Float32,
     irt_residual::Float32,
@@ -311,8 +314,9 @@ function _append_mbr_candidate_row!(
         target = target,
         decoy = !target,
         mbr_rescue_candidate = is_rescue,
-        trace_prob_prepass = score,
-        trace_prob_infold = score,
+        trace_prob_prepass = prepass_score,
+        main_search_prob = main_search_prob,
+        trace_prob_infold = cross_run_prob,
         _mbr_normal_file_idx = normal_file_idx,
         _mbr_normal_row_idx = normal_row_idx,
         _mbr_rescue_file_idx = rescue_file_idx,
@@ -700,6 +704,8 @@ function load_normal_mbr_candidate_slim_dataframe(
                 UInt8(fold_v[i]),
                 Bool(target_v[i]),
                 Float32(pass1.trace_prob_prepass[i]),
+                _mbr_main_pep_confidence(main.main_pep[i]),
+                Float32(pass1.trace_prob_infold[i]),
                 Float32(weight_v[i]),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
@@ -709,7 +715,6 @@ function load_normal_mbr_candidate_slim_dataframe(
                 donor_f,
                 fragment_keys,
             )
-            out.trace_prob_infold[end] = Float32(pass1.trace_prob_infold[i])
         end
         offset += n
     end
@@ -762,6 +767,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
             donor_f === nothing && continue
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            main_search_prob = _mbr_main_pep_confidence(pep_v[i])
             _append_mbr_candidate_row!(
                 out,
                 UInt32(0),
@@ -774,7 +780,9 @@ function load_mbr_rescue_candidate_slim_dataframe(
                 ms_file_idx,
                 UInt8(fold_v[i]),
                 Bool(target_v[i]),
-                _mbr_main_pep_confidence(pep_v[i]),
+                main_search_prob,
+                main_search_prob,
+                0.0f0,
                 Float32(weight_v[i]),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
