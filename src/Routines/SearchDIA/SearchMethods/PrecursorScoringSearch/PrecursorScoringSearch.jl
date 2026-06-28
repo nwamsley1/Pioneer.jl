@@ -152,6 +152,11 @@ function _precursor_scoring_per_run_pep_columns()
         # Compatibility for QC/output code that expects :qval. In this
         # temporary path, :qval intentionally mirrors the per-run PEP gate.
         df[!, :qval] = copy(pep)
+        # Compatibility aliases only: these are per-run values, not cross-run
+        # aggregates. The output writer expects the columns to exist.
+        df[!, :global_prob] = Float32.(df[!, :prec_prob])
+        df[!, :global_qval] = copy(pep)
+        df[!, :global_pep] = copy(pep)
         return df
     end
     return desc => op
@@ -178,6 +183,7 @@ function _prepare_per_run_pep_only_scoring_columns!(
     df[!, :decoy]              = df[!, :target] .== false
     df[!, :trace_prob_prepass] = confidence
     df[!, :trace_prob]         = copy(confidence)
+    df[!, :global_prob]        = copy(confidence)
     df[!, :mbr_recovered]      = falses(n)
     return df
 end

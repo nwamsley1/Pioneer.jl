@@ -63,8 +63,9 @@ end
         @test filtered.precursor_idx == UInt32[1, 3]
         @test filtered.pep == Float32[0.005, 0.009]
         @test filtered.qval == filtered.pep
-        @test :global_qval ∉ Symbol.(names(filtered))
-        @test :global_pep ∉ Symbol.(names(filtered))
+        @test filtered.global_prob == Float32[0.995, 0.991]
+        @test filtered.global_qval == filtered.pep
+        @test filtered.global_pep == filtered.pep
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin
