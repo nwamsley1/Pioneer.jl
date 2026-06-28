@@ -49,23 +49,51 @@ end
         @test scoring_params.match_between_runs == false
     end
 
-    @testset "temporary per-run PEP filter bypasses global precursor gates" begin
-        pipeline = Pioneer._precursor_scoring_per_run_pep_filter_pipeline(0.01f0)
-        psms = DataFrame(
-            precursor_idx = UInt32[1, 2, 3],
-            main_pep = Float32[0.005, 0.02, 0.009],
-            prec_prob = Float32[0.995, 0.98, 0.991],
-            mbr_recovered = Bool[false, false, false],
-        )
+    @testset "temporary per-run PEP experiment still applies precursor FDR controls" begin
+        mktempdir() do dir
+            refs = Pioneer.PSMFileReference[]
+            for file_idx in UInt32[1, 2]
+                path = joinpath(dir, "run$(file_idx).arrow")
+                Pioneer.writeArrow(path, DataFrame(
+                    precursor_idx = UInt32[1, 2, 3, 4],
+                    ms_file_idx = fill(file_idx, 4),
+                    trace_prob = Float32[0.99, 0.98, 0.97, 0.20],
+                    target = Bool[true, false, true, true],
+                    main_pep = fill(0.001f0, 4),
+                    mbr_recovered = falses(4),
+                ))
+                push!(refs, Pioneer.PSMFileReference(path))
+            end
 
-        filtered = _apply_pipeline_to_df(psms, pipeline)
+            Pioneer.aggregate_per_file!(refs)
+            results = Pioneer.PrecursorScoringSearchResults(
+                Ref(Dict{UInt32, Float32}()),
+                Ref{Any}(nothing),
+                Ref{Any}(nothing),
+                joinpath(dir, "merged_quant.arrow"),
+            )
 
-        @test filtered.precursor_idx == UInt32[1, 3]
-        @test filtered.pep == Float32[0.005, 0.009]
-        @test filtered.qval == filtered.pep
-        @test filtered.global_prob == Float32[0.995, 0.991]
-        @test filtered.global_qval == filtered.pep
-        @test filtered.global_pep == filtered.pep
+            passing_refs = Pioneer._apply_precursor_qvalue_controls!(
+                results,
+                refs,
+                joinpath(dir, "passing_psms"),
+                2,
+                4,
+                0.01f0,
+                1,
+                1.0f0,
+            )
+            passing = vcat([
+                DataFrame(Arrow.Table(Pioneer.file_path(ref))) for ref in passing_refs
+            ]...)
+
+            @test passing.precursor_idx == UInt32[1, 1]
+            @test all(passing.qval .<= 0.01f0)
+            @test all(skipmissing(passing.global_qval) .<= 0.01f0)
+            @test results.precursor_qval_interp[] !== nothing
+            @test results.precursor_pep_interp[] !== nothing
+            @test results.precursor_global_qval_dict[][UInt32(2)] > 0.01f0
+        end
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin

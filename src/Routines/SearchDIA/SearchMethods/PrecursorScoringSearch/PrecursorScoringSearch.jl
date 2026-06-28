@@ -54,8 +54,8 @@ const FORCE_OOM = false
 
 """
 Temporary entrapment-FDR experiment: bypass MBR, the experiment-wide
-PrecursorScoringSearch model, and global precursor aggregation. IDs are handed
-downstream using MainSearch's per-run `main_pep` only.
+PrecursorScoringSearch model, and MBR rescue. Precursor FDR controls are still
+computed from MainSearch's per-run `main_pep` scores.
 """
 const TEMPORARY_PER_RUN_PEP_ONLY_BYPASS = true
 
@@ -141,33 +141,6 @@ function _precursor_scoring_recalculated_qvalue_filter_pipeline(
         filter_by_multiple_thresholds([(:qval, q_value_threshold)])
 end
 
-function _precursor_scoring_per_run_pep_columns()
-    desc = "temporary_per_run_pep_columns"
-    op = function(df)
-        hasproperty(df, :main_pep) ||
-            error("Temporary per-run PEP experiment requires :main_pep from MainSearch")
-
-        pep = Float32.(df[!, :main_pep])
-        df[!, :pep] = pep
-        # Compatibility for QC/output code that expects :qval. In this
-        # temporary path, :qval intentionally mirrors the per-run PEP gate.
-        df[!, :qval] = copy(pep)
-        # Compatibility aliases only: these are per-run values, not cross-run
-        # aggregates. The output writer expects the columns to exist.
-        df[!, :global_prob] = Float32.(df[!, :prec_prob])
-        df[!, :global_qval] = copy(pep)
-        df[!, :global_pep] = copy(pep)
-        return df
-    end
-    return desc => op
-end
-
-function _precursor_scoring_per_run_pep_filter_pipeline(q_value_threshold::Float32)
-    return TransformPipeline() |>
-        _precursor_scoring_per_run_pep_columns() |>
-        filter_by_threshold(:pep, q_value_threshold)
-end
-
 function _prepare_per_run_pep_only_scoring_columns!(
     df::DataFrame,
     precursors::LibraryPrecursors,
@@ -183,9 +156,53 @@ function _prepare_per_run_pep_only_scoring_columns!(
     df[!, :decoy]              = df[!, :target] .== false
     df[!, :trace_prob_prepass] = confidence
     df[!, :trace_prob]         = copy(confidence)
-    df[!, :global_prob]        = copy(confidence)
     df[!, :mbr_recovered]      = falses(n)
     return df
+end
+
+function _apply_precursor_qvalue_controls!(
+    results::PrecursorScoringSearchResults,
+    filtered_refs::Vector{PSMFileReference},
+    passing_psms_folder::String,
+    n_files_total::Int,
+    n_precursors::Int,
+    q_value_threshold::Float32,
+    pep_bin_size::Int64,
+    fdr_scale::Float32,
+)
+    sqrt_n_runs = max(1, floor(Int64, sqrt(n_files_total)))
+
+    global_prob_dict, target_dict =
+        build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
+
+    global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+    global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+    results.precursor_global_qval_dict[] = global_qval_dict
+
+    spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
+        compute_pep=true, min_pep_points_per_bin=pep_bin_size,
+        fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
+    if spline_result === nothing
+        @user_warn "No non-empty files for precursor q-value calculation — no passing PSMs"
+        results.precursor_qval_interp[] = nothing
+        results.precursor_pep_interp[] = nothing
+        return PSMFileReference[]
+    end
+
+    qval_spline = spline_result.qval_spline
+    results.precursor_qval_interp[] = qval_spline
+    results.precursor_pep_interp[] = spline_result.pep_interp
+
+    combined_pipeline = _precursor_scoring_qvalue_filter_pipeline(
+        global_prob_dict,
+        global_qval_dict,
+        global_pep_dict,
+        qval_spline,
+        results.precursor_pep_interp[],
+        q_value_threshold,
+    )
+
+    return apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
 end
 
 #==========================================================
@@ -314,7 +331,7 @@ function summarize_results!(
     max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
     @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
     if TEMPORARY_PER_RUN_PEP_ONLY_BYPASS
-        @user_warn "TEMPORARY experiment active: bypassing MBR, PrecursorScoringSearch model, and global precursor aggregation; using MainSearch per-run PEP only."
+        @user_warn "TEMPORARY experiment active: bypassing MBR and PrecursorScoringSearch model; computing precursor FDR controls from MainSearch per-run PEP scores."
     else
         fragment_lookup = getFragmentLookupTable(spec_lib)
         score_precursor_isotope_traces(
@@ -367,11 +384,13 @@ function summarize_results!(
             push!(fold_dfs, _load_fold(fold1_path))
         end
 
-        for fold in UInt8[0, 1]
-            rescue_path = mbr_rescue_recovered_path(mbr_rescue_fold_path("$(base_path)_fold$(fold).arrow"))
-            isfile(rescue_path) || continue
-            rescue_df = _load_fold(rescue_path)
-            nrow(rescue_df) > 0 && push!(fold_dfs, rescue_df)
+        if params.match_between_runs
+            for fold in UInt8[0, 1]
+                rescue_path = mbr_rescue_recovered_path(mbr_rescue_fold_path("$(base_path)_fold$(fold).arrow"))
+                isfile(rescue_path) || continue
+                rescue_df = _load_fold(rescue_path)
+                nrow(rescue_df) > 0 && push!(fold_dfs, rescue_df)
+            end
         end
 
         if !isempty(fold_dfs)
@@ -411,62 +430,25 @@ function summarize_results!(
     # so no best-trace selection is needed. Pass refs through directly.
     filtered_refs = second_pass_refs
 
-    passing_refs = PSMFileReference[]
-    if TEMPORARY_PER_RUN_PEP_ONLY_BYPASS
-        results.precursor_global_qval_dict[] = Dict{UInt32, Float32}()
-        results.precursor_qval_interp[] = nothing
-        results.precursor_pep_interp[] = nothing
-
-        combined_pipeline = _precursor_scoring_per_run_pep_filter_pipeline(
-            params.q_value_threshold,
-        )
-        passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
-    else
-        # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
-        # Replaces 6 separate sort-merge-load-split cycles with:
-        #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
-        #   - In-memory q-value computation from dicts (no I/O)
-        #   - Lightweight 2-column sidecar files for spline computation
-        #   - Single per-file pipeline combining all column additions + filtering
-        n_files_total = length(getFilePaths(getMSData(search_context)))
-        sqrt_n_runs = max(1, floor(Int64, sqrt(n_files_total)))
-        fdr_scale = getLibraryFdrScaleFactor(search_context)
-
-        # Pre-allocation size from spectral library
-        n_precursors = length(precursors)
-
-        # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
-        global_prob_dict, target_dict =
-            build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
-
-        # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
-        global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
-        global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
-        results.precursor_global_qval_dict[] = global_qval_dict
-
-        # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
-        spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
-            compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
-        qval_spline = spline_result.qval_spline
-        results.precursor_qval_interp[] = qval_spline
-        results.precursor_pep_interp[] = spline_result.pep_interp
-
-        # Initial filter: all rows must pass :global_qval. Non-MBR rows also
-        # pass the initial row-level :qval; MBR-recovered rows wait for the
-        # recalculated row-level q-value below.
-        # The :pep and :off variants are retained in git history if needed.
-        combined_pipeline = _precursor_scoring_qvalue_filter_pipeline(
-            global_prob_dict,
-            global_qval_dict,
-            global_pep_dict,
-            qval_spline,
-            results.precursor_pep_interp[],
-            params.q_value_threshold,
-        )
-
-        passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
-    end
+    # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
+    # Replaces 6 separate sort-merge-load-split cycles with:
+    #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
+    #   - In-memory q-value computation from dicts (no I/O)
+    #   - Lightweight 2-column sidecar files for spline computation
+    #   - Single per-file pipeline combining all column additions + filtering
+    n_files_total = length(getFilePaths(getMSData(search_context)))
+    fdr_scale = getLibraryFdrScaleFactor(search_context)
+    n_precursors = length(precursors)
+    passing_refs = _apply_precursor_qvalue_controls!(
+        results,
+        filtered_refs,
+        passing_psms_folder,
+        n_files_total,
+        n_precursors,
+        params.q_value_threshold,
+        params.pep_bin_size,
+        fdr_scale,
+    )
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
     # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). The
@@ -474,23 +456,21 @@ function summarize_results!(
     # keep these files available for diagnostic inspection. Re-enable once the
     # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
-    if !TEMPORARY_PER_RUN_PEP_ONLY_BYPASS
-        # Step 11: Re-calculate q-values using filtered data (sidecar-based), now
-        # including MBR-recovered rows that passed the global q-value filter. This
-        # second row-level q-value is applied to every row, including MBR transfers.
-        # Sidecar lifecycle for new spline (on filtered data)
-        spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
-        if spline_result === nothing
-            @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-        else
-            recalc_pipeline = _precursor_scoring_recalculated_qvalue_filter_pipeline(
-                spline_result.qval_spline,
-                params.q_value_threshold,
-            )
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
-        end
+    # Step 11: Re-calculate q-values using filtered data (sidecar-based), now
+    # including MBR-recovered rows that passed the global q-value filter. This
+    # second row-level q-value is applied to every row, including MBR transfers.
+    # Sidecar lifecycle for new spline (on filtered data)
+    spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
+        min_pep_points_per_bin=params.pep_bin_size,
+        fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
+    if spline_result === nothing
+        @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+    else
+        recalc_pipeline = _precursor_scoring_recalculated_qvalue_filter_pipeline(
+            spline_result.qval_spline,
+            params.q_value_threshold,
+        )
+        passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
     end
 
     # Update search context with passing PSM paths
