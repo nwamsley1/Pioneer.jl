@@ -70,7 +70,7 @@ end
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).ms_file_idx == UInt32(40)
 end
 
-@testset "MBR false donor selection uses nearest cross-file iRT partner" begin
+@testset "MBR false donor selection skips same-file partners" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}()
     for pid in UInt32(2):UInt32(10)
         donor_dict[pid] = [_test_mbr_donor(0.20f0 + 0.01f0 * Float32(pid), UInt32(10))]
@@ -78,10 +78,13 @@ end
     donor_dict[UInt32(11)] = [_test_mbr_donor(0.55f0, UInt32(20))]
 
     cache = Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}()
+    partner_pools = _test_partner_pools_for_receiver()
+    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
     donor = Pioneer._false_donor_for_pid(
         cache,
         donor_dict,
-        _test_partner_pools_for_receiver(),
+        partner_pools,
+        hard_indexes,
         UInt32(1),
         UInt32(10),
     )
@@ -90,4 +93,85 @@ end
     @test donor.trace_prob == 0.55f0
     @test donor.ms_file_idx == UInt32(20)
     @test haskey(cache, UInt32(1))
+end
+
+@testset "MBR false donor selection prefers highest scoring local counterfactual" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+        UInt32(2) => [_test_mbr_donor(0.30f0, UInt32(20))],
+        UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(20))],
+        UInt32(4) => [_test_mbr_donor(0.99f0, UInt32(20))],
+    )
+    target_by_pid = falses(4)
+    target_by_pid[1] = true
+    fold_by_pid = zeros(UInt8, 4)
+    mz_bin_by_pid = ones(UInt8, 4)
+    irt_by_pid = zeros(Float32, 4)
+    irt_by_pid[1] = 10.0f0
+    decoy_pool = (pids = UInt32[2, 3, 4], irts = Float32[10.01, 10.20, 13.0])
+    empty_pool = (pids = UInt32[], irts = Float32[])
+    partner_pools = Pioneer._CounterfactualPartnerPools(
+        target_by_pid,
+        fold_by_pid,
+        mz_bin_by_pid,
+        irt_by_pid,
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => decoy_pool),
+        Dict{Int, Pioneer._IrtPool}(0 => empty_pool, 1 => empty_pool),
+        Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
+        empty_pool,
+        decoy_pool,
+    )
+    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
+
+    donor = Pioneer._false_donor_for_pid(
+        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+        donor_dict,
+        partner_pools,
+        hard_indexes,
+        UInt32(1),
+        UInt32(10),
+    )
+
+    @test donor !== nothing
+    @test donor.trace_prob == 0.85f0
+end
+
+@testset "MBR false donor fold fallback uses nearest iRT" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+        UInt32(2) => [_test_mbr_donor(0.30f0, UInt32(20))],
+        UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(20))],
+    )
+    target_by_pid = falses(3)
+    target_by_pid[1] = true
+    fold_by_pid = zeros(UInt8, 3)
+    mz_bin_by_pid = ones(UInt8, 3)
+    irt_by_pid = zeros(Float32, 3)
+    irt_by_pid[1] = 10.0f0
+    primary_pool = (pids = UInt32[], irts = Float32[])
+    fold_pool = (pids = UInt32[2, 3], irts = Float32[10.01, 10.20])
+    partner_pools = Pioneer._CounterfactualPartnerPools(
+        target_by_pid,
+        fold_by_pid,
+        mz_bin_by_pid,
+        irt_by_pid,
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => primary_pool),
+        Dict{Int, Pioneer._IrtPool}(0 => primary_pool, 1 => primary_pool),
+        Dict{Int, Pioneer._IrtPool}(0 => fold_pool, 1 => primary_pool),
+        primary_pool,
+        fold_pool,
+    )
+    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
+
+    donor = Pioneer._false_donor_for_pid(
+        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+        donor_dict,
+        partner_pools,
+        hard_indexes,
+        UInt32(1),
+        UInt32(10),
+    )
+
+    @test donor !== nothing
+    @test donor.trace_prob == 0.30f0
 end

@@ -33,7 +33,7 @@ const MAIN_PEP_FILTER_THR = 0.9f0
 # PEP ceiling for rows that fail the normal MainSearch gate but are retained
 # as MBR-only rescue candidates. Rows above this are discarded before the
 # cross-run rescue path.
-const MAIN_MBR_RESCUE_PEP_MAX = 0.95f0
+const MAIN_MBR_RESCUE_PEP_MAX = 0.98f0
 
 function _mainsearch_pep_partition(
     peps::AbstractVector{Float32},

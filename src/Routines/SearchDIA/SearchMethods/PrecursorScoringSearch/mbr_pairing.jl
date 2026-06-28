@@ -11,9 +11,9 @@
 # choose the nearest valid counterfactual partner for each receiver file.
 #
 # MBR streaming resolves the partner against donor availability: first the
-# nearest opposite-class precursor in the same cv_fold × prec_mz decile that
-# has a cross-file donor, then same-fold, then global. Nothing here mutates
-# the spectral library or any PSM column.
+# highest-scoring opposite-class donor within a local iRT window in the same
+# cv_fold × prec_mz decile, then nearest-iRT broader fallbacks. Nothing here
+# mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
 # a concatenated PSM DataFrame. Only (:precursor_idx, :target, :cv_fold)
@@ -88,7 +88,7 @@ function _compute_mz_deciles(mzs::Vector{Float32})
 end
 
 # A pool is a (pids, irts) NamedTuple with irts sorted ascending so we
-# can do binary search for iRT-nearest lookups.
+# can do binary search for local-window and iRT-nearest lookups.
 const _IrtPool = NamedTuple{(:pids, :irts), Tuple{Vector{UInt32}, Vector{Float32}}}
 
 _empty_pool() = (pids = UInt32[], irts = Float32[])
@@ -163,9 +163,11 @@ MBR Batch F: build the precursor-indexed metadata and sorted opposite-class
 iRT pools needed for deterministic, file-aware counterfactual partner
 resolution.
 
-For each receiver row, MBR streaming chooses the nearest opposite-class
-precursor by predicted iRT that has a donor in a file other than the receiver
-file, checking same (cv_fold × prec_mz decile), then same-fold, then global.
+For each receiver row, MBR streaming first chooses the highest-scoring
+opposite-class donor inside a local iRT window in the same
+(cv_fold × prec_mz decile). If that primary stratum has no eligible cross-file
+donor, it falls back through same-bin nearest iRT, same-fold nearest iRT, then
+global nearest iRT.
 """
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
