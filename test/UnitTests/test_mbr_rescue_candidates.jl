@@ -31,6 +31,42 @@ end
         @test :MBR_best_rt_diff_false ∉ Pioneer._MBR_SIDECAR_OUT_COLS
     end
 
+    @testset "temporary per-run PEP experiment hard-disables MBR" begin
+        params = Pioneer.PioneerParameters(
+            (match_between_runs = true, q_value_threshold = 0.01f0),
+            NamedTuple(),
+            NamedTuple(),
+            (machine_learning = (max_psm_memory_mb = 1.0, pep_bin_size = 10),),
+            NamedTuple(),
+            NamedTuple(),
+            NamedTuple(),
+            NamedTuple(),
+            NamedTuple(),
+        )
+
+        scoring_params = Pioneer.PrecursorScoringSearchParameters(params)
+
+        @test scoring_params.match_between_runs == false
+    end
+
+    @testset "temporary per-run PEP filter bypasses global precursor gates" begin
+        pipeline = Pioneer._precursor_scoring_per_run_pep_filter_pipeline(0.01f0)
+        psms = DataFrame(
+            precursor_idx = UInt32[1, 2, 3],
+            main_pep = Float32[0.005, 0.02, 0.009],
+            prec_prob = Float32[0.995, 0.98, 0.991],
+            mbr_recovered = Bool[false, false, false],
+        )
+
+        filtered = _apply_pipeline_to_df(psms, pipeline)
+
+        @test filtered.precursor_idx == UInt32[1, 3]
+        @test filtered.pep == Float32[0.005, 0.009]
+        @test filtered.qval == filtered.pep
+        @test :global_qval ∉ Symbol.(names(filtered))
+        @test :global_pep ∉ Symbol.(names(filtered))
+    end
+
     @testset "rescue path discovery mirrors main_search_psms layout" begin
         mktempdir() do dir
             normal_dir = joinpath(dir, "main_search_psms")
