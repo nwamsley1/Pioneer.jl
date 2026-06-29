@@ -316,12 +316,23 @@ function importScripts()
         "utils.jl"
     ])
 
+    # MBRRecoverySearch (donor-driven targeted PSM recovery)
+    include_files!(
+        joinpath(search_methods_dir, "MBRRecoverySearch"),
+        [
+            "types.jl",
+            "donor_pool.jl",
+            "MBRRecoverySearch.jl",
+        ]
+    )
+
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
         root_basename = basename(root)
         if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" ||
            root_basename == "HuberTuningSearch" ||
            root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch" ||
+           root_basename == "MBRRecoverySearch" ||
            occursin("MainSearch", root)
             continue
         end
