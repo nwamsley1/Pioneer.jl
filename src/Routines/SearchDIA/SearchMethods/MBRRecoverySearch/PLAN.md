@@ -66,23 +66,33 @@ a built-in part of V1.
 ```
 src/Routines/SearchDIA/SearchMethods/MBRRecoverySearch/
 ├── PLAN.md                  This file
-├── types.jl                 [DONE] RecoveredSeedRow, params, results, constants
-├── MBRRecoverySearch.jl     [V0]   interface + performSearch wired to donor
-                                    pool + empty sidecar emit per file
+├── types.jl                 [DONE] RecoveredSeedRow, params, results, constants.
+                                    Results now caches donor_pool / donor_pid_set /
+                                    fragment_keys + initialized flag (built once,
+                                    survives reset_results!).
+├── MBRRecoverySearch.jl     [V1.0] process_file!-driven per-cell extraction.
+                                    ensure_recovery_initialized! builds the donor
+                                    pool lazily on first file; extract_file_recovery_seeds
+                                    threads over missing pids (per-thread scratch);
+                                    summarize_results! is the final log.
 ├── donor_pool.jl            [DONE] build_recovery_donor_pool + helpers
 ├── mbr_features.jl          [DONE] compute_seed_mbr_features (7 MBR_*_true)
 ├── sidecar.jl               [DONE] write/read recovery_seed_sidecar.arrow
-└── extraction.jl            [V0]   extract_max_weight_in_window! — primary
-                                    weight + scan_idx ✓; secondary features
-                                    (log2_intensity_explained, log_by_ratio,
-                                    smoothed_frag_sqrt) are placeholder zeros
-                                    pending per-scan deconv state plumbing
+└── extraction.jl            [V1.1] extract_max_weight_in_window! — iRT-space
+                                    window + primary weight + scan_idx ✓;
+                                    secondary features now REAL: the walk uses
+                                    FusedStandard (not FusedRTIndexed) so
+                                    apply_main_scoring! fills the donor's
+                                    b/y-ion + per-rank frag intensities, from
+                                    which log2_intensity_explained, log_by_ratio,
+                                    and smoothed_frag_sqrt are computed at the
+                                    best scan (Step 1 done).
 ```
 
 Registered in `src/importScripts.jl` as an ordered-include block; excluded
 from the SearchMethods walkdir loader.
 
-## What's done (checkpoint after second push)
+## What's done (checkpoint after V1.0 wiring)
 
 - [x] Module skeleton, types, constants — compiles + instantiates
 - [x] `list_post_scoring_psm_files`, `build_recovery_donor_pool`,
@@ -93,32 +103,51 @@ from the SearchMethods walkdir loader.
        mirror PrecursorScoringSearch/mbr_streaming.jl `_compute_mbr_inner!`
        exactly; verified against synthetic data — see commit message of
        previous push for sample output)
-- [x] `extract_max_weight_in_window!` skeleton — reuses
+- [x] `extract_max_weight_in_window!` — reuses
        `collect_rt_window_precursors!` → `prepare_scan_peaks!` →
        `run_fused!(FusedRTIndexed, ...)` → `solve_deconvolution!` chain.
        Donor pid is manually prepended to the per-scan candidate list since
        it's NOT in `precursors_passing` (it's the missing pid we're recovering).
-- [x] `perform_recovery_search!` wired to:
-       (1) build donor pool from all post-scoring PSM files
-       (2) per file: compute missing-pid set; write empty
-           recovery_seed_sidecar.arrow (V0 — locks the on-disk shape)
-       (3) update results counters (n_donor_pids, n_cells_attempted)
+       **iRT-space window** (see decision note below): scans are visited when
+       `abs(rt_irt_model(scan_rt) − donor.irt_obs) ≤ irt_tol`.
+- [x] **V1.0 per-cell loop wired into `process_file!`** (Step 2):
+       (1) `ensure_recovery_initialized!` builds the donor pool + fragment keys
+           once, lazily, cached on results (survives `reset_results!`)
+       (2) per file: map ms_file_idx → `main_search_psms/{name}.arrow`, compute
+           missing-pid set, load rt_index from disk, thread extraction over
+           missing pids using `getSearchData(ctx)[thread_id]` scratch
+       (3) compute 7 MBR_*_true features inline, build RecoveredSeedRow, write
+           sidecar; update counters (n_donor_pids, n_cells_attempted/emitted)
+       (4) Pioneer precompiles + loads clean with all changes.
+
+       NOTE: compilation ≠ correctness. The loop has not yet been *run* against
+       real data — it needs upstream `main_search_psms/*.arrow` + `rt_indices/`
+       that only exist mid-pipeline, so its first real exercise is Step 4 (e2e),
+       which also requires Step 3 (registration — not yet in the pipeline).
 
 ## What's next
 
 In order:
 
-1. **Finish extraction.jl secondary features** (~1 hour)
-   - log2_intensity_explained: from per-scan Hs column sums vs total matched
-     intensity (already available in the per-scan deconv state)
-   - log_by_ratio: from sum of b-ion fragment intensities vs y-ion (need
-     to look up fragment ion types from frag_lookup per matched fragment)
-   - smoothed_frag_sqrt[8]: top-8 fragment intensities at the chosen scan,
-     L1-normalized, sqrt'd (mirrors `_read_smoothed_frag_sqrt` but reading
-     from the live per-scan match output rather than post-scoring frag cols)
-   - These mirror what MainSearch's `add_chromatogram_features!` and
-     `_mbr_smoothed_spectrum_sqrt_tuple` produce. Refactoring those helpers
-     to be callable per-scan would be cleanest.
+1. **[DONE] Finish extraction.jl secondary features**
+   Approach taken (differs from the original Hs-column idea): ion type (b/y)
+   is NOT stored in `Hs`, only `rank`. Rather than reconstruct ion types, the
+   window walk now runs `run_fused!` with **`FusedStandard`** (was
+   `FusedRTIndexed`) backed by `getMainUnscoredPsms(scratch)`, so
+   `apply_main_scoring!` populates the donor column's `MainUnscoredPSM`
+   (b_int, y_int, frag1..8_int) for free. Quant weights are unchanged
+   (identical column set + matched fragments; the inline mz/iRT prec-checks
+   are no-ops here — `irt_tol=Inf`, and every enumerated candidate already
+   passes the quad mz window). At each best-weight scan we compute, mirroring
+   MainSearch's `Score!` (ScoredPSMs.jl:199, 242-243) exactly:
+   - `log2_intensity_explained = log2((b_int+y_int) / Σ scan intensity)`
+   - `log_by_ratio (m0)        = log(b_int+1) − log(y_int+1)`
+   - `smoothed_frag_sqrt[8]     = sqrt(L1-normalized frag{1..8}_int)`
+     (single-scan: MainSearch's radius-1 chromatogram smoothing collapses to
+     the raw per-rank value when a scan has no flanking cycles)
+   Also fixed a latent skeleton bug: `n_frag_isotopes` was `UInt8(1)` but
+   `run_fused!` wants `::Int64` (would have MethodError'd on first call).
+   Pioneer compiles clean with the change.
 
 2. **Per-cell extraction loop in performSearch!** (~half day, depends on
    how clean the SearchData scratch lifecycle access is from MBRRecoverySearch)
@@ -231,9 +260,31 @@ finishes.
   FTR LightGBM. V1.5 will add `mbr_recovered_seed` as an explicit boolean
   feature to disambiguate.
 - We chose PMM over Huber for extraction (matches MainSearch's weight
-  semantics + faster) per user direction.
-- Window: per-file `getRtTolerance` (calibrated, in RT minutes) — same
-  width IntegrateChromatogramSearch uses, not a fixed `±5 cycles`.
+  semantics + faster) per user direction. PMM iters/tol use the production
+  constants `DECONV_MAX_ITER` (1000) / `DECONV_CONVERGENCE_TOL` (0.01).
+- **Window (REVISED — supersedes the original RT-minutes plan): iRT space.**
+  The original design opened the window at `center_rt = inverse(rt_irt_model)(donor.irt_obs)`
+  ± `getRtTolerance` (RT minutes). That depends on an iRT→RT inverse model that
+  **does not exist** — `irt_rt_map` / `setIrtRtMap!` is dead code (never called
+  anywhere in `src`), and no `inverse(::RtConversionModel)` is defined. Instead
+  we window in iRT space: a scan is visited when
+  `abs(rt_irt_model(scan_rt) − donor.irt_obs) ≤ irt_tol`, where `irt_tol =
+  getIrtErrors(ctx)[ms_file_idx]`. This uses only the forward model (always
+  available) and matches how the fragment-index search matches scans to
+  precursors across files (`_precompute_scan_properties`,
+  PartitionedFragmentIndex/search.jl:497). The per-scan *competitor* enumeration
+  still runs in RT space via `get_rt_tol(rt_binned_tol, scan_rt)` (with an
+  irt_tol/slope fallback when no rt_binned_tol exists), unchanged from
+  IntegrateChromatogramSearch's `build_chromatograms`.
+- **Architecture (REVISED): per-file work lives in `process_file!`, not
+  `summarize_results!`.** The framework's `execute_search` loop already
+  iterates `(ms_file_idx, spectra)` and calls `process_file!` per file, so that
+  hook is the only place the receiver's `spectra` + per-file calibrated models
+  are available. The donor pool is file-independent, so it is built once
+  (lazily, on the first `process_file!`) and cached on the mutable results
+  struct, which persists because `reset_results!` is a no-op. The old plan to
+  do everything in `summarize_results!` could not get `spectra` and is why V0
+  stalled.
 - Cell enumeration: skip cells where donor pid is already in receiver's
   `main_search_psms`. Already-IDed pids stay available as competitors in
   the per-scan design matrix via `rt_index` lookup.

@@ -74,13 +74,25 @@ end
 Results container for MBRRecoverySearch.
 
 Per-file recovery is written to disk as a sidecar (see sidecar.jl); the
-in-memory results just track totals for the post-run summary log.
+in-memory results track totals for the post-run summary log plus the
+once-built, file-independent state the per-file `process_file!` calls reuse.
+
+The donor pool, donor-pid set, and fragment-annotation keys are built on the
+first `process_file!` call (`initialized` guards the build) and persist across
+files because `reset_results!` is a no-op for this method.
 """
 mutable struct MBRRecoverySearchResults <: SearchResults
     n_donor_pids::Int                         # Distinct pids in the donor pool
     n_cells_attempted::Int                    # Sum of "cells we tried to recover"
     n_cells_emitted::Int                      # Sum of "cells with positive-weight seed"
     elapsed_sec::Float64
+    t_start::Float64                          # time() at init, for elapsed reporting
+
+    # Built once on first process_file!; reused for every file.
+    initialized::Bool
+    donor_pool::Dict{UInt32, Vector{_MBRDonorEntry}}
+    donor_pid_set::Set{UInt32}
+    fragment_keys::_MBRFragmentAnnotationKeys
 end
 
 # Constants shared with the rest of the recovery code.
