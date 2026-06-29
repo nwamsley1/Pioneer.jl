@@ -55,6 +55,7 @@ function _mbr_empirical_main_table(;
         irt_pred = zeros(Float32, n),
         irt_obs = zeros(Float32, n),
         log_by_ratio_m0 = zeros(Float16, n),
+        n_scans = fill(Float32(4), n),
         rt = zeros(Float32, n),
         ms_file_idx = fill(UInt32(ms_file_idx), n),
         target = Bool.(target),
@@ -105,7 +106,7 @@ end
             precursor_idx = [2],
             scan_idx = [2001],
             ms_file_idx = 2,
-            target = [false],
+            target = [true],
             frag1 = [0],
             frag2 = [100],
         ))
@@ -147,7 +148,7 @@ end
 
         @test length(partner_pools.irt_by_pid) == 4
         @test partner_pools.target_by_pid[4] == true
-        @test UInt32(4) ∉ partner_pools.global_pool_t.pids
+        @test UInt32(4) ∉ partner_pools.global_pool.pids
         @test donor !== nothing
         @test donor.precursor_idx == UInt32(2)
         @test donor.ms_file_idx == UInt32(2)

@@ -104,6 +104,68 @@ function _precursor_scoring_qvalue_filter_pipeline(
         add_interpolated_column(:pep, :prec_prob, pep_interp)
 end
 
+function _score_floor_for_qvalue(qval_spline, q_value_threshold::Float32)
+    low = eps(Float32)
+    high = 1.0f0 - eps(Float32)
+    Float32(qval_spline(low)) <= q_value_threshold && return low
+    Float32(qval_spline(high)) > q_value_threshold && return high
+
+    for _ in 1:32
+        mid = (low + high) / 2.0f0
+        if Float32(qval_spline(mid)) <= q_value_threshold
+            high = mid
+        else
+            low = mid
+        end
+    end
+    return high
+end
+
+function remap_mbr_recovered_prec_probs(
+    qval_spline,
+    q_value_threshold::Float32,
+)
+    score_ceiling = prevfloat(_score_floor_for_qvalue(qval_spline, q_value_threshold))
+    score_floor = eps(Float32)
+    score_width = max(score_ceiling - score_floor, 0.0f0)
+    desc = "remap_mbr_recovered_prec_probs"
+
+    op = function(df)
+        hasproperty(df, :mbr_target_decoy_prob) || return df
+        prec_probs = df[!, :prec_prob]::AbstractVector{Float32}
+        recovered = df[!, :mbr_recovered]
+        target_decoy_probs = df[!, :mbr_target_decoy_prob]
+
+        @inbounds for i in eachindex(prec_probs)
+            Bool(recovered[i]) || continue
+            score = clamp(Float32(target_decoy_probs[i]), 0.0f0, 1.0f0)
+            prec_probs[i] = score_floor + score_width * score
+        end
+        return df
+    end
+    return desc => op
+end
+
+function remap_mbr_recovered_prec_probs!(
+    refs::Vector{PSMFileReference},
+    merged_path::String;
+    q_value_threshold::Float32,
+    min_pep_points_per_bin::Int,
+    fdr_scale_factor::Float32,
+)
+    any(ref -> has_column_anywhere(ref, :mbr_target_decoy_prob), refs) || return refs
+
+    spline_result = build_qvalue_spline_from_refs(refs, :prec_prob, merged_path;
+        compute_pep=false,
+        min_pep_points_per_bin=min_pep_points_per_bin,
+        fdr_scale_factor=fdr_scale_factor,
+        temp_prefix="mbr_score_sidecar")
+    remap_pipeline = TransformPipeline() |>
+        remap_mbr_recovered_prec_probs(spline_result.qval_spline, q_value_threshold)
+    apply_pipeline!(refs, remap_pipeline; parallel=false)
+    return refs
+end
+
 function _initial_precursor_qvalue_filter(q_value_threshold::Float32)
     desc = "initial_precursor_qvalue_filter_with_mbr_recovery"
     op = function(df)
@@ -128,11 +190,13 @@ end
 
 function _precursor_scoring_recalculated_qvalue_filter_pipeline(
     qval_spline,
+    pep_interp,
     q_value_threshold::Float32,
 )
     return TransformPipeline() |>
         add_interpolated_column(:qval, :prec_prob, qval_spline) |>
-        filter_by_multiple_thresholds([(:qval, q_value_threshold)])
+        filter_by_multiple_thresholds([(:qval, q_value_threshold)]) |>
+        add_interpolated_column(:pep, :prec_prob, pep_interp)
 end
 
 #==========================================================
@@ -361,6 +425,14 @@ function summarize_results!(
     # Pre-allocation size from spectral library
     n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
+    remap_mbr_recovered_prec_probs!(
+        filtered_refs,
+        results.merged_quant_path;
+        q_value_threshold=params.q_value_threshold,
+        min_pep_points_per_bin=params.pep_bin_size,
+        fdr_scale_factor=fdr_scale,
+    )
+
     # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
     global_prob_dict, target_dict =
         build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
@@ -404,6 +476,7 @@ function summarize_results!(
     # second row-level q-value is applied to every row, including MBR transfers.
     # Sidecar lifecycle for new spline (on filtered data)
     spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
+        compute_pep=true,
         min_pep_points_per_bin=params.pep_bin_size,
         fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
     if spline_result === nothing
@@ -411,6 +484,7 @@ function summarize_results!(
     else
         recalc_pipeline = _precursor_scoring_recalculated_qvalue_filter_pipeline(
             spline_result.qval_spline,
+            spline_result.pep_interp,
             params.q_value_threshold,
         )
         passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)

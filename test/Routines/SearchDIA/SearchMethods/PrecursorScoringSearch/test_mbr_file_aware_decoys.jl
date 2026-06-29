@@ -1,15 +1,21 @@
 using Test
 using Pioneer
 
-function _test_mbr_donor(prob::Float32, file_idx::UInt32)
+function _test_mbr_donor(
+    prob::Float32,
+    file_idx::UInt32,
+    pid::UInt32 = UInt32(1),
+    n_scans::Float32 = 4.0f0,
+)
     return Pioneer._MBRDonorEntry(
         prob,
-        UInt32(1),
+        pid,
         1.0f0,
         0.25f0,
         0.5f0,
         12.0f0,
         0.1f0,
+        n_scans,
         Pioneer.MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT,
         file_idx,
         false,
@@ -32,11 +38,8 @@ function _test_partner_pools_for_receiver()
         fold_by_pid,
         mz_bin_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
         Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => decoy_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => empty_pool, 1 => empty_pool),
         Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
-        empty_pool,
         decoy_pool,
     )
 end
@@ -56,6 +59,7 @@ end
         Float32[12, 12, 12, 12, 12],
         Float32[11, 11, 11, 11, 11],
         nothing,
+        Float32[2, 3, 4, 5, 6],
         ntuple(_ -> zeros(Float32, 5), 8),
         UInt32[10, 10, 20, 30, 40],
         "unit-test",
@@ -66,8 +70,43 @@ end
     @test length(entries) == 2
     @test [entry.ms_file_idx for entry in entries] == UInt32[40, 10]
     @test [entry.trace_prob for entry in entries] == Float32[0.98, 0.95]
+    @test [entry.n_scans for entry in entries] == Float32[6, 2]
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(40)).ms_file_idx == UInt32(10)
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).ms_file_idx == UInt32(40)
+end
+
+@testset "MBR false donor selection excludes the same precursor" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+        UInt32(1) => [_test_mbr_donor(0.99f0, UInt32(20), UInt32(1))],
+        UInt32(2) => [_test_mbr_donor(0.40f0, UInt32(20), UInt32(2))],
+    )
+    target_by_pid = trues(2)
+    fold_by_pid = zeros(UInt8, 2)
+    mz_bin_by_pid = ones(UInt8, 2)
+    irt_by_pid = Float32[10.0, 10.01]
+    pool = (pids = UInt32[1, 2], irts = Float32[10.0, 10.01])
+    partner_pools = Pioneer._CounterfactualPartnerPools(
+        target_by_pid,
+        fold_by_pid,
+        mz_bin_by_pid,
+        irt_by_pid,
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => pool),
+        Dict{Int, Pioneer._IrtPool}(0 => pool, 1 => Pioneer._empty_pool()),
+        pool,
+    )
+    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
+
+    donor = Pioneer._false_donor_for_pid(
+        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+        donor_dict,
+        partner_pools,
+        hard_indexes,
+        UInt32(1),
+        UInt32(10),
+    )
+
+    @test donor !== nothing
+    @test donor.precursor_idx == UInt32(2)
 end
 
 @testset "MBR false donor selection skips same-file partners" begin
@@ -114,11 +153,8 @@ end
         fold_by_pid,
         mz_bin_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
         Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => decoy_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => empty_pool, 1 => empty_pool),
         Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
-        empty_pool,
         decoy_pool,
     )
     hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
@@ -154,11 +190,8 @@ end
         fold_by_pid,
         mz_bin_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
         Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => primary_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => primary_pool, 1 => primary_pool),
         Dict{Int, Pioneer._IrtPool}(0 => fold_pool, 1 => primary_pool),
-        primary_pool,
         fold_pool,
     )
     hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)

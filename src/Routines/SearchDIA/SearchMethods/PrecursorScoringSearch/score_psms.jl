@@ -266,6 +266,44 @@ function _train_scoring_classifier_semisupervised(
     return best_state.scores, best_state.last_classifier, best_state.info, best_state
 end
 
+function score_mbr_recovered_target_decoy!(psms::DataFrame)
+    scores = fill(NaN32, nrow(psms))
+    psms[!, :mbr_target_decoy_prob] = scores
+
+    recovered_idx = findall(Bool.(psms[!, :mbr_recovered]))
+    isempty(recovered_idx) && return nothing
+
+    recovered = psms[recovered_idx, :]
+    available_features = filter(
+        feature -> hasproperty(recovered, feature),
+        MBR_TRANSFER_TARGET_DECOY_FEATURES,
+    )
+    recovered_scores, last_classifier, _, state = _train_scoring_classifier_semisupervised(
+        recovered;
+        features = available_features,
+        lgbm_hp = SCORING_LGBM_HP,
+        max_train = SCORING_LGBM_MAX_TRAIN,
+    )
+
+    @inbounds for (j, row_idx) in enumerate(recovered_idx)
+        scores[row_idx] = Float32(recovered_scores[j])
+    end
+
+    if last_classifier !== nothing
+        lgbm_model = LightGBMModel(last_classifier, state.info.available_features, nothing)
+        imp = importance(lgbm_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by = x -> -x[2])
+            @debug_l1 "MBR recovered target-decoy feature importances (gain):"
+            for (fname, gain) in sorted_imp
+                @debug_l1 "    $(rpad(string(fname), 40)) $(round(gain, digits=2))"
+            end
+        end
+    end
+
+    return nothing
+end
+
 # Streaming MBR-on path. Walks the per-file Arrow tables for everything;
 # the only DataFrame ever materialised is the slim FTR table (10 cols)
 # reconstructed from sidecars right before the FTR controller runs.
@@ -373,6 +411,7 @@ function _score_precursor_isotope_traces_mbr(
         pregated = true,
         pregated_prob_thresh = normal_candidate_result.prob_thresh,
     )
+    score_mbr_recovered_target_decoy!(psms)
 
     # 9. Recovery sidecars + final merge — folds (Pass-1 + recovery)
     # back into each main file in one pass.

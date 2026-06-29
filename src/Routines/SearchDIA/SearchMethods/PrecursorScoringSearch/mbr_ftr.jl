@@ -69,6 +69,8 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_max_pair_prob_true,
     :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true,
+    :MBR_abs_n_scans_diff_true,
+    :MBR_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
     :MBR_log_by_diff_true,
     :MBR_smoothed_frag_hellinger_true,
@@ -94,12 +96,19 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
+    f === :MBR_abs_n_scans_diff_true     ? :MBR_abs_n_scans_diff_false :
+    f === :MBR_log2_n_scans_ratio_true   ? :MBR_log2_n_scans_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_smoothed_frag_hellinger_true ? :MBR_smoothed_frag_hellinger_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]
+
+const MBR_TRANSFER_TARGET_DECOY_FEATURES = filter(
+    feature -> startswith(String(feature), "MBR_"),
+    FTR_FEATURES_F_TRUE,
+)
 
 function _mbr_candidate_gate(
     psms::DataFrame;
@@ -303,12 +312,9 @@ function apply_mbr_filter_paired!(
         Float32(Inf)
 
     # ── 8. Recovered transfer composition ──
-    # Use library label + MBR_is_best_decoy-equivalent — donor polarity from
-    # the true-donor's target/decoy class. The dual-features file does not
-    # currently log donor target/decoy; infer from the precursor itself (T←T
-    # for targets, D←D for decoys, since the donor is the SAME precursor).
-    # T←D / D←T can only happen via the counterfactual, which is never used
-    # for recovery; here counts are simpler: T or D recoveries.
+    # Recovery uses the real donor for the same precursor. Counterfactual rows
+    # only train/control FTR, so recovered composition is just target vs decoy
+    # receiver rows.
     n_t_rec = count(i -> mbr_recovered_full[i] && target_col[i], 1:n)
     n_d_rec = n_recovered - n_t_rec
     n_rescue_recovered = count(i -> mbr_recovered_full[i] && rescue_mask[i], 1:n)

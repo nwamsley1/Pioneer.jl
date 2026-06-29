@@ -48,6 +48,7 @@ struct _MBRDonorEntry
     irt_residual::Float32  # irt_pred − irt_obs of the donor row
     irt_obs::Float32       # raw observed iRT of the donor row
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
+    n_scans::Float32
     smoothed_frag_sqrt::NTuple{8, Float32}
     ms_file_idx::UInt32
     is_decoy::Bool
@@ -175,7 +176,7 @@ end
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0,
-    :ms_file_idx, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
+    :n_scans, :ms_file_idx, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -184,6 +185,8 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_max_pair_prob_true,        :MBR_max_pair_prob_false,
     :MBR_log2_weight_ratio_true,    :MBR_log2_weight_ratio_false,
     :MBR_log2_explained_ratio_true, :MBR_log2_explained_ratio_false,
+    :MBR_abs_n_scans_diff_true,     :MBR_abs_n_scans_diff_false,
+    :MBR_log2_n_scans_ratio_true,   :MBR_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
@@ -244,7 +247,7 @@ function _emit_pass1_sidecar!(
 end
 
 function _empty_mbr_rescue_candidate_slim_columns()
-    return (
+    base_cols = (
         precursor_idx = UInt32[],
         scan_idx = UInt32[],
         ms_file_idx = UInt32[],
@@ -265,6 +268,10 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_log2_weight_ratio_false = Float32[],
         MBR_log2_explained_ratio_true = Float32[],
         MBR_log2_explained_ratio_false = Float32[],
+        MBR_abs_n_scans_diff_true = Float32[],
+        MBR_abs_n_scans_diff_false = Float32[],
+        MBR_log2_n_scans_ratio_true = Float32[],
+        MBR_log2_n_scans_ratio_false = Float32[],
         MBR_best_irt_diff_true = Float32[],
         MBR_best_irt_diff_false = Float32[],
         MBR_is_missing_true = Bool[],
@@ -274,6 +281,10 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_smoothed_frag_hellinger_true = Float32[],
         MBR_smoothed_frag_hellinger_false = Float32[],
     )
+    pass1_cols = NamedTuple{Tuple(ADVANCED_FEATURE_SET)}(
+        ntuple(_ -> Float32[], length(ADVANCED_FEATURE_SET))
+    )
+    return merge(base_cols, pass1_cols)
 end
 
 function _mbr_candidate_columns_to_dataframe(cols)
@@ -282,6 +293,24 @@ end
 
 function _empty_mbr_rescue_candidate_slim_dataframe()
     return _mbr_candidate_columns_to_dataframe(_empty_mbr_rescue_candidate_slim_columns())
+end
+
+function _mbr_pass1_feature_columns(main)
+    return NamedTuple{Tuple(ADVANCED_FEATURE_SET)}(
+        ntuple(i -> begin
+            feature = ADVANCED_FEATURE_SET[i]
+            hasproperty(main, feature) ? getproperty(main, feature) : nothing
+        end, length(ADVANCED_FEATURE_SET))
+    )
+end
+
+function _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, row_idx::Int)
+    for feature in ADVANCED_FEATURE_SET
+        col = getproperty(pass1_feature_cols, feature)
+        value = col === nothing ? 0.0f0 : Float32(col[row_idx])
+        push!(getproperty(out, feature), value)
+    end
+    return nothing
 end
 
 function _append_mbr_candidate_row!(
@@ -303,6 +332,7 @@ function _append_mbr_candidate_row!(
     log2_intensity_explained::Float32,
     irt_residual::Float32,
     log_by_ratio::Float32,
+    n_scans::Float32,
     recipient_sqrt::NTuple{8, Float32},
     donor_t::_MBRDonorEntry,
     donor_f::_MBRDonorEntry,
@@ -350,6 +380,10 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_log2_weight_ratio_false, log2_weight_ratio_f)
     push!(out.MBR_log2_explained_ratio_true, log2_intensity_explained - donor_t.log2_intensity_explained)
     push!(out.MBR_log2_explained_ratio_false, log2_intensity_explained - donor_f.log2_intensity_explained)
+    push!(out.MBR_abs_n_scans_diff_true, abs(n_scans - donor_t.n_scans))
+    push!(out.MBR_abs_n_scans_diff_false, abs(n_scans - donor_f.n_scans))
+    push!(out.MBR_log2_n_scans_ratio_true, log2((n_scans + 1.0f0) / (donor_t.n_scans + 1.0f0)))
+    push!(out.MBR_log2_n_scans_ratio_false, log2((n_scans + 1.0f0) / (donor_f.n_scans + 1.0f0)))
     push!(out.MBR_best_irt_diff_true, abs(irt_residual - donor_t.irt_residual))
     push!(out.MBR_best_irt_diff_false, abs(irt_residual - donor_f.irt_residual))
     push!(out.MBR_is_missing_true, false)
@@ -455,6 +489,7 @@ end
     irtp_c::AbstractVector{Float32},
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
+    nscans_c::AbstractVector,
     smoothed_frag_cols,
     fidx_c::AbstractVector{UInt32},
     side_path::String,
@@ -471,6 +506,7 @@ end
             irtp_c[i] - irto_c[i],
             irto_c[i],
             has_logby ? Float32(logby_c[i]) : 0f0,
+            Float32(nscans_c[i]),
             _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
             fidx_c[i], false,
         )
@@ -515,6 +551,7 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             main.log2_intensity_explained,
             main.irt_pred, main.irt_obs,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
+            main.n_scans,
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
             main.ms_file_idx,
             side_path,
@@ -540,6 +577,7 @@ end
     pool::_IrtPool,
     target_irt::Float32,
     my_file::UInt32,
+    my_pid::UInt32,
 )
     n = length(pool.irts)
     n == 0 && return nothing
@@ -556,6 +594,7 @@ end
         end
         pool_idx = use_left ? left : right
         use_left ? (left -= 1) : (right += 1)
+        pool.pids[pool_idx] == my_pid && continue
         donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
         donor !== nothing && return donor
     end
@@ -564,14 +603,14 @@ end
 
 struct _MBRDonorRangeIndex
     irts::Vector{Float32}
+    pid_to_index::Dict{UInt32, Int}
     leaf_count::Int
     best1::Vector{Union{Nothing, _MBRDonorEntry}}
     best2::Vector{Union{Nothing, _MBRDonorEntry}}
 end
 
 struct _MBRHardCounterfactualIndexes
-    pools_t::Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}
-    pools_d::Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}
+    pools::Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}
 end
 
 @inline function _mbr_donor_is_better(a::_MBRDonorEntry, b)
@@ -579,6 +618,8 @@ end
     return a.trace_prob > b.trace_prob ||
            (a.trace_prob == b.trace_prob && a.precursor_idx < b.precursor_idx)
 end
+
+@inline _mbr_donor_is_better(::Nothing, _) = false
 
 @inline function _mbr_insert_top2(
     best1::Union{Nothing, _MBRDonorEntry},
@@ -625,9 +666,11 @@ function _build_mbr_donor_range_index(
     best2 = Vector{Union{Nothing, _MBRDonorEntry}}(undef, 2 * leaf_count)
     fill!(best1, nothing)
     fill!(best2, nothing)
+    pid_to_index = Dict{UInt32, Int}()
 
     @inbounds for pool_idx in 1:n
         node = leaf_count + pool_idx - 1
+        pid_to_index[pool.pids[pool_idx]] = pool_idx
         entries = get(donor_dict, pool.pids[pool_idx], nothing)
         entries === nothing && continue
         for donor in entries
@@ -644,22 +687,18 @@ function _build_mbr_donor_range_index(
         _mbr_merge_top2!(best1, best2, node, best2[right])
     end
 
-    return _MBRDonorRangeIndex(pool.irts, leaf_count, best1, best2)
+    return _MBRDonorRangeIndex(pool.irts, pid_to_index, leaf_count, best1, best2)
 end
 
 function build_mbr_hard_counterfactual_indexes(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
 )
-    pools_t = Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}(
+    pools = Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}(
         key => _build_mbr_donor_range_index(pool, donor_dict)
-        for (key, pool) in partner_pools.pools_t
+        for (key, pool) in partner_pools.pools
     )
-    pools_d = Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}(
-        key => _build_mbr_donor_range_index(pool, donor_dict)
-        for (key, pool) in partner_pools.pools_d
-    )
-    return _MBRHardCounterfactualIndexes(pools_t, pools_d)
+    return _MBRHardCounterfactualIndexes(pools)
 end
 
 @inline function _best_cross_file_from_range_node(
@@ -674,17 +713,12 @@ end
     return nothing
 end
 
-@inline function _best_scoring_cross_file_donor_in_irt_window(
+@inline function _best_scoring_cross_file_donor_in_range(
     index::_MBRDonorRangeIndex,
-    target_irt::Float32,
+    first_idx::Int,
+    last_idx::Int,
     my_file::UInt32,
-    irt_window::Float32,
 )
-    n = length(index.irts)
-    n == 0 && return nothing
-
-    first_idx = searchsortedfirst(index.irts, target_irt - irt_window)
-    last_idx = searchsortedlast(index.irts, target_irt + irt_window)
     first_idx <= last_idx || return nothing
 
     left = index.leaf_count + first_idx - 1
@@ -708,10 +742,34 @@ end
 end
 
 @inline function _best_scoring_cross_file_donor_in_irt_window(
+    index::_MBRDonorRangeIndex,
+    target_irt::Float32,
+    my_file::UInt32,
+    my_pid::UInt32,
+    irt_window::Float32,
+)
+    n = length(index.irts)
+    n == 0 && return nothing
+
+    first_idx = searchsortedfirst(index.irts, target_irt - irt_window)
+    last_idx = searchsortedlast(index.irts, target_irt + irt_window)
+    first_idx <= last_idx || return nothing
+
+    self_idx = get(index.pid_to_index, my_pid, 0)
+    if first_idx <= self_idx <= last_idx
+        left_donor = _best_scoring_cross_file_donor_in_range(index, first_idx, self_idx - 1, my_file)
+        right_donor = _best_scoring_cross_file_donor_in_range(index, self_idx + 1, last_idx, my_file)
+        return _mbr_donor_is_better(right_donor, left_donor) ? right_donor : left_donor
+    end
+    return _best_scoring_cross_file_donor_in_range(index, first_idx, last_idx, my_file)
+end
+
+@inline function _best_scoring_cross_file_donor_in_irt_window(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pool::_IrtPool,
     target_irt::Float32,
     my_file::UInt32,
+    my_pid::UInt32,
     irt_window::Float32,
 )
     n = length(pool.irts)
@@ -725,7 +783,9 @@ end
     best_score = -Inf32
     best_irt_delta = Inf32
     @inbounds for pool_idx in first_idx:last_idx
-        donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
+        donor_pid = pool.pids[pool_idx]
+        donor_pid == my_pid && continue
+        donor = _donor_for_pid(donor_dict, donor_pid, my_file)
         donor === nothing && continue
         score = donor.trace_prob
         irt_delta = abs(pool.irts[pool_idx] - target_irt)
@@ -748,6 +808,7 @@ end
     index::Union{Nothing, _MBRDonorRangeIndex},
     target_irt::Float32,
     my_file::UInt32,
+    my_pid::UInt32,
 )
     donor = index === nothing ?
             _best_scoring_cross_file_donor_in_irt_window(
@@ -755,16 +816,18 @@ end
                 pool,
                 target_irt,
                 my_file,
+                my_pid,
                 MBR_COUNTERFACTUAL_LOCAL_IRT_WINDOW,
             ) :
             _best_scoring_cross_file_donor_in_irt_window(
                 index,
                 target_irt,
                 my_file,
+                my_pid,
                 MBR_COUNTERFACTUAL_LOCAL_IRT_WINDOW,
             )
     donor !== nothing && return donor
-    return _nearest_cross_file_donor(donor_dict, pool, target_irt, my_file)
+    return _nearest_cross_file_donor(donor_dict, pool, target_irt, my_file, my_pid)
 end
 
 @inline function _resolve_false_donor_for_pid(
@@ -778,34 +841,20 @@ end
     my_irt = partner_pools.irt_by_pid[pid_idx]
     my_fold = Int(partner_pools.fold_by_pid[pid_idx])
     my_mz = Int(partner_pools.mz_bin_by_pid[pid_idx])
+    pool_key = (my_fold, my_mz)
 
-    if partner_pools.target_by_pid[pid_idx]
-        pool_key = (my_fold, my_mz)
-        donor = _hard_counterfactual_donor_from_pool(
-            donor_dict,
-            get(partner_pools.pools_d, pool_key, _empty_pool()),
-            hard_indexes === nothing ? nothing : get(hard_indexes.pools_d, pool_key, nothing),
-            my_irt,
-            my_file,
-        )
-        donor !== nothing && return donor
-        donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool_d[my_fold], my_irt, my_file)
-        donor !== nothing && return donor
-        return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool_d, my_irt, my_file)
-    else
-        pool_key = (my_fold, my_mz)
-        donor = _hard_counterfactual_donor_from_pool(
-            donor_dict,
-            get(partner_pools.pools_t, pool_key, _empty_pool()),
-            hard_indexes === nothing ? nothing : get(hard_indexes.pools_t, pool_key, nothing),
-            my_irt,
-            my_file,
-        )
-        donor !== nothing && return donor
-        donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool_t[my_fold], my_irt, my_file)
-        donor !== nothing && return donor
-        return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool_t, my_irt, my_file)
-    end
+    donor = _hard_counterfactual_donor_from_pool(
+        donor_dict,
+        get(partner_pools.pools, pool_key, _empty_pool()),
+        hard_indexes === nothing ? nothing : get(hard_indexes.pools, pool_key, nothing),
+        my_irt,
+        my_file,
+        my_pid,
+    )
+    donor !== nothing && return donor
+    donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool[my_fold], my_irt, my_file, my_pid)
+    donor !== nothing && return donor
+    return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool, my_irt, my_file, my_pid)
 end
 
 @inline function _false_donor_for_pid(
@@ -898,7 +947,9 @@ function load_normal_mbr_candidate_slim_dataframe(
         irto_v = main.irt_obs
         logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
         has_logby = logby_v !== nothing
+        nscans_v = main.n_scans
         smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+        pass1_feature_cols = _mbr_pass1_feature_columns(main)
         false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
 
         @inbounds for i in 1:n
@@ -932,11 +983,13 @@ function load_normal_mbr_candidate_slim_dataframe(
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
+                Float32(nscans_v[i]),
                 recipient_sqrt,
                 donor_t,
                 donor_f,
                 fragment_keys,
             )
+            _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, i)
         end
         offset += n
     end
@@ -977,7 +1030,9 @@ function load_mbr_rescue_candidate_slim_dataframe(
         irto_v = main.irt_obs
         logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
         has_logby = logby_v !== nothing
+        nscans_v = main.n_scans
         smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+        pass1_feature_cols = _mbr_pass1_feature_columns(main)
         false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
 
         @inbounds for i in 1:n
@@ -1010,11 +1065,13 @@ function load_mbr_rescue_candidate_slim_dataframe(
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
+                Float32(nscans_v[i]),
                 recipient_sqrt,
                 donor_t,
                 donor_f,
                 fragment_keys,
             )
+            _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, i)
         end
     end
     return _mbr_candidate_columns_to_dataframe(out)
@@ -1040,6 +1097,7 @@ function write_sparse_normal_recovery_sidecars!(slim_df::DataFrame, file_paths::
 
         mbr_recovered = falses(n)
         transfer_candidate = falses(n)
+        target_decoy_prob = fill(NaN32, n)
         ftr_qval = fill(NaN32, n)
         ftr_pep = fill(NaN32, n)
 
@@ -1052,6 +1110,7 @@ function write_sparse_normal_recovery_sidecars!(slim_df::DataFrame, file_paths::
                 error("write_sparse_normal_recovery_sidecars!: slim_df misaligned at row $row for $main_path")
             mbr_recovered[source_row] = Bool(slim_df.mbr_recovered[row])
             transfer_candidate[source_row] = Bool(slim_df.MBR_transfer_candidate[row])
+            target_decoy_prob[source_row] = Float32(slim_df.mbr_target_decoy_prob[row])
             ftr_qval[source_row] = Float32(slim_df.ftr_qval_true[row])
             ftr_pep[source_row] = Float32(slim_df.ftr_pep_true[row])
         end
@@ -1062,6 +1121,7 @@ function write_sparse_normal_recovery_sidecars!(slim_df::DataFrame, file_paths::
             scan_idx = collect(UInt32.(main.scan_idx)),
             mbr_recovered = mbr_recovered,
             MBR_transfer_candidate = transfer_candidate,
+            mbr_target_decoy_prob = target_decoy_prob,
             ftr_qval_true = ftr_qval,
             ftr_pep_true = ftr_pep,
         ))
@@ -1106,6 +1166,7 @@ function write_mbr_rescue_recovered_files!(slim_df::DataFrame, file_paths::Vecto
         recovered[!, :trace_prob] = copy(recovered[!, :trace_prob_prepass])
         recovered[!, :mbr_recovered] = Bool[slim_df.mbr_recovered[row] for row in rows]
         recovered[!, :MBR_transfer_candidate] = Bool[slim_df.MBR_transfer_candidate[row] for row in rows]
+        recovered[!, :mbr_target_decoy_prob] = Float32[slim_df.mbr_target_decoy_prob[row] for row in rows]
         recovered[!, :ftr_qval_true] = Float32[slim_df.ftr_qval_true[row] for row in rows]
         recovered[!, :ftr_pep_true] = Float32[slim_df.ftr_pep_true[row] for row in rows]
 
@@ -1152,6 +1213,7 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         side_df[!, :trace_prob]           = side_df[!, :trace_prob_prepass]
         side_df[!, :mbr_recovered]        = collect(Bool.(rec.mbr_recovered))
         side_df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
+        side_df[!, :mbr_target_decoy_prob] = collect(Float32.(rec.mbr_target_decoy_prob))
         side_df[!, :ftr_qval_true]        = collect(Float32.(rec.ftr_qval_true))
         side_df[!, :ftr_pep_true]         = collect(Float32.(rec.ftr_pep_true))
 

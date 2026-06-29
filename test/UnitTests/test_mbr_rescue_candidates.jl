@@ -17,13 +17,13 @@ end
     @testset "main-search PEP partition bounds MBR rescue candidates" begin
         @test Pioneer.MAIN_MBR_RESCUE_PEP_MAX == 0.98f0
 
-        peps = Float32[0.0, 0.9, 0.9001, 0.98, 0.9801, 1.0]
+        peps = Float32[0.0, 0.9, 0.9001, 0.98, 1.0]
 
         part = Pioneer._mainsearch_pep_partition(peps, 0.9f0, 0.98f0)
 
-        @test part.keep_mask == Bool[true, true, false, false, false, false]
-        @test part.rescue_mask == Bool[false, false, true, true, false, false]
-        @test part.discard_mask == Bool[false, false, false, false, true, true]
+        @test part.keep_mask == Bool[true, true, false, false, false]
+        @test part.rescue_mask == Bool[false, false, true, true, false]
+        @test part.discard_mask == Bool[false, false, false, false, true]
     end
 
     @testset "raw RT MBR features are no longer emitted or modeled" begin
@@ -38,6 +38,25 @@ end
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
         @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
+    end
+
+    @testset "FTR includes MBR scan-count comparison features" begin
+        @test :MBR_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_abs_n_scans_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+    end
+
+    @testset "MBR transfer target-decoy scorer uses only true MBR features" begin
+        true_mbr_features = filter(feature -> startswith(String(feature), "MBR_"), Pioneer.FTR_FEATURES_F_TRUE)
+        @test Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES == true_mbr_features
+        @test all(feature -> feature ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES, Pioneer.ADVANCED_FEATURE_SET)
+        @test :main_search_prob ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+        @test :trace_prob_infold ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+        @test :MBR_max_pair_prob_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+        @test :MBR_log2_weight_ratio_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+        @test :MBR_smoothed_frag_hellinger_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+        @test :MBR_max_pair_prob_false ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin
@@ -74,17 +93,18 @@ end
                 :irt_pred => Float32[10, 30],
                 :irt_obs => Float32[9, 29],
                 :log_by_ratio_m0 => Float16[0.5, 0.2],
+                :n_scans => Float32[6, 2],
                 smoothed_cols...,
             ))
             donor_sqrt = ntuple(_ -> sqrt(1.0f0 / 8.0f0), 8)
             donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
                 UInt32(1) => [Pioneer._MBRDonorEntry(
                     0.95f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
-                    0.1f0, donor_sqrt, UInt32(2), false,
+                    0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
                 )],
                 UInt32(2) => [Pioneer._MBRDonorEntry(
                     0.94f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
-                    0.3f0, donor_sqrt, UInt32(2), false,
+                    0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
                 )],
             )
             pool = (pids = UInt32[2], irts = Float32[10])
@@ -93,11 +113,8 @@ end
                 UInt8[0, 0, 0],
                 UInt8[1, 1, 1],
                 Float32[10, 10, 30],
-                Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
                 Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => pool),
-                Dict{Int, Pioneer._IrtPool}(0 => Pioneer._empty_pool(), 1 => Pioneer._empty_pool()),
                 Dict{Int, Pioneer._IrtPool}(0 => pool, 1 => Pioneer._empty_pool()),
-                Pioneer._empty_pool(),
                 pool,
             )
             fragment_keys = Pioneer._MBRFragmentAnnotationKeys(zeros(UInt16, 8 * 3))
@@ -121,6 +138,18 @@ end
             @test slim._mbr_rescue_row_idx == UInt32[1]
             @test slim.MBR_is_missing_true == Bool[false]
             @test slim.MBR_is_missing_false == Bool[false]
+            @test slim.MBR_abs_n_scans_diff_true == Float32[2]
+            @test slim.MBR_abs_n_scans_diff_false == Float32[3]
+            @test isapprox(
+                slim.MBR_log2_n_scans_ratio_true[1],
+                Float32(log2((6.0f0 + 1.0f0) / (4.0f0 + 1.0f0)));
+                atol = 1.0f-6,
+            )
+            @test isapprox(
+                slim.MBR_log2_n_scans_ratio_false[1],
+                Float32(log2((6.0f0 + 1.0f0) / (3.0f0 + 1.0f0)));
+                atol = 1.0f-6,
+            )
         end
     end
 
@@ -226,6 +255,7 @@ end
                 :irt_pred => Float32[10, 20, 30],
                 :irt_obs => Float32[9, 19, 29],
                 :log_by_ratio_m0 => Float16[0.5, 0.2, 0.7],
+                :n_scans => Float32[7, 3, 9],
                 smoothed_cols...,
             ))
             Pioneer.writeArrow(normal_path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
@@ -238,11 +268,11 @@ end
             donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
                 UInt32(1) => [Pioneer._MBRDonorEntry(
                     0.99f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
-                    0.1f0, donor_sqrt, UInt32(2), false,
+                    0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
                 )],
                 UInt32(2) => [Pioneer._MBRDonorEntry(
                     0.99f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
-                    0.3f0, donor_sqrt, UInt32(2), false,
+                    0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
                 )],
             )
             pool = (pids = UInt32[2], irts = Float32[10])
@@ -251,11 +281,8 @@ end
                 UInt8[0, 0, 0],
                 UInt8[1, 1, 1],
                 Float32[10, 10, 30],
-                Dict{Tuple{Int, Int}, Pioneer._IrtPool}(),
                 Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => pool),
-                Dict{Int, Pioneer._IrtPool}(0 => Pioneer._empty_pool(), 1 => Pioneer._empty_pool()),
                 Dict{Int, Pioneer._IrtPool}(0 => pool, 1 => Pioneer._empty_pool()),
-                Pioneer._empty_pool(),
                 pool,
             )
             fragment_keys = Pioneer._MBRFragmentAnnotationKeys(zeros(UInt16, 8 * 3))
@@ -281,6 +308,18 @@ end
             @test result.candidates._mbr_normal_row_idx == UInt32[1]
             @test result.candidates.MBR_is_missing_true == Bool[false]
             @test result.candidates.MBR_is_missing_false == Bool[false]
+            @test result.candidates.MBR_abs_n_scans_diff_true == Float32[3]
+            @test result.candidates.MBR_abs_n_scans_diff_false == Float32[4]
+            @test isapprox(
+                result.candidates.MBR_log2_n_scans_ratio_true[1],
+                Float32(log2((7.0f0 + 1.0f0) / (4.0f0 + 1.0f0)));
+                atol = 1.0f-6,
+            )
+            @test isapprox(
+                result.candidates.MBR_log2_n_scans_ratio_false[1],
+                Float32(log2((7.0f0 + 1.0f0) / (3.0f0 + 1.0f0)));
+                atol = 1.0f-6,
+            )
         end
     end
 
@@ -298,6 +337,7 @@ end
                 _mbr_normal_row_idx = UInt32[2],
                 mbr_recovered = Bool[true],
                 MBR_transfer_candidate = Bool[true],
+                mbr_target_decoy_prob = Float32[0.88],
                 ftr_qval_true = Float32[0.005],
                 ftr_pep_true = Float32[0.006],
             )
@@ -311,6 +351,9 @@ end
             @test collect(recovery.scan_idx) == UInt32[10, 20]
             @test collect(recovery.mbr_recovered) == Bool[false, true]
             @test collect(recovery.MBR_transfer_candidate) == Bool[false, true]
+            @test collect(recovery.mbr_target_decoy_prob)[1] |> isnan
+            @test collect(recovery.mbr_target_decoy_prob)[2] == 0.88f0
+            @test !hasproperty(recovery, :ftr_score_true)
             @test collect(recovery.ftr_qval_true)[1] |> isnan
             @test collect(recovery.ftr_qval_true)[2] == 0.005f0
             @test collect(recovery.ftr_pep_true)[1] |> isnan
@@ -338,6 +381,7 @@ end
                 trace_prob_infold = Float32[0.07, 0.08],
                 mbr_recovered = Bool[false, true],
                 MBR_transfer_candidate = Bool[true, true],
+                mbr_target_decoy_prob = Float32[0.10, 0.88],
                 ftr_qval_true = Float32[0.20, 0.005],
                 ftr_pep_true = Float32[0.20, 0.006],
             )
@@ -354,6 +398,8 @@ end
             @test recovered.trace_prob == Float32[0.08]
             @test recovered.mbr_recovered == Bool[true]
             @test recovered.MBR_transfer_candidate == Bool[true]
+            @test recovered.mbr_target_decoy_prob == Float32[0.88]
+            @test !hasproperty(recovered, :ftr_score_true)
             @test recovered.ftr_qval_true == Float32[0.005]
             @test recovered.ftr_pep_true == Float32[0.006]
 
@@ -362,6 +408,27 @@ end
             @test empty_result.n_rows == 0
             @test !isfile(recovered_path)
         end
+    end
+
+    @testset "MBR recovered target-decoy scorer scores only recovered rows" begin
+        psms = DataFrame(
+            target = Bool[true, false, true, false, true, false, true, false],
+            cv_fold = UInt8[0, 0, 0, 0, 1, 1, 1, 1],
+            mbr_recovered = Bool[true, true, false, false, true, true, false, false],
+            mbr_rescue_candidate = Bool[false, true, false, false, true, false, false, false],
+            main_search_prob = Float32[0.95, 0.20, 0.90, 0.30, 0.94, 0.25, 0.91, 0.35],
+            trace_prob_infold = Float32[0.96, 0.15, 0.88, 0.25, 0.93, 0.22, 0.87, 0.32],
+            MBR_max_pair_prob_true = Float32[0.98, 0.30, 0.90, 0.20, 0.97, 0.35, 0.91, 0.25],
+            MBR_log2_weight_ratio_true = Float32[0.1, -2.0, 0.2, -1.5, 0.0, -1.8, 0.3, -1.2],
+            MBR_smoothed_frag_hellinger_true = Float32[0.05, 0.6, 0.08, 0.5, 0.04, 0.55, 0.09, 0.45],
+        )
+
+        Pioneer.score_mbr_recovered_target_decoy!(psms)
+
+        @test hasproperty(psms, :mbr_target_decoy_prob)
+        @test all(!isnan, psms.mbr_target_decoy_prob[psms.mbr_recovered])
+        @test all(isnan, psms.mbr_target_decoy_prob[.!psms.mbr_recovered])
+        @test all(!isnan, psms.mbr_target_decoy_prob[psms.mbr_rescue_candidate .& psms.mbr_recovered])
     end
 
     @testset "MBR recovered rows bypass only the initial row q-value filter" begin
@@ -386,13 +453,44 @@ end
         psms = DataFrame(
             precursor_idx = UInt32[1, 2, 3],
             prec_prob = Float32[0.95, 0.05, 0.05],
+            target = Bool[true, true, false],
             mbr_recovered = Bool[false, true, false],
+            mbr_target_decoy_prob = Float32[NaN32, 0.90, NaN32],
         )
 
         initial_filtered = _apply_pipeline_to_df(psms, pipeline)
 
         @test initial_filtered.precursor_idx == UInt32[1, 2]
+        @test initial_filtered.prec_prob[2] == 0.05f0
         @test initial_filtered.qval[2] > 0.1f0
+    end
+
+    @testset "MBR recovered rows are ranked by target-decoy score below direct row-level passers" begin
+        qval_spline = linear_interpolation(
+            Float32[0.0, 1.0],
+            Float32[0.2, 0.0];
+            extrapolation_bc = Interpolations.Flat(),
+        )
+        pipeline = Pioneer.TransformPipeline() |>
+            Pioneer.add_interpolated_column(:qval, :prec_prob, qval_spline) |>
+            Pioneer.remap_mbr_recovered_prec_probs(qval_spline, 0.1f0)
+        psms = DataFrame(
+            precursor_idx = UInt32[1, 2, 3, 4],
+            prec_prob = Float32[0.95, 0.05, 0.05, 0.04],
+            target = Bool[true, true, true, false],
+            mbr_recovered = Bool[false, true, true, false],
+            mbr_target_decoy_prob = Float32[NaN32, 0.90, 0.30, NaN32],
+            ftr_pep_true = Float32[NaN32, 0.009, 0.001, NaN32],
+        )
+
+        remapped = _apply_pipeline_to_df(psms, pipeline)
+        direct_floor = Pioneer._score_floor_for_qvalue(qval_spline, 0.1f0)
+
+        @test remapped.prec_prob[1] == 0.95f0
+        @test remapped.prec_prob[4] == 0.04f0
+        @test remapped.prec_prob[2] < direct_floor
+        @test remapped.prec_prob[3] < direct_floor
+        @test remapped.prec_prob[2] > remapped.prec_prob[3]
     end
 
     @testset "MBR recovered rows are filtered by recalculated row q-values" begin
@@ -401,13 +499,20 @@ end
             Float32[0.2, 0.0];
             extrapolation_bc = Interpolations.Flat(),
         )
+        recalc_pep_interp = linear_interpolation(
+            Float32[0.0, 1.0],
+            Float32[0.2, 0.0];
+            extrapolation_bc = Interpolations.Flat(),
+        )
         pipeline = Pioneer._precursor_scoring_recalculated_qvalue_filter_pipeline(
             recalc_qval_spline,
+            recalc_pep_interp,
             0.1f0,
         )
         psms = DataFrame(
             precursor_idx = UInt32[1, 2],
             prec_prob = Float32[0.95, 0.05],
+            target = Bool[true, true],
             mbr_recovered = Bool[false, true],
         )
 
@@ -415,5 +520,36 @@ end
 
         @test filtered.precursor_idx == UInt32[1]
         @test filtered.qval ≈ Float32[0.01]
+    end
+
+    @testset "recalculated row-level filter recomputes emitted PEP" begin
+        recalc_qval_spline = linear_interpolation(
+            Float32[0.0, 1.0],
+            Float32[0.2, 0.0];
+            extrapolation_bc = Interpolations.Flat(),
+        )
+        recalc_pep_interp = linear_interpolation(
+            Float32[0.0, 1.0],
+            Float32[0.2, 0.02];
+            extrapolation_bc = Interpolations.Flat(),
+        )
+        pipeline = Pioneer._precursor_scoring_recalculated_qvalue_filter_pipeline(
+            recalc_qval_spline,
+            recalc_pep_interp,
+            0.1f0,
+        )
+        psms = DataFrame(
+            precursor_idx = UInt32[1, 2],
+            prec_prob = Float32[0.95, 0.05],
+            pep = Float32[0.9999, 0.9999],
+            target = Bool[true, true],
+            mbr_recovered = Bool[true, true],
+        )
+
+        filtered = _apply_pipeline_to_df(psms, pipeline)
+
+        @test filtered.precursor_idx == UInt32[1]
+        @test filtered.pep[1] < 0.1f0
+        @test filtered.pep[1] ≈ Float32(recalc_pep_interp(0.95f0))
     end
 end

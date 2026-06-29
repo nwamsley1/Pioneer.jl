@@ -7,12 +7,12 @@
 #
 # Builds experiment-global counterfactual-partner pools used by MBR
 # Batch F. For every unique `precursor_idx` observed across the per-file
-# second-pass Arrow tables, stores the OPPOSITE-class iRT pools needed to
-# choose the nearest valid counterfactual partner for each receiver file.
+# second-pass Arrow tables, stores iRT pools needed to choose a different
+# precursor as the counterfactual partner for each receiver file.
 #
 # MBR streaming resolves the partner against donor availability: first the
-# highest-scoring opposite-class donor within a local iRT window in the same
-# cv_fold × prec_mz decile, then nearest-iRT broader fallbacks. Nothing here
+# highest-scoring donor from a different precursor within a local iRT window in
+# the same cv_fold × prec_mz decile, then nearest-iRT broader fallbacks. Nothing here
 # mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
@@ -98,12 +98,9 @@ struct _CounterfactualPartnerPools
     fold_by_pid::Vector{UInt8}
     mz_bin_by_pid::Vector{UInt8}
     irt_by_pid::Vector{Float32}
-    pools_t::Dict{Tuple{Int, Int}, _IrtPool}
-    pools_d::Dict{Tuple{Int, Int}, _IrtPool}
-    fold_pool_t::Dict{Int, _IrtPool}
-    fold_pool_d::Dict{Int, _IrtPool}
-    global_pool_t::_IrtPool
-    global_pool_d::_IrtPool
+    pools::Dict{Tuple{Int, Int}, _IrtPool}
+    fold_pool::Dict{Int, _IrtPool}
+    global_pool::_IrtPool
 end
 
 # Build a sorted pool from a list of (irt, pid) tuples — sort by irt
@@ -114,21 +111,17 @@ function _sort_to_pool(pairs::Vector{Tuple{Float32, UInt32}})::_IrtPool
             irts = Float32[x[1] for x in pairs])
 end
 
-# Per-(cv_fold, mz_decile) sorted iRT pools, one per target/decoy class.
+# Per-(cv_fold, mz_decile) sorted iRT pools.
 function _build_stratum_pools(
-    pids::Vector{UInt32}, target::Vector{Bool},
+    pids::Vector{UInt32},
     fold::Vector{UInt8}, bin_mz::Vector{Int}, irt::Vector{Float32},
 )
-    tmp_t = Dict{Tuple{Int,Int}, Vector{Tuple{Float32, UInt32}}}()
-    tmp_d = Dict{Tuple{Int,Int}, Vector{Tuple{Float32, UInt32}}}()
+    tmp = Dict{Tuple{Int,Int}, Vector{Tuple{Float32, UInt32}}}()
     @inbounds for i in eachindex(pids)
         key = (Int(fold[i]), bin_mz[i])
-        dst = target[i] ? tmp_t : tmp_d
-        push!(get!(() -> Tuple{Float32, UInt32}[], dst, key), (irt[i], pids[i]))
+        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
     end
-    pools_t = Dict{Tuple{Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp_t)
-    pools_d = Dict{Tuple{Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp_d)
-    return pools_t, pools_d
+    return Dict{Tuple{Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
 end
 
 # Collapse all (fold, *) stratum pools for a single fold into one sorted
@@ -159,12 +152,11 @@ end
 """
     build_counterfactual_partner_pools(file_paths, precursors) -> _CounterfactualPartnerPools
 
-MBR Batch F: build the precursor-indexed metadata and sorted opposite-class
-iRT pools needed for deterministic, file-aware counterfactual partner
-resolution.
+MBR Batch F: build the precursor-indexed metadata and sorted iRT pools needed
+for deterministic, file-aware counterfactual partner resolution.
 
-For each receiver row, MBR streaming first chooses the highest-scoring
-opposite-class donor inside a local iRT window in the same
+For each receiver row, MBR streaming first chooses the highest-scoring donor
+from a different precursor inside a local iRT window in the same
 (cv_fold × prec_mz decile). If that primary stratum has no eligible cross-file
 donor, it falls back through same-bin nearest iRT, same-fold nearest iRT, then
 global nearest iRT.
@@ -186,30 +178,25 @@ function build_counterfactual_partner_pools(
         empty_fold = Dict{Int, _IrtPool}(0 => _empty_pool(), 1 => _empty_pool())
         return _CounterfactualPartnerPools(
             Bool[], UInt8[], UInt8[], Float32[],
-            empty_stratum, empty_stratum,
-            empty_fold, empty_fold,
-            _empty_pool(), _empty_pool(),
+            empty_stratum,
+            empty_fold,
+            _empty_pool(),
         )
     end
 
     mz_edges = _compute_mz_decile_edges(pool_unique.mz)
     pool_bin_mz = _assign_mz_deciles(pool_unique.mz, mz_edges)
-    pools_t, pools_d = _build_stratum_pools(
-        pool_unique.pids, pool_unique.target, pool_unique.fold, pool_bin_mz, pool_unique.irt,
+    pools = _build_stratum_pools(
+        pool_unique.pids, pool_unique.fold, pool_bin_mz, pool_unique.irt,
     )
 
     # Pre-build per-fold and experiment-global fallback pools. Two folds
     # (cv_fold ∈ {0, 1}) is the convention upstream.
-    fold_pool_t = Dict{Int, _IrtPool}(
-        0 => _build_fold_pool(pools_t, 0),
-        1 => _build_fold_pool(pools_t, 1),
+    fold_pool = Dict{Int, _IrtPool}(
+        0 => _build_fold_pool(pools, 0),
+        1 => _build_fold_pool(pools, 1),
     )
-    fold_pool_d = Dict{Int, _IrtPool}(
-        0 => _build_fold_pool(pools_d, 0),
-        1 => _build_fold_pool(pools_d, 1),
-    )
-    global_pool_t = _build_global_pool(fold_pool_t)
-    global_pool_d = _build_global_pool(fold_pool_d)
+    global_pool = _build_global_pool(fold_pool)
 
     max_pid = Int(maximum(receiver_unique.pids))
     target_by_pid = falses(max_pid)
@@ -231,11 +218,8 @@ function build_counterfactual_partner_pools(
         fold_by_pid,
         mz_bin_by_pid,
         irt_by_pid,
-        pools_t,
-        pools_d,
-        fold_pool_t,
-        fold_pool_d,
-        global_pool_t,
-        global_pool_d,
+        pools,
+        fold_pool,
+        global_pool,
     )
 end
