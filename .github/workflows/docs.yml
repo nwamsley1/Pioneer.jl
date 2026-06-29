@@ -31,7 +31,7 @@ jobs:
           version: '1.12.6'  # match Project.toml's `julia = "1.12.5"` compat lower bound
 
       - name: Cache docs packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.julia/registries
