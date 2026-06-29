@@ -322,6 +322,9 @@ function importScripts()
         [
             "types.jl",
             "donor_pool.jl",
+            "sidecar.jl",
+            "mbr_features.jl",
+            "extraction.jl",
             "MBRRecoverySearch.jl",
         ]
     )

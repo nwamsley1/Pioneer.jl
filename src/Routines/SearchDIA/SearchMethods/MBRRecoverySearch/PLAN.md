@@ -67,89 +67,85 @@ a built-in part of V1.
 src/Routines/SearchDIA/SearchMethods/MBRRecoverySearch/
 ├── PLAN.md                  This file
 ├── types.jl                 [DONE] RecoveredSeedRow, params, results, constants
-├── MBRRecoverySearch.jl     [SKELETON] interface + summarize_results! stub
+├── MBRRecoverySearch.jl     [V0]   interface + performSearch wired to donor
+                                    pool + empty sidecar emit per file
 ├── donor_pool.jl            [DONE] build_recovery_donor_pool + helpers
-├── mbr_features.jl          [TODO] inline compute of 7 MBR_*_true features
-├── sidecar.jl               [TODO] read/write recovery_seed_sidecar.arrow
-└── extraction.jl            [TODO] per-cell PMM extraction
+├── mbr_features.jl          [DONE] compute_seed_mbr_features (7 MBR_*_true)
+├── sidecar.jl               [DONE] write/read recovery_seed_sidecar.arrow
+└── extraction.jl            [V0]   extract_max_weight_in_window! — primary
+                                    weight + scan_idx ✓; secondary features
+                                    (log2_intensity_explained, log_by_ratio,
+                                    smoothed_frag_sqrt) are placeholder zeros
+                                    pending per-scan deconv state plumbing
 ```
 
 Registered in `src/importScripts.jl` as an ordered-include block; excluded
 from the SearchMethods walkdir loader.
 
-## What's done
+## What's done (checkpoint after second push)
 
-- [x] Module skeleton, types, constants
-- [x] SearchMethod interface stubs (compiles, instantiates)
-- [x] `list_post_scoring_psm_files` — enumerates the right per-file PSM tables
-- [x] `build_recovery_donor_pool` — streams files, recomputes per-file qval,
-       keeps top-2 donors per pid by trace_prob (reuses `_MBRDonorEntry` from
-       `PrecursorScoringSearch/mbr_streaming.jl` and
-       `_insert_sorted_donor_entry!`)
-- [x] `_read_smoothed_frag_sqrt` helper (sqrt-L1-normalized top-8 frag tuple)
-- [x] `main_search_pid_set` — for skipping cells already IDed in receiver file
-- [x] Registration in `importScripts.jl`
-- [x] Verified: `julia --project=. -e 'using Pioneer; Pioneer.MBRRecoverySearch()'`
-       precompiles cleanly and instantiates
+- [x] Module skeleton, types, constants — compiles + instantiates
+- [x] `list_post_scoring_psm_files`, `build_recovery_donor_pool`,
+       `main_search_pid_set`, `_read_smoothed_frag_sqrt`
+- [x] `write_recovery_seed_sidecar`, `read_recovery_seed_sidecar`,
+       `recovery_seed_sidecar_path`
+- [x] `ReceiverExtraction` struct + `compute_seed_mbr_features` (formulas
+       mirror PrecursorScoringSearch/mbr_streaming.jl `_compute_mbr_inner!`
+       exactly; verified against synthetic data — see commit message of
+       previous push for sample output)
+- [x] `extract_max_weight_in_window!` skeleton — reuses
+       `collect_rt_window_precursors!` → `prepare_scan_peaks!` →
+       `run_fused!(FusedRTIndexed, ...)` → `solve_deconvolution!` chain.
+       Donor pid is manually prepended to the per-scan candidate list since
+       it's NOT in `precursors_passing` (it's the missing pid we're recovering).
+- [x] `perform_recovery_search!` wired to:
+       (1) build donor pool from all post-scoring PSM files
+       (2) per file: compute missing-pid set; write empty
+           recovery_seed_sidecar.arrow (V0 — locks the on-disk shape)
+       (3) update results counters (n_donor_pids, n_cells_attempted)
 
 ## What's next
 
 In order:
 
-1. **sidecar.jl** (~half hour)
-   - `write_recovery_seed_sidecar(path, seeds::Vector{RecoveredSeedRow})`
-   - `read_recovery_seed_sidecar(path) -> DataFrame`
-   - Format: per-file Arrow next to `main_search_psms/{file}.arrow`
-     with suffix `.recovery_seed.arrow`
+1. **Finish extraction.jl secondary features** (~1 hour)
+   - log2_intensity_explained: from per-scan Hs column sums vs total matched
+     intensity (already available in the per-scan deconv state)
+   - log_by_ratio: from sum of b-ion fragment intensities vs y-ion (need
+     to look up fragment ion types from frag_lookup per matched fragment)
+   - smoothed_frag_sqrt[8]: top-8 fragment intensities at the chosen scan,
+     L1-normalized, sqrt'd (mirrors `_read_smoothed_frag_sqrt` but reading
+     from the live per-scan match output rather than post-scoring frag cols)
+   - These mirror what MainSearch's `add_chromatogram_features!` and
+     `_mbr_smoothed_spectrum_sqrt_tuple` produce. Refactoring those helpers
+     to be callable per-scan would be cleanest.
 
-2. **mbr_features.jl** (~half hour)
-   - `compute_seed_mbr_features(receiver, donor, donor_pid,
-     precursors, fragment_keys) -> NamedTuple` with the 7 MBR_*_true values.
-   - Receiver side: weight, log2_intensity_explained, irt_obs, log_by_ratio,
-     rt_obs, smoothed_frag_sqrt[8]. Donor side: pulled from _MBRDonorEntry.
-   - Hellinger distance: reuse `_mbr_hellinger` from
-     `PrecursorScoringSearch/mbr_streaming.jl`.
+2. **Per-cell extraction loop in performSearch!** (~half day, depends on
+   how clean the SearchData scratch lifecycle access is from MBRRecoverySearch)
+   - For each (donor pid × file) cell:
+     - Pull thread-local `SearchDataStructures` scratch from search_context
+     - Read per-file rt_index from `temp_data/rt_indices/{file}.arrow`
+       (already written by PrecursorScoringSearch's `build_rt_indices!`)
+     - Compute `center_rt = inverse(rt_irt_model)(donor.irt_obs)`
+     - Get `rt_tol` from `getRtTolerance(ctx, ms_file_idx)` (per-file
+       calibrated; floor at `params.rt_tol_floor_min`)
+     - Call `extract_max_weight_in_window!`
+     - If positive weight: call `compute_seed_mbr_features` and push
+       RecoveredSeedRow into per-file vector
+   - Parallelize per file (each has its own SearchData scratch) or per
+     pid within a file (per-thread scratch).
 
-3. **extraction.jl** (the meaty integration — needs API exploration first)
-   - Per (donor pid × receiver file) cell:
-     - Project donor irt_obs → receiver RT via per-file `rt_to_irt` spline
-       (inverse of `getRtIrtModel(ctx, file_idx)`)
-     - Window: `getRtTolerance(ctx, file_idx)` (same as
-       IntegrateChromatogramSearch) — calibrated half-width at this RT
-     - For each MS2 scan in window whose isolation window contains donor mz:
-       - Build candidate set = donor pid + already-IDed competitors at this
-         scan via `rt_index` lookup
-       - Build small design matrix using existing PMM scratch utilities
-       - PMM-solve via `PoissonMMSolver()` (matches MainSearch; faster than
-         Huber)
-     - Take max-weight scan as the recovered PSM
-     - Compute MBR features inline, emit RecoveredSeedRow
-   - This step requires reading these existing files for API:
-     - `src/Routines/SearchDIA/SearchMethods/MainSearch/deconvolution.jl`
-     - `src/Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch/utils.jl`
-       (especially `collect_rt_window_precursors!`, line ~577)
-     - `src/Routines/SearchDIA/process_scans.jl` (the unified scan loop —
-       see how it dispatches into PMM solve)
-     - `src/utils/ML/spectralLinearRegression.jl` (PMM solver internals)
-
-4. **performSearch! orchestrator** (~1 hour)
-   - Replace the stub in `MBRRecoverySearch.jl::summarize_results!` with:
-     - Build donor pool once
-     - Per file (parallel? or per-thread inside?): load main pids,
-       enumerate B-bucket cells, extract, emit sidecar
-     - Update results counters
-
-5. **Wire into pipeline** (~15 min)
+3. **Wire into pipeline** (~15 min)
    - Add `("MBR Recovery", MBRRecoverySearch())` to the `searches` array
      in `src/Routines/SearchDIA.jl`, after `("Precursor Scoring", ...)`
 
-6. **End-to-end test on 23 Olsen Exploris files** (~half hour, plus a
+4. **End-to-end test on 23 Olsen Exploris files** (~half hour, plus a
    ~15-min search run)
    - Same config we've been using:
      `/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/searches/olsen_exploris_3P_bitvec10_2026-06-29/config.json`
    - Validate per the metrics in the "Validation plan" section below.
 
-7. **V1.5 — Recovery FTR** (deferred)
+5. **V1.5 — Recovery FTR** (deferred)
    - Pair recovery rows with cross-fold counterfactual partners using
      existing `build_counterfactual_partner_pools` machinery
    - Train a small paired LightGBM on (MBR_*_true vs MBR_*_false) for

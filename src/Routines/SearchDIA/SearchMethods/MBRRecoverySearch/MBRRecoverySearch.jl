@@ -60,12 +60,20 @@ Core processing
 """
     perform_recovery_search!(method, results, params, search_context)
 
-Top-level entry. Builds the donor pool once from the (post-prescore) per-file
-PSM tables, then loops over files for the per-cell extraction. Each file
-gets a `recovery_seed_sidecar.arrow` written to `temp_data/main_search_psms/`.
+Top-level entry. Builds the donor pool once from the post-PrecursorScoringSearch
+per-file PSM tables, then per file:
+  - identifies pids missing from this receiver file's main_search_psms
+  - (V1.0) runs extract_max_weight_in_window! per cell to compute the recovered
+    weight + receiver-side payload
+  - (V1.0) computes the 7 MBR_*_true features inline via compute_seed_mbr_features
+  - writes recovery_seed_sidecar.arrow next to the main file
 
-V0: stubbed. Real implementation comes in donor_pool.jl + extraction.jl +
-sidecar.jl.
+V0 (this commit): builds the donor pool + identifies missing cells per file
+and writes an EMPTY sidecar per file so the on-disk shape lines up. The
+actual extraction call is gated behind the per-cell scratch-buffer wiring,
+which depends on SearchData lifecycle access from PrecursorScoringSearch's
+output. The extraction.jl function is in place and unit-testable in isolation
+once that wiring lands.
 """
 function perform_recovery_search!(
     method::MBRRecoverySearch,
@@ -74,8 +82,56 @@ function perform_recovery_search!(
     search_context::SearchContext,
 )
     t0 = time()
-    @user_info "MBRRecoverySearch: stub — donor pool + extraction not yet wired"
-    # TODO: see donor_pool.jl + extraction.jl + sidecar.jl
+
+    spec_lib = getSpecLib(search_context)
+    psm_paths = list_post_scoring_psm_files(search_context)
+    if isempty(psm_paths)
+        @user_warn "MBRRecoverySearch: no post-scoring PSM files found — skipping"
+        results.elapsed_sec = time() - t0
+        return nothing
+    end
+
+    donor_pool = build_recovery_donor_pool(
+        psm_paths, spec_lib;
+        qval_threshold = params.donor_qval_threshold,
+        max_donors = params.max_donors_per_pid,
+    )
+    results.n_donor_pids = length(donor_pool)
+    donor_pid_set = Set{UInt32}(keys(donor_pool))
+
+    for (file_idx, psm_path) in enumerate(psm_paths)
+        main_pids = main_search_pid_set(psm_path)
+        missing_pids = setdiff(donor_pid_set, main_pids)
+        results.n_cells_attempted += length(missing_pids)
+
+        # V0: write an empty sidecar to lock the on-disk format.
+        # V1.0 will replace this with the per-cell extraction loop:
+        #
+        #   seeds = RecoveredSeedRow[]
+        #   for donor_pid in missing_pids
+        #       donor = first(donor_pool[donor_pid])  # best by trace_prob
+        #       center_rt = inverse(rt_irt_model)(donor.irt_obs)
+        #       receiver = extract_max_weight_in_window!(
+        #           search_data, spectra, donor_pid, main_pids, rt_index,
+        #           center_rt, rt_tol, rt_irt_model, mass_err, quad, nce,
+        #           precursors, frag_lookup, iso_splines,
+        #           params.isotope_err_bounds, params.min_fraction_transmitted,
+        #           irt_tol, rt_binned_tol, max_iter_outer, max_diff, deconv_solver,
+        #       )
+        #       receiver === nothing && continue
+        #       features = compute_seed_mbr_features(
+        #           receiver, donor, getIrt(precursors)[donor_pid], fragment_keys,
+        #       )
+        #       push!(seeds, _build_recovered_seed_row(donor_pid, donor, receiver, features))
+        #   end
+        #   results.n_cells_emitted += length(seeds)
+        seeds = RecoveredSeedRow[]
+        sidecar_path = recovery_seed_sidecar_path(psm_path)
+        write_recovery_seed_sidecar(sidecar_path, seeds)
+        @user_info "  $(basename(psm_path)): $(length(missing_pids)) missing-pid cells, " *
+                   "$(length(seeds)) seeds emitted (V0 stub)"
+    end
+
     results.elapsed_sec = time() - t0
     return nothing
 end
