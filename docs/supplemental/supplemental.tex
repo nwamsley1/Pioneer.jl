@@ -1,0 +1,1420 @@
+\PassOptionsToPackage{
+  top=18mm,
+  bottom=18mm,
+  left=18mm,
+  right=18mm,
+  includeheadfoot,
+  twoside=false
+}{geometry}
+\documentclass[pdflatex,sn-nature]{sn-jnl}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage{pdfpages}
+\usepackage{tabularx}
+\usepackage{makecell}
+\usepackage{changepage}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{nicematrix}
+\usepackage{mathtools}
+\usepackage[mathlines]{lineno}
+
+\begin{document}
+\linenumbers
+\title[Supplementary Information]{Supplementary Information for ``Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows''}
+
+\author[1]{\fnm{Nathan T.} \sur{Wamsley}}
+\author[1]{\fnm{Emily M.} \sur{Wilkerson}}
+\author[1,2]{\fnm{Ben} \sur{Major}}
+\author*[1,3]{\fnm{Dennis} \sur{Goldfarb}}
+
+\affil[1]{\orgdiv{Department of Cell Biology and Physiology}, \orgname{Washington University School of Medicine}, \orgaddress{\city{\\St. Louis}, \state{Missouri}, \country{United States of America}}}
+\affil[2]{\orgdiv{Department of Otolaryngology}, \orgname{Washington University School of Medicine}, \orgaddress{\city{\\St. Louis}, \state{Missouri}, \country{United States of America}}}
+\affil[3]{\orgdiv{Institute for Informatics, Data Science \& Biostatistics}, \orgname{Washington University School of Medicine}, \orgaddress{\city{St. Louis}, \state{Missouri}, \country{United States of America}}}
+
+\maketitle
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Methods
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Supplementary Methods}\label{sec:supplementary-methods}
+This section is organized to mirror the conceptual workflow of Pioneer. We begin with the construction and training of Altimeter, including data curation, fragment annotation, harmonization, model architecture, and deployment. We then describe Pioneer's raw file conversion, spectral library generation, and the intensity-aware fragment index used for rapid MS2 candidate precursor identification. The subsequent sections detail the Pioneer analysis pipeline itself, following the steps outlined in Extended Data Fig.~1: parameter tuning, the main search, spectral deconvolution, match-between-runs (MBR), semi-supervised model training, false-discovery and false-transfer rate control, chromatogram integration, and protein inference and quantification. Finally, we provide a mathematical treatment of fragment isotope correction and estimation of the quadrupole transmission function. Together, these sections describe the complete statistical and computational framework underlying Pioneer and Altimeter.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Altimeter
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Altimeter Training Data}\label{subsec:altimeter-training-data}
+The training dataset for Altimeter was derived from the ProteomeTools project and was re-processed in-house. Raw files were obtained from PRIDE: PXD021013 (HLA and non-tryptic peptides), PXD010595 and PXD004732 (tryptic peptides), and PXD006832 (PROCAL calibration).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Database Search
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Database Searching}\label{subsubsec:database-searching}
+Raw files containing HCD data were converted to mzML using ThermoRawFileParser v1.4.4 and searched with sage v0.14.7 against the human UniProt reference proteome (release 2024-06-04; canonical isoforms only), the PROCAL calibration peptides (PXD006832), and pool-specific FASTA files generated for each raw file. These pool-specific FASTAs contained both the intended synthetic peptide sequences and potential synthesis error variants, specifically double C-terminal residues, single amino acid deletions, and early termination products.
+Searches were performed with default parameters, with the following constraints: precursor and fragment tolerance $\pm10$ ppm, fully enzymatic specificity with up to three missed cleavages, peptide lengths 5–60 amino acids, peptide masses 500–8,000 Da, and precursor charge states +1 to +8. Carbamidomethylation of cysteine was set as a static modification, and oxidation of methionine as a variable modification. Spectrum-level FDR was controlled at 1\% using a target–decoy approach.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Spectrum Filters
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Spectrum Filtering}\label{subsubsec:spectrum-filtering}
+After database searching, only spectra acquired using higher-energy collisional dissociation (HCD) in the Orbitrap analyzer were retained. Additional quality control steps were applied to ensure that only high-confidence spectra were used for training. Precursor isolation purity was calculated from MS1 signals, requiring that the isolation window be centered on one of the isotopes of the identified precursor and that the set of precursor isotopes together contributed at least 90\% of the total signal within the isolation window. The MS1 isotope distribution also had to agree with the theoretical precursor distribution, with a cosine similarity $\geq$0.95. Peptide-spectrum matches were further filtered to those with a sage hyperscore $\geq$30. Finally, retention times were aligned to Chronologer predictions using spline fitting, and spectra were excluded if their observed retention times deviated by more than three standard deviations from the predicted values.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fragment Annotation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Fragment Annotation}\label{subsubsec:fragment-ion-annotation}
+All spectra were initially annotated for b- and y-type ions, precursor ions, and immonium ions, including their isotopes. Annotation was performed with a 20 ppm tolerance. After annotation, ions were retained only if they were observed in at least 2\% of the spectra in which they were theoretically detectable given the sequence, charge, and m/z scan range. This filtered set defined the ion dictionary used for model training.
+
+Fragment m/z values were corrected on a per-spectrum basis by fitting the ppm error as a function of fragment m/z using the RANSAC algorithm, a robust regression method. Following this correction, annotation was repeated to recover ions that may have been missed during the first pass.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Quadrupole transmission fit and deisotoping
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Quadrupole Transmission Fit and Deisotoping}\label{subsubsec:quadrupole-transmission-fit-deisotoping}
+To identify fragment isotope clusters that were inconsistent with theoretical expectations, possibly due to interference, we fit the quadrupole transmission function. For each spectrum, precursor isotope contributions were estimated using the approach described in section \ref{subsubsec:estimating-precursor-isotope-abundances}, and ratios were computed relative to the theoretical precursor isotope distribution, assuming that the center isotope was isolated at 100\%. Spectra from raw files that shared the same quadrupole calibration date were then jointly fit with an asymmetric generalized bell function, yielding a calibration-wide transmission profile (Extended Data Fig. 2C).
+
+Fragment ions were then deisotoped by collapsing isotope clusters into single monoisotopic entries representing the total fragment intensity. When isotope clusters overlapped in m/z, their intensities were deconvolved according to the theoretical contributions of each overlapping isotope, and the resulting abundances were summed. The observed isotope distribution for each fragment was then compared to the theoretical distribution derived from the transmission profile, and any cluster with a cosine similarity below 0.9 was flagged as inconsistent.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Annotation Masking
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Fragment Masking}\label{subsubsec:fragment-masking}
+Each annotated fragment ion was assigned a mask indicating how it should be handled during training (Extended Data Fig. 2D). Five cases were defined:
+
+\begin{adjustwidth}{2em}{0pt} % <-- set your left indent here
+    \begin{enumerate}
+      \item Unmasked --- the fragment passed all checks.
+      \item Outside m/z scan range --- the fragment lay outside the MS2 m/z scan range.
+      \item High mass error --- fragments with a mass error $\geq15$ ppm.
+      \item Inconsistent isotope distribution --- fragments that failed the isotope consistency check.
+      \item Ambiguous annotation --- fragments that could not be uniquely assigned because multiple ions shared the same m/z.
+    \end{enumerate}
+\end{adjustwidth}
+	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - NCE Alignment
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{NCE Alignment}\label{subsubsec:nce-alignment}
+Reported normalized collision energies (NCEs) were aligned to the PROCAL Lumos scale for training. The PROCAL data, part of the ProteomeTools project, had been collected on both the Fusion Lumos and QE instruments and were reprocessed in-house. For each spectrum, intensities were normalized by dividing by the total annotated intensity, and the median normalized intensity across replicates was taken for each fragment–NCE combination. On the QE, spectra were collected at 15 NCE settings, and fragment splines were fit to these data to provide a dense reference across the NCE range (Extended Data Fig. 2E).
+
+To align Lumos PROCAL data to this reference, candidate NCE offsets were tested in 0.1-unit increments, and spectral angle was used to compare observed spectra with those predicted from the QE splines. For each precursor, the aligned NCE was defined as the median value that gave the best agreement. These aligned NCEs were then used to fit a mapping spline between QE and Lumos values (Extended Data Fig. 2F).
+For experimental runs, reported NCEs were first aligned to the QE fragment splines and then converted to the PROCAL Lumos scale using this mapping. The median result across precursors was taken as the aligned NCE for that file, and the difference between the aligned and reported values was defined as the NCE offset:
+\begin{equation} 
+    \text{NCE}_{\text{aligned}} = \text{NCE}_{\text{reported}} + \text{NCE}_{\text{offset}}
+\end{equation}
+
+Offsets were then smoothed over time with a 12-hour rolling window, applied separately to each reported NCE across all raw files collected under the same collision-energy calibration date (Extended Data Fig. 2G,H).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Architecture
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Altimeter Model Architecture}\label{subsubsec:altimeter-model-architecture}
+Altimeter is a transformer-based model built on the architecture used by UniSpec \cite{Lapin2024-xj} (Extended Data Fig. 2I). The input consists of the peptide sequence and precursor charge. Sequences are one-hot encoded and projected into a 256-dimensional embedding space; charge is embedded separately and concatenated with the sequence representation before being passed through nine transformer blocks with a dropout rate of 0.1. The model contains 11.8 million trainable parameters and was implemented in PyTorch.
+The output is a set of cubic B-spline coefficients for each fragment ion in the ion dictionary. Four coefficients are predicted per fragment, along with eight knot positions that are learned for the entire model. Given an aligned NCE, splines are evaluated to produce a predicted monoisotopic, total-intensity spectrum.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Training
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Training}\label{subsubsec:altimeter-training}
+Altimeter was trained with the Adam optimizer (learning rate $3\times10^{-4}$, exponential decay 0.85) using a batch size of 100. Data were split 70/20/10 into training, validation, and test sets, with uniform sampling.  
+
+The objective was a masked spectral-angle loss on the predicted total-intensity spectra. Fragments outside the MS2 $m/z$ range were excluded, while those with high mass error, inconsistent isotope distributions, or ambiguous annotations contributed only as upper bounds: predictions below the observed intensity were ignored, and over-predictions were penalized in proportion to the excess. Predictions below a spectrum's smallest detected signal were also excluded from the loss. Each spectrum was weighted by the square root of precursor isolation purity multiplied by rawOvFtT to prioritize high-quality, abundant spectra.  
+
+Spectral angle was computed from the cosine similarity ($cs$) between predicted and observed spectra. Cosine values were clamped to the range $[-(1-\epsilon), (1-\epsilon)]$ with $\epsilon = 1\times10^{-5}$ to ensure numerical stability, then converted as  
+
+\[
+SA = -\left(1 - 2 \cdot \frac{\arccos(cs)}{\pi}\right).
+\]  
+
+Training ran for up to 100 epochs with validation tested after each epoch. Early stopping with a patience of five epochs selected the model from epoch 30 as optimal (Extended Data Fig. 2J).  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Koina
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Deployment}\label{subsubsec:altimeter-deployment}
+Four inference variants are deployed via the Koina framework:
+\begin{adjustwidth}{2em}{0pt}
+    \begin{enumerate}
+        \item Altimeter\_2024\_intensities: produces the predicted total-intensity spectrum (splines evaluated at requested NCE) and returns fragment intensities.
+        \item Altimeter\_2024\_isotopes: returns re-isotoped spectra so that fragment isotope distributions (given precursor isotope transmission) can be reconstructed.
+        \item Altimeter\_2024\_splines: returns the raw spline coefficients for fragment ions (without evaluating them at a specific NCE) so downstream users can evaluate them as needed.
+        \item Altimeter\_2024\_splines\_index: similar to splines variant but uses integer fragment ion indices (not string annotation names) for faster performance and lighter I/O.
+    \end{enumerate}
+\end{adjustwidth}
+
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Pioneer
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - File Conversion
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Cross-Platform Mass Spectrometry File Conversion}\label{subsec:file-conversion}
+
+Pioneer reads mass spectrometry data in the Apache Arrow IPC format rather than directly from the vendor formats. The PioneerConverter tool converts Thermo Scientific Raw (.raw) files to the IPC format.
+PioneerConverter is distributed both as a standalone tool (https://github.com/nwamsley1/PioneerConverter) and packaged with the Pioneer installer. It uses the Thermo Scientific RawFileReader to read the .RAW files and is cross-platform. In addition, Pioneer supports the conversion of .mzML files to the same Arrow format. Pioneer-compatible arrow tables follow the schema in Table~\ref{tab:simple_scores}. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Spectral Libraries
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Spectral Library Sequence Generation}\label{subsec:spectral-library-sequence-generation}
+Pioneer constructs target-decoy sequence libraries as inputs to Altimeter and Chronologer \cite{Wilburn2023-uk} for \textit{in silico} spectrum and retention time prediction. Given a list of FASTA-formatted protein sequences, Pioneer digests these according to a user-defined enzymatic cleavage rule. After the initial digestion, Pioneer generates decoy sequences by either reversing or shuffling the target peptide sequences according to a user-defined parameter. In either case the C-terminal amino acid remains fixed in each sequence, and the mass distribution of the decoy sequences matches that of the targets \cite{Freestone2023-ef}. For internal testing, Pioneer optionally adds entrapment sequences to evaluate its false discovery rate estimation according to Wen et al. \cite{Wen2025-mz}. Pioneer generates the entrapment targets by randomly shuffling each original target sequence while keeping the C-terminal amino acid fixed. Because reversing a given target to form both a decoy and an entrapment sequence would yield identical sequences, Pioneer does not permit both the decoy and entrapment sets to be generated by reversal; if one set is generated by reversal, the other is generated by shuffling. Treating isoleucine and leucine as identical, Pioneer shuffles until the peptide is unique across all targets, decoys, and entrapment peptides, or until 20 consecutive attempts fail, in which case the decoy or entrapment is skipped.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fragment Index
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Intensity-Aware Fragment Index Search}\label{subsec:fragment-index-search}
+
+Both MSFragger and Sage use a fragment-index search to efficiently lookup precursors from a digested sequence database for which their theoretical fragments closely match the experiment MS2 spectra \cite{Kong2017-gg,Lazear2023-ci}. Pioneer implements a modified version of this data structure that accounts for spectral library fragment intensities. For each peak in an MS2 spectrum, Pioneer performs an index query that records all library ions that satisfy the retention time, fragment m/z, and precursor m/z constraints. The fragment-index construction and query process are as follows.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fragment Index Generation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Index Construction}\label{subsubsec:index-construction}
+
+The fragment index is constructed from all fragment ions in the spectral library. Index construction proceeds as follows.
+
+\begin{enumerate}
+
+\item Low-specificity fragments (y$_1$, y$_2$, y$_3$, b$_1$, b$_2$), isotope peaks, and (by default) precursor ions are removed.
+
+\item For each precursor:
+    \begin{itemize}
+        \item Remaining fragments are sorted in descending order of intensity (or area under the curve for the Altimeter spline model).
+        \item The top eight fragments are retained. Each retained fragment is assigned a one-hot bitmask: the $r$-th ranked fragment ($r = 1,\dots,8$) is given the value $2^{\,r-1}$, setting a single distinct bit of an 8-bit word. During search, the bitmasks of a precursor's matched fragments are combined by bitwise OR (Section~\ref{subsubsec:score-counter}), so the accumulated value records \emph{which} of its top-ranked fragments were observed.
+    \end{itemize}
+
+\item Each retained fragment is stored as a compact record
+\[
+I = (P_k, S_k)_{k=1}^m,
+\]
+where $P_k$ is a partition-local precursor identifier (see below) and $S_k$ is the fragment rank bitmask. Precursor m/z is encoded by the index partition and precursor charge is stored separately, so neither is duplicated per fragment.
+\end{enumerate}
+
+Fragments are organized into a three-level hierarchy---precursor m/z partitions, each containing retention time bins, each containing fragment m/z bins---to bound per-fragment memory and support efficient range queries.
+
+\begin{enumerate}
+
+\item \textbf{Precursor m/z partitions.}
+The library is divided into contiguous precursor m/z intervals (default width \SI{5}{\dalton}). Precursor identifiers are remapped to 16-bit indices within each partition, so any partition that would contain more than 65{,}535 precursors is recursively split. Partitioning by precursor m/z lets each query restrict its search to the partitions overlapping the isolation window, and removes the need to store precursor m/z with every fragment.
+
+\item \textbf{Retention time bins.}
+Within each partition, fragments are partitioned into non-overlapping retention time intervals
+\[
+[RT_{lo,k}, RT_{hi,k}].
+\]
+Each retention time bin stores:
+    \begin{itemize}
+        \item Its lower and upper bounds,
+        \item Pointers to the first and last fragment m/z bins contained within the interval.
+    \end{itemize}
+
+\item \textbf{Fragment m/z bins.}
+Within each retention time bin, fragments are further partitioned into non-overlapping fragment m/z intervals
+\[
+[M_{lo,j}, M_{hi,j}].
+\]
+Each m/z bin stores:
+    \begin{itemize}
+        \item Its lower and upper bounds,
+        \item Pointers to the first and last entries in $I$ corresponding to fragments in the bin.
+    \end{itemize}
+
+\item \textbf{Ordering constraints.}
+    \begin{itemize}
+        \item Partitions are stored in ascending order of precursor m/z.
+        \item Retention time bins are stored in ascending order of $RT_{lo,k}$ within each partition.
+        \item Fragment m/z bins are stored in ascending order within each retention time bin.
+    \end{itemize}
+
+\end{enumerate}
+
+This hierarchical structure enables efficient retrieval of fragments satisfying user-defined retention time and m/z constraints.
+
+\subsubsection{Score Counter}\label{subsubsec:score-counter}
+
+During fragment-index search, Pioneer maintains a counter that accumulates evidence for candidate precursors within a single MS2 scan. The counter consists of:
+
+\begin{itemize}
+    \item An array $V$ listing the precursor IDs matched in the current scan, in the order they are first encountered,
+    \item An array $W$, indexed by precursor ID, holding each precursor's accumulated fragment bitmask,
+    \item An integer $n$ tracking the number of unique precursors encountered.
+\end{itemize}
+
+When a library fragment matches a peak, its rank bitmask (Section~\ref{subsubsec:index-construction}) is combined into the matched precursor's entry of $W$ by bitwise OR; the first time a precursor is matched, its ID is appended to $V$ and $n$ is incremented. After all peaks are processed, $W$ holds, for each matched precursor, the bitwise OR of the rank bitmasks of its observed fragments, encoding which of its top-ranked fragments were detected. Indexing $W$ by precursor ID lets each match be accumulated in constant time, while $V$ records the active precursors so that the counter can be reset between scans by clearing only its first $n$ entries; entries of $V$ beyond index $n$ are inactive and stale.
+
+\subsubsection{MS2 Scan Query}\label{subsubsec:msms-scan-query}
+
+For each MS2 scan, Pioneer performs a fragment-index query constrained by the scan precursor m/z window $[mz_{min}, mz_{max}]$ and retention time window $[rt_{min}, rt_{max}]$, producing candidate precursors for downstream spectral deconvolution. The query proceeds as follows.
+
+\begin{enumerate}
+
+\item Select the index partitions whose precursor m/z ranges overlap $[mz_{min}, mz_{max}]$, and initialize the counter by setting $n = 0$.
+
+\item Since MS2 scans are processed in retention time order, the search begins at the current retention time bin and advances sequentially to identify the bins overlapping the scan retention time window.
+
+\item For each overlapping retention time bin and each peak in the spectrum (in m/z order, skipping peaks below an intensity threshold):
+    \begin{itemize}
+        \item Determine the peak's fragment m/z tolerance interval $[x_{lo}, x_{hi}]$ from the mass-error model.
+        \item Locate the fragment m/z bins overlapping $[x_{lo}, x_{hi}]$ using a hybrid binary-then-linear search, seeded from the previous peak's bin and finished with a vectorized (SIMD) scan.
+        \item For each fragment $(P_k, S_k)$ in the matching bins, combine its rank bitmask $S_k$ into precursor $P_k$'s counter entry by bitwise OR. The first time a precursor is encountered (its accumulated bitmask is zero), append $P_k$ to $V$ and increment $n$.
+    \end{itemize}
+
+\item After all peaks are processed, look up each encountered precursor's accumulated bitmask in the pass/fail table learned during bit-vector calibration (Section~\ref{subsubsec:bitvec-calibration}); precursors whose bitmask passes are emitted as candidate matches for the scan. Precise precursor m/z and retention-time filtering are deferred to the spectral deconvolution step.
+
+\item Reset the counter by clearing the accumulated bitmasks of the first $n$ precursors and setting $n = 0$.
+
+\end{enumerate}
+
+\subsubsection{Bit-Vector Calibration}\label{subsubsec:bitvec-calibration}
+
+A precursor's accumulated bitmask (Section~\ref{subsubsec:score-counter}) is one of $2^{8} = 256$ patterns recording which of its top eight library fragments were observed in a scan. Before the main search, Pioneer learns a single 256-entry pass/fail lookup table that decides, for each pattern, whether precursors exhibiting it should be retained as candidates. The table is estimated as follows.
+
+\begin{enumerate}
+\item For each raw file, a sample of the highest total-ion-current MS2 scans is queried against the fragment index in an accumulator mode that, rather than emitting candidates, tallies for every pattern the number of times it arises from target and from decoy precursors. Precursor m/z and retention time constraints are applied during this tally, since no further filtering follows.
+
+\item The per-file target and decoy counts are pooled across all files.
+
+\item For each pattern, Pioneer computes a library-corrected excess rate---the relative excess of target over decoy counts after scaling the decoy counts by the library target-to-decoy ratio---together with a confidence interval. A pattern is locked as pass when the lower bound of its interval exceeds a minimum excess rate ($3\%$ by default) and as fail when the upper bound falls below it.
+
+\item Patterns with too few counts to decide are merged into progressively coarser groups, defined by how many of the top-ranked fragments they require to be present (the top one, three, five, or eight), and re-evaluated until each pattern receives a verdict.
+\end{enumerate}
+
+The resulting table is shared across all files. During the main search, a precursor is retained as a candidate if and only if its accumulated bitmask pattern passes this table.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Parameter Tuning
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Parameter Tuning}\label{subsec:parameter-tuning}
+
+Pioneer performs a preliminary analysis of each raw data file to estimate run-specific parameters for library retention time alignment, mass accuracy, and library collision energy alignment. This ``pre-search'' follows a similar procedure to the main search but with three modifications. First, instead of analyzing all MS2 scans in a raw file, Pioneer samples scans in a retention-time--stratified order until it has collected a target number of peptide-spectrum-matches (PSMs) that meet a user-specified FDR threshold. The MS2 scans are partitioned into retention time bins, and the sampler cycles through the bins in turn, each time taking the highest--total-ion-current scan remaining in the current bin, so that the sampled scans are distributed across the entire gradient. Second, the tuning search may require more of a precursor's top-ranked fragments to match in the fragment index. Third, the tuning search employs a simplified version of the fragment index that contains only a single retention time bin and uses a wide initial mass tolerance. The initial mass tolerance and the minimum number of required fragment matches are automatically adjusted to obtain the desired number of PSMs. The parameter tuning search estimates the following run-specific parameters:
+
+ \begin{itemize}
+    \item A uniform-basis cubic B-spline that maps empirical retention times to library retention times.
+    \item A retention time tolerance measured in library retention time units. 
+    \item An MS2 mass-error model that expresses the m/z bias and tolerance as smoothing-spline functions of fragment m/z, intensity, and retention time.
+    \item An MS1 m/z error and tolerance (ppm), estimated from the precursor isotope pattern of the accepted PSMs.
+    \item A function that returns an optimized library collision energy given the m/z and charge of a precursor.
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Retention Time
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Retention Time Alignment}\label{sec:rt_align}
+
+Let $\mathcal{D} = \{(t_i^{\text{emp}}, t_i^{\text{lib}})\}_{i=1}^{n}$ be the set of matched PSMs in the pre-search that pass a 1\% FDR threshold. For each PSM
+\begin{itemize}
+    \item $t_i^{\text{emp}}$ is the empirical retention time
+    \item $t_i^{\text{lib}}$ is the library retention time
+    \item $n$ is the number of sampled PSMs
+\end{itemize}
+
+Pioneer fits a uniform-basis cubic B-spline $f(t)$ that maps empirical to library retention times by penalized least squares; outlier PSMs identified from an initial fit are removed before the spline is refit. The retention time errors are
+\begin{equation}
+    \epsilon_i = t_i^{\text{lib}} - f(t_i^{\text{emp}}) \quad \text{for } i = 1,\ldots,n
+\end{equation}
+
+Pioneer sets the retention time tolerance to 3 times a robust estimate of standard deviation. Pioneer calculates the median absolute deviation and retention time tolerance, $\delta_{\text{RT}}$, as follows:
+\begin{equation} \text{MAD} = \text{median}\left(|\epsilon_i - \text{median}(\epsilon)|\right) \end{equation}
+and
+\begin{equation}
+    \delta_{\text{RT}} = \frac{3}{\Phi(3/4)^{-1}} \cdot \text{MAD}
+\end{equation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Mass Error
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Mass Error Estimation}\label{subsubsec:mass-error-estimation}
+Let $\mathcal{F} = \{f_1, \ldots, f_N\}$ be the top $N$ ($N = 3$) most abundant matched library fragments for each PSM. The ranking of library fragment abundances are determined by the area-under-the-curve of the Altimeter splines. For each matched fragment, Pioneer records its theoretical m/z, observed m/z, and intensity, together with the retention time of the scan. The mass error of fragment $f_j$ is
+\begin{equation}
+    \text{Error}(f_j) = 10^6 \cdot \frac{m_j^{\text{measured}} - m_j^{\text{theoretical}}}{m_j^{\text{theoretical}}}.
+\end{equation}
+
+Pioneer models the systematic component of the mass error---the bias---as an additive function of fragment m/z, log-intensity, and retention time:
+\begin{equation}
+    \text{bias}(m, I, t) = g_{m}(m) + g_{I}(\log_2 I) + g_{t}(t),
+\end{equation}
+where each term is a regularized cubic B-spline fit by robust (iteratively reweighted) regression to down-weight outliers. The m/z and retention time terms are fit to the median error within equal-count bins of m/z and retention time, while the intensity term is fit to all matched fragments under a monotonicity constraint. The retention time term is fit only when at least 500 matched fragments span a non-degenerate retention time range, and is otherwise set to zero. Each spline is evaluated by linear extrapolation outside its fitted range. During the search, every predicted fragment m/z is shifted by the fitted bias before matching.
+
+The mass tolerance is derived from the dispersion of the residual errors rather than from a single fixed window. Pioneer fits a smoothing spline giving the residual standard deviation as a function of log-intensity, together with an m/z-dependent multiplicative correction, and sets the half-width of the matching window to $k$ standard deviations, with $k$ chosen to cover approximately 95\% of the residual errors.
+
+When too few fragments are matched to fit these splines, Pioneer falls back to a simpler model with a constant bias and fixed left- and right-hand tolerances.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - MS1 Mass Error
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{MS1 Mass Error Estimation}\label{subsubsec:ms1-mass-error-estimation}
+
+Pioneer also estimates an MS1 mass-error model from the same MS2-accepted PSMs. For each PSM, Pioneer locates the MS1 scan nearest in retention time and searches it for the precursor's first three isotopologues (M+0, M+1, M+2). For each isotopologue, the closest MS1 peak within $\pm 100$ ppm of the predicted m/z is matched, and the signed ppm residual between the observed and predicted m/z is recorded. The MS1 mass bias is set to the median of these residuals and the MS1 tolerance to $\pm 5$ times their median absolute deviation. Unlike the MS2 model, the MS1 model is a single bias and tolerance rather than a set of splines. Pioneer uses it to correct and bound precursor m/z in the MS1-level steps of the search.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - NCE
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Library Collision Energy Alignment}\label{subsubsec:library-collision-energy-alignment}
+
+Pioneer selects an optimized collision energy as a function of precursor m/z and charge that best aligns the Altimeter spectral library to the data for each run in an experiment. Recall that the Altimeter libraries include fragment intensity splines for each precursor that can be evaluated at different normalized collision energies (NCEs). During the search, Pioneer evaluates these splines at specific NCE values to get fragment intensities for the search. For each precursor in a set of pre-search PSMs, Pioneer evaluates the library at every value on a grid of NCEs and scores the resulting fit to the spectrum by the deconvolution goodness of fit. The NCE giving the best fit is taken as that precursor's optimal value:
+
+\begin{equation}
+    \text{NCE}_p = \underset{n \in \mathcal{N}}{\operatorname{argmax}}\ \text{gof}(p, n).
+\end{equation}
+
+Pioneer then summarizes these per-precursor optima into a model indexed by charge state and precursor m/z. For each charge state, the optimal NCE values are binned by precursor m/z and the median NCE is taken within each bin; the number of m/z bins is reduced adaptively until every bin contains at least 50 precursors. The model predicts a precursor's NCE as the median of the bin matching its charge and m/z, falling back to a default NCE for charge states with fewer than 50 precursors. Pioneer uses this model to assign NCE values for all precursors in subsequent searches.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - First Pass Search (FINAL VERSION WITH CODE REFERENCES)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Main Search}\label{subsec:first-pass-search}
+
+In the main search, Pioneer identifies, scores, and filters the precursors carried forward for quantification. For each MS2 scan, the fragment index (Section~\ref{subsec:fragment-index-search}) yields a set of candidate precursors, which are quantified against the spectrum by spectral deconvolution (Section~\ref{subsec:matrix-representation}) and scored by a machine-learned classifier. Pioneer then selects a single best PSM per precursor, removes low-confidence identifications, and aggregates the per-run results into the set of precursors used downstream.
+
+\subsubsection{PSM Scoring}\label{subsubsec:first-pass-search-scoring}
+
+For each MS data file, Pioneer scores its PSMs with a gradient-boosted decision-tree classifier (LightGBM) trained to separate target from decoy PSMs. Training uses two-fold cross-validation: precursors are split into two folds, a model is trained on each fold and used to score the PSMs of the other, so no PSM is scored by a model trained on it. The classifier draws on a large set of features, including spectral goodness-of-fit and similarity scores, fragment-ion coverage, the deconvolution weight and its rank among co-eluting precursors, retention-time agreement, MS1 isotope-pattern features, per-rank fragment chromatographic traces and fragment--fragment correlations, and precursor and sequence properties. For files with too few PSMs to train a stable tree model, Pioneer falls back to a probit regression.
+
+\textbf{Best PSM selection.} Pioneer then selects one PSM per precursor: among a precursor's top-scoring scans, it keeps the one with the largest deconvolution weight, falling back to the highest-scoring scan when only a few PSMs are available.
+
+\textbf{PEP-based filtering.} Pioneer estimates each PSM's posterior error probability (PEP) from the classifier scores by isotonic regression, using the weighted Pool Adjacent Violators Algorithm (wPAVA) \cite{Zheng_pyIsoPEP}. PSMs with $\text{PEP} \leq 0.9$ are retained for each file and the rest are filtered out.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Aggregate First Pass Search
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{First Pass PSM Aggregation}\label{subsubsec:first-pass-psm-aggregation}
+After scoring and filtering the run-specific PSM lists, Pioneer assembles a single list of $M$ precursors to include in the second, quantitative search across all MS data files. Let $\mathcal{R} = \{1, \ldots, R\}$ be the set of all runs, and $\mathcal{P}$ be the set of all precursors in the spectral library. Let $P^{r} = \{(p_j^{r}, s_j^{r}, t_j^{r})\}_{j=1}^{N_r}$ be the set of precursors and their respective scores in each run $r \in \mathcal{R}$. Here:
+\begin{itemize}
+\item $p_j^{r} \in \mathbb{N}^+$ uniquely identifies the precursor
+\item $s_j^{r} \in [0,1]$ is the probability score of the $j$-th precursor in run $r$
+\item $t_j^{r} \in \mathbb{R}^+$ is the library retention time (iRT) of the $j$-th precursor in run $r$
+\end{itemize}
+
+For each run $r \in \mathcal{R}$ and precursor $p \in \mathcal{P}$, let:
+\begin{equation}
+    s_r(p) = \begin{cases}
+        s_j^{r} & \text{if } \exists j : p = p_j^{r} \\
+        0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+For each precursor $p \in \mathcal{P}$, define its maximum score across all runs:
+\begin{equation}
+    s_{\text{max}}(p) = \max_{r \in \mathcal{R}} \{s_r(p)\}
+\end{equation}
+
+To determine the number of precursors $M$ to include in the second-pass search, Pioneer uses the maximum number of PSMs passing the PEP threshold (default 0.9) in any single run.
+\begin{equation}
+    M = \max_{r \in \mathcal{R}} |P^r|
+\end{equation}
+
+Pioneer then ranks all precursors by $s_{\text{max}}$ and selects the top $M$ of these. Specifically, define $s_{\text{max}}^{(k)}(\mathcal{P})$ as the $k$-th largest value in set $\mathcal{P}$ under the $s_{\text{max}}$ scoring function. The top $M$ precursors are:
+\begin{equation}
+    P_M = \{p \in \mathcal{P} : s_{\text{max}}(p) \geq s_{\text{max}}^{(M)}(\mathcal{P})\}
+\end{equation}
+
+\subsubsection{Retention Time Alignment and Tolerance Estimation}\label{subsubsec:rt-alignment-tolerance-estimation}
+
+Pioneer performs a second refined retention time alignment to replace the initial spline mapping and retention time tolerance from the parameter tuning search. This refined alignment uses high-confidence PSMs from the first-pass search to improve the mapping between empirical retention times (RT) and library retention times (iRT). For each MS data file, Pioneer selects PSMs whose probit-derived probability exceeds 0.95 and uses these to fit B-splines mapping library to empirical retention times and vice-versa. Pioneer then uses simple statistics to estimate a retention time-tolerance for the second pass search in library retention time units. 
+
+\begin{enumerate}
+
+\item{
+\textbf{Cross-run retention time statistics.} For each precursor $p \in P_M$ selected for the second-pass search, Pioneer accumulates retention time statistics across runs. These statistics serve two purposes: (1) the best iRT provides an anchor for RT window placement in the second pass search and (2) the variance across multiple runs informs the global RT tolerance calculation. Let $\mathcal{R}_p$ be the set of runs where precursor $p$ passes the q-value threshold:
+\begin{equation}
+    \mathcal{R}_p = \{r \in \mathcal{R} : q_r(p) \leq 0.01\}
+\end{equation}
+
+\begin{enumerate}
+
+\item \textbf{Best iRT:} The library retention time from the run with highest probability score:
+    \begin{equation}
+        t_{\text{best}}(p) = t_{r^*}(p) \quad \text{where} \quad r^* = \underset{r \in \mathcal{R}}{\arg\max} \, \text{prob}_r(p)
+    \end{equation}
+    where $t_r(p) = f_r(\text{RT}_r(p))$ is the library retention time (iRT) obtained by transforming the empirical retention time $\text{RT}_r(p)$ through the refined RT-to-iRT spline model $f_r(\cdot)$ for run $r$. 
+\item \textbf{iRT variance:} For precursors observed in multiple qualifying runs ($|\mathcal{R}_p| > 1$):
+    \begin{equation}
+        \sigma^2(p) = \frac{1}{|\mathcal{R}_p|} \sum_{r \in \mathcal{R}_p} \left(t_r(p) - \bar{t}(p)\right)^2
+    \end{equation}
+\end{enumerate}
+}
+
+\item{
+\textbf{Refined retention time tolerance.} Pioneer recalculates the retention time tolerance for each file using first-pass search results. The new tolerance combines two sources of uncertainty:
+
+\begin{enumerate}
+    \item \textbf{Chromatographic peak width variation (file-specific):} Based on the full-width at half-maximum (FWHM) of chromatographic peaks observed in each file:
+    \begin{equation}
+        \text{FWHM}_{\text{tol}}^{(r)} = \text{median}(\text{FWHM}^{(r)}) + k \cdot \text{MAD}(\text{FWHM}^{(r)})
+    \end{equation}
+    where FWHM values are estimated from the intensity profiles of identified precursors, and $k_1$ is a user-specified multiplier (default: $k=4$).
+
+    \item \textbf{Cross-run iRT variation (global):} Based on the variation in library retention times for precursors observed across multiple runs:
+    \begin{equation}
+        \text{iRT}_{\text{var}} = k \cdot \text{median} \left(\sqrt{\sigma^2(p)}\right)
+        \label{eq:irt_var}
+    \end{equation}
+\end{enumerate}
+The final retention time tolerance for file $r$ combines both components:
+\begin{equation}
+    \delta_{\text{iRT}}^{(r)} = \text{FWHM}_{\text{tol}}^{(r)} + \text{iRT}_{\text{var}}
+\end{equation}
+}
+\end{enumerate}
+
+
+\subsection{Matrix Representation of Library and Observed Mass Spectra}\label{subsec:matrix-representation}
+
+For each MS2 spectrum, Pioneer aligns it to candidate library spectra for precursors within a specified mass-to-charge (m/z) and retention time tolerance. Let $N$ denote the number of candidate precursors considered for the scan.
+
+Let the observed spectrum contain $m$ peaks and be represented as
+\[
+X = \{(I_k^{(X)}, Z_k^{(X)})\}_{k=1}^{m},
+\]
+where $I_k^{(X)}$ and $Z_k^{(X)}$ denote the intensity and m/z of the $k$th observed peak.
+
+For $j \in \{1,\ldots,N\}$, let the candidate library spectrum for precursor $j$ contain $n_j$ fragments and be represented as
+\[
+L_j = \{(I_k^{(L_j)}, Z_k^{(L_j)})\}_{k=1}^{n_j},
+\]
+where $I_k^{(L_j)}$ and $Z_k^{(L_j)}$ denote the intensity and m/z of the $k$th fragment in library spectrum $j$. All spectra are sorted in ascending order by m/z.
+
+Pioneer combines all candidate library spectra into a single set
+\[
+F = \{(I_k^{(F)}, Z_k^{(F)}, j_k^{(F)})\}_{k=1}^{T},
+\]
+where $T = \sum_{j=1}^{N} n_j$, and $j_k^{(F)}$ identifies the precursor associated with each fragment.
+
+After sorting $F$ by $Z^{(F)}$, Pioneer matches each fragment in $F$ to the nearest peak in $X$ based on m/z, provided it's within the specified mass tolerance. The matched and unmatched fragments are represented as:
+
+\[
+F_m = \{(I_k^{(F_m)}, j_k^{(F_m)}, m_k^{(F_m)})\}_{k=1}^{K}
+\]
+and
+\[
+F_u = \{(I_k^{(F_u)}, j_k^{(F_u)})\}_{k=1}^{U},
+\]
+where $K = |F_m|$ and $U = |F_u|$ denote the number of matched and unmatched library fragments, respectively. Here, $m_k^{(F_m)} \in \{1,\ldots,m\}$ denotes the index of the observed peak in $X$ matched to the $k$th library fragment.
+
+Let
+\[
+P = \left|\{m_k^{(F_m)}\}\right|
+\]
+denote the number of unique peaks in $X$ matched by fragments in $F_m$. Let $U = |F_u|$ denote the number of unmatched fragments. The matrix row dimension is then
+\[
+M = P + U,
+\]
+where $P \leq K$.
+
+Define a mapping $r : \{1,\ldots,K\} \rightarrow \{1,\ldots,P\}$ such that if two fragments $k$ and $l$ match to the same peak in $X$ (i.e., $m_k^{(F_m)} = m_l^{(F_m)}$), then $r(k) = r(l)$. In other words, matched fragments that correspond to the same observed peak share a common row in the matrix, whereas each unmatched fragment in $F_u$ is assigned a unique row.
+
+
+
+
+The observed intensities vector $\vec{y} \in \mathbb{R}^{M}$ and the template matrix $\mathbf{A} \in \mathbb{R}^{M \times N}$ are constructed as:
+
+\begin{equation}
+y_i =
+\begin{cases}
+I_{m_k^{(F_m)}}^{(X)} & \text{if } \exists k \leq M_m \text{ such that } r(k) = i \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\begin{equation}
+A_{ij} =
+\begin{cases}
+I_k^{(F_m)} & \text{if } \exists k \leq M_m \text{ such that } r(k) = i \text{ and } j_k^{(F_m)} = j \\
+I_{i - M_p}^{(F_u)} & \text{if } i > M_p \text{ and } j_{i - M_p}^{(F_u)} = j \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+This construction can be visualized schematically as shown below, with the top block representing matched observed peaks and the bottom block representing unmatched library fragments that occupy their own rows.
+
+\begin{equation}
+\underbrace{
+\begin{NiceMatrix}[vlines,hlines]
+y_{1}\\
+\Vdots\\
+y_{P}\\ \hline
+y_{P+1}\\
+\Vdots\\
+y_{P+U}
+\end{NiceMatrix}}_{\vec{y}\in\mathbb{R}^{M},\; M=P+U}
+=
+\underbrace{
+\begin{NiceMatrix}[vlines,hlines]
+A_{11} & \Cdots & A_{1N}\\
+\Vdots & \Ddots & \Vdots\\
+A_{P1} & \Cdots & A_{PN}\\ \hline
+A_{P+1,1} & \Cdots & A_{P+1,N}\\
+\Vdots & \Ddots & \Vdots\\
+A_{P+U,1} & \Cdots & A_{P+U,N}
+\end{NiceMatrix}}_{\mathbf{A}\in\mathbb{R}^{M\times N}}
+\underbrace{
+\begin{NiceMatrix}[vlines,hlines]
+x_{1}\\
+\Vdots\\
+x_{N}
+\end{NiceMatrix}}_{\vec{x}\in\mathbb{R}^{N}} .
+\end{equation}
+
+Pioneer represents $\mathbf{A}$ in a sparse, column-major layout.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Spectral Deconvolution
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Linear Regression of Mass Spectra onto Library Spectra}\label{sec:linear_regression}
+Pioneer models each spectrum as a linear combination of $N$ template spectra from a spectral library. This problem can be formulated as the following linear system: 
+
+\begin{equation}
+    \mathbf{A}\vec{x} \approx \vec{y}
+\end{equation}
+
+\begin{equation}
+   \vec{r} = \mathbf{A}\vec{x} - \vec{y}
+\end{equation}
+
+The vector $\vec{r} \in \mathbb{R}^{M}$ contains the residuals. Pioneer estimates a vector of weights, $\vec{x} \in \mathbb{R}^{N}$, subject to a non-negativity constraint to minimize the pseudo-Huber loss \cite{Charbonnier1997-wc, Gokcesu2021-tz}.
+
+\begin{equation}
+\underset{\vec{x} \geq  \mathbf{0}}{\operatorname{argmin}}\,  L(\vec{x}) = \delta^2\left(\sum\limits_{i=1}^{M}\sqrt{
+1 + \left(\frac{r_{i}}{\delta}\right)^{2}
+}\right) - \delta^{2}M
+\end{equation}
+
+The smoothing parameter $\delta$ controls the transition between squared and absolute error. Because $\mathbf{A}$ is sparse, Pioneer uses a coordinate descent algorithm, which iteratively updates each variable $x_j$ to minimize $L(\vec{x})$ while treating the other variables as constants. For each $j$, the Pioneer solves this optimization problem:
+
+\begin{equation}
+x_j^{\text{k+1}} = \underset{x \geq 0}{\operatorname{argmin}} \, L(x; x_{1}^{k+1},\dots,x_{j-1}^{k},x_{j+1}^{k}, \dots, x_{N}^{k})
+\end{equation}
+
+Pioneer solves each of these single variable problems by the Newton-Raphson method. In case Newton's method fails to converge for one of the single variable problems, Pioneer defaults to a bisection method with initial bounds of 0 and a large positive value (e.g., 1e11).  Pioneer enforces the non-negativity constraint by setting the new guess for each variable to the maximum of 0 and the updated value, i.e., $x_j = \max(0, x_j^{\text{new}})$. Lastly, Pioneer uses a "hot-start". That is, if a previous spectrum already estimated a weight for a given precursor, then that previous estimate is the initial guess.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - FDR (Revised)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Target-Decoy Model, Match-Between-Runs, and False-Discovery Rate Estimation}\label{subsec:target-decoy-mbr-fdr}
+
+Pioneer trains LightGBM target-decoy discrimination models using cross-validation to score each precursor chromatogram extracted from an individual isolation window (hereafter referred to as a precursor isotope trace, or simply, isotope trace) \cite{ke2017lightgbm}. Chromatograms from different windows are evaluated independently and are not merged until the dual-window quantification stage. The approach implements an iterative training scheme and, when match-between-runs (MBR) is enabled, incorporates cross-run comparison features followed by false transfer rate (FTR) filtering.
+
+\subsubsection{Data Structure and Cross-Validation Setup}\label{subsubsec:data-structure-cv-setup}
+
+To train the target–decoy discrimination model at the isotope-trace level while preventing information leakage across related precursors, we formalize the data structure and cross-validation scheme as follows.
+
+The basic training unit is an isotope trace $(p,i,r)$, representing a precursor chromatogram for precursor $p$ extracted from isolation window $i$ in run $r$. Each trace is described by a feature vector $\mathbf{X}_{p,i,r} \in \mathbb{R}^d$.
+
+Let $\mathcal{P}$ denote the set of precursors retained after the second-pass search, defined as those with at least one non-zero weight in any MS2 scan across any run after linear regression (Section~\ref{sec:linear_regression}). For each precursor $p \in \mathcal{P}$, let $\mathcal{I}_p$ denote the set of its isotope traces, where each trace corresponds to a distinct subset of precursor isotopes transmitted by the quadrupole. Let $\mathcal{R}$ denote the set of runs in the experiment.
+
+Each precursor $p$ is labeled $Y_p \in \{0,1\}$ to indicate target (1) or decoy (0); this label is inherited by all associated traces $(p,i,r)$.
+
+During spectral library construction, Pioneer randomly assigns each library protein group to one of two cross-validation folds, $\mathcal{F}_1$ or $\mathcal{F}_2$. All precursors belonging to a library protein group inherit that group's fold assignment, ensuring that precursors from the same protein group are not split across folds.
+
+
+
+
+
+\subsubsection{Target-Decoy Pairing for Match-Between-Runs}\label{subsubsec:target-decoy-pairing}
+
+When MBR is enabled, Pioneer assigns target-decoy pairs to enable empirical estimation of false transfer rates. These pairs function as MBR decoys. Pairing is performed within retention time bins to ensure comparable elution profiles.
+
+\paragraph{iRT Binning}\label{para:irt-binning} Precursors are sorted by predicted indexed retention time (iRT) and partitioned into bins of size $B = 1000$. For precursors with predicted iRTs $\{\text{iRT}_1, \ldots, \text{iRT}_{|\mathcal{P}|}\}$ sorted in ascending order, bin assignments $b_p$ are:
+\begin{equation}
+  b_p = \lfloor (\text{rank}(p) - 1) / B \rfloor
+\end{equation}
+where $\text{rank}(p)$ is the rank of precursor $p$ in the sorted iRT order.
+
+\paragraph{Random Pairing Within Bins}\label{para:random-pairing-within-bins} Within each bin $b$, let $\mathcal{T}_b = \{t_1, t_2, \ldots, t_{n_T}\}$ be the target precursors where $t_i \in \mathcal{P}$, $Y_{t_i} = 1$, and $b_{t_i} = b$. Similarly, let $\mathcal{D}_b = \{d_1, d_2, \ldots, d_{n_D}\}$ be the decoy precursors where $d_j \in \mathcal{P}$, $Y_{d_j} = 0$, and $b_{d_j} = b$. Pairing proceeds as follows:
+
+\begin{enumerate}
+\item Randomly shuffle $\mathcal{T}_b$ using a fixed seed to obtain $\mathcal{T}_b' = \{t'_1, t'_2, \ldots, t'_{n_T}\}$
+\item For $k = 1$ to $\min(n_T, n_D)$:
+\begin{itemize}
+    \item Generate a new unique pair identifier $\text{id}_k$
+    \item Assign $\text{pair\_id}(t'_k) = \text{id}_k$
+    \item Assign $\text{pair\_id}(d_k) = \text{id}_k$
+\end{itemize}
+\item For any unpaired precursors (when $n_T \neq n_D$), assign each a unique identifier
+\end{enumerate}
+
+
+\subsubsection{Match-Between-Runs Features}\label{sec:mbr_features}
+
+When MBR is enabled, Pioneer augments the feature vector $\mathbf{X}_{p,i,r}$ with seven additional features that summarize cross-run evidence relative to the best-scoring paired precursor from iteration 2. For each isotope trace, two donor identities are considered across other runs: the same precursor $p$ itself and its paired counterpart (MBR decoy) defined during MBR pairing. The highest-probability trace among these competing candidates (from iteration 2 of Section \ref{subsubsec:iterative-model-training}) is selected as the donor, and all MBR features are computed relative to that trace. Under this construction, each precursor competes directly against their MBR decoys. These features are computed at the end of the second training iteration and used to train the third—and final—iteration model.
+
+
+
+\paragraph{Donor Trace Selection}\label{para:paired-precursor-identification} 
+
+For each isotope trace $(p,i,r)$, let $\mathcal{C}(p,i,r)$ denote the set of candidate donor traces across other runs sharing either the same precursor identity or its paired counterpart:
+\begin{equation}
+\mathcal{C}(p,i,r) =
+\{(p', i, r') : r' \in \mathcal{R} \setminus \{r\},\; p' \in \{p, \text{paired}(p)\}\}.
+\end{equation}
+
+The donor trace $(p^*, i^*, r^*)$ is defined as the candidate in $\mathcal{C}(p,i,r)$ with the highest in-fold trace-level probability from iteration 2.
+
+\paragraph{MBR Feature Definitions}
+
+The following features are computed at iteration 3 using in-fold probabilities from iteration 2, relative to the selected donor trace $(p^*,i^*,r^*)$.
+
+\begin{enumerate}
+
+\item \textbf{MBR\_max\_pair\_prob}:  
+Trace-level probability of the donor trace from iteration 2.
+
+\item \textbf{MBR\_num\_runs}:  
+Number of runs (excluding run $r$) in which the donor passes the q-value threshold (default 0.01).
+
+\item \textbf{MBR\_rv\_coefficient}:  
+RV coefficient measuring similarity between chromatographic profiles of $(p,i,r)$ and the donor trace.  
+
+Let $\mathbf{w}_{p,i,r}$ and $\mathbf{t}_{p,i,r}$ denote chromatographic intensities and retention times for trace $(p,i,r)$, and similarly for $(p^*,i^*,r^*)$. After padding to equal length:
+\begin{equation}
+X =
+\begin{bmatrix}
+\mathbf{w}_{p,i,r} & \mathbf{t}_{p,i,r}
+\end{bmatrix},
+\quad
+Y =
+\begin{bmatrix}
+\mathbf{w}_{p^*,i^*,r^*} & \mathbf{t}_{p^*,i^*,r^*}
+\end{bmatrix},
+\end{equation}
+\begin{equation}
+\text{MBR\_rv\_coefficient}_{p,i,r} =
+\frac{\mathrm{tr}(X^\top Y \cdot Y^\top X)}
+{\sqrt{\mathrm{tr}(X^\top X \cdot X^\top X)\,
+       \mathrm{tr}(Y^\top Y \cdot Y^\top Y)}}.
+\end{equation}
+
+\item \textbf{MBR\_best\_irt\_diff}:  
+Absolute difference in indexed retention time at chromatographic apex between the trace and the donor trace:
+\[
+\text{MBR\_best\_irt\_diff}_{p,i,r} =
+\left|
+\text{iRT}_{p,i,r}^{\text{apex}} -
+\text{iRT}_{p^*,i^*,r^*}^{\text{apex}}
+\right|.
+\]
+
+\item \textbf{MBR\_log2\_weight\_ratio}:  
+Log$_2$ ratio of integrated chromatographic intensities:
+\[
+\text{MBR\_log2\_weight\_ratio}_{p,i,r} =
+\log_2\!\left(
+\frac{\sum_j w_{p,i,r}^{(j)}}
+     {\sum_j w_{p^*,i^*,r^*}^{(j)}}
+\right).
+\]
+
+\item \textbf{MBR\_log2\_explained\_ratio}:  
+Difference in log$_2$ explained spectral intensities:
+\[
+\text{MBR\_log2\_explained\_ratio}_{p,i,r} =
+\log_2(I_{\text{explained}}^{p,i,r}) -
+\log_2(I_{\text{explained}}^{p^*,i^*,r^*}).
+\]
+
+\item \textbf{MBR\_is\_donor\_decoy}:  
+Indicator of whether the selected donor trace corresponds to a decoy precursor.
+
+\end{enumerate}
+
+When no valid donor trace exists in other runs, all MBR features are assigned sentinel values to indicate missingness.
+
+\subsubsection{Iterative Model Training}\label{subsubsec:iterative-model-training}
+
+Pioneer employs a three-iteration semi-supervised training scheme that progressively refines the training set and in the final iteration, incorporates MBR features. Models are trained in a two-fold cross-validation framework to produce unbiased trace-level probability estimates.
+
+Let $M_k^{(t)}$ be the gradient boosting model trained on fold $k \in \{1,2\}$ at iteration $t \in \{1,2,3\}$ to discriminate between isotope traces belonging to targets and decoys. 
+
+For a given trace $(p,i,r)$ with feature vector $\mathbf{X}_{p,i,r}^{(t)}$, the model produces two types of predictions:
+
+\paragraph{In-Fold (Training) Predictions}\label{para:in-fold-training-predictions} Used for training set refinement and MBR feature computation:
+\begin{equation}
+  \text{trace\_prob}_{p,i,r}^{\text{train},(t)} = M_k^{(t)}(\mathbf{X}_{p,i,r}^{(t)}) \quad \text{where } p \in \mathcal{F}_k
+\end{equation}
+
+\paragraph{Out-of-Fold (Test) Predictions}\label{para:out-of-fold-test-predictions} Used for final cross-validated probability estimates:
+\begin{equation}
+  \text{trace\_prob}_{p,i,r}^{\text{test},(t)} = M_k^{(t)}(\mathbf{X}_{p,i,r}^{(t)}) \quad \text{where } p \in \mathcal{F}_{\bar{k}}
+\end{equation}
+where $\mathcal{F}_{\bar{k}}$ denotes the held-out fold (i.e., if $k=1$ then $\bar{k}=2$ and vice versa).
+
+
+\paragraph{Feature Sets by Iteration} \label{para:feature-sets-iter}
+The feature vector $\mathbf{X}_{p,i,r}^{(t)}$ varies by iteration:
+\begin{itemize}
+  \item \textbf{Iterations 1--2} ($t \leq 2$): Base spectral and chromatographic features only
+  \item \textbf{Iteration 3} ($t = 3$): Base features augmented with MBR features computed from the second iteration in-fold trace probabilities
+\end{itemize}
+
+\paragraph{Training Set Selection}\label{para:training-set-selection} The training set for each iteration is refined using q-values and posterior error probabilities (PEP) computed from the \emph{in-fold} trace probabilities of the previous iteration:
+
+\textbf{Iteration 1}: Train on all data in fold $k$ without MBR features
+\begin{equation}
+  \mathcal{T}_{k}^{(1)} = \{(p,i,r) : p \in \mathcal{F}_{k}\}
+\end{equation}
+
+\textbf{Iterations 2--3}: Update training subset and labels using \emph{in-fold} trace probabilities from iteration $t-1$. First, compute q-values $q_{p,i,r}^{\text{train},(t-1)}$ and PEPs $\text{PEP}_{p,i,r}^{\text{train},(t-1)}$ from the in-fold predictions. Then define:
+\begin{equation}
+  \mathcal{T}_{k}^{(t)} = \mathcal{D}_k \cup \mathcal{T}_k^{\text{high-conf}} \cup \mathcal{T}_k^{\text{relabeled-neg}}
+\end{equation}
+where:
+\begin{align}
+  \mathcal{D}_k &= \{(p,i,r) : p \in \mathcal{F}_{k}, Y_p = 0\} && \text{(all decoys)} \\
+  \mathcal{T}_k^{\text{high-conf}} &= \{(p,i,r) : p \in \mathcal{F}_{k}, Y_p = 1, q_{p,i,r}^{\text{train},(t-1)} \leq 0.01\} && \text{(high-confidence targets)} \\
+  \mathcal{T}_k^{\text{relabeled-neg}} &= \{(p,i,r) : p \in \mathcal{F}_{k}, Y_p = 1, \text{PEP}_{p,i,r}^{\text{train},(t-1)} \geq 0.90\} && \text{(targets relabeled as negative)} \\
+\end{align}
+
+The worsts scoring targets are relabeled as negatives for training the next iteration.
+
+\subsubsection{False Transfer Rate Filtering}\label{subsubsec:false-transfer-rate-filtering}
+
+After the three-iteration training, Pioneer applies a false transfer rate (FTR) filter to control the rate of incorrect MBR transfers when MBR is enabled.
+
+
+\paragraph{Transfer Candidate Identification}\label{para:transfer-candidate-identification} 
+
+Let $\text{trace\_prob}_{p,i,r}^{\text{test},(2)}$ be the out-of-fold trace probabilities from iteration 2 (before MBR feature refinement) and compute corresponding q-values $q_{p,i,r}^{\text{test},(2)}$. An isotope trace $(p,i,r)$ is designated as a transfer candidate if it failed the q-value threshold according to the 2nd iteration scores but has strong donor support:
+\begin{equation}
+  \text{is\_transfer\_candidate}_{p,i,r} = \begin{cases}
+      \text{true} & \text{if } q_{p,i,r}^{\text{test},(2)} > \tau_q \text{ and } \text{MBR\_max\_pair\_prob}_{p,i,r}^{(3)} \geq \tau_p \\
+      \text{false} & \text{otherwise}
+  \end{cases}
+\end{equation}
+
+where $\tau_q = 0.01$ is the q-value threshold and 
+\[
+\tau_p = \min\{\text{trace\_prob}_{p,i,r}^{\text{test},(2)} : q_{p,i,r}^{\text{test},(2)} \leq \tau_q, Y_p = 1\}
+\]
+
+is the minimum trace probability among target isotope traces passing the q-value threshold in iteration 2.
+
+
+\paragraph{Bad Transfer Detection}\label{para:bad-transfer-detection} A transfer candidate is classified as a bad transfer if there is a target-decoy mismatch between the isotope trace and its selected donor:
+\begin{align}
+  \text{is\_bad\_transfer}_{p,i,r} = \text{is\_transfer\_candidate}_{p,i,r} \land \big[&(Y_p = 1 \land \text{MBR\_is\_best\_decoy}_{p,i,r}^{(3)}) \notag \\
+  &\lor (Y_p = 0 \land \lnot\text{MBR\_is\_best\_decoy}_{p,i,r}^{(3)})\big]
+\end{align}
+
+This captures two error modes: target isotope traces transferring identifications to their paired decoy isotope traces, and decoy isotope traces transferring identifications to their paired target isotope traces.
+
+
+\paragraph{MBR-Specific Model Training}\label{para:mbr-specific-model-training} 
+Pioneer trains a separate model $M^{\text{MBR}}$ specifically for scoring transfer candidates using cross-validation. Let $\mathcal{C}$ denote the set of all transfer candidates. For each fold $k$, define:
+\begin{equation}
+  \mathcal{C}_k = \{(p,i,r) \in \mathcal{C} : p \in \mathcal{F}_k\}
+\end{equation}
+
+The feature vector $\mathbf{Z}_{p,i,r}$ for MBR scoring includes:
+\begin{itemize}
+  \item \textbf{Base trace probability}: $\text{trace\_prob}_{p,i,r}^{\text{test},(2)}$ from iteration 2
+  \item \textbf{MBR features}: All seven MBR features defined in Section~\ref{sec:mbr_features}
+  \item \textbf{Quality metrics}: Retention time error (irt\_error), MS1-MS2 RT difference
+\end{itemize}
+
+For each fold $k$, model $M_k^{\text{MBR}}$ is trained on $\mathcal{C}_k$ to predict correct transfers. Out-of-fold MBR scores are computed as:
+\begin{equation}
+  s_{p,i,r}^{\text{MBR}} = M_k^{\text{MBR}}(\mathbf{Z}_{p,i,r}) \quad \text{for } (p,i,r) \in \mathcal{C}_{\bar{k}}
+\end{equation}
+
+Pioneer tests three model types (simple threshold, probit regression, LightGBM) and automatically selects the model that passes the most transfer candidates at the target FTR.
+
+
+\paragraph{FTR Threshold Selection}\label{para:ftr-threshold-selection} 
+For a given score threshold $\tau$, the False Transfer Rate using MBR-specific scores is defined as:
+\begin{equation}
+  \text{FTR}(\tau) = \frac{|\{(p,i,r) \in \mathcal{C} : \text{is\_bad\_transfer}_{p,i,r} = \text{true}, s_{p,i,r}^{\text{MBR}} \geq \tau\}|}{|\{(p,i,r) \in \mathcal{C} : s_{p,i,r}^{\text{MBR}} \geq \tau\}|}
+\end{equation}
+
+Pioneer selects the smallest threshold $\tau^*$ such that $\text{FTR}(\tau^*) \leq \alpha$ for a user-specified $\alpha$ (typically 0.01):
+\begin{equation}
+  \tau^* = \min\{\tau : \text{FTR}(\tau) \leq \alpha\}
+\end{equation}
+
+Transfer candidates with MBR scores below $\tau^*$ are filtered out to control the false transfer rate. The filtered trace probabilities used for downstream analysis are:
+\begin{equation}
+  \text{trace\_prob}_{p,i,r}^{\text{filtered}} = \begin{cases}
+      \text{trace\_prob}_{p,i,r}^{\text{test},(3)} & \text{if } (p,i,r) \notin \mathcal{C} \text{ or } s_{p,i,r}^{\text{MBR}} \geq \tau^* \\
+      0 & \text{otherwise.}
+    \end{cases}
+\end{equation}
+
+
+\subsubsection{Isotope Trace Selection for Quantification}\label{subsubsec:isotope-trace-selection}
+
+Because precursors may produce multiple isotope traces corresponding to distinct isolation windows, Pioneer must resolve these traces prior to downstream FDR control and quantification. The \texttt{combine\_traces} parameter controls both isotope trace selection and subsequent aggregation. This section describes the trace selection component of each mode.
+
+\paragraph{Per-Run Selection (combine\_traces: true)}\label{para:per-run-selection}
+In per-run mode (default), Pioneer selects the highest-probability isotope trace independently within each run. For each precursor $p$ in run $r$, the selected trace is:
+\begin{equation}
+  i^*_{p,r} = \underset{i \in \mathcal{I}_p}{\operatorname{argmax}} \, \text{trace\_prob}_{p,i,r}^{\text{filtered}}
+\end{equation}
+
+Under this strategy, different isotope traces may be selected for the same precursor across different runs (i.e., $i^*_{p,r_1}$ may differ from $i^*_{p,r_2}$). For each precursor-run pair $(p,r)$, only the isotope trace $(p, i^*_{p,r}, r)$ is retained for downstream analysis.
+
+\paragraph{Global Selection (\texttt{combine\_traces: false})}\label{para:global-selection}
+Alternatively, in global mode, Pioneer selects a single canonical isotope trace per precursor based on summed trace probabilities across all runs:
+\begin{equation}
+  i^*_{p} = \underset{i \in \mathcal{I}_p}{\operatorname{argmax}} \sum_{r \in \mathcal{R}} \text{trace\_prob}_{p,i,r}^{\text{filtered}}
+\end{equation}
+
+The same trace $(p,i^*_p,r)$ is retained for all runs $r$, ensuring consistent measurement of a single isotope trace across the experiment.
+
+\paragraph{Rationale}\label{para:selection-rationale}
+The per-run strategy adapts to run-specific conditions such as varying quadrupole transmission efficiency or differential isotope interference, potentially improving quantification accuracy within individual runs. The global strategy prioritizes cross-run consistency, which may benefit analyses where the same isotope envelope is measured across all samples. Both strategies produce equivalent results when isotope trace rankings are consistent across runs.
+
+
+\subsubsection{Probability Aggregation for Precursor Scoring}\label{subsubsec:probability-aggregation}
+
+After isotope trace selection, Pioneer aggregates the selected trace probabilities to produce precursor-level scores. The aggregation strategy depends on the \texttt{combine\_traces} setting defined in Section~\ref{subsubsec:isotope-trace-selection}.
+
+\paragraph{Per-Run Selection Mode (combine\_traces: true)}\label{para:per-run-aggregation}
+When per-run selection is used, each precursor-run pair $(p,r)$ has exactly one selected isotope trace $i^*_{p,r}$. The precursor-run probability is simply the trace probability of the selected isotope:
+
+\begin{equation}
+  \text{prec\_prob}_{p,r} = \text{trace\_prob}_{p,i^*_{p,r},r}^{\text{filtered}}
+\end{equation}
+
+
+\paragraph{Global Selection Mode (combine\_traces: false)}\label{para:global-aggregation}
+When global selection is used, all precursor-run pairs for a given precursor $p$ have the same isotope trace $i^*_p$. Before trace selection, precursor-run probabilities are computed by aggregating across \emph{all} isotope traces:
+\begin{equation}
+  \text{prec\_prob}_{p,r} = 1 - \epsilon - \exp\left(\sum_{i \in \mathcal{I}_p} \log(1 - \text{trace\_prob}_{p,i,r}^{\text{filtered}})\right)
+\end{equation}
+where $\epsilon$ is machine epsilon for a 32-bit floating point number to prevent numerical underflow. This aggregation combines evidence from all isotope traces to produce a single probability $\text{prec\_prob}_{p,r}$ for the precursor in run $r$.
+
+\paragraph{Global Precursor Score}\label{para:global-precursor-score}
+
+In both modes, global precursor scores are computed by combining precursor-run probabilities across runs using scaled log-odds:
+\begin{equation}
+  \text{global\_prob}_{p} = \sum_{r \in \mathcal{R}} \frac{1}{\sqrt{|\mathcal{R}|}} \log\left(\frac{\text{prec\_prob}_{p,r}}{1 - \text{prec\_prob}_{p,r}}\right)
+\end{equation}
+
+The resulting $\text{global\_prob}_p$ integrates evidence across runs to produce a single global score per precursor. The scores $\text{prec\_prob}_{p,r}$ and $\text{global\_prob}_p$ are assigned to the selected isotope trace(s) for downstream FDR control.
+
+
+\subsubsection{Q-value Calculation and FDR Control}\label{subsubsec:qvalue-calculation-fdr-control}
+
+Pioneer employs a multi-stage FDR control strategy using the aggregated precursor-level scores that operates on the selected isotope trace(s) for each precursor. Here, an \emph{experiment} corresponds to a single MS run, while a \emph{dataset} comprises multiple experiments. Accordingly, \emph{experiment-wide} control operates at the run level, whereas \emph{global} control operates at the dataset-wide level.
+
+\paragraph{Stage 1: Global Q-value Calculation (Dataset-Wide)}\label{para:stage1-global-qvalue-calculation}
+Sort all precursors by decreasing $\text{global\_prob}_p$. Let $\pi_g$ be the permutation sorting precursors by decreasing $\text{global\_prob}$. The global q-value for the $k$-th ranked precursor is computed using target-decoy competition:
+\begin{equation}
+  \text{global\_qval}_{\pi_g(k)} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{\pi_g(l)})}{\sum_{l=1}^{j} Y_{\pi_g(l)}} \right\}
+\end{equation}
+where $Y_p \in \{0,1\}$ indicates whether precursor $p$ is a target (1) or decoy (0).
+
+\paragraph{Stage 2: Experiment-Wide Q-value Calculation (Run-Level)}\label{para:stage2-experiment-wide-qvalue-calculation}
+Sort all precursor-run pairs by decreasing $\text{prec\_prob}_{p,r}$. Let $\pi_e$ be the permutation sorting precursor-run pairs by decreasing $\text{prec\_prob}$. The experiment-wide q-value for the $k$-th ranked precursor-run pair is:
+\begin{equation}
+  \text{qval}_{(p,r)_{\pi_e(k)}} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{(p,r)_{\pi_e(l)}})}{\sum_{l=1}^{j} Y_{(p,r)_{\pi_e(l)}}} \right\}
+\end{equation}
+
+\paragraph{Stage 3: Dual-Threshold Filtering}\label{para:stage3-dual-threshold-filtering}
+Apply \emph{both} filtering thresholds simultaneously. A precursor-run pair $(p,r)$ passes filtering if and only if it satisfies both criteria:
+\begin{equation}
+  \mathcal{P}_{\text{pass}} = \{(p,r) : \text{global\_qval}_p \leq \alpha_g \text{ and } \text{qval}_{(p,r)} \leq \alpha_e\}
+\end{equation}
+where $\alpha_g$ and $\alpha_e$ are both typically set to 0.01.
+
+\paragraph{Stage 4: Q-value Recalculation on Passing Subset}\label{para:stage4-qvalue-recalculation}
+After dual filtering, the experiment-wide q-values are recalculated using \emph{only} the passing precursor-run pairs $\mathcal{P}_{\text{pass}}$. Re-sort the passing pairs by decreasing $\text{prec\_prob}_{p,r}$ and recompute:
+\begin{equation}
+  \text{qval}_{(p,r)_{\pi'_e(k)}}^{\text{final}} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{(p,r)_{\pi'_e(l)}})}{\sum_{l=1}^{j} Y_{(p,r)_{\pi'_e(l)}}} \right\}
+\end{equation}
+where $\pi'_e$ is the permutation sorting only the passing pairs $(p,r) \in \mathcal{P}_{\text{pass}}$ by decreasing $\text{prec\_prob}$.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Chromatogram Quantification
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Chromatogram Smoothing and Integration}\label{subsec:chromatogram-smoothing-integration}
+
+For target precursors passing both global and experiment-wide q-value thresholds, Pioneer estimates their chromatographic peak area. Pioneer does this by first repeating the linear regression of mass spectra onto the library spectra \ref{sec:linear_regression}, but with the now substantially reduced list of identified precursors. The precursor-specific weights are sorted in temporal order to form chromatograms, which are processed and integrated as follows.
+
+\subsubsection{Isotope Trace Handling}\label{subsubsec:isotope-trace-handling}
+
+The \texttt{combine\_traces} setting governs how isotope traces are incorporated into precursor chromatograms for quantification, consistent with its role in precursor scoring (Section~\ref{subsubsec:isotope-trace-selection}). The two strategies are:
+
+\paragraph{Combined Isotope Traces (combine\_traces: true)}\label{para:combined-isotope-traces} 
+When \texttt{combine\_traces} is enabled, Pioneer combines intensities across all isotope traces for each precursor into a single chromatogram before integration. See section \ref{subsec:fragment-isotope-correction} for documentation on correcting the abundance of separate isotope traces based on the isolated precursor fraction.
+
+\paragraph{Separate Isotope Traces (combine\_traces: false)}\label{para:separate-isotope-traces} 
+When \texttt{combine\_traces} is disabled, only the best isotope trace, $(p, i^*_p, r)$, per precursor is integrated. The isotope trace pattern to integrate for each precursor is selected as described in \ref{subsubsec:isotope-trace-selection}.
+
+\subsubsection{Integration Workflow}\label{subsubsec:integration-workflow}
+
+For each target precursor passing FDR thresholds, Pioneer applies the following chromatogram processing pipeline:
+
+\begin{enumerate}
+    \item \textbf{Whittaker-Henderson Smoothing}: Apply penalized least squares smoothing \cite{Biessy2023-ix} to the intensity time series.
+
+    \item \textbf{Apex Refinement}: Refine the chromatographic apex by finding the maximum of the smoothed signal within $\pm 2$ scans of the initial apex identified during scoring.
+
+    \item \textbf{Peak Boundary Detection}: Calculate the second derivative of the smoothed signal and identify integration boundaries by first finding local maxima in the second derivative (inflection points) and then extending these boundaries as long as the intensity decreases monotonically.
+
+    \item \textbf{Baseline Subtraction}: Subtract a linear baseline fit to the minimum intensities on the left and right sides of the apex.
+
+    \item \textbf{Trapezoidal Integration}: Integrate the baseline-corrected, smoothed time series using the trapezoidal rule:
+    \begin{equation}
+        A_{p,r} = \frac{1}{2}\sum_{j=1}^{N-1} (t_{j+1} - t_j)(I_j + I_{j+1})
+    \end{equation}
+    where $A_{p,r}$ is the chromatographic peak area of precursor $p$ in run $r$, $t_j$ are retention times, $I_j$ are baseline-corrected intensities, and $N$ is the number of points within the integration bounds.
+\end{enumerate}
+
+The integrated peak areas $A_{p,r}$ serve as precursor abundances for downstream label-free quantification.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Protein Inference and Quantification
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Protein Inference and Quantification}\label{subsec:protein_inference}
+
+After precursor-level FDR control, Pioneer performs protein inference. Protein inference is performed independently for each MS run to enable run-specific protein presence calls. Dataset-wide protein inference will be enabled in future releases. The algorithm returns only peptides unique to their respective inferred protein groups. These inferred protein groups may be distinct from the library protein groups (See section \ref{subsec:spectral-library-sequence-generation}) and are hereafter simply referred to as protein groups.
+
+
+\subsubsection{Input Selection for Protein Inference}\label{subsubsec:input-selection-protein-inference}
+
+Pioneer performs protein inference separately for each MS run on all precursors that passed both the global and experiment-wide q-value thresholds from the two-stage FDR control described in Section~ \ref{subsubsec:qvalue-calculation-fdr-control}. For each run $r \in \mathcal{R}$, let $\mathcal{P}_{\text{inference}}^{(r)}$ denote the set of precursors eligible for protein inference:
+\begin{equation}
+\mathcal{P}_{\text{inference}}^{(r)} = \{p : \text{global\_qval}_p \leq \alpha_g, \, \text{qval}_{p,r} \leq \alpha_e\}
+\end{equation}
+where $\alpha_g = 0.01$ is the global FDR threshold and $\alpha_e = 0.01$ is the experiment-wide FDR threshold. Both target precursors ($Y_p = 1$) and decoy precursors ($Y_p = 0$) passing these thresholds are included in $\mathcal{P}_{\text{inference}}^{(r)}$.
+
+
+\subsubsection{Parsimony-Based Protein Inference
+Algorithm}\label{subsubsec:parsimony-based-protein-inference}
+
+Pioneer implements a two-phase parsimony-based inference algorithm
+\cite{Nesvizhskii2005-oj,Zhang2007-jo} to identify a minimal set of protein groups that can explain all the observed peptides. The algorithm operates on the peptide–protein bipartite graph defined below and is applied independently to each run $r$.
+
+\paragraph{Protein-Peptide Bipartite
+Graph}\label{para:protein-peptide-bipartite-graph} Let $\mathcal{A}$ denote the set of all protein accession numbers in the spectral library (Section~\ref{subsec:spectral-library-sequence-generation}). For each run $r$, define the set of peptide-protein associations:
+\begin{equation}
+\mathcal{E}^{(r)} = \{(p, a) : p \in \mathcal{P}_{\text{inference}}^{(r)},  a
+\in \mathcal{A},  \text{peptide } p \text{ maps to protein } a\}
+\end{equation}
+Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph connecting observed peptide $p$ to library protein name $a$.
+
+\paragraph{Algorithm Overview}\label{para:algorithm-overview} The inference algorithm decomposes the bipartite graph into disjoint connected components using depth-first search. Within each component, the algorithm applies a two-phase approach. Pioneer first selects all proteins with unique peptide evidence and next applies a greedy set-cover. At each iteration of the greedy phase, inferred proteins with identical remaining peptide sets are first merged, and the inferred protein group covering the most remaining peptides is selected. The algorithm returns only peptides that uniquely map to a single protein group; shared peptides are excluded to ensure unambiguous protein quantification.
+
+
+\begin{algorithm}[H]
+\caption{Protein Inference Phase 1: Graph Decomposition}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Edges $\mathcal{E}^{(r)} = (p, a)$ where $p$ is
+peptide, $a$ is protein
+\State \textbf{Output:} Connected components $C = (P_c, A_c)$ with
+bidirectional mappings $A[p]$ and $P[a]$
+\State \textbf{Define:} $A[p] = a : (p, a) \in \mathcal{E}^{(r)}$ (proteins
+containing peptide $p$)
+\State \hspace{2.3em} $P[a] = p : (p, a) \in \mathcal{E}^{(r)}$ (peptides in
+protein $a$)
+\State
+\State \textit{// Build bidirectional mappings}
+\For{$(p, a) \in \mathcal{E}^{(r)}$}
+  \State $A[p] \gets A[p] \cup a$ \Comment{Proteins for each peptide}
+  \State $P[a] \gets P[a] \cup p$ \Comment{Peptides for each protein}
+\EndFor
+\State
+\State \textit{// Find connected components via depth-first search}
+\State $V \gets \emptyset$, $C \gets \emptyset$ \Comment{Visited peptides,
+components list}
+\For{each peptide $p$}
+  \If{$p \notin V$}
+      \State $(P_c, A_c) \gets \text{DFS}(p, A, P, V)$ \Comment{Discover
+component}
+      \State $V \gets V \cup P_c$ \Comment{Mark component peptides as
+visited}
+      \State $C \gets C \cup (P_c, A_c)$
+  \EndIf
+\EndFor
+\State
+\State \textbf{return} $C$, $A$, $P$
+\end{algorithmic}
+\end{algorithm}
+
+\newpage
+
+
+\begin{algorithm}[H]
+\caption{Protein Inference Phase 2: Component Processing with Merge-First
+Set Cover}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Components $C$, mappings $A[p]$ and $P[a]$ from
+Algorithm 1
+\State \textbf{Output:} $G[p] \to q$ where $q \subseteq \mathcal{A}$ is a protein group (only unique peptides)
+\State
+\Function{MergeIndistinguishable}{$K$, $P$, $R$}
+  \State \textbf{Input:} Candidate proteins/groups $K$, peptide mapping $P[\cdot]$, remaining peptides $R$
+  \State \textbf{Output:} Updated $K$ and $P[\cdot]$ with indistinguishable candidates merged
+  \State Group candidates $a \in K$ by the set $P[a] \cap R$
+  \For{each group $\Gamma$ with $|\Gamma| > 1$}
+      \State Create merged group identifier $g \gets \text{MergeName}(\Gamma)$ \Comment{e.g., ``protein1;protein2;...''}
+      \State $P[g] \gets \bigcup_{a \in \Gamma} P[a]$ \Comment{Define peptide set for merged group}
+      \State $K \gets (K \setminus \Gamma) \cup \{g\}$
+  \EndFor
+  \State \textbf{return} $K$, $P$
+\EndFunction
+\State
+\State \textit{// Process each component independently}
+\For{$(P_c, A_c) \in C$}
+  \State
+  \State \textit{// Case 1: All proteins indistinguishable}
+  \If{$P[a] = P[a']$ for all $a, a' \in A_c$}
+      \For{$p \in P_c$}
+          \State $G[p] \gets A_c$ \Comment{All peptides unique to protein
+group}
+      \EndFor
+      \State \textbf{continue}
+  \EndIf
+  \State
+  \State \textit{// Case 2: Mixed peptide assignments}
+  \State $U \gets p \in P_c : |A[p] \cap A_c| = 1$ \Comment{Unique
+peptides}
+  \State
+  \State \textit{// Phase 1: Select all proteins with unique peptides}
+  \State $S \gets a \in A_c : P[a] \cap U \neq \emptyset$
+\Comment{Necessary proteins}
+  \State $R \gets P_c \setminus \bigcup_{a \in S} P[a]$ \Comment{Remaining uncovered peptides}
+  \State
+  \State \textit{// Phase 2: Merge-first greedy set cover}
+  \State $K \gets A_c \setminus S$ \Comment{Candidate proteins}
+  \While{$R \neq \emptyset$ and $K \neq \emptyset$}
+      \State $K \gets \text{MergeIndistinguishable}(K, P, R)$
+\Comment{Merge proteins with identical remaining peptides}
+      \State $a^* \gets \arg\max_{a \in K} |P[a] \cap R|$ \Comment{Select protein covering most peptides}
+      \If{$|P[a^*] \cap R| = 0$}
+          \State \textbf{break}
+      \EndIf
+      \State $S \gets S \cup a^*$ \Comment{Add to solution}
+      \State $R \gets R \setminus P[a^*]$ \Comment{Remove covered peptides}
+      \State $K \gets K \setminus a^*$ \Comment{Remove from candidates}
+  \EndWhile
+  \State
+  \State \textit{// Add only unique peptides to result}
+  \For{$p \in P_c$}
+      \State $S_p \gets A[p] \cap S$ \Comment{Necessary proteins for this peptide}
+      \If{$|S_p| = 1$}
+          \State $G[p] \gets S_p$ \Comment{Unique assignment}
+      \EndIf
+      \State \textit{// Note: Shared peptides ($|S_p| > 1$) are excluded from G}
+  \EndFor
+\EndFor
+\State
+\State \textbf{return} $G$
+\end{algorithmic}
+\end{algorithm}
+
+After protein inference, the protein groups are filtered by the minimum number of peptides. For each protein $q \in S$ selected across all components, let $\mathcal{N}(q)$ denote its set of assigned peptides. Filter proteins by:
+
+\begin{equation}
+S_{\text{filtered}} = q \in S : |\mathcal{N}(q)| \geq n_{\text{min}}
+\end{equation}
+
+where $n_{\text{min}}$ is the minimum peptide threshold (default: 1).
+
+\subsubsection{Protein Group Scoring and FDR Control}\label{subsubsec:protein-group-scoring-fdr}
+
+After protein inference and filtering, Pioneer scores protein groups in three stages. 
+
+\paragraph{Stage 1: Per-Run Log-Sum Scoring}\label{para:stage1-per-run-log-sum-scoring} For each MS run, each protein group $q$ is scored using a log-sum aggregation formula:
+\begin{equation}
+\text{score}(q) = -\sum_{p \in \mathcal{N}(q)} \log(1 - \text{prob}_p)
+\end{equation}
+where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run. When match-between-runs (MBR) is enabled, protein scoring uses MBR-boosted precursor probabilities; otherwise standard precursor probabilities from the machine learning PSM scoring model are used.
+
+\paragraph{Stage 2: Probit Regression Refinement}\label{para:stage2-probit-regression-refinement} Pioneer applies probit regression to refine the per-run protein group scores using the following features:
+\begin{itemize}
+  \item The log-sum score 
+  \item Presence of one or more fully tryptic and unmodified peptides
+  \item Fraction of possible peptides observed for the protein group 
+  \item Number of possible peptides for the protein group
+\end{itemize}
+
+The probit regression is trained using cross-validation folds to maintain consistency with the PSM-level scoring, with each protein assigned to the CV fold of its best-scoring constituent peptide.
+
+\paragraph{Stage 3: Global Protein Group Scoring}\label{para:stage3-global-protein-group-scoring} After probit refinement Pioneer computes global protein group scores by aggregating the refined per-run scores across all runs using a log-odds combination formula just as with the global precursor scores (see Section~\ref{para:global-precursor-score}).
+
+
+\paragraph{Protein-Level Q-value Calculation}\label{para:protein-level-qvalue-calculation} Pioneer controls both the experiment-wide and global false discovery rate at the protein group level. For a given score type (experiment-wide or global), let $\pi$ be the permutation sorting protein groups by decreasing score. The protein-level q-value for the $k$-th ranked protein is:
+\begin{equation}
+\text{protein\_qval}_{\pi(k)} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{\pi(l)})}{\sum_{l=1}^{j} Y_{\pi(l)}} \right\}
+\end{equation}
+where $Y_q = 1$ if protein $q$ is a target and $Y_q = 0$ if it is a decoy. After filtering on both thresholds the experiment-wide q-values are recomputed using the experiment-wide scores of the remaining protein groups and only these proteins are retained for downstream quantification.
+
+
+\subsubsection{MaxLFQ Quantification}\label{subsubsec:maxlfq-quantification}
+
+Pioneer implements the MaxLFQ algorithm \cite{Cox2014-zm} for label-free protein quantification. For each protein $q$ passing protein-level FDR thresholds and peptide $p \in \mathcal{N}(q)$ in run $r$, the integrated chromatographic peak area $A_{p,r}$ serves as the quantification intensity. The MaxLFQ intensities $\{I_{q,r}\}_{r \in \mathcal{R}}$ are computed by solving:
+
+\begin{equation}
+\min_{\{I_{q,r}\}_{r \in \mathcal{R}}} \sum_{r,r' \in \mathcal{R}} \sum_{p \in \mathcal{N}(q)} w_{p,r,r'} \left( \log I_{q,r} - \log I_{q,r'} - \log \frac{A_{p,r}}{A_{p,r'}} \right)^2
+\end{equation}
+
+where $w_{p,r,r'} = 1$ if $A_{p,r} > 0$ and $A_{p,r'} > 0$, and 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fragment Isotopes
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Fragment Isotope Correction}\label{subsec:fragment-isotope-correction}
+
+By default Pioneer assumes the spectral libraries provided to it record the total intensity rather than the monoisotopic intensity of each fragment ion. In the latter case Pioneer models the fragment isotope probabilities as conditional on the quadrupole filtered precursor isotope distribution, which differs from the natural distribution.  Using the conditional model, Pioneer re-isotopes the library spectra on the fly to more closely match the empirical MS2 spectra. 
+
+Goldfarb et al. described how fragment isotope distributions depend on precursor isotope selection and then derived a formula to calculate conditional fragment isotope probabilities in terms of unconditional probabilities \cite{Goldfarb2018-ai}. Borrowing notation, suppose $P$ and $F$ are random variables for the isotopic state of a precursor and fragment ion respectively, and likewise, $p$ and $f$ are the specific isotopic states. Then for fragmentation of a specific subset of the precursor isotopes, $\mathbf{p}$, the conditional fragment isotope probabilities can be written as:  
+\begin{equation}
+    \Pr\bigl( F=f \mid \bigcup\limits_{p\in \boldsymbol{p}} P = p \bigr)
+\end{equation}
+Goldfarb et al. proposed a means to calculate these conditional fragment isotope probabilities in terms of the unconditional ones, $\text{Pr}(F = f)$, and then proposed an efficient approximation for the unconditional probabilities using sulfur-specific splines. 
+
+Pioneer uses this method and extends it to model non-uniform  quadrupole transmission efficiency. Pioneer models the transmission efficiency of each precursor isotope with which the quadrupole transmits each precursor isotope. The quadrupole transmission function is defined as the following:
+\begin{equation}
+    Q(z^{p}; c, w) = \Pr\bigl( P=p \mid Q)
+\end{equation}
+
+where $z^{p}$ is the mass-to-charge ratio of isotope $p$. The parameters $c$ and $w$ are the center and nominal width of the isolation window in Thomsons respectively. 
+
+This function describes the probability that the quadrupole transmits a specific precursor isotope through the entire length of the quadrupole. Assuming a reasonable estimate for $Q(z; c, w)$, and given equation 3.5 from \cite{Goldfarb2018-ai} we have the following: 
+
+\begin{equation}
+    \Pr\bigl( F=f | Q) =\Pr\bigl(F = f\bigr) \cdot \left(\sum\limits_{p = 0}^{\infty} \Pr\bigl( P=p \mid Q)Pr\bigl(C = p - f\bigr) \right)
+\end{equation}\label{eq:fragment-isotope-conditional}
+
+In practice, Pioneer truncates the sum in equation~\eqref{eq:fragment-isotope-conditional} at $p=5$. Pioneer calculates fragment isotopes up to a user-defined maximum number of isotopes, which can be set differently for the first-pass search and the second-pass searches. Using this equation, Pioneer estimates conditional fragment isotope distributions assuming a reasonable model for $Q$.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fitting the Quadrupole Transmission Function
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Estimating the Quadrupole Transmission Function}\label{subsec:estimating-quadrupole-transmission}
+Pioneer estimates the quadrupole transmission function, $Q$, based on a random sampling of high-quality PSMs. Given a model for $Q$, it is possible to estimate the parameters based on deviations between observed and theoretical precursor isotope ratios. For precursor $i$, define:
+
+\begin{itemize}
+    \item $\zeta_{i}^{k}$ - theoretical absolute abundance of the $k$-th precursor isotope prior to quadrupole isolation
+    \item $x_{i}^{k}$ - observed abundance of the $k$-th precursor isotope after quadrupole isolation
+    \item $z_{i}^{k}$ - m/z offset of the $k$-th precursor relative to the isolation window center
+    \item $Q(z_{i}^{k}; c, w)$ - transmission probability at offset $z_i^{k}$ for a quadrupole centered at $c$, with an isolation width, $w$.    
+\end{itemize}
+
+Then by definition:
+\begin{equation}
+    x_i^{k} = \zeta_{i}^{k} \cdot Q(z_{i}^{k}; c, w)
+\end{equation}
+For precursor $i$ define $\delta_{i}$: 
+\begin{equation}
+    \delta_{i} = \frac{\zeta_{i}^{1}}{\zeta_{i}^{0}} 
+\end{equation}
+
+Theoretical isotope ratios, $\zeta_{i}^{1}/\zeta_{i}^{0}$, can be calculated from the isotope splines provided in Goldfarb et al. That is, although mass spectrometers cannot measure the absolute number of each isotope in front of the quadrupole, it is possible to calculate the isotopic ratios from theory, either exactly based on the molecular composition or approximately via the averagine method or isotope splines \cite{Goldfarb2018-ai}. Pioneer can then estimate the quadrupole transmission function, $Q(z_i^{k}; c, w)$, based on a comparison between the observed abundance ratios $x_{k}^{0}/x_{k}^{1}$ and the theoretical ratios $\zeta_i^{0}/\zeta_i^{1}$. Therefore:
+\begin{equation}
+\frac{Q(z_{i}^{0}; c, w)}{Q(z_{i}^{1}; c, w)} = \delta_{i} \cdot \left(\frac{x_{i}^{0}}{x_{i}^{1}}\right)
+\end{equation}\label{eq:quadrupole-ratio}
+which relates the relative transmission efficiency of adjacent precursor isotopes to the distortion between observed and theoretical isotope ratios.
+
+After assigning a functional form to $Q$ it is possible to estimate the parameters of the quadrupole transmission function given the observations. We propose a solution in Section~\ref{subsubsec:asymmetric-generalized-bell-function}. Section~\ref{subsubsec:estimating-precursor-isotope-abundances} describes how to estimate each $x_{i}^{k}$.  
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Estimating Precursor Isotope Abundance
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Estimating Observed Precursor Isotope Abundances}\label{subsubsec:estimating-precursor-isotope-abundances}
+Let $p(k)$ denote the $k$-th isotope of a precursor ion species, $p$, and then let $s\left(f(l)_{j}^{p(k)}\right)$ give the conditional abundance of $l$-th isotope of the $j$-th fragment of $p(k)$. Then construct the following matrix:
+\begin{equation}
+\mathbf{S}_{p} = \begin{bmatrix} 
+s\left(f(0)_{1}^{p(0)}\right) & s\left(f(0)_{1}^{p(1)}\right) & \hdots & s\left(f(0)_{1}^{p(n)}\right) \\
+s\left(f(1)_{1}^{p(0)}\right) & s\left(f(1)_{1}^{p(1)}\right) & \hdots & s\left(f(1)_{1}^{p(n)}\right) \\
+s\left(f(2)_{1}^{p(0)}\right) & s\left(f(2)_{1}^{p(1)}\right) & \hdots & s\left(f(2)_{1}^{p(n)}\right) \\
+s\left(f(0)_{2}^{p(0)}\right) & s\left(f(0)_{2}^{p(1)}\right) & \hdots & s\left(f(0)_{2}^{p(n)}\right) \\
+\vdots & \vdots & \ddots & \vdots \\
+s\left(f(2)_{m}^{p(0)}\right) & s\left(f(2)_{m}^{p(1)}\right) & \hdots & s\left(f(2)_{m}^{p(n)}\right)
+\end{bmatrix}
+\end{equation}
+
+Now for an observed MS2 spectrum, let $\vec{I_{i}}$ be the observed intensities of peaks that match each fragment isotope, with a value of zero for unmatched fragment ions. This results in the following linear system:
+
+\begin{equation}
+    \mathbf{S}_p \begin{bmatrix} 
+    y^0 \\
+    y^1 \\
+    \vdots \\
+    y^n
+\end{bmatrix} \approx \vec{I_{i}}
+\end{equation}
+
+The least squares solution, $\vec{y}$, approximates the relative abundances of the isotopes of the precursor $p$ after quadrupole transmission.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Fitting an Asymmetric Generalized Bell Function
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Estimating Quadrupole Transmission with an Asymmetric Generalized Bell Function}\label{subsubsec:asymmetric-generalized-bell-function}
+Pioneer models quadrupole transmission efficiency using an asymmetric generalized bell function, a modified form of the generalized bell function \cite{Jang1993-ke}.
+
+\begin{equation}
+    Q(x; a_l, a_r, b_l, b_r) = \begin{cases}
+    \left[1 + \left(-x \,/\, a_l\right)^{2b_l}\right]^{-1} & \text{if } x \leq 0 \\
+    \left[1 + \left(x \,/\, a_r\right)^{2b_r}\right]^{-1} & \text{if } x > 0
+    \end{cases}
+\end{equation}
+
+In this four-parameter model, $a_l$ and $a_r$ control the isolation window width. They represent the distance from the maximum peak (at $x=0$) to the half-maximum intensity on the left and right sides, respectively. The shape parameters $b_l$ and $b_r$ determine the smoothness of the transition. Given that $x^0 < x^1$, the ratio of the transmission function at $x^0$ and $x^1$ is as follows. 
+
+\begin{equation}
+R(x_i^0, x_i^1)
+=
+\frac{Q(x_i^0; a_l, a_r, b_l, b_r)}
+     {Q(x_i^1; a_l, a_r, b_l, b_r)}.
+\end{equation}
+
+Expanding piecewise:
+
+\begin{equation}
+    R(x_i^0, x_i^1) =
+    \begin{cases}
+    \left(\frac{1 + \left(-x^1 \,/\, a_l \right)^{2b_l}}{1 + \left(-x^0 \,/\, a_l \right)^{2b_l}}\right) & \text{if } x^0 \leq 0 \text{ and } x^1 \leq 0 \\[1em]
+    \left(\frac{1 + \left(z^1 \,/\, a_l \right)^{2b_l}}{1 + \left(-x^0 \,/\, a_r \right)^{2b_r}}\right) & \text{if } x^0 \leq 0 \text{ and } x^1 > 0 \\[1em]
+    \left(\frac{1 + \left(x^1 \,/\, a_r \right)^{2b_r}}{1 + \left(x^0 \,/\, a_r \right)^{2b_r}}\right) & \text{if } x^0 > 0 \text{ and } x^1 > 0
+    \end{cases}
+\end{equation}
+Therefore, to estimate the parameters, $ a_l, a_r, b_l, b_r$, Pioneer minimizes the squared error between the respective natural logarithms of $R(x_0, x_1)$ and the data as in equation~\eqref{eq:quadrupole-ratio}. The objective function to minimize becomes:
+
+\begin{equation}
+    \min_{a_l, a_r, b_l, b_r} L(a_l, a_r, b_l, b_r; \vec{x^0}, \vec{x^1}) = \sum_i \left(\text{ln}\left(R(x_i^0, x_i^1)\right) - \text{ln}\left(\delta_i \cdot \frac{x_{i}^{0}}{x_{i}^{1}}\right)\right)^2
+\end{equation}
+
+Pioneer uses the Symbolics.jl package in Julia to calculate the piecewise partial derivatives for $R$ with respect to the parameters and then implements a Levenberg-Marquardt algorithm to minimize the objective function, $L$.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Figures
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Supplementary Figures}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S1.pdf}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S2.pdf}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S3.pdf}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S4-02-09-2026-NW.pdf}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S5.pdf}
+\includepdf[pages=-,pagecommand={},fitpaper=false]{figures/Figure-S6.pdf}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Tables
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Supplementary Tables}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table - First Pass Features Table
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+{
+\renewcommand{\arraystretch}{1.5}
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{@{} l >{\raggedright\arraybackslash}p{0.28\textwidth} >{\raggedright\arraybackslash}X @{}}
+    \toprule
+    \textbf{Score} & \textbf{Mathematical Form} & \textbf{Description} \\
+    \midrule    
+        Scribe & $-\log\left(\frac{1}{N}\sum_i\left(\frac{\sqrt{h_i}}{\sum_j\sqrt{h_j}} - \frac{\sqrt{x_i}}{\sum_j\sqrt{x_j}}\right)^2\right)$ & Scribe score from Searle, Shannon, and Wilburn 2023 \cite{Searle2023-po} \\\addlinespace[5pt]
+        City Block & $-\log\left(\frac{1}{N}\sum_i\left|\frac{h_i}{\|h\|_2} - \frac{x_i}{\|x\|_2}\right|\right)$ & Manhattan distance between L2-normalized spectra \\\addlinespace[5pt]
+        Cosine Similarity & $\frac{\sum_i h_ix_i}{\|h\|_2\|x\|_2}$ & Cosine similarity between spectra \\\addlinespace[5pt]
+        Matched Ratio & $\log_2\left(\frac{\sum_{i\in M} h_i}{\sum_{i\notin M} h_i}\right)$ & Logarithmic ratio of matched to unmatched predicted peak intensities \\\addlinespace[5pt]
+        Entropy & See Li et al. \cite{Li2021-wi}  & Weighted spectral entropy similarity from Li et al. \\\addlinespace[5pt]
+    \bottomrule
+  \end{tabularx}
+  \caption{\textbf{Spectral scoring metrics for the first-pass search.} $h_i$ are theoretical intensities; $x_i$ are experimental intensities; $N$ is the number of peaks; $M$ is the set of matched peaks.}
+  \label{tab:simple_scores}
+\end{table}
+}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table - Second Pass Features
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+{
+\renewcommand{\arraystretch}{1.5}
+\begin{table}[htbp]
+    \centering
+    \begin{tabularx}{\textwidth}{@{} l >{\raggedright\arraybackslash}p{0.28\textwidth} >{\raggedright\arraybackslash}X @{}}
+    \toprule
+        \textbf{Score} & \textbf{Mathematical Form} & \textbf{Description} \\
+    \midrule    
+        Cosine Similarity & $\frac{\sum_i h_ix_i}{\|h\|_2\|x\|_2}$ & Basic cosine similarity between theoretical and experimental spectra \\\addlinespace[5pt]
+        Fitted Sqrt. Cosine Simlarity & $\frac{\sum_{i\in M} \sqrt{(wh_i + r_i)}\sqrt{wh_i}}{\sqrt{\sum_{i\in M}(wh_i + r_i)}\sqrt{\sum_i wh_i}}$ & Cosine similarity between the square root of the fitted intensities and observed intensities \\\addlinespace[5pt]
+        Goodness of Fit & $-\log_2\left(\frac{\sum_i |r_i|}{\sum_i wh_i}\right)$ & Logarithmic ratio of residuals to fitted peak intensities \\\addlinespace[5pt]
+        Max Matched Residual & $-\log_2\left(\frac{\max_{i\in M}|r_i|}{\sum_{i\in M}wh_i}\right)$ & Largest residual among matched peaks relative to their sum \\\addlinespace[5pt]
+        Max Unmatched Residual & $-\log_2\left(\frac{\max_{i\notin M}|r_i|}{\sum_i wh_i}\right)$ & Largest residual among unmatched peaks relative to total intensity \\\addlinespace[5pt]
+        Fitted Manhattan Distance & $-\log_2\left(\frac{\sum_i|wh_i - x_i|}{\sum_i x_i}\right)$ & Manhattan distance between fitted and experimental spectra \\\addlinespace[5pt]
+        Matched Ratio & $\log_2\left(\frac{\sum_{i\in M} h_i}{\sum_{i\notin M} h_i}\right)$ & Logarithmic ratio of matched to unmatched predicted peak intensities \\\addlinespace[5pt]
+    \bottomrule
+    \end{tabularx}
+    \caption{\textbf{Spectral scoring metrics for the second pass search.} Here, $h_i$ represents theoretical spectrum intensities, $x_i$ represents experimental spectrum intensities, $w$ is the fitted weight, $r_i$ represents residuals, and $M$ is the set of matched peaks.}
+    \label{tab:complex_scores}
+\end{table}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table - Fragment Index Rank Scores
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[h]
+    \centering
+    \begin{tabular}{@{}ll|llllllll@{}}
+    \toprule
+        Fragment Rank & & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+    \midrule
+        Score & & 8 & 4 & 4 & 2 & 2 & 1 & 1 \\
+    \bottomrule
+    \end{tabular}
+    \caption{\textbf{Default scoring function for the fragment index search.}}
+    \label{tab:frag_score}
+\end{table}
+
+%\begin{thebibliography}{9}
+%\end{thebibliography}
+
+\newpage
+\bibliography{sn-bibliography}
+
+\end{document}

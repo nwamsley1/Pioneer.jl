@@ -1,0 +1,15 @@
+# Local preview scaffolding — NOT the real Springer Nature build.
+# The real manuscript provides sn-jnl.cls, sn-bibliography.bib, and figures.
+sn-jnl.cls
+nicematrix.sty
+rebuild.sh
+figures/
+*.pdf
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
