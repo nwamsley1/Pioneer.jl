@@ -257,7 +257,7 @@ reset_results!(::BitVecCalibrationResults) = nothing
 const BITVEC_MIN_TOTAL_COUNTS = Int64(10_000_000)
 const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
-const BITVEC_MIN_EXCESS_RATE = Float32(0.01)
+const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
 
 function _bitvec_excess_rank_table(
     target_counts::AbstractVector{<:Integer},
