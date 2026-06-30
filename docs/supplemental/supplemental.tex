@@ -388,49 +388,21 @@ Pioneer then summarizes these per-precursor optima into a model indexed by charg
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Main Search}\label{subsec:first-pass-search}
 
-In the main search, Pioneer identifies, scores, and filters the precursors carried forward for quantification. For each MS2 scan, the fragment index (Section~\ref{subsec:fragment-index-search}) yields a set of candidate precursors, which are quantified against the spectrum by spectral deconvolution (Section~\ref{subsec:matrix-representation}) and scored by a machine-learned classifier. Pioneer then selects a single best PSM per precursor, removes low-confidence identifications, and aggregates the per-run results into the set of precursors used downstream.
+In the main search, Pioneer identifies, scores, and filters the precursors carried forward for quantification. The main search begins with its own fragment-index search (Section~\ref{subsec:fragment-index-search}), retrieving candidate precursors for each MS2 scan. This is a separate search from the one performed during parameter tuning (Section~\ref{subsec:parameter-tuning}): parameter tuning queries a simplified index with a single retention time bin and a wide mass tolerance, whereas the main search queries the full index---using all retention time bins together with the calibrated retention time alignment and mass-error model fit during tuning---to constrain candidates by both retention time and m/z. Each scan's candidate precursors are then quantified against the spectrum by spectral deconvolution (Section~\ref{subsec:matrix-representation}) and scored by a machine-learned classifier. Pioneer then selects a single best PSM per precursor, removes low-confidence identifications, and aggregates the per-run results into the set of precursors used downstream.
 
 \subsubsection{PSM Scoring}\label{subsubsec:first-pass-search-scoring}
 
-For each MS data file, Pioneer scores its PSMs with a gradient-boosted decision-tree classifier (LightGBM) trained to separate target from decoy PSMs. Training uses two-fold cross-validation: precursors are split into two folds, a model is trained on each fold and used to score the PSMs of the other, so no PSM is scored by a model trained on it. The classifier draws on a large set of features, including spectral goodness-of-fit and similarity scores, fragment-ion coverage, the deconvolution weight and its rank among co-eluting precursors, retention-time agreement, MS1 isotope-pattern features, per-rank fragment chromatographic traces and fragment--fragment correlations, and precursor and sequence properties. For files with too few PSMs to train a stable tree model, Pioneer falls back to a probit regression.
-
-\textbf{Best PSM selection.} Pioneer then selects one PSM per precursor: among a precursor's top-scoring scans, it keeps the one with the largest deconvolution weight, falling back to the highest-scoring scan when only a few PSMs are available.
-
-\textbf{PEP-based filtering.} Pioneer estimates each PSM's posterior error probability (PEP) from the classifier scores by isotonic regression, using the weighted Pool Adjacent Violators Algorithm (wPAVA) \cite{Zheng_pyIsoPEP}. PSMs with $\text{PEP} \leq 0.9$ are retained for each file and the rest are filtered out.
+For each MS data file, Pioneer scores its PSMs with a gradient-boosted decision-tree classifier (LightGBM) trained to separate target from decoy PSMs. Training uses two-fold cross-validation: precursors are split into two folds, a model is trained on each fold and used to score the PSMs of the other, so no PSM is scored by a model trained on it. The classifier draws on a large set of features, including spectral goodness-of-fit and similarity scores, fragment-ion coverage, the deconvolution weight and its rank among co-eluting precursors, retention-time agreement, MS1 isotope-pattern features, per-rank fragment chromatographic traces and fragment--fragment correlations, and precursor and sequence properties. For files with too few PSMs to train a stable tree model, Pioneer falls back to a probit regression. From these scores, Pioneer reduces each precursor to a single best PSM and filters out low-confidence identifications by a posterior error probability threshold.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Method - Aggregate First Pass Search
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsubsection{First Pass PSM Aggregation}\label{subsubsec:first-pass-psm-aggregation}
-After scoring and filtering the run-specific PSM lists, Pioneer assembles a single list of $M$ precursors to include in the second, quantitative search across all MS data files. Let $\mathcal{R} = \{1, \ldots, R\}$ be the set of all runs, and $\mathcal{P}$ be the set of all precursors in the spectral library. Let $P^{r} = \{(p_j^{r}, s_j^{r}, t_j^{r})\}_{j=1}^{N_r}$ be the set of precursors and their respective scores in each run $r \in \mathcal{R}$. Here:
-\begin{itemize}
-\item $p_j^{r} \in \mathbb{N}^+$ uniquely identifies the precursor
-\item $s_j^{r} \in [0,1]$ is the probability score of the $j$-th precursor in run $r$
-\item $t_j^{r} \in \mathbb{R}^+$ is the library retention time (iRT) of the $j$-th precursor in run $r$
-\end{itemize}
-
-For each run $r \in \mathcal{R}$ and precursor $p \in \mathcal{P}$, let:
+\subsubsection{Cross-Run Precursor Aggregation}\label{subsubsec:first-pass-psm-aggregation}
+After per-file scoring and PEP filtering, the precursors that passed in one or more runs are pooled into a single cross-experiment set; no fixed number of precursors is selected. Pioneer also computes, for each precursor, a cross-run global score that summarizes its evidence across runs. Let $R$ be the number of runs and, for precursor $p$, let $\{s_r(p)\}$ be its cross-validated scores in the runs where it was identified. The global score is the log-odds average of the precursor's top-$\sqrt{R}$ run scores:
 \begin{equation}
-    s_r(p) = \begin{cases}
-        s_j^{r} & \text{if } \exists j : p = p_j^{r} \\
-        0 & \text{otherwise}
-    \end{cases}
+    s_{\text{global}}(p) = \sigma\!\left(\frac{1}{k}\sum_{r \in \text{top-}k} \log\frac{s_r(p)}{1 - s_r(p)}\right), \qquad k = \lfloor\sqrt{R}\rfloor,
 \end{equation}
-
-For each precursor $p \in \mathcal{P}$, define its maximum score across all runs:
-\begin{equation}
-    s_{\text{max}}(p) = \max_{r \in \mathcal{R}} \{s_r(p)\}
-\end{equation}
-
-To determine the number of precursors $M$ to include in the second-pass search, Pioneer uses the maximum number of PSMs passing the PEP threshold (default 0.9) in any single run.
-\begin{equation}
-    M = \max_{r \in \mathcal{R}} |P^r|
-\end{equation}
-
-Pioneer then ranks all precursors by $s_{\text{max}}$ and selects the top $M$ of these. Specifically, define $s_{\text{max}}^{(k)}(\mathcal{P})$ as the $k$-th largest value in set $\mathcal{P}$ under the $s_{\text{max}}$ scoring function. The top $M$ precursors are:
-\begin{equation}
-    P_M = \{p \in \mathcal{P} : s_{\text{max}}(p) \geq s_{\text{max}}^{(M)}(\mathcal{P})\}
-\end{equation}
+where $\sigma$ is the logistic function. Global q-values are computed from these scores by the target-decoy approach. Rather than filtering the precursor set, these global q-values select the highest-confidence precursors, which inform the refined retention time tolerance (Section~\ref{subsubsec:rt-alignment-tolerance-estimation}). The full set of PEP-passing precursors, split by cross-validation fold, is carried forward for quantitative rescoring.
 
 \subsubsection{Retention Time Alignment and Tolerance Estimation}\label{subsubsec:rt-alignment-tolerance-estimation}
 
