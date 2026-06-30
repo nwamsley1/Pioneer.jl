@@ -211,7 +211,7 @@ function extract_file_recovery_seeds(
                 )
                 receiver === nothing && continue
 
-                feats = compute_seed_mbr_features(receiver, donor, prec_irt_arr[pid], fragment_keys)
+                feats = compute_seed_mbr_features(receiver, donor, prec_irt_arr[pid], fragment_keys, pid)
                 push!(local_seeds, _build_recovered_seed_row(
                     pid, donor, receiver, feats, precursors, prec_mz_arr, prec_irt_arr,
                 ))
@@ -295,10 +295,15 @@ function summarize_results!(
     params::MBRRecoverySearchParameters,
     search_context::SearchContext,
 )
-    results.elapsed_sec = time() - results.t_start
     @user_info "MBRRecoverySearch done — pids=$(results.n_donor_pids) " *
                "cells_attempted=$(results.n_cells_attempted) " *
                "cells_emitted=$(results.n_cells_emitted) " *
-               "elapsed=$(round(results.elapsed_sec, digits=2))s"
+               "extraction_elapsed=$(round(time() - results.t_start, digits=2))s"
+
+    # V1.5: score the emitted recovery seeds with the paired-counterfactual
+    # recovery FTR and report the candidates → passing → <1% FDR funnel.
+    run_recovery_ftr!(search_context, results)
+
+    results.elapsed_sec = time() - results.t_start
     return nothing
 end

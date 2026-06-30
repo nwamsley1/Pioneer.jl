@@ -34,25 +34,25 @@ struct ReceiverExtraction
 end
 
 """
-    compute_seed_mbr_features(receiver, donor, irt_pred, fragment_keys) -> NamedTuple
+    compute_seed_mbr_features(receiver, donor, irt_pred, fragment_keys, recipient_pid) -> NamedTuple
 
-Computes the seven MBR_*_true features + MBR_is_missing_true (= false) for a
-recovered seed. Receiver and donor share the same precursor_idx, so the
-Hellinger fragment-key lookup gets the same pid both sides.
+Computes the seven MBR_* features + MBR_is_missing (= false) for one
+(receiver, donor) pair. `recipient_pid` is the recovery seed's own precursor;
+`donor.precursor_idx` equals it for the genuine cross-file donor (the _true
+case) but differs for a counterfactual partner (the _false case), which is why
+the Hellinger fragment-key lookup takes both pids explicitly.
 
-`irt_pred` is the library iRT for the shared pid. It cancels in
-`MBR_best_irt_diff_true` because (irt_pred − receiver.irt_obs) −
-(irt_pred − donor.irt_obs) = donor.irt_obs − receiver.irt_obs, but we
-keep the same formula shape to mirror the existing semantics exactly.
+The returned NamedTuple uses the `*_true` field names regardless of which donor
+was passed; the caller maps them to `_true` or `_false` columns. `irt_pred` is
+the library iRT of `recipient_pid`.
 """
 function compute_seed_mbr_features(
     receiver::ReceiverExtraction,
     donor::_MBRDonorEntry,
     irt_pred::Float32,
     fragment_keys::_MBRFragmentAnnotationKeys,
+    recipient_pid::UInt32,
 )
-    pid = donor.precursor_idx
-
     # MBR_max_pair_prob_true = donor's pass-1 LightGBM trace_prob
     max_pair_prob = donor.trace_prob
 
@@ -80,12 +80,15 @@ function compute_seed_mbr_features(
 
     # MBR_smoothed_frag_hellinger_true: Hellinger on sqrt-L1-normalized
     # top-8 fragment intensities, matching ranks via library fragment keys
+    # recipient_pid is the recovery seed's own pid; donor.precursor_idx equals it
+    # for the genuine (_true) donor but differs for a counterfactual (_false)
+    # partner, so the two pids are passed explicitly.
     smoothed_frag_hellinger = _mbr_smoothed_spectrum_hellinger_from_sqrt(
         receiver.smoothed_frag_sqrt,
         donor.smoothed_frag_sqrt,
         fragment_keys,
-        pid,         # recipient_pid
-        pid,         # donor_pid (same)
+        recipient_pid,
+        donor.precursor_idx,
     )
 
     return (

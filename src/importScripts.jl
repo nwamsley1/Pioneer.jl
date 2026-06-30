@@ -325,6 +325,7 @@ function importScripts()
             "sidecar.jl",
             "mbr_features.jl",
             "extraction.jl",
+            "recovery_ftr.jl",
             "MBRRecoverySearch.jl",
         ]
     )
