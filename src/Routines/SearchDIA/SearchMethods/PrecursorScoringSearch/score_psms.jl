@@ -254,7 +254,9 @@ function _score_precursor_isotope_traces_mbr(
             donor_dict,
             cf_partner_pools,
             fragment_keys,
-            normal_candidate_result.prob_thresh,
+            normal_candidate_result.prob_thresh;
+            lod_log2_weight_by_file = normal_prepass.lod_log2_weight_by_file,
+            lod_log2_weight_global = normal_prepass.lod_log2_weight_global,
         )
         if nrow(rescue_psms) > 0
             psms = vcat(psms, rescue_psms; cols = :union)

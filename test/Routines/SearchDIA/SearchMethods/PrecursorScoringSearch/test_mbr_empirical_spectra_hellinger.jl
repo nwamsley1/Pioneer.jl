@@ -72,6 +72,7 @@ function _mbr_empirical_main_table(;
         frag6_smoothed_intensity = zeros(Float32, n),
         frag7_smoothed_intensity = zeros(Float32, n),
         frag8_smoothed_intensity = zeros(Float32, n),
+        smoothed_2d_shadow_hellinger = zeros(Float32, n),
     )
     main_pep === nothing || (df[!, :main_pep] = Float32.(main_pep))
     return df
@@ -222,7 +223,9 @@ end
             donor_dict,
             partner_pools,
             fragment_keys,
-            0.90f0,
+            0.90f0;
+            lod_log2_weight_by_file = Dict(UInt32(1) => 0.0f0),
+            lod_log2_weight_global = 0.0f0,
         )
 
         @test nrow(candidates) == 1

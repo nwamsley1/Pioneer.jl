@@ -39,6 +39,7 @@ function _test_mbr_donor(
         0.1f0,
         n_scans,
         Pioneer.MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT,
+        0.0f0,
         file_idx,
         false,
     )
@@ -174,6 +175,7 @@ end
         Float32[11, 11, 11, 11, 11],
         nothing,
         Float32[2, 3, 4, 5, 6],
+        Float32[0.2, 0.3, 0.4, 0.5, 0.1],
         ntuple(_ -> zeros(Float32, 5), 8),
         UInt32[10, 10, 20, 30, 40],
         "unit-test",
@@ -185,6 +187,7 @@ end
     @test [entry.ms_file_idx for entry in entries] == UInt32[40, 10]
     @test [entry.trace_prob for entry in entries] == Float32[0.98, 0.95]
     @test [entry.n_scans for entry in entries] == Float32[6, 2]
+    @test [entry.library_hellinger for entry in entries] == Float32[0.1, 0.2]
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(40)).ms_file_idx == UInt32(10)
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).ms_file_idx == UInt32(40)
 end
@@ -205,6 +208,7 @@ end
         Float32[11, 11, 11, 11, 11],
         nothing,
         Float32[2, 3, 4, 5, 6],
+        Float32[0.1, 0.2, 0.3, 0.4, 0.5],
         ntuple(_ -> zeros(Float32, 5), 8),
         UInt32[10, 20, 30, 40, 50],
         "unit-test";

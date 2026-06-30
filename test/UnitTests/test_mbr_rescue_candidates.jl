@@ -50,6 +50,18 @@ end
               Bool[true, false, false, false, false, false, false, false]
         @test Pioneer._mbr_transfer_training_mask(positive_top, target_top) ==
               Bool[true, false, true, true, true, true, true, true]
+
+        scores_double = Float32[1.0; collect(range(0.99f0, 0.5f0; length=40)); zeros(Float32, 41)]
+        eval_labels = Bool[false; trues(40); falses(41)]
+        target_top = Bool[false; trues(40)]
+        metrics = Pioneer._mbr_transfer_iteration_metrics(
+            scores_double,
+            eval_labels,
+            target_top,
+            41;
+            ftr_threshold = 1.0f0,
+        )
+        @test !metrics.positive_top[41]
     end
 
     @testset "FTR includes MBR scan-count comparison features" begin
@@ -64,8 +76,15 @@ end
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_log2_weight_lod_ratio in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_irt_diff_worst_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_best_irt_diff_worst_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_donor_library_hellinger_worst_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin
@@ -103,17 +122,18 @@ end
                 :irt_obs => Float32[9, 29],
                 :log_by_ratio_m0 => Float16[0.5, 0.2],
                 :n_scans => Float32[6, 2],
+                :smoothed_2d_shadow_hellinger => Float32[0.12, 0.22],
                 smoothed_cols...,
             ))
             donor_sqrt = ntuple(_ -> sqrt(1.0f0 / 8.0f0), 8)
             donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
                 UInt32(1) => [Pioneer._MBRDonorEntry(
                     0.95f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
-                    0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
+                    0.1f0, 4.0f0, donor_sqrt, 0.12f0, UInt32(2), false,
                 )],
                 UInt32(2) => [Pioneer._MBRDonorEntry(
                     0.94f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
-                    0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
+                    0.3f0, 3.0f0, donor_sqrt, 0.22f0, UInt32(2), false,
                 )],
             )
             pool = (pids = UInt32[2], irts = Float32[10])
@@ -135,7 +155,9 @@ end
                 donor_dict,
                 partner_pools,
                 fragment_keys,
-                0.90f0,
+                0.90f0;
+                lod_log2_weight_by_file = Dict(UInt32(1) => Float32(log2(10.0f0))),
+                lod_log2_weight_global = Float32(log2(10.0f0)),
             )
 
             @test !isfile(rescue_path * Pioneer.PASS1_SIDECAR_SUFFIX)
@@ -267,6 +289,7 @@ end
                 :irt_obs => Float32[9, 19, 29],
                 :log_by_ratio_m0 => Float16[0.5, 0.2, 0.7],
                 :n_scans => Float32[7, 3, 9],
+                :smoothed_2d_shadow_hellinger => Float32[0.05, 0.20, 0.01],
                 smoothed_cols...,
             ))
             Pioneer.writeArrow(normal_path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
@@ -275,27 +298,31 @@ end
                 trace_prob_prepass = Float32[0.80, 0.95, 0.99],
                 trace_prob_infold = Float32[0.81, 0.96, 0.995],
             ))
+            computed_prepass = Pioneer._normal_mbr_prepass_qvals_and_threshold([normal_path])
+            @test computed_prepass.lod_log2_weight_by_file[UInt32(1)] == Float32(log2(9.0f0))
+            @test computed_prepass.lod_log2_weight_global == Float32(log2(9.0f0))
+
             donor_sqrt = ntuple(_ -> sqrt(1.0f0 / 8.0f0), 8)
             worst_donor_sqrt = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
             donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
                 UInt32(1) => [
                     Pioneer._MBRDonorEntry(
                         0.99f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
-                        0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
+                        0.1f0, 4.0f0, donor_sqrt, 0.11f0, UInt32(2), false,
                     ),
                     Pioneer._MBRDonorEntry(
                         0.98f0, UInt32(1), 4.0f0, 1.0f0, 0.4f0, 8.2f0,
-                        0.2f0, 2.0f0, worst_donor_sqrt, UInt32(3), false,
+                        0.2f0, 2.0f0, worst_donor_sqrt, 0.33f0, UInt32(3), false,
                     ),
                 ],
                 UInt32(2) => [
                     Pioneer._MBRDonorEntry(
                         0.99f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
-                        0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
+                        0.3f0, 3.0f0, donor_sqrt, 0.22f0, UInt32(2), false,
                     ),
                     Pioneer._MBRDonorEntry(
                         0.98f0, UInt32(2), 2.0f0, 0.5f0, 0.6f0, 8.1f0,
-                        0.4f0, 1.0f0, worst_donor_sqrt, UInt32(3), false,
+                        0.4f0, 1.0f0, worst_donor_sqrt, 0.44f0, UInt32(3), false,
                     ),
                 ],
             )
@@ -321,6 +348,8 @@ end
                 qvals = Float32[0.02, 0.0, 0.0],
                 row_counts = Int[3],
                 prob_thresh = 0.95f0,
+                lod_log2_weight_by_file = Dict(UInt32(1) => Float32(log2(9.0f0))),
+                lod_log2_weight_global = Float32(log2(9.0f0)),
             )
 
             result = Pioneer.load_normal_mbr_candidate_slim_dataframe(
@@ -349,7 +378,9 @@ end
             @test result.candidates.MBR_abs_n_scans_diff_false == Float32[4]
             @test result.candidates.MBR_abs_n_scans_diff_worst_true[1] == Float32(5)
             @test result.candidates.MBR_abs_n_scans_diff_worst_false[1] == Float32(6)
-            @test result.candidates.MBR_log2_weight[1] == Float32(log2(8.0f0))
+            @test isapprox(result.candidates.MBR_best_irt_diff_worst_true[1], 0.6f0; atol = 1.0f-6)
+            @test isapprox(result.candidates.MBR_best_irt_diff_worst_false[1], 0.4f0; atol = 1.0f-6)
+            @test result.candidates.MBR_log2_weight_lod_ratio[1] == Float32(log2(8.0f0) - log2(9.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_true[1] == Float32(log2(8.0f0 / 4.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_false[1] == Float32(log2(8.0f0 / 2.0f0))
             @test result.candidates.MBR_log2_explained_ratio_worst_true[1] == Float32(3.0f0 - 1.0f0)
@@ -358,6 +389,10 @@ end
                   result.candidates.MBR_smoothed_frag_hellinger_true[1]
             @test result.candidates.MBR_smoothed_frag_hellinger_worst_false[1] >
                   result.candidates.MBR_smoothed_frag_hellinger_false[1]
+            @test result.candidates.MBR_donor_library_hellinger_true == Float32[0.11]
+            @test result.candidates.MBR_donor_library_hellinger_false == Float32[0.22]
+            @test result.candidates.MBR_donor_library_hellinger_worst_true == Float32[0.33]
+            @test result.candidates.MBR_donor_library_hellinger_worst_false == Float32[0.44]
             @test isapprox(
                 result.candidates.MBR_log2_n_scans_ratio_true[1],
                 Float32(log2((7.0f0 + 1.0f0) / (4.0f0 + 1.0f0)));

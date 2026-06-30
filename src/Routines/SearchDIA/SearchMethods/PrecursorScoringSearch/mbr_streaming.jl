@@ -51,12 +51,14 @@ struct _MBRDonorEntry
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
     n_scans::Float32
     smoothed_frag_sqrt::NTuple{8, Float32}
+    library_hellinger::Float32
     ms_file_idx::UInt32
     is_decoy::Bool
 end
 
 const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR = 2
+const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 
 struct _MBRFragmentAnnotationKeys
@@ -177,14 +179,15 @@ end
 # it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0,
-    :n_scans, :ms_file_idx, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
+    :n_scans, :ms_file_idx, :smoothed_2d_shadow_hellinger,
+    SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
 # check-keys (asserted equal at downstream join time).
 const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_max_pair_prob_true,        :MBR_max_pair_prob_false,
-    :MBR_log2_weight,
+    :MBR_log2_weight_lod_ratio,
     :MBR_log2_weight_ratio_true,    :MBR_log2_weight_ratio_false,
     :MBR_log2_weight_ratio_worst_true,
     :MBR_log2_weight_ratio_worst_false,
@@ -196,12 +199,17 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_abs_n_scans_diff_worst_false,
     :MBR_log2_n_scans_ratio_true,   :MBR_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
+    :MBR_best_irt_diff_worst_true,  :MBR_best_irt_diff_worst_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_smoothed_frag_hellinger_true,
     :MBR_smoothed_frag_hellinger_false,
     :MBR_smoothed_frag_hellinger_worst_true,
     :MBR_smoothed_frag_hellinger_worst_false,
+    :MBR_donor_library_hellinger_true,
+    :MBR_donor_library_hellinger_false,
+    :MBR_donor_library_hellinger_worst_true,
+    :MBR_donor_library_hellinger_worst_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -274,7 +282,7 @@ function _empty_mbr_rescue_candidate_slim_columns()
         _mbr_rescue_row_idx = UInt32[],
         MBR_max_pair_prob_true = Float32[],
         MBR_max_pair_prob_false = Float32[],
-        MBR_log2_weight = Float32[],
+        MBR_log2_weight_lod_ratio = Float32[],
         MBR_log2_weight_ratio_true = Float32[],
         MBR_log2_weight_ratio_false = Float32[],
         MBR_log2_weight_ratio_worst_true = Float32[],
@@ -291,6 +299,8 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_log2_n_scans_ratio_false = Float32[],
         MBR_best_irt_diff_true = Float32[],
         MBR_best_irt_diff_false = Float32[],
+        MBR_best_irt_diff_worst_true = Float32[],
+        MBR_best_irt_diff_worst_false = Float32[],
         MBR_is_missing_true = Bool[],
         MBR_is_missing_false = Bool[],
         MBR_log_by_diff_true = Float32[],
@@ -299,6 +309,10 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_smoothed_frag_hellinger_false = Float32[],
         MBR_smoothed_frag_hellinger_worst_true = Float32[],
         MBR_smoothed_frag_hellinger_worst_false = Float32[],
+        MBR_donor_library_hellinger_true = Float32[],
+        MBR_donor_library_hellinger_false = Float32[],
+        MBR_donor_library_hellinger_worst_true = Float32[],
+        MBR_donor_library_hellinger_worst_false = Float32[],
     )
     pass1_cols = NamedTuple{Tuple(ADVANCED_FEATURE_SET)}(
         ntuple(_ -> Float32[], length(ADVANCED_FEATURE_SET))
@@ -337,9 +351,16 @@ end
     return log2(weight / donor.weight)
 end
 
-@inline function _mbr_log2_weight(weight::Float32)
+@inline function _mbr_log2_weight_lod_ratio(
+    weight::Float32,
+    ms_file_idx::UInt32,
+    lod_log2_weight_by_file::Dict{UInt32, Float32},
+    lod_log2_weight_global::Float32,
+)
     weight > 0.0f0 || return -1.0f0
-    return log2(weight)
+    lod_log2_weight = get(lod_log2_weight_by_file, ms_file_idx, lod_log2_weight_global)
+    isfinite(lod_log2_weight) || return -1.0f0
+    return log2(weight) - lod_log2_weight
 end
 
 @inline function _mbr_log2_explained_ratio(
@@ -358,6 +379,14 @@ end
     return abs(n_scans - donor.n_scans)
 end
 
+@inline function _mbr_best_irt_diff(
+    irt_residual::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor === nothing && return -1.0f0
+    return abs(irt_residual - donor.irt_residual)
+end
+
 @inline function _mbr_smoothed_spectrum_hellinger_from_donor(
     recipient_sqrt::NTuple{8, Float32},
     donor::Union{Nothing, _MBRDonorEntry},
@@ -372,6 +401,11 @@ end
         recipient_pid,
         donor.precursor_idx,
     )
+end
+
+@inline function _mbr_donor_library_hellinger(donor::Union{Nothing, _MBRDonorEntry})
+    donor === nothing && return 1.0f0
+    return donor.library_hellinger
 end
 
 function _append_mbr_candidate_row!(
@@ -390,6 +424,7 @@ function _append_mbr_candidate_row!(
     main_search_prob::Float32,
     cross_run_prob::Float32,
     weight::Float32,
+    log2_weight_lod_ratio::Float32,
     log2_intensity_explained::Float32,
     irt_residual::Float32,
     log_by_ratio::Float32,
@@ -449,7 +484,7 @@ function _append_mbr_candidate_row!(
     push!(out._mbr_rescue_row_idx, rescue_row_idx)
     push!(out.MBR_max_pair_prob_true, donor_t.trace_prob)
     push!(out.MBR_max_pair_prob_false, donor_f.trace_prob)
-    push!(out.MBR_log2_weight, _mbr_log2_weight(weight))
+    push!(out.MBR_log2_weight_lod_ratio, log2_weight_lod_ratio)
     push!(out.MBR_log2_weight_ratio_true, log2_weight_ratio_t)
     push!(out.MBR_log2_weight_ratio_false, log2_weight_ratio_f)
     push!(out.MBR_log2_weight_ratio_worst_true, log2_weight_ratio_worst_t)
@@ -466,6 +501,8 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_log2_n_scans_ratio_false, log2((n_scans + 1.0f0) / (donor_f.n_scans + 1.0f0)))
     push!(out.MBR_best_irt_diff_true, abs(irt_residual - donor_t.irt_residual))
     push!(out.MBR_best_irt_diff_false, abs(irt_residual - donor_f.irt_residual))
+    push!(out.MBR_best_irt_diff_worst_true, _mbr_best_irt_diff(irt_residual, donor_worst_t))
+    push!(out.MBR_best_irt_diff_worst_false, _mbr_best_irt_diff(irt_residual, donor_worst_f))
     push!(out.MBR_is_missing_true, false)
     push!(out.MBR_is_missing_false, false)
     push!(out.MBR_log_by_diff_true, log_by_ratio - donor_t.log_by_ratio)
@@ -474,6 +511,10 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_smoothed_frag_hellinger_false, hellinger_f)
     push!(out.MBR_smoothed_frag_hellinger_worst_true, hellinger_worst_t)
     push!(out.MBR_smoothed_frag_hellinger_worst_false, hellinger_worst_f)
+    push!(out.MBR_donor_library_hellinger_true, donor_t.library_hellinger)
+    push!(out.MBR_donor_library_hellinger_false, donor_f.library_hellinger)
+    push!(out.MBR_donor_library_hellinger_worst_true, _mbr_donor_library_hellinger(donor_worst_t))
+    push!(out.MBR_donor_library_hellinger_worst_false, _mbr_donor_library_hellinger(donor_worst_f))
     return nothing
 end
 
@@ -601,6 +642,7 @@ end
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
     nscans_c::AbstractVector,
+    library_hellinger_c::AbstractVector{Float32},
     smoothed_frag_cols,
     fidx_c::AbstractVector{UInt32},
     side_path::String,
@@ -621,6 +663,7 @@ end
             has_logby ? Float32(logby_c[i]) : 0f0,
             Float32(nscans_c[i]),
             _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
+            Float32(library_hellinger_c[i]),
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -669,6 +712,7 @@ function build_mbr_donor_dict_streaming_with_pass1(
             main.irt_pred, main.irt_obs,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             main.n_scans,
+            main.smoothed_2d_shadow_hellinger,
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
             main.ms_file_idx,
             side_path,
@@ -798,6 +842,8 @@ function _normal_mbr_prepass_qvals_and_threshold(
 )
     scores = Float32[]
     targets = Bool[]
+    weights = Float32[]
+    file_indices = UInt32[]
     row_counts = Int[]
 
     for main_path in file_paths
@@ -815,6 +861,8 @@ function _normal_mbr_prepass_qvals_and_threshold(
                 error("Pass-1 sidecar misaligned at row $i of $pass1_path")
             push!(scores, Float32(pass1.trace_prob_prepass[i]))
             push!(targets, Bool(main.target[i]))
+            push!(weights, Float32(main.weight[i]))
+            push!(file_indices, UInt32(main.ms_file_idx[i]))
         end
     end
 
@@ -824,12 +872,36 @@ function _normal_mbr_prepass_qvals_and_threshold(
     end
     donor_target_pass = (qvals .<= donor_q_threshold) .& targets
     prob_thresh = any(donor_target_pass) ? minimum(scores[donor_target_pass]) : Float32(Inf)
+
+    lod_samples_by_file = Dict{UInt32, Vector{Float32}}()
+    lod_samples_global = Float32[]
+    @inbounds for i in eachindex(scores)
+        donor_target_pass[i] || continue
+        weights[i] > 0.0f0 || continue
+        log2_weight = log2(weights[i])
+        push!(get!(() -> Float32[], lod_samples_by_file, file_indices[i]), log2_weight)
+        push!(lod_samples_global, log2_weight)
+    end
+    lod_log2_weight_by_file = Dict{UInt32, Float32}()
+    for (file_idx, samples) in lod_samples_by_file
+        lod_log2_weight_by_file[file_idx] = _mbr_lod_log2_weight!(samples)
+    end
+
     return (
         scores = scores,
         qvals = qvals,
         row_counts = row_counts,
         prob_thresh = prob_thresh,
+        lod_log2_weight_by_file = lod_log2_weight_by_file,
+        lod_log2_weight_global = _mbr_lod_log2_weight!(lod_samples_global),
     )
+end
+
+function _mbr_lod_log2_weight!(samples::Vector{Float32})
+    isempty(samples) && return NaN32
+    sort!(samples)
+    idx = clamp(ceil(Int, Float64(MBR_LOD_WEIGHT_QUANTILE) * length(samples)), 1, length(samples))
+    return samples[idx]
 end
 
 function load_normal_mbr_candidate_slim_dataframe(
@@ -887,6 +959,7 @@ function load_normal_mbr_candidate_slim_dataframe(
             donor_worst_f = _worst_donor_for_pid(donor_dict, donor_f.precursor_idx, ms_file_idx, prepass.prob_thresh)
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            weight = Float32(weight_v[i])
             _append_mbr_candidate_row!(
                 out,
                 UInt32(file_idx),
@@ -902,7 +975,13 @@ function load_normal_mbr_candidate_slim_dataframe(
                 Float32(pass1.trace_prob_prepass[i]),
                 _mbr_main_pep_confidence(main.main_pep[i]),
                 Float32(pass1.trace_prob_infold[i]),
-                Float32(weight_v[i]),
+                weight,
+                _mbr_log2_weight_lod_ratio(
+                    weight,
+                    ms_file_idx,
+                    prepass.lod_log2_weight_by_file,
+                    prepass.lod_log2_weight_global,
+                ),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
@@ -932,6 +1011,8 @@ function load_mbr_rescue_candidate_slim_dataframe(
     partner_pools::_CounterfactualPartnerPools,
     fragment_keys::_MBRFragmentAnnotationKeys,
     prob_thresh::Float32;
+    lod_log2_weight_by_file::Dict{UInt32, Float32},
+    lod_log2_weight_global::Float32,
 )
     out = _empty_mbr_rescue_candidate_slim_columns()
     for (file_idx, main_path) in pairs(file_paths)
@@ -972,6 +1053,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             main_search_prob = _mbr_main_pep_confidence(pep_v[i])
+            weight = Float32(weight_v[i])
             _append_mbr_candidate_row!(
                 out,
                 UInt32(0),
@@ -987,7 +1069,13 @@ function load_mbr_rescue_candidate_slim_dataframe(
                 main_search_prob,
                 main_search_prob,
                 0.0f0,
-                Float32(weight_v[i]),
+                weight,
+                _mbr_log2_weight_lod_ratio(
+                    weight,
+                    ms_file_idx,
+                    lod_log2_weight_by_file,
+                    lod_log2_weight_global,
+                ),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
