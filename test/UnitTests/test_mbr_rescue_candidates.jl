@@ -15,15 +15,15 @@ end
 
 @testset "MBR rescue candidate helpers" begin
     @testset "main-search PEP partition bounds MBR rescue candidates" begin
-        @test Pioneer.MAIN_MBR_RESCUE_PEP_MAX == 0.98f0
+        @test Pioneer.MAIN_MBR_RESCUE_PEP_MAX == 0.99f0
 
-        peps = Float32[0.0, 0.9, 0.9001, 0.98, 1.0]
+        peps = Float32[0.0, 0.9, 0.9001, 0.98, 0.99, 1.0]
 
-        part = Pioneer._mainsearch_pep_partition(peps, 0.9f0, 0.98f0)
+        part = Pioneer._mainsearch_pep_partition(peps, 0.9f0, 0.99f0)
 
-        @test part.keep_mask == Bool[true, true, false, false, false]
-        @test part.rescue_mask == Bool[false, false, true, true, false]
-        @test part.discard_mask == Bool[false, false, false, false, true]
+        @test part.keep_mask == Bool[true, true, false, false, false, false]
+        @test part.rescue_mask == Bool[false, false, true, true, true, false]
+        @test part.discard_mask == Bool[false, false, false, false, false, true]
     end
 
     @testset "raw RT MBR features are no longer emitted or modeled" begin
@@ -77,12 +77,10 @@ end
         @test :MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_log2_weight_lod_ratio in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_best_irt_diff_worst_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_best_irt_diff_worst_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_donor_library_hellinger_worst_false in Pioneer.FTR_FEATURES_F_FALSE
     end
@@ -378,8 +376,6 @@ end
             @test result.candidates.MBR_abs_n_scans_diff_false == Float32[4]
             @test result.candidates.MBR_abs_n_scans_diff_worst_true[1] == Float32(5)
             @test result.candidates.MBR_abs_n_scans_diff_worst_false[1] == Float32(6)
-            @test isapprox(result.candidates.MBR_best_irt_diff_worst_true[1], 0.6f0; atol = 1.0f-6)
-            @test isapprox(result.candidates.MBR_best_irt_diff_worst_false[1], 0.4f0; atol = 1.0f-6)
             @test result.candidates.MBR_log2_weight_lod_ratio[1] == Float32(log2(8.0f0) - log2(9.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_true[1] == Float32(log2(8.0f0 / 4.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_false[1] == Float32(log2(8.0f0 / 2.0f0))

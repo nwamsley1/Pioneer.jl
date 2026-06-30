@@ -199,7 +199,6 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_abs_n_scans_diff_worst_false,
     :MBR_log2_n_scans_ratio_true,   :MBR_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
-    :MBR_best_irt_diff_worst_true,  :MBR_best_irt_diff_worst_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_smoothed_frag_hellinger_true,
@@ -299,8 +298,6 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_log2_n_scans_ratio_false = Float32[],
         MBR_best_irt_diff_true = Float32[],
         MBR_best_irt_diff_false = Float32[],
-        MBR_best_irt_diff_worst_true = Float32[],
-        MBR_best_irt_diff_worst_false = Float32[],
         MBR_is_missing_true = Bool[],
         MBR_is_missing_false = Bool[],
         MBR_log_by_diff_true = Float32[],
@@ -377,14 +374,6 @@ end
 )
     donor === nothing && return -1.0f0
     return abs(n_scans - donor.n_scans)
-end
-
-@inline function _mbr_best_irt_diff(
-    irt_residual::Float32,
-    donor::Union{Nothing, _MBRDonorEntry},
-)
-    donor === nothing && return -1.0f0
-    return abs(irt_residual - donor.irt_residual)
 end
 
 @inline function _mbr_smoothed_spectrum_hellinger_from_donor(
@@ -501,8 +490,6 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_log2_n_scans_ratio_false, log2((n_scans + 1.0f0) / (donor_f.n_scans + 1.0f0)))
     push!(out.MBR_best_irt_diff_true, abs(irt_residual - donor_t.irt_residual))
     push!(out.MBR_best_irt_diff_false, abs(irt_residual - donor_f.irt_residual))
-    push!(out.MBR_best_irt_diff_worst_true, _mbr_best_irt_diff(irt_residual, donor_worst_t))
-    push!(out.MBR_best_irt_diff_worst_false, _mbr_best_irt_diff(irt_residual, donor_worst_f))
     push!(out.MBR_is_missing_true, false)
     push!(out.MBR_is_missing_false, false)
     push!(out.MBR_log_by_diff_true, log_by_ratio - donor_t.log_by_ratio)
