@@ -1,5 +1,25 @@
 using Test
 using Pioneer
+using Arrow
+using DataFrames
+
+struct MBRChargeMockPrecursors <: Pioneer.LibraryPrecursors
+    mz::Vector{Float32}
+    irt::Vector{Float32}
+    charge::Vector{UInt8}
+end
+
+Pioneer.getMz(p::MBRChargeMockPrecursors) = p.mz
+Pioneer.getIrt(p::MBRChargeMockPrecursors) = p.irt
+Pioneer.getCharge(p::MBRChargeMockPrecursors) = p.charge
+
+function _mbr_pairing_table(; precursor_idx, target, cv_fold)
+    return DataFrame(
+        precursor_idx = UInt32.(precursor_idx),
+        target = Bool.(target),
+        cv_fold = UInt8.(cv_fold),
+    )
+end
 
 function _test_mbr_donor(
     prob::Float32,
@@ -27,6 +47,7 @@ function _test_partner_pools_for_receiver()
     target_by_pid[1] = true
     fold_by_pid = zeros(UInt8, 11)
     mz_bin_by_pid = ones(UInt8, 11)
+    charge_by_pid = fill(UInt8(2), 11)
     irt_by_pid = zeros(Float32, 11)
     irt_by_pid[1] = 10.0f0
 
@@ -37,11 +58,55 @@ function _test_partner_pools_for_receiver()
         target_by_pid,
         fold_by_pid,
         mz_bin_by_pid,
+        charge_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => decoy_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
-        decoy_pool,
+        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => decoy_pool),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => decoy_pool, (1, 2) => empty_pool),
+        Dict{Int, Pioneer._IrtPool}(2 => decoy_pool),
     )
+end
+
+@testset "MBR false donor selection requires same precursor charge" begin
+    mktempdir() do dir
+        donor_path = joinpath(dir, "donors.arrow")
+        receiver_path = joinpath(dir, "receiver.arrow")
+        Arrow.write(donor_path, _mbr_pairing_table(
+            precursor_idx = [2, 3],
+            target = [false, false],
+            cv_fold = [0, 0],
+        ))
+        Arrow.write(receiver_path, _mbr_pairing_table(
+            precursor_idx = [1],
+            target = [true],
+            cv_fold = [0],
+        ))
+
+        precursors = MBRChargeMockPrecursors(
+            Float32[500.0, 500.0, 500.1],
+            Float32[10.0, 10.01, 10.20],
+            UInt8[2, 3, 2],
+        )
+        partner_pools = Pioneer.build_counterfactual_partner_pools(
+            [donor_path],
+            precursors;
+            receiver_file_paths = [receiver_path],
+        )
+        donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+            UInt32(2) => [_test_mbr_donor(0.90f0, UInt32(20), UInt32(2))],
+            UInt32(3) => [_test_mbr_donor(0.80f0, UInt32(20), UInt32(3))],
+        )
+
+        donor = Pioneer._false_donor_for_pid(
+            Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+            donor_dict,
+            partner_pools,
+            UInt32(1),
+            UInt32(10),
+        )
+
+        @test donor !== nothing
+        @test donor.precursor_idx == UInt32(3)
+    end
 end
 
 @testset "MBR donor dictionary keeps top two distinct-file donors" begin
@@ -83,16 +148,18 @@ end
     target_by_pid = trues(2)
     fold_by_pid = zeros(UInt8, 2)
     mz_bin_by_pid = ones(UInt8, 2)
+    charge_by_pid = fill(UInt8(2), 2)
     irt_by_pid = Float32[10.0, 10.01]
     pool = (pids = UInt32[1, 2], irts = Float32[10.0, 10.01])
     partner_pools = Pioneer._CounterfactualPartnerPools(
         target_by_pid,
         fold_by_pid,
         mz_bin_by_pid,
+        charge_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => pool),
-        Dict{Int, Pioneer._IrtPool}(0 => pool, 1 => Pioneer._empty_pool()),
-        pool,
+        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => pool),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => pool),
+        Dict{Int, Pioneer._IrtPool}(2 => pool),
     )
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
@@ -114,16 +181,18 @@ end
     target_by_pid = Bool[true, true, false]
     fold_by_pid = zeros(UInt8, 3)
     mz_bin_by_pid = ones(UInt8, 3)
+    charge_by_pid = fill(UInt8(2), 3)
     irt_by_pid = Float32[10.0, 10.01, 10.02]
     mixed_pool = (pids = UInt32[2, 3], irts = Float32[10.01, 10.02])
     partner_pools = Pioneer._CounterfactualPartnerPools(
         target_by_pid,
         fold_by_pid,
         mz_bin_by_pid,
+        charge_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => mixed_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => mixed_pool, 1 => Pioneer._empty_pool()),
-        mixed_pool,
+        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => mixed_pool),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => mixed_pool),
+        Dict{Int, Pioneer._IrtPool}(2 => mixed_pool),
     )
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
@@ -170,6 +239,7 @@ end
     target_by_pid[1] = true
     fold_by_pid = zeros(UInt8, 4)
     mz_bin_by_pid = ones(UInt8, 4)
+    charge_by_pid = fill(UInt8(2), 4)
     irt_by_pid = zeros(Float32, 4)
     irt_by_pid[1] = 10.0f0
     decoy_pool = (pids = UInt32[2, 3, 4], irts = Float32[10.01, 10.20, 13.0])
@@ -178,10 +248,11 @@ end
         target_by_pid,
         fold_by_pid,
         mz_bin_by_pid,
+        charge_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => decoy_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
-        decoy_pool,
+        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => decoy_pool),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => decoy_pool, (1, 2) => empty_pool),
+        Dict{Int, Pioneer._IrtPool}(2 => decoy_pool),
     )
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
@@ -204,18 +275,20 @@ end
     target_by_pid[1] = true
     fold_by_pid = zeros(UInt8, 3)
     mz_bin_by_pid = ones(UInt8, 3)
+    charge_by_pid = fill(UInt8(2), 3)
     irt_by_pid = zeros(Float32, 3)
     irt_by_pid[1] = 10.0f0
     primary_pool = (pids = UInt32[], irts = Float32[])
-    fold_pool = (pids = UInt32[2, 3], irts = Float32[10.01, 10.20])
+    fold_charge_pool = (pids = UInt32[2, 3], irts = Float32[10.01, 10.20])
     partner_pools = Pioneer._CounterfactualPartnerPools(
         target_by_pid,
         fold_by_pid,
         mz_bin_by_pid,
+        charge_by_pid,
         irt_by_pid,
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => primary_pool),
-        Dict{Int, Pioneer._IrtPool}(0 => fold_pool, 1 => primary_pool),
-        fold_pool,
+        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => primary_pool),
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => fold_charge_pool, (1, 2) => primary_pool),
+        Dict{Int, Pioneer._IrtPool}(2 => fold_charge_pool),
     )
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),

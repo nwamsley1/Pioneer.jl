@@ -610,7 +610,8 @@ end
     my_irt = partner_pools.irt_by_pid[pid_idx]
     my_fold = Int(partner_pools.fold_by_pid[pid_idx])
     my_mz = Int(partner_pools.mz_bin_by_pid[pid_idx])
-    pool_key = (my_fold, my_mz)
+    my_charge = Int(partner_pools.charge_by_pid[pid_idx])
+    pool_key = (my_fold, my_mz, my_charge)
 
     donor = _nearest_cross_file_donor(
         donor_dict,
@@ -620,9 +621,21 @@ end
         my_pid,
     )
     donor !== nothing && return donor
-    donor = _nearest_cross_file_donor(donor_dict, partner_pools.fold_pool[my_fold], my_irt, my_file, my_pid)
+    donor = _nearest_cross_file_donor(
+        donor_dict,
+        get(partner_pools.fold_charge_pool, (my_fold, my_charge), _empty_pool()),
+        my_irt,
+        my_file,
+        my_pid,
+    )
     donor !== nothing && return donor
-    return _nearest_cross_file_donor(donor_dict, partner_pools.global_pool, my_irt, my_file, my_pid)
+    return _nearest_cross_file_donor(
+        donor_dict,
+        get(partner_pools.charge_pool, my_charge, _empty_pool()),
+        my_irt,
+        my_file,
+        my_pid,
+    )
 end
 
 @inline function _false_donor_for_pid(
