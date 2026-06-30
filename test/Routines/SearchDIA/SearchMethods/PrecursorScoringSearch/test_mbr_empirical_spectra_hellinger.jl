@@ -135,13 +135,11 @@ end
             receiver_file_paths = [f1, f2, rescue],
         )
         donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
-        hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
 
         donor = Pioneer._false_donor_for_pid(
             Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
             donor_dict,
             partner_pools,
-            hard_indexes,
             UInt32(4),
             UInt32(1),
         )

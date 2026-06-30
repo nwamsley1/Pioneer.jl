@@ -360,7 +360,6 @@ function _score_precursor_isotope_traces_mbr(
     @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
-    hard_counterfactual_indexes = build_mbr_hard_counterfactual_indexes(donor_dict, cf_partner_pools)
 
     # 6. Sparse FTR DataFrame: normal candidates are pre-gated from full
     # Pass-1 q-values + donor availability; rescue candidates use the same
@@ -371,7 +370,6 @@ function _score_precursor_isotope_traces_mbr(
         donor_dict,
         cf_partner_pools,
         fragment_keys;
-        hard_indexes = hard_counterfactual_indexes,
         q_thresh = 0.01f0,
     )
     psms = normal_candidate_result.candidates
@@ -384,7 +382,6 @@ function _score_precursor_isotope_traces_mbr(
             cf_partner_pools,
             fragment_keys,
             normal_candidate_result.prob_thresh,
-            hard_indexes = hard_counterfactual_indexes,
         )
         if nrow(rescue_psms) > 0
             psms = vcat(psms, rescue_psms; cols = :union)
@@ -395,7 +392,6 @@ function _score_precursor_isotope_traces_mbr(
     @debug_l1 "  sparse FTR rows: normal=$(normal_ftr_rows) rescue=$(nrow(rescue_psms))"
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    hard_counterfactual_indexes = nothing
     cf_partner_pools = nothing
     fragment_keys = nothing
     GC.gc()

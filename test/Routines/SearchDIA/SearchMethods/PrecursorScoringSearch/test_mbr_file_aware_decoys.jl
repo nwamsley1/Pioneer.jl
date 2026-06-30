@@ -94,13 +94,41 @@ end
         Dict{Int, Pioneer._IrtPool}(0 => pool, 1 => Pioneer._empty_pool()),
         pool,
     )
-    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
-
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
         donor_dict,
         partner_pools,
-        hard_indexes,
+        UInt32(1),
+        UInt32(10),
+    )
+
+    @test donor !== nothing
+    @test donor.precursor_idx == UInt32(2)
+end
+
+@testset "MBR false donor selection can use either target-decoy class" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+        UInt32(2) => [_test_mbr_donor(0.99f0, UInt32(20), UInt32(2))],
+        UInt32(3) => [_test_mbr_donor(0.30f0, UInt32(20), UInt32(3))],
+    )
+    target_by_pid = Bool[true, true, false]
+    fold_by_pid = zeros(UInt8, 3)
+    mz_bin_by_pid = ones(UInt8, 3)
+    irt_by_pid = Float32[10.0, 10.01, 10.02]
+    mixed_pool = (pids = UInt32[2, 3], irts = Float32[10.01, 10.02])
+    partner_pools = Pioneer._CounterfactualPartnerPools(
+        target_by_pid,
+        fold_by_pid,
+        mz_bin_by_pid,
+        irt_by_pid,
+        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 1) => mixed_pool),
+        Dict{Int, Pioneer._IrtPool}(0 => mixed_pool, 1 => Pioneer._empty_pool()),
+        mixed_pool,
+    )
+    donor = Pioneer._false_donor_for_pid(
+        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+        donor_dict,
+        partner_pools,
         UInt32(1),
         UInt32(10),
     )
@@ -118,12 +146,10 @@ end
 
     cache = Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}()
     partner_pools = _test_partner_pools_for_receiver()
-    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
     donor = Pioneer._false_donor_for_pid(
         cache,
         donor_dict,
         partner_pools,
-        hard_indexes,
         UInt32(1),
         UInt32(10),
     )
@@ -134,7 +160,7 @@ end
     @test haskey(cache, UInt32(1))
 end
 
-@testset "MBR false donor selection prefers highest scoring local counterfactual" begin
+@testset "MBR false donor selection prefers nearest iRT local counterfactual" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
         UInt32(2) => [_test_mbr_donor(0.30f0, UInt32(20))],
         UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(20))],
@@ -157,19 +183,16 @@ end
         Dict{Int, Pioneer._IrtPool}(0 => decoy_pool, 1 => empty_pool),
         decoy_pool,
     )
-    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
-
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
         donor_dict,
         partner_pools,
-        hard_indexes,
         UInt32(1),
         UInt32(10),
     )
 
     @test donor !== nothing
-    @test donor.trace_prob == 0.85f0
+    @test donor.trace_prob == 0.30f0
 end
 
 @testset "MBR false donor fold fallback uses nearest iRT" begin
@@ -194,13 +217,10 @@ end
         Dict{Int, Pioneer._IrtPool}(0 => fold_pool, 1 => primary_pool),
         fold_pool,
     )
-    hard_indexes = Pioneer.build_mbr_hard_counterfactual_indexes(donor_dict, partner_pools)
-
     donor = Pioneer._false_donor_for_pid(
         Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
         donor_dict,
         partner_pools,
-        hard_indexes,
         UInt32(1),
         UInt32(10),
     )

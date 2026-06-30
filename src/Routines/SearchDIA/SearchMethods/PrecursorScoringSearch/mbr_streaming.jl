@@ -56,7 +56,6 @@ end
 
 const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
-const MBR_COUNTERFACTUAL_LOCAL_IRT_WINDOW = 1.0f0
 
 struct _MBRFragmentAnnotationKeys
     keys::Vector{UInt16}
@@ -601,239 +600,9 @@ end
     return nothing
 end
 
-struct _MBRDonorRangeIndex
-    irts::Vector{Float32}
-    pid_to_index::Dict{UInt32, Int}
-    leaf_count::Int
-    best1::Vector{Union{Nothing, _MBRDonorEntry}}
-    best2::Vector{Union{Nothing, _MBRDonorEntry}}
-end
-
-struct _MBRHardCounterfactualIndexes
-    pools::Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}
-end
-
-@inline function _mbr_donor_is_better(a::_MBRDonorEntry, b)
-    b === nothing && return true
-    return a.trace_prob > b.trace_prob ||
-           (a.trace_prob == b.trace_prob && a.precursor_idx < b.precursor_idx)
-end
-
-@inline _mbr_donor_is_better(::Nothing, _) = false
-
-@inline function _mbr_insert_top2(
-    best1::Union{Nothing, _MBRDonorEntry},
-    best2::Union{Nothing, _MBRDonorEntry},
-    donor::_MBRDonorEntry,
-)
-    if best1 !== nothing && donor.ms_file_idx == best1.ms_file_idx
-        _mbr_donor_is_better(donor, best1) && (best1 = donor)
-    elseif best2 !== nothing && donor.ms_file_idx == best2.ms_file_idx
-        _mbr_donor_is_better(donor, best2) && (best2 = donor)
-    elseif _mbr_donor_is_better(donor, best1)
-        best2 = best1
-        best1 = donor
-    elseif _mbr_donor_is_better(donor, best2)
-        best2 = donor
-    end
-    if best1 !== nothing && best2 !== nothing && _mbr_donor_is_better(best2, best1)
-        best1, best2 = best2, best1
-    end
-    return best1, best2
-end
-
-@inline function _mbr_merge_top2!(
-    best1::Vector{Union{Nothing, _MBRDonorEntry}},
-    best2::Vector{Union{Nothing, _MBRDonorEntry}},
-    node::Int,
-    donor,
-)
-    donor === nothing && return nothing
-    best1[node], best2[node] = _mbr_insert_top2(best1[node], best2[node], donor)
-    return nothing
-end
-
-function _build_mbr_donor_range_index(
-    pool::_IrtPool,
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-)
-    n = length(pool.pids)
-    leaf_count = 1
-    while leaf_count < max(n, 1)
-        leaf_count <<= 1
-    end
-    best1 = Vector{Union{Nothing, _MBRDonorEntry}}(undef, 2 * leaf_count)
-    best2 = Vector{Union{Nothing, _MBRDonorEntry}}(undef, 2 * leaf_count)
-    fill!(best1, nothing)
-    fill!(best2, nothing)
-    pid_to_index = Dict{UInt32, Int}()
-
-    @inbounds for pool_idx in 1:n
-        node = leaf_count + pool_idx - 1
-        pid_to_index[pool.pids[pool_idx]] = pool_idx
-        entries = get(donor_dict, pool.pids[pool_idx], nothing)
-        entries === nothing && continue
-        for donor in entries
-            _mbr_merge_top2!(best1, best2, node, donor)
-        end
-    end
-
-    @inbounds for node in (leaf_count - 1):-1:1
-        left = node << 1
-        right = left + 1
-        _mbr_merge_top2!(best1, best2, node, best1[left])
-        _mbr_merge_top2!(best1, best2, node, best2[left])
-        _mbr_merge_top2!(best1, best2, node, best1[right])
-        _mbr_merge_top2!(best1, best2, node, best2[right])
-    end
-
-    return _MBRDonorRangeIndex(pool.irts, pid_to_index, leaf_count, best1, best2)
-end
-
-function build_mbr_hard_counterfactual_indexes(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    partner_pools::_CounterfactualPartnerPools,
-)
-    pools = Dict{Tuple{Int, Int}, _MBRDonorRangeIndex}(
-        key => _build_mbr_donor_range_index(pool, donor_dict)
-        for (key, pool) in partner_pools.pools
-    )
-    return _MBRHardCounterfactualIndexes(pools)
-end
-
-@inline function _best_cross_file_from_range_node(
-    index::_MBRDonorRangeIndex,
-    node::Int,
-    my_file::UInt32,
-)
-    donor = index.best1[node]
-    donor !== nothing && donor.ms_file_idx != my_file && return donor
-    donor = index.best2[node]
-    donor !== nothing && donor.ms_file_idx != my_file && return donor
-    return nothing
-end
-
-@inline function _best_scoring_cross_file_donor_in_range(
-    index::_MBRDonorRangeIndex,
-    first_idx::Int,
-    last_idx::Int,
-    my_file::UInt32,
-)
-    first_idx <= last_idx || return nothing
-
-    left = index.leaf_count + first_idx - 1
-    right = index.leaf_count + last_idx - 1
-    best_donor = nothing
-    @inbounds while left <= right
-        if isodd(left)
-            donor = _best_cross_file_from_range_node(index, left, my_file)
-            donor !== nothing && _mbr_donor_is_better(donor, best_donor) && (best_donor = donor)
-            left += 1
-        end
-        if iseven(right)
-            donor = _best_cross_file_from_range_node(index, right, my_file)
-            donor !== nothing && _mbr_donor_is_better(donor, best_donor) && (best_donor = donor)
-            right -= 1
-        end
-        left >>= 1
-        right >>= 1
-    end
-    return best_donor
-end
-
-@inline function _best_scoring_cross_file_donor_in_irt_window(
-    index::_MBRDonorRangeIndex,
-    target_irt::Float32,
-    my_file::UInt32,
-    my_pid::UInt32,
-    irt_window::Float32,
-)
-    n = length(index.irts)
-    n == 0 && return nothing
-
-    first_idx = searchsortedfirst(index.irts, target_irt - irt_window)
-    last_idx = searchsortedlast(index.irts, target_irt + irt_window)
-    first_idx <= last_idx || return nothing
-
-    self_idx = get(index.pid_to_index, my_pid, 0)
-    if first_idx <= self_idx <= last_idx
-        left_donor = _best_scoring_cross_file_donor_in_range(index, first_idx, self_idx - 1, my_file)
-        right_donor = _best_scoring_cross_file_donor_in_range(index, self_idx + 1, last_idx, my_file)
-        return _mbr_donor_is_better(right_donor, left_donor) ? right_donor : left_donor
-    end
-    return _best_scoring_cross_file_donor_in_range(index, first_idx, last_idx, my_file)
-end
-
-@inline function _best_scoring_cross_file_donor_in_irt_window(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    pool::_IrtPool,
-    target_irt::Float32,
-    my_file::UInt32,
-    my_pid::UInt32,
-    irt_window::Float32,
-)
-    n = length(pool.irts)
-    n == 0 && return nothing
-
-    first_idx = searchsortedfirst(pool.irts, target_irt - irt_window)
-    last_idx = searchsortedlast(pool.irts, target_irt + irt_window)
-    first_idx <= last_idx || return nothing
-
-    best_donor = nothing
-    best_score = -Inf32
-    best_irt_delta = Inf32
-    @inbounds for pool_idx in first_idx:last_idx
-        donor_pid = pool.pids[pool_idx]
-        donor_pid == my_pid && continue
-        donor = _donor_for_pid(donor_dict, donor_pid, my_file)
-        donor === nothing && continue
-        score = donor.trace_prob
-        irt_delta = abs(pool.irts[pool_idx] - target_irt)
-        if best_donor === nothing ||
-           score > best_score ||
-           (score == best_score && irt_delta < best_irt_delta) ||
-           (score == best_score && irt_delta == best_irt_delta &&
-            donor.precursor_idx < best_donor.precursor_idx)
-            best_donor = donor
-            best_score = score
-            best_irt_delta = irt_delta
-        end
-    end
-    return best_donor
-end
-
-@inline function _hard_counterfactual_donor_from_pool(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    pool::_IrtPool,
-    index::Union{Nothing, _MBRDonorRangeIndex},
-    target_irt::Float32,
-    my_file::UInt32,
-    my_pid::UInt32,
-)
-    donor = index === nothing ?
-            _best_scoring_cross_file_donor_in_irt_window(
-                donor_dict,
-                pool,
-                target_irt,
-                my_file,
-                my_pid,
-                MBR_COUNTERFACTUAL_LOCAL_IRT_WINDOW,
-            ) :
-            _best_scoring_cross_file_donor_in_irt_window(
-                index,
-                target_irt,
-                my_file,
-                my_pid,
-                MBR_COUNTERFACTUAL_LOCAL_IRT_WINDOW,
-            )
-    donor !== nothing && return donor
-    return _nearest_cross_file_donor(donor_dict, pool, target_irt, my_file, my_pid)
-end
-
 @inline function _resolve_false_donor_for_pid(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
-    hard_indexes::Union{Nothing, _MBRHardCounterfactualIndexes},
     my_pid::UInt32,
     my_file::UInt32,
 )
@@ -843,10 +612,9 @@ end
     my_mz = Int(partner_pools.mz_bin_by_pid[pid_idx])
     pool_key = (my_fold, my_mz)
 
-    donor = _hard_counterfactual_donor_from_pool(
+    donor = _nearest_cross_file_donor(
         donor_dict,
         get(partner_pools.pools, pool_key, _empty_pool()),
-        hard_indexes === nothing ? nothing : get(hard_indexes.pools, pool_key, nothing),
         my_irt,
         my_file,
         my_pid,
@@ -861,14 +629,13 @@ end
     false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
-    hard_indexes::Union{Nothing, _MBRHardCounterfactualIndexes},
     my_pid::UInt32,
     my_file::UInt32,
 )
     if haskey(false_donor_cache, my_pid)
         return false_donor_cache[my_pid]
     end
-    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, hard_indexes, my_pid, my_file)
+    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
     false_donor_cache[my_pid] = donor
     return donor
 end
@@ -920,7 +687,6 @@ function load_normal_mbr_candidate_slim_dataframe(
     fragment_keys::_MBRFragmentAnnotationKeys;
     q_thresh::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
-    hard_indexes::Union{Nothing, _MBRHardCounterfactualIndexes} = nothing,
 )
     prepass = _normal_mbr_prepass_qvals_and_threshold(
         file_paths;
@@ -960,7 +726,7 @@ function load_normal_mbr_candidate_slim_dataframe(
             donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
             donor_t === nothing && continue
             donor_t.trace_prob >= prepass.prob_thresh || continue
-            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, hard_indexes, pid, ms_file_idx)
+            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
             donor_f === nothing && continue
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
@@ -1007,7 +773,6 @@ function load_mbr_rescue_candidate_slim_dataframe(
     partner_pools::_CounterfactualPartnerPools,
     fragment_keys::_MBRFragmentAnnotationKeys,
     prob_thresh::Float32;
-    hard_indexes::Union{Nothing, _MBRHardCounterfactualIndexes} = nothing,
 )
     out = _empty_mbr_rescue_candidate_slim_columns()
     for (file_idx, main_path) in pairs(file_paths)
@@ -1041,7 +806,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
             donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
             donor_t === nothing && continue
             donor_t.trace_prob >= prob_thresh || continue
-            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, hard_indexes, pid, ms_file_idx)
+            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
             donor_f === nothing && continue
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
