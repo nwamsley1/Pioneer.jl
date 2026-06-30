@@ -40,6 +40,18 @@ end
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
     end
 
+    @testset "MBR semi-supervised training keeps only FTR/FDR target positives" begin
+        positive_top = Bool[true, false, false, false]
+        target_top = Bool[true, true, false, false]
+
+        @test Pioneer.MBR_SEMISUPERVISED_FTR_THRESHOLD == 0.03f0
+        @test Pioneer.MBR_SEMISUPERVISED_FDR_THRESHOLD == 0.01f0
+        @test Pioneer._mbr_transfer_training_labels(positive_top) ==
+              Bool[true, false, false, false, false, false, false, false]
+        @test Pioneer._mbr_transfer_training_mask(positive_top, target_top) ==
+              Bool[true, false, true, true, true, true, true, true]
+    end
+
     @testset "FTR includes MBR scan-count comparison features" begin
         @test :MBR_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
@@ -47,16 +59,13 @@ end
         @test :MBR_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 
-    @testset "MBR transfer target-decoy scorer uses only true MBR features" begin
-        true_mbr_features = filter(feature -> startswith(String(feature), "MBR_"), Pioneer.FTR_FEATURES_F_TRUE)
-        @test Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES == true_mbr_features
-        @test all(feature -> feature ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES, Pioneer.ADVANCED_FEATURE_SET)
-        @test :main_search_prob ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
-        @test :trace_prob_infold ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
-        @test :MBR_max_pair_prob_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
-        @test :MBR_log2_weight_ratio_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
-        @test :MBR_smoothed_frag_hellinger_true in Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
-        @test :MBR_max_pair_prob_false ∉ Pioneer.MBR_TRANSFER_TARGET_DECOY_FEATURES
+    @testset "FTR features include MBR and row-level evidence for transfer ranking" begin
+        @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
+        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin
@@ -414,22 +423,41 @@ end
         end
     end
 
-    @testset "MBR recovered target-decoy scorer scores only recovered rows" begin
+    @testset "paired FTR emits target-decoy probabilities for recovered rows" begin
         psms = DataFrame(
             target = Bool[true, false, true, false, true, false, true, false],
             cv_fold = UInt8[0, 0, 0, 0, 1, 1, 1, 1],
-            mbr_recovered = Bool[true, true, false, false, true, true, false, false],
             mbr_rescue_candidate = Bool[false, true, false, false, true, false, false, false],
             main_search_prob = Float32[0.95, 0.20, 0.90, 0.30, 0.94, 0.25, 0.91, 0.35],
             trace_prob_infold = Float32[0.96, 0.15, 0.88, 0.25, 0.93, 0.22, 0.87, 0.32],
             MBR_max_pair_prob_true = Float32[0.98, 0.30, 0.90, 0.20, 0.97, 0.35, 0.91, 0.25],
+            MBR_max_pair_prob_false = Float32[0.40, 0.80, 0.35, 0.75, 0.45, 0.82, 0.36, 0.78],
             MBR_log2_weight_ratio_true = Float32[0.1, -2.0, 0.2, -1.5, 0.0, -1.8, 0.3, -1.2],
+            MBR_log2_weight_ratio_false = Float32[-1.0, 0.1, -1.2, 0.2, -1.1, 0.0, -1.3, 0.3],
+            MBR_log2_explained_ratio_true = Float32[0.2, -1.0, 0.1, -0.8, 0.2, -0.9, 0.1, -0.7],
+            MBR_log2_explained_ratio_false = Float32[-0.8, 0.2, -0.7, 0.1, -0.9, 0.3, -0.6, 0.2],
+            MBR_abs_n_scans_diff_true = Float32[0.0, 5.0, 1.0, 4.0, 0.0, 5.0, 1.0, 4.0],
+            MBR_abs_n_scans_diff_false = Float32[4.0, 0.0, 5.0, 1.0, 4.0, 0.0, 5.0, 1.0],
+            MBR_log2_n_scans_ratio_true = Float32[0.0, -2.0, 0.1, -1.5, 0.0, -1.8, 0.2, -1.2],
+            MBR_log2_n_scans_ratio_false = Float32[-1.5, 0.0, -2.0, 0.1, -1.6, 0.0, -1.9, 0.2],
+            MBR_best_irt_diff_true = Float32[0.1, 3.0, 0.2, 2.5, 0.1, 3.2, 0.2, 2.6],
+            MBR_best_irt_diff_false = Float32[2.5, 0.1, 3.0, 0.2, 2.6, 0.1, 3.1, 0.2],
+            MBR_log_by_diff_true = Float32[0.0, 1.5, 0.1, 1.2, 0.0, 1.6, 0.1, 1.3],
+            MBR_log_by_diff_false = Float32[1.2, 0.0, 1.5, 0.1, 1.3, 0.0, 1.6, 0.1],
             MBR_smoothed_frag_hellinger_true = Float32[0.05, 0.6, 0.08, 0.5, 0.04, 0.55, 0.09, 0.45],
+            MBR_smoothed_frag_hellinger_false = Float32[0.5, 0.05, 0.6, 0.08, 0.55, 0.04, 0.45, 0.09],
         )
 
-        Pioneer.score_mbr_recovered_target_decoy!(psms)
+        Pioneer.apply_mbr_filter_paired!(
+            psms;
+            alpha = 0.5f0,
+            pregated = true,
+            pregated_prob_thresh = 0.0f0,
+        )
 
         @test hasproperty(psms, :mbr_target_decoy_prob)
+        @test any((psms.ftr_qval_true .<= 0.5f0) .& (psms.ftr_pep_true .> 0.5f0))
+        @test psms.mbr_recovered == (psms.ftr_qval_true .<= 0.5f0)
         @test all(!isnan, psms.mbr_target_decoy_prob[psms.mbr_recovered])
         @test all(isnan, psms.mbr_target_decoy_prob[.!psms.mbr_recovered])
         @test all(!isnan, psms.mbr_target_decoy_prob[psms.mbr_rescue_candidate .& psms.mbr_recovered])

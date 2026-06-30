@@ -3,19 +3,18 @@
 # This file is part of Pioneer.jl
 # Licensed under AGPL v3+; see LICENSE.
 
-# MBR Phase 4/5b/6 — False-Transfer-Rate controller as a RECOVERY mechanism
-# scoped to the transfer-candidate cohort, with a dedicated FTR LightGBM model.
+# MBR false-transfer controller as a recovery mechanism scoped to the
+# transfer-candidate cohort.
 #
-# Phase 6 change vs Phase 5b:
-#   * The MBR-boosted score :trace_prob_mbr alone cannot separate good from
-#     bad transfers tightly enough at α=0.01 (recovered ≈ 0).
-#   * We train a second LightGBM on the candidate cohort with label
-#     :is_bad_transfer (i.e. positives = good transfer). Features are the
-#     MBR evidence + boosted/prepass scores; we deliberately exclude
-#     :target, :decoy, :MBR_is_best_decoy to avoid label leakage.
-#   * 2-fold CV on the existing :cv_fold so each candidate gets an
-#     out-of-fold FTR score.
-#   * `get_ftr_threshold` then runs on the OOF FTR score over candidates.
+# The paired frame contains each candidate twice:
+#   * top half: candidate features using the same-precursor donor
+#   * bottom half: the same receiver with counterfactual donor features
+# The evaluation label is true only for target receivers in the top half. Decoy
+# receivers and all counterfactual rows are negatives. Semi-supervised
+# iterations use only the 3% FTR ∩ 1% top-half FDR targets as positives for the
+# next training round; unselected target receivers are omitted from training.
+# The resulting OOF score drives both FTR recovery and downstream recovered-row
+# ranking.
 #
 # Architecture unchanged otherwise:
 #   * The qval pipeline downstream uses :trace_prob (= :trace_prob_prepass,
@@ -29,6 +28,8 @@
 # Tighter (0.001) → only very confident donors → fewer candidates, safer FTR.
 # Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
+const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
+const MBR_SEMISUPERVISED_FDR_THRESHOLD = Float32(0.01)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Legacy Phase 6 (single-frame) FTR controller removed 2026-05-18.
@@ -105,10 +106,61 @@ const FTR_FEATURES_F_FALSE = Symbol[
     for f in FTR_FEATURES_F_TRUE
 ]
 
-const MBR_TRANSFER_TARGET_DECOY_FEATURES = filter(
-    feature -> startswith(String(feature), "MBR_"),
-    FTR_FEATURES_F_TRUE,
+function _mbr_transfer_training_labels(positive_top::AbstractVector{Bool})
+    n = length(positive_top)
+    labels = falses(2 * n)
+    @inbounds for i in 1:n
+        labels[i] = positive_top[i]
+    end
+    return labels
+end
+
+function _mbr_transfer_training_mask(
+    positive_top::AbstractVector{Bool},
+    target_top::AbstractVector{Bool},
 )
+    n = length(target_top)
+    mask = trues(2 * n)
+    @inbounds for i in 1:n
+        mask[i] = !target_top[i] || positive_top[i]
+    end
+    return mask
+end
+
+function _mbr_transfer_iteration_metrics(
+    scores_double::AbstractVector{<:Real},
+    eval_labels::AbstractVector{Bool},
+    target_top::AbstractVector{Bool},
+    n_cand::Int;
+    ftr_threshold::Float32 = MBR_SEMISUPERVISED_FTR_THRESHOLD,
+    fdr_threshold::Float32 = MBR_SEMISUPERVISED_FDR_THRESHOLD,
+)
+    qvals_double = Vector{Float32}(undef, 2 * n_cand)
+    pep_double = Vector{Float32}(undef, 2 * n_cand)
+    get_qvalues!(scores_double, eval_labels, qvals_double)
+    get_PEP!(scores_double, eval_labels, pep_double)
+
+    scores_top = scores_double[1:n_cand]
+    fdr_qvals_top = Vector{Float32}(undef, n_cand)
+    get_qvalues!(scores_top, target_top, fdr_qvals_top)
+
+    positive_top = falses(n_cand)
+    @inbounds for i in 1:n_cand
+        positive_top[i] = target_top[i] &&
+                          pep_double[i] <= ftr_threshold &&
+                          fdr_qvals_top[i] <= fdr_threshold
+    end
+
+    return (
+        qvals_double = qvals_double,
+        pep_double = pep_double,
+        qvals_top = qvals_double[1:n_cand],
+        pep_top = pep_double[1:n_cand],
+        fdr_qvals_top = fdr_qvals_top,
+        positive_top = positive_top,
+        n_positive = count(positive_top),
+    )
+end
 
 function _mbr_candidate_gate(
     psms::DataFrame;
@@ -162,16 +214,17 @@ Algorithm (see BATCH_F_PLAN.md):
 1. Candidate gate = (pre_qvals > q_thresh) & (MBR_max_pair_prob_true ≥
    prob_thresh) & (!MBR_is_missing_true) & (!MBR_is_missing_false).
 2. Build a row-doubled training frame:
-   - top half: candidate rows with FTR_FEATURES_F_TRUE values  → label is_real=true
-   - bottom half: SAME candidate rows with FTR_FEATURES_F_FALSE values → label is_real=false
-3. Train 2-fold CV LightGBM on the doubled frame with label=is_real.
-   OOF scores: higher = more "real" by the model's lights.
-4. Compute q-values on the doubled frame via get_qvalues! (target=is_real,
-   monotonized). Pick rows whose q ≤ alpha.
-5. Recovery: candidate rows whose TOP-HALF (real-MBR) row has q ≤ alpha.
+   - top half: candidate rows with FTR_FEATURES_F_TRUE values.
+   - bottom half: same receivers with FTR_FEATURES_F_FALSE values.
+3. Train iterative 2-fold CV LightGBM. Each iteration uses the previous round's
+   3% FTR ∩ 1% top-half FDR target rows as positives, plus top-half decoys and
+   counterfactual rows as negatives.
+4. Compute q-values and PEPs on the doubled frame. Recover candidate rows whose
+   top-half row has q-value ≤ alpha.
 
-Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:ftr_qval_true` on
-`psms` in-place. Does NOT mutate `:trace_prob`.
+Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:mbr_target_decoy_prob`,
+`:ftr_qval_true`, and `:ftr_pep_true` on `psms` in-place. Does NOT mutate
+`:trace_prob`.
 """
 function apply_mbr_filter_paired!(
     psms::DataFrame;
@@ -188,6 +241,7 @@ function apply_mbr_filter_paired!(
         @debug_l1 "MBR Batch F — apply_mbr_filter_paired!: no PSMs to filter"
         psms[!, :mbr_recovered]          = falses(0)
         psms[!, :MBR_transfer_candidate] = falses(0)
+        psms[!, :mbr_target_decoy_prob]  = Float32[]
         psms[!, :ftr_qval_true]          = Float32[]
         psms[!, :ftr_pep_true]           = Float32[]
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
@@ -219,6 +273,7 @@ function apply_mbr_filter_paired!(
     if n_cand == 0
         psms[!, :mbr_recovered]          = falses(n)
         psms[!, :MBR_transfer_candidate] = candidate_mask
+        psms[!, :mbr_target_decoy_prob]  = fill(NaN32, n)
         psms[!, :ftr_qval_true]          = fill(NaN32, n)
         psms[!, :ftr_pep_true]           = fill(NaN32, n)
         return (
@@ -231,8 +286,8 @@ function apply_mbr_filter_paired!(
     end
 
     # ── 3. Build the doubled training frame ──
-    # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
-    # Bottom half: same candidates with _false MBR values swapped in. Label = false.
+    # Top half: true-donor rows. Label = true only for target receivers.
+    # Bottom half: same receivers with _false MBR values swapped in. Label = false.
     sub = psms[cand_idx, :]
     available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
     # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
@@ -247,68 +302,127 @@ function apply_mbr_filter_paired!(
     X_true  = feature_matrix(sub, available_true)
     X_false = feature_matrix(sub, available_false)
     X       = vcat(X_true, X_false)              # 2 n_cand × n_features
-    y       = vcat(trues(n_cand), falses(n_cand))  # label = is_real
+    target_top = Bool.(sub[!, :target])
+    eval_labels = _mbr_transfer_training_labels(target_top)
     cv_double = vcat(sub[!, :cv_fold], sub[!, :cv_fold])
 
-    # ── 4. 2-fold CV LightGBM on the doubled frame ──
+    # ── 4. Semi-supervised 2-fold CV LightGBM on the doubled frame ──
     pos0 = findall(cv_double .== 0)
     pos1 = findall(cv_double .== 1)
-    ftr_score_double = fill(NaN32, 2 * n_cand)
-    last_cls = nothing
-    for (train_pos, test_pos) in ((pos1, pos0), (pos0, pos1))
-        (isempty(train_pos) || isempty(test_pos)) && continue
-        y_tr = y[train_pos]
-        if length(unique(y_tr)) == 1
-            ftr_score_double[test_pos] .= y_tr[1] ? 1f0 : 0f0
-            continue
+    training_labels = eval_labels
+    training_mask = trues(2 * n_cand)
+    best_state = nothing
+    previous_positive_count = -1
+
+    for iter_idx in 1:SCORING_SEMISUPERVISED_MAX_ITERATIONS
+        ftr_score_double = fill(NaN32, 2 * n_cand)
+        last_cls_iter = nothing
+        n_train_targets = 0
+        n_train_decoys = 0
+
+        for (train_pos_all, test_pos) in ((pos1, pos0), (pos0, pos1))
+            train_pos = train_pos_all[training_mask[train_pos_all]]
+            (isempty(train_pos) || isempty(test_pos)) && continue
+            y_tr = training_labels[train_pos]
+            n_targets_fold = count(y_tr)
+            n_train_targets += n_targets_fold
+            n_train_decoys += length(y_tr) - n_targets_fold
+            if length(unique(y_tr)) == 1
+                ftr_score_double[test_pos] .= y_tr[1] ? 1f0 : 0f0
+                continue
+            end
+            cls = build_lightgbm_classifier(; SHARED_LGBM_HP...)
+            LightGBM.fit!(cls, X[train_pos, :], _prepare_labels(y_tr); verbosity = -1)
+            raw = LightGBM.predict(cls, X[test_pos, :])
+            s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            ftr_score_double[test_pos] .= Float32.(s)
+            last_cls_iter = cls
         end
-        cls = build_lightgbm_classifier(; SHARED_LGBM_HP...)
-        LightGBM.fit!(cls, X[train_pos, :], _prepare_labels(y_tr); verbosity = -1)
-        raw = LightGBM.predict(cls, X[test_pos, :])
-        s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
-        ftr_score_double[test_pos] .= Float32.(s)
-        last_cls = cls
+
+        metrics = _mbr_transfer_iteration_metrics(
+            ftr_score_double,
+            eval_labels,
+            target_top,
+            n_cand,
+        )
+        state = (
+            iter = iter_idx,
+            scores = ftr_score_double,
+            metrics = metrics,
+            last_cls = last_cls_iter,
+            n_positive = metrics.n_positive,
+            n_train_targets = n_train_targets,
+            n_train_decoys = n_train_decoys,
+        )
+        if best_state === nothing || state.n_positive > best_state.n_positive
+            best_state = state
+        end
+
+        @debug_l1 "  MBR transfer semi-supervised iter $iter_idx: " *
+                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
+                   "FTR≤$(round(100 * MBR_SEMISUPERVISED_FTR_THRESHOLD, digits=2))% " *
+                   "∩ FDR≤$(round(100 * MBR_SEMISUPERVISED_FDR_THRESHOLD, digits=2))% " *
+                   "targets=$(state.n_positive)"
+
+        if iter_idx > 1 && !_scoring_target_gain_sufficient(
+            previous_positive_count,
+            state.n_positive,
+        )
+            @debug_l1 "  MBR transfer semi-supervised stopping: " *
+                       "iter $iter_idx positives=$(state.n_positive) did not improve by " *
+                       "$(round(100 * SCORING_SEMISUPERVISED_MIN_TARGET_GAIN, digits=2))% " *
+                       "over $previous_positive_count; using iter $(best_state.iter) " *
+                       "with positives=$(best_state.n_positive)"
+            break
+        elseif iter_idx == SCORING_SEMISUPERVISED_MAX_ITERATIONS
+            @debug_l1 "  MBR transfer semi-supervised stopping: hit max iterations " *
+                       "$SCORING_SEMISUPERVISED_MAX_ITERATIONS; using iter $(best_state.iter) " *
+                       "with positives=$(best_state.n_positive)"
+            break
+        end
+
+        previous_positive_count = state.n_positive
+        training_labels = _mbr_transfer_training_labels(metrics.positive_top)
+        training_mask = _mbr_transfer_training_mask(metrics.positive_top, target_top)
     end
 
-    # ── 5. Q-value AND PEP on the doubled frame (target=is_real, decoy=is_fake) ──
-    qvals_double = Vector{Float32}(undef, 2 * n_cand)
-    pep_double   = Vector{Float32}(undef, 2 * n_cand)
-    get_qvalues!(ftr_score_double, y, qvals_double)
-    get_PEP!(ftr_score_double, y, pep_double)
-    # qvals_double[i] = (# fakes ranked ≥ row i) / (# reals ranked ≥ row i),
+    # ── 5. Q-value AND PEP on the doubled frame ──
+    ftr_score_double = best_state.scores
+    qvals_double = best_state.metrics.qvals_double
+    pep_double = best_state.metrics.pep_double
+    last_cls = best_state.last_cls
+    # qvals_double[i] = (# negatives ranked ≥ row i) / (# positives ranked ≥ row i),
     # monotonized to be non-increasing as score increases.
-    # pep_double[i]   = per-row P(is_false | score), isotonic-regression-derived.
+    # pep_double[i]   = per-row P(negative | score), isotonic-regression-derived.
 
-    # ── 6. Recovery: top-half rows (real-MBR) with pep ≤ alpha.
-    #    PEP-based recovery at α=0.01 gives ~half the Dennis-FTR species-
-    #    mismatch rate vs qval-based at the same α (validated 2026-05-15 on
-    #    40-file YeastMBR + 20-file HelaOnly: any-YEAST 9.66% qval → 4.49% pep,
-    #    strict-YEAST 8.86% → 3.32%). PEP is more conservative — ~33% fewer
-    #    ΔTotal recoveries — but the surviving recoveries are dramatically
-    #    cleaner. The qval path is retained in git history if needed.
+    # ── 6. Recovery: top-half rows (real-MBR) with q-value ≤ alpha.
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    recovered_in_cand = pep_top .<= alpha
+    recovered_in_cand = qvals_top .<= alpha
     n_recovered = count(recovered_in_cand)
 
     mbr_recovered_full = falses(n)
+    target_decoy_prob_full = fill(NaN32, n)
     ftr_qval_full      = fill(NaN32, n)
     ftr_pep_full       = fill(NaN32, n)
+    ftr_score_top      = ftr_score_double[1:n_cand]
     @inbounds for (k, i) in enumerate(cand_idx)
         ftr_qval_full[i] = qvals_top[k]
         ftr_pep_full[i]  = pep_top[k]
         if recovered_in_cand[k]
             mbr_recovered_full[i] = true
+            target_decoy_prob_full[i] = ftr_score_top[k]
         end
     end
     psms[!, :mbr_recovered]          = mbr_recovered_full
     psms[!, :MBR_transfer_candidate] = candidate_mask
+    psms[!, :mbr_target_decoy_prob]  = target_decoy_prob_full
     psms[!, :ftr_qval_true]          = ftr_qval_full
     psms[!, :ftr_pep_true]           = ftr_pep_full
 
-    # ── 7. Threshold for log: highest ftr_score on a top-half row with q ≤ α ──
+    # ── 7. Threshold for log: lowest FTR score on a recovered top-half row ──
     τ = n_recovered > 0 ?
-        minimum(ftr_score_double[1:n_cand][recovered_in_cand]) :
+        minimum(ftr_score_top[recovered_in_cand]) :
         Float32(Inf)
 
     # ── 8. Recovered transfer composition ──
@@ -320,7 +434,7 @@ function apply_mbr_filter_paired!(
     n_rescue_recovered = count(i -> mbr_recovered_full[i] && rescue_mask[i], 1:n)
     n_normal_recovered = n_recovered - n_rescue_recovered
 
-    @debug_l1 "  doubled-frame rows: $(2*n_cand)  (top=real, bottom=fake)"
+    @debug_l1 "  doubled-frame rows: $(2*n_cand)  (top=true donor, bottom=counterfactual)"
     @debug_l1 "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
     @debug_l1 "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
     @debug_l1 "  recovered normal=$n_normal_recovered rescue=$n_rescue_recovered"
@@ -331,7 +445,7 @@ function apply_mbr_filter_paired!(
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l1 "  Batch F FTR-model feature importances (gain):"
+            @debug_l1 "  Batch F transfer-model feature importances (gain):"
             for (fname, gain) in sorted_imp
                 @debug_l1 "    $(rpad(string(fname), 36)) $(round(gain, digits=2))"
             end

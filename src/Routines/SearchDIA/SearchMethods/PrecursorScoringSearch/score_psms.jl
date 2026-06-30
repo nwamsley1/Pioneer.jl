@@ -141,27 +141,6 @@ function _scoring_semisupervised_metrics_and_mask(
     )
 end
 
-function _scoring_training_target_decoy_counts(
-    targets::AbstractVector{Bool},
-    training_mask::Union{Nothing, AbstractVector{Bool}},
-)
-    if training_mask === nothing
-        n_targets = count(targets)
-        return n_targets, length(targets) - n_targets
-    end
-    n_targets = 0
-    n_decoys = 0
-    @inbounds for i in eachindex(targets)
-        training_mask[i] || continue
-        if targets[i]
-            n_targets += 1
-        else
-            n_decoys += 1
-        end
-    end
-    return n_targets, n_decoys
-end
-
 function _scoring_target_gain_sufficient(
     previous_targets::Integer,
     current_targets::Integer;
@@ -189,119 +168,6 @@ function _split_scoring_train_masks(
         offset += n
     end
     return masks
-end
-
-function _train_scoring_classifier_semisupervised(
-    psms::DataFrame;
-    features::Vector{Symbol},
-    lgbm_hp = SCORING_LGBM_HP,
-    max_train::Int = SCORING_LGBM_MAX_TRAIN,
-    train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
-    stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
-    min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
-    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
-)
-    targets = Vector{Bool}(psms[!, :target])
-    training_mask = nothing
-    previous_target_q01 = -1
-    best_state = nothing
-
-    for iter_idx in 1:max_iterations
-        n_train_targets, n_train_decoys = _scoring_training_target_decoy_counts(
-            targets,
-            training_mask,
-        )
-        all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
-            psms;
-            features = features,
-            lgbm_hp = lgbm_hp,
-            compute_infold = false,
-            max_train = max_train,
-            training_mask = training_mask,
-        )
-        scores = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
-        metrics = _scoring_semisupervised_metrics_and_mask(
-            scores,
-            targets;
-            train_q_threshold = train_q_threshold,
-            stop_q_threshold = stop_q_threshold,
-        )
-        current_state = (
-            scores = scores,
-            last_classifier = last_classifier,
-            info = info,
-            target_q01 = metrics.target_q01,
-            decoy_q01 = metrics.decoy_q01,
-            iter = iter_idx,
-        )
-        @debug_l1 "ScoringSearch semi-supervised iter $iter_idx (in-memory): " *
-                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
-                   "q≤.01 targets=$(metrics.target_q01) decoys=$(metrics.decoy_q01)"
-
-        if iter_idx > 1 && !_scoring_target_gain_sufficient(
-            previous_target_q01,
-            metrics.target_q01;
-            min_fraction = min_gain,
-        )
-            best_state = _scoring_better_iteration_state(best_state, current_state)
-            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
-                       "iter $iter_idx q≤.01 targets=$(metrics.target_q01) did not improve by " *
-                       "$(round(100 * min_gain, digits=2))% over $previous_target_q01; " *
-                       "using iter $(best_state.iter) with q≤.01 targets=$(best_state.target_q01)"
-            break
-        end
-
-        best_state = _scoring_better_iteration_state(best_state, current_state)
-        if iter_idx == max_iterations
-            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
-                       "hit max iterations $max_iterations; using iter $(best_state.iter) " *
-                       "with q≤.01 targets=$(best_state.target_q01)"
-            break
-        end
-
-        previous_target_q01 = metrics.target_q01
-        training_mask = metrics.training_mask
-    end
-
-    return best_state.scores, best_state.last_classifier, best_state.info, best_state
-end
-
-function score_mbr_recovered_target_decoy!(psms::DataFrame)
-    scores = fill(NaN32, nrow(psms))
-    psms[!, :mbr_target_decoy_prob] = scores
-
-    recovered_idx = findall(Bool.(psms[!, :mbr_recovered]))
-    isempty(recovered_idx) && return nothing
-
-    recovered = psms[recovered_idx, :]
-    available_features = filter(
-        feature -> hasproperty(recovered, feature),
-        MBR_TRANSFER_TARGET_DECOY_FEATURES,
-    )
-    recovered_scores, last_classifier, _, state = _train_scoring_classifier_semisupervised(
-        recovered;
-        features = available_features,
-        lgbm_hp = SCORING_LGBM_HP,
-        max_train = SCORING_LGBM_MAX_TRAIN,
-    )
-
-    @inbounds for (j, row_idx) in enumerate(recovered_idx)
-        scores[row_idx] = Float32(recovered_scores[j])
-    end
-
-    if last_classifier !== nothing
-        lgbm_model = LightGBMModel(last_classifier, state.info.available_features, nothing)
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l1 "MBR recovered target-decoy feature importances (gain):"
-            for (fname, gain) in sorted_imp
-                @debug_l1 "    $(rpad(string(fname), 40)) $(round(gain, digits=2))"
-            end
-        end
-    end
-
-    return nothing
 end
 
 # Streaming MBR-on path. Walks the per-file Arrow tables for everything;
@@ -407,7 +273,6 @@ function _score_precursor_isotope_traces_mbr(
         pregated = true,
         pregated_prob_thresh = normal_candidate_result.prob_thresh,
     )
-    score_mbr_recovered_target_decoy!(psms)
 
     # 9. Recovery sidecars + final merge — folds (Pass-1 + recovery)
     # back into each main file in one pass.
