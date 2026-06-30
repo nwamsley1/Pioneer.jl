@@ -11,20 +11,22 @@
 # precursor as the counterfactual partner for each receiver file.
 #
 # MBR streaming resolves the partner against donor availability: first the
-# nearest-iRT donor from a different precursor with the same charge in the same
-# cv_fold × prec_mz decile, then nearest-iRT broader same-charge fallbacks.
+# nearest-iRT donor from a different precursor with the same charge and length
+# in the same cv_fold × prec_mz decile, then nearest-iRT broader same-charge,
+# same-length fallbacks.
 # Nothing here mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
 # a concatenated PSM DataFrame. Only (:precursor_idx, :target, :cv_fold)
-# columns are touched; everything else (mz, charge, irt) comes from the library.
+# columns are touched; everything else (mz, charge, length, irt) comes from the
+# library.
 
 using Statistics
 
 # Streams the per-file Arrow tables, projects just the three columns we
-# need, and returns one entry per unique pid: target flag, library mz,
-# charge, iRT, and cv_fold (the first cv_fold encountered — it's constant
-# per pid because folds are precursor-keyed in the fold-split files).
+# need, and returns one entry per unique pid: target flag, library mz, charge,
+# length, iRT, and cv_fold (the first cv_fold encountered — it's constant per
+# pid because folds are precursor-keyed in the fold-split files).
 function _collect_unique_precursors_streaming(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
@@ -32,12 +34,14 @@ function _collect_unique_precursors_streaming(
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
     prec_charge_full = getCharge(precursors)
+    prec_length_full = getLength(precursors)
 
     seen         = Set{UInt32}()
     plist_pids   = UInt32[]
     plist_target = Bool[]
     plist_mz     = Float32[]
     plist_charge = UInt8[]
+    plist_length = UInt8[]
     plist_irt    = Float32[]
     plist_fold   = UInt8[]
 
@@ -56,12 +60,14 @@ function _collect_unique_precursors_streaming(
             push!(plist_target, Bool(target_c[i]))
             push!(plist_mz, Float32(prec_mz_full[pid]))
             push!(plist_charge, UInt8(prec_charge_full[pid]))
+            push!(plist_length, UInt8(prec_length_full[pid]))
             push!(plist_irt, Float32(prec_irt_full[pid]))
             push!(plist_fold, UInt8(fold_c[i]))
         end
     end
     return (pids = plist_pids, target = plist_target,
-            mz = plist_mz, charge = plist_charge, irt = plist_irt, fold = plist_fold)
+            mz = plist_mz, charge = plist_charge, length = plist_length,
+            irt = plist_irt, fold = plist_fold)
 end
 
 # 10 mz-quantile deciles. Returns Int8 bin index ∈ 1..10 for each input
@@ -101,10 +107,11 @@ struct _CounterfactualPartnerPools
     fold_by_pid::Vector{UInt8}
     mz_bin_by_pid::Vector{UInt8}
     charge_by_pid::Vector{UInt8}
+    length_by_pid::Vector{UInt8}
     irt_by_pid::Vector{Float32}
-    pools::Dict{Tuple{Int, Int, Int}, _IrtPool}
-    fold_charge_pool::Dict{Tuple{Int, Int}, _IrtPool}
-    charge_pool::Dict{Int, _IrtPool}
+    pools::Dict{Tuple{Int, Int, Int, Int}, _IrtPool}
+    fold_charge_length_pool::Dict{Tuple{Int, Int, Int}, _IrtPool}
+    charge_length_pool::Dict{Tuple{Int, Int}, _IrtPool}
 end
 
 # Build a sorted pool from a list of (irt, pid) tuples — sort by irt
@@ -115,41 +122,42 @@ function _sort_to_pool(pairs::Vector{Tuple{Float32, UInt32}})::_IrtPool
             irts = Float32[x[1] for x in pairs])
 end
 
-# Per-(cv_fold, mz_decile, charge) sorted iRT pools.
+# Per-(cv_fold, mz_decile, charge, length) sorted iRT pools.
 function _build_stratum_pools(
     pids::Vector{UInt32}, fold::Vector{UInt8}, bin_mz::Vector{Int},
-    charge::Vector{UInt8}, irt::Vector{Float32},
+    charge::Vector{UInt8}, length::Vector{UInt8}, irt::Vector{Float32},
+)
+    tmp = Dict{Tuple{Int,Int,Int,Int}, Vector{Tuple{Float32, UInt32}}}()
+    @inbounds for i in eachindex(pids)
+        key = (Int(fold[i]), bin_mz[i], Int(charge[i]), Int(length[i]))
+        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
+    end
+    return Dict{Tuple{Int,Int,Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
+end
+
+# Same-fold, same-charge, same-length fallback pools.
+function _build_fold_charge_length_pools(
+    pids::Vector{UInt32}, fold::Vector{UInt8}, charge::Vector{UInt8},
+    length::Vector{UInt8}, irt::Vector{Float32},
 )
     tmp = Dict{Tuple{Int,Int,Int}, Vector{Tuple{Float32, UInt32}}}()
     @inbounds for i in eachindex(pids)
-        key = (Int(fold[i]), bin_mz[i], Int(charge[i]))
+        key = (Int(fold[i]), Int(charge[i]), Int(length[i]))
         push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
     end
     return Dict{Tuple{Int,Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
 end
 
-# Same-fold, same-charge fallback pools.
-function _build_fold_charge_pools(
-    pids::Vector{UInt32}, fold::Vector{UInt8}, charge::Vector{UInt8}, irt::Vector{Float32},
+# Experiment-wide same-charge, same-length fallback pools.
+function _build_charge_length_pools(
+    pids::Vector{UInt32}, charge::Vector{UInt8}, length::Vector{UInt8}, irt::Vector{Float32},
 )
     tmp = Dict{Tuple{Int,Int}, Vector{Tuple{Float32, UInt32}}}()
     @inbounds for i in eachindex(pids)
-        key = (Int(fold[i]), Int(charge[i]))
+        key = (Int(charge[i]), Int(length[i]))
         push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
     end
     return Dict{Tuple{Int,Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
-end
-
-# Experiment-wide same-charge fallback pools.
-function _build_charge_pools(
-    pids::Vector{UInt32}, charge::Vector{UInt8}, irt::Vector{Float32},
-)
-    tmp = Dict{Int, Vector{Tuple{Float32, UInt32}}}()
-    @inbounds for i in eachindex(pids)
-        key = Int(charge[i])
-        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
-    end
-    return Dict{Int, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
 end
 
 """
@@ -159,9 +167,10 @@ MBR Batch F: build the precursor-indexed metadata and sorted iRT pools needed
 for deterministic, file-aware counterfactual partner resolution.
 
 For each receiver row, MBR streaming first chooses the nearest-iRT donor from a
-different precursor with the same charge in the same (cv_fold × prec_mz decile).
-If that primary stratum has no eligible cross-file donor, it falls back through
-same-fold same-charge nearest iRT, then experiment-wide same-charge nearest iRT.
+different precursor with the same charge and length in the same
+(cv_fold × prec_mz decile). If that primary stratum has no eligible cross-file
+donor, it falls back through same-fold same-charge same-length nearest iRT, then
+experiment-wide same-charge same-length nearest iRT.
 """
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
@@ -177,24 +186,26 @@ function build_counterfactual_partner_pools(
     n_receiver_precs = length(receiver_unique.pids)
     if n_pool_precs == 0 && n_receiver_precs == 0
         return _CounterfactualPartnerPools(
-            Bool[], UInt8[], UInt8[], UInt8[], Float32[],
+            Bool[], UInt8[], UInt8[], UInt8[], UInt8[], Float32[],
+            Dict{Tuple{Int, Int, Int, Int}, _IrtPool}(),
             Dict{Tuple{Int, Int, Int}, _IrtPool}(),
             Dict{Tuple{Int, Int}, _IrtPool}(),
-            Dict{Int, _IrtPool}(),
         )
     end
 
     mz_edges = _compute_mz_decile_edges(pool_unique.mz)
     pool_bin_mz = _assign_mz_deciles(pool_unique.mz, mz_edges)
     pools = _build_stratum_pools(
-        pool_unique.pids, pool_unique.fold, pool_bin_mz, pool_unique.charge, pool_unique.irt,
+        pool_unique.pids, pool_unique.fold, pool_bin_mz, pool_unique.charge,
+        pool_unique.length, pool_unique.irt,
     )
 
-    fold_charge_pool = _build_fold_charge_pools(
-        pool_unique.pids, pool_unique.fold, pool_unique.charge, pool_unique.irt,
+    fold_charge_length_pool = _build_fold_charge_length_pools(
+        pool_unique.pids, pool_unique.fold, pool_unique.charge,
+        pool_unique.length, pool_unique.irt,
     )
-    charge_pool = _build_charge_pools(
-        pool_unique.pids, pool_unique.charge, pool_unique.irt,
+    charge_length_pool = _build_charge_length_pools(
+        pool_unique.pids, pool_unique.charge, pool_unique.length, pool_unique.irt,
     )
 
     max_pid = Int(maximum(receiver_unique.pids))
@@ -202,6 +213,7 @@ function build_counterfactual_partner_pools(
     fold_by_pid = zeros(UInt8, max_pid)
     mz_bin_by_pid = zeros(UInt8, max_pid)
     charge_by_pid = zeros(UInt8, max_pid)
+    length_by_pid = zeros(UInt8, max_pid)
     irt_by_pid = zeros(Float32, max_pid)
 
     receiver_bin_mz = _assign_mz_deciles(receiver_unique.mz, mz_edges)
@@ -211,6 +223,7 @@ function build_counterfactual_partner_pools(
         fold_by_pid[pid] = receiver_unique.fold[i]
         mz_bin_by_pid[pid] = UInt8(receiver_bin_mz[i])
         charge_by_pid[pid] = receiver_unique.charge[i]
+        length_by_pid[pid] = receiver_unique.length[i]
         irt_by_pid[pid] = receiver_unique.irt[i]
     end
 
@@ -219,9 +232,10 @@ function build_counterfactual_partner_pools(
         fold_by_pid,
         mz_bin_by_pid,
         charge_by_pid,
+        length_by_pid,
         irt_by_pid,
         pools,
-        fold_charge_pool,
-        charge_pool,
+        fold_charge_length_pool,
+        charge_length_pool,
     )
 end

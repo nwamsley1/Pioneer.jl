@@ -113,10 +113,11 @@ end
                 UInt8[0, 0, 0],
                 UInt8[1, 1, 1],
                 UInt8[2, 2, 2],
+                UInt8[10, 10, 10],
                 Float32[10, 10, 30],
-                Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => pool),
-                Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => pool),
-                Dict{Int, Pioneer._IrtPool}(2 => pool),
+                Dict{Tuple{Int, Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2, 10) => pool),
+                Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => pool),
+                Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => pool),
             )
             fragment_keys = Pioneer._MBRFragmentAnnotationKeys(zeros(UInt16, 8 * 3))
 
@@ -282,10 +283,11 @@ end
                 UInt8[0, 0, 0],
                 UInt8[1, 1, 1],
                 UInt8[2, 2, 2],
+                UInt8[10, 10, 10],
                 Float32[10, 10, 30],
-                Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2) => pool),
-                Dict{Tuple{Int, Int}, Pioneer._IrtPool}((0, 2) => pool),
-                Dict{Int, Pioneer._IrtPool}(2 => pool),
+                Dict{Tuple{Int, Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2, 10) => pool),
+                Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => pool),
+                Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => pool),
             )
             fragment_keys = Pioneer._MBRFragmentAnnotationKeys(zeros(UInt16, 8 * 3))
 

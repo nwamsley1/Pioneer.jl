@@ -7,11 +7,13 @@ struct MBREmpiricalMockPrecursors <: Pioneer.LibraryPrecursors
     mz::Vector{Float32}
     irt::Vector{Float32}
     charge::Vector{UInt8}
+    length::Vector{UInt8}
 end
 
 Pioneer.getMz(p::MBREmpiricalMockPrecursors) = p.mz
 Pioneer.getIrt(p::MBREmpiricalMockPrecursors) = p.irt
 Pioneer.getCharge(p::MBREmpiricalMockPrecursors) = p.charge
+Pioneer.getLength(p::MBREmpiricalMockPrecursors) = p.length
 
 function _mbr_empirical_fragment_lookup()
     frags = Pioneer.CompactFrag{Float32}[
@@ -131,6 +133,7 @@ end
             Float32[500, 501, 502, 503],
             Float32[10, 10.01, 10.02, 10.03],
             UInt8[2, 2, 2, 2],
+            UInt8[10, 10, 10, 10],
         )
         partner_pools = Pioneer.build_counterfactual_partner_pools(
             [f1, f2],
@@ -149,7 +152,7 @@ end
 
         @test length(partner_pools.irt_by_pid) == 4
         @test partner_pools.target_by_pid[4] == true
-        @test UInt32(4) ∉ partner_pools.charge_pool[2].pids
+        @test UInt32(4) ∉ partner_pools.charge_length_pool[(2, 10)].pids
         @test donor !== nothing
         @test donor.precursor_idx == UInt32(2)
         @test donor.ms_file_idx == UInt32(2)
@@ -203,6 +206,7 @@ end
             Float32[500, 501],
             Float32[10, 10.01],
             UInt8[2, 2],
+            UInt8[10, 10],
         )
         fragment_keys = Pioneer.build_mbr_fragment_annotation_keys(_mbr_empirical_fragment_lookup())
         donor_paths = [true_donor, false_donor]
