@@ -221,6 +221,8 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
     min_index_search_score::UInt8
     spec_order::Set{Int64}
     min_excess_rate::Float32
+    diagnostic_stratify::Bool   # DIAGNOSTIC ONLY: stratify pattern counts by scan peak count
+    n_stratify_bins::Int        # number of peak-count quantile bins for the diagnostic
 
     function BitVecCalibrationParameters(params::PioneerParameters)
         # Per-bitvec-pattern minimum target-excess rate for admission. Lower =>
@@ -231,11 +233,18 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
         # defaults to BITVEC_MIN_EXCESS_RATE (0.03) when absent.
         bitvec_cfg = get(params.optimization, :bitvec_calibration, (;))
         min_excess_rate = Float32(get(bitvec_cfg, :min_excess_rate, BITVEC_MIN_EXCESS_RATE))
+        # DIAGNOSTIC: when on, additionally accumulate per-pattern target/decoy
+        # counts stratified into peak-count quantile bins and write
+        # bitvec_stratified_counts.arrow. Does NOT change the live filter.
+        diagnostic_stratify = Bool(get(bitvec_cfg, :diagnostic_stratify, false))
+        n_stratify_bins = Int(get(bitvec_cfg, :n_stratify_bins, 10))
         new(
             (UInt8(1), UInt8(0)),  # isotope_err_bounds
             UInt8(3),              # min_score for CountFilter fallback (normal search path)
             Set{Int64}([2]),       # MS2 only
             min_excess_rate,
+            diagnostic_stratify,
+            n_stratify_bins,
         )
     end
 end
@@ -250,6 +259,14 @@ const BITVEC_DIAGNOSTIC_Z = Float32(1.28)
 struct BitVecCalibrationResults <: SearchResults
     global_tc::Vector{Int}  # length 256, accumulated across all files
     global_dc::Vector{Int}  # length 256, accumulated across all files
+    # DIAGNOSTIC (sized 256×B, B=0 when off): per-pattern target/decoy counts
+    # stratified into B peak-count quantile bins, summed across files (bin = the
+    # b-th per-file crowding decile). strat_peak_sum/strat_nscans give the
+    # count-weighted mean peak count per bin for the report's x-axis.
+    strat_tc::Matrix{Int}
+    strat_dc::Matrix{Int}
+    strat_peak_sum::Vector{Float64}
+    strat_nscans::Vector{Int}
 end
 
 #==========================================================
@@ -258,8 +275,12 @@ Interface
 
 get_parameters(::BitVecCalibrationSearch, params::Any) = BitVecCalibrationParameters(params)
 
-function init_search_results(::BitVecCalibrationSearch, ::BitVecCalibrationParameters, ::SearchContext)
-    return BitVecCalibrationResults(zeros(Int, 256), zeros(Int, 256))
+function init_search_results(::BitVecCalibrationSearch, params::BitVecCalibrationParameters, ::SearchContext)
+    B = params.diagnostic_stratify ? params.n_stratify_bins : 0
+    return BitVecCalibrationResults(
+        zeros(Int, 256), zeros(Int, 256),
+        zeros(Int, 256, B), zeros(Int, 256, B), zeros(Float64, B), zeros(Int, B),
+    )
 end
 
 reset_results!(::BitVecCalibrationResults) = nothing
@@ -417,6 +438,66 @@ function process_file!(
     n_pass = count(filter_table)
     elapsed = round(time() - t_start, digits=2)
     @debug_l1 "BitVec: $file_name — $(prev) scans, $(total_counts) counts, $(n_pass)/256 pass ($mode, min_excess=$(round(min_excess_rate*100, digits=1))%, $(elapsed)s)"
+
+    # DIAGNOSTIC: re-accumulate the same sampled scans, stratified by peak count.
+    # Live filter above is untouched.
+    if params.diagnostic_stratify
+        accumulate_stratified!(results, params, search_context, ms_file_idx, spectra,
+            Int.(scan_priority[1:prev]), scan_to_prec_idx, partitioned_index,
+            qtm, mem, rt_to_irt, irt_tol, prec_mzs, prec_irts, is_decoy)
+    end
+end
+
+"""
+    accumulate_stratified!(results, ...)
+
+DIAGNOSTIC ONLY. Bins the file's sampled MS2 scans into `n_stratify_bins`
+peak-count quantile bins, re-runs the fragment-index search once per bin (each
+scan processed exactly once, in its bin), and folds the per-(pattern, bin)
+target/decoy counts into the global stratified table. Reuses the existing
+`PatternAccumulator` + search — no change to the live gate or the hot loop.
+"""
+function accumulate_stratified!(
+    results::BitVecCalibrationResults,
+    params::BitVecCalibrationParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData,
+    sampled_scans::Vector{Int},
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    partitioned_index,
+    qtm, mem, rt_to_irt, irt_tol,
+    prec_mzs::AbstractVector{Float32},
+    prec_irts::AbstractVector{Float32},
+    is_decoy::AbstractVector{Bool},
+)
+    B = params.n_stratify_bins
+    n = length(sampled_scans)
+    n < B && return nothing
+    pc = Float64[length(getMzArray(spectra, s)) for s in sampled_scans]
+    # Nearest-rank quantile edges (pure Base; avoids a Statistics dependency).
+    sp = sort(pc); np = length(sp)
+    edges = Float64[sp[clamp(floor(Int, q * (np - 1)) + 1, 1, np)] for q in range(0.0, 1.0; length = B + 1)]
+    binof(x) = clamp(searchsortedlast(edges, x), 1, B)
+    nthreads = Threads.nthreads()
+    for b in 1:B
+        binscans = Int[sampled_scans[i] for i in 1:n if binof(pc[i]) == b]
+        isempty(binscans) && continue
+        acc = PatternAccumulator(nthreads, is_decoy; min_score = UInt8(2))
+        searchFragmentIndexPartitionMajorHinted(
+            scan_to_prec_idx, partitioned_index, spectra, binscans, nthreads,
+            params, qtm, mem, rt_to_irt, irt_tol, prec_mzs;
+            pattern_accumulator = acc, precursor_irts = prec_irts,
+            scratch = getFragIndexScratch(search_context))
+        tc_b, dc_b = merge_accumulator(acc)
+        @inbounds for p in 1:256
+            results.strat_tc[p, b] += tc_b[p]
+            results.strat_dc[p, b] += dc_b[p]
+        end
+        results.strat_nscans[b] += length(binscans)
+        results.strat_peak_sum[b] += sum(pc[i] for i in 1:n if binof(pc[i]) == b)
+    end
+    return nothing
 end
 
 function process_search_results!(
@@ -553,5 +634,28 @@ function summarize_results!(
                          (fdr_scale * (Float64(dc[p+1]) + α)) > min_r for p in mask_pats)
         n_pats_k = length(mask_pats)
         (t_k + d_k > 0) && @debug_l1 "  k=$k: $(n_pats_k) patterns, $(t_k) target, $(d_k) decoy, $(n_pass_k)/$(n_pats_k) pass\n"
+    end
+
+    # ── 6. DIAGNOSTIC: stratified (pattern × peak-count bin) counts ──
+    if params.diagnostic_stratify && size(results.strat_tc, 2) > 0
+        B = size(results.strat_tc, 2)
+        mean_pc = [results.strat_nscans[b] > 0 ? results.strat_peak_sum[b]/results.strat_nscans[b] : 0.0 for b in 1:B]
+        αs = 1.0
+        rows_pat=Int[]; rows_bin=Int[]; rows_k=Int[]; rows_mpc=Float64[]
+        rows_tc=Int[]; rows_dc=Int[]; rows_excess=Float64[]; rows_rate=Float64[]; rows_pass=Bool[]; rows_ns=Int[]
+        for p in 1:256, b in 1:B
+            t=Float64(results.strat_tc[p,b]); d=fdr_scale*Float64(results.strat_dc[p,b])
+            rate=((t+αs)-(d+αs))/(d+αs)
+            push!(rows_pat,p-1); push!(rows_bin,b); push!(rows_k,count_ones(UInt8(p-1))); push!(rows_mpc,mean_pc[b])
+            push!(rows_tc,results.strat_tc[p,b]); push!(rows_dc,results.strat_dc[p,b])
+            push!(rows_excess, t - fdr_scale*Float64(results.strat_dc[p,b]))
+            push!(rows_rate, rate); push!(rows_pass, rate > min_r); push!(rows_ns, results.strat_nscans[b])
+        end
+        Arrow.write(joinpath(out_dir, "bitvec_stratified_counts.arrow"), DataFrame(
+            pattern=rows_pat, bin=rows_bin, count_ones=rows_k, mean_peak_count=rows_mpc,
+            target_count=rows_tc, decoy_count=rows_dc, excess_count=rows_excess,
+            excess_rate=rows_rate, would_pass=rows_pass, n_scans_bin=rows_ns))
+        @user_info "BitVec stratified diagnostic: wrote bitvec_stratified_counts.arrow " *
+                   "($B bins, mean peak counts $(round.(mean_pc, digits=0)))"
     end
 end
