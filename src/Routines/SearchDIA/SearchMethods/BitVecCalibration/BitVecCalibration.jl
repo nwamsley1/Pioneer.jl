@@ -223,6 +223,8 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
     min_excess_rate::Float32
     diagnostic_stratify::Bool   # DIAGNOSTIC ONLY: stratify pattern counts by scan peak count
     n_stratify_bins::Int        # number of peak-count quantile bins for the diagnostic
+    diagnostic_all_scans::Bool  # DIAGNOSTIC: stratify over ALL MS2 scans, not just the
+                                # TIC-priority adaptive sample (removes the dense-scan bias)
 
     function BitVecCalibrationParameters(params::PioneerParameters)
         # Per-bitvec-pattern minimum target-excess rate for admission. Lower =>
@@ -238,6 +240,7 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
         # bitvec_stratified_counts.arrow. Does NOT change the live filter.
         diagnostic_stratify = Bool(get(bitvec_cfg, :diagnostic_stratify, false))
         n_stratify_bins = Int(get(bitvec_cfg, :n_stratify_bins, 10))
+        diagnostic_all_scans = Bool(get(bitvec_cfg, :diagnostic_all_scans, false))
         new(
             (UInt8(1), UInt8(0)),  # isotope_err_bounds
             UInt8(3),              # min_score for CountFilter fallback (normal search path)
@@ -245,6 +248,7 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
             min_excess_rate,
             diagnostic_stratify,
             n_stratify_bins,
+            diagnostic_all_scans,
         )
     end
 end
@@ -442,8 +446,10 @@ function process_file!(
     # DIAGNOSTIC: re-accumulate the same sampled scans, stratified by peak count.
     # Live filter above is untouched.
     if params.diagnostic_stratify
+        # All MS2 scans (unbiased) vs the TIC-priority sample the live filter used.
+        diag_scans = params.diagnostic_all_scans ? Int.(scan_priority) : Int.(scan_priority[1:prev])
         accumulate_stratified!(results, params, search_context, ms_file_idx, spectra,
-            Int.(scan_priority[1:prev]), scan_to_prec_idx, partitioned_index,
+            diag_scans, scan_to_prec_idx, partitioned_index,
             qtm, mem, rt_to_irt, irt_tol, prec_mzs, prec_irts, is_decoy)
     end
 end
