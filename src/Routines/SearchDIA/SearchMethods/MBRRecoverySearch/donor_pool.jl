@@ -31,6 +31,10 @@ function list_post_scoring_psm_files(search_context::SearchContext)
         endswith(f, ".arrow") &&
         !occursin("_fold0", basename(f)) &&
         !occursin("_fold1", basename(f)) &&
+        # Catches the PrecursorScoringSearch `{file}.arrow.prec_prob.sidecar.arrow`
+        # sidecars (and any future `*.sidecar.arrow`) — a real post-scoring PSM
+        # file is `{name}.arrow` with no second `.arrow.` segment.
+        !occursin(".sidecar.arrow", basename(f)) &&
         !endswith(basename(f), ".mbr_sidecar.arrow") &&
         !endswith(basename(f), ".pass1_sidecar.arrow") &&
         !endswith(basename(f), ".recovery_sidecar.arrow") &&
@@ -120,7 +124,11 @@ function build_recovery_donor_pool(
                 Bool(!tbl.target[i]),
             )
             entries = get!(() -> _MBRDonorEntry[], pool, pid)
-            _insert_sorted_donor_entry!(entries, entry; max_kept=max_donors)
+            # Insert sorted desc by trace_prob, then cap at max_donors. Each pid
+            # appears at most once per file (best-per-precursor), so the kept
+            # entries are the top-scoring donors from distinct files.
+            _insert_sorted_donor_entry!(entries, entry)
+            length(entries) > max_donors && pop!(entries)
             n_donor_rows_seen += 1
             file_had_donor = true
         end

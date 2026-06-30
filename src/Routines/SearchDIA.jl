@@ -233,6 +233,7 @@ function SearchDIA(params_path::String)
             ("BitVec Calibration", BitVecCalibrationSearch()),
             ("Main Search", MainSearch()),
             ("Precursor Scoring", PrecursorScoringSearch()),
+            ("MBR Recovery", MBRRecoverySearch()),
         ]
         if get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber"
             push!(searches, ("Huber Calibration", HuberTuningSearch()))
@@ -313,7 +314,7 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
     execution_order = [
         "Parameter Loading", "Spectral Library Loading", "Search Context Initialization",
         "Parameter Tuning", "Quadrupole Tuning", "BitVec Calibration",
-        "Main Search", "Precursor Scoring", "Huber Calibration", "Chromatogram Integration",
+        "Main Search", "Precursor Scoring", "MBR Recovery", "Huber Calibration", "Chromatogram Integration",
         "Protein Inference", "Protein Scoring", "Quantification & Output",
     ]
     seen = Set{String}()

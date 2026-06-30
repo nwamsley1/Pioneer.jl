@@ -38,12 +38,16 @@ Interface
 get_search_method_name(::MBRRecoverySearch) = "MBR Recovery"
 
 function get_parameters(::MBRRecoverySearch, params::Any)
+    # min_fraction_transmitted is hardcoded to 0.25 to match MainSearch and
+    # IntegrateChromatogramSearch (the former global.isotope_settings knob was
+    # removed — every shipping config used this value), so the per-scan
+    # candidate sets are comparable across stages.
     return MBRRecoverySearchParameters(
         MBR_RECOVERY_DONOR_QVAL,
         MBR_RECOVERY_MAX_DONORS,
         MBR_RECOVERY_RT_TOL_FLOOR_MIN,
         (UInt8(1), UInt8(0)),
-        Float32(params.global.isotope_settings.min_fraction_transmitted),
+        Float32(0.25),
     )
 end
 
@@ -254,10 +258,14 @@ function process_file!(
 
     sidecar_path = recovery_seed_sidecar_path(psm_path)
 
-    # Need the per-file RT index (empirical RT space) to enumerate competitors.
+    # Need the per-file RT index (empirical RT space) to enumerate competitors,
+    # plus a calibrated per-file iRT tolerance to size the recovery window. A
+    # file lacking either was not fully calibrated upstream (e.g. too few PSMs);
+    # skip it with an empty sidecar.
     rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
-    if isempty(rt_index_path) || !isfile(rt_index_path)
-        @debug_l2 "MBRRecoverySearch: no rt_index for $file_name — emitting empty sidecar"
+    if isempty(rt_index_path) || !isfile(rt_index_path) ||
+       !haskey(getIrtErrors(search_context), ms_file_idx)
+        @debug_l2 "MBRRecoverySearch: no rt_index / iRT tol for $file_name — emitting empty sidecar"
         write_recovery_seed_sidecar(sidecar_path, RecoveredSeedRow[])
         return nothing
     end
