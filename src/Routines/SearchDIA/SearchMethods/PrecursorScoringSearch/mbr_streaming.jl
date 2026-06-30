@@ -19,8 +19,9 @@
 #   Sweep 1 (build_mbr_donor_dict_streaming_with_pass1)
 #     Streams each (main + pass1 sidecar) pair to build the donor dict keyed
 #     by precursor_idx. Each pid keeps the two best donor rows from distinct
-#     files, sorted by score, so `_donor_for_pid` can choose the best cross-file
-#     donor without storage growing with file count.
+#     files plus the two worst rows that clear the donor score floor, so MBR can
+#     compare a receiver to both strong and weak passing evidence without
+#     storage growing with file count.
 #
 #   Sweep 2 (load_normal_mbr_candidate_slim_dataframe)
 #     Computes pre-MBR row q-values from Pass-1 scores, keeps only rows that
@@ -55,6 +56,7 @@ struct _MBRDonorEntry
 end
 
 const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
+const MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 
 struct _MBRFragmentAnnotationKeys
@@ -182,15 +184,24 @@ const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
 # check-keys (asserted equal at downstream join time).
 const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_max_pair_prob_true,        :MBR_max_pair_prob_false,
+    :MBR_log2_weight,
     :MBR_log2_weight_ratio_true,    :MBR_log2_weight_ratio_false,
+    :MBR_log2_weight_ratio_worst_true,
+    :MBR_log2_weight_ratio_worst_false,
     :MBR_log2_explained_ratio_true, :MBR_log2_explained_ratio_false,
+    :MBR_log2_explained_ratio_worst_true,
+    :MBR_log2_explained_ratio_worst_false,
     :MBR_abs_n_scans_diff_true,     :MBR_abs_n_scans_diff_false,
+    :MBR_abs_n_scans_diff_worst_true,
+    :MBR_abs_n_scans_diff_worst_false,
     :MBR_log2_n_scans_ratio_true,   :MBR_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_smoothed_frag_hellinger_true,
     :MBR_smoothed_frag_hellinger_false,
+    :MBR_smoothed_frag_hellinger_worst_true,
+    :MBR_smoothed_frag_hellinger_worst_false,
 )
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
@@ -263,12 +274,19 @@ function _empty_mbr_rescue_candidate_slim_columns()
         _mbr_rescue_row_idx = UInt32[],
         MBR_max_pair_prob_true = Float32[],
         MBR_max_pair_prob_false = Float32[],
+        MBR_log2_weight = Float32[],
         MBR_log2_weight_ratio_true = Float32[],
         MBR_log2_weight_ratio_false = Float32[],
+        MBR_log2_weight_ratio_worst_true = Float32[],
+        MBR_log2_weight_ratio_worst_false = Float32[],
         MBR_log2_explained_ratio_true = Float32[],
         MBR_log2_explained_ratio_false = Float32[],
+        MBR_log2_explained_ratio_worst_true = Float32[],
+        MBR_log2_explained_ratio_worst_false = Float32[],
         MBR_abs_n_scans_diff_true = Float32[],
         MBR_abs_n_scans_diff_false = Float32[],
+        MBR_abs_n_scans_diff_worst_true = Float32[],
+        MBR_abs_n_scans_diff_worst_false = Float32[],
         MBR_log2_n_scans_ratio_true = Float32[],
         MBR_log2_n_scans_ratio_false = Float32[],
         MBR_best_irt_diff_true = Float32[],
@@ -279,6 +297,8 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_log_by_diff_false = Float32[],
         MBR_smoothed_frag_hellinger_true = Float32[],
         MBR_smoothed_frag_hellinger_false = Float32[],
+        MBR_smoothed_frag_hellinger_worst_true = Float32[],
+        MBR_smoothed_frag_hellinger_worst_false = Float32[],
     )
     pass1_cols = NamedTuple{Tuple(ADVANCED_FEATURE_SET)}(
         ntuple(_ -> Float32[], length(ADVANCED_FEATURE_SET))
@@ -312,6 +332,48 @@ function _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, row_idx:
     return nothing
 end
 
+@inline function _mbr_log2_weight_ratio(weight::Float32, donor::Union{Nothing, _MBRDonorEntry})
+    (donor !== nothing && weight > 0.0f0 && donor.weight > 0.0f0) || return -1.0f0
+    return log2(weight / donor.weight)
+end
+
+@inline function _mbr_log2_weight(weight::Float32)
+    weight > 0.0f0 || return -1.0f0
+    return log2(weight)
+end
+
+@inline function _mbr_log2_explained_ratio(
+    log2_intensity_explained::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor === nothing && return -1.0f0
+    return log2_intensity_explained - donor.log2_intensity_explained
+end
+
+@inline function _mbr_abs_n_scans_diff(
+    n_scans::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor === nothing && return -1.0f0
+    return abs(n_scans - donor.n_scans)
+end
+
+@inline function _mbr_smoothed_spectrum_hellinger_from_donor(
+    recipient_sqrt::NTuple{8, Float32},
+    donor::Union{Nothing, _MBRDonorEntry},
+    fragment_keys::_MBRFragmentAnnotationKeys,
+    recipient_pid::UInt32,
+)
+    donor === nothing && return 1.0f0
+    return _mbr_smoothed_spectrum_hellinger_from_sqrt(
+        recipient_sqrt,
+        donor.smoothed_frag_sqrt,
+        fragment_keys,
+        recipient_pid,
+        donor.precursor_idx,
+    )
+end
+
 function _append_mbr_candidate_row!(
     out,
     normal_file_idx::UInt32,
@@ -335,14 +397,14 @@ function _append_mbr_candidate_row!(
     recipient_sqrt::NTuple{8, Float32},
     donor_t::_MBRDonorEntry,
     donor_f::_MBRDonorEntry,
+    donor_worst_t::Union{Nothing, _MBRDonorEntry},
+    donor_worst_f::Union{Nothing, _MBRDonorEntry},
     fragment_keys::_MBRFragmentAnnotationKeys,
 )
-    log2_weight_ratio_t = -1.0f0
-    log2_weight_ratio_f = -1.0f0
-    if weight > 0.0f0
-        donor_t.weight > 0.0f0 && (log2_weight_ratio_t = log2(weight / donor_t.weight))
-        donor_f.weight > 0.0f0 && (log2_weight_ratio_f = log2(weight / donor_f.weight))
-    end
+    log2_weight_ratio_t = _mbr_log2_weight_ratio(weight, donor_t)
+    log2_weight_ratio_f = _mbr_log2_weight_ratio(weight, donor_f)
+    log2_weight_ratio_worst_t = _mbr_log2_weight_ratio(weight, donor_worst_t)
+    log2_weight_ratio_worst_f = _mbr_log2_weight_ratio(weight, donor_worst_f)
 
     hellinger_t = _mbr_smoothed_spectrum_hellinger_from_sqrt(
         recipient_sqrt,
@@ -357,6 +419,18 @@ function _append_mbr_candidate_row!(
         fragment_keys,
         pid,
         donor_f.precursor_idx,
+    )
+    hellinger_worst_t = _mbr_smoothed_spectrum_hellinger_from_donor(
+        recipient_sqrt,
+        donor_worst_t,
+        fragment_keys,
+        pid,
+    )
+    hellinger_worst_f = _mbr_smoothed_spectrum_hellinger_from_donor(
+        recipient_sqrt,
+        donor_worst_f,
+        fragment_keys,
+        pid,
     )
 
     push!(out.precursor_idx, pid)
@@ -375,12 +449,19 @@ function _append_mbr_candidate_row!(
     push!(out._mbr_rescue_row_idx, rescue_row_idx)
     push!(out.MBR_max_pair_prob_true, donor_t.trace_prob)
     push!(out.MBR_max_pair_prob_false, donor_f.trace_prob)
+    push!(out.MBR_log2_weight, _mbr_log2_weight(weight))
     push!(out.MBR_log2_weight_ratio_true, log2_weight_ratio_t)
     push!(out.MBR_log2_weight_ratio_false, log2_weight_ratio_f)
-    push!(out.MBR_log2_explained_ratio_true, log2_intensity_explained - donor_t.log2_intensity_explained)
-    push!(out.MBR_log2_explained_ratio_false, log2_intensity_explained - donor_f.log2_intensity_explained)
+    push!(out.MBR_log2_weight_ratio_worst_true, log2_weight_ratio_worst_t)
+    push!(out.MBR_log2_weight_ratio_worst_false, log2_weight_ratio_worst_f)
+    push!(out.MBR_log2_explained_ratio_true, _mbr_log2_explained_ratio(log2_intensity_explained, donor_t))
+    push!(out.MBR_log2_explained_ratio_false, _mbr_log2_explained_ratio(log2_intensity_explained, donor_f))
+    push!(out.MBR_log2_explained_ratio_worst_true, _mbr_log2_explained_ratio(log2_intensity_explained, donor_worst_t))
+    push!(out.MBR_log2_explained_ratio_worst_false, _mbr_log2_explained_ratio(log2_intensity_explained, donor_worst_f))
     push!(out.MBR_abs_n_scans_diff_true, abs(n_scans - donor_t.n_scans))
     push!(out.MBR_abs_n_scans_diff_false, abs(n_scans - donor_f.n_scans))
+    push!(out.MBR_abs_n_scans_diff_worst_true, _mbr_abs_n_scans_diff(n_scans, donor_worst_t))
+    push!(out.MBR_abs_n_scans_diff_worst_false, _mbr_abs_n_scans_diff(n_scans, donor_worst_f))
     push!(out.MBR_log2_n_scans_ratio_true, log2((n_scans + 1.0f0) / (donor_t.n_scans + 1.0f0)))
     push!(out.MBR_log2_n_scans_ratio_false, log2((n_scans + 1.0f0) / (donor_f.n_scans + 1.0f0)))
     push!(out.MBR_best_irt_diff_true, abs(irt_residual - donor_t.irt_residual))
@@ -391,6 +472,8 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_log_by_diff_false, log_by_ratio - donor_f.log_by_ratio)
     push!(out.MBR_smoothed_frag_hellinger_true, hellinger_t)
     push!(out.MBR_smoothed_frag_hellinger_false, hellinger_f)
+    push!(out.MBR_smoothed_frag_hellinger_worst_true, hellinger_worst_t)
+    push!(out.MBR_smoothed_frag_hellinger_worst_false, hellinger_worst_f)
     return nothing
 end
 
@@ -472,6 +555,35 @@ function _insert_sorted_donor_entry!(
     return nothing
 end
 
+function _prune_donor_entries!(
+    entries::Vector{_MBRDonorEntry},
+    passing_score_floor::Float32,
+)
+    sort!(entries, by = entry -> entry.trace_prob, rev = true)
+    keep = falses(length(entries))
+    @inbounds for idx in 1:min(length(entries), MBR_MAX_DONOR_FILES_PER_PRECURSOR)
+        keep[idx] = true
+    end
+
+    kept_worst = 0
+    @inbounds for idx in length(entries):-1:1
+        entries[idx].trace_prob >= passing_score_floor || continue
+        keep[idx] = true
+        kept_worst += 1
+        kept_worst == MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR && break
+    end
+
+    write_idx = 1
+    @inbounds for read_idx in eachindex(entries)
+        if keep[read_idx]
+            entries[write_idx] = entries[read_idx]
+            write_idx += 1
+        end
+    end
+    resize!(entries, write_idx - 1)
+    return nothing
+end
+
 # Inner per-file row loop for build_mbr_donor_dict_streaming_with_pass1.
 # Extracted so Julia specializes on the concrete Arrow column types and the
 # Union{Nothing, ...} branch on logby_c becomes a one-time call-site
@@ -492,6 +604,8 @@ end
     smoothed_frag_cols,
     fidx_c::AbstractVector{UInt32},
     side_path::String,
+    ;
+    passing_score_floor::Float32 = Float32(Inf),
 )
     n = length(pid_c)
     has_logby = logby_c !== nothing
@@ -522,7 +636,8 @@ end
             deleteat!(entries, same_file_idx)
         end
         _insert_sorted_donor_entry!(entries, e)
-        length(entries) > MBR_MAX_DONOR_FILES_PER_PRECURSOR && pop!(entries)
+        length(entries) > MBR_MAX_DONOR_FILES_PER_PRECURSOR &&
+            _prune_donor_entries!(entries, passing_score_floor)
     end
     return nothing
 end
@@ -531,7 +646,10 @@ end
 # `trace_prob_prepass` from the Pass-1 sidecar (rather than expecting it
 # in the main file). All other donor columns come from the main file.
 # Alignment between main and sidecar is asserted via (:precursor_idx, :scan_idx).
-function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
+function build_mbr_donor_dict_streaming_with_pass1(
+    file_paths::Vector{String};
+    passing_score_floor::Float32 = Float32(Inf),
+)
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
         side_path = main_path * PASS1_SIDECAR_SUFFIX
@@ -554,9 +672,29 @@ function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
             main.ms_file_idx,
             side_path,
+            passing_score_floor = passing_score_floor,
         )
     end
     return all_entries
+end
+
+@inline function _worst_donor_for_pid(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    my_file::UInt32,
+    passing_score_floor::Float32,
+)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    worst = nothing
+    @inbounds for e in entries
+        e.ms_file_idx == my_file && continue
+        e.trace_prob >= passing_score_floor || continue
+        if worst === nothing || e.trace_prob < worst.trace_prob
+            worst = e
+        end
+    end
+    return worst
 end
 
 # Find the donor entry for `pid` from a file OTHER than `my_file`. Pulled
@@ -701,11 +839,14 @@ function load_normal_mbr_candidate_slim_dataframe(
     fragment_keys::_MBRFragmentAnnotationKeys;
     q_thresh::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    prepass = nothing,
 )
-    prepass = _normal_mbr_prepass_qvals_and_threshold(
-        file_paths;
-        donor_q_threshold = donor_q_threshold,
-    )
+    prepass = prepass === nothing ?
+        _normal_mbr_prepass_qvals_and_threshold(
+            file_paths;
+            donor_q_threshold = donor_q_threshold,
+        ) :
+        prepass
     out = _empty_mbr_rescue_candidate_slim_columns()
     offset = 0
 
@@ -742,6 +883,8 @@ function load_normal_mbr_candidate_slim_dataframe(
             donor_t.trace_prob >= prepass.prob_thresh || continue
             donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
             donor_f === nothing && continue
+            donor_worst_t = _worst_donor_for_pid(donor_dict, pid, ms_file_idx, prepass.prob_thresh)
+            donor_worst_f = _worst_donor_for_pid(donor_dict, donor_f.precursor_idx, ms_file_idx, prepass.prob_thresh)
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             _append_mbr_candidate_row!(
@@ -767,6 +910,8 @@ function load_normal_mbr_candidate_slim_dataframe(
                 recipient_sqrt,
                 donor_t,
                 donor_f,
+                donor_worst_t,
+                donor_worst_f,
                 fragment_keys,
             )
             _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, i)
@@ -822,6 +967,8 @@ function load_mbr_rescue_candidate_slim_dataframe(
             donor_t.trace_prob >= prob_thresh || continue
             donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
             donor_f === nothing && continue
+            donor_worst_t = _worst_donor_for_pid(donor_dict, pid, ms_file_idx, prob_thresh)
+            donor_worst_f = _worst_donor_for_pid(donor_dict, donor_f.precursor_idx, ms_file_idx, prob_thresh)
 
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             main_search_prob = _mbr_main_pep_confidence(pep_v[i])
@@ -848,6 +995,8 @@ function load_mbr_rescue_candidate_slim_dataframe(
                 recipient_sqrt,
                 donor_t,
                 donor_f,
+                donor_worst_t,
+                donor_worst_f,
                 fragment_keys,
             )
             _append_mbr_candidate_pass1_features!(out, pass1_feature_cols, i)

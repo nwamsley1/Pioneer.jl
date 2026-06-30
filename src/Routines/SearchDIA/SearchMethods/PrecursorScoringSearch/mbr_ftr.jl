@@ -68,13 +68,18 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :main_search_prob,                             # per-run 1 - main_search PEP
     :trace_prob_infold,                            # in-fold cross-run score
     :MBR_max_pair_prob_true,
+    :MBR_log2_weight,
     :MBR_log2_weight_ratio_true,
+    :MBR_log2_weight_ratio_worst_true,
     :MBR_log2_explained_ratio_true,
+    :MBR_log2_explained_ratio_worst_true,
     :MBR_abs_n_scans_diff_true,
+    :MBR_abs_n_scans_diff_worst_true,
     :MBR_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
     :MBR_log_by_diff_true,
     :MBR_smoothed_frag_hellinger_true,
+    :MBR_smoothed_frag_hellinger_worst_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -96,12 +101,16 @@ const FTR_FEATURES_F_TRUE = Symbol[
 const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
+    f === :MBR_log2_weight_ratio_worst_true ? :MBR_log2_weight_ratio_worst_false :
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
+    f === :MBR_log2_explained_ratio_worst_true ? :MBR_log2_explained_ratio_worst_false :
     f === :MBR_abs_n_scans_diff_true     ? :MBR_abs_n_scans_diff_false :
+    f === :MBR_abs_n_scans_diff_worst_true ? :MBR_abs_n_scans_diff_worst_false :
     f === :MBR_log2_n_scans_ratio_true   ? :MBR_log2_n_scans_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_smoothed_frag_hellinger_true ? :MBR_smoothed_frag_hellinger_false :
+    f === :MBR_smoothed_frag_hellinger_worst_true ? :MBR_smoothed_frag_hellinger_worst_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]

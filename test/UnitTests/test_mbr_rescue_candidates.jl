@@ -276,15 +276,28 @@ end
                 trace_prob_infold = Float32[0.81, 0.96, 0.995],
             ))
             donor_sqrt = ntuple(_ -> sqrt(1.0f0 / 8.0f0), 8)
+            worst_donor_sqrt = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
             donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
-                UInt32(1) => [Pioneer._MBRDonorEntry(
-                    0.99f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
-                    0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
-                )],
-                UInt32(2) => [Pioneer._MBRDonorEntry(
-                    0.99f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
-                    0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
-                )],
+                UInt32(1) => [
+                    Pioneer._MBRDonorEntry(
+                        0.99f0, UInt32(1), 10.0f0, 2.0f0, 0.25f0, 8.8f0,
+                        0.1f0, 4.0f0, donor_sqrt, UInt32(2), false,
+                    ),
+                    Pioneer._MBRDonorEntry(
+                        0.98f0, UInt32(1), 4.0f0, 1.0f0, 0.4f0, 8.2f0,
+                        0.2f0, 2.0f0, worst_donor_sqrt, UInt32(3), false,
+                    ),
+                ],
+                UInt32(2) => [
+                    Pioneer._MBRDonorEntry(
+                        0.99f0, UInt32(2), 12.0f0, 1.0f0, 0.5f0, 8.5f0,
+                        0.3f0, 3.0f0, donor_sqrt, UInt32(2), false,
+                    ),
+                    Pioneer._MBRDonorEntry(
+                        0.98f0, UInt32(2), 2.0f0, 0.5f0, 0.6f0, 8.1f0,
+                        0.4f0, 1.0f0, worst_donor_sqrt, UInt32(3), false,
+                    ),
+                ],
             )
             pool = (pids = UInt32[2], irts = Float32[10])
             partner_pools = Pioneer._CounterfactualPartnerPools(
@@ -298,7 +311,17 @@ end
                 Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => pool),
                 Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => pool),
             )
-            fragment_keys = Pioneer._MBRFragmentAnnotationKeys(zeros(UInt16, 8 * 3))
+            fragment_key_values = zeros(UInt16, 8 * 3)
+            for pid in 1:3, rank in 1:8
+                fragment_key_values[8 * (pid - 1) + rank] = UInt16(rank)
+            end
+            fragment_keys = Pioneer._MBRFragmentAnnotationKeys(fragment_key_values)
+            prepass = (
+                scores = Float32[0.80, 0.95, 0.99],
+                qvals = Float32[0.02, 0.0, 0.0],
+                row_counts = Int[3],
+                prob_thresh = 0.95f0,
+            )
 
             result = Pioneer.load_normal_mbr_candidate_slim_dataframe(
                 [normal_path],
@@ -306,10 +329,11 @@ end
                 partner_pools,
                 fragment_keys;
                 q_thresh = 0.01f0,
+                prepass = prepass,
             )
 
             @test !isfile(normal_path * ".mbr_sidecar.arrow")
-            @test result.prob_thresh == 0.99f0
+            @test result.prob_thresh == 0.95f0
             @test result.n_rows == 3
             @test result.candidates.precursor_idx == UInt32[1]
             @test result.candidates.scan_idx == UInt32[10]
@@ -323,6 +347,17 @@ end
             @test result.candidates.MBR_is_missing_false == Bool[false]
             @test result.candidates.MBR_abs_n_scans_diff_true == Float32[3]
             @test result.candidates.MBR_abs_n_scans_diff_false == Float32[4]
+            @test result.candidates.MBR_abs_n_scans_diff_worst_true[1] == Float32(5)
+            @test result.candidates.MBR_abs_n_scans_diff_worst_false[1] == Float32(6)
+            @test result.candidates.MBR_log2_weight[1] == Float32(log2(8.0f0))
+            @test result.candidates.MBR_log2_weight_ratio_worst_true[1] == Float32(log2(8.0f0 / 4.0f0))
+            @test result.candidates.MBR_log2_weight_ratio_worst_false[1] == Float32(log2(8.0f0 / 2.0f0))
+            @test result.candidates.MBR_log2_explained_ratio_worst_true[1] == Float32(3.0f0 - 1.0f0)
+            @test result.candidates.MBR_log2_explained_ratio_worst_false[1] == Float32(3.0f0 - 0.5f0)
+            @test result.candidates.MBR_smoothed_frag_hellinger_worst_true[1] >
+                  result.candidates.MBR_smoothed_frag_hellinger_true[1]
+            @test result.candidates.MBR_smoothed_frag_hellinger_worst_false[1] >
+                  result.candidates.MBR_smoothed_frag_hellinger_false[1]
             @test isapprox(
                 result.candidates.MBR_log2_n_scans_ratio_true[1],
                 Float32(log2((7.0f0 + 1.0f0) / (4.0f0 + 1.0f0)));

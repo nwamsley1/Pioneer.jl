@@ -189,6 +189,36 @@ end
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).ms_file_idx == UInt32(40)
 end
 
+@testset "MBR donor dictionary keeps worst passing distinct-file donors" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}()
+
+    Pioneer._accumulate_donor_entries!(
+        donor_dict,
+        UInt32[1, 1, 1, 1, 1],
+        UInt32[1, 1, 1, 1, 1],
+        UInt32[10, 11, 12, 13, 14],
+        UInt32[10, 11, 12, 13, 14],
+        Float32[0.99, 0.95, 0.85, 0.70, 0.80],
+        Float32[1, 1, 1, 1, 1],
+        Float16[0.5, 0.5, 0.5, 0.5, 0.5],
+        Float32[12, 12, 12, 12, 12],
+        Float32[11, 11, 11, 11, 11],
+        nothing,
+        Float32[2, 3, 4, 5, 6],
+        ntuple(_ -> zeros(Float32, 5), 8),
+        UInt32[10, 20, 30, 40, 50],
+        "unit-test";
+        passing_score_floor = 0.75f0,
+    )
+
+    entries = donor_dict[UInt32(1)]
+
+    @test [entry.trace_prob for entry in entries] == Float32[0.99, 0.95, 0.85, 0.80]
+    @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).trace_prob == 0.95f0
+    @test Pioneer._worst_donor_for_pid(donor_dict, UInt32(1), UInt32(10), 0.75f0).trace_prob == 0.80f0
+    @test Pioneer._worst_donor_for_pid(donor_dict, UInt32(1), UInt32(50), 0.75f0).trace_prob == 0.85f0
+end
+
 @testset "MBR false donor selection excludes the same precursor" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
         UInt32(1) => [_test_mbr_donor(0.99f0, UInt32(20), UInt32(1))],

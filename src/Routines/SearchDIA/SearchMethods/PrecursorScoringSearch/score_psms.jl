@@ -220,14 +220,20 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    # 5. MBR donor dict from normal rows. FTR features are computed only for
+    # 5. Pre-MBR q-values define the donor score floor and candidate gate.
+    normal_prepass = _normal_mbr_prepass_qvals_and_threshold(file_paths)
+
+    # 6. MBR donor dict from normal rows. FTR features are computed only for
     # candidate rows below, so no dense per-file MBR feature sidecars are
     # written.
     @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
-    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+        file_paths;
+        passing_score_floor = normal_prepass.prob_thresh,
+    )
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
-    # 6. Sparse FTR DataFrame: normal candidates are pre-gated from full
+    # 7. Sparse FTR DataFrame: normal candidates are pre-gated from full
     # Pass-1 q-values + donor availability; rescue candidates use the same
     # donor score floor.
     @debug_l1 "MBR Batch F: building sparse FTR candidate rows..."
@@ -237,6 +243,7 @@ function _score_precursor_isotope_traces_mbr(
         cf_partner_pools,
         fragment_keys;
         q_thresh = 0.01f0,
+        prepass = normal_prepass,
     )
     psms = normal_candidate_result.candidates
     normal_ftr_rows = nrow(psms)
@@ -262,10 +269,10 @@ function _score_precursor_isotope_traces_mbr(
     fragment_keys = nothing
     GC.gc()
 
-    # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
+    # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
     psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
 
-    # 8. Paired-counterfactual FTR.
+    # 9. Paired-counterfactual FTR.
     apply_mbr_filter_paired!(
         psms;
         alpha = 0.01f0,
@@ -274,7 +281,7 @@ function _score_precursor_isotope_traces_mbr(
         pregated_prob_thresh = normal_candidate_result.prob_thresh,
     )
 
-    # 9. Recovery sidecars + final merge — folds (Pass-1 + recovery)
+    # 10. Recovery sidecars + final merge — folds (Pass-1 + recovery)
     # back into each main file in one pass.
     @debug_l1 "MBR Batch F: writing recovery sidecars..."
     write_sparse_normal_recovery_sidecars!(
