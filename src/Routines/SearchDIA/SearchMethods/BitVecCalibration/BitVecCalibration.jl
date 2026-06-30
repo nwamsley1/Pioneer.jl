@@ -225,6 +225,9 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
     n_stratify_bins::Int        # number of peak-count quantile bins for the diagnostic
     diagnostic_all_scans::Bool  # DIAGNOSTIC: stratify over ALL MS2 scans, not just the
                                 # TIC-priority adaptive sample (removes the dense-scan bias)
+    diagnostic_strata_target::Int  # DIAGNOSTIC: if >0, RANDOM-sample scans within each
+                                   # peak-count stratum until it reaches this many counts
+                                   # (instead of TIC-priority), so sparse strata are sampled
 
     function BitVecCalibrationParameters(params::PioneerParameters)
         # Per-bitvec-pattern minimum target-excess rate for admission. Lower =>
@@ -241,6 +244,7 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
         diagnostic_stratify = Bool(get(bitvec_cfg, :diagnostic_stratify, false))
         n_stratify_bins = Int(get(bitvec_cfg, :n_stratify_bins, 10))
         diagnostic_all_scans = Bool(get(bitvec_cfg, :diagnostic_all_scans, false))
+        diagnostic_strata_target = Int(get(bitvec_cfg, :diagnostic_strata_target, 0))
         new(
             (UInt8(1), UInt8(0)),  # isotope_err_bounds
             UInt8(3),              # min_score for CountFilter fallback (normal search path)
@@ -249,6 +253,7 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
             diagnostic_stratify,
             n_stratify_bins,
             diagnostic_all_scans,
+            diagnostic_strata_target,
         )
     end
 end
@@ -446,11 +451,18 @@ function process_file!(
     # DIAGNOSTIC: re-accumulate the same sampled scans, stratified by peak count.
     # Live filter above is untouched.
     if params.diagnostic_stratify
-        # All MS2 scans (unbiased) vs the TIC-priority sample the live filter used.
-        diag_scans = params.diagnostic_all_scans ? Int.(scan_priority) : Int.(scan_priority[1:prev])
-        accumulate_stratified!(results, params, search_context, ms_file_idx, spectra,
-            diag_scans, scan_to_prec_idx, partitioned_index,
-            qtm, mem, rt_to_irt, irt_tol, prec_mzs, prec_irts, is_decoy)
+        if params.diagnostic_strata_target > 0
+            # Random-sample within each peak-count stratum until the count target.
+            accumulate_stratified_random!(results, params, search_context, ms_file_idx, spectra,
+                Int.(scan_priority), scan_to_prec_idx, partitioned_index,
+                qtm, mem, rt_to_irt, irt_tol, prec_mzs, prec_irts, is_decoy)
+        else
+            # All MS2 scans (unbiased) vs the TIC-priority sample the live filter used.
+            diag_scans = params.diagnostic_all_scans ? Int.(scan_priority) : Int.(scan_priority[1:prev])
+            accumulate_stratified!(results, params, search_context, ms_file_idx, spectra,
+                diag_scans, scan_to_prec_idx, partitioned_index,
+                qtm, mem, rt_to_irt, irt_tol, prec_mzs, prec_irts, is_decoy)
+        end
     end
 end
 
@@ -502,6 +514,73 @@ function accumulate_stratified!(
         end
         results.strat_nscans[b] += length(binscans)
         results.strat_peak_sum[b] += sum(pc[i] for i in 1:n if binof(pc[i]) == b)
+    end
+    return nothing
+end
+
+"""
+    accumulate_stratified_random!(results, ...)
+
+DIAGNOSTIC ONLY. Bins ALL MS2 scans into `n_stratify_bins` peak-count quantile
+strata, then **randomly** samples scans within each stratum (not TIC-priority,
+which skips sparse spectra) until that stratum reaches `diagnostic_strata_target`
+counts (or its scans are exhausted). Random subsampling preserves the per-pattern
+excess-rate estimate; the targets just guarantee adequate counts in every
+stratum — including the sparse ones the live sampler under-samples.
+"""
+function accumulate_stratified_random!(
+    results::BitVecCalibrationResults,
+    params::BitVecCalibrationParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData,
+    all_scans::Vector{Int},
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    partitioned_index,
+    qtm, mem, rt_to_irt, irt_tol,
+    prec_mzs::AbstractVector{Float32},
+    prec_irts::AbstractVector{Float32},
+    is_decoy::AbstractVector{Bool},
+)
+    B = params.n_stratify_bins
+    target = params.diagnostic_strata_target
+    n = length(all_scans)
+    n < B && return nothing
+    pc = Float64[length(getMzArray(spectra, s)) for s in all_scans]
+    sp = sort(pc); np = length(sp)
+    edges = Float64[sp[clamp(floor(Int, q * (np - 1)) + 1, 1, np)] for q in range(0.0, 1.0; length = B + 1)]
+    binof(x) = clamp(searchsortedlast(edges, x), 1, B)
+    bin_scans = [Int[] for _ in 1:B]
+    bin_pc    = [Float64[] for _ in 1:B]
+    @inbounds for i in 1:n
+        b = binof(pc[i]); push!(bin_scans[b], all_scans[i]); push!(bin_pc[b], pc[i])
+    end
+    rng = Random.MersenneTwister(1844 + ms_file_idx)
+    nthreads = Threads.nthreads()
+    for b in 1:B
+        m = length(bin_scans[b]); m == 0 && continue
+        order = Random.shuffle(rng, collect(1:m))
+        acc = PatternAccumulator(nthreads, is_decoy; min_score = UInt8(2))
+        processed = 0; pcsum = 0.0; chunk = 2000
+        while processed < m
+            idxs = order[(processed + 1):min(processed + chunk, m)]
+            batch = Int[bin_scans[b][j] for j in idxs]
+            searchFragmentIndexPartitionMajorHinted(
+                scan_to_prec_idx, partitioned_index, spectra, batch, nthreads,
+                params, qtm, mem, rt_to_irt, irt_tol, prec_mzs;
+                pattern_accumulator = acc, precursor_irts = prec_irts,
+                scratch = getFragIndexScratch(search_context))
+            pcsum += sum(bin_pc[b][j] for j in idxs)
+            processed += length(idxs)
+            tc, dc = merge_accumulator(acc)
+            (sum(tc) + sum(dc)) >= target && break
+        end
+        tc, dc = merge_accumulator(acc)
+        @inbounds for p in 1:256
+            results.strat_tc[p, b] += tc[p]; results.strat_dc[p, b] += dc[p]
+        end
+        results.strat_nscans[b] += processed
+        results.strat_peak_sum[b] += pcsum
     end
     return nothing
 end
