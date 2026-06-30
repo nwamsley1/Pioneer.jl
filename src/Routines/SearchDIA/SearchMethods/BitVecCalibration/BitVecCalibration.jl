@@ -220,12 +220,22 @@ struct BitVecCalibrationParameters <: FragmentIndexSearchParameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_index_search_score::UInt8
     spec_order::Set{Int64}
+    min_excess_rate::Float32
 
-    function BitVecCalibrationParameters(::PioneerParameters)
+    function BitVecCalibrationParameters(params::PioneerParameters)
+        # Per-bitvec-pattern minimum target-excess rate for admission. Lower =>
+        # more candidate (scan, precursor) cells admitted to scoring (more IDs,
+        # more runtime). Surfaced as a config knob
+        # (optimization.bitvec_calibration.min_excess_rate) so different
+        # thresholds can be swept in one REPL session without recompiling;
+        # defaults to BITVEC_MIN_EXCESS_RATE (0.03) when absent.
+        bitvec_cfg = get(params.optimization, :bitvec_calibration, (;))
+        min_excess_rate = Float32(get(bitvec_cfg, :min_excess_rate, BITVEC_MIN_EXCESS_RATE))
         new(
             (UInt8(1), UInt8(0)),  # isotope_err_bounds
             UInt8(3),              # min_score for CountFilter fallback (normal search path)
             Set{Int64}([2]),       # MS2 only
+            min_excess_rate,
         )
     end
 end
@@ -357,7 +367,7 @@ function process_file!(
 
     # Compute per-file filter
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
-    min_excess_rate = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_excess_rate = Float64(params.min_excess_rate)
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
@@ -436,7 +446,7 @@ function summarize_results!(
     end
 
     z = Float64(BITVEC_DIAGNOSTIC_Z)
-    min_r = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_r = Float64(params.min_excess_rate)
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
     result = _adaptive_merge(tc, dc, z, min_r, fdr_scale)
     partition = result.partition
