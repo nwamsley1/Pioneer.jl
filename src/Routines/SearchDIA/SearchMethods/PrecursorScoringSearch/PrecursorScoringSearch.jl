@@ -146,12 +146,38 @@ function remap_mbr_recovered_prec_probs(
     return desc => op
 end
 
+function gate_mbr_recovered_by_global_qvalue(
+    global_qval_dict::Dict{UInt32, Float32},
+    q_value_threshold::Float32,
+)
+    desc = "gate_mbr_recovered_by_global_qvalue"
+    op = function(df)
+        hasproperty(df, :mbr_recovered) || return df
+        precursors = df[!, :precursor_idx]
+        recovered = df[!, :mbr_recovered]
+        target_decoy_probs = hasproperty(df, :mbr_target_decoy_prob) ?
+                             df[!, :mbr_target_decoy_prob] :
+                             nothing
+
+        @inbounds for i in eachindex(recovered)
+            Bool(recovered[i]) || continue
+            global_qval = get(global_qval_dict, UInt32(precursors[i]), Inf32)
+            global_qval <= q_value_threshold && continue
+            recovered[i] = false
+            target_decoy_probs !== nothing && (target_decoy_probs[i] = NaN32)
+        end
+        return df
+    end
+    return desc => op
+end
+
 function remap_mbr_recovered_prec_probs!(
     refs::Vector{PSMFileReference},
     merged_path::String;
     q_value_threshold::Float32,
     min_pep_points_per_bin::Int,
     fdr_scale_factor::Float32,
+    global_qval_dict::Union{Nothing, Dict{UInt32, Float32}} = nothing,
 )
     any(ref -> has_column_anywhere(ref, :mbr_target_decoy_prob), refs) || return refs
 
@@ -160,7 +186,12 @@ function remap_mbr_recovered_prec_probs!(
         min_pep_points_per_bin=min_pep_points_per_bin,
         fdr_scale_factor=fdr_scale_factor,
         temp_prefix="mbr_score_sidecar")
-    remap_pipeline = TransformPipeline() |>
+    remap_pipeline = TransformPipeline()
+    if global_qval_dict !== nothing
+        remap_pipeline = remap_pipeline |>
+            gate_mbr_recovered_by_global_qvalue(global_qval_dict, q_value_threshold)
+    end
+    remap_pipeline = remap_pipeline |>
         remap_mbr_recovered_prec_probs(spline_result.qval_spline, q_value_threshold)
     apply_pipeline!(refs, remap_pipeline; parallel=false)
     return refs
@@ -414,7 +445,7 @@ function summarize_results!(
 
     # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
     # Replaces 6 separate sort-merge-load-split cycles with:
-    #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
+    #   - Streaming dict accumulation for global_prob from narrow columns
     #   - In-memory q-value computation from dicts (no I/O)
     #   - Lightweight 2-column sidecar files for spline computation
     #   - Single per-file pipeline combining all column additions + filtering
@@ -425,22 +456,29 @@ function summarize_results!(
     # Pre-allocation size from spectral library
     n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
+    # A1: Stream per-file to build non-MBR global_prob dictionaries.
+    # MBR transfers are restricted to this fixed global ID universe, so MBR can
+    # fill missing rows but cannot create new globally passing precursors.
+    global_prob_dict, target_dict = build_precursor_global_prob_dicts(
+        filtered_refs,
+        sqrt_n_runs,
+        n_precursors;
+        exclude_mbr_rescue_recovered = true,
+    )
+
+    # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
+    global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+    global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+    results.precursor_global_qval_dict[] = global_qval_dict
+
     remap_mbr_recovered_prec_probs!(
         filtered_refs,
         results.merged_quant_path;
         q_value_threshold=params.q_value_threshold,
         min_pep_points_per_bin=params.pep_bin_size,
         fdr_scale_factor=fdr_scale,
+        global_qval_dict=global_qval_dict,
     )
-
-    # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
-    global_prob_dict, target_dict =
-        build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
-
-    # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
-    global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
-    global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
-    results.precursor_global_qval_dict[] = global_qval_dict
 
     # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
     spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;

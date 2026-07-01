@@ -85,6 +85,13 @@ end
         @test :MBR_donor_library_hellinger_worst_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 
+    @testset "counterfactual iRT window uses robust observed residuals" begin
+        @test Pioneer._mbr_counterfactual_irt_window!(Float32[]) == 1.0f0
+        @test Pioneer._mbr_counterfactual_irt_window!(Float32[0.01, 0.02, 0.03]) == 0.25f0
+        @test Pioneer._mbr_counterfactual_irt_window!(Float32[0.2, 0.4, 0.6, 8.0]) == 1.0f0
+        @test Pioneer._mbr_counterfactual_irt_window!(Float32[3.0, 4.0, 5.0]) == 2.0f0
+    end
+
     @testset "rescue path discovery mirrors main_search_psms layout" begin
         mktempdir() do dir
             normal_dir = joinpath(dir, "main_search_psms")
@@ -299,6 +306,8 @@ end
             computed_prepass = Pioneer._normal_mbr_prepass_qvals_and_threshold([normal_path])
             @test computed_prepass.lod_log2_weight_by_file[UInt32(1)] == Float32(log2(9.0f0))
             @test computed_prepass.lod_log2_weight_global == Float32(log2(9.0f0))
+            @test computed_prepass.counterfactual_irt_window == 2.0f0
+            @test computed_prepass.n_counterfactual_irt_window_samples == 1
 
             donor_sqrt = ntuple(_ -> sqrt(1.0f0 / 8.0f0), 8)
             worst_donor_sqrt = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
@@ -346,6 +355,8 @@ end
                 qvals = Float32[0.02, 0.0, 0.0],
                 row_counts = Int[3],
                 prob_thresh = 0.95f0,
+                counterfactual_irt_window = 2.0f0,
+                n_counterfactual_irt_window_samples = 1,
                 lod_log2_weight_by_file = Dict(UInt32(1) => Float32(log2(9.0f0))),
                 lod_log2_weight_global = Float32(log2(9.0f0)),
             )
@@ -589,6 +600,59 @@ end
         @test remapped.prec_prob[2] < direct_floor
         @test remapped.prec_prob[3] < direct_floor
         @test remapped.prec_prob[2] > remapped.prec_prob[3]
+    end
+
+    @testset "MBR recovered rows require non-MBR global q-value support" begin
+        qval_spline = linear_interpolation(
+            Float32[0.0, 1.0],
+            Float32[0.2, 0.0];
+            extrapolation_bc = Interpolations.Flat(),
+        )
+        pipeline = Pioneer.TransformPipeline() |>
+            Pioneer.gate_mbr_recovered_by_global_qvalue(
+                Dict(UInt32(2) => 0.01f0, UInt32(3) => 0.20f0),
+                0.1f0,
+            ) |>
+            Pioneer.remap_mbr_recovered_prec_probs(qval_spline, 0.1f0)
+        psms = DataFrame(
+            precursor_idx = UInt32[1, 2, 3],
+            prec_prob = Float32[0.95, 0.05, 0.06],
+            target = Bool[true, true, true],
+            mbr_recovered = Bool[false, true, true],
+            mbr_target_decoy_prob = Float32[NaN32, 0.90, 0.90],
+        )
+
+        remapped = _apply_pipeline_to_df(psms, pipeline)
+
+        @test remapped.mbr_recovered == Bool[false, true, false]
+        @test remapped.prec_prob[2] > 0.05f0
+        @test remapped.prec_prob[3] == 0.06f0
+        @test isnan(remapped.mbr_target_decoy_prob[3])
+    end
+
+    @testset "non-MBR global scores ignore recovered rescue-only rows" begin
+        mktempdir() do dir
+            path = joinpath(dir, "psms.arrow")
+            Pioneer.writeArrow(path, DataFrame(
+                precursor_idx = UInt32[1, 2, 3],
+                target = Bool[true, true, true],
+                prec_prob = Float32[0.90, 0.70, 0.80],
+                mbr_recovered = Bool[false, true, true],
+                mbr_rescue_candidate = Bool[false, false, true],
+            ))
+
+            global_prob, target_dict = Pioneer.build_precursor_global_prob_dicts(
+                [Pioneer.PSMFileReference(path)],
+                1,
+                3;
+                exclude_mbr_rescue_recovered = true,
+            )
+
+            @test global_prob[UInt32(1)] == 0.90f0
+            @test global_prob[UInt32(2)] == 0.70f0
+            @test !haskey(global_prob, UInt32(3))
+            @test !haskey(target_dict, UInt32(3))
+        end
     end
 
     @testset "MBR recovered rows are filtered by recalculated row q-values" begin

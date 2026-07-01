@@ -222,6 +222,8 @@ function _score_precursor_isotope_traces_mbr(
 
     # 5. Pre-MBR q-values define the donor score floor and candidate gate.
     normal_prepass = _normal_mbr_prepass_qvals_and_threshold(file_paths)
+    @debug_l1 "MBR counterfactual iRT window: ±$(round(normal_prepass.counterfactual_irt_window, digits=3)) " *
+              "(n=$(normal_prepass.n_counterfactual_irt_window_samples) high-confidence target residuals)"
 
     # 6. MBR donor dict from normal rows. FTR features are computed only for
     # candidate rows below, so no dense per-file MBR feature sidecars are
@@ -257,6 +259,7 @@ function _score_precursor_isotope_traces_mbr(
             normal_candidate_result.prob_thresh;
             lod_log2_weight_by_file = normal_prepass.lod_log2_weight_by_file,
             lod_log2_weight_global = normal_prepass.lod_log2_weight_global,
+            counterfactual_irt_window = normal_prepass.counterfactual_irt_window,
         )
         if nrow(rescue_psms) > 0
             psms = vcat(psms, rescue_psms; cols = :union)

@@ -2,6 +2,7 @@ using Test
 using Pioneer
 using Arrow
 using DataFrames
+using Random
 
 struct MBRChargeMockPrecursors <: Pioneer.LibraryPrecursors
     mz::Vector{Float32}
@@ -258,7 +259,7 @@ end
     @test donor.precursor_idx == UInt32(2)
 end
 
-@testset "MBR false donor selection can use either target-decoy class" begin
+@testset "MBR false donor selection samples either target-decoy class" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
         UInt32(2) => [_test_mbr_donor(0.99f0, UInt32(20), UInt32(2))],
         UInt32(3) => [_test_mbr_donor(0.30f0, UInt32(20), UInt32(3))],
@@ -281,16 +282,22 @@ end
         Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => mixed_pool),
         Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => mixed_pool),
     )
-    donor = Pioneer._false_donor_for_pid(
-        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
-        donor_dict,
-        partner_pools,
-        UInt32(1),
-        UInt32(10),
-    )
+    rng = MersenneTwister(11)
+    seen = Set{UInt32}()
+    for _ in 1:100
+        donor = Pioneer._false_donor_for_pid(
+            Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+            donor_dict,
+            partner_pools,
+            UInt32(1),
+            UInt32(10),
+            rng,
+        )
+        @test donor !== nothing
+        push!(seen, donor.precursor_idx)
+    end
 
-    @test donor !== nothing
-    @test donor.precursor_idx == UInt32(2)
+    @test seen == Set(UInt32[2, 3])
 end
 
 @testset "MBR false donor selection skips same-file partners" begin
@@ -316,46 +323,35 @@ end
     @test haskey(cache, UInt32(1))
 end
 
-@testset "MBR false donor selection prefers nearest iRT local counterfactual" begin
+@testset "MBR false donor selection samples uniformly within local iRT window" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
         UInt32(2) => [_test_mbr_donor(0.30f0, UInt32(20))],
         UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(20))],
         UInt32(4) => [_test_mbr_donor(0.99f0, UInt32(20))],
     )
-    target_by_pid = falses(4)
-    target_by_pid[1] = true
-    fold_by_pid = zeros(UInt8, 4)
-    mz_bin_by_pid = ones(UInt8, 4)
-    charge_by_pid = fill(UInt8(2), 4)
-    length_by_pid = fill(UInt8(10), 4)
-    irt_by_pid = zeros(Float32, 4)
-    irt_by_pid[1] = 10.0f0
     decoy_pool = (pids = UInt32[2, 3, 4], irts = Float32[10.01, 10.20, 13.0])
-    empty_pool = (pids = UInt32[], irts = Float32[])
-    partner_pools = Pioneer._CounterfactualPartnerPools(
-        target_by_pid,
-        fold_by_pid,
-        mz_bin_by_pid,
-        charge_by_pid,
-        length_by_pid,
-        irt_by_pid,
-        Dict{Tuple{Int, Int, Int, Int}, Pioneer._IrtPool}((0, 1, 2, 10) => decoy_pool),
-        Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => decoy_pool, (1, 2, 10) => empty_pool),
-        Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => decoy_pool),
-    )
-    donor = Pioneer._false_donor_for_pid(
-        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
-        donor_dict,
-        partner_pools,
-        UInt32(1),
-        UInt32(10),
-    )
 
-    @test donor !== nothing
-    @test donor.trace_prob == 0.30f0
+    rng = MersenneTwister(1776)
+    counts = Dict(0.30f0 => 0, 0.85f0 => 0, 0.99f0 => 0)
+    for _ in 1:1000
+        donor = Pioneer._uniform_random_cross_file_donor(
+            rng,
+            donor_dict,
+            decoy_pool,
+            10.0f0,
+            UInt32(10),
+            UInt32(1),
+        )
+        @test donor !== nothing
+        counts[donor.trace_prob] += 1
+    end
+
+    @test counts[0.99f0] == 0
+    @test 350 <= counts[0.30f0] <= 650
+    @test 350 <= counts[0.85f0] <= 650
 end
 
-@testset "MBR false donor fold fallback uses nearest iRT" begin
+@testset "MBR false donor fold fallback samples within iRT window" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
         UInt32(2) => [_test_mbr_donor(0.30f0, UInt32(20))],
         UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(20))],
@@ -381,14 +377,20 @@ end
         Dict{Tuple{Int, Int, Int}, Pioneer._IrtPool}((0, 2, 10) => fold_charge_length_pool, (1, 2, 10) => primary_pool),
         Dict{Tuple{Int, Int}, Pioneer._IrtPool}((2, 10) => fold_charge_length_pool),
     )
-    donor = Pioneer._false_donor_for_pid(
-        Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
-        donor_dict,
-        partner_pools,
-        UInt32(1),
-        UInt32(10),
-    )
+    rng = MersenneTwister(21)
+    seen = Set{Float32}()
+    for _ in 1:100
+        donor = Pioneer._false_donor_for_pid(
+            Dict{UInt32, Union{Nothing, Pioneer._MBRDonorEntry}}(),
+            donor_dict,
+            partner_pools,
+            UInt32(1),
+            UInt32(10),
+            rng,
+        )
+        @test donor !== nothing
+        push!(seen, donor.trace_prob)
+    end
 
-    @test donor !== nothing
-    @test donor.trace_prob == 0.30f0
+    @test seen == Set(Float32[0.30, 0.85])
 end

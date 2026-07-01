@@ -58,6 +58,10 @@ end
 
 const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR = 2
+const MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT = 1.0f0
+const MBR_COUNTERFACTUAL_IRT_WINDOW_MIN = 0.25f0
+const MBR_COUNTERFACTUAL_IRT_WINDOW_MAX = 2.0f0
+const MBR_COUNTERFACTUAL_IRT_WINDOW_MEDIAN_MULTIPLIER = 2.0f0
 const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 
@@ -740,31 +744,39 @@ end
     return nothing
 end
 
-@inline function _nearest_cross_file_donor(
+@inline function _uniform_random_cross_file_donor(
+    rng::Random.AbstractRNG,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pool::_IrtPool,
     target_irt::Float32,
     my_file::UInt32,
     my_pid::UInt32,
+    counterfactual_irt_window::Float32 = MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT,
 )
     n = length(pool.irts)
     n == 0 && return nothing
 
-    right = searchsortedfirst(pool.irts, target_irt)
-    left = right - 1
-    @inbounds while left >= 1 || right <= n
-        use_left = if right > n
-            true
-        elseif left < 1
-            false
-        else
-            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
-        end
-        pool_idx = use_left ? left : right
-        use_left ? (left -= 1) : (right += 1)
+    first_idx = searchsortedfirst(pool.irts, target_irt - counterfactual_irt_window)
+    last_idx = searchsortedlast(pool.irts, target_irt + counterfactual_irt_window)
+    n_valid = 0
+    @inbounds for pool_idx in first_idx:last_idx
         pool.pids[pool_idx] == my_pid && continue
         donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
-        donor !== nothing && return donor
+        donor === nothing && continue
+        n_valid += 1
+    end
+    n_valid == 0 && return nothing
+
+    selected = rand(rng, 1:n_valid)
+    seen = 0
+    @inbounds for pool_idx in first_idx:last_idx
+        pool.pids[pool_idx] == my_pid && continue
+        donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
+        donor === nothing && continue
+        seen += 1
+        if seen == selected
+            return donor
+        end
     end
     return nothing
 end
@@ -774,6 +786,8 @@ end
     partner_pools::_CounterfactualPartnerPools,
     my_pid::UInt32,
     my_file::UInt32,
+    rng::Random.AbstractRNG = Random.default_rng(),
+    counterfactual_irt_window::Float32 = MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT,
 )
     pid_idx = Int(my_pid)
     my_irt = partner_pools.irt_by_pid[pid_idx]
@@ -783,28 +797,34 @@ end
     my_length = Int(partner_pools.length_by_pid[pid_idx])
     pool_key = (my_fold, my_mz, my_charge, my_length)
 
-    donor = _nearest_cross_file_donor(
+    donor = _uniform_random_cross_file_donor(
+        rng,
         donor_dict,
         get(partner_pools.pools, pool_key, _empty_pool()),
         my_irt,
         my_file,
         my_pid,
+        counterfactual_irt_window,
     )
     donor !== nothing && return donor
-    donor = _nearest_cross_file_donor(
+    donor = _uniform_random_cross_file_donor(
+        rng,
         donor_dict,
         get(partner_pools.fold_charge_length_pool, (my_fold, my_charge, my_length), _empty_pool()),
         my_irt,
         my_file,
         my_pid,
+        counterfactual_irt_window,
     )
     donor !== nothing && return donor
-    return _nearest_cross_file_donor(
+    return _uniform_random_cross_file_donor(
+        rng,
         donor_dict,
         get(partner_pools.charge_length_pool, (my_charge, my_length), _empty_pool()),
         my_irt,
         my_file,
         my_pid,
+        counterfactual_irt_window,
     )
 end
 
@@ -814,13 +834,34 @@ end
     partner_pools::_CounterfactualPartnerPools,
     my_pid::UInt32,
     my_file::UInt32,
+    rng::Random.AbstractRNG = Random.default_rng(),
+    counterfactual_irt_window::Float32 = MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT,
 )
     if haskey(false_donor_cache, my_pid)
         return false_donor_cache[my_pid]
     end
-    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
+    donor = _resolve_false_donor_for_pid(
+        donor_dict,
+        partner_pools,
+        my_pid,
+        my_file,
+        rng,
+        counterfactual_irt_window,
+    )
     false_donor_cache[my_pid] = donor
     return donor
+end
+
+function _mbr_counterfactual_irt_window!(abs_irt_residuals::Vector{Float32})
+    isempty(abs_irt_residuals) && return MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT
+    sort!(abs_irt_residuals)
+    med_abs_residual = Float32(median(abs_irt_residuals))
+    isfinite(med_abs_residual) || return MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT
+    return clamp(
+        MBR_COUNTERFACTUAL_IRT_WINDOW_MEDIAN_MULTIPLIER * med_abs_residual,
+        MBR_COUNTERFACTUAL_IRT_WINDOW_MIN,
+        MBR_COUNTERFACTUAL_IRT_WINDOW_MAX,
+    )
 end
 
 function _normal_mbr_prepass_qvals_and_threshold(
@@ -831,6 +872,7 @@ function _normal_mbr_prepass_qvals_and_threshold(
     targets = Bool[]
     weights = Float32[]
     file_indices = UInt32[]
+    abs_irt_residuals = Float32[]
     row_counts = Int[]
 
     for main_path in file_paths
@@ -850,6 +892,7 @@ function _normal_mbr_prepass_qvals_and_threshold(
             push!(targets, Bool(main.target[i]))
             push!(weights, Float32(main.weight[i]))
             push!(file_indices, UInt32(main.ms_file_idx[i]))
+            push!(abs_irt_residuals, abs(Float32(main.irt_pred[i]) - Float32(main.irt_obs[i])))
         end
     end
 
@@ -862,8 +905,11 @@ function _normal_mbr_prepass_qvals_and_threshold(
 
     lod_samples_by_file = Dict{UInt32, Vector{Float32}}()
     lod_samples_global = Float32[]
+    counterfactual_irt_window_samples = Float32[]
     @inbounds for i in eachindex(scores)
         donor_target_pass[i] || continue
+        residual = abs_irt_residuals[i]
+        isfinite(residual) && push!(counterfactual_irt_window_samples, residual)
         weights[i] > 0.0f0 || continue
         log2_weight = log2(weights[i])
         push!(get!(() -> Float32[], lod_samples_by_file, file_indices[i]), log2_weight)
@@ -873,12 +919,16 @@ function _normal_mbr_prepass_qvals_and_threshold(
     for (file_idx, samples) in lod_samples_by_file
         lod_log2_weight_by_file[file_idx] = _mbr_lod_log2_weight!(samples)
     end
+    counterfactual_irt_window = _mbr_counterfactual_irt_window!(counterfactual_irt_window_samples)
+    n_counterfactual_irt_window_samples = length(counterfactual_irt_window_samples)
 
     return (
         scores = scores,
         qvals = qvals,
         row_counts = row_counts,
         prob_thresh = prob_thresh,
+        counterfactual_irt_window = counterfactual_irt_window,
+        n_counterfactual_irt_window_samples = n_counterfactual_irt_window_samples,
         lod_log2_weight_by_file = lod_log2_weight_by_file,
         lod_log2_weight_global = _mbr_lod_log2_weight!(lod_samples_global),
     )
@@ -931,6 +981,8 @@ function load_normal_mbr_candidate_slim_dataframe(
         smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
         pass1_feature_cols = _mbr_pass1_feature_columns(main)
         false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
+        rng = Random.default_rng()
+        counterfactual_irt_window = prepass.counterfactual_irt_window
 
         @inbounds for i in 1:n
             global_row = offset + i
@@ -940,7 +992,15 @@ function load_normal_mbr_candidate_slim_dataframe(
             donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
             donor_t === nothing && continue
             donor_t.trace_prob >= prepass.prob_thresh || continue
-            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
+            donor_f = _false_donor_for_pid(
+                false_donor_cache,
+                donor_dict,
+                partner_pools,
+                pid,
+                ms_file_idx,
+                rng,
+                counterfactual_irt_window,
+            )
             donor_f === nothing && continue
             donor_worst_t = _worst_donor_for_pid(donor_dict, pid, ms_file_idx, prepass.prob_thresh)
             donor_worst_f = _worst_donor_for_pid(donor_dict, donor_f.precursor_idx, ms_file_idx, prepass.prob_thresh)
@@ -1000,6 +1060,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
     prob_thresh::Float32;
     lod_log2_weight_by_file::Dict{UInt32, Float32},
     lod_log2_weight_global::Float32,
+    counterfactual_irt_window::Float32 = MBR_COUNTERFACTUAL_IRT_WINDOW_DEFAULT,
 )
     out = _empty_mbr_rescue_candidate_slim_columns()
     for (file_idx, main_path) in pairs(file_paths)
@@ -1026,6 +1087,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
         smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
         pass1_feature_cols = _mbr_pass1_feature_columns(main)
         false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
+        rng = Random.default_rng()
 
         @inbounds for i in 1:n
             pid = UInt32(pid_v[i])
@@ -1033,7 +1095,15 @@ function load_mbr_rescue_candidate_slim_dataframe(
             donor_t = _donor_for_pid(donor_dict, pid, ms_file_idx)
             donor_t === nothing && continue
             donor_t.trace_prob >= prob_thresh || continue
-            donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, pid, ms_file_idx)
+            donor_f = _false_donor_for_pid(
+                false_donor_cache,
+                donor_dict,
+                partner_pools,
+                pid,
+                ms_file_idx,
+                rng,
+                counterfactual_irt_window,
+            )
             donor_f === nothing && continue
             donor_worst_t = _worst_donor_for_pid(donor_dict, pid, ms_file_idx, prob_thresh)
             donor_worst_f = _worst_donor_for_pid(donor_dict, donor_f.precursor_idx, ms_file_idx, prob_thresh)

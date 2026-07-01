@@ -10,10 +10,10 @@
 # second-pass Arrow tables, stores iRT pools needed to choose a different
 # precursor as the counterfactual partner for each receiver file.
 #
-# MBR streaming resolves the partner against donor availability: first the
-# nearest-iRT donor from a different precursor with the same charge and length
-# in the same cv_fold × prec_mz decile, then nearest-iRT broader same-charge,
-# same-length fallbacks.
+# MBR streaming resolves the partner against donor availability by uniformly
+# sampling from the local iRT window: first within the same charge, length,
+# cv_fold, and prec_mz decile, then through broader same-charge same-length
+# fallbacks.
 # Nothing here mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
@@ -96,8 +96,8 @@ function _compute_mz_deciles(mzs::Vector{Float32})
     return _assign_mz_deciles(mzs, _compute_mz_decile_edges(mzs))
 end
 
-# A pool is a (pids, irts) NamedTuple with irts sorted ascending so we
-# can do binary search for iRT-nearest lookups.
+# A pool is a (pids, irts) NamedTuple with irts sorted ascending so we can
+# binary-search the local iRT window before sampling counterfactual donors.
 const _IrtPool = NamedTuple{(:pids, :irts), Tuple{Vector{UInt32}, Vector{Float32}}}
 
 _empty_pool() = (pids = UInt32[], irts = Float32[])
@@ -164,13 +164,13 @@ end
     build_counterfactual_partner_pools(file_paths, precursors) -> _CounterfactualPartnerPools
 
 MBR Batch F: build the precursor-indexed metadata and sorted iRT pools needed
-for deterministic, file-aware counterfactual partner resolution.
+for file-aware counterfactual partner resolution.
 
-For each receiver row, MBR streaming first chooses the nearest-iRT donor from a
-different precursor with the same charge and length in the same
-(cv_fold × prec_mz decile). If that primary stratum has no eligible cross-file
-donor, it falls back through same-fold same-charge same-length nearest iRT, then
-experiment-wide same-charge same-length nearest iRT.
+For each receiver row, MBR streaming samples a cross-file donor uniformly from
+different precursors within the local iRT window and with the same charge and
+length in the same (cv_fold × prec_mz decile). If that primary stratum has no
+eligible cross-file donor, it falls back through same-fold same-charge
+same-length, then experiment-wide same-charge same-length pools.
 """
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
