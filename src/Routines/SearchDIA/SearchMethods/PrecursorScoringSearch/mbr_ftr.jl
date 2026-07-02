@@ -77,6 +77,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_abs_n_scans_diff_worst_true,
     :MBR_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
+    :MBR_best_irt_obs_diff_true,
     :MBR_log_by_diff_true,
     :MBR_smoothed_frag_hellinger_true,
     :MBR_smoothed_frag_hellinger_worst_true,
@@ -110,6 +111,7 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_abs_n_scans_diff_worst_true ? :MBR_abs_n_scans_diff_worst_false :
     f === :MBR_log2_n_scans_ratio_true   ? :MBR_log2_n_scans_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
+    f === :MBR_best_irt_obs_diff_true    ? :MBR_best_irt_obs_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_smoothed_frag_hellinger_true ? :MBR_smoothed_frag_hellinger_false :
     f === :MBR_smoothed_frag_hellinger_worst_true ? :MBR_smoothed_frag_hellinger_worst_false :

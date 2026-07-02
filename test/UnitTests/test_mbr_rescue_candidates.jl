@@ -71,6 +71,13 @@ end
         @test :MBR_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 
+    @testset "FTR includes observed iRT comparison features" begin
+        @test :MBR_best_irt_obs_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_irt_obs_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_best_irt_obs_diff_true in Pioneer._MBR_SIDECAR_OUT_COLS
+        @test :MBR_best_irt_obs_diff_false in Pioneer._MBR_SIDECAR_OUT_COLS
+    end
+
     @testset "FTR features include MBR and row-level evidence for transfer ranking" begin
         @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
@@ -387,6 +394,8 @@ end
             @test result.candidates.MBR_abs_n_scans_diff_false == Float32[4]
             @test result.candidates.MBR_abs_n_scans_diff_worst_true[1] == Float32(5)
             @test result.candidates.MBR_abs_n_scans_diff_worst_false[1] == Float32(6)
+            @test isapprox(result.candidates.MBR_best_irt_obs_diff_true[1], 0.2f0; atol = 1.0f-6)
+            @test isapprox(result.candidates.MBR_best_irt_obs_diff_false[1], 0.5f0; atol = 1.0f-6)
             @test result.candidates.MBR_log2_weight_lod_ratio[1] == Float32(log2(8.0f0) - log2(9.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_true[1] == Float32(log2(8.0f0 / 4.0f0))
             @test result.candidates.MBR_log2_weight_ratio_worst_false[1] == Float32(log2(8.0f0 / 2.0f0))

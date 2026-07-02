@@ -203,6 +203,7 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_abs_n_scans_diff_worst_false,
     :MBR_log2_n_scans_ratio_true,   :MBR_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
+    :MBR_best_irt_obs_diff_true,    :MBR_best_irt_obs_diff_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_smoothed_frag_hellinger_true,
@@ -302,6 +303,8 @@ function _empty_mbr_rescue_candidate_slim_columns()
         MBR_log2_n_scans_ratio_false = Float32[],
         MBR_best_irt_diff_true = Float32[],
         MBR_best_irt_diff_false = Float32[],
+        MBR_best_irt_obs_diff_true = Float32[],
+        MBR_best_irt_obs_diff_false = Float32[],
         MBR_is_missing_true = Bool[],
         MBR_is_missing_false = Bool[],
         MBR_log_by_diff_true = Float32[],
@@ -420,6 +423,7 @@ function _append_mbr_candidate_row!(
     log2_weight_lod_ratio::Float32,
     log2_intensity_explained::Float32,
     irt_residual::Float32,
+    irt_obs::Float32,
     log_by_ratio::Float32,
     n_scans::Float32,
     recipient_sqrt::NTuple{8, Float32},
@@ -494,6 +498,8 @@ function _append_mbr_candidate_row!(
     push!(out.MBR_log2_n_scans_ratio_false, log2((n_scans + 1.0f0) / (donor_f.n_scans + 1.0f0)))
     push!(out.MBR_best_irt_diff_true, abs(irt_residual - donor_t.irt_residual))
     push!(out.MBR_best_irt_diff_false, abs(irt_residual - donor_f.irt_residual))
+    push!(out.MBR_best_irt_obs_diff_true, abs(irt_obs - donor_t.irt_obs))
+    push!(out.MBR_best_irt_obs_diff_false, abs(irt_obs - donor_f.irt_obs))
     push!(out.MBR_is_missing_true, false)
     push!(out.MBR_is_missing_false, false)
     push!(out.MBR_log_by_diff_true, log_by_ratio - donor_t.log_by_ratio)
@@ -1031,6 +1037,7 @@ function load_normal_mbr_candidate_slim_dataframe(
                 ),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
+                Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
                 Float32(nscans_v[i]),
                 recipient_sqrt,
@@ -1135,6 +1142,7 @@ function load_mbr_rescue_candidate_slim_dataframe(
                 ),
                 Float32(l2ie_v[i]),
                 Float32(irtp_v[i]) - Float32(irto_v[i]),
+                Float32(irto_v[i]),
                 has_logby ? Float32(logby_v[i]) : 0.0f0,
                 Float32(nscans_v[i]),
                 recipient_sqrt,
