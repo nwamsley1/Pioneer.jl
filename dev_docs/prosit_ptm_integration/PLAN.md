@@ -360,19 +360,21 @@ Use `git show 6bab0dadb^:<path>` as a *reference*, then hand-port onto today's c
 Each step states its verification, per CLAUDE.md §4.
 
 ```
-0.1  Re-add InstrumentAgnosticModel + registry entry (prosit_2020_hcd)
-     verify: `Pioneer.MODEL_CONFIGS["prosit_2020_hcd"]` resolves; package precompiles.
-0.2  prepare_koina_batch + parse_koina_batch for Prosit
-     verify: unit test builds a request JSON matching the verified contract (§4.2);
-             parse of a captured real response yields intensities+mz+annotation.
-0.3  filter + decode -> DetailedFrag; buildPionLib(::InstrumentAgnosticModel)
-     verify: one-protein build (minimal_protein.fasta) produces a library file with
-             non-empty fragments; spot-check 2-3 fragments' m/z vs a live Koina call.
-0.4  Restore NCE adjustment on the Prosit branch
+[DONE] 0.1  Re-add InstrumentAgnosticModel + registry entry (prosit_2020_hcd)
+     verify: MODEL_CONFIGS["prosit_2020_hcd"] resolves; precompiles. (commit 314886fdc)
+[DONE] 0.2  prepare_koina_batch + parse_koina_batch for Prosit
+     verify: request JSON matches §4.2; live parse yields intensities+mz+annotation,
+             n_frags=174, base-peak=1.0. (commit 1a46ab54d)
+[DONE] 0.3  filter (mono->total via iso_splines + sulfur + topN) + decode -> CompactFrag;
+       buildPionLib(::InstrumentAgnosticModel) -> StandardFragmentLookup. NOTE: emits
+       CompactFrag (not DetailedFrag) — the modern build target; mono->total (0.5) folded
+       into the predict-time filter; survivors reordered by total so rank=intensity rank.
+     verify: one-protein build (minimal_protein.fasta) -> 4 prec / 40 frags (10/prec);
+             every ALYKMSR frag m/z matches live Koina, intensity==Float16(mono/f0) with
+             correct sulfur, ranks intensity-ordered. Altimeter build regression passes.
+             (commits 27fbf308d [0.3a filter], 59772198d [0.3b decode+build])
+0.4  Restore NCE adjustment on the Prosit branch  <-- NEXT
      verify: collision_energy column varies with charge per CHARGE_ADJUSTMENT_FACTORS.
-0.5  Monoisotopic->total conversion (§5.3-A)
-     verify: for a few peptides, converted envelope ~matches theoretical/Altimeter
-             within tolerance (dedicated numeric test).
 1.1  Build a full YEAST library with prosit_2020_hcd (+ Chronologer RT)
      verify: build completes; library size + fragment counts sane.
 1.2  DIA search with the Prosit yeast library on the MTAC yeast 3M run (raw from RIS)
