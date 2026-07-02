@@ -717,12 +717,18 @@ const MODEL_CONFIGS = Dict(
         model_type = SplineCoefficientModel("altimeter"),
         instruments = Set([])
     ),
+    "prosit_2020_hcd" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
+        instruments = Set([])
+    ),
 )
 
 
 const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
+    "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
 )
 
 function __init__()
