@@ -378,14 +378,13 @@ Each step states its verification, per CLAUDE.md §4.
 [DEFERRED] 0.4  Per-charge NCE adjustment — NOT done by decision (2026-07-02). Flat NCE
        (nce_params.nce=26) is the current behavior and needs no code change; per-charge
        adjustment is an optimization for later (§5.2). Phase 0 is complete without it.
-1.1  Build a full YEAST library with prosit_2020_hcd (+ Chronologer RT)  <-- NEXT
-     verify: build completes; library size + fragment counts sane.
-1.2  DIA search with the Prosit yeast library on the MTAC yeast 3M run (raw from RIS)
-     verify: search completes; produce IDs @1% FDR + quant.
-1.3  Benchmark vs Altimeter/Chronologer yeast library on the same run
-     verify: IDs + quant within agreed tolerance; write up in FINDINGS.md.
-1.4  Small NCE sweep; pick default
-     verify: chosen NCE documented with the ID curve.
+[DONE] 1.1  Built full yeast prosit_2020_hcd + altimeter libs (355,188 prec, 10 frags/prec).
+[DONE] 1.2  Searched 3 MTAC 3-min reps with each (default develop params, 8 threads, 1% FDR).
+[DONE] 1.3  Benchmark: PROSIT ON PAR WITH ALTIMETER (see FINDINGS.md). Unique precursors
+       51,237 vs 51,391 (-0.3%), 95% overlap, protein groups 4401 vs 4386 (~0%), quant
+       median CV 16.1% vs 16.6% (Prosit marginally better). Phase-1 done-definition MET.
+1.4  Small NCE sweep — OPTIONAL now: parity already achieved at flat NCE 27.
+     verify: chosen NCE documented with the ID curve (if pursued).
 ```
 
 We keep the **Altimeter path as the reference** throughout — same search code, same raw
