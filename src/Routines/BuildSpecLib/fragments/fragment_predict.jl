@@ -444,7 +444,7 @@ function predict_fragments_batch(
         n_precursors_in_batch = UInt32(fld(nrow(batch_df), batch_result.frags_per_precursor))
         batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
                                              inner=batch_result.frags_per_precursor)
-        filter_fragments!(batch_df, model, filter_ctx)
+        batch_df = filter_fragments!(batch_df, model, filter_ctx)  # returns reordered topN table
         push!(batch_dfs, batch_df)
     end
 
@@ -504,10 +504,11 @@ function build_agnostic_frag_filter_ctx(
 end
 
 # Parse (and cache) a Prosit string annotation into a PioneerFragAnnotation.
-@inline function _agnostic_annotation!(cache::Dict{String, PioneerFragAnnotation}, s::String)
+# Accepts AbstractString so Arrow-backed columns (SubString/String) work at decode.
+@inline function _agnostic_annotation!(cache::Dict{String, PioneerFragAnnotation}, s::AbstractString)
     pa = get(cache, s, nothing)
     pa === nothing || return pa
-    pa = parse_fragment_annotation(GenericFragAnnotation(s))
+    pa = parse_fragment_annotation(GenericFragAnnotation(String(s)))
     cache[s] = pa
     return pa
 end
@@ -590,7 +591,11 @@ function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
         total[i] = f0 > 0f0 ? ints[i] / f0 : ints[i]
     end
 
-    # --- Pass 2: per-precursor topN by converted total (contiguous blocks) ---
+    # --- Pass 2: per-precursor topN, REORDERED by converted total so the decode's
+    # positional rank equals the intensity rank (matches the spline path, where
+    # Altimeter returns fragments already in importance order). Blocks are appended
+    # in ascending precursor_idx order, so the result stays precursor-grouped. ---
+    final_order = Int[]
     i = 1
     @inbounds while i <= n_rows
         pid = pids[i]
@@ -599,22 +604,20 @@ function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
             j += 1
         end
         block = [k for k in i:(j-1) if keep[k]]
+        sort!(block, by = k -> -total[k])
         max_n = min(Int(ctx.max_frag_rank),
                     round(Int, Float32(ctx.prec_len[pid]) * ctx.length_to_frag_count_multiple) + 1)
-        if length(block) > max_n
-            sort!(block, by = k -> -total[k])
-            for k in block[(max_n+1):end]
-                keep[k] = false
-            end
+        for t in 1:min(length(block), max_n)
+            push!(final_order, block[t])
         end
         i = j
     end
 
-    # Store the converted total on survivors so decode reads total abundance.
-    @inbounds for i in 1:n_rows
-        keep[i] && (ints[i] = total[i])
-    end
-    deleteat!(df, findall(.!keep))
-    return df
+    # Emit a precursor-grouped, intensity-descending, topN table with `intensities`
+    # holding total abundance (search reconstructs the monoisotopic peak). Returned
+    # (not in-place) — predict_fragments_batch rebinds to the result.
+    out = df[final_order, :]
+    out[!, :intensities] = Float32[total[k] for k in final_order]
+    return out
 end
 
