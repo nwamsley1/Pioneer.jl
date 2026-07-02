@@ -455,7 +455,48 @@ because a model swap can shift score scale without changing rank much. We agree 
 tolerance before running (e.g. "Prosit within X% of Altimeter precursor IDs and
 comparable quant CVs") once we see the reference Altimeter numbers on this run.
 
-# 9. Phosphoproteomics roadmap (Phases 2-4, scoped, not committed)
+# 9. Phosphoproteomics roadmap (Phases 2-4)
+
+## 9.0 Phase 2 concrete plan (phospho, 2026-07-02)
+
+**Phospho = variable mod `Unimod:21` (+79.966331) on S/T/Y** (single UNIMOD id; residue gives
+specificity). Config: `variable_mods` name `Unimod:21`, pattern `[STY]`, mass 79.966331.
+
+**Verified:**
+- Koina PTM models all handle phospho with correct residue-specific mass placement, and
+  agree tightly: `Prosit_2024_intensity_PTMs_gl` vs `2025_22PTM` cosine **1.000**, vs
+  `2025_40PTM` **0.998**. RT works via **Chronologer** (accepts phospho) and the matched
+  Prosit iRT. Papers: 2024 = PROSPECT-PTMs (NeurIPS 2024); 2025 22/40PTM = Prosit-PTM
+  data-augmented (bioRxiv 2025). For dev either is fine — both run without error.
+- **Variable-mod generation verified correct** (`matchVarMods` + `fillVarModStrings!`):
+  `LSSTPEYK` (S2,S3,T4,Y7) yields 5 / 11 / 15 combinations at max_var_mods 1 / 2 / 3
+  (= Sum C(4,n)), correct positions/residues.
+
+**Model choice:** default `Prosit_2024_intensity_PTMs_gl` + Chronologer RT; `40PTM` is a
+one-line drop-in (broader coverage, ~identical output) so we can use both without error.
+
+**Code changes (small):** (1) register `prosit_2024_ptm` in `MODEL_CONFIGS`/`KOINA_URLS` with
+a `fragmentation_type="HCD"` field; (2) `prepare_koina_batch(::InstrumentAgnosticModel)` sends
+`fragmentation_types` when the config specifies it. Everything else (parse, iso-spline
+mono->total filter, decode->CompactFrag, build->StandardFragmentLookup, Chronologer RT) is
+reused unchanged. Phospho adds no sulfur and P is monoisotopic, so mono->total is unaffected.
+
+**Gate:** build the synthetic phospho library (`synth_phospho.fasta`, variable `[STY]`
+`Unimod:21`, max_var_mods=2) end to end; verify pS/pT/pY fragment m/z shifts and RT vs live
+Koina — the one-protein gate, with PTMs, on a debuggable fixture.
+
+## 9.0.1 Variable-mod combinatorial limits (informed by Sage issue #231)
+
+Sage **[issue #231](https://github.com/lazear/sage/issues/231)** (variable-mod limits) is the
+reference for how to bound combinatorial explosion in PTM-heavy samples. Pioneer today has
+**only** the global `max_var_mods` cap — no per-mod occurrence limit and no `max_combinations`
+per-peptide hard cap, and `countVarModCombinations` pre-allocates `all_mods` to the full
+binomial sum (a pathological peptide could OOM before any cap applies). **Decision:** correct
+as-is for phospho dev/testing at modest `max_var_mods`; at **scale (Phase 4)** add a
+`max_combinations` per-peptide cap ("prefer fewer-PTM forms") + optional per-mod occurrence
+limit, guarding the pre-allocation, mirroring Sage #231's design.
+
+## 9.1 Longer-range (Phases 2-4, scoped)
 
 Enough detail to avoid Phase-1 dead-ends:
 
