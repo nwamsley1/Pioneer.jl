@@ -423,6 +423,15 @@ fragment m/z vs a live Koina call, intensity ordering, the monoisotopic->total c
 (§5.3-A) against a theoretical/Altimeter envelope for a few peptides. This is the Phase-0
 gate and needs nothing but the Koina server.
 
+*Mirror-plot sanity check* (`dev_docs/prosit_ptm_integration/mirror_prosit_vs_altimeter.jl`,
+built in Phase 0.2): overlays Prosit (up) vs Altimeter (down, spline evaluated at NCE)
+predicted spectra on a shared m/z axis, swept over an NCE grid, each self-normalized.
+First run (peptides LGGNEQVTR / GISNEGQNASIK / TASEFDSAIAQDK / LFLQFGAQGSPFLK, NCE
+{22,26,30}): fragment m/z **align** between the two models (core check passes), Altimeter
+fragments more with rising NCE, and the **NCE scales of the two models differ** (Altimeter
+looks under-fragmented at NCE 22 vs Prosit; base peaks don't always coincide) — an early,
+concrete confirmation that Phase-1 needs the NCE calibration/sweep (§5.2).
+
 **Tier 2 — full-pipeline parity (IDs + quant), kept deliberately simple.** We need a real
 DIA run, but the *fastest full library to build* is **yeast** (small proteome), so the
 Phase-1 benchmark is the **MTAC yeast 3M run**. Even a full yeast Prosit prediction takes
