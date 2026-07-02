@@ -157,6 +157,8 @@ const PRESCORE_FEATURES = [
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
+    :predicted_intensity_below_lod_fraction,
+    :predicted_peaks_below_lod_fraction,
 
     # Cross-precursor at-scan
     :weight_ratio_at_scan, :weight_rank_at_scan,

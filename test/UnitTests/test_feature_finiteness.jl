@@ -48,12 +48,13 @@ function _make_single_col_H(nzval::Vector{Float32}, x::Vector{Float32},
 end
 
 function _score_single(w_val::Float32, nzval, x, matched;
-                       ranks=zeros(UInt8, length(nzval)))
+                       ranks=zeros(UInt8, length(nzval)),
+                       lod_threshold=0.0f0)
     H = _make_single_col_H(nzval, x, matched; ranks=ranks)
     w = Float32[w_val]
     r = zeros(Float32, H.m)
     spectral_scores = Vector{_SpectralScoresMainSearch{Float16, Float32}}(undef, 1)
-    _getDistanceMetrics(w, r, H, spectral_scores)
+    _getDistanceMetrics(w, r, H, spectral_scores; lod_intensity_threshold=lod_threshold)
     spectral_scores[1]
 end
 
@@ -190,6 +191,43 @@ end
     @test s.shadow_frag2_int == 6.0f0
     @test s.fitted_frag3_int == 0.0f0
     @test s.shadow_frag3_int == 0.0f0
+
+    s = _score_single(2.0f0,
+                      Float32[0.4, 0.6, 0.5, 0.9, 0.3, 8.0],
+                      Float32[0.0, 0.0, 0.2, 0.0, 0.0, 0.0],
+                      Bool[false, false, true, false, false, false];
+                      lod_threshold=2.0f0)
+    @test isapprox(s.predicted_peaks_below_lod_fraction, 5.0f0 / 6.0f0; atol=1.0f-6)
+    @test isapprox(s.predicted_intensity_below_lod_fraction, 5.4f0 / 21.4f0; atol=1.0f-6)
+
+    s = _score_single(2.0f0,
+                      Float32[0.4, 0.6, 2.0, 8.0],
+                      Float32[0.1, 0.2, 0.0, 0.0],
+                      Bool[true, true, false, false];
+                      lod_threshold=0.0f0)
+    @test s.predicted_peaks_below_lod_fraction == 0.0f0
+    @test s.predicted_intensity_below_lod_fraction == 0.0f0
+end
+
+@testset "LOD features are model inputs outside MBR" begin
+    main_psm_fields = fieldnames(Pioneer.MainSearchScoredPSM{Float32, Float16})
+    @test :predicted_intensity_below_lod_fraction in main_psm_fields
+    @test :predicted_peaks_below_lod_fraction in main_psm_fields
+
+    @test :predicted_intensity_below_lod_fraction in Pioneer.PRESCORE_FEATURES
+    @test :predicted_peaks_below_lod_fraction in Pioneer.PRESCORE_FEATURES
+    @test :predicted_intensity_below_lod_fraction in Pioneer.ADVANCED_FEATURE_SET
+    @test :predicted_peaks_below_lod_fraction in Pioneer.ADVANCED_FEATURE_SET
+
+    @test !(:predicted_intensity_below_lod_fraction in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:predicted_peaks_below_lod_fraction in Pioneer.FTR_FEATURES_F_TRUE)
+end
+
+@testset "Scan LOD intensity helper" begin
+    @test Pioneer._scan_lod_intensity(Float32.(1:200)) == 2.0f0
+    @test Pioneer._scan_lod_intensity(Float32[10, 1, 3, 2]) == 1.0f0
+    @test Pioneer._scan_lod_intensity(Union{Missing, Float32}[missing, 0.0f0, NaN32, Inf32, 5.0f0]) == 5.0f0
+    @test Pioneer._scan_lod_intensity(Union{Missing, Float32}[missing, 0.0f0, NaN32, Inf32]) == 0.0f0
 end
 
 @testset "Feature finiteness — log2 floors at the PSM emission site" begin

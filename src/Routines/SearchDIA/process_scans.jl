@@ -80,6 +80,34 @@ get_unscored_psms(sd::SearchDataStructures, ::ParameterTuningSearchParameters) =
 # QuadTuningSearchParameters dispatches live in QuadTuningSearch/utils.jl
 # (loaded after this file — QuadTuning types aren't available yet here).
 
+const PREDICTED_PEAK_LOD_QUANTILE = 0.01f0
+
+function _scan_lod_intensity(scan_intensities)
+    n_positive = 0
+    @inbounds for value in scan_intensities
+        value === missing && continue
+        intensity = Float32(value)
+        if isfinite(intensity) && intensity > 0.0f0
+            n_positive += 1
+        end
+    end
+    n_positive == 0 && return 0.0f0
+
+    positive = Vector{Float32}(undef, n_positive)
+    write_idx = 1
+    @inbounds for value in scan_intensities
+        value === missing && continue
+        intensity = Float32(value)
+        if isfinite(intensity) && intensity > 0.0f0
+            positive[write_idx] = intensity
+            write_idx += 1
+        end
+    end
+
+    idx = clamp(ceil(Int, Float64(PREDICTED_PEAK_LOD_QUANTILE) * n_positive), 1, n_positive)
+    return partialsort!(positive, idx)
+end
+
 #==========================================================
 Dispatched helpers
 ==========================================================#
@@ -153,14 +181,26 @@ Compute spectral distance metrics between observed and predicted spectra.
 - Simple path: iterative peak removal with relative improvement threshold.
 - MainSearch: single-pass metrics using deconvolution weights and residuals.
 """
-function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::SearchDataStructures, params::MainSearchParameters)
+function compute_distance_metrics!(
+    Hs::AbstractSparseDesignMatrix,
+    search_data::SearchDataStructures,
+    params::MainSearchParameters;
+    lod_intensity_threshold::Float32 = 0.0f0,
+)
     getDistanceMetrics(getTempWeights(search_data), getResiduals(search_data),
-        Hs, getMainSearchSpectralScores(search_data))
+        Hs, getMainSearchSpectralScores(search_data);
+        lod_intensity_threshold=lod_intensity_threshold)
 end
 
-function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::SearchDataStructures, params::ParameterTuningSearchParameters)
+function compute_distance_metrics!(
+    Hs::AbstractSparseDesignMatrix,
+    search_data::SearchDataStructures,
+    params::ParameterTuningSearchParameters;
+    lod_intensity_threshold::Float32 = 0.0f0,
+)
     getDistanceMetrics(getTempWeights(search_data), getResiduals(search_data),
-        Hs, getMainSearchSpectralScores(search_data))
+        Hs, getMainSearchSpectralScores(search_data);
+        lod_intensity_threshold=lod_intensity_threshold)
 end
 
 

@@ -22,6 +22,8 @@ struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralSc
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     fitted_hellinger::T
+    predicted_intensity_below_lod_fraction::I
+    predicted_peaks_below_lod_fraction::I
     fitted_frag1_int::I
     fitted_frag2_int::I
     fitted_frag3_int::I
@@ -39,11 +41,13 @@ struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralSc
     shadow_frag7_int::I
     shadow_frag8_int::I
 end
-function getDistanceMetrics(w::Vector{T},
+function getDistanceMetrics(
+    w::Vector{T},
     r::Vector{T},
     H::AbstractSparseDesignMatrix{Ti,T},
-    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
-   ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
+    spectral_scores::Vector{SpectralScoresMainSearch{U,V}};
+    lod_intensity_threshold::T = zero(T),
+) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
 
     # Zero residual vector
     @turbo for i in range(1, H.m)
@@ -70,6 +74,7 @@ function getDistanceMetrics(w::Vector{T},
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
                 zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
@@ -89,6 +94,9 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient
         sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
+        sum_fitted_below_lod = zero(T)
+        n_predicted = 0
+        n_predicted_below_lod = 0
         fitted_frag1_int = zero(T)
         fitted_frag2_int = zero(T)
         fitted_frag3_int = zero(T)
@@ -109,6 +117,15 @@ function getDistanceMetrics(w::Vector{T},
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
             fitted_peak = w[col]*H.nzval[i]
+            is_matched = matched_at(H, i)
+            if fitted_peak > zero(T)
+                n_predicted += 1
+                if lod_intensity_threshold > zero(T) &&
+                   fitted_peak < lod_intensity_threshold
+                    n_predicted_below_lod += 1
+                    sum_fitted_below_lod += fitted_peak
+                end
+            end
             manhattan_distance += abs(fitted_peak - H.x[i])
 
             shadow_peak = fitted_peak - r[H.rowval[i]]
@@ -147,7 +164,7 @@ function getDistanceMetrics(w::Vector{T},
                 shadow_frag8_int += x_i
             end
 
-            if matched_at(H, i)
+            if is_matched
                 sum_of_fitted_peaks_matched += fitted_peak
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
@@ -172,6 +189,10 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_denom = sqrt(sum_fitted * sum_shadow)
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
+        predicted_intensity_below_lod_fraction = sum_fitted > zero(T) ?
+            sum_fitted_below_lod / sum_fitted : zero(T)
+        predicted_peaks_below_lod_fraction = n_predicted > 0 ?
+            Float32(n_predicted_below_lod) / Float32(n_predicted) : 0.0f0
 
         spectral_scores[col] = SpectralScoresMainSearch(
             U(gof),
@@ -179,6 +200,8 @@ function getDistanceMetrics(w::Vector{T},
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             U(fitted_hellinger),
+            V(predicted_intensity_below_lod_fraction),
+            V(predicted_peaks_below_lod_fraction),
             V(fitted_frag1_int),
             V(fitted_frag2_int),
             V(fitted_frag3_int),

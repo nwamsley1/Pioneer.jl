@@ -53,9 +53,11 @@ end
 
 function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix,
                                     search_data::SearchDataStructures,
-                                    params::QuadTuningSearchParameters)
+                                    params::QuadTuningSearchParameters;
+                                    lod_intensity_threshold::Float32 = 0.0f0)
     getDistanceMetrics(getTempWeights(search_data), getResiduals(search_data),
-        Hs, getMainSearchSpectralScores(search_data))
+        Hs, getMainSearchSpectralScores(search_data);
+        lod_intensity_threshold=lod_intensity_threshold)
 end
 
 function score_psms!(
@@ -1369,4 +1371,3 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
     )
     return fitted_params, initial_params
 end
-
