@@ -260,33 +260,30 @@ function _train_scoring_classifier_semisupervised(
     return best_state.scores, best_state.last_classifier, best_state.info, best_state
 end
 
-# Streaming MBR-on path. Walks the per-file Arrow tables for everything;
-# the only DataFrame ever materialised is the slim FTR table (10 cols)
-# reconstructed from sidecars right before the FTR controller runs.
+# MBR-on Pass-1 path. Donor selection, MBR features, and FTR now run after
+# the initial run-level and global q-value filters in PrecursorScoringSearch.
+# This early stage only trains/predicts Pass-1 scores and writes them back to
+# the fold files so the q-value filter can run on the non-MBR score.
 function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    fragment_lookup::LibraryFragmentLookup,
+    ::LibraryFragmentLookup,
 )
-    # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
-    cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
-    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
-
-    # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
+    # 1. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
     # out, so no quantile-binned features need pre-computing.
     features = copy(ADVANCED_FEATURE_SET)
 
-    # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
+    # 2. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
     # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,
-        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
+        compute_infold  = true,                # post-qvalue MBR-FTR consumes trace_prob_infold
         lgbm_hp         = SCORING_LGBM_HP,
         semisupervised  = true,
     )
 
-    # 4. Pass-1 feature importance (last_classifier is whichever fold's
+    # 3. Pass-1 feature importance (last_classifier is whichever fold's
     # booster the OOM trainer kept — only used for the diagnostic dump).
     if pass1.last_classifier !== nothing
         lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
@@ -301,61 +298,16 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    # 5. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
-    @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
-    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
-    @debug_l1 "  donor dict pids: $(length(donor_dict))"
-
-    # Parallelize the per-file MBR feature compute + sidecar write across
-    # files. donor_dict and cf_partner_pools are read-only across this loop
-    # (built before, not mutated by the per-file function), and each file
-    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
-    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
-    parallel_foreach!(length(file_paths)) do chunk
-        for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(
-                file_paths[f_idx],
-                donor_dict,
-                cf_partner_pools,
-                fragment_keys,
-            )
-        end
-    end
-
-    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    cf_partner_pools = nothing
-    fragment_keys = nothing
-    GC.gc()
-
-    # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
-    # only as wide as the FTR controller needs.
-    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
-    psms = load_ftr_slim_dataframe(file_paths)
-    @debug_l1 "  slim FTR rows: $(nrow(psms))"
-
-    # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
-    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
-
-    # 8. Paired-counterfactual FTR.
-    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
-
-    # 9. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
-    # back into each main file in one pass.
-    @debug_l1 "MBR Batch F: writing recovery sidecars..."
-    write_recovery_sidecars(psms, file_paths)
-    psms = DataFrame()
-    GC.gc()
-    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
-    merge_mbr_sidecars_into_main!(file_paths)
-
+    _merge_pass1_into_main_no_mbr!(file_paths, precursors)
     return nothing
 end
 
 # Legacy in-memory path used only when match_between_runs = false. Kept for
 # small / non-MBR runs where the full best_psms easily fits in memory.
-# No-MBR Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
-# file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
-# into each main file ONE FILE AT A TIME — the full experiment is never materialised.
+# Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
+# file's `.pass1_sidecar.arrow`, fold the Pass-1 scores into each main file ONE
+# FILE AT A TIME — the full experiment is never materialised. MBR-on searches
+# preserve `:trace_prob_infold` here for the post-qvalue FTR controller.
 # Reproduces the exact output columns the legacy in-memory path wrote:
 # `:accession_numbers`, `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
 # `:mbr_recovered` (= false).
@@ -383,6 +335,9 @@ function _merge_pass1_into_main_no_mbr!(
         main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
         main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
+        if hasproperty(pass1, :trace_prob_infold)
+            main[!, :trace_prob_infold] = collect(Float32.(pass1.trace_prob_infold))
+        end
         main[!, :trace_prob]         = main[!, :trace_prob_prepass]
         main[!, :mbr_recovered]      = falses(n)
         pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
