@@ -53,6 +53,53 @@ function prepare_koina_batch(model::SplineCoefficientModel,
 end
 
 """
+Prepare batch request for instrument-agnostic scalar-intensity models (Prosit).
+
+Same three inputs the spline path sends plus `collision_energies` (Prosit takes a
+raw collision energy; there is no NCE spline). No `instrument_types` input — the
+model is instrument-agnostic.
+"""
+function prepare_koina_batch(model::InstrumentAgnosticModel,
+                           data::DataFrame;
+                           batch_size::Int = 1000)::Vector{String}
+    n_rows = nrow(data)
+    n_batches = ceil(Int, n_rows/batch_size)
+    json_batches = Vector{String}(undef, n_batches)
+
+    for i in 1:n_batches
+        start_idx = (i-1) * batch_size + 1
+        end_idx = min(i * batch_size, n_rows)
+        batch_data = data[start_idx:end_idx, :]
+        batch_dict = Dict(
+            "id" => "0",
+            "inputs" => [
+                Dict(
+                    "name" => "peptide_sequences",
+                    "shape" => [nrow(batch_data), 1],
+                    "datatype" => "BYTES",
+                    "data" => strip.(batch_data.koina_sequence)
+                ),
+                Dict(
+                    "name" => "precursor_charges",
+                    "shape" => [nrow(batch_data), 1],
+                    "datatype" => "INT32",
+                    "data" => batch_data.precursor_charge
+                ),
+                Dict(
+                    "name" => "collision_energies",
+                    "shape" => [nrow(batch_data), 1],
+                    "datatype" => "FP32",
+                    "data" => batch_data.collision_energy
+                )
+            ]
+        )
+        json_batches[i] = JSON.json(batch_dict)
+    end
+
+    return json_batches
+end
+
+"""
 Prepare batch request for retention time predictions.
 """
 function prepare_koina_batch(model::RetentionTimeModel,
