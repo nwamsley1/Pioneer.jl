@@ -50,6 +50,43 @@ struct SplineFragFilterCtx
 end
 
 """
+    AgnosticFragFilterCtx
+
+Per-batch filter context for the Prosit (`InstrumentAgnosticModel`) path. Unlike
+the Altimeter spline path, Prosit returns raw *monoisotopic* scalar intensities
+with STRING annotations ("y7+1"), so this context carries what the predict-time
+filter needs to (1) parse string annotations (`annotation_cache`, filled lazily
+via the `GenericFragAnnotation` parser), (2) convert monoisotopic->total using the
+SAME `iso_splines` the search uses (`getFragIsotopes!`), and (3) rank by the
+converted total and keep the per-precursor topN.
+
+The conversion needs per-fragment sulfur, computed on the fly from the precursor
+`sequences`/`mods` (mirroring the decode kernel `_fill_detailed_from_raw!`), so
+`raw_fragments.arrow` is written already-topN with `intensities` = total abundance.
+"""
+struct AgnosticFragFilterCtx
+    annotation_cache::Dict{String, PioneerFragAnnotation}
+    iso_splines::IsotopeSplineModel{40, Float32}
+    sequences::Vector{String}
+    mods::Vector{String}
+    mods_to_sulfur_diff::Dict{String, Int8}
+    prec_len::Vector{UInt8}
+    prec_mz::Vector{Float32}
+    y_start::UInt8
+    b_start::UInt8
+    include_p::Bool
+    include_isotope::Bool
+    include_immonium::Bool
+    include_internal::Bool
+    include_neutral_diff::Bool
+    max_frag_charge::UInt8
+    max_frag_rank::UInt8
+    length_to_frag_count_multiple::Float32
+    min_frag_intensity::Float32
+    frag_bounds::FragBoundModel
+end
+
+"""
     predict_fragments(
         peptide_table_path::String,
         frags_out_path::String,
@@ -88,7 +125,7 @@ function predict_fragments(
     peptide_table_path::String,
     frags_out_path::String,
     model_type::KoinaModelType,
-    filter_ctx::SplineFragFilterCtx,
+    filter_ctx,  # SplineFragFilterCtx (Altimeter) or AgnosticFragFilterCtx (Prosit); dispatched on model_type in predict_fragments_batch
     max_koina_batches::Int,
     batch_size::Int,
     model_name::String;
@@ -377,5 +414,207 @@ Sort fragments by intensity within each precursor group.
 """
 function sort_fragments!(df::DataFrame)
     sort!(df, [:precursor_idx, order(:intensities, rev=true)])
+end
+
+# ---------------------------------------------------------------------------
+# Prosit (InstrumentAgnosticModel) prediction path
+# ---------------------------------------------------------------------------
+
+"""
+Fragment prediction for instrument-agnostic scalar-intensity models (Prosit).
+Returns `(DataFrame, nothing)` — no knot vector (contrast the spline path).
+"""
+function predict_fragments_batch(
+    peptides_df::DataFrame,
+    model::InstrumentAgnosticModel,
+    filter_ctx::AgnosticFragFilterCtx,
+    batch_size::Int,
+    concurrent_koina_requests::Int,
+    first_prec_idx::UInt32
+)::Tuple{DataFrame, Nothing}
+    json_batches = prepare_koina_batch(model, peptides_df, batch_size=batch_size)
+    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name];
+                                          concurrency=concurrent_koina_requests)
+
+    batch_dfs = DataFrame[]
+    for (i, response) in enumerate(responses)
+        batch_result = parse_koina_batch(model, response)
+        start_idx = first_prec_idx + UInt32((i-1) * batch_size)
+        batch_df = batch_result.fragments
+        n_precursors_in_batch = UInt32(fld(nrow(batch_df), batch_result.frags_per_precursor))
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
+                                             inner=batch_result.frags_per_precursor)
+        filter_fragments!(batch_df, model, filter_ctx)
+        push!(batch_dfs, batch_df)
+    end
+
+    return (vcat(batch_dfs...), nothing)
+end
+
+"""
+    build_agnostic_frag_filter_ctx(frag_bounds, precursors_df, immonium_data_path,
+        mods_to_sulfur_diff; kwargs...) -> AgnosticFragFilterCtx
+
+Construct the Prosit filter context. Loads the isotope splines (the SAME model
+search uses, `assets/IsotopeSplines_10kDa_21isotopes.xml`) so the predict-time
+monoisotopic->total conversion matches `getFragIsotopes!` exactly. Filter knobs
+are passed as kwargs (BuildSpecLib hardcodes them at the call site, single source
+of truth with `buildPionLib`).
+"""
+function build_agnostic_frag_filter_ctx(
+    frag_bounds::FragBoundModel,
+    precursors_df::DataFrame,
+    mods_to_sulfur_diff::Dict{String, Int8};
+    y_start::UInt8,
+    b_start::UInt8,
+    include_p::Bool,
+    include_isotope::Bool,
+    include_immonium::Bool,
+    include_internal::Bool,
+    include_neutral_diff::Bool,
+    max_frag_charge::UInt8,
+    max_frag_rank::UInt8,
+    length_to_frag_count_multiple::Float32,
+    min_frag_intensity::Float32,
+)::AgnosticFragFilterCtx
+    iso_splines = parseIsoXML(isotope_spline_path())
+
+    n_precs = nrow(precursors_df)
+    prec_len = Vector{UInt8}(undef, n_precs)
+    prec_mz  = Vector{Float32}(undef, n_precs)
+    seqs = String.(precursors_df[!, :sequence])
+    mods = String.(precursors_df[!, :mods])
+    mzs  = precursors_df[!, :mz]
+    @inbounds for i in 1:n_precs
+        prec_len[i] = UInt8(min(255, length(seqs[i])))
+        prec_mz[i]  = Float32(mzs[i])
+    end
+
+    return AgnosticFragFilterCtx(
+        Dict{String, PioneerFragAnnotation}(),
+        iso_splines, seqs, mods, mods_to_sulfur_diff,
+        prec_len, prec_mz,
+        y_start, b_start,
+        include_p, include_isotope, include_immonium, include_internal,
+        include_neutral_diff,
+        max_frag_charge, max_frag_rank,
+        length_to_frag_count_multiple, min_frag_intensity,
+        frag_bounds,
+    )
+end
+
+# Parse (and cache) a Prosit string annotation into a PioneerFragAnnotation.
+@inline function _agnostic_annotation!(cache::Dict{String, PioneerFragAnnotation}, s::String)
+    pa = get(cache, s, nothing)
+    pa === nothing || return pa
+    pa = parse_fragment_annotation(GenericFragAnnotation(s))
+    cache[s] = pa
+    return pa
+end
+
+"""
+    filter_fragments!(df, ::InstrumentAgnosticModel, ctx::AgnosticFragFilterCtx)
+
+Apply, per precursor and in place: (1) per-fragment metadata filters (mz>0,
+frag_bounds, y/b start, charge, include_* flags, min intensity), (2) the
+monoisotopic->total conversion `total = mono / iso_splines(min(sulfur,5), 0,
+mz*charge)` — the SAME isotope model search uses — computing per-fragment sulfur
+from the precursor sequence span, then (3) a per-precursor topN cap ranked by the
+converted total. On return `df[:intensities]` holds the total abundance for the
+surviving topN fragments (search reconstructs the monoisotopic peak exactly).
+
+`df` is assumed grouped by ascending `precursor_idx` (parse_koina_batch emits
+174 contiguous fragments per precursor), so per-precursor blocks are contiguous.
+"""
+function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
+                           ctx::AgnosticFragFilterCtx)
+    n_rows = nrow(df)
+    n_rows == 0 && return df
+
+    annotations = df[!, :annotation]::Vector{String}
+    mzs         = df[!, :mz]::Vector{Float32}
+    ints        = df[!, :intensities]::Vector{Float32}
+    pids        = df[!, :precursor_idx]::Vector{UInt32}
+
+    keep  = trues(n_rows)
+    total = Vector{Float32}(undef, n_rows)
+
+    # --- Pass 1: metadata filters + sulfur + mono->total (per-precursor state) ---
+    seq_idx_to_sulfur = zeros(UInt8, 255)
+    last_pid = zero(UInt32)
+    prec_sulfur = 0
+    prec_length = zero(UInt8)
+    @inbounds for i in 1:n_rows
+        pid = pids[i]
+        if pid != last_pid
+            last_pid = pid
+            fill!(seq_idx_to_sulfur, zero(UInt8))
+            seq = ctx.sequences[pid]
+            prec_sulfur = Int(count_sulfurs!(seq_idx_to_sulfur, seq,
+                                             parseMods(ctx.mods[pid]),
+                                             ctx.mods_to_sulfur_diff))
+            prec_length = ctx.prec_len[pid]
+        end
+
+        if mzs[i] <= 0 || ints[i] <= ctx.min_frag_intensity
+            keep[i] = false; continue
+        end
+        lo, hi = ctx.frag_bounds(ctx.prec_mz[pid])
+        if mzs[i] < lo || mzs[i] > hi
+            keep[i] = false; continue
+        end
+
+        pa = _agnostic_annotation!(ctx.annotation_cache, annotations[i])
+        bt = pa.base_type
+        if bt == 'y' && pa.frag_index < ctx.y_start; keep[i] = false; continue; end
+        if bt == 'b' && pa.frag_index < ctx.b_start; keep[i] = false; continue; end
+        if bt == 'p' && !ctx.include_p; keep[i] = false; continue; end
+        if pa.immonium && !ctx.include_immonium; keep[i] = false; continue; end
+        if pa.internal && !ctx.include_internal; keep[i] = false; continue; end
+        if pa.neutral_diff && !ctx.include_neutral_diff; keep[i] = false; continue; end
+        if !ctx.include_isotope && pa.isotope > 0; keep[i] = false; continue; end
+        if pa.charge > ctx.max_frag_charge; keep[i] = false; continue; end
+
+        # per-fragment sulfur over the covered sequence span (skip immonium)
+        s_idx, e_idx = get_fragment_indices(bt, pa.frag_index, prec_length)
+        sc = 0
+        if !pa.immonium
+            for k in s_idx:e_idx
+                sc += seq_idx_to_sulfur[k]
+            end
+        end
+        sc += pa.sulfur_diff
+        sc = min(sc, prec_sulfur)
+
+        f0 = ctx.iso_splines(min(sc, 5), 0, mzs[i] * pa.charge)
+        total[i] = f0 > 0f0 ? ints[i] / f0 : ints[i]
+    end
+
+    # --- Pass 2: per-precursor topN by converted total (contiguous blocks) ---
+    i = 1
+    @inbounds while i <= n_rows
+        pid = pids[i]
+        j = i
+        while j <= n_rows && pids[j] == pid
+            j += 1
+        end
+        block = [k for k in i:(j-1) if keep[k]]
+        max_n = min(Int(ctx.max_frag_rank),
+                    round(Int, Float32(ctx.prec_len[pid]) * ctx.length_to_frag_count_multiple) + 1)
+        if length(block) > max_n
+            sort!(block, by = k -> -total[k])
+            for k in block[(max_n+1):end]
+                keep[k] = false
+            end
+        end
+        i = j
+    end
+
+    # Store the converted total on survivors so decode reads total abundance.
+    @inbounds for i in 1:n_rows
+        keep[i] && (ints[i] = total[i])
+    end
+    deleteat!(df, findall(.!keep))
+    return df
 end
 
