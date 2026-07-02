@@ -226,17 +226,19 @@ machinery was removed: `adjustNCE(NCE, default_charge, peptide_charge, charge_fa
 `CHARGE_ADJUSTMENT_FACTORS = [1, 0.9, 0.85, 0.8, 0.75]`, plus `nce_params.default_charge`
 and `nce_params.dynamic_nce` config fields.
 
-**Plan.** Restore that machinery *only on the Prosit branch* of `chronologer_prep.jl`
-(where `:collision_energy` is populated). Config gains back `nce_params.default_charge`
-and `nce_params.dynamic_nce` (validated only when `prediction_model` is a Prosit model).
-Altimeter's branch is untouched. Note UniSpec's per-run m/z->eV calibration
-(`get_mz_to_ev_interp`) is a *separate* mechanism we are **not** restoring (UniSpec is out
-of scope).
+**Decision (2026-07-02): flat NCE, no per-charge adjustment — 0.4 deferred.** This is
+already the current behavior: `chronologer_prep.jl` populates `:collision_energy` from
+`nce_params.nce` (a flat 26.0), and Prosit's `prepare_koina_batch` sends that as
+`collision_energies`. So the Prosit build already works with a flat NCE and **no code
+change is needed**. Per-charge adjustment (`adjustNCE` + `CHARGE_ADJUSTMENT_FACTORS` +
+`nce_params.default_charge`/`dynamic_nce`) is an *optimization*, not correctness-critical,
+and is explicitly deferred — we can add it later if the benchmark shows it matters. (UniSpec's
+per-run m/z->eV calibration is a separate mechanism we are also not restoring — out of scope.)
 
-**Open question for §10:** which fixed NCE to use by default for our instruments. Prosit
-intensity is CE-sensitive; a wrong global NCE hurts spectral-contrast scores. We will
-sweep a small NCE grid on the benchmark in Phase 1 and pick the best, rather than trusting
-the config default blindly.
+**Still to tune in Phase 1:** the flat NCE *value*. Prosit intensity is CE-sensitive, so a
+wrong global NCE hurts spectral-contrast scores. We sweep a small NCE grid on the benchmark
+(the mirror-plot tool already shows Altimeter and Prosit NCE scales differ) and pick the
+best flat value — a scalar choice, distinct from the deferred per-charge adjustment.
 
 ## 5.3 Monoisotopic vs total-abundance intensities (the crux)
 
@@ -373,9 +375,10 @@ Each step states its verification, per CLAUDE.md §4.
              every ALYKMSR frag m/z matches live Koina, intensity==Float16(mono/f0) with
              correct sulfur, ranks intensity-ordered. Altimeter build regression passes.
              (commits 27fbf308d [0.3a filter], 59772198d [0.3b decode+build])
-0.4  Restore NCE adjustment on the Prosit branch  <-- NEXT
-     verify: collision_energy column varies with charge per CHARGE_ADJUSTMENT_FACTORS.
-1.1  Build a full YEAST library with prosit_2020_hcd (+ Chronologer RT)
+[DEFERRED] 0.4  Per-charge NCE adjustment — NOT done by decision (2026-07-02). Flat NCE
+       (nce_params.nce=26) is the current behavior and needs no code change; per-charge
+       adjustment is an optimization for later (§5.2). Phase 0 is complete without it.
+1.1  Build a full YEAST library with prosit_2020_hcd (+ Chronologer RT)  <-- NEXT
      verify: build completes; library size + fragment counts sane.
 1.2  DIA search with the Prosit yeast library on the MTAC yeast 3M run (raw from RIS)
      verify: search completes; produce IDs @1% FDR + quant.
