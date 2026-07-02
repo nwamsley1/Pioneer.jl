@@ -10,6 +10,8 @@ end
 
 Pioneer.getMz(p::MBREmpiricalMockPrecursors) = p.mz
 Pioneer.getIrt(p::MBREmpiricalMockPrecursors) = p.irt
+Pioneer.getCharge(p::MBREmpiricalMockPrecursors) = fill(UInt8(2), length(p.mz))
+Pioneer.getLength(p::MBREmpiricalMockPrecursors) = fill(UInt8(9), length(p.mz))
 
 function _mbr_empirical_fragment_lookup()
     frags = Pioneer.CompactFrag{Float32}[
@@ -42,6 +44,11 @@ function _mbr_empirical_main_table(;
     scan_idx,
     ms_file_idx,
     target,
+    weight = ones(Float32, length(precursor_idx)),
+    log2_intensity_explained = fill(Float16(1), length(precursor_idx)),
+    n_scans = ones(Float32, length(precursor_idx)),
+    main_pep = fill(0.5f0, length(precursor_idx)),
+    library_hellinger = fill(0.25f0, length(precursor_idx)),
     frag1,
     frag2,
 )
@@ -49,12 +56,15 @@ function _mbr_empirical_main_table(;
     return DataFrame(
         precursor_idx = UInt32.(precursor_idx),
         scan_idx = UInt32.(scan_idx),
-        weight = ones(Float32, n),
-        log2_intensity_explained = fill(Float16(1), n),
+        weight = Float32.(weight),
+        log2_intensity_explained = Float16.(log2_intensity_explained),
         irt_pred = zeros(Float32, n),
         irt_obs = zeros(Float32, n),
         log_by_ratio_m0 = zeros(Float16, n),
         rt = zeros(Float32, n),
+        n_scans = Float32.(n_scans),
+        main_pep = Float32.(main_pep),
+        smoothed_2d_shadow_hellinger = Float32.(library_hellinger),
         ms_file_idx = fill(UInt32(ms_file_idx), n),
         target = Bool.(target),
         cv_fold = zeros(UInt8, n),
@@ -82,12 +92,16 @@ end
     mktempdir() do dir
         f1 = joinpath(dir, "run1_fold0.arrow")
         f2 = joinpath(dir, "run2_fold0.arrow")
+        f3 = joinpath(dir, "run3_fold0.arrow")
 
         Arrow.write(f1, _mbr_empirical_main_table(
             precursor_idx = [1],
             scan_idx = [1001],
             ms_file_idx = 1,
             target = [true],
+            weight = [8],
+            n_scans = [9],
+            main_pep = [0.125],
             frag1 = [100],
             frag2 = [0],
         ))
@@ -102,6 +116,10 @@ end
             scan_idx = [2001],
             ms_file_idx = 2,
             target = [false],
+            weight = [2],
+            log2_intensity_explained = [0.75],
+            n_scans = [5],
+            library_hellinger = [0.25],
             frag1 = [0],
             frag2 = [100],
         ))
@@ -111,26 +129,79 @@ end
             score = [0.91],
         ))
 
+        Arrow.write(f3, _mbr_empirical_main_table(
+            precursor_idx = [2],
+            scan_idx = [3001],
+            ms_file_idx = 3,
+            target = [false],
+            weight = [4],
+            log2_intensity_explained = [0.25],
+            n_scans = [2],
+            library_hellinger = [0.75],
+            frag1 = [100],
+            frag2 = [0],
+        ))
+        Arrow.write(f3 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
+            precursor_idx = [2],
+            scan_idx = [3001],
+            score = [0.30],
+        ))
+
         precursors = MBREmpiricalMockPrecursors(
             Float32[500, 501],
             Float32[10, 10.01],
         )
         fragment_keys = Pioneer.build_mbr_fragment_annotation_keys(_mbr_empirical_fragment_lookup())
-        partner_pools = Pioneer.build_counterfactual_partner_pools([f1, f2], precursors)
-        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1([f1, f2])
+        partner_pools = Pioneer.build_counterfactual_partner_pools([f1, f2, f3], precursors)
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [f1, f2, f3];
+            passing_score_floor = 0.20f0,
+        )
 
         Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
             f1,
             donor_dict,
             partner_pools,
             fragment_keys,
+            passing_score_floor = 0.20f0,
+            lod_log2_weight_by_file = Dict(UInt32(1) => log2(4.0f0)),
+            lod_log2_weight_global = log2(4.0f0),
         )
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
-        @test isapprox(mbr.MBR_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
-        @test mbr.MBR_is_missing_false[1] == false
-        @test mbr.MBR_max_pair_prob_false[1] == 0.91f0
-        @test :MBR_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test isapprox(mbr.MBR_best_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
+        @test isapprox(mbr.MBR_worst_smoothed_frag_hellinger_false[1], 1.0f0; atol = 1.0f-6)
+        @test mbr.MBR_best_is_missing_false[1] == false
+        @test !(:MBR_max_pair_prob_false in propertynames(mbr))
+        @test mbr.MBR_best_pair_prob_false[1] == 0.91f0
+        @test mbr.MBR_worst_pair_prob_false[1] == 0.30f0
+        @test mbr.MBR_log2_weight_lod_ratio[1] == 1.0f0
+        @test mbr.MBR_best_log2_weight_ratio_false[1] == 2.0f0
+        @test mbr.MBR_worst_log2_weight_ratio_false[1] == 1.0f0
+        @test mbr.MBR_best_log2_explained_ratio_false[1] == 0.25f0
+        @test mbr.MBR_worst_log2_explained_ratio_false[1] == 0.75f0
+        @test mbr.MBR_best_abs_n_scans_diff_false[1] == 4.0f0
+        @test mbr.MBR_worst_abs_n_scans_diff_false[1] == 7.0f0
+        @test isapprox(mbr.MBR_best_log2_n_scans_ratio_false[1], log2(10.0f0 / 6.0f0); atol = 1.0f-6)
+        @test mbr.MBR_best_donor_library_hellinger_false[1] == 0.25f0
+        @test mbr.MBR_worst_donor_library_hellinger_false[1] == 0.75f0
+        @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test :MBR_log2_weight_lod_ratio in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
     end
 end
