@@ -425,7 +425,9 @@ gate and needs nothing but the Koina server.
 
 *Mirror-plot sanity check* (`dev_docs/prosit_ptm_integration/mirror_prosit_vs_altimeter.jl`,
 built in Phase 0.2): overlays Prosit (up) vs Altimeter (down, spline evaluated at NCE)
-predicted spectra on a shared m/z axis, swept over an NCE grid, each self-normalized.
+predicted spectra on a shared m/z axis, swept over an NCE grid, each restricted to its
+**top 10 fragments by intensity** (matching the library's `max_frag_rank` topN) and
+self-normalized.
 First run (peptides LGGNEQVTR / GISNEGQNASIK / TASEFDSAIAQDK / LFLQFGAQGSPFLK, NCE
 {22,26,30}): fragment m/z **align** between the two models (core check passes), Altimeter
 fragments more with rising NCE, and the **NCE scales of the two models differ** (Altimeter

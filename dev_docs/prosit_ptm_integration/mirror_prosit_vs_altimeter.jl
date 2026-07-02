@@ -21,7 +21,21 @@ const ALT    = Pioneer.SplineCoefficientModel("altimeter")
 const PEPTIDES = ["LGGNEQVTR", "GISNEGQNASIK", "TASEFDSAIAQDK", "LFLQFGAQGSPFLK"]
 const CHARGE   = Int32(2)
 const NCE_GRID = Float32[22, 26, 30]
-const MIN_INT  = 0.01f0   # drop tiny peaks for legibility
+const TOPN     = 10   # match the library's per-precursor top-N cap (max_frag_rank)
+
+# Keep the top-N fragments by intensity (int > 0), then normalize the kept set to
+# its own base peak. Mirrors the library's per-precursor topN filter so the plot
+# shows the fragments that would actually survive into the library. (The library
+# also applies ion-type/charge metadata filters — y>=3, b>=2, charge<=3, etc. —
+# which this quick raw-prediction view does not fully replicate.)
+function top_stems(mz, int; n::Int = TOPN)
+    keep = findall(>(0f0), int)
+    isempty(keep) && return (eltype(mz)[], eltype(int)[])
+    order = keep[sortperm(int[keep], rev = true)]
+    sel = order[1:min(n, length(order))]
+    m = maximum(int[sel])
+    return (mz[sel], int[sel] ./ m)
+end
 
 # --- Prosit: one request per NCE (collision energy is a per-precursor input) ---
 function prosit_spectra(nce::Float32)
@@ -59,21 +73,17 @@ function altimeter_spectrum(res, pep_idx::Int, nce::Float32)
     return (mz = mz, int = inten)
 end
 
-norm_int(v) = (m = maximum(v; init = 0f0); m > 0 ? v ./ m : v)
-
 function mirror_panel(pep, nce, ps, as)
     p = plot(legend = false, title = "$pep  z$CHARGE  NCE $(Int(nce))",
              titlefontsize = 7, xlabel = "m/z", ylabel = "rel. int",
              xguidefontsize = 6, yguidefontsize = 6, tickfontsize = 5,
              ylims = (-1.15, 1.15), grid = false)
-    # Prosit up
-    pm, pi = ps.mz, norm_int(ps.int)
-    keep = pi .> MIN_INT
-    sticks!(p, pm[keep], pi[keep], color = :steelblue, linewidth = 1)
-    # Altimeter down
-    am, ai = as.mz, norm_int(as.int)
-    keepa = ai .> MIN_INT
-    sticks!(p, am[keepa], -ai[keepa], color = :firebrick, linewidth = 1)
+    # Prosit up (top-N by intensity, self-normalized)
+    pm, pi = top_stems(ps.mz, ps.int)
+    sticks!(p, pm, pi, color = :steelblue, linewidth = 1)
+    # Altimeter down (top-N by intensity at this NCE, self-normalized)
+    am, ai = top_stems(as.mz, as.int)
+    sticks!(p, am, -ai, color = :firebrick, linewidth = 1)
     hline!(p, [0.0], color = :black, linewidth = 0.5)
     return p
 end
