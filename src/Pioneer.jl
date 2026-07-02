@@ -711,16 +711,27 @@ const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.01)
 
 
 
+# `fragmentation_type`: nothing for models that take no fragmentation input; a string
+# ("HCD"/"CID") for the PTM models (Prosit_2024/2025 *PTM*) that require the extra
+# `fragmentation_types` Koina input. prepare_koina_batch reads it.
 const MODEL_CONFIGS = Dict(
     "altimeter" => (
         annotation_type = UniSpecFragAnnotation("y1^1"),
         model_type = SplineCoefficientModel("altimeter"),
-        instruments = Set([])
+        instruments = Set([]),
+        fragmentation_type = nothing,
     ),
     "prosit_2020_hcd" => (
         annotation_type = GenericFragAnnotation("y1+1"),
         model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
-        instruments = Set([])
+        instruments = Set([]),
+        fragmentation_type = nothing,
+    ),
+    "prosit_2024_ptm" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2024_ptm"),
+        instruments = Set([]),
+        fragmentation_type = "HCD",
     ),
 )
 
@@ -729,6 +740,7 @@ const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
+    "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
 )
 
 function __init__()
