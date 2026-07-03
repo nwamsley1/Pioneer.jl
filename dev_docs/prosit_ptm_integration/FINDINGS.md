@@ -98,3 +98,24 @@ Working dir `/Users/n.t.wamsley/prosit_yeast_benchmark/`: `{prosit,altimeter}_ye
   precursors, 7,208 protein groups, 5.85 min.
 - Next: add 225 standards to a library (with known sites), search -> ID recovery + FLR; then a
   site-localization scorer (Phase 3) and the dilution series for LOD/FLR curve.
+
+### Ground-truth benchmark: ID + FLR with 225 standards (2026-07-03)
+Built a **combined library** = yeast phosphoproteome + synthetic standards, 1 MC, variable
+phospho [STY] max_var_mods=2 min_var_mods=1 (all positional isomers so localization can fail):
+5,306,732 precursors, 208/212 standard sequences present (built 27 min). Standards FASTA =
+217 with <=1 internal K/R (172 fully tryptic + 45 with 1 MC; 8 with >=2 internal deferred).
+Truth = coon_225_standards.tsv "Reference Sheet" (sequence + known site).
+
+**Search Stds01 (10000 amol, highest load) vs the combined library, default develop params,
+1% FDR** (42,116 total phospho precursors, 5.69 min):
+- **ID recovery: 198/212 standards = 93.4%** (mono + a few multi).
+- **Localization (best-scoring positional isomer per standard vs known site): 152/198 correct
+  -> FLR = 23.2%** (mono 22.3%; multi 2/5). Allowing any valid site for positional-isomer
+  standards barely changed it (24.2% -> 23.2%).
+
+**Interpretation:** Prosit-PTM phospho *identification* is strong (~93% ground-truth recovery);
+*localization* is the gap (23% FLR vs the field's 1-5%) because Pioneer has **no dedicated
+site-localization scorer** — "best isomer wins" is a crude proxy and DIA positional isomers
+share most fragments. This is the concrete motivation + harness for **Phase 3 (site-localization
+scoring / AScore-style site-determining-ion model)**. Analysis: `analyze_flr2.jl`. Library/data
+in `/Users/n.t.wamsley/prosit_phospho_test/` (yeast_plus_standards_1mc.poin, search_std/).
