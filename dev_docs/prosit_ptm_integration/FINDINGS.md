@@ -159,3 +159,26 @@ Full L2 sweep on the same benchmark:
 - Takeaway: L2 reliably increases ID count and modulates localization with a lambda~1 optimum, but
   a real localization improvement needs replicates + FDR/entrapment checks. Dedicated site-
   localization scoring (Phase 3) remains the principled fix; L2 is a cheap knob worth revisiting.
+
+### KEY RESULT: deconvolution weight localizes far better than q-value (2026-07-03)
+On the same NoNorm phospho benchmark + ground truth, re-scoring localization by the *isomer's
+deconvolution weight* instead of its q-value (no new model, no re-search — just a different column):
+
+| localization rule | correct | FLR |
+|---|---|---|
+| best q-value (prior proxy) | 152/198 | 23.2% |
+| **highest deconvolution weight** | **187/198** | **5.6%** |
+| best weight_rank_at_scan | 175/198 | 11.6% |
+
+**FLR 23.2% -> 5.6%** — into the paper's 1-5% range, using info Pioneer already computes. Rationale:
+the q-value compares isomers' OVERALL scores (discriminating signal buried under shared fragments);
+the deconvolution weight is the isomer COMPETITION (solver splits shared signal; split driven by
+site-determining ions weighted by Prosit-PTM predicted intensities) = a direct, intensity-aware
+localization readout. Raw weight > weight_rank (rank is vs all precursors at scan, not just isomers).
+The two rules disagree on 51/198; weight wins most. `weight`/`weight_ratio_at_scan`/
+`weight_rank_at_scan` are already in precursors_long.arrow.
+
+Headroom (Phase 3 localizer): weight-FRACTION (w_best / sum w_isomers) as a per-site confidence +
+cutoff (field uses >=0.75) -> trades recall for lower FLR toward ~1%; integrate weight over the peak;
+true shared-apex version (all isomers at the same apex scan). Caveats: 1 replicate; `weight` is each
+isomer's own best-scan weight, not strictly the shared apex.
