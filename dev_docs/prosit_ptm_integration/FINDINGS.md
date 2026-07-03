@@ -54,3 +54,34 @@ Living record of empirical results per phase. See `PLAN.md` for the design.
 ### Artifacts (local, not in repo)
 Working dir `/Users/n.t.wamsley/prosit_yeast_benchmark/`: `{prosit,altimeter}_yeast.poin`,
 `results_{prosit,altimeter}/`, `build_*.json`, `search_*_default.json`, `compare.jl`.
+
+## Phase 2/3 — first phospho search on REAL data (2026-07-03)
+
+**Prosit-PTM phospho pipeline validated end-to-end on real Astral DIA phospho data.**
+
+### Data
+- Coon lab Astral phospho benchmark = **MassIVE MSV000093613** (DOI 10.25345/C5D795N33), *not*
+  PXD049028 (the benchmark brief mis-attributed it — PXD049028 is HAP1/MGME proteome).
+- Benchmark files: `20240306_NML_15min_2Th_250ngYeast_{10000,2500,625,156,39}amol_Stds0{1,2,3}.raw`
+  = 250 ng yeast phosphopeptides + synthetic standards (JPT SpikeMix 52/54 + Sigma PhosphoMix
+  1/2/3 = "JPTstySig123"), 5 amol dilution points x 3 reps, 15-min 2Th Astral DIA.
+- Downloaded the 10000 amol triplicate (~21 GB) via MassIVE HTTPS (~20 MB/s).
+
+### Pipeline (all local, working)
+1. `.raw` -> `.arrow` via **PioneerConverter** (~/Projects/PioneerConverter, dotnet 8, built
+   `dotnet build -c Release`): 7.4 GB raw -> 3.37 GB arrow in ~57 s; 250,866 scans
+   (2,483 MS1 + 248,383 MS2). No mzML step.
+2. Search with the yeast **phospho-only** library (`prosit_yeast_phospho_only.poin`, 2.05M
+   precursors), default develop params, 8 threads.
+
+### Result (Stds01, single 15-min run, 1% FDR)
+- **24,267 phosphopeptide precursors** (100% carry >=1 Unimod:21), **21,284 unique
+  phosphopeptides**, **25,802 phospho-sites**, 2,358 protein groups. Runtime 4.82 min.
+- Multiplicity: 22,732 mono- + 1,535 di-phospho (0 tri — max_var_mods=2 cap).
+
+### Notes / next
+- The **225 synthetic standards** are NOT in the yeast library (they're human/synthetic); their
+  sequences are needed for ground-truth ID+localization. Not in the public .xlsx supplements
+  (results tables only) — likely in the SI PDF (MOESM1) or the commercial JPT/Sigma kit sheets.
+- Next: 3-rep MBR search (all 3 reps converting); site-localization scoring (Phase 3); add the
+  225 standards for a real FLR benchmark; dilution series for LOD/FLR curve.
