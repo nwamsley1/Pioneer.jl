@@ -1,7 +1,7 @@
 # Unit tests for isomer (localization) decoy core logic.
 # Hand-verified on VLSAGSPESIK (L=11, S at 3,6,9): move phospho S6 -> P7 decoy.
 # See dev_docs/prosit_ptm_integration/localization_decoy_library_plan.md.
-using Pioneer, Test
+using Pioneer, Test, DataFrames
 const _P = Pioneer
 const PHOS = 79.966331
 
@@ -60,4 +60,41 @@ end
             d == 0 || @test UInt8(d) in cover
         end
     end
+end
+
+@testset "generate_isomer_decoys! table emission" begin
+    # One real mono-phospho precursor VLSAGSPESIK @ S6; row 1 (odd -> +sign -> d=7,P).
+    prec = DataFrame(sequence = ["VLSAGSPESIK"], mods = ["(6,S,Unimod:21)"],
+                     mz = Float32[600.0], prec_charge = UInt8[2])
+    frag = DataFrame(precursor_idx = UInt32[1, 1, 1, 1], annotation = ["b5", "b6", "b7", "y5"],
+                     mz = Float32[500, 500, 500, 500], intensities = Float32[10, 20, 30, 40])
+    vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[(p = r"[STY]", r = "Unimod:21")]
+    masses = Dict("Unimod:21" => 79.966331f0)
+
+    _P.generate_isomer_decoys!(prec, frag, vm, masses; spacing = 1)
+
+    @test nrow(prec) == 2                              # 1 real + 1 decoy
+    @test prec.is_loc_decoy == [false, true]
+    @test prec.loc_base_prec_id == UInt32[0, 1]
+    @test prec.mz[2] == prec.mz[1]                     # precursor mass preserved
+    @test prec.mods[2] == "(7,P,Unimod:21)"            # phospho moved S6 -> P7
+    @test prec.sequence[2] == "VLSAGSPESIK"
+
+    dec = frag[frag.precursor_idx .== 2, :]
+    d = Float32(PHOS)
+    m = Dict(dec.annotation[i] => dec.mz[i] for i in 1:nrow(dec))
+    @test nrow(dec) == 4
+    @test m["b6"] ≈ 500 - d                            # contains 6 not 7 -> -Δ
+    @test m["y5"] ≈ 500 + d                            # contains 7 not 6 -> +Δ
+    @test m["b7"] == 500 && m["b5"] == 500             # unchanged
+    @test all(frag[frag.precursor_idx .== 1, :mz] .== 500)   # reals untouched
+end
+
+@testset "generate_isomer_decoys! no-op without var mods" begin
+    prec = DataFrame(sequence = ["PEPTIDEK"], mods = [""], mz = Float32[400.0])
+    frag = DataFrame(precursor_idx = UInt32[1], annotation = ["b2"],
+                     mz = Float32[200], intensities = Float32[1])
+    empty_vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[]
+    _P.generate_isomer_decoys!(prec, frag, empty_vm, Dict("Unimod:21" => 79.966331f0))
+    @test nrow(prec) == 1 && all(.!prec.is_loc_decoy)  # no decoys, flag col added
 end
