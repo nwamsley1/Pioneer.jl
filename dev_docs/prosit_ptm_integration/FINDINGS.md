@@ -85,3 +85,16 @@ Working dir `/Users/n.t.wamsley/prosit_yeast_benchmark/`: `{prosit,altimeter}_ye
   (results tables only) — likely in the SI PDF (MOESM1) or the commercial JPT/Sigma kit sheets.
 - Next: 3-rep MBR search (all 3 reps converting); site-localization scoring (Phase 3); add the
   225 standards for a real FLR benchmark; dilution series for LOD/FLR curve.
+
+### Update: 225 standards found + 3-rep MBR (2026-07-03)
+- **Paper:** "Fast and deep phosphoproteome analysis with the Orbitrap Astral mass spectrometer",
+  Nature Communications 2024, DOI 10.1038/s41467-024-51274-0 (Coon lab).
+- **225 synthetic standards = Supplementary Data 1 (MOESM3), sheet "Reference Sheet- Peptide
+  Level"** (225 peptides, sequence + known Site in Spectronaut notation e.g. Y6; multiplicity
+  210 mono / 11 di / 3 tri / 1 tetra). Also "Reference Sheet - Site Level" (245 sites) +
+  "Dilution Series Data". Saved to `/Users/n.t.wamsley/prosit_phospho_test/coon_225_standards.tsv`.
+  This is the ground truth for ID + false-localization-rate benchmarking.
+- **3-rep MBR search** (all 3 x 10000amol reps, phospho-only yeast lib): 75,016 phosphopeptide
+  precursors, 7,208 protein groups, 5.85 min.
+- Next: add 225 standards to a library (with known sites), search -> ID recovery + FLR; then a
+  site-localization scorer (Phase 3) and the dilution series for LOD/FLR curve.
