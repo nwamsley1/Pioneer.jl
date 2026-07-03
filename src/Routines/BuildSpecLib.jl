@@ -232,6 +232,26 @@ function BuildSpecLib(params_path::String)
             const_length_to_frag_count_multiple = Float32(1000)
             const_min_frag_intensity            = 0.0f0
 
+            # Variable-mod patterns + masses (authoritative, from config), shared by
+            # site-determining retention and isomer-decoy generation below.
+            loc_var_mods = NamedTuple{(:p, :r), Tuple{Regex, String}}[]
+            loc_mod_masses = Dict{String, Float32}()
+            if haskey(params, "variable_mods") && haskey(params["variable_mods"], "pattern")
+                for vi in 1:length(params["variable_mods"]["pattern"])
+                    _nm = String(params["variable_mods"]["name"][vi])
+                    push!(loc_var_mods,
+                          (p = Regex(String(params["variable_mods"]["pattern"][vi])), r = _nm))
+                    haskey(params["variable_mods"], "mass") &&
+                        (loc_mod_masses[_nm] = Float32(params["variable_mods"]["mass"][vi]))
+                end
+            end
+            # Isomer (localization) decoys (Prosit path only). Default off.
+            _libp = get(params, "library_params", Dict{String, Any}())
+            loc_decoy_enabled = (koina_model_type isa InstrumentAgnosticModel) &&
+                                (get(_libp, "isomer_decoys", false) == true)
+            loc_decoy_spacing = Int(get(_libp, "isomer_decoy_spacing", 1))
+            loc_decoy_target  = String(get(_libp, "isomer_decoy_mod", "Unimod:21"))
+
             # Fragment prediction
             @user_info "Predicting fragment ion intensities..."
             frag_predict_timing = @timed begin
@@ -240,24 +260,15 @@ function BuildSpecLib(params_path::String)
                 # otherwise applies after raw_fragments.arrow is on disk.
                 precursors_df_for_ctx = DataFrame(Arrow.Table(precursors_arrow_path))
 
-                # Site-determining fragment retention (phospho localization):
-                # compute per-precursor candidate-site set S once, from the SAME
-                # variable-mod patterns the generator enumerated (authoritative),
-                # and carry it into the Prosit filter ctx so filter_fragments!
-                # keeps the ions that distinguish positional isomers. Empty (no
-                # variable mods, or the spline path) -> strict no-op.
+                # Site-determining fragment retention (phospho localization): carry the
+                # per-precursor candidate-site set S into the Prosit filter ctx so
+                # filter_fragments! keeps the ions that distinguish positional isomers
+                # (and, when decoys are on, the decoy sites too, via include_decoy +
+                # matching spacing). Empty off the Prosit path -> strict no-op.
                 precursor_gap_sites = if koina_model_type isa InstrumentAgnosticModel
-                    retention_var_mods = NamedTuple{(:p, :r), Tuple{Regex, String}}[]
-                    if haskey(params, "variable_mods") && haskey(params["variable_mods"], "pattern")
-                        for vi in 1:length(params["variable_mods"]["pattern"])
-                            push!(retention_var_mods,
-                                  (p = Regex(String(params["variable_mods"]["pattern"][vi])),
-                                   r = String(params["variable_mods"]["name"][vi])))
-                        end
-                    end
-                    # Decoy-neighbour sites deferred until isomer decoys land.
                     gap_sites_for_library(precursors_df_for_ctx[!, :sequence],
-                                          retention_var_mods, false)
+                                          loc_var_mods, loc_decoy_enabled;
+                                          spacing = loc_decoy_spacing)
                 else
                     Vector{UInt8}[]
                 end
@@ -313,6 +324,27 @@ function BuildSpecLib(params_path::String)
                 nothing
             end
             timings["Fragment Prediction"] = frag_predict_timing
+
+            # Isomer (localization) decoys: append decoy precursors + permuted
+            # fragments to the on-disk tables so they flow into buildPionLib. Reads
+            # raw_fragments (already top-N + gap-retained), permutes site-determining
+            # ion m/z, and rewrites both tables in place. Default off.
+            if loc_decoy_enabled
+                loc_decoy_timing = @timed begin
+                    @user_info "Generating isomer (localization) decoys (spacing=$loc_decoy_spacing)..."
+                    _pdf = DataFrame(Arrow.Table(precursors_arrow_path))
+                    _fdf = DataFrame(Arrow.Table(raw_fragments_arrow_path))
+                    _n0 = nrow(_pdf)
+                    generate_isomer_decoys!(_pdf, _fdf, loc_var_mods, loc_mod_masses;
+                                            spacing = loc_decoy_spacing,
+                                            target_mod_name = loc_decoy_target)
+                    Arrow.write(precursors_arrow_path, _pdf)
+                    Arrow.write(raw_fragments_arrow_path, _fdf)
+                    @user_info "  +$(nrow(_pdf) - _n0) isomer-decoy precursors (of $_n0 reals)"
+                    nothing
+                end
+                timings["Isomer Decoy Generation"] = loc_decoy_timing
+            end
 
             # Process predictions
             process_timing = @timed begin
