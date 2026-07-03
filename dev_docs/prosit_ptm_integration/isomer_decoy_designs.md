@@ -146,3 +146,33 @@ about distance, and the design is really "what distance distribution do I sample
 optimistic extreme; the honest estimator matches the real acceptor-spacing. The
 `spacing` knob already exists; adding a distance *distribution* (and validating it
 against the standards' known FLR) is the principled next step.
+
+# 6. The simpler bet: random placement already IS spacing-matched
+
+There is a cleaner way to see this that removes the need to model spacing at all.
+Put a true site at position `t`. Compare two distances:
+
+- **real false localization:** to another acceptor `a`  ->  `|t - a|`
+- **random decoy:** to a random position `r`  ->  `|t - r|`
+
+If acceptors are roughly **uniform** along the peptide, then `a` and `r` are drawn
+from the *same* distribution, so `|t - a|` and `|t - r|` are the **identical law**
+(both `|uniform - uniform|`, triangular, mean ~= L/3). So **random non-acceptor
+placement reproduces the real acceptor-distance distribution for free** -- no
+explicit spacing model needed. The count-matched form is simply: for a peptide
+with N phospho acceptors and M oxidation acceptors, draw **N random phospho decoy
+positions and M random oxidation decoy positions** (each a non-acceptor of that
+mod). This is the recommended default -- simpler than the `spacing` knob and, under
+uniformity, unbiased.
+
+**The one bend:** acceptors aren't perfectly uniform -- S/T/Y cluster in
+proline-directed / S-T-rich motifs, where real errors are short-distance (hard)
+but random decoys average longer (easier) -> a mild FLR **under**-estimate in
+those regions. Mitigations if it matters: bias the draw toward the true site (or
+cap the max distance). Otherwise it likely washes out library-wide.
+
+**Settle it empirically.** The standards give ground-truth FLR (2.5% @ 0.75). Run
+the designs and compare their decoy-estimated FLR to the known value: if random
+matches -> use random; if random under-shoots -> add a short-distance bias; if
+adjacent over-shoots -> confirms it is too conservative. The choice becomes a fit,
+not a judgement call.
