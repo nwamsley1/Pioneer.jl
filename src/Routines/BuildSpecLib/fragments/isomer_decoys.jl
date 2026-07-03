@@ -82,6 +82,12 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
 
     seqs = precursors_df[!, :sequence]
     modcol = precursors_df[!, :mods]
+    # charge column: intermediate table uses :precursor_charge (renamed to
+    # :prec_charge later). Uniqueness is per (charge, decoy-mods) so the same
+    # peptidoform at different charges each gets its own decoy.
+    chargecol = hasproperty(precursors_df, :prec_charge) ? precursors_df[!, :prec_charge] :
+                hasproperty(precursors_df, :precursor_charge) ? precursors_df[!, :precursor_charge] :
+                nothing
     # group rows by sequence (a peptide's peptidoforms decoy together for uniqueness)
     by_seq = Dict{String, Vector{Int}}()
     for r in 1:R; push!(get!(by_seq, String(seqs[r]), Int[]), r); end
@@ -94,7 +100,7 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
         real_by = real_sites_by_mod(seq, var_mods)
         isempty(real_by) && continue
         shadow = shadow_decoy_sites(seq, real_by; seed = seq_seed(seq; global_seed))
-        used = Set{String}()
+        used = Set{Tuple{Int,String}}()
         rng  = Random.MersenneTwister(seq_seed(seq; global_seed) ⊻ 0xD5C0FFEE)
         L = length(seq)
         for r in rows
@@ -102,6 +108,7 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
             (ismissing(ms) || isempty(ms)) && continue
             mods = _parse_mod_tuples(ms)
             isempty(mods) && continue
+            z = chargecol === nothing ? 0 : Int(chargecol[r])
             # candidate decoys: move one mod (pos,name) to a shadow site of that name
             cand_str = String[]; cand_mods = Vector{Tuple{Int,Char,String}}[]
             cand_move = Tuple{Int,Int,String}[]
@@ -110,13 +117,13 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
                 for d in shadow[name]
                     nm = [(p == pos && n == name) ? (d, seq[d], n) : (p, a, n) for (p, a, n) in mods]
                     str = _format_mod_tuples(nm)
-                    str in used && continue
+                    (z, str) in used && continue
                     push!(cand_str, str); push!(cand_mods, nm); push!(cand_move, (pos, d, name))
                 end
             end
             isempty(cand_str) && continue
             j = rand(rng, 1:length(cand_str))
-            push!(used, cand_str[j])
+            push!(used, (z, cand_str[j]))
             push!(base_rows, r)
             push!(decoy_modstrs, cand_str[j])
             k_old, k_new, name = cand_move[j]
