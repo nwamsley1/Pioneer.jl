@@ -47,14 +47,15 @@ function fillVarModStrings!(
                             all_mods::Vector{Vector{PeptideMod}},
                             var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
                             fixed_mods::Vector{PeptideMod},
-                            max_var_mods::Int
+                            max_var_mods::Int,
+                            min_var_mods::Int = 0
                             )
     i = 1
-    #from 1 to length(var_mod_matches) variable mods 
-    for N in 1:min(max_var_mods, length(var_mod_matches))
-        #Each combination of 'N' var mods 
+    #from max(1,min_var_mods) to length(var_mod_matches) variable mods
+    for N in max(1, min_var_mods):min(max_var_mods, length(var_mod_matches))
+        #Each combination of 'N' var mods
         for mods in combinations(var_mod_matches, N)
-            #Need a unique key that can map between the target and reverse decoy verion of a sequence. 
+            #Need a unique key that can map between the target and reverse decoy verion of a sequence.
             peptide_all_mods = copy(fixed_mods)
             for mod in mods
                 index = UInt8(mod[:regex_match].offset)
@@ -65,8 +66,11 @@ function fillVarModStrings!(
             i += 1
         end
     end
-    #Version with 0 variable mods
-    all_mods[end] = fixed_mods
+    #Version with 0 variable mods — only when min_var_mods==0 (else phospho-only)
+    if min_var_mods == 0
+        all_mods[i] = fixed_mods
+        i += 1
+    end
     sort!(all_mods)
     return nothing
 end
