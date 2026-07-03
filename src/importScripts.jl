@@ -369,6 +369,7 @@ function importScripts()
     
     # Fragment handling
     safe_include!(joinpath(root_path, "fragments", "get_frag_bounds.jl"))
+    safe_include!(joinpath(root_path, "fragments", "site_determining.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_parse.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_annotation.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_predict.jl"))
