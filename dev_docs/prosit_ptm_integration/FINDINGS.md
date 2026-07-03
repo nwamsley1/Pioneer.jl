@@ -119,3 +119,23 @@ site-localization scorer** — "best isomer wins" is a crude proxy and DIA posit
 share most fragments. This is the concrete motivation + harness for **Phase 3 (site-localization
 scoring / AScore-style site-determining-ion model)**. Analysis: `analyze_flr2.jl`. Library/data
 in `/Users/n.t.wamsley/prosit_phospho_test/` (yeast_plus_standards_1mc.poin, search_std/).
+
+### Experiment: PMM deconvolution L1/L2 penalty sweep (2026-07-03, commit 41f26619c)
+Added config-driven L1/L2 penalty to the PoissonMM main-search solver. Swept on the phospho
+FLR benchmark (Stds01 vs yeast+standards 1MC lib, 1% FDR):
+
+| reg | lambda | total precursors | standards ID | correct | FLR |
+|---|---|---|---|---|---|
+| none | 0.0 | 42,116 | 198/212 | 152 | 23.2% |
+| L1 | 0.1 | 42,492 | 199/212 | 152 | 23.6% |
+| L1 | 1.0 | 42,606 | 199/212 | 152 | 23.6% |
+| **L2** | **1.0** | **47,426** | 199/212 | **160** | **19.6%** |
+
+- `none` reproduced the baseline exactly -> the L1/L2 change is bit-identical for NoNorm (no regression).
+- **L2 ridge (lambda=1) improved localization: FLR 23.2% -> 19.6%** (real ground-truth gain) AND
+  +12.6% total precursors. The extra precursors need FDR validation (entrapment/decoy) before
+  claiming a depth gain, but the FLR drop is a clean quality signal.
+- L1 had ~no effect (NNLS max(.,0) already induces sparsity).
+- Interpretation: L2 shrinkage stabilizes the dense-DIA phospho deconvolution (many co-isolated
+  positional isomers), yielding steadier weights -> correct isomer wins more often. Promising
+  lever for phospho localization; worth a dose-response + FDR check.
