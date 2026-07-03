@@ -26,6 +26,7 @@ include("./UnitTests/test_retention_time_index.jl")
 include("./UnitTests/test_arrow_psm_container.jl")
 include("./UnitTests/test_buildpionlib_index_filters.jl")
 include("./UnitTests/test_site_determining.jl")
+include("./UnitTests/test_isomer_decoys.jl")
 
 include("./UnitTests/isotopeSplines.jl")
 include("./UnitTests/testIsotopesJun13.jl")

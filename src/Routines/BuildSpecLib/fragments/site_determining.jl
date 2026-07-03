@@ -27,19 +27,22 @@ function acceptor_positions(var_mod_matches)
 end
 
 """
-    decoy_neighbor_positions(seq, acc_positions) -> Vector{UInt8}
+    decoy_neighbor_positions(seq, acc_positions; spacing=1) -> Vector{UInt8}
 
-Decoy-candidate positions: the immediate sequence neighbours (`p-1`, `p+1`) of
-each acceptor that are **not themselves acceptors** (so a phospho placed there is
-wrong by construction). This is the shared helper the isomer-decoy generator
-must also use, so the reals retain the ions that distinguish the decoys.
+Decoy-candidate positions: the sequence neighbours `p ± spacing` of each acceptor
+that are **not themselves acceptors** (so a phospho placed there is wrong by
+construction). Both signs are returned (the generator picks one; retention must
+cover the superset). `spacing=1` gives the stringent adjacent decoys; 2/3 give
+easier ones. This is the shared helper the isomer-decoy generator uses, so reals
+retain the ions that distinguish the decoys.
 """
-function decoy_neighbor_positions(seq::AbstractString, acc_positions::AbstractVector{<:Integer})
+function decoy_neighbor_positions(seq::AbstractString, acc_positions::AbstractVector{<:Integer};
+                                  spacing::Integer = 1)
     L = length(seq)
     accset = Set{Int}(Int.(acc_positions))
     neigh = UInt8[]
     for p in acc_positions
-        for j in (Int(p) - 1, Int(p) + 1)
+        for j in (Int(p) - spacing, Int(p) + spacing)
             if 1 <= j <= L && !(j in accset)
                 push!(neigh, UInt8(j))
             end
@@ -56,11 +59,12 @@ unioned with decoy-candidate neighbours, sorted and unique. Consecutive pairs of
 `S` are the "gaps" whose crossing ions must be retained. Empty when there are no
 acceptors (retention is then a strict no-op).
 """
-function compute_gap_sites(seq::AbstractString, var_mod_matches, include_decoy::Bool)
+function compute_gap_sites(seq::AbstractString, var_mod_matches, include_decoy::Bool;
+                           spacing::Integer = 1)
     acc = acceptor_positions(var_mod_matches)
     isempty(acc) && return UInt8[]
     include_decoy || return acc
-    return sort!(unique!(vcat(acc, decoy_neighbor_positions(seq, acc))))
+    return sort!(unique!(vcat(acc, decoy_neighbor_positions(seq, acc; spacing = spacing))))
 end
 
 """
@@ -115,7 +119,7 @@ whole feature a strict no-op).
 """
 function gap_sites_for_library(sequences::AbstractVector,
                                var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
-                               include_decoy::Bool)
+                               include_decoy::Bool; spacing::Integer = 1)
     n = length(sequences)
     out = Vector{Vector{UInt8}}(undef, n)
     if isempty(var_mods)
@@ -124,7 +128,7 @@ function gap_sites_for_library(sequences::AbstractVector,
     end
     @inbounds for i in 1:n
         seq = String(sequences[i])
-        out[i] = compute_gap_sites(seq, matchVarMods(seq, var_mods), include_decoy)
+        out[i] = compute_gap_sites(seq, matchVarMods(seq, var_mods), include_decoy; spacing = spacing)
     end
     return out
 end
