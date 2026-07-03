@@ -297,6 +297,11 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     # path so BitVec's adaptive while loop doesn't re-allocate ~50–100 MB per batch.
     frag_index_scratch::FragIndexScratch
 
+    # Per-precursor positional-isomer group ids for phospho-localization
+    # competition (Idea-1). Positional isomers (same sequence+charge+mz) share
+    # an id. Computed once, lazily, from the library; see get_isomer_group_ids.
+    isomer_group_ids::Base.Ref{Vector{UInt32}}
+
     # Constructor
     function SearchContext(
         spec_lib::L,
@@ -330,6 +335,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Vector{Bool}}(),  # Initialize bitvec_filter
             Dict{Int64, Vector{UInt16}}(), # Initialize bitvec_excess_rank
             FragIndexScratch(n_threads),  # reusable frag-index scratch buffers
+            Ref{Vector{UInt32}}(),        # isomer_group_ids (computed lazily)
         )
     end
 end

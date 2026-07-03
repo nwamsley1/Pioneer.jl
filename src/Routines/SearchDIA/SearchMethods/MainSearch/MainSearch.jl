@@ -244,6 +244,15 @@ function process_file!(
     # Dict-based version (measured 2026-05-19).
     t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
+    # Per-scan positional-isomer weight competition (phospho localization,
+    # Idea-1 Phase A). Gated on optimization.localization.enabled so non-phospho
+    # runs skip the sweep entirely. Must run here, BEFORE the precursor sort,
+    # to exploit the same contiguous-by-scan invariant.
+    if getLocalizationEnabled(params)
+        @alloc_bucket "isomer_competition_features" add_isomer_competition_features!(
+            psms, get_isomer_group_ids(search_context))
+    end
+
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
     # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
     # BEFORE the precursor sort so that consecutive rows within a per-chunk

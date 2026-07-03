@@ -61,6 +61,18 @@ function _resolve_deconv_reg(params::PioneerParameters)
     return lam, reg
 end
 
+# Phospho-localization isomer-competition feature toggle
+# (optimization.localization.enabled). Default false so non-phospho runs pay
+# nothing (the per-scan isomer sweep is skipped entirely). See
+# add_isomer_competition_features! (Idea-1, Phase A).
+function _resolve_localization_enabled(params::PioneerParameters)
+    if hasproperty(params, :optimization) && hasproperty(params.optimization, :localization)
+        loc = params.optimization.localization
+        hasproperty(loc, :enabled) && return Bool(loc.enabled)
+    end
+    return false
+end
+
 """
 Parameters for main search (deconvolution, scoring, and prescore aggregation).
 """
@@ -98,6 +110,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
     # Pre-filter: require marginal candidates to appear in ≥ N scans
     prefilter_min_scan_count::Int64
+
+    # Phospho-localization: compute per-scan isomer-competition features
+    localization_enabled::Bool
 
     function MainSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -155,9 +170,12 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             DEFAULT_INDEX_SEARCH_MIN_SCORE,
 
             0,                  # prefilter_min_scan_count (formerly fragment_index_search.prefilter_min_scan_count; never overridden)
+
+            _resolve_localization_enabled(params),  # localization_enabled (config: optimization.localization.enabled)
         )
     end
 end
 
 getIsotopeTraceType(p::MainSearchParameters) = p.isotope_tracetype
 getPrefilterMinScanCount(p::MainSearchParameters) = p.prefilter_min_scan_count
+getLocalizationEnabled(p::MainSearchParameters) = p.localization_enabled

@@ -1597,6 +1597,141 @@ function add_scan_competition_features!(psms::DataFrame)
     return
 end
 
+"""
+    build_isomer_group_ids(precursors) -> Vector{UInt32}
+
+Assign each precursor an isomer-group id so that **positional isomers** — same
+bare `sequence`, same `prec_charge`, same precursor `mz` (hence same variable-mod
+count) — share an id. This is the sibling key for per-scan localization
+competition (Idea-1).
+
+`base_pep_id` does NOT group isomers (each positional isomer gets its own id, so
+grouping on it would put every isomer in its own singleton group). We group
+directly on `(sequence, charge, mz-bucket, is_decoy)`. `is_decoy` is folded in so
+a decoy never shares a group with a target. `mz` is bucketed to 1 mDa; true
+positional isomers have bit-identical mz, so the bucket only guards fp noise and
+never merges distinct masses.
+
+O(n_precursors); computed once per search (memoized via `get_isomer_group_ids`).
+"""
+function build_isomer_group_ids(precursors::LibraryPrecursors)
+    n = length(precursors)
+    seqs   = getSequence(precursors)
+    charge = getCharge(precursors)
+    mz     = getMz(precursors)
+    decoy  = getIsDecoy(precursors)
+    group_ids = Vector{UInt32}(undef, n)
+    key_to_id = Dict{Tuple{String, UInt8, Int64, Bool}, UInt32}()
+    next_id = UInt32(0)
+    @inbounds for i in 1:n
+        key = (String(seqs[i]), charge[i], round(Int64, Float64(mz[i]) * 1000), decoy[i])
+        id = get(key_to_id, key, UInt32(0))
+        if id == UInt32(0)
+            next_id += UInt32(1)
+            id = next_id
+            key_to_id[key] = id
+        end
+        group_ids[i] = id
+    end
+    return group_ids
+end
+
+"""
+    get_isomer_group_ids(search_context) -> Vector{UInt32}
+
+Memoized accessor for the per-precursor isomer-group id vector (indexed by
+`precursor_idx`). Built once from the library on first call, then cached on
+`search_context.isomer_group_ids`.
+"""
+function get_isomer_group_ids(search_context::SearchContext)
+    ref = search_context.isomer_group_ids
+    if !isassigned(ref)
+        ref[] = build_isomer_group_ids(getPrecursors(getSpecLib(search_context)))
+    end
+    return ref[]
+end
+
+"""
+    add_isomer_competition_features!(psms, isomer_group_ids)
+
+Per-scan positional-isomer weight competition (Idea-1, Phase A: reporting only,
+no PSMs dropped). Adds two columns:
+
+- `iso_weight_fraction_at_scan::Float32` — `weight` / (sum of weights over
+  **sibling isomers** — same `isomer_group_id` — present at the SAME scan).
+  Within a group at a scan the fractions sum to 1, so `f` reads as a
+  site-probability (the `>= 0.75` analogue).
+- `iso_group_size_at_scan::UInt16` — number of sibling PSMs of this group at
+  this scan (1 = uncontested; f is trivially 1).
+
+**CRITICAL**: the denominator is the SIBLING sum, NOT the scan-wide max used by
+`add_scan_competition_features!` — a co-isolated *unrelated* peptide (different
+sequence) lands in a different group and must not dilute the localization signal.
+
+**PRECONDITION**: `psms` is contiguous-by-:scan_idx (same invariant as
+`add_scan_competition_features!`). Call BEFORE the precursor sort.
+"""
+function add_isomer_competition_features!(psms::DataFrame, isomer_group_ids::Vector{UInt32})
+    n = nrow(psms)
+    frac  = Vector{Float32}(undef, n)
+    gsize = Vector{UInt16}(undef, n)
+    if n == 0
+        psms[!, :iso_weight_fraction_at_scan] = frac
+        psms[!, :iso_group_size_at_scan]      = gsize
+        return
+    end
+
+    scan::Vector{UInt32} = psms[!, :scan_idx]
+    w::Vector{Float32}   = psms[!, :weight]
+    pid::Vector{UInt32}  = psms[!, :precursor_idx]
+
+    # 1. Contiguous-by-scan run boundaries (O(n)).
+    starts = Int[1]
+    sizehint!(starts, n ÷ 4)
+    @inbounds for i in 2:n
+        if scan[i] != scan[i-1]
+            push!(starts, i)
+        end
+    end
+    n_runs = length(starts)
+    push!(starts, n + 1)
+
+    # 2. Per-scan sibling-group fraction. Each run writes disjoint rows, so
+    #    threading is contention-free. Thread-local group-sum/count Dicts,
+    #    reused across scans (empty! between). O(len) per scan.
+    parallel_foreach!(n_runs) do chunk
+        @inbounds begin
+            gsum = Dict{UInt32, Float32}()
+            gcnt = Dict{UInt32, UInt16}()
+            for r in chunk
+                s = starts[r]
+                e = starts[r+1] - 1
+                if e == s
+                    frac[s]  = 1f0
+                    gsize[s] = UInt16(1)
+                    continue
+                end
+                empty!(gsum); empty!(gcnt)
+                for row in s:e
+                    g = isomer_group_ids[pid[row]]
+                    gsum[g] = get(gsum, g, 0f0) + w[row]
+                    gcnt[g] = get(gcnt, g, UInt16(0)) + UInt16(1)
+                end
+                for row in s:e
+                    g   = isomer_group_ids[pid[row]]
+                    tot = gsum[g]
+                    frac[row]  = tot > 0 ? w[row] / tot : 1f0
+                    gsize[row] = gcnt[g]
+                end
+            end
+        end
+    end
+
+    psms[!, :iso_weight_fraction_at_scan] = frac
+    psms[!, :iso_group_size_at_scan]      = gsize
+    return
+end
+
 # LGBM_RECOVERY_FEATURES const removed 2026-05-18 — it was a stale legacy
 # list (23 entries) that claimed to be "the full Phase-2 feature set" but
 # was never referenced anywhere. The active feature lists are
