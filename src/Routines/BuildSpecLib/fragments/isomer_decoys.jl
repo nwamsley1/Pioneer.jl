@@ -151,6 +151,17 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
     decoy_prec[!, :mods]             = decoy_modstrs
     decoy_prec[!, :is_loc_decoy]     = trues(ndec)
     decoy_prec[!, :loc_base_prec_id] = UInt32.(base_rows)
+    # Fresh unique pair_id per loc-decoy: inheriting the base target's pair_id would
+    # make 3 rows share it and break add_pair_indices! (which only partners pair_ids
+    # with exactly 2 rows), destroying the real target<->decoy pairing. Unique ids
+    # leave loc-decoys as unpaired singletons and the real pairs intact.
+    if hasproperty(precursors_df, :pair_id)
+        mx = UInt32(0)
+        @inbounds for x in precursors_df[!, :pair_id]
+            ismissing(x) || (mx = max(mx, UInt32(x)))
+        end
+        decoy_prec[!, :pair_id] = UInt32[mx + UInt32(i) for i in 1:ndec]
+    end
 
     # decoy fragment rows: copy source frags, permute m/z, repoint precursor_idx.
     total = sum(length, decoy_frag_src)

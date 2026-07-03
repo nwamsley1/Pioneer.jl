@@ -65,7 +65,7 @@ end
 @testset "generate_isomer_decoys! table emission" begin
     # One real mono-phospho precursor VLSAGSPESIK @ S6; row 1 (odd -> +sign -> d=7,P).
     prec = DataFrame(sequence = ["VLSAGSPESIK"], mods = ["(6,S,Unimod:21)"],
-                     mz = Float32[600.0], prec_charge = UInt8[2])
+                     mz = Float32[600.0], prec_charge = UInt8[2], pair_id = UInt32[5])
     frag = DataFrame(precursor_idx = UInt32[1, 1, 1, 1], annotation = ["b5", "b6", "b7", "y5"],
                      mz = Float32[500, 500, 500, 500], intensities = Float32[10, 20, 30, 40])
     vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[(p = r"[STY]", r = "Unimod:21")]
@@ -79,6 +79,8 @@ end
     @test prec.mz[2] == prec.mz[1]                     # precursor mass preserved
     @test prec.mods[2] == "(7,P,Unimod:21)"            # phospho moved S6 -> P7
     @test prec.sequence[2] == "VLSAGSPESIK"
+    @test prec.pair_id[2] != prec.pair_id[1]           # loc-decoy gets a FRESH pair_id
+    @test prec.pair_id[2] == UInt32(6)                 # max(5)+1
 
     dec = frag[frag.precursor_idx .== 2, :]
     d = Float32(PHOS)
@@ -88,6 +90,31 @@ end
     @test m["y5"] ≈ 500 + d                            # contains 7 not 6 -> +Δ
     @test m["b7"] == 500 && m["b5"] == 500             # unchanged
     @test all(frag[frag.precursor_idx .== 1, :mz] .== 500)   # reals untouched
+end
+
+@testset "loc-decoy pair_id preserves real target/decoy pairing" begin
+    # A real target + its ID-decoy share pair_id=10 (2 rows). Both phospho, so both
+    # spawn loc-decoys. After add_pair_indices! the real pair must stay partnered and
+    # the loc-decoys must be unpaired (missing).
+    prec = DataFrame(
+        sequence = ["SAAAAAK", "KAAAAAS"],
+        mods = ["(1,S,Unimod:21)", "(7,S,Unimod:21)"],
+        mz = Float32[400, 400], prec_charge = UInt8[2, 2],
+        is_decoy = [false, true], pair_id = UInt32[10, 10])
+    frag = DataFrame(precursor_idx = UInt32[1, 2], annotation = ["b2", "b2"],
+                     mz = Float32[200, 200], intensities = Float32[1, 1])
+    vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[(p = r"[STY]", r = "Unimod:21")]
+
+    _P.generate_isomer_decoys!(prec, frag, vm, Dict("Unimod:21" => 79.966331f0))
+    @test nrow(prec) == 4                               # 2 real + 2 loc-decoy
+    @test allunique(prec.pair_id[3:4])                  # fresh ids
+    @test all(prec.pair_id[3:4] .> UInt32(10))
+
+    _P.add_pair_indices!(prec)
+    @test prec.partner_precursor_idx[1] == 2            # real pair intact
+    @test prec.partner_precursor_idx[2] == 1
+    @test ismissing(prec.partner_precursor_idx[3])      # loc-decoys unpaired
+    @test ismissing(prec.partner_precursor_idx[4])
 end
 
 @testset "generate_isomer_decoys! no-op without var mods" begin
