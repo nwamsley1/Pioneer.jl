@@ -102,6 +102,101 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
     )
 end
 
+function _score_floor_for_qvalue(qval_spline, q_value_threshold::Float32)
+    low = eps(Float32)
+    high = 1.0f0 - eps(Float32)
+    Float32(qval_spline(low)) <= q_value_threshold && return low
+    Float32(qval_spline(high)) > q_value_threshold && return high
+
+    for _ in 1:32
+        mid = (low + high) / 2.0f0
+        if Float32(qval_spline(mid)) <= q_value_threshold
+            high = mid
+        else
+            low = mid
+        end
+    end
+    return high
+end
+
+function remap_mbr_recovered_prec_probs(
+    qval_spline,
+    q_value_threshold::Float32,
+)
+    score_ceiling = prevfloat(_score_floor_for_qvalue(qval_spline, q_value_threshold))
+    score_floor = eps(Float32)
+    score_width = max(score_ceiling - score_floor, 0.0f0)
+    desc = "remap_mbr_recovered_prec_probs"
+
+    op = function(df)
+        hasproperty(df, :mbr_target_decoy_prob) || return df
+        prec_probs = df[!, :prec_prob]
+        recovered = df[!, :mbr_recovered]
+        target_decoy_probs = df[!, :mbr_target_decoy_prob]
+
+        @inbounds for i in eachindex(prec_probs)
+            Bool(recovered[i]) || continue
+            score = clamp(Float32(target_decoy_probs[i]), 0.0f0, 1.0f0)
+            prec_probs[i] = score_floor + score_width * score
+        end
+        return df
+    end
+    return desc => op
+end
+
+function gate_mbr_recovered_by_global_qvalue(
+    global_qval_dict::Dict{UInt32, Float32},
+    q_value_threshold::Float32,
+)
+    desc = "gate_mbr_recovered_by_global_qvalue"
+    op = function(df)
+        hasproperty(df, :mbr_recovered) || return df
+        precursors = df[!, :precursor_idx]
+        recovered = df[!, :mbr_recovered]
+        target_decoy_probs = hasproperty(df, :mbr_target_decoy_prob) ?
+                             df[!, :mbr_target_decoy_prob] :
+                             nothing
+
+        @inbounds for i in eachindex(recovered)
+            Bool(recovered[i]) || continue
+            global_qval = get(global_qval_dict, UInt32(precursors[i]), Inf32)
+            global_qval <= q_value_threshold && continue
+            recovered[i] = false
+            target_decoy_probs !== nothing && (target_decoy_probs[i] = NaN32)
+        end
+        return df
+    end
+    return desc => op
+end
+
+function remap_mbr_recovered_prec_probs!(
+    refs::Vector{PSMFileReference},
+    merged_path::String;
+    q_value_threshold::Float32,
+    min_pep_points_per_bin::Int,
+    fdr_scale_factor::Float32,
+    global_qval_dict::Union{Nothing, Dict{UInt32, Float32}} = nothing,
+)
+    any(ref -> has_column_anywhere(ref, :mbr_target_decoy_prob), refs) || return refs
+
+    spline_result = build_qvalue_spline_from_refs(refs, :prec_prob, merged_path;
+        compute_pep = false,
+        min_pep_points_per_bin = min_pep_points_per_bin,
+        fdr_scale_factor = fdr_scale_factor,
+        temp_prefix = "mbr_score_sidecar")
+    spline_result === nothing && return refs
+
+    remap_pipeline = TransformPipeline()
+    if global_qval_dict !== nothing
+        remap_pipeline = remap_pipeline |>
+            gate_mbr_recovered_by_global_qvalue(global_qval_dict, q_value_threshold)
+    end
+    remap_pipeline = remap_pipeline |>
+        remap_mbr_recovered_prec_probs(spline_result.qval_spline, q_value_threshold)
+    apply_pipeline!(refs, remap_pipeline; parallel = false)
+    return refs
+end
+
 function process_file!(
     results::PrecursorScoringSearchResults,
     params::PrecursorScoringSearchParameters,
@@ -333,6 +428,10 @@ function summarize_results!(
 
     if params.match_between_runs && !isempty(passing_refs)
         post_mbr_time = @elapsed begin
+            irt_tolerance_by_file = Dict{UInt32, Float32}()
+            for (ms_file_idx, irt_tol) in pairs(getIrtErrors(search_context))
+                irt_tolerance_by_file[UInt32(ms_file_idx)] = Float32(irt_tol)
+            end
             summary = run_mbr_after_qvalue_filter!(
                 annotated_refs,
                 passing_refs,
@@ -340,10 +439,19 @@ function summarize_results!(
                 getFragmentLookupTable(getSpecLib(search_context));
                 q_value_threshold = params.q_value_threshold,
                 donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+                irt_tolerance_by_file = irt_tolerance_by_file,
             )
             @debug_l1 "Post-qvalue MBR completed: files=$(summary.n_files), " *
                       "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"
             annotated_refs = [PSMFileReference(file_path(ref)) for ref in annotated_refs]
+            remap_mbr_recovered_prec_probs!(
+                annotated_refs,
+                results.merged_quant_path;
+                q_value_threshold = params.q_value_threshold,
+                min_pep_points_per_bin = params.pep_bin_size,
+                fdr_scale_factor = fdr_scale,
+                global_qval_dict = global_qval_dict,
+            )
 
             q_threshold = params.q_value_threshold
             mbr_selection_pipeline = TransformPipeline() |>
@@ -387,6 +495,7 @@ function summarize_results!(
             results.precursor_pep_interp[] = spline_result.pep_interp
             recalc_pipeline = TransformPipeline() |>
                 add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+                filter_by_multiple_thresholds([(:qval, params.q_value_threshold)]) |>
                 add_interpolated_column(:pep, :prec_prob, spline_result.pep_interp)
             passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
         end
