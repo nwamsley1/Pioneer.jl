@@ -39,49 +39,63 @@ cross-precursor state.
 
 # 3. The change
 
-## 3.1 Extract a pure, testable function
+**Architecture: compute the gap sites at peptidoform *generation*, carry them to *prediction*.**
+The peptidoform generator is the authority on where mods can go -- it already enumerates the acceptor
+sites (honouring fixed mods on acceptors, motif restrictions, min/max var-mods). Re-deriving "all
+S/T/Y" independently inside `filter_fragments!` risks diverging from what was actually enumerated.
+So we compute the potential-site set `S` once, at generation, stamp it per precursor, and carry it
+forward; the filter (and later the decoy generator) just consume it. `S` is a build-time
+intermediate -- it rides the working precursor table, not the final `.poin`, so no library bloat.
+
+## 3.1 At generation: compute and stamp the gap sites
+
+Where variable-mod peptidoforms are enumerated (BuildSpecLib var-mod path -- `fillVarModStrings!` /
+`matchVarMods` / `chronologer_prep.jl`), add:
 
 ```
-gap_cover_indices(seq, L, decoy_enabled,
-                  base_type::Vector{Char}, frag_index::Vector{UInt8},
-                  total::Vector{Float32}, block::Vector{Int}, topn_cut::Int) -> Vector{Int}
+compute_gap_sites(seq, enabled_var_mods, decoy_cfg) -> Vector{UInt8}   # sorted potential sites S
 ```
 
-Pure (no ctx, no I/O): given one precursor's kept fragments (as parallel arrays indexed by `block`,
-already sorted by descending `total`), returns the indices of the **extra** fragments to retain
-beyond `block[1:topn_cut]`. Unit-tested in isolation (Section 6.1).
+`S = sort( union over enabled var mods of their acceptor positions  union  (decoy on ? decoy-neighbour
+positions : {}) )`. All peptidoforms of a base peptide share the same `S` (it is sequence-derived),
+so compute once per base peptide and stamp every peptidoform row with it. `decoy_neighbor_positions`
+must be the **same helper** the decoy generator uses (shared function), or reals won't retain the
+ions that distinguish the decoys (retention note, Section 5).
 
-Logic:
-1. `S = sort(acceptor_positions(seq) union (decoy_enabled ? decoy_neighbor_positions(seq) : []))`.
-2. `gaps = [(S[j], S[j+1]) for j in 1:length(S)-1]`.
-3. For each fragment define its **cleavage position**: `c = is_b ? frag_index : L - frag_index`
-   (a y-ion of ordinal `m` cleaves after residue `L-m`). Fragment **crosses** gap `(a,b)` iff
-   `a <= c < b`.
-4. `block` is descending by `total`, so for each gap the **first** block entry that crosses it is
-   that gap's highest-intensity in-gap fragment (per-peptidoform -- this precursor's own spectrum).
-5. Return those gap-winner indices that are **not already** in `block[1:topn_cut]`.
+Carry `S` as a per-precursor field through Koina prep/parse into `AgnosticFragFilterCtx`
+(alongside the existing `ctx.sequences`, `ctx.prec_len`, `ctx.prec_mz`) as `ctx.gap_sites[pid]`.
 
-## 3.2 Wire into Pass 2
+## 3.2 At prediction: the pure retention function
 
-After computing `block` and `max_n` (line 608), append `gap_cover_indices(...)` to `final_order`
-for this precursor (in `block` order, so the emitted table stays intensity-descending -- every extra
-ion sits below the top-N cut by construction, preserving the decode's rank=position invariant). One
-call per precursor; O(|frags| * |gaps|), both small.
+```
+gap_cover_indices(gap_sites, L, base_type, frag_index, total, block, topn_cut) -> Vector{Int}
+```
 
-## 3.3 Site helpers
+Pure (no ctx, no I/O): given the carried `gap_sites` and one precursor's kept fragments (parallel
+arrays indexed by `block`, already sorted by descending `total`), returns the **extra** indices to
+retain beyond `block[1:topn_cut]`. It no longer needs the sequence or the acceptor logic -- that
+lives at generation. Logic:
 
-- `acceptor_positions(seq)` -- positions of the variable-mod acceptor residues. Phospho: S/T/Y. For
-  the general (multi-mod) case, the **union over all enabled variable mods** of their acceptor
-  residues (see risks S8).
-- `decoy_neighbor_positions(seq)` -- for each acceptor, its nearest non-acceptor neighbour(s) (the
-  decoy candidates). Must match the decoy generator's site choice exactly, or reals won't retain the
-  ions that distinguish the decoys (proved in the retention note, Section 5).
+1. `gaps = [(gap_sites[j], gap_sites[j+1]) for j in 1:length(gap_sites)-1]`.
+2. Fragment **cleavage position** `c = is_b ? frag_index : L - frag_index` (a y-ion of ordinal `m`
+   cleaves after residue `L-m`). Fragment **crosses** gap `(a,b)` iff `a <= c < b`.
+3. `block` is descending by `total`, so for each gap the **first** crossing block entry is that gap's
+   highest-intensity in-gap fragment (per-peptidoform -- this precursor's own spectrum).
+4. Return the gap-winner indices **not already** in `block[1:topn_cut]`.
+
+## 3.3 Wire into Pass 2
+
+After computing `block` and `max_n` (line 608), append `gap_cover_indices(ctx.gap_sites[pid], ...)`
+to `final_order` for this precursor (in `block` order, so the emitted table stays
+intensity-descending -- every extra ion sits below the top-N cut by construction, preserving the
+decode's rank=position invariant). One call per precursor; O(|frags| * |gaps|), both small. If
+`gap_sites` is empty (no acceptors), it returns `[]` -- a strict no-op.
 
 # 4. Streaming / batching guarantees (your concern)
 
-**Per-peptidoform retention needs only the single precursor's fragments + its sequence -- never its
-siblings.** `S` is a function of the *sequence*, identical for every peptidoform of a base peptide,
-but each peptidoform picks its own in-gap winners from its own spectrum. So:
+**Per-peptidoform retention needs only the single precursor's fragments + its carried `gap_sites` --
+never its siblings.** `gap_sites` is stamped at generation and identical for every peptidoform of a
+base peptide, but each peptidoform picks its own in-gap winners from its own spectrum. So:
 
 - **No base-peptide co-location required.** A precursor and its positional-isomer siblings may sit in
   different Koina batches with no effect -- each is self-contained.
@@ -186,12 +200,19 @@ ions) is a small companion table asserted against.
 
 # 8. Implementation steps
 
-1. `gap_cover_indices` + `acceptor_positions` + `decoy_neighbor_positions` (shared with decoy gen) +
-   the Section 6.1 unit tests (hand-verified, offline). Land this first -- it is the whole algorithm,
-   fully testable with zero build machinery.
-2. Wire into `filter_fragments!` Pass 2; config gate; the batch-contiguity assertion; no-op test.
-3. The synthetic FASTA fixture + mock-predictor pipeline test (6.2) -- the deterministic
-   known-answer end-to-end.
-4. Optional real-Koina integration test (6.3).
-5. Only then build the phospho standards library with retention on and re-run the FLR harness to
+1. **Pure functions + unit tests (offline, land first):** `gap_cover_indices(gap_sites, ...)` plus
+   `acceptor_positions` / `decoy_neighbor_positions` / `compute_gap_sites` (the last shared with the
+   decoy generator) + the Section 6.1 hand-verified tests. This is the whole algorithm, testable with
+   zero build machinery.
+2. **Generation + carry:** call `compute_gap_sites` at var-mod enumeration, stamp a per-precursor
+   `gap_sites` field, and thread it through Koina prep/parse into `AgnosticFragFilterCtx.gap_sites`.
+   Test: every peptidoform of a base peptide carries the same `S`, and `S` matches the hand-computed
+   set for the synthetic fixtures.
+3. **Wire into `filter_fragments!` Pass 2:** consume `ctx.gap_sites[pid]`; config gate; the
+   batch-contiguity assertion; the no-op (empty `gap_sites`) regression test.
+4. **Synthetic FASTA fixture + mock-predictor pipeline test (6.2)** -- the deterministic
+   known-answer end-to-end (retained set == top-N union expected gap ions; isomers distinguishable; full
+   series never written).
+5. Optional real-Koina integration test (6.3).
+6. Only then build the phospho standards library with retention on and re-run the FLR harness to
    confirm the retained site-determining ions move the residual adjacent-site errors.
