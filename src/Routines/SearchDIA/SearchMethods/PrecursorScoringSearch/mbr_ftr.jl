@@ -77,11 +77,12 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_best_abs_n_scans_diff_true,
     :MBR_worst_abs_n_scans_diff_true,
     :MBR_best_log2_n_scans_ratio_true,
+    :MBR_worst_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
+    :MBR_worst_irt_diff_true,
     :MBR_best_observed_irt_diff_true,
     :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
-    :MBR_best_log_by_diff_true,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_worst_smoothed_frag_hellinger_true,
     :MBR_best_donor_library_hellinger_true,
@@ -114,11 +115,12 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_best_abs_n_scans_diff_true ? :MBR_best_abs_n_scans_diff_false :
     f === :MBR_worst_abs_n_scans_diff_true ? :MBR_worst_abs_n_scans_diff_false :
     f === :MBR_best_log2_n_scans_ratio_true ? :MBR_best_log2_n_scans_ratio_false :
+    f === :MBR_worst_log2_n_scans_ratio_true ? :MBR_worst_log2_n_scans_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
+    f === :MBR_worst_irt_diff_true       ? :MBR_worst_irt_diff_false :
     f === :MBR_best_observed_irt_diff_true ? :MBR_best_observed_irt_diff_false :
     f === :MBR_worst_observed_irt_diff_true ? :MBR_worst_observed_irt_diff_false :
     f === :MBR_single_donor_true         ? :MBR_single_donor_false :
-    f === :MBR_best_log_by_diff_true     ? :MBR_best_log_by_diff_false :
     f === :MBR_best_smoothed_frag_hellinger_true ? :MBR_best_smoothed_frag_hellinger_false :
     f === :MBR_worst_smoothed_frag_hellinger_true ? :MBR_worst_smoothed_frag_hellinger_false :
     f === :MBR_best_donor_library_hellinger_true ? :MBR_best_donor_library_hellinger_false :
@@ -230,8 +232,8 @@ Algorithm (see BATCH_F_PLAN.md):
 4. Compute q-values and PEPs on the doubled frame. Recover candidate rows whose
    top-half row has q-value ≤ alpha.
 
-Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:ftr_qval_true` on
-`psms` in-place. Does NOT mutate `:trace_prob`.
+Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:mbr_target_decoy_prob`,
+`:ftr_qval_true` on `psms` in-place. Does NOT mutate `:trace_prob`.
 """
 function _mbr_recovery_mask(qvals_top, pep_top, alpha::Float32)
     return Float32.(qvals_top) .<= alpha
@@ -250,6 +252,7 @@ function apply_mbr_filter_paired!(
         @debug_l1 "MBR Batch F — apply_mbr_filter_paired!: no PSMs to filter"
         psms[!, :mbr_recovered]          = falses(0)
         psms[!, :MBR_transfer_candidate] = falses(0)
+        psms[!, :mbr_target_decoy_prob]  = Float32[]
         psms[!, :ftr_qval_true]          = Float32[]
         psms[!, :ftr_pep_true]           = Float32[]
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
@@ -300,6 +303,7 @@ function apply_mbr_filter_paired!(
     if n_cand == 0
         psms[!, :mbr_recovered]          = falses(n)
         psms[!, :MBR_transfer_candidate] = candidate_mask
+        psms[!, :mbr_target_decoy_prob]  = fill(NaN32, n)
         psms[!, :ftr_qval_true]          = fill(NaN32, n)
         psms[!, :ftr_pep_true]           = fill(NaN32, n)
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=time()-t0)
@@ -427,23 +431,27 @@ function apply_mbr_filter_paired!(
     n_recovered = count(recovered_in_cand)
 
     mbr_recovered_full = falses(n)
+    target_decoy_prob_full = fill(NaN32, n)
     ftr_qval_full      = fill(NaN32, n)
     ftr_pep_full       = fill(NaN32, n)
+    ftr_score_top      = ftr_score_double[1:n_cand]
     @inbounds for (k, i) in enumerate(cand_idx)
         ftr_qval_full[i] = qvals_top[k]
         ftr_pep_full[i]  = pep_top[k]
         if recovered_in_cand[k]
             mbr_recovered_full[i] = true
+            target_decoy_prob_full[i] = ftr_score_top[k]
         end
     end
     psms[!, :mbr_recovered]          = mbr_recovered_full
     psms[!, :MBR_transfer_candidate] = candidate_mask
+    psms[!, :mbr_target_decoy_prob]  = target_decoy_prob_full
     psms[!, :ftr_qval_true]          = ftr_qval_full
     psms[!, :ftr_pep_true]           = ftr_pep_full
 
     # ── 7. Threshold for log: highest ftr_score on a top-half row with q ≤ α ──
     τ = n_recovered > 0 ?
-        minimum(ftr_score_double[1:n_cand][recovered_in_cand]) :
+        minimum(ftr_score_top[recovered_in_cand]) :
         Float32(Inf)
 
     # ── 8. Recovered transfer composition ──

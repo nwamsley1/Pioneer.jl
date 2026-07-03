@@ -200,14 +200,16 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_worst_abs_n_scans_diff_false,
     :MBR_best_log2_n_scans_ratio_true,
     :MBR_best_log2_n_scans_ratio_false,
+    :MBR_worst_log2_n_scans_ratio_true,
+    :MBR_worst_log2_n_scans_ratio_false,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
+    :MBR_worst_irt_diff_true,       :MBR_worst_irt_diff_false,
     :MBR_best_observed_irt_diff_true,
     :MBR_best_observed_irt_diff_false,
     :MBR_worst_observed_irt_diff_true,
     :MBR_worst_observed_irt_diff_false,
     :MBR_single_donor_true,        :MBR_single_donor_false,
     :MBR_best_is_missing_true,      :MBR_best_is_missing_false,
-    :MBR_best_log_by_diff_true,     :MBR_best_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_false,
@@ -583,17 +585,41 @@ end
     return nothing
 end
 
-@inline function _nearest_cross_file_donor(
+@inline function _counterfactual_receiver_eligible(
+    ::Nothing,
+    receiver_file::UInt32,
+    pid::UInt32,
+)
+    return true
+end
+
+@inline function _counterfactual_receiver_eligible(
+    eligibility_by_file::_CounterfactualEligibilityByFile,
+    receiver_file::UInt32,
+    pid::UInt32,
+)
+    pid_int = Int(pid)
+    pid_int in eligibility_by_file.dataset_passed || return false
+    run_passed = get(eligibility_by_file.run_passed_by_file, receiver_file, nothing)
+    run_passed === nothing && return true
+    return !(pid_int in run_passed)
+end
+
+@inline function _nearest_mz_cross_file_donor(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    pool::_IrtPool,
+    pool::_MzPool,
+    target_mz::Float32,
     target_irt::Float32,
+    irt_tolerance::Float32,
+    partner_pools::_CounterfactualPartnerPools,
     my_file::UInt32,
     my_pid::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
 )
-    n = length(pool.irts)
+    n = length(pool.mzs)
     n == 0 && return nothing
 
-    right = searchsortedfirst(pool.irts, target_irt)
+    right = searchsortedfirst(pool.mzs, target_mz)
     left = right - 1
     @inbounds while left >= 1 || right <= n
         use_left = if right > n
@@ -601,12 +627,15 @@ end
         elseif left < 1
             false
         else
-            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
+            abs(target_mz - pool.mzs[left]) <= abs(pool.mzs[right] - target_mz)
         end
         pool_idx = use_left ? left : right
         use_left ? (left -= 1) : (right += 1)
-        pool.pids[pool_idx] == my_pid && continue
-        donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
+        pool_pid = pool.pids[pool_idx]
+        pool_pid == my_pid && continue
+        abs(partner_pools.irt_by_pid[Int(pool_pid)] - target_irt) <= irt_tolerance || continue
+        _counterfactual_receiver_eligible(eligibility_by_file, my_file, pool_pid) || continue
+        donor = _donor_for_pid(donor_dict, pool_pid, my_file)
         donor !== nothing && return donor
     end
     return nothing
@@ -617,51 +646,50 @@ end
     partner_pools::_CounterfactualPartnerPools,
     my_pid::UInt32,
     my_file::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    irt_tolerance_by_file::Dict{UInt32, Float32},
 )
     pid_idx = Int(my_pid)
+    my_mz = partner_pools.mz_by_pid[pid_idx]
     my_irt = partner_pools.irt_by_pid[pid_idx]
-    my_fold = Int(partner_pools.fold_by_pid[pid_idx])
-    my_mz = Int(partner_pools.mz_bin_by_pid[pid_idx])
     my_charge = Int(partner_pools.charge_by_pid[pid_idx])
-    my_length = Int(partner_pools.length_by_pid[pid_idx])
+    irt_tolerance = get(irt_tolerance_by_file, my_file, Float32(Inf))
 
-    donor = _nearest_cross_file_donor(
+    return _nearest_mz_cross_file_donor(
         donor_dict,
-        get(partner_pools.pools, (my_fold, my_mz, my_charge, my_length), _empty_pool()),
+        get(partner_pools.charge_pool, my_charge, _empty_pool()),
+        my_mz,
         my_irt,
+        irt_tolerance,
+        partner_pools,
         my_file,
         my_pid,
-    )
-    donor !== nothing && return donor
-    donor = _nearest_cross_file_donor(
-        donor_dict,
-        get(partner_pools.fold_charge_length_pool, (my_fold, my_charge, my_length), _empty_pool()),
-        my_irt,
-        my_file,
-        my_pid,
-    )
-    donor !== nothing && return donor
-    return _nearest_cross_file_donor(
-        donor_dict,
-        get(partner_pools.charge_length_pool, (my_charge, my_length), _empty_pool()),
-        my_irt,
-        my_file,
-        my_pid,
+        eligibility_by_file,
     )
 end
 
 @inline function _false_donor_for_pid(
-    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
+    false_donor_cache::Dict{Tuple{UInt32, UInt32}, Union{Nothing, _MBRDonorEntry}},
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
     my_pid::UInt32,
     my_file::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    irt_tolerance_by_file::Dict{UInt32, Float32},
 )
-    if haskey(false_donor_cache, my_pid)
-        return false_donor_cache[my_pid]
+    cache_key = (my_file, my_pid)
+    if haskey(false_donor_cache, cache_key)
+        return false_donor_cache[cache_key]
     end
-    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
-    false_donor_cache[my_pid] = donor
+    donor = _resolve_false_donor_for_pid(
+        donor_dict,
+        partner_pools,
+        my_pid,
+        my_file,
+        eligibility_by_file,
+        irt_tolerance_by_file,
+    )
+    false_donor_cache[cache_key] = donor
     return donor
 end
 
@@ -729,7 +757,7 @@ end
 # Inner per-row MBR-feature compute. Extracted from
 # compute_mbr_features_per_file_to_sidecar_with_pass1! so Julia specializes
 # on the concrete column types (Arrow.Primitive{T} or Vector{T}) and the
-# Union{Nothing, ...} branch on logby_v / rt_v becomes a one-time call-site
+# Union{Nothing, ...} branch on rt_v becomes a one-time call-site
 # decision instead of per-row dispatch.
 @inline function _compute_mbr_inner!(
     out_best_pair_t::Vector{Float32}, out_best_pair_f::Vector{Float32},
@@ -742,12 +770,13 @@ end
     out_nscans_t::Vector{Float32}, out_nscans_f::Vector{Float32},
     out_nscans_worst_t::Vector{Float32}, out_nscans_worst_f::Vector{Float32},
     out_l2_nscans_t::Vector{Float32}, out_l2_nscans_f::Vector{Float32},
+    out_l2_nscans_worst_t::Vector{Float32}, out_l2_nscans_worst_f::Vector{Float32},
     out_ir_t::Vector{Float32},  out_ir_f::Vector{Float32},
+    out_ir_worst_t::Vector{Float32}, out_ir_worst_f::Vector{Float32},
     out_obs_ir_t::Vector{Float32}, out_obs_ir_f::Vector{Float32},
     out_obs_ir_worst_t::Vector{Float32}, out_obs_ir_worst_f::Vector{Float32},
     out_single_donor_t::Vector{Float32}, out_single_donor_f::Vector{Float32},
     out_miss_t::BitVector,      out_miss_f::BitVector,
-    out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
     out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
     out_smoothed_hellinger_t::Vector{Float32},
     out_smoothed_hellinger_f::Vector{Float32},
@@ -763,20 +792,20 @@ end
     l2ie_v::AbstractVector{Float16},
     irtp_v::AbstractVector{Float32},
     irto_v::AbstractVector{Float32},
-    logby_v::Union{Nothing, AbstractVector{Float16}},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     nscans_v::AbstractVector,
     smoothed_frag_cols,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
-    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
+    false_donor_cache::Dict{Tuple{UInt32, UInt32}, Union{Nothing, _MBRDonorEntry}},
+    counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    irt_tolerance_by_file::Dict{UInt32, Float32},
     lod_log2_weight_by_file::Dict{UInt32, Float32},
     lod_log2_weight_global::Float32,
     passing_score_floor::Float32,
 )
     n = length(pid_v)
-    has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
     @inbounds for i in 1:n
         my_file = file_v[i]
@@ -802,9 +831,6 @@ end
             out_l2_nscans_t[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_t)
             out_ir_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
             out_obs_ir_t[i] = abs(irto_v[i] - donor_t.irt_obs)
-            if has_logby
-                out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
-            end
             if has_rt
                 out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
             end
@@ -821,11 +847,16 @@ end
             donor_worst_t = _worst_donor_for_pid(donor_dict, my_pid, my_file, passing_score_floor)
             if donor_worst_t !== nothing
                 out_worst_pair_t[i] = donor_worst_t.trace_prob
-                out_single_donor_t[i] = _mbr_same_donor(donor_t, donor_worst_t) ? 1.0f0 : 0.0f0
+                same_worst_t = _mbr_same_donor(donor_t, donor_worst_t)
+                out_single_donor_t[i] = same_worst_t ? 1.0f0 : 0.0f0
                 out_lw_worst_t[i] = _mbr_log2_weight_ratio(my_weight, donor_worst_t)
                 out_le_worst_t[i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_t)
                 out_nscans_worst_t[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_t)
-                out_obs_ir_worst_t[i] = abs(irto_v[i] - donor_worst_t.irt_obs)
+                out_l2_nscans_worst_t[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_worst_t)
+                if !same_worst_t
+                    out_ir_worst_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_t.irt_residual)
+                    out_obs_ir_worst_t[i] = abs(irto_v[i] - donor_worst_t.irt_obs)
+                end
                 out_smoothed_hellinger_worst_t[i] = _mbr_smoothed_spectrum_hellinger_from_donor(
                     recipient_sqrt,
                     donor_worst_t,
@@ -837,7 +868,15 @@ end
             end
             out_miss_t[i] = false
         end
-        donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, my_pid, my_file)
+        donor_f = _false_donor_for_pid(
+            false_donor_cache,
+            donor_dict,
+            partner_pools,
+            my_pid,
+            my_file,
+            counterfactual_eligibility_by_file,
+            irt_tolerance_by_file,
+        )
         if donor_f !== nothing
             out_best_pair_f[i] = donor_f.trace_prob
             out_lw_f[i] = _mbr_log2_weight_ratio(my_weight, donor_f)
@@ -846,9 +885,6 @@ end
             out_l2_nscans_f[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_f)
             out_ir_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
             out_obs_ir_f[i] = abs(irto_v[i] - donor_f.irt_obs)
-            if has_logby
-                out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
-            end
             if has_rt
                 out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
             end
@@ -871,11 +907,16 @@ end
             )
             if donor_worst_f !== nothing
                 out_worst_pair_f[i] = donor_worst_f.trace_prob
-                out_single_donor_f[i] = _mbr_same_donor(donor_f, donor_worst_f) ? 1.0f0 : 0.0f0
+                same_worst_f = _mbr_same_donor(donor_f, donor_worst_f)
+                out_single_donor_f[i] = same_worst_f ? 1.0f0 : 0.0f0
                 out_lw_worst_f[i] = _mbr_log2_weight_ratio(my_weight, donor_worst_f)
                 out_le_worst_f[i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_f)
                 out_nscans_worst_f[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_f)
-                out_obs_ir_worst_f[i] = abs(irto_v[i] - donor_worst_f.irt_obs)
+                out_l2_nscans_worst_f[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_worst_f)
+                if !same_worst_f
+                    out_ir_worst_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_f.irt_residual)
+                    out_obs_ir_worst_f[i] = abs(irto_v[i] - donor_worst_f.irt_obs)
+                end
                 out_smoothed_hellinger_worst_f[i] = _mbr_smoothed_spectrum_hellinger_from_donor(
                     recipient_sqrt,
                     donor_worst_f,
@@ -899,6 +940,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
         partner_pools::_CounterfactualPartnerPools,
         fragment_keys::_MBRFragmentAnnotationKeys;
+        counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile} = nothing,
+        irt_tolerance_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
         passing_score_floor::Float32 = Float32(Inf),
         lod_log2_weight_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
         lod_log2_weight_global::Float32 = NaN32)
@@ -917,7 +960,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     l2ie_v  = main.log2_intensity_explained
     irtp_v  = main.irt_pred
     irto_v  = main.irt_obs
-    logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
     nscans_v = main.n_scans
     smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
@@ -937,19 +979,20 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_nscans_t = fill(-1f0, n); out_nscans_f = fill(-1f0, n)
     out_nscans_worst_t = fill(-1f0, n); out_nscans_worst_f = fill(-1f0, n)
     out_l2_nscans_t = fill(-1f0, n); out_l2_nscans_f = fill(-1f0, n)
+    out_l2_nscans_worst_t = fill(-1f0, n); out_l2_nscans_worst_f = fill(-1f0, n)
     out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
+    out_ir_worst_t = fill(-1f0, n); out_ir_worst_f = fill(-1f0, n)
     out_obs_ir_t = fill(-1f0, n); out_obs_ir_f = fill(-1f0, n)
     out_obs_ir_worst_t = fill(-1f0, n); out_obs_ir_worst_f = fill(-1f0, n)
     out_single_donor_t = fill(0f0, n); out_single_donor_f = fill(0f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
-    out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = fill(-1f0, n)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = fill(1f0, n)
     out_donor_library_h_t = fill(1f0, n); out_donor_library_h_f = fill(1f0, n)
     out_donor_library_h_worst_t = fill(1f0, n)
     out_donor_library_h_worst_f = fill(1f0, n)
-    false_donor_cache = Dict{UInt32, Union{Nothing, _MBRDonorEntry}}()
+    false_donor_cache = Dict{Tuple{UInt32, UInt32}, Union{Nothing, _MBRDonorEntry}}()
 
     _compute_mbr_inner!(
         out_best_pair_t, out_best_pair_f,
@@ -958,19 +1001,23 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_lw_t, out_lw_f, out_lw_worst_t, out_lw_worst_f,
         out_le_t, out_le_f, out_le_worst_t, out_le_worst_f,
         out_nscans_t, out_nscans_f, out_nscans_worst_t, out_nscans_worst_f,
-        out_l2_nscans_t, out_l2_nscans_f, out_ir_t, out_ir_f,
+        out_l2_nscans_t, out_l2_nscans_f,
+        out_l2_nscans_worst_t, out_l2_nscans_worst_f,
+        out_ir_t, out_ir_f, out_ir_worst_t, out_ir_worst_f,
         out_obs_ir_t, out_obs_ir_f,
         out_obs_ir_worst_t, out_obs_ir_worst_f,
         out_single_donor_t, out_single_donor_f,
         out_miss_t, out_miss_f,
-        out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
+        out_rt_t, out_rt_f,
         out_smoothed_h_t, out_smoothed_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
         out_donor_library_h_t, out_donor_library_h_f,
         out_donor_library_h_worst_t, out_donor_library_h_worst_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
-        logby_v, rt_v, nscans_v, smoothed_frag_cols, fragment_keys,
+        rt_v, nscans_v, smoothed_frag_cols, fragment_keys,
         donor_dict, partner_pools, false_donor_cache,
+        counterfactual_eligibility_by_file,
+        irt_tolerance_by_file,
         lod_log2_weight_by_file, lod_log2_weight_global, passing_score_floor,
     )
 
@@ -997,8 +1044,12 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_worst_abs_n_scans_diff_false    = out_nscans_worst_f,
         MBR_best_log2_n_scans_ratio_true    = out_l2_nscans_t,
         MBR_best_log2_n_scans_ratio_false   = out_l2_nscans_f,
+        MBR_worst_log2_n_scans_ratio_true   = out_l2_nscans_worst_t,
+        MBR_worst_log2_n_scans_ratio_false  = out_l2_nscans_worst_f,
         MBR_best_irt_diff_true         = out_ir_t,
         MBR_best_irt_diff_false        = out_ir_f,
+        MBR_worst_irt_diff_true        = out_ir_worst_t,
+        MBR_worst_irt_diff_false       = out_ir_worst_f,
         MBR_best_observed_irt_diff_true  = out_obs_ir_t,
         MBR_best_observed_irt_diff_false = out_obs_ir_f,
         MBR_worst_observed_irt_diff_true  = out_obs_ir_worst_t,
@@ -1007,8 +1058,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_single_donor_false       = out_single_donor_f,
         MBR_best_is_missing_true       = out_miss_t,
         MBR_best_is_missing_false      = out_miss_f,
-        MBR_best_log_by_diff_true      = out_log_by_t,
-        MBR_best_log_by_diff_false     = out_log_by_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
         MBR_best_smoothed_frag_hellinger_true  = out_smoothed_h_t,
@@ -1115,6 +1164,7 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
                 scan_idx               = collect(UInt32.(g[!, :scan_idx])),
                 mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
                 MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
+                mbr_target_decoy_prob  = collect(Float32.(g[!, :mbr_target_decoy_prob])),
                 ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
                 ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
             )
@@ -1132,6 +1182,7 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
                 scan_idx               = collect(UInt32.(g[!, :scan_idx])),
                 mbr_recovered          = collect(Bool.(g[!, :mbr_recovered])),
                 MBR_transfer_candidate = collect(Bool.(g[!, :MBR_transfer_candidate])),
+                mbr_target_decoy_prob  = collect(Float32.(g[!, :mbr_target_decoy_prob])),
                 ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
                 ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
             )
@@ -1186,6 +1237,7 @@ function merge_mbr_recovery_sidecars_into_main!(
 
         main[!, :mbr_recovered] = collect(Bool.(rec.mbr_recovered))
         main[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
+        main[!, :mbr_target_decoy_prob] = collect(Float32.(rec.mbr_target_decoy_prob))
         main[!, :ftr_qval_true] = collect(Float32.(rec.ftr_qval_true))
         main[!, :ftr_pep_true] = collect(Float32.(rec.ftr_pep_true))
 
@@ -1222,6 +1274,7 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    irt_tolerance_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
 )
     candidate_paths = String[file_path(ref) for ref in candidate_refs if exists(ref)]
     donor_paths = String[file_path(ref) for ref in donor_refs if exists(ref)]
@@ -1242,6 +1295,10 @@ function run_mbr_after_qvalue_filter!(
     n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
 
     cf_partner_pools = build_counterfactual_partner_pools(candidate_paths, precursors)
+    cf_eligibility_by_file = build_counterfactual_receiver_eligibility(
+        candidate_paths;
+        q_value_threshold = q_value_threshold,
+    )
     fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
 
     @debug_l1 "MBR Batch F: computing post-qvalue donor score floor..."
@@ -1268,6 +1325,8 @@ function run_mbr_after_qvalue_filter!(
                 donor_dict,
                 cf_partner_pools,
                 fragment_keys,
+                counterfactual_eligibility_by_file = cf_eligibility_by_file,
+                irt_tolerance_by_file = irt_tolerance_by_file,
                 passing_score_floor = donor_prob_thresh,
                 lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
                 lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
@@ -1278,6 +1337,7 @@ function run_mbr_after_qvalue_filter!(
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
     mbr_prepass = nothing
     cf_partner_pools = nothing
+    cf_eligibility_by_file = nothing
     fragment_keys = nothing
     GC.gc()
 
@@ -1319,6 +1379,7 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    irt_tolerance_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
 )
     return run_mbr_after_qvalue_filter!(
         refs,
@@ -1327,6 +1388,7 @@ function run_mbr_after_qvalue_filter!(
         fragment_lookup;
         q_value_threshold = q_value_threshold,
         donor_q_threshold = donor_q_threshold,
+        irt_tolerance_by_file = irt_tolerance_by_file,
     )
 end
 
@@ -1370,6 +1432,7 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         side_df[!, :trace_prob]           = side_df[!, :trace_prob_prepass]
         side_df[!, :mbr_recovered]        = collect(Bool.(rec.mbr_recovered))
         side_df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
+        side_df[!, :mbr_target_decoy_prob] = collect(Float32.(rec.mbr_target_decoy_prob))
         side_df[!, :ftr_qval_true]        = collect(Float32.(rec.ftr_qval_true))
         side_df[!, :ftr_pep_true]         = collect(Float32.(rec.ftr_pep_true))
 
