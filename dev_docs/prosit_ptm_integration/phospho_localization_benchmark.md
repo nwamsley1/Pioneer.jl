@@ -95,7 +95,7 @@ The logic is:
 
 This yields two numbers (the **success criteria**):
 
-- **Identification recovery** = (standards identified with ≥1 passing isomer) / (standards in the
+- **Identification recovery** = (standards identified with >=1 passing isomer) / (standards in the
   library). "Did we find it at all?"
 - **False-localization rate (FLR)** = (identified standards whose best isomer is on the *wrong*
   residue) / (identified standards). "When we found it, did we place the phosphate correctly?"
@@ -112,44 +112,74 @@ The paper is a **Spectronaut**-based study (not our engine):
   development, and **directDIA (library-free)** for the mouse atlas and the entrapment/phospho-
   proline validation experiments. They **cross-checked with Proteome Discoverer 3.1 + CHIMERYS**.
 - **Localization scoring:** Spectronaut's **`PTM.SiteProbability`** — a per-site localization
-  *probability*. They **filter to sites with probability ≥ 0.75** and report FLR on that confident
-  subset. They independently validated the FLR using the **phospho-proline decoy** trick (allow
-  phospho on proline, which can't be phosphorylated; any proline hit is a false localization).
-- **Reported success:** *"depending on localization probability cutoff, the error rate ranges
-  between 1 and 5 percent"* on the 225-standard dilution series, while retaining the majority of
-  correct precursors even at stringent cutoffs.
+  *probability* in [0,1]. They **filter to sites with probability >= 0.75** and report FLR on that
+  confident subset. They independently validated the FLR using the **phospho-proline decoy** trick
+  (allow phospho on proline, which can't be phosphorylated; any proline hit is a false localization).
+
+**What "cutoff" means.** Every localized site carries a confidence score. A *cutoff* is a threshold
+on it: report only sites scoring >= the cutoff, set the rest aside as ambiguous. So "FLR X% @ 0.75"
+means *among sites we were >= 0.75-confident about, X% were on the wrong residue*. The cutoff trades
+coverage for accuracy, so **every FLR number is meaningless without its cutoff** — raising the
+cutoff keeps fewer, more-trustworthy sites (lower FLR, lower coverage).
+
+- **Reported success — the exact numbers (Source Data, Fig. 2I; the 225 standards):**
+
+  | `PTM.SiteProbability` cutoff | 0.75 | 0.80 | 0.85 | 0.90 | 0.95 | 0.99 | 0.999 |
+  |---|---|---|---|---|---|---|---|
+  | **FLR %** (Astral + Spectronaut) | 3.95 | 3.37 | 2.91 | 2.51 | 1.80 | 0.99 | 0.38 |
+
+  Field context (Suppl. Fig. 3A, FLR @ 0.75): **5.8 %** Bekker-Jensen *reported*, **4.6 %** their
+  re-analysis, **3.95 %** this Astral study.
+- **Coverage is NOT published as a fraction.** Suppl. Fig. 3B plots only an *absolute count* of
+  "average correct precursors" vs cutoff (196.8 at 0.75 → 158.8 at 0.999), with **no denominator**
+  (total identified before filtering) and no point below 0.75. Deriving total-passing from the FLR
+  gives ~205 precursors at 0.75. So there is **no coverage % to quote** — the paper's coverage claim
+  is only the qualitative "retain the majority of correct precursors."
 - **Overall depth (context):** ~29,190 phosphosites from the Spectronaut DIA method; a single
   30-min HEK run gave 12,327 phosphopeptides / 9,537 sites; the mouse atlas reached 81,120 sites.
 
-**Two things to note about their 1–5 %:** it is (a) produced by a **dedicated localization
-probability model**, and (b) reported **after filtering** at a probability cutoff (≥0.75) — i.e. it
-is the FLR of the *confidently-localized* subset, trading some sensitivity for localization
-confidence.
+Source: Nat Commun 2024, s41467-024-51274-0, Source Data (MOESM8) sheets `Fig2I`, `SFig3A`, `SFig3B`.
 
 # 6. Our result (Pioneer), and the honest comparison
 
 Searching the 10,000-amol run with a Pioneer library that includes the standards (Prosit-PTM
-fragments + Chronologer RT, 1 missed cleavage, all positional isomers):
+fragments + Chronologer RT, 1 missed cleavage, all positional isomers). Localization = **select the
+isomer with the highest apex deconvolution weight, then use the winner's per-scan sibling
+weight-fraction (`iso_weight_fraction_at_scan`) as the localization confidence** (Idea-1 Phase A).
 
-| Metric | Pioneer | Paper (Spectronaut) |
+| localization rule | FLR | coverage |
 |---|---|---|
-| Standards **identified** | **198 / 212 = 93.4 %** | very high (deep phospho-ID) |
-| **FLR** (localization error) | **23.2 %** (best-isomer, no cutoff) | **1–5 %** (`PTM.SiteProbability` ≥ 0.75) |
+| best q-value (no confidence) | 20.7 % | 100 % |
+| **max apex weight** (no cutoff) | **6.6 %** | 100 % |
+| max weight + **fraction cutoff @ 0.75** | **2.5 %** | 81.3 % |
 
-**Identification is excellent** — Pioneer + Prosit-PTM recovers 93 % of the ground-truth standards.
-**Localization is the gap**, but the comparison is **not yet apples-to-apples**, and the reason *is*
-the finding:
+- **Identification:** 198 / 212 standards = **93 %** — excellent, unchanged.
+- **Localization** now has both a decision rule (max weight) and a **filterable confidence**
+  (sibling weight-fraction). The full FLR-vs-cutoff curve: 6.6 % @ 0 (all), 3.4 % @ 0.60,
+  2.9 % @ 0.70, **2.5 % @ 0.75**, ~2.7 % beyond (small-N floor).
 
-- The paper's low FLR relies on a **localization probability score** and a **stringent cutoff** that
-  *discards* low-confidence site calls. Pioneer, today, has **neither** — our 23 % is measured on
-  **every** identified standard, "best isomer wins," with **no localization-confidence filter**.
-- So a large part of the 23 % vs 1–5 % gap is the **absence of a dedicated site-localization scorer
-  + probability cutoff**, not a failure of identification. Adding one (Phase 3) — a site-determining-
-  ion / AScore-style probability plus a cutoff — is the principled path to the field's 1–5 %.
+**Head-to-head at the 0.75 operating point (same standards benchmark):**
 
-We also ran a quick side-experiment adding **L1/L2 regularization to the deconvolution solver**: L2
-(ridge) at λ≈1 nudged FLR to ~19.6 %, but across a dose–response the effect was noisy — a cheap knob,
-not a substitute for a real localization model.
+| | FLR @ 0.75 | coverage @ 0.75 |
+|---|---|---|
+| Paper (Astral + Spectronaut) | 3.95 % | ~205 precursors (no fraction published) |
+| **Pioneer (max wt + fraction cut)** | **2.5 %** | 81.3 % (161/198 sequences) |
+
+Pioneer's FLR sits **inside** the field's 1–5 % band and is a touch lower than the paper's 3.95 % at
+0.75. **Two caveats keep this honest:** (a) the two "0.75" cutoffs are **not the same stringency** —
+Spectronaut's is a calibrated *probability*, ours an uncalibrated *weight fraction*, so equal cutoff
+values != equal operating points; and (b) units differ — their coverage is per-precursor, ours
+per-sequence (198), and we credit either real site for the isomer-pair standards. The defensible
+claim is *matched FLR range at a comparable-but-not-identical operating point*, not "we beat
+Spectronaut."
+
+Note the earlier plan gap is closed: the old "23 % FLR, no cutoff" number reflected best-*q-value*
+selection with no confidence filter. The finding was that (i) **max apex weight**, not q-value, is
+the right decision rule (23 %→6.6 %), and (ii) the **sibling weight-fraction of the winner** is a
+good confidence for the cutoff (6.6 %→2.5 % @ 0.75) — but a bad *selection* rule on its own
+(confounded by isomers that find a lonely scan and score fraction=1 trivially). A light **L1/L2
+regularization** sweep on the deconvolution is being evaluated for whether ridge sharpens the
+fraction/cutoff curve.
 
 # 7. Bottom line
 
@@ -160,8 +190,9 @@ not a substitute for a real localization model.
   every spike-in.
 - **Assessment:** build a library with all positional isomers, search, and compare the chosen site
   to truth -> **ID recovery** and **false-localization rate**.
-- **Success bar:** the paper's Spectronaut pipeline achieves **1–5 % FLR** (with a localization
-  probability score, filtered at ≥0.75).
-- **Where we stand:** Pioneer **identifies** 93 % of standards but sits at **23 % FLR** because it
-  has **no localization scorer/cutoff yet** — precisely the Phase-3 build this harness now lets us
-  measure against.
+- **Success bar:** the paper's Spectronaut pipeline achieves **3.95 % FLR @ 0.75** (range 1–5 %
+  across cutoffs), with a localization probability score.
+- **Where we stand:** Pioneer **identifies** 93 % of standards and, with max-weight selection + the
+  sibling weight-fraction as a confidence cutoff, reaches **2.5 % FLR @ 0.75 (81 % coverage)** —
+  inside the field's band. Caveat: the 0.75 cutoffs are comparable but not identical stringency
+  (calibrated probability vs uncalibrated fraction).
