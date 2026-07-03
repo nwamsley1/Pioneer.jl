@@ -71,7 +71,7 @@ end
     vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[(p = r"[STY]", r = "Unimod:21")]
     masses = Dict("Unimod:21" => 79.966331f0)
 
-    _P.generate_isomer_decoys!(prec, frag, vm, masses; spacing = 1)
+    prec, frag = _P.generate_isomer_decoys!(prec, frag, vm, masses; spacing = 1)
 
     @test nrow(prec) == 2                              # 1 real + 1 decoy
     @test prec.is_loc_decoy == [false, true]
@@ -105,7 +105,7 @@ end
                      mz = Float32[200, 200], intensities = Float32[1, 1])
     vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[(p = r"[STY]", r = "Unimod:21")]
 
-    _P.generate_isomer_decoys!(prec, frag, vm, Dict("Unimod:21" => 79.966331f0))
+    prec, frag = _P.generate_isomer_decoys!(prec, frag, vm, Dict("Unimod:21" => 79.966331f0))
     @test nrow(prec) == 4                               # 2 real + 2 loc-decoy
     @test allunique(prec.pair_id[3:4])                  # fresh ids
     @test all(prec.pair_id[3:4] .> UInt32(10))
@@ -122,6 +122,6 @@ end
     frag = DataFrame(precursor_idx = UInt32[1], annotation = ["b2"],
                      mz = Float32[200], intensities = Float32[1])
     empty_vm = NamedTuple{(:p, :r), Tuple{Regex, String}}[]
-    _P.generate_isomer_decoys!(prec, frag, empty_vm, Dict("Unimod:21" => 79.966331f0))
+    prec, frag = _P.generate_isomer_decoys!(prec, frag, empty_vm, Dict("Unimod:21" => 79.966331f0))
     @test nrow(prec) == 1 && all(.!prec.is_loc_decoy)  # no decoys, flag col added
 end

@@ -111,10 +111,10 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
     end
     mod_mass = Float64(mod_masses[target_mod_name])
 
-    fr_pid = fragments_df[!, :precursor_idx]::Vector{UInt32}
+    fr_pid = fragments_df[!, :precursor_idx]
     frag_rows = Dict{UInt32, Vector{Int}}()
-    @inbounds for i in 1:length(fr_pid)
-        push!(get!(frag_rows, fr_pid[i], Int[]), i)
+    for i in 1:length(fr_pid)
+        push!(get!(frag_rows, UInt32(fr_pid[i]), Int[]), i)
     end
 
     base_rows      = Int[]
@@ -169,7 +169,7 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
     new_mz   = Vector{Float32}(undef, total)
     new_pid  = Vector{UInt32}(undef, total)
     ann_col  = fragments_df[!, :annotation]
-    mz_col   = fragments_df[!, :mz]::Vector{Float32}
+    mz_col   = fragments_df[!, :mz]
     pos = 0
     for di in 1:ndec
         r = base_rows[di]; (k, d) = decoy_frag_kd[di]
@@ -188,7 +188,7 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
     decoy_frag[!, :mz]            = new_mz
     decoy_frag[!, :precursor_idx] = new_pid
 
-    append!(precursors_df, decoy_prec)
-    append!(fragments_df, decoy_frag)
-    return precursors_df, fragments_df
+    # vcat (not append!) — the on-disk tables load as immutable Arrow columns, so we
+    # build new frames. Callers MUST use the return values.
+    return vcat(precursors_df, decoy_prec), vcat(fragments_df, decoy_frag)
 end

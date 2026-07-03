@@ -335,9 +335,9 @@ function BuildSpecLib(params_path::String)
                     _pdf = DataFrame(Arrow.Table(precursors_arrow_path))
                     _fdf = DataFrame(Arrow.Table(raw_fragments_arrow_path))
                     _n0 = nrow(_pdf)
-                    generate_isomer_decoys!(_pdf, _fdf, loc_var_mods, loc_mod_masses;
-                                            spacing = loc_decoy_spacing,
-                                            target_mod_name = loc_decoy_target)
+                    _pdf, _fdf = generate_isomer_decoys!(_pdf, _fdf, loc_var_mods, loc_mod_masses;
+                                                         spacing = loc_decoy_spacing,
+                                                         target_mod_name = loc_decoy_target)
                     Arrow.write(precursors_arrow_path, _pdf)
                     Arrow.write(raw_fragments_arrow_path, _fdf)
                     @user_info "  +$(nrow(_pdf) - _n0) isomer-decoy precursors (of $_n0 reals)"
