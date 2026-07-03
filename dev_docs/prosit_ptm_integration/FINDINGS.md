@@ -139,3 +139,23 @@ FLR benchmark (Stds01 vs yeast+standards 1MC lib, 1% FDR):
 - Interpretation: L2 shrinkage stabilizes the dense-DIA phospho deconvolution (many co-isolated
   positional isomers), yielding steadier weights -> correct isomer wins more often. Promising
   lever for phospho localization; worth a dose-response + FDR check.
+
+### L2 dose-response (refines the above)
+Full L2 sweep on the same benchmark:
+
+| reg | lambda | total precursors | correct | FLR |
+|---|---|---|---|---|
+| none | 0.0 | 42,116 | 152 | 23.2% |
+| L2 | 0.1 | 43,742 | 141 | 28.8% |
+| L2 | 1.0 | 47,426 | 160 | 19.6% |
+| L2 | 2.0 | 48,619 | 154 | 22.6% |
+| L2 | 5.0 | 50,186 | 156 | 21.2% |
+
+- **Total precursors rise MONOTONICALLY with lambda** (42k->50k) — robust effect (L2 smoothing gives
+  more precursors non-zero weight); needs FDR (entrapment/decoy) validation before claiming depth.
+- **FLR is non-monotonic / noisy**: baseline 23.2%, best 19.6% at lambda=1, but lambda=0.1 is WORSE
+  (28.8%). Spread ~9% over ~198 standards (~18 peptides). CORRECTION to the single-point claim
+  above: L2 has a lambda~1 localization sweet spot but the FLR gain is NOT robust from one replicate.
+- Takeaway: L2 reliably increases ID count and modulates localization with a lambda~1 optimum, but
+  a real localization improvement needs replicates + FDR/entrapment checks. Dedicated site-
+  localization scoring (Phase 3) remains the principled fix; L2 is a cheap knob worth revisiting.
