@@ -84,6 +84,10 @@ struct AgnosticFragFilterCtx
     length_to_frag_count_multiple::Float32
     min_frag_intensity::Float32
     frag_bounds::FragBoundModel
+    # Per-precursor site-determining candidate positions S (indexed by precursor_idx).
+    # Carried from BuildSpecLib (computed via matchVarMods). Empty inner vector -> no
+    # gap retention for that precursor; empty outer vector -> feature off (no-op).
+    gap_sites::Vector{Vector{UInt8}}
 end
 
 """
@@ -476,6 +480,7 @@ function build_agnostic_frag_filter_ctx(
     max_frag_rank::UInt8,
     length_to_frag_count_multiple::Float32,
     min_frag_intensity::Float32,
+    gap_sites::Vector{Vector{UInt8}} = Vector{UInt8}[],
 )::AgnosticFragFilterCtx
     iso_splines = parseIsoXML(isotope_spline_path())
 
@@ -500,6 +505,7 @@ function build_agnostic_frag_filter_ctx(
         max_frag_charge, max_frag_rank,
         length_to_frag_count_multiple, min_frag_intensity,
         frag_bounds,
+        gap_sites,
     )
 end
 
@@ -539,6 +545,10 @@ function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
 
     keep  = trues(n_rows)
     total = Vector{Float32}(undef, n_rows)
+    # Captured for site-determining gap retention in Pass 2 (only kept rows are
+    # read, via `block`). base_type/frag ordinal per fragment.
+    base_types = Vector{Char}(undef, n_rows)
+    frag_ords  = Vector{UInt8}(undef, n_rows)
 
     # --- Pass 1: metadata filters + sulfur + mono->total (per-precursor state) ---
     seq_idx_to_sulfur = zeros(UInt8, 255)
@@ -567,6 +577,8 @@ function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
 
         pa = _agnostic_annotation!(ctx.annotation_cache, annotations[i])
         bt = pa.base_type
+        base_types[i] = bt
+        frag_ords[i]  = UInt8(min(255, pa.frag_index))
         if bt == 'y' && pa.frag_index < ctx.y_start; keep[i] = false; continue; end
         if bt == 'b' && pa.frag_index < ctx.b_start; keep[i] = false; continue; end
         if bt == 'p' && !ctx.include_p; keep[i] = false; continue; end
@@ -609,6 +621,19 @@ function filter_fragments!(df::DataFrame, model::InstrumentAgnosticModel,
                     round(Int, Float32(ctx.prec_len[pid]) * ctx.length_to_frag_count_multiple) + 1)
         for t in 1:min(length(block), max_n)
             push!(final_order, block[t])
+        end
+        # Site-determining retention: append the highest-intensity in-gap
+        # fragment for each gap that isn't already in the top-N (below the cut,
+        # so the emitted block stays intensity-descending). No-op when gap_sites
+        # is empty (feature off) or the precursor has < 2 candidate sites.
+        if !isempty(ctx.gap_sites)
+            gs = ctx.gap_sites[pid]
+            if length(gs) >= 2
+                for k in gap_cover_indices(gs, Int(ctx.prec_len[pid]),
+                                           base_types, frag_ords, block, max_n)
+                    push!(final_order, k)
+                end
+            end
         end
         i = j
     end

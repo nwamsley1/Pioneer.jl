@@ -1,7 +1,8 @@
 # Unit tests for site-determining fragment retention (phospho localization).
 # Hand-verified on the worked example VLSAGSPESIK (S at 3,6,9). See
 # dev_docs/prosit_ptm_integration/site_determining_fragment_retention.md.
-using Pioneer, Test
+using Pioneer, Test, DataFrames
+using Polynomials: ImmutablePolynomial
 
 const _P = Pioneer
 _vm(seq) = _P.matchVarMods(String(seq),
@@ -91,4 +92,38 @@ end
     block = [r for r in sortperm(total, rev = true) if !(r in (6,7,8,13,14,15))]
     extra = _P.gap_cover_indices(UInt8[3,6,9], L, base, ord, block, 8)
     @test extra == [4]                              # gap(6,9) uncoverable -> nothing
+end
+
+@testset "filter_fragments! wires gap retention (VLSAGSPESIK, real ctx)" begin
+    fb = _P.FragBoundModel(ImmutablePolynomial(Float32[0]), ImmutablePolynomial(Float32[1f6]))
+    precdf = DataFrame(sequence = ["VLSAGSPESIK"], mods = [""], mz = Float32[600.0])
+    build_ctx(gs) = _P.build_agnostic_frag_filter_ctx(
+        fb, precdf, Dict{String,Int8}();
+        y_start = UInt8(3), b_start = UInt8(2), include_p = false, include_isotope = false,
+        include_immonium = false, include_internal = false, include_neutral_diff = true,
+        max_frag_charge = UInt8(3), max_frag_rank = UInt8(5),
+        length_to_frag_count_multiple = Float32(1000), min_frag_intensity = 0.0f0,
+        gap_sites = gs)
+
+    # b1..b10, y1..y10; non-crossers (c in {1,2,9,10}) huge so they fill top-5;
+    # b4 (gap 3,6) and b7 (gap 6,9) are the top crossers but below the top-5 cut.
+    anns = String[]; mzs = Float32[]
+    for i in 1:10; push!(anns, "b$i"); push!(mzs, Float32(150 + i*7)); end
+    for j in 1:10; push!(anns, "y$j"); push!(mzs, Float32(500 + j*7)); end
+    intmap = Dict("b2"=>1f6,"b9"=>1f6,"b10"=>1f6,"y9"=>1f6,"y10"=>1f6,
+                  "b4"=>500f0,"b7"=>450f0,"b3"=>100f0,"b5"=>90f0,"b6"=>80f0,"b8"=>70f0,
+                  "y3"=>60f0,"y4"=>50f0,"y5"=>40f0,"y6"=>30f0,"y7"=>20f0,"y8"=>10f0,
+                  "b1"=>5f0,"y1"=>5f0,"y2"=>5f0)
+    ints = Float32[intmap[a] for a in anns]
+    mkdf() = DataFrame(annotation = copy(anns), mz = copy(mzs),
+                       intensities = copy(ints), precursor_idx = fill(UInt32(1), 20))
+    model = _P.InstrumentAgnosticModel("test")
+
+    on  = Set(_P.filter_fragments!(mkdf(), model, build_ctx([UInt8[3,6,9]])).annotation)
+    off = Set(_P.filter_fragments!(mkdf(), model, build_ctx(Vector{UInt8}[])).annotation)
+
+    @test !("b4" in off) && !("b7" in off)          # top-5 alone drops the gap ions
+    @test ("b4" in on) && ("b7" in on)              # retention keeps them
+    @test issubset(off, on)                          # ON == OFF + gap ions
+    @test length(on) == length(off) + 2
 end

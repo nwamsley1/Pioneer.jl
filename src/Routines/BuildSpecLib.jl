@@ -239,6 +239,29 @@ function BuildSpecLib(params_path::String)
                 # apply the same metadata + rank filters that getDetailedFrags
                 # otherwise applies after raw_fragments.arrow is on disk.
                 precursors_df_for_ctx = DataFrame(Arrow.Table(precursors_arrow_path))
+
+                # Site-determining fragment retention (phospho localization):
+                # compute per-precursor candidate-site set S once, from the SAME
+                # variable-mod patterns the generator enumerated (authoritative),
+                # and carry it into the Prosit filter ctx so filter_fragments!
+                # keeps the ions that distinguish positional isomers. Empty (no
+                # variable mods, or the spline path) -> strict no-op.
+                precursor_gap_sites = if koina_model_type isa InstrumentAgnosticModel
+                    retention_var_mods = NamedTuple{(:p, :r), Tuple{Regex, String}}[]
+                    if haskey(params, "variable_mods") && haskey(params["variable_mods"], "pattern")
+                        for vi in 1:length(params["variable_mods"]["pattern"])
+                            push!(retention_var_mods,
+                                  (p = Regex(String(params["variable_mods"]["pattern"][vi])),
+                                   r = String(params["variable_mods"]["name"][vi])))
+                        end
+                    end
+                    # Decoy-neighbour sites deferred until isomer decoys land.
+                    gap_sites_for_library(precursors_df_for_ctx[!, :sequence],
+                                          retention_var_mods, false)
+                else
+                    Vector{UInt8}[]
+                end
+
                 filter_ctx = if koina_model_type isa InstrumentAgnosticModel
                     # Prosit: string-annotation + iso-spline mono->total + topN filter.
                     build_agnostic_frag_filter_ctx(
@@ -256,6 +279,7 @@ function BuildSpecLib(params_path::String)
                         max_frag_rank = const_max_frag_rank,
                         length_to_frag_count_multiple = const_length_to_frag_count_multiple,
                         min_frag_intensity = const_min_frag_intensity,
+                        gap_sites = precursor_gap_sites,
                     )
                 else
                     build_spline_frag_filter_ctx(

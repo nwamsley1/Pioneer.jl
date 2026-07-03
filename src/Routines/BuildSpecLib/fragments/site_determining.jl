@@ -103,3 +103,28 @@ function gap_cover_indices(gap_sites::AbstractVector{<:Integer},
     end
     return extra
 end
+
+"""
+    gap_sites_for_library(sequences, var_mods, include_decoy) -> Vector{Vector{UInt8}}
+
+Compute the carried `gap_sites` (candidate-site set `S`) once per precursor from
+the authoritative variable-mod patterns — the same `matchVarMods` the generator
+uses — so the retention filter never re-derives acceptor identity. Returns one
+`Vector{UInt8}` per precursor (empty when there are no variable mods, making the
+whole feature a strict no-op).
+"""
+function gap_sites_for_library(sequences::AbstractVector,
+                               var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+                               include_decoy::Bool)
+    n = length(sequences)
+    out = Vector{Vector{UInt8}}(undef, n)
+    if isempty(var_mods)
+        @inbounds for i in 1:n; out[i] = UInt8[]; end
+        return out
+    end
+    @inbounds for i in 1:n
+        seq = String(sequences[i])
+        out[i] = compute_gap_sites(seq, matchVarMods(seq, var_mods), include_decoy)
+    end
+    return out
+end
