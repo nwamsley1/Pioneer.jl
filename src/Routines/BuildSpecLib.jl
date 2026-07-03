@@ -267,8 +267,7 @@ function BuildSpecLib(params_path::String)
                 # matching spacing). Empty off the Prosit path -> strict no-op.
                 precursor_gap_sites = if koina_model_type isa InstrumentAgnosticModel
                     gap_sites_for_library(precursors_df_for_ctx[!, :sequence],
-                                          loc_var_mods, loc_decoy_enabled;
-                                          spacing = loc_decoy_spacing)
+                                          loc_var_mods, loc_decoy_enabled)
                 else
                     Vector{UInt8}[]
                 end
@@ -331,13 +330,11 @@ function BuildSpecLib(params_path::String)
             # ion m/z, and rewrites both tables in place. Default off.
             if loc_decoy_enabled
                 loc_decoy_timing = @timed begin
-                    @user_info "Generating isomer (localization) decoys (spacing=$loc_decoy_spacing)..."
+                    @user_info "Generating isomer (localization) decoys (move-one-random shadow sites)..."
                     _pdf = DataFrame(Arrow.Table(precursors_arrow_path))
                     _fdf = DataFrame(Arrow.Table(raw_fragments_arrow_path))
                     _n0 = nrow(_pdf)
-                    _pdf, _fdf = generate_isomer_decoys!(_pdf, _fdf, loc_var_mods, loc_mod_masses;
-                                                         spacing = loc_decoy_spacing,
-                                                         target_mod_name = loc_decoy_target)
+                    _pdf, _fdf = generate_isomer_decoys!(_pdf, _fdf, loc_var_mods, loc_mod_masses)
                     Arrow.write(precursors_arrow_path, _pdf)
                     Arrow.write(raw_fragments_arrow_path, _fdf)
                     @user_info "  +$(nrow(_pdf) - _n0) isomer-decoy precursors (of $_n0 reals)"
