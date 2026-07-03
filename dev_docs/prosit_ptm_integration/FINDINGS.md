@@ -182,3 +182,50 @@ Headroom (Phase 3 localizer): weight-FRACTION (w_best / sum w_isomers) as a per-
 cutoff (field uses >=0.75) -> trades recall for lower FLR toward ~1%; integrate weight over the peak;
 true shared-apex version (all isomers at the same apex scan). Caveats: 1 replicate; `weight` is each
 isomer's own best-scan weight, not strictly the shared apex.
+
+### Phase A isomer-competition feature built + reg sweep (2026-07-03, commit b31302ebf)
+Implemented `add_isomer_competition_features!`: per-PSM `iso_weight_fraction_at_scan` = weight /
+sum(weights of SIBLING isomers at the same scan), siblings = (sequence, charge, mz-bucket,
+is_decoy). Gated on `optimization.localization.enabled`; propagates to precursors_long.arrow. Full
+per-standard table: `isomer_competition_standards.tsv` (193 contested groups).
+
+**The fraction is a CONFIDENCE, not a selector** (10k-amol Stds01, 198 IDs):
+
+| localization rule | FLR |
+|---|---|
+| best q-value | 20.7% |
+| **max apex weight** (selector) | **6.6%** |
+| max apex fraction (selector) | 18.7% (BAD) |
+
+Max-fraction selection is confounded: a weak WRONG isomer that finds a scan with no co-eluting
+sibling gets fraction=1.0 trivially (wrong maxfrac picks have median conf 1.0). So SELECT by max
+weight, then cut on the winner's fraction as a filterable confidence:
+
+| tau | FLR | coverage |
+|---|---|---|
+| 0.0 | 6.6% | 100% |
+| 0.75 | 2.5% | 81.3% |
+
+2.5% @ 0.75 is the PTM.SiteProbability>=0.75 analogue and beats the paper's Astral 3.95% @ 0.75
+(exact, from Nat Commun 2024 Source Data Fig2I; caveat: uncalibrated fraction vs calibrated
+probability, different operating points).
+
+**Deconvolution reg sweep (localization on; matched ~80% coverage) — ridge helps, L1 doesn't:**
+
+| run | FLR | coverage |
+|---|---|---|
+| no reg (tau=0.75) | 2.5% | 81.3% |
+| L2 lambda=0.5 (tau=0.60) | 1.8% | 83.3% |
+| **L2 lambda=1.0 (tau=0.60)** | **1.3%** | 80.2% |
+| L1 lambda=0.5 (tau=0.75) | 3.0% | 83.3% |
+
+Ridge sharpens the sibling split monotonically with lambda (1.3% FLR at 80% cov, below the paper's
+3.95%); L1 neutral-to-worse. Confirms the collinearity hypothesis (sibling columns share all but the
+site-determining ions). Caveat: L2 rescales the fraction -> compare at matched coverage, not matched
+cutoff. **A light ridge default belongs in the localization path** — and becomes mandatory once
+isomer decoys add near-collinear columns.
+
+Residual errors are all ADJACENT-site (AALDHSCSPSK S6-vs-true-S8 @ conf 0.962; DLATVYVDVLK
+T4-vs-Y6 @ 1.0): the wrong isomer finds a lonely scan -> high confidence despite being wrong. These
+are the ~2.5% the cutoff can't catch -> next step: **isomer decoys + a learned localization
+discriminant** (see `localization_decoy_library_plan.md`).
