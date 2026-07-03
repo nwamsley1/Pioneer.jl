@@ -91,19 +91,41 @@ peak-integrated version). Then:
   fraction $\big(\sum_{\text{apex}\pm\delta} w_i\big) / \big(\sum_{\text{apex}\pm\delta}\sum_j w_j\big)$
   (Phase B) — steadier than a single scan.
 
-## 3.3 Competition / survival (the filter, and the co-presence guardrail)
+## 3.3 Per-scan drop (the filter) — local, and why it is safe
 
-Operate per sibling group across all its scans:
+The filter is a **per-scan** rule, not a per-group cross-scan survival analysis. In the same sweep
+that computes `f` (§3.1), at each scan within each sibling group:
 
-- An isomer **survives** if it **dominates** (`f >= margin`, e.g. 0.75, or is the group max with
-  `f_best / f_2nd >= ratio`) at **at least one** scan — i.e. it has its **own apex**.
-- **Co-present, resolved** -> siblings A and B dominate at **different** scans (different RT) -> both
-  survive (nothing discarded). *This is the answer to "what if both are truly present."*
-- **Spurious split** -> an isomer that never dominates anywhere (only ever a weak share of a real
-  isomer's signal) -> **suppressed** (no PSM -> no ID).
-- **Genuinely ambiguous** -> at the shared apex no isomer dominates (adjacent/co-eluting sites,
-  e.g. the benchmark's ADEPSSEESDLEIDK S5-vs-S6 at equal weight) -> **keep the group's best PSM and
-  set `localization_ambiguous = true`**. Never delete both.
+- **Keep the group's per-scan winner (argmax `f`) unconditionally.**
+- **Drop every other sibling PSM whose `f < tau`** (localization threshold, e.g. 0.75).
+
+**Why dropping is safe (the key point).** Dropping an isomer's PSM at a scan where it *loses* costs
+nothing, because a real isomer wins at its **own apex** — a *different* scan — where its PSM is kept
+and it still gets scored / integrated / identified. The filter only ever removes the scans where an
+isomer is the *minority* share of a sibling's signal. An isomer's apex is also where `f` is
+cleanest (highest weight, best-resolved site-determining ions), so the scans we drop are the noisy
+low-weight tails, not the informative ones.
+
+**This subsumes the group-level survival logic as an emergent property** — no cross-scan bookkeeping:
+
+- **Spurious split** -> a minor isomer that is *never* the argmax at a real apex is dropped at every
+  scan -> no surviving PSM -> suppressed.
+- **Co-present, resolved (different RT)** -> A is argmax in its RT region, B in its own -> **both
+  survive.** The resolvable co-presence case is handled for free.
+- **Co-present, unresolved (co-eluting ~50/50)** -> neither clears `tau`; the **argmax guard** keeps
+  one PSM per scan (never double-deletes), and the group is flagged `localization_ambiguous`
+  (winner `f < tau`). We cannot confidently claim two sites the data cannot separate — flag, don't
+  fabricate. (e.g. the benchmark's ADEPSSEESDLEIDK S5-vs-S6 at equal weight.)
+
+**The argmax guard is load-bearing.** A naive "drop if `f < tau`" with no guard would delete *both*
+isomers of a co-eluting ~50/50 pair at every scan (neither reaches 0.75) — the exact double-delete
+we must avoid. Keeping the per-scan winner prevents it.
+
+**Not a re-deconvolution.** This is a post-hoc filter on already-emitted PSMs; we do **not** remove
+the loser's column and re-solve (the winner does not absorb the loser's signal). Quant impact is
+limited to truncating a kept isomer's low-weight *losing* tails — worth watching, but it touches
+only minority-share scans; the apex is kept. (Re-deconvolving after suppression is a possible later
+refinement, deliberately out of scope.)
 
 ## 3.4 Output
 
@@ -130,8 +152,9 @@ before changing what gets identified.
 **Phase B — filtering + peak integration.**
 
 5. Switch confidence to the **peak-integrated** fraction (apex +- a few scans).
-6. Apply the **survival filter** (3.3): suppress isomers that never dominate; flag ambiguous groups.
-   Config-gate it (`optimization.localization.enabled`, `margin`, `min_confidence`).
+6. Apply the **per-scan drop** (3.3): keep each scan's group-winner (argmax), drop sub-threshold
+   losers, flag groups whose winner never clears `tau` as ambiguous. Config-gate it
+   (`optimization.localization.enabled`, `tau`, `min_confidence`).
 7. **Validate:** FLR + ID recovery on the harness; confirm the 3 co-present isomer pairs both
    survive; confirm no double-deletion of ambiguous pairs.
 
