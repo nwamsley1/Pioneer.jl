@@ -45,6 +45,22 @@ function _resolve_q_value_threshold(global_section)
     end
 end
 
+# Deconvolution regularization from config (optimization.deconvolution.{lambda,reg_type}).
+# Defaults to lambda=0 / NoNorm (unregularized PoissonMM) so existing configs are unchanged.
+# reg_type string: "none"->NoNorm, "l1"->L1Norm, "l2"->L2Norm. Enables PMM L1/L2 penalty sweeps.
+function _resolve_deconv_reg(params::PioneerParameters)
+    lam = 0.0f0
+    reg_str = "none"
+    if hasproperty(params, :optimization) && hasproperty(params.optimization, :deconvolution)
+        dec = params.optimization.deconvolution
+        hasproperty(dec, :lambda)   && (lam = Float32(dec.lambda))
+        hasproperty(dec, :reg_type) && (reg_str = lowercase(String(dec.reg_type)))
+    end
+    reg = reg_str in ("l1", "l1norm") ? L1Norm() :
+          reg_str in ("l2", "l2norm") ? L2Norm() : NoNorm()
+    return lam, reg
+end
+
 """
 Parameters for main search (deconvolution, scoring, and prescore aggregation).
 """
@@ -105,6 +121,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         # so old configs keep working.
         n_isotopes_val = _resolve_n_isotopes(quant_params)
 
+        # Deconvolution regularization (config-driven; default lambda=0/NoNorm)
+        deconv_lambda, deconv_reg = _resolve_deconv_reg(params)
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             isotope_bounds,
             Float32(min_fraction_transmitted),
@@ -112,9 +131,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             max_frag_rank,
             Set{Int64}([2]),
 
-            Float32(0.0),     # lambda (no regularization)
-            NoNorm(),         # reg_type
-            PoissonMMSolver(),  # OLS / Lasso / AdaptiveLasso paths retained in git history
+            deconv_lambda,    # lambda (config: optimization.deconvolution.lambda)
+            deconv_reg,       # reg_type (config: optimization.deconvolution.reg_type)
+            PoissonMMSolver(deconv_lambda, deconv_reg),  # PMM with optional L1/L2 penalty
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 

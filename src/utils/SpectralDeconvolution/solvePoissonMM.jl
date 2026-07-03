@@ -15,7 +15,15 @@
 # ── Solver trait types ──
 abstract type DeconvolutionSolver end
 struct OLSSolver <: DeconvolutionSolver end
-struct PoissonMMSolver <: DeconvolutionSolver end
+# PoissonMMSolver with optional L1/L2 penalty on the non-negative weights.
+# reg_type is a type parameter so the penalty (getRegL1/getRegL2) dispatches at
+# compile time — NoNorm inlines to 0 (adding +0.0, bit-identical to the
+# unregularized solver), L1Norm/L2Norm add a proximal-Newton shrinkage term.
+struct PoissonMMSolver{R<:RegularizationType} <: DeconvolutionSolver
+    lambda::Float32
+    reg_type::R
+end
+PoissonMMSolver() = PoissonMMSolver(0.0f0, NoNorm())
 
 # Iterated adaptive LASSO with non-negativity, OLS loss. Parameters:
 #   λ_rel  ∈ (0, 1)  — fraction of the unpenalized λ_max that becomes λ_eff
@@ -111,7 +119,9 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
                                X₁::Vector{T},
                                max_iter_outer::Int64,
                                relative_convergence_threshold::T;
-                               max_inner_iter::Int64 = Int64(5)) where {Ti<:Integer, T<:AbstractFloat}
+                               max_inner_iter::Int64 = Int64(5),
+                               lambda::T = zero(T),
+                               reg_type::R = NoNorm()) where {Ti<:Integer, T<:AbstractFloat, R<:RegularizationType}
 
     # ── Y-scaling: divide y by max(y) to bring weights into tractable range ──
     y_scale = T(0)
@@ -175,6 +185,10 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
                 end
             end
 
+            # ── L1/L2 regularization penalty (NoNorm -> +0.0, bit-identical) ──
+            L1 += Float64(getRegL1(lambda, X₁[col], reg_type))
+            L2 += Float64(getRegL2(lambda, X₁[col], reg_type))
+
             # ── Inner Newton iterations ──
             for _k in 1:max_inner_iter
                 (L2 <= ε_L || isnan(L1)) && break
@@ -205,6 +219,8 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
                             L2   += a_ij * a_ij * inv_μ
                         end
                     end
+                    L1 += Float64(getRegL1(lambda, X₁[col], reg_type))
+                    L2 += Float64(getRegL2(lambda, X₁[col], reg_type))
                 else
                     # ── Just update μ (converged or last inner iteration) ──
                     @inbounds @fastmath for i in col_start:col_end
@@ -264,12 +280,13 @@ function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_ite
     return solveLasso!(Hs, r, w, colnorm2, eltype(w)(s.λ_rel), max_iter, conv)
 end
 
-function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(s::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
     # Resize residuals for downstream getDistanceMetrics (which recomputes r from scratch)
     if length(r) < Hs.m
         append!(r, zeros(eltype(r), Hs.m - length(r)))
     end
     initObserved!(y, Hs)
     initMu!(μ, Hs, w)
-    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv)
+    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv;
+                                lambda = eltype(w)(s.lambda), reg_type = s.reg_type)
 end
