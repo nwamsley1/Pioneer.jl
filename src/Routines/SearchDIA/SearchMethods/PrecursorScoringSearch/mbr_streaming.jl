@@ -135,37 +135,17 @@ end
 @inline function _mbr_smoothed_spectrum_hellinger_from_sqrt(
     recipient_sqrt::NTuple{8, Float32},
     donor_sqrt::NTuple{8, Float32},
-    fragment_keys::_MBRFragmentAnnotationKeys,
-    recipient_pid::UInt32,
-    donor_pid::UInt32,
+    _fragment_keys::_MBRFragmentAnnotationKeys,
+    _recipient_pid::UInt32,
+    _donor_pid::UInt32,
 )
     (_mbr_smoothed_spectrum_sqrt_is_valid(recipient_sqrt) &&
      _mbr_smoothed_spectrum_sqrt_is_valid(donor_sqrt)) || return 1.0f0
 
     dist2 = 0.0f0
-    donor_matched = UInt16(0)
-    @inbounds for recipient_rank in 1:8
-        recipient_key = _mbr_fragment_annotation_key(fragment_keys, recipient_pid, recipient_rank)
-        recipient_key == UInt16(0) && continue
-        donor_rank = 0
-        for candidate_rank in 1:8
-            if _mbr_fragment_annotation_key(fragment_keys, donor_pid, candidate_rank) == recipient_key
-                donor_rank = candidate_rank
-                break
-            end
-        end
-        if donor_rank == 0
-            dist2 += recipient_sqrt[recipient_rank] * recipient_sqrt[recipient_rank]
-        else
-            delta = recipient_sqrt[recipient_rank] - donor_sqrt[donor_rank]
-            dist2 += delta * delta
-            donor_matched |= UInt16(1 << (donor_rank - 1))
-        end
-    end
-    @inbounds for donor_rank in 1:8
-        _mbr_fragment_annotation_key(fragment_keys, donor_pid, donor_rank) == UInt16(0) && continue
-        (donor_matched & UInt16(1 << (donor_rank - 1))) != UInt16(0) && continue
-        dist2 += donor_sqrt[donor_rank] * donor_sqrt[donor_rank]
+    @inbounds for rank in 1:8
+        delta = recipient_sqrt[rank] - donor_sqrt[rank]
+        dist2 += delta * delta
     end
     return sqrt(max(0.0f0, 0.5f0 * dist2))
 end
@@ -211,6 +191,7 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_single_donor_true,        :MBR_single_donor_false,
     :MBR_best_is_missing_true,      :MBR_best_is_missing_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
+    :MBR_best_log_by_diff_true,     :MBR_best_log_by_diff_false,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_false,
     :MBR_worst_smoothed_frag_hellinger_true,
@@ -351,6 +332,14 @@ function _insert_sorted_donor_entry!(
     return nothing
 end
 
+@inline function _mbr_lower_weight_donor_first(a::_MBRDonorEntry, b::_MBRDonorEntry)
+    a.weight < b.weight && return true
+    a.weight > b.weight && return false
+    a.trace_prob < b.trace_prob && return true
+    a.trace_prob > b.trace_prob && return false
+    return a.ms_file_idx < b.ms_file_idx
+end
+
 function _prune_donor_entries!(
     entries::Vector{_MBRDonorEntry},
     passing_score_floor::Float32,
@@ -361,12 +350,20 @@ function _prune_donor_entries!(
         keep[idx] = true
     end
 
-    kept_worst = 0
-    @inbounds for idx in length(entries):-1:1
-        entries[idx].trace_prob >= passing_score_floor || continue
-        keep[idx] = true
-        kept_worst += 1
-        kept_worst == MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR && break
+    kept_low_weight = 0
+    while kept_low_weight < MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR
+        low_weight_idx = 0
+        @inbounds for idx in eachindex(entries)
+            keep[idx] && continue
+            entries[idx].trace_prob >= passing_score_floor || continue
+            if low_weight_idx == 0 ||
+               _mbr_lower_weight_donor_first(entries[idx], entries[low_weight_idx])
+                low_weight_idx = idx
+            end
+        end
+        low_weight_idx == 0 && break
+        keep[low_weight_idx] = true
+        kept_low_weight += 1
     end
 
     write_idx = 1
@@ -554,23 +551,25 @@ function build_mbr_donor_dict_streaming_with_pass1(
     return all_entries
 end
 
-@inline function _worst_donor_for_pid(
+@inline function _min_weight_alternate_donor_for_pid(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pid::UInt32,
     my_file::UInt32,
+    best_donor::_MBRDonorEntry,
     passing_score_floor::Float32,
 )
     entries = get(donor_dict, pid, nothing)
     entries === nothing && return nothing
-    worst = nothing
+    min_weight = nothing
     @inbounds for e in entries
         e.ms_file_idx == my_file && continue
         e.trace_prob >= passing_score_floor || continue
-        if worst === nothing || e.trace_prob < worst.trace_prob
-            worst = e
+        _mbr_same_donor(e, best_donor) && continue
+        if min_weight === nothing || _mbr_lower_weight_donor_first(e, min_weight)
+            min_weight = e
         end
     end
-    return worst
+    return min_weight
 end
 
 # Find the donor entry for `pid` from a file OTHER than `my_file`. Pulled
@@ -605,21 +604,18 @@ end
     return !(pid_int in run_passed)
 end
 
-@inline function _nearest_mz_cross_file_donor(
+@inline function _nearest_irt_cross_file_donor(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-    pool::_MzPool,
-    target_mz::Float32,
+    pool::_IrtPool,
     target_irt::Float32,
-    irt_tolerance::Float32,
-    partner_pools::_CounterfactualPartnerPools,
     my_file::UInt32,
     my_pid::UInt32,
     eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
 )
-    n = length(pool.mzs)
+    n = length(pool.irts)
     n == 0 && return nothing
 
-    right = searchsortedfirst(pool.mzs, target_mz)
+    right = searchsortedfirst(pool.irts, target_irt)
     left = right - 1
     @inbounds while left >= 1 || right <= n
         use_left = if right > n
@@ -627,13 +623,12 @@ end
         elseif left < 1
             false
         else
-            abs(target_mz - pool.mzs[left]) <= abs(pool.mzs[right] - target_mz)
+            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
         end
         pool_idx = use_left ? left : right
         use_left ? (left -= 1) : (right += 1)
         pool_pid = pool.pids[pool_idx]
         pool_pid == my_pid && continue
-        abs(partner_pools.irt_by_pid[Int(pool_pid)] - target_irt) <= irt_tolerance || continue
         _counterfactual_receiver_eligible(eligibility_by_file, my_file, pool_pid) || continue
         donor = _donor_for_pid(donor_dict, pool_pid, my_file)
         donor !== nothing && return donor
@@ -650,18 +645,14 @@ end
     irt_tolerance_by_file::Dict{UInt32, Float32},
 )
     pid_idx = Int(my_pid)
-    my_mz = partner_pools.mz_by_pid[pid_idx]
     my_irt = partner_pools.irt_by_pid[pid_idx]
     my_charge = Int(partner_pools.charge_by_pid[pid_idx])
-    irt_tolerance = get(irt_tolerance_by_file, my_file, Float32(Inf))
+    my_length = Int(partner_pools.length_by_pid[pid_idx])
 
-    return _nearest_mz_cross_file_donor(
+    return _nearest_irt_cross_file_donor(
         donor_dict,
-        get(partner_pools.charge_pool, my_charge, _empty_pool()),
-        my_mz,
+        get(partner_pools.charge_length_irt_pool, (my_charge, my_length), _empty_irt_pool()),
         my_irt,
-        irt_tolerance,
-        partner_pools,
         my_file,
         my_pid,
         eligibility_by_file,
@@ -778,6 +769,7 @@ end
     out_single_donor_t::Vector{Float32}, out_single_donor_f::Vector{Float32},
     out_miss_t::BitVector,      out_miss_f::BitVector,
     out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
+    out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
     out_smoothed_hellinger_t::Vector{Float32},
     out_smoothed_hellinger_f::Vector{Float32},
     out_smoothed_hellinger_worst_t::Vector{Float32},
@@ -792,6 +784,7 @@ end
     l2ie_v::AbstractVector{Float16},
     irtp_v::AbstractVector{Float32},
     irto_v::AbstractVector{Float32},
+    logby_v::Union{Nothing, AbstractVector},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     nscans_v::AbstractVector,
     smoothed_frag_cols,
@@ -806,6 +799,7 @@ end
     passing_score_floor::Float32,
 )
     n = length(pid_v)
+    has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
     @inbounds for i in 1:n
         my_file = file_v[i]
@@ -834,6 +828,9 @@ end
             if has_rt
                 out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
             end
+            if has_logby
+                out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
+            end
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             has_recipient_spectrum = true
             out_smoothed_hellinger_t[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
@@ -844,19 +841,21 @@ end
                 donor_t.precursor_idx,
             )
             out_donor_library_hellinger_t[i] = donor_t.library_hellinger
-            donor_worst_t = _worst_donor_for_pid(donor_dict, my_pid, my_file, passing_score_floor)
+            donor_worst_t = _min_weight_alternate_donor_for_pid(
+                donor_dict,
+                my_pid,
+                my_file,
+                donor_t,
+                passing_score_floor,
+            )
             if donor_worst_t !== nothing
                 out_worst_pair_t[i] = donor_worst_t.trace_prob
-                same_worst_t = _mbr_same_donor(donor_t, donor_worst_t)
-                out_single_donor_t[i] = same_worst_t ? 1.0f0 : 0.0f0
                 out_lw_worst_t[i] = _mbr_log2_weight_ratio(my_weight, donor_worst_t)
                 out_le_worst_t[i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_t)
                 out_nscans_worst_t[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_t)
                 out_l2_nscans_worst_t[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_worst_t)
-                if !same_worst_t
-                    out_ir_worst_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_t.irt_residual)
-                    out_obs_ir_worst_t[i] = abs(irto_v[i] - donor_worst_t.irt_obs)
-                end
+                out_ir_worst_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_t.irt_residual)
+                out_obs_ir_worst_t[i] = abs(irto_v[i] - donor_worst_t.irt_obs)
                 out_smoothed_hellinger_worst_t[i] = _mbr_smoothed_spectrum_hellinger_from_donor(
                     recipient_sqrt,
                     donor_worst_t,
@@ -865,6 +864,8 @@ end
                 )
                 out_donor_library_hellinger_worst_t[i] =
                     _mbr_donor_library_hellinger(donor_worst_t)
+            else
+                out_single_donor_t[i] = 1.0f0
             end
             out_miss_t[i] = false
         end
@@ -888,6 +889,9 @@ end
             if has_rt
                 out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
             end
+            if has_logby
+                out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
+            end
             if !has_recipient_spectrum
                 recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             end
@@ -899,24 +903,21 @@ end
                 donor_f.precursor_idx,
             )
             out_donor_library_hellinger_f[i] = donor_f.library_hellinger
-            donor_worst_f = _worst_donor_for_pid(
+            donor_worst_f = _min_weight_alternate_donor_for_pid(
                 donor_dict,
                 donor_f.precursor_idx,
                 my_file,
+                donor_f,
                 passing_score_floor,
             )
             if donor_worst_f !== nothing
                 out_worst_pair_f[i] = donor_worst_f.trace_prob
-                same_worst_f = _mbr_same_donor(donor_f, donor_worst_f)
-                out_single_donor_f[i] = same_worst_f ? 1.0f0 : 0.0f0
                 out_lw_worst_f[i] = _mbr_log2_weight_ratio(my_weight, donor_worst_f)
                 out_le_worst_f[i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_f)
                 out_nscans_worst_f[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_f)
                 out_l2_nscans_worst_f[i] = _mbr_log2_n_scans_ratio(my_n_scans, donor_worst_f)
-                if !same_worst_f
-                    out_ir_worst_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_f.irt_residual)
-                    out_obs_ir_worst_f[i] = abs(irto_v[i] - donor_worst_f.irt_obs)
-                end
+                out_ir_worst_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_worst_f.irt_residual)
+                out_obs_ir_worst_f[i] = abs(irto_v[i] - donor_worst_f.irt_obs)
                 out_smoothed_hellinger_worst_f[i] = _mbr_smoothed_spectrum_hellinger_from_donor(
                     recipient_sqrt,
                     donor_worst_f,
@@ -925,6 +926,8 @@ end
                 )
                 out_donor_library_hellinger_worst_f[i] =
                     _mbr_donor_library_hellinger(donor_worst_f)
+            else
+                out_single_donor_f[i] = 1.0f0
             end
             out_miss_f[i] = false
         end
@@ -960,6 +963,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     l2ie_v  = main.log2_intensity_explained
     irtp_v  = main.irt_pred
     irto_v  = main.irt_obs
+    logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
     nscans_v = main.n_scans
     smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
@@ -987,6 +991,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_single_donor_t = fill(0f0, n); out_single_donor_f = fill(0f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
+    out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = fill(-1f0, n)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = fill(1f0, n)
     out_donor_library_h_t = fill(1f0, n); out_donor_library_h_f = fill(1f0, n)
@@ -1009,11 +1014,13 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_single_donor_t, out_single_donor_f,
         out_miss_t, out_miss_f,
         out_rt_t, out_rt_f,
+        out_log_by_t, out_log_by_f,
         out_smoothed_h_t, out_smoothed_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
         out_donor_library_h_t, out_donor_library_h_f,
         out_donor_library_h_worst_t, out_donor_library_h_worst_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
+        logby_v,
         rt_v, nscans_v, smoothed_frag_cols, fragment_keys,
         donor_dict, partner_pools, false_donor_cache,
         counterfactual_eligibility_by_file,
@@ -1060,6 +1067,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         MBR_best_is_missing_false      = out_miss_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
+        MBR_best_log_by_diff_true      = out_log_by_t,
+        MBR_best_log_by_diff_false     = out_log_by_f,
         MBR_best_smoothed_frag_hellinger_true  = out_smoothed_h_t,
         MBR_best_smoothed_frag_hellinger_false = out_smoothed_h_f,
         MBR_worst_smoothed_frag_hellinger_true  = out_smoothed_h_worst_t,
@@ -1348,7 +1357,7 @@ function run_mbr_after_qvalue_filter!(
     psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
     ftr_summary = apply_mbr_filter_paired!(
         psms;
-        alpha = 0.01f0,
+        alpha = _mbr_recovery_alpha_from_env(),
         q_thresh = q_value_threshold,
         prob_thresh_override = donor_prob_thresh,
     )
