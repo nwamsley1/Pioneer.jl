@@ -59,12 +59,18 @@ function score_precursor_isotope_traces(
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
     # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
     # MBR features, FTR recovery) — best_psms is never materialised as the
     # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
+        return _score_precursor_isotope_traces_mbr(
+            file_paths,
+            precursors,
+            fragment_lookup;
+            mbr_rescue_file_paths = mbr_rescue_file_paths,
+        )
     else
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
@@ -267,7 +273,8 @@ end
 function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    ::LibraryFragmentLookup,
+    fragment_lookup::LibraryFragmentLookup;
+    mbr_rescue_file_paths::Vector{String} = String[],
 )
     # 1. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
     # out, so no quantile-binned features need pre-computing.
@@ -296,6 +303,53 @@ function _score_precursor_isotope_traces_mbr(
             end
             @debug_l1 join(lines, "\n")
         end
+    end
+
+    rescue_file_paths = filter(isfile, mbr_rescue_file_paths)
+    if !isempty(rescue_file_paths)
+        @debug_l1 "MBR rescue pool: scoring $(length(rescue_file_paths)) fold files"
+        _write_rescue_pass1_sidecars_from_main!(rescue_file_paths)
+
+        all_receiver_paths = vcat(file_paths, rescue_file_paths)
+        cf_partner_pools = build_counterfactual_partner_pools(all_receiver_paths, precursors)
+        fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
+        mbr_prepass = _mbr_prepass_donor_summary(file_paths; donor_q_threshold = MBR_DONOR_Q_THRESHOLD)
+        donor_prob_thresh = mbr_prepass.prob_thresh
+        donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+            file_paths;
+            passing_score_floor = donor_prob_thresh,
+        )
+
+        parallel_foreach!(length(rescue_file_paths)) do chunk
+            for f_idx in chunk
+                compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                    rescue_file_paths[f_idx],
+                    donor_dict,
+                    cf_partner_pools,
+                    fragment_keys,
+                    passing_score_floor = donor_prob_thresh,
+                    lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
+                    lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                )
+            end
+        end
+
+        rescue_psms = load_ftr_slim_dataframe(
+            rescue_file_paths;
+            mbr_rescue_candidate = true,
+        )
+        rescue_psms[!, :trace_prob] = rescue_psms[!, :trace_prob_prepass]
+        rescue_summary = apply_mbr_filter_paired!(
+            rescue_psms;
+            alpha = _mbr_recovery_alpha_from_env(),
+            q_thresh = 0.01f0,
+            prob_thresh_override = donor_prob_thresh,
+        )
+        rescue_recovery_stats = write_mbr_rescue_recovered_files!(rescue_psms, rescue_file_paths)
+        @debug_l1 "MBR rescue pool: candidates=$(rescue_summary.n_candidates), " *
+                  "recovered=$(rescue_summary.n_recovered), " *
+                  "written=$(rescue_recovery_stats.n_rows)"
+        _cleanup_mbr_temporary_sidecars!(rescue_file_paths)
     end
 
     _merge_pass1_into_main_no_mbr!(file_paths, precursors)
