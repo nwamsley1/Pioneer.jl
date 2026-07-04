@@ -399,7 +399,7 @@ end
     end
 end
 
-@testset "MBR counterfactuals can pair to same-charge different-length precursors" begin
+@testset "MBR counterfactuals require same-charge same-length precursors" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         other_path = joinpath(dir, "other_run.arrow")
@@ -506,12 +506,12 @@ end
         )
         side = DataFrame(Arrow.Table(side_path))
 
-        @test side.MBR_best_pair_prob_false[1] == 0.70f0
-        @test !side.MBR_best_is_missing_false[1]
+        @test side.MBR_best_pair_prob_false[1] == -1.0f0
+        @test side.MBR_best_is_missing_false[1]
     end
 end
 
-@testset "MBR counterfactuals choose closest m/z within receiver iRT tolerance" begin
+@testset "MBR counterfactuals choose closest library iRT within same length and charge" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         other_path = joinpath(dir, "other_run.arrow")
@@ -597,9 +597,10 @@ end
         donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1([other_path])
         partner_pools = Pioneer.build_counterfactual_partner_pools(
             [receiver_path, other_path],
-            MBRPostQMockPrecursors(
-                Float32[500.0, 520.0, 500.2, 500.1],
+            MBRPostQMockPrecursorsWithLength(
+                Float32[500.0, 650.0, 500.2, 500.1],
                 Float32[10.0, 10.01, 10.50, 12.0],
+                UInt8[9, 9, 9, 9],
             ),
         )
         eligible_by_file = Pioneer.build_counterfactual_receiver_eligibility(
@@ -618,7 +619,7 @@ end
         )
         side = DataFrame(Arrow.Table(side_path))
 
-        @test side.MBR_best_pair_prob_false[1] == 0.80f0
+        @test side.MBR_best_pair_prob_false[1] == 0.60f0
         @test !side.MBR_best_is_missing_false[1]
     end
 end
@@ -644,6 +645,15 @@ end
     peps = Float32[0.5, 0.0, 0.2]
 
     @test Pioneer._mbr_recovery_mask(qvals, peps, 0.01f0) == Bool[true, false, true]
+end
+
+@testset "MBR recovery alpha can be overridden for threshold sweeps" begin
+    @test Pioneer._mbr_recovery_alpha_from_env(Dict{String, String}()) == 0.01f0
+    @test Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0.02")) == 0.02f0
+    @test Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0.05")) == 0.05f0
+    @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0"))
+    @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "1.1"))
+    @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "nope"))
 end
 
 @testset "MBR semi-supervised transfer training uses counterfactual FTR labels" begin
@@ -696,10 +706,13 @@ end
     @test isinf(valid_metrics.qvals_top[4])
 end
 
-@testset "MBR FTR model uses iRT difference but not raw RT difference" begin
+@testset "MBR FTR model uses best/worst precursor features while ablating RT, b/y, and non-best Hellinger" begin
     expected_true = Symbol[
+        :main_search_prob,
+        :trace_prob_infold,
         :MBR_best_pair_prob_true,
         :MBR_worst_pair_prob_true,
+        :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_true,
         :MBR_worst_log2_weight_ratio_true,
         :MBR_best_log2_explained_ratio_true,
@@ -714,23 +727,48 @@ end
         :MBR_worst_observed_irt_diff_true,
         :MBR_single_donor_true,
         :MBR_best_smoothed_frag_hellinger_true,
-        :MBR_worst_smoothed_frag_hellinger_true,
-        :MBR_best_donor_library_hellinger_true,
-        :MBR_worst_donor_library_hellinger_true,
+    ]
+    expected_false = Symbol[
+        :main_search_prob,
+        :trace_prob_infold,
+        :MBR_best_pair_prob_false,
+        :MBR_worst_pair_prob_false,
+        :MBR_log2_weight_lod_ratio,
+        :MBR_best_log2_weight_ratio_false,
+        :MBR_worst_log2_weight_ratio_false,
+        :MBR_best_log2_explained_ratio_false,
+        :MBR_worst_log2_explained_ratio_false,
+        :MBR_best_abs_n_scans_diff_false,
+        :MBR_worst_abs_n_scans_diff_false,
+        :MBR_best_log2_n_scans_ratio_false,
+        :MBR_worst_log2_n_scans_ratio_false,
+        :MBR_best_irt_diff_false,
+        :MBR_worst_irt_diff_false,
+        :MBR_best_observed_irt_diff_false,
+        :MBR_worst_observed_irt_diff_false,
+        :MBR_single_donor_false,
+        :MBR_best_smoothed_frag_hellinger_false,
     ]
 
-    for feature in expected_true
-        @test feature in Pioneer.FTR_FEATURES_F_TRUE
-    end
+    @test Pioneer.FTR_FEATURES_F_TRUE == expected_true
+    @test Pioneer.FTR_FEATURES_F_FALSE == expected_false
 
+    all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
+    @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
+    @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
+    @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
+    @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
-    @test :MBR_best_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_best_rt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_best_rt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test !(:MBR_best_log_by_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_best_log_by_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
@@ -739,19 +777,26 @@ end
     @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test !(:MBR_best_log_by_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_best_log_by_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
-    @test !(:MBR_best_rt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_best_rt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_log2_weight_ratio_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_smoothed_frag_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test !(:MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_best_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test !(:MBR_worst_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
 end
 
 @testset "MBR observed iRT difference and single-donor flag use best/worst donors" begin
     mktempdir() do dir
         best_donor_path = joinpath(dir, "best_donor.arrow")
         worst_donor_path = joinpath(dir, "worst_donor.arrow")
+        min_weight_donor_path = joinpath(dir, "min_weight_donor.arrow")
         single_donor_path = joinpath(dir, "single_donor.arrow")
         receiver_path = joinpath(dir, "receiver.arrow")
         single_receiver_path = joinpath(dir, "single_receiver.arrow")
@@ -760,24 +805,35 @@ end
         best_donor_df[!, :irt_obs] = Float32[11.5, 19.0]
         worst_donor_df = _mbr_post_q_main_table(ms_file_idx = 2, scan_offset = 2000)
         worst_donor_df[!, :irt_obs] = Float32[17.0, 24.0]
+        worst_donor_df[!, :weight] = Float32[8, 4]
         worst_donor_df[!, :n_scans] = Float32[5, 4]
         worst_donor_df[!, :trace_prob_prepass] = Float32[0.70, 0.60]
         worst_donor_df[!, :trace_prob_infold] = Float32[0.70, 0.60]
+        min_weight_donor_df = _mbr_post_q_main_table(ms_file_idx = 6, scan_offset = 6000)
+        min_weight_donor_df[!, :irt_obs] = Float32[13.0, 26.0]
+        min_weight_donor_df[!, :weight] = Float32[2, 0.5]
+        min_weight_donor_df[!, :n_scans] = Float32[3, 2]
+        min_weight_donor_df[!, :trace_prob_prepass] = Float32[0.90, 0.50]
+        min_weight_donor_df[!, :trace_prob_infold] = Float32[0.90, 0.50]
         single_donor_df = _mbr_post_q_main_table(ms_file_idx = 4, scan_offset = 4000)
         single_donor_df[!, :irt_obs] = Float32[30.0, 35.0]
         receiver_df = _mbr_post_q_main_table(ms_file_idx = 3, scan_offset = 3000)
         receiver_df[!, :irt_obs] = Float32[14.25, 22.0]
+        receiver_df[!, :rt] = Float32[6.25, 22.0]
+        receiver_df[!, :log_by_ratio_m0] = Float16[1.5, 0.0]
         single_receiver_df = _mbr_post_q_main_table(ms_file_idx = 5, scan_offset = 5000)
         single_receiver_df[!, :irt_obs] = Float32[31.25, 37.0]
 
         Arrow.write(best_donor_path, best_donor_df)
         Arrow.write(worst_donor_path, worst_donor_df)
+        Arrow.write(min_weight_donor_path, min_weight_donor_df)
         Arrow.write(single_donor_path, single_donor_df)
         Arrow.write(receiver_path, receiver_df)
         Arrow.write(single_receiver_path, single_receiver_df)
         for (path, df) in (
             (best_donor_path, best_donor_df),
             (worst_donor_path, worst_donor_df),
+            (min_weight_donor_path, min_weight_donor_df),
             (single_donor_path, single_donor_df),
             (receiver_path, receiver_df),
             (single_receiver_path, single_receiver_df),
@@ -792,10 +848,11 @@ end
 
         precursors = MBRPostQMockPrecursors(Float32[500, 600], Float32[10, 20])
         donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
-            [best_donor_path, worst_donor_path],
+            [best_donor_path, worst_donor_path, min_weight_donor_path];
+            passing_score_floor = 0.0f0,
         )
         partner_pools = Pioneer.build_counterfactual_partner_pools(
-            [best_donor_path, worst_donor_path, receiver_path],
+            [best_donor_path, worst_donor_path, min_weight_donor_path, receiver_path],
             precursors,
         )
 
@@ -810,24 +867,32 @@ end
 
         receiver_residual = receiver_df.irt_pred[1] - receiver_df.irt_obs[1]
         best_donor_residual = best_donor_df.irt_pred[1] - best_donor_df.irt_obs[1]
-        worst_donor_residual = worst_donor_df.irt_pred[1] - worst_donor_df.irt_obs[1]
+        min_weight_donor_residual = min_weight_donor_df.irt_pred[1] - min_weight_donor_df.irt_obs[1]
+        min_weight_false_residual = min_weight_donor_df.irt_pred[2] - min_weight_donor_df.irt_obs[2]
 
         @test side.MBR_best_observed_irt_diff_true[1] == abs(14.25f0 - 11.5f0)
-        @test side.MBR_worst_observed_irt_diff_true[1] == abs(14.25f0 - 17.0f0)
+        @test side.MBR_worst_pair_prob_true[1] == 0.90f0
+        @test side.MBR_worst_observed_irt_diff_true[1] == abs(14.25f0 - 13.0f0)
         @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
-        @test side.MBR_worst_irt_diff_true[1] == abs(receiver_residual - worst_donor_residual)
+        @test side.MBR_worst_irt_diff_true[1] == abs(receiver_residual - min_weight_donor_residual)
+        @test side.MBR_best_rt_diff_true[1] == abs(6.25f0 - best_donor_df.rt[1])
+        @test side.MBR_best_log_by_diff_true[1] == 1.5f0
         @test isapprox(
             side.MBR_worst_log2_n_scans_ratio_true[1],
-            log2((receiver_df.n_scans[1] + 1.0f0) / (worst_donor_df.n_scans[1] + 1.0f0));
+            log2((receiver_df.n_scans[1] + 1.0f0) / (min_weight_donor_df.n_scans[1] + 1.0f0));
             atol = 1.0f-6,
         )
         @test side.MBR_single_donor_true[1] == 0.0f0
+        @test side.MBR_worst_pair_prob_false[1] == 0.50f0
+        @test side.MBR_worst_observed_irt_diff_false[1] == abs(14.25f0 - 26.0f0)
+        @test side.MBR_worst_irt_diff_false[1] == abs(receiver_residual - min_weight_false_residual)
+        @test side.MBR_single_donor_false[1] == 0.0f0
         @test :MBR_worst_irt_diff_true in propertynames(side)
         @test :MBR_worst_irt_diff_false in propertynames(side)
         @test :MBR_worst_log2_n_scans_ratio_true in propertynames(side)
         @test :MBR_worst_log2_n_scans_ratio_false in propertynames(side)
-        @test !(:MBR_best_log_by_diff_true in propertynames(side))
-        @test !(:MBR_best_log_by_diff_false in propertynames(side))
+        @test :MBR_best_log_by_diff_true in propertynames(side)
+        @test :MBR_best_log_by_diff_false in propertynames(side)
 
         single_donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1([single_donor_path])
         single_partner_pools = Pioneer.build_counterfactual_partner_pools(
@@ -844,9 +909,19 @@ end
         single_side = DataFrame(Arrow.Table(single_side_path))
 
         @test single_side.MBR_single_donor_true[1] == 1.0f0
+        @test single_side.MBR_worst_pair_prob_true[1] == -1.0f0
+        @test single_side.MBR_worst_log2_weight_ratio_true[1] == -1.0f0
+        @test single_side.MBR_worst_log2_explained_ratio_true[1] == -1.0f0
+        @test single_side.MBR_worst_abs_n_scans_diff_true[1] == -1.0f0
+        @test single_side.MBR_worst_log2_n_scans_ratio_true[1] == -1.0f0
         @test single_side.MBR_worst_observed_irt_diff_true[1] == -1.0f0
         @test single_side.MBR_worst_irt_diff_true[1] == -1.0f0
         @test single_side.MBR_single_donor_false[1] == 1.0f0
+        @test single_side.MBR_worst_pair_prob_false[1] == -1.0f0
+        @test single_side.MBR_worst_log2_weight_ratio_false[1] == -1.0f0
+        @test single_side.MBR_worst_log2_explained_ratio_false[1] == -1.0f0
+        @test single_side.MBR_worst_abs_n_scans_diff_false[1] == -1.0f0
+        @test single_side.MBR_worst_log2_n_scans_ratio_false[1] == -1.0f0
         @test single_side.MBR_worst_observed_irt_diff_false[1] == -1.0f0
         @test single_side.MBR_worst_irt_diff_false[1] == -1.0f0
     end
