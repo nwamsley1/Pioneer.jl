@@ -206,6 +206,32 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
 # pipeline. All sidecars carry (:precursor_idx, :scan_idx) as alignment keys.
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
+const MBR_RESCUE_PSMS_DIRNAME = "mbr_rescue_psms"
+const MBR_RESCUE_RECOVERED_SUFFIX = ".recovered.arrow"
+
+function mbr_rescue_fold_path(main_fold_path::String)
+    parent = dirname(main_fold_path)
+    if basename(parent) == "main_search_psms"
+        return joinpath(dirname(parent), MBR_RESCUE_PSMS_DIRNAME, basename(main_fold_path))
+    end
+    return joinpath(parent, MBR_RESCUE_PSMS_DIRNAME, basename(main_fold_path))
+end
+
+function mbr_rescue_recovered_path(rescue_fold_path::String)
+    stem = endswith(rescue_fold_path, ".arrow") ?
+           rescue_fold_path[1:(end - length(".arrow"))] :
+           rescue_fold_path
+    return stem * MBR_RESCUE_RECOVERED_SUFFIX
+end
+
+function get_existing_mbr_rescue_fold_paths(main_fold_paths::Vector{String})
+    rescue_paths = String[]
+    for path in main_fold_paths
+        rescue_path = mbr_rescue_fold_path(path)
+        isfile(rescue_path) && push!(rescue_paths, rescue_path)
+    end
+    return rescue_paths
+end
 
 @inline function _mbr_main_pep_confidence(pep)
     p = Float64(pep)
@@ -651,7 +677,7 @@ end
 
     return _nearest_irt_cross_file_donor(
         donor_dict,
-        get(partner_pools.charge_length_irt_pool, (my_charge, my_length), _empty_irt_pool()),
+        get(partner_pools.charge_length_pool, (my_charge, my_length), _empty_irt_pool()),
         my_irt,
         my_file,
         my_pid,
@@ -681,6 +707,28 @@ end
         irt_tolerance_by_file,
     )
     false_donor_cache[cache_key] = donor
+    return donor
+end
+
+@inline function _false_donor_for_pid(
+    false_donor_cache::Dict{UInt32, Union{Nothing, _MBRDonorEntry}},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    my_pid::UInt32,
+    my_file::UInt32,
+)
+    if haskey(false_donor_cache, my_pid)
+        return false_donor_cache[my_pid]
+    end
+    donor = _resolve_false_donor_for_pid(
+        donor_dict,
+        partner_pools,
+        my_pid,
+        my_file,
+        nothing,
+        Dict{UInt32, Float32}(),
+    )
+    false_donor_cache[my_pid] = donor
     return donor
 end
 
@@ -1086,9 +1134,12 @@ end
 # apply_mbr_filter_paired! needs, from main + Pass-1 sidecar + MBR sidecar,
 # in main-file row order across all files. Substantially smaller than
 # best_psms (≈20 cols vs ≈80).
-function load_ftr_slim_dataframe(file_paths::Vector{String})
+function load_ftr_slim_dataframe(
+    file_paths::Vector{String};
+    mbr_rescue_candidate::Bool = false,
+)
     parts = DataFrame[]
-    for path in file_paths
+    for (file_idx, path) in enumerate(file_paths)
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         mbr_path   = path * MBR_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
@@ -1117,6 +1168,11 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
                                    _mbr_main_pep_confidence.(main.main_pep) :
                                    fill(0.0f0, n),
         )
+        if mbr_rescue_candidate
+            d[!, :mbr_rescue_candidate] = trues(n)
+            d[!, :_mbr_rescue_file_idx] = fill(UInt32(file_idx), n)
+            d[!, :_mbr_rescue_row_idx] = UInt32.(1:n)
+        end
         if hasproperty(main, :qval)
             d[!, :qval] = collect(Float32.(main.qval))
         end
@@ -1132,6 +1188,28 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
         push!(parts, d)
     end
     return vcat(parts...)
+end
+
+function _write_rescue_pass1_sidecars_from_main!(file_paths::Vector{String})
+    n_written = 0
+    for path in file_paths
+        main = Arrow.Table(path)
+        for col in (:precursor_idx, :scan_idx, :main_pep)
+            hasproperty(main, col) ||
+                error("MBR rescue requires column $col in rescue file $path")
+        end
+        n = length(main.precursor_idx)
+        side_df = DataFrame(
+            precursor_idx = collect(UInt32.(main.precursor_idx)),
+            scan_idx = collect(UInt32.(main.scan_idx)),
+            trace_prob_prepass = _mbr_main_pep_confidence.(main.main_pep),
+            trace_prob_infold = fill(0.0f0, n),
+        )
+        writeArrow(path * PASS1_SIDECAR_SUFFIX, side_df)
+        n_written += 1
+    end
+    @debug_l1 "  Wrote $n_written MBR rescue synthetic Pass-1 sidecars"
+    return n_written
 end
 
 # After apply_mbr_filter_paired! adds the four recovery columns to the slim
@@ -1203,6 +1281,54 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
     return n_written
 end
 
+function write_mbr_rescue_recovered_files!(slim_df::DataFrame, file_paths::Vector{String})
+    rows_by_file = Dict{UInt32, Vector{Int}}()
+    n_rows = nrow(slim_df)
+    if n_rows == 0
+        for main_path in file_paths
+            safeRm(mbr_rescue_recovered_path(main_path), nothing; force = true)
+        end
+        return (n_files = 0, n_rows = 0)
+    end
+
+    @inbounds for row in 1:n_rows
+        Bool(slim_df.mbr_recovered[row]) || continue
+        file_idx = UInt32(slim_df._mbr_rescue_file_idx[row])
+        1 <= Int(file_idx) <= length(file_paths) ||
+            error("write_mbr_rescue_recovered_files!: invalid rescue file index $file_idx")
+        push!(get!(() -> Int[], rows_by_file, file_idx), row)
+    end
+
+    n_files_written = 0
+    n_recovered_rows = 0
+    for file_idx in eachindex(file_paths)
+        main_path = file_paths[file_idx]
+        rows = get(rows_by_file, UInt32(file_idx), Int[])
+        if isempty(rows)
+            safeRm(mbr_rescue_recovered_path(main_path), nothing; force = true)
+            continue
+        end
+
+        main = DataFrame(Tables.columntable(Arrow.Table(main_path)))
+        source_rows = Int[slim_df._mbr_rescue_row_idx[row] for row in rows]
+        recovered = main[source_rows, :]
+        recovered[!, :trace_prob_prepass] = Float32[slim_df.trace_prob_prepass[row] for row in rows]
+        recovered[!, :trace_prob_infold] = Float32[slim_df.trace_prob_infold[row] for row in rows]
+        recovered[!, :trace_prob] = copy(recovered[!, :trace_prob_prepass])
+        recovered[!, :mbr_recovered] = Bool[slim_df.mbr_recovered[row] for row in rows]
+        recovered[!, :MBR_transfer_candidate] = Bool[slim_df.MBR_transfer_candidate[row] for row in rows]
+        recovered[!, :mbr_target_decoy_prob] = Float32[slim_df.mbr_target_decoy_prob[row] for row in rows]
+        recovered[!, :ftr_qval_true] = Float32[slim_df.ftr_qval_true[row] for row in rows]
+        recovered[!, :ftr_pep_true] = Float32[slim_df.ftr_pep_true[row] for row in rows]
+        hasproperty(recovered, :decoy) || (recovered[!, :decoy] = .!Bool.(recovered[!, :target]))
+
+        writeArrow(mbr_rescue_recovered_path(main_path), recovered)
+        n_files_written += 1
+        n_recovered_rows += nrow(recovered)
+    end
+    return (n_files = n_files_written, n_rows = n_recovered_rows)
+end
+
 function _write_pass1_sidecars_from_main!(file_paths::Vector{String})
     n_written = 0
     for path in file_paths
@@ -1244,11 +1370,33 @@ function merge_mbr_recovery_sidecars_into_main!(
                 error("Recovery sidecar misaligned at row $i of $path")
         end
 
-        main[!, :mbr_recovered] = collect(Bool.(rec.mbr_recovered))
-        main[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
-        main[!, :mbr_target_decoy_prob] = collect(Float32.(rec.mbr_target_decoy_prob))
-        main[!, :ftr_qval_true] = collect(Float32.(rec.ftr_qval_true))
-        main[!, :ftr_pep_true] = collect(Float32.(rec.ftr_pep_true))
+        rec_recovered = collect(Bool.(rec.mbr_recovered))
+        old_recovered = hasproperty(main, :mbr_recovered) ?
+                        collect(Bool.(main[!, :mbr_recovered])) :
+                        falses(n)
+        old_candidate = hasproperty(main, :MBR_transfer_candidate) ?
+                        collect(Bool.(main[!, :MBR_transfer_candidate])) :
+                        falses(n)
+        old_prob = hasproperty(main, :mbr_target_decoy_prob) ?
+                   collect(Float32.(main[!, :mbr_target_decoy_prob])) :
+                   fill(NaN32, n)
+        old_qval = hasproperty(main, :ftr_qval_true) ?
+                   collect(Float32.(main[!, :ftr_qval_true])) :
+                   fill(NaN32, n)
+        old_pep = hasproperty(main, :ftr_pep_true) ?
+                  collect(Float32.(main[!, :ftr_pep_true])) :
+                  fill(NaN32, n)
+
+        rec_candidate = collect(Bool.(rec.MBR_transfer_candidate))
+        rec_prob = collect(Float32.(rec.mbr_target_decoy_prob))
+        rec_qval = collect(Float32.(rec.ftr_qval_true))
+        rec_pep = collect(Float32.(rec.ftr_pep_true))
+
+        main[!, :mbr_recovered] = old_recovered .| rec_recovered
+        main[!, :MBR_transfer_candidate] = old_candidate .| rec_candidate
+        main[!, :mbr_target_decoy_prob] = ifelse.(rec_recovered, rec_prob, old_prob)
+        main[!, :ftr_qval_true] = ifelse.(rec_recovered, rec_qval, old_qval)
+        main[!, :ftr_pep_true] = ifelse.(rec_recovered, rec_pep, old_pep)
 
         rec = nothing
         GC.gc(false)

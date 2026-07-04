@@ -169,6 +169,38 @@ function gate_mbr_recovered_by_global_qvalue(
     return desc => op
 end
 
+function _initial_precursor_qvalue_filter(q_value_threshold::Float32)
+    desc = "initial_precursor_qvalue_filter_with_mbr_recovery"
+    op = function(df)
+        qvals = df[!, :qval]
+        global_qvals = df[!, :global_qval]
+        recovered = hasproperty(df, :mbr_recovered) ? df[!, :mbr_recovered] : falses(nrow(df))
+
+        keep = BitVector(undef, nrow(df))
+        @inbounds for i in 1:nrow(df)
+            global_pass = !ismissing(global_qvals[i]) && Float32(global_qvals[i]) <= q_value_threshold
+            row_pass = !ismissing(qvals[i]) && Float32(qvals[i]) <= q_value_threshold
+            keep[i] = global_pass && (row_pass || Bool(recovered[i]))
+        end
+        return df[keep, :]
+    end
+    return desc => op
+end
+
+function _normalize_optional_mbr_columns!(df::DataFrame)
+    for col in (:mbr_recovered, :MBR_transfer_candidate, :mbr_rescue_candidate)
+        hasproperty(df, col) || continue
+        values = df[!, col]
+        df[!, col] = Bool[!ismissing(x) && Bool(x) for x in values]
+    end
+    for col in (:mbr_target_decoy_prob, :ftr_qval_true, :ftr_pep_true)
+        hasproperty(df, col) || continue
+        values = df[!, col]
+        df[!, col] = Float32[ismissing(x) ? NaN32 : Float32(x) for x in values]
+    end
+    return df
+end
+
 function remap_mbr_recovered_prec_probs!(
     refs::Vector{PSMFileReference},
     merged_path::String;
@@ -293,6 +325,12 @@ function summarize_results!(
         return nothing
     end
 
+    mbr_rescue_fold_paths = params.match_between_runs ?
+                            get_existing_mbr_rescue_fold_paths(valid_fold_paths) :
+                            String[]
+    !isempty(mbr_rescue_fold_paths) && @debug_l1 "MBR rescue pool: found " *
+        "$(length(mbr_rescue_fold_paths)) fold files before cross-run scoring"
+
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
@@ -305,6 +343,7 @@ function summarize_results!(
             params.q_value_threshold,
             FORCE_OOM;
             match_between_runs = params.match_between_runs,
+            mbr_rescue_file_paths = mbr_rescue_fold_paths,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -314,6 +353,7 @@ function summarize_results!(
     # This simplifies downstream processing which expects one file per MS run
     merged_psm_paths = String[]
     fold_paths_to_delete = String[]
+    precursor_accessions = getAccessionNumbers(getPrecursors(getSpecLib(search_context)))
     for (idx, base_path) in valid_file_data
         fold0_path = "$(base_path)_fold0.arrow"
         fold1_path = "$(base_path)_fold1.arrow"
@@ -337,9 +377,21 @@ function summarize_results!(
         isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
         isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
 
+        for fold in UInt8[0, 1]
+            rescue_path = mbr_rescue_recovered_path(mbr_rescue_fold_path("$(base_path)_fold$(fold).arrow"))
+            isfile(rescue_path) || continue
+            rescue_df = _load_fold(rescue_path)
+            nrow(rescue_df) > 0 && push!(fold_dfs, rescue_df)
+        end
+
         if !isempty(fold_dfs)
             # Merge and write combined file
-            combined_df = vcat(fold_dfs...)
+            combined_df = vcat(fold_dfs...; cols = :union)
+            _normalize_optional_mbr_columns!(combined_df)
+            combined_df[!, :accession_numbers] = [
+                precursor_accessions[pid] for pid in combined_df[!, :precursor_idx]
+            ]
+            combined_df[!, :decoy] = combined_df[!, :target] .== false
             writeArrow(merged_path, combined_df)
             push!(merged_psm_paths, merged_path)
 
@@ -392,12 +444,27 @@ function summarize_results!(
 
         # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
         global_prob_dict, target_dict =
-            build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
+            build_precursor_global_prob_dicts(
+                filtered_refs,
+                sqrt_n_runs,
+                n_precursors;
+                exclude_mbr_rescue_recovered = true,
+            )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
+
+        remap_mbr_recovered_prec_probs!(
+            filtered_refs,
+            results.merged_quant_path;
+            q_value_threshold = params.q_value_threshold,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = fdr_scale,
+            global_qval_dict = global_qval_dict,
+        )
+        filtered_refs = [PSMFileReference(file_path(ref)) for ref in filtered_refs]
 
         # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
         spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
@@ -421,7 +488,7 @@ function summarize_results!(
         annotated_refs = apply_pipeline_batch(filtered_refs, scoring_pipeline, annotated_psms_folder)
 
         initial_filter_pipeline = TransformPipeline() |>
-            filter_by_multiple_thresholds(qval_conditions)
+            _initial_precursor_qvalue_filter(params.q_value_threshold)
 
         passing_refs = apply_pipeline_batch(annotated_refs, initial_filter_pipeline, passing_psms_folder)
     end

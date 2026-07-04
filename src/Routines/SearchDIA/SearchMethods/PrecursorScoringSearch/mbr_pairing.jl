@@ -22,7 +22,7 @@
 # else (mz, charge, irt) comes from the library.
 
 # Streams the per-file Arrow tables and returns one entry per unique pid with
-# library m/z, charge, and iRT metadata.
+# target flag, library m/z, charge, length, iRT, and CV-fold metadata.
 function _collect_unique_precursors_streaming(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
@@ -34,34 +34,37 @@ function _collect_unique_precursors_streaming(
 
     seen         = Set{UInt32}()
     plist_pids   = UInt32[]
+    plist_target = Bool[]
     plist_mz     = Float32[]
     plist_charge = UInt8[]
     plist_length = UInt8[]
     plist_irt    = Float32[]
+    plist_fold   = UInt8[]
 
     for fpath in file_paths
         tbl = Arrow.Table(fpath)
         n = length(tbl.precursor_idx)
         n == 0 && continue
         pid_c    = tbl.precursor_idx
+        target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
+        fold_c   = hasproperty(tbl, :cv_fold) ? tbl.cv_fold : zeros(UInt8, n)
         @inbounds for i in 1:n
             pid = UInt32(pid_c[i])
             pid in seen && continue
             push!(seen, pid)
             push!(plist_pids, pid)
+            push!(plist_target, Bool(target_c[i]))
             push!(plist_mz, Float32(prec_mz_full[pid]))
             push!(plist_charge, UInt8(prec_charge_full[pid]))
             push!(plist_length, UInt8(prec_length_full[pid]))
             push!(plist_irt, Float32(prec_irt_full[pid]))
+            push!(plist_fold, UInt8(fold_c[i]))
         end
     end
-    return (pids = plist_pids, mz = plist_mz, charge = plist_charge,
-            length = plist_length, irt = plist_irt)
+    return (pids = plist_pids, target = plist_target, mz = plist_mz,
+            charge = plist_charge, length = plist_length, irt = plist_irt,
+            fold = plist_fold)
 end
-
-# A pool is a (pids, mzs) NamedTuple with m/z values sorted ascending so we can
-# do binary search for m/z-nearest lookups.
-const _MzPool = NamedTuple{(:pids, :mzs), Tuple{Vector{UInt32}, Vector{Float32}}}
 
 # A pool is a (pids, irts) NamedTuple with library iRT values sorted ascending
 # so we can do binary search for iRT-nearest lookups.
@@ -72,70 +75,112 @@ struct _CounterfactualEligibilityByFile
     run_passed_by_file::Dict{UInt32, BitSet}
 end
 
-_empty_pool() = (pids = UInt32[], mzs = Float32[])
 _empty_irt_pool() = (pids = UInt32[], irts = Float32[])
+_empty_pool() = _empty_irt_pool()
 
 struct _CounterfactualPartnerPools
-    mz_by_pid::Vector{Float32}
+    target_by_pid::Vector{Bool}
+    fold_by_pid::Vector{UInt8}
+    mz_bin_by_pid::Vector{UInt8}
     charge_by_pid::Vector{UInt8}
     length_by_pid::Vector{UInt8}
     irt_by_pid::Vector{Float32}
-    charge_pool::Dict{Int, _MzPool}
-    charge_length_irt_pool::Dict{Tuple{Int, Int}, _IrtPool}
+    pools::Dict{Tuple{Int, Int, Int, Int}, _IrtPool}
+    fold_charge_length_pool::Dict{Tuple{Int, Int, Int}, _IrtPool}
+    charge_length_pool::Dict{Tuple{Int, Int}, _IrtPool}
 end
 
 _CounterfactualPartnerPools(
     mz_by_pid::Vector{Float32},
     charge_by_pid::Vector{UInt8},
     irt_by_pid::Vector{Float32},
-    charge_pool::Dict{Int, _MzPool},
+    charge_pool::Dict{Int, <:NamedTuple},
 ) = _CounterfactualPartnerPools(
-    mz_by_pid,
+    falses(length(mz_by_pid)),
+    zeros(UInt8, length(mz_by_pid)),
+    ones(UInt8, length(mz_by_pid)),
     charge_by_pid,
-    UInt8[],
+    zeros(UInt8, length(mz_by_pid)),
     irt_by_pid,
-    charge_pool,
+    Dict{Tuple{Int, Int, Int, Int}, _IrtPool}(),
+    Dict{Tuple{Int, Int, Int}, _IrtPool}(),
     Dict{Tuple{Int, Int}, _IrtPool}(),
 )
 
-# Build a sorted pool from a list of (mz, pid) tuples — sort by m/z
-# (tiebreak by pid for determinism), then split.
-function _sort_to_pool(pairs::Vector{Tuple{Float32, UInt32}})::_MzPool
-    sort!(pairs; by = x -> (x[1], x[2]))
-    return (pids = UInt32[x[2] for x in pairs],
-            mzs = Float32[x[1] for x in pairs])
+function _compute_mz_decile_edges(mzs::Vector{Float32})
+    finite = filter(isfinite, mzs)
+    if isempty(finite)
+        return Float32.(collect(LinRange(0.0f0, 1.0f0, 11)))
+    end
+    sorted = sort(finite)
+    n = length(sorted)
+    edges = Vector{Float32}(undef, 11)
+    @inbounds for i in 0:10
+        idx = clamp(round(Int, 1 + i * (n - 1) / 10), 1, n)
+        edges[i + 1] = sorted[idx]
+    end
+    if length(unique(edges)) < 11
+        mn, mx = extrema(finite)
+        edges = Float32.(collect(LinRange(mn, mx, 11)))
+    end
+    return edges
 end
 
-function _sort_to_irt_pool(pairs::Vector{Tuple{Float32, UInt32}})::_IrtPool
+function _assign_mz_deciles(mzs::Vector{Float32}, edges::Vector{Float32})
+    bins = Vector{Int}(undef, length(mzs))
+    @inbounds for i in eachindex(mzs)
+        v = mzs[i]
+        bins[i] = isfinite(v) ? clamp(searchsortedlast(edges, v), 1, 10) : 5
+    end
+    return bins
+end
+
+function _sort_to_pool(pairs::Vector{Tuple{Float32, UInt32}})::_IrtPool
     sort!(pairs; by = x -> (x[1], x[2]))
     return (pids = UInt32[x[2] for x in pairs],
             irts = Float32[x[1] for x in pairs])
 end
 
-# Experiment-wide same-charge fallback pools.
-function _build_charge_pools(
-    pids::Vector{UInt32}, charge::Vector{UInt8}, mz::Vector{Float32},
-)
-    tmp = Dict{Int, Vector{Tuple{Float32, UInt32}}}()
-    @inbounds for i in eachindex(pids)
-        key = Int(charge[i])
-        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (mz[i], pids[i]))
-    end
-    return Dict{Int, _MzPool}(k => _sort_to_pool(v) for (k, v) in tmp)
-end
-
-function _build_charge_length_irt_pools(
+function _build_stratum_pools(
     pids::Vector{UInt32},
+    fold::Vector{UInt8},
+    bin_mz::Vector{Int},
     charge::Vector{UInt8},
     length::Vector{UInt8},
     irt::Vector{Float32},
+)
+    tmp = Dict{Tuple{Int, Int, Int, Int}, Vector{Tuple{Float32, UInt32}}}()
+    @inbounds for i in eachindex(pids)
+        key = (Int(fold[i]), bin_mz[i], Int(charge[i]), Int(length[i]))
+        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
+    end
+    return Dict{Tuple{Int, Int, Int, Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
+end
+
+function _build_fold_charge_length_pools(
+    pids::Vector{UInt32},
+    fold::Vector{UInt8},
+    charge::Vector{UInt8},
+    length::Vector{UInt8},
+    irt::Vector{Float32},
+)
+    tmp = Dict{Tuple{Int, Int, Int}, Vector{Tuple{Float32, UInt32}}}()
+    @inbounds for i in eachindex(pids)
+        key = (Int(fold[i]), Int(charge[i]), Int(length[i]))
+        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
+    end
+    return Dict{Tuple{Int, Int, Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
+end
+
+function _build_charge_length_pools(
+    pids::Vector{UInt32}, charge::Vector{UInt8}, length::Vector{UInt8}, irt::Vector{Float32},
 )
     tmp = Dict{Tuple{Int, Int}, Vector{Tuple{Float32, UInt32}}}()
     @inbounds for i in eachindex(pids)
         key = (Int(charge[i]), Int(length[i]))
         push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
     end
-    return Dict{Tuple{Int, Int}, _IrtPool}(k => _sort_to_irt_pool(v) for (k, v) in tmp)
+    return Dict{Tuple{Int, Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
 end
 
 """
@@ -152,45 +197,67 @@ end
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    ;
+    receiver_file_paths::Vector{String} = file_paths,
 )
-    unique = _collect_unique_precursors_streaming(file_paths, precursors)
-    n_precs = length(unique.pids)
-    if n_precs == 0
+    pool_unique = _collect_unique_precursors_streaming(file_paths, precursors)
+    receiver_unique = receiver_file_paths == file_paths ?
+                      pool_unique :
+                      _collect_unique_precursors_streaming(receiver_file_paths, precursors)
+    n_pool_precs = length(pool_unique.pids)
+    n_receiver_precs = length(receiver_unique.pids)
+    if n_pool_precs == 0 && n_receiver_precs == 0
         return _CounterfactualPartnerPools(
-            Float32[], UInt8[], UInt8[], Float32[],
-            Dict{Int, _MzPool}(),
+            Bool[], UInt8[], UInt8[], UInt8[], UInt8[], Float32[],
+            Dict{Tuple{Int, Int, Int, Int}, _IrtPool}(),
+            Dict{Tuple{Int, Int, Int}, _IrtPool}(),
             Dict{Tuple{Int, Int}, _IrtPool}(),
         )
     end
 
-    charge_pool = _build_charge_pools(
-        unique.pids, unique.charge, unique.mz,
+    mz_edges = _compute_mz_decile_edges(pool_unique.mz)
+    pool_bin_mz = _assign_mz_deciles(pool_unique.mz, mz_edges)
+    pools = _build_stratum_pools(
+        pool_unique.pids, pool_unique.fold, pool_bin_mz, pool_unique.charge,
+        pool_unique.length, pool_unique.irt,
     )
-    charge_length_irt_pool = _build_charge_length_irt_pools(
-        unique.pids, unique.charge, unique.length, unique.irt,
+    fold_charge_length_pool = _build_fold_charge_length_pools(
+        pool_unique.pids, pool_unique.fold, pool_unique.charge,
+        pool_unique.length, pool_unique.irt,
+    )
+    charge_length_pool = _build_charge_length_pools(
+        pool_unique.pids, pool_unique.charge, pool_unique.length, pool_unique.irt,
     )
 
-    max_pid = Int(maximum(unique.pids))
-    mz_by_pid = zeros(Float32, max_pid)
+    max_pid = Int(maximum(receiver_unique.pids))
+    target_by_pid = falses(max_pid)
+    fold_by_pid = zeros(UInt8, max_pid)
+    mz_bin_by_pid = zeros(UInt8, max_pid)
     charge_by_pid = zeros(UInt8, max_pid)
     length_by_pid = zeros(UInt8, max_pid)
     irt_by_pid = zeros(Float32, max_pid)
 
-    @inbounds for i in 1:n_precs
-        pid = Int(unique.pids[i])
-        mz_by_pid[pid] = unique.mz[i]
-        charge_by_pid[pid] = unique.charge[i]
-        length_by_pid[pid] = unique.length[i]
-        irt_by_pid[pid] = unique.irt[i]
+    receiver_bin_mz = _assign_mz_deciles(receiver_unique.mz, mz_edges)
+    @inbounds for i in 1:n_receiver_precs
+        pid = Int(receiver_unique.pids[i])
+        target_by_pid[pid] = receiver_unique.target[i]
+        fold_by_pid[pid] = receiver_unique.fold[i]
+        mz_bin_by_pid[pid] = UInt8(receiver_bin_mz[i])
+        charge_by_pid[pid] = receiver_unique.charge[i]
+        length_by_pid[pid] = receiver_unique.length[i]
+        irt_by_pid[pid] = receiver_unique.irt[i]
     end
 
     return _CounterfactualPartnerPools(
-        mz_by_pid,
+        target_by_pid,
+        fold_by_pid,
+        mz_bin_by_pid,
         charge_by_pid,
         length_by_pid,
         irt_by_pid,
-        charge_pool,
-        charge_length_irt_pool,
+        pools,
+        fold_charge_length_pool,
+        charge_length_pool,
     )
 end
 
