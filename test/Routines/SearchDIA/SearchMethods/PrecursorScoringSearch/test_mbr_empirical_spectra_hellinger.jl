@@ -88,7 +88,7 @@ function _mbr_empirical_pass1_table(; precursor_idx, scan_idx, score)
     )
 end
 
-@testset "MBR empirical smoothed Hellinger aligns spectra by library annotation" begin
+@testset "MBR empirical smoothed Hellinger aligns spectra by rank" begin
     mktempdir() do dir
         f1 = joinpath(dir, "run1_fold0.arrow")
         f2 = joinpath(dir, "run2_fold0.arrow")
@@ -169,8 +169,8 @@ end
         )
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
-        @test isapprox(mbr.MBR_best_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
-        @test isapprox(mbr.MBR_worst_smoothed_frag_hellinger_false[1], 1.0f0; atol = 1.0f-6)
+        @test isapprox(mbr.MBR_best_smoothed_frag_hellinger_false[1], 1.0f0; atol = 1.0f-6)
+        @test isapprox(mbr.MBR_worst_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
         @test mbr.MBR_best_is_missing_false[1] == false
         @test !(:MBR_max_pair_prob_false in propertynames(mbr))
         @test mbr.MBR_best_pair_prob_false[1] == 0.91f0
@@ -185,9 +185,15 @@ end
         @test isapprox(mbr.MBR_best_log2_n_scans_ratio_false[1], log2(10.0f0 / 6.0f0); atol = 1.0f-6)
         @test mbr.MBR_best_donor_library_hellinger_false[1] == 0.25f0
         @test mbr.MBR_worst_donor_library_hellinger_false[1] == 0.75f0
+        all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
         @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_worst_smoothed_frag_hellinger_true in all_features)
+        @test !(:MBR_worst_smoothed_frag_hellinger_false in all_features)
         @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
+        @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
+        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
+        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
@@ -199,9 +205,29 @@ end
         @test :MBR_best_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_best_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_log2_explained_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_log2_explained_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_abs_n_scans_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_best_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_best_rt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_best_rt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_best_log_by_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_best_log_by_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test :MBR_best_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_best_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_worst_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_donor_library_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
     end
 end

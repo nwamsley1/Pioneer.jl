@@ -29,6 +29,16 @@
 # Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
+const MBR_RECOVERY_ALPHA_DEFAULT = Float32(0.01)
+
+function _mbr_recovery_alpha_from_env(env = ENV)::Float32
+    raw = get(env, "PIONEER_MBR_FTR_ALPHA", "")
+    isempty(raw) && return MBR_RECOVERY_ALPHA_DEFAULT
+    value = tryparse(Float32, raw)
+    (value === nothing || !isfinite(value) || value <= 0.0f0 || value > 1.0f0) &&
+        error("PIONEER_MBR_FTR_ALPHA must be a finite number in (0, 1], got \"$raw\"")
+    return value
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Legacy Phase 6 (single-frame) FTR controller removed 2026-05-18.
@@ -66,7 +76,7 @@ const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
 #     both subsequently dropped along with the other M0 frag-6-vector features)
 const FTR_FEATURES_F_TRUE = Symbol[
     :main_search_prob,
-    :trace_prob_infold,                            # rtv3: in-fold Pass-1 score
+    :trace_prob_infold,
     :MBR_best_pair_prob_true,
     :MBR_worst_pair_prob_true,
     :MBR_log2_weight_lod_ratio,
@@ -84,9 +94,6 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
     :MBR_best_smoothed_frag_hellinger_true,
-    :MBR_worst_smoothed_frag_hellinger_true,
-    :MBR_best_donor_library_hellinger_true,
-    :MBR_worst_donor_library_hellinger_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -99,12 +106,20 @@ const FTR_FEATURES_F_TRUE = Symbol[
 #   at a cost of −0.06 % precursor IDs / −2.1 % MBR recoveries (YeastMBR);
 #   HelaOnly pure-FTR 0.252 % → 0.242 %, PGs +0.33 %, IDs −0.65 %. Net quality
 #   win; donor entries no longer need frag1_int..frag8_int.
+#
+# Ablated 2026-07-03:
+#   :MBR_best_rt_diff_true, :MBR_best_log_by_diff_true, worst Hellinger inputs,
+#   and donor-library Hellinger inputs. The best/worst precursor summaries are
+#   kept, with :MBR_single_donor_* marking rows whose worst donor columns are
+#   sentinel-valued because only one donor was available. :main_search_prob is
+#   the per-run MainSearch confidence, derived as 1 - main_pep in the slim MBR
+#   frame.
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror
 # FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
-# semantic feature columns in the same order. Row-level features
-# (trace_prob_infold) pass through the default `f` branch unchanged.
+# semantic feature columns in the same order. Row-level features such as
+# trace_prob_infold pass through the default `f` branch unchanged.
 const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_best_pair_prob_true       ? :MBR_best_pair_prob_false :
     f === :MBR_worst_pair_prob_true      ? :MBR_worst_pair_prob_false :
@@ -118,9 +133,11 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_worst_log2_n_scans_ratio_true ? :MBR_worst_log2_n_scans_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_worst_irt_diff_true       ? :MBR_worst_irt_diff_false :
+    f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :
     f === :MBR_best_observed_irt_diff_true ? :MBR_best_observed_irt_diff_false :
     f === :MBR_worst_observed_irt_diff_true ? :MBR_worst_observed_irt_diff_false :
     f === :MBR_single_donor_true         ? :MBR_single_donor_false :
+    f === :MBR_best_log_by_diff_true     ? :MBR_best_log_by_diff_false :
     f === :MBR_best_smoothed_frag_hellinger_true ? :MBR_best_smoothed_frag_hellinger_false :
     f === :MBR_worst_smoothed_frag_hellinger_true ? :MBR_worst_smoothed_frag_hellinger_false :
     f === :MBR_best_donor_library_hellinger_true ? :MBR_best_donor_library_hellinger_false :
