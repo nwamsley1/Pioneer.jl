@@ -88,6 +88,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     weight::H
 
     fitted_hellinger::L
+    fitted_lod_huber::L
 
     # Per-rank fitted and shadow intensities from the deconvolved design
     # matrix. These are temporary helper columns for selected-PSM cross-run
@@ -206,6 +207,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             weight[scores_idx],
 
             L(spectral_scores[scores_idx].fitted_hellinger),
+            L(spectral_scores[scores_idx].fitted_lod_huber),
 
             H(spectral_scores[scores_idx].fitted_frag1_int),
             H(spectral_scores[scores_idx].fitted_frag2_int),

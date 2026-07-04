@@ -123,7 +123,8 @@ function process_scans_fused!(
                 if !converged
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)
                 else
-                    compute_distance_metrics!(Hs, search_data, params)
+                    scan_lod = scan_lod_bottom_percent!(corr_mz, scan_int)
+                    compute_distance_metrics!(Hs, search_data, params, scan_lod)
                     last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
                                           spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)

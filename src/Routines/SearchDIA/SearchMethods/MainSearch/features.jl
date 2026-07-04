@@ -156,7 +156,7 @@ const PRESCORE_FEATURES = [
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
-    :fitted_hellinger,
+    :fitted_hellinger, :fitted_lod_huber,
 
     # Cross-precursor at-scan
     :weight_ratio_at_scan, :weight_rank_at_scan,

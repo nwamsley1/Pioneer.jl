@@ -17,6 +17,7 @@ const _getDistanceMetrics      = Pioneer.getDistanceMetrics
 const _psm_getPoisson          = Pioneer.psm_getPoisson
 const _psm_logfac              = Pioneer.psm_logfac
 const _pack_meta               = Pioneer.pack_meta
+const _scan_lod_bottom_percent = Pioneer.scan_lod_bottom_percent
 
 # ---------------------------------------------------------------------------
 # Build a 1-column SparseArrayFused with `peaks` rows. `matched` is a
@@ -48,12 +49,13 @@ function _make_single_col_H(nzval::Vector{Float32}, x::Vector{Float32},
 end
 
 function _score_single(w_val::Float32, nzval, x, matched;
-                       ranks=zeros(UInt8, length(nzval)))
+                       ranks=zeros(UInt8, length(nzval)),
+                       lod::Float32=0.0f0)
     H = _make_single_col_H(nzval, x, matched; ranks=ranks)
     w = Float32[w_val]
     r = zeros(Float32, H.m)
     spectral_scores = Vector{_SpectralScoresMainSearch{Float16, Float32}}(undef, 1)
-    _getDistanceMetrics(w, r, H, spectral_scores)
+    _getDistanceMetrics(w, r, H, spectral_scores, lod)
     spectral_scores[1]
 end
 
@@ -190,6 +192,50 @@ end
     @test s.shadow_frag2_int == 6.0f0
     @test s.fitted_frag3_int == 0.0f0
     @test s.shadow_frag3_int == 0.0f0
+end
+
+@testset "LOD-aware one-sided Huber spectral feature" begin
+    @test _scan_lod_bottom_percent(Union{Missing, Float32}[
+        missing;
+        0.0f0;
+        Float32.(200:-1:1)
+    ]) == 2.0f0
+    @test _scan_lod_bottom_percent(Float32[0.0, -1.0, 0.0]) == 0.0f0
+
+    below_lod_missing = _score_single(
+        1.0f0,
+        Float32[5.0],
+        Float32[0.0],
+        Bool[false];
+        lod = 10.0f0,
+    )
+    above_lod_missing = _score_single(
+        1.0f0,
+        Float32[20.0],
+        Float32[0.0],
+        Bool[false];
+        lod = 10.0f0,
+    )
+    partial_shadow = _score_single(
+        1.0f0,
+        Float32[20.0],
+        Float32[15.0],
+        Bool[true];
+        lod = 10.0f0,
+    )
+    excess_shadow = _score_single(
+        1.0f0,
+        Float32[20.0],
+        Float32[100.0],
+        Bool[true];
+        lod = 10.0f0,
+    )
+
+    @test isfinite(below_lod_missing.fitted_lod_huber)
+    @test below_lod_missing.fitted_lod_huber == 0.0f0
+    @test above_lod_missing.fitted_lod_huber < partial_shadow.fitted_lod_huber
+    @test partial_shadow.fitted_lod_huber < excess_shadow.fitted_lod_huber
+    @test excess_shadow.fitted_lod_huber > Float16(20)
 end
 
 @testset "Feature finiteness — log2 floors at the PSM emission site" begin

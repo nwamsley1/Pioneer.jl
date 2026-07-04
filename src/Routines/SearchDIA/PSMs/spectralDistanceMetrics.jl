@@ -22,6 +22,7 @@ struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralSc
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     fitted_hellinger::T
+    fitted_lod_huber::T
     fitted_frag1_int::I
     fitted_frag2_int::I
     fitted_frag3_int::I
@@ -39,11 +40,41 @@ struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralSc
     shadow_frag7_int::I
     shadow_frag8_int::I
 end
+
+const SCAN_LOD_BOTTOM_FRACTION = Float32(0.01)
+
+function scan_lod_bottom_percent!(scratch::Vector{Float32}, intens)::Float32
+    n = 0
+    length(scratch) < length(intens) && resize!(scratch, length(intens))
+    @inbounds for i in eachindex(intens)
+        it = intens[i]
+        ismissing(it) && continue
+        v = Float32(it)
+        if isfinite(v) && v > 0.0f0
+            n += 1
+            scratch[n] = v
+        end
+    end
+    n == 0 && return 0.0f0
+    rank = clamp(ceil(Int, Float64(SCAN_LOD_BOTTOM_FRACTION) * n), 1, n)
+    return Float32(partialsort!(@view(scratch[1:n]), rank))
+end
+
+scan_lod_bottom_percent(intens)::Float32 =
+    scan_lod_bottom_percent!(Vector{Float32}(undef, length(intens)), intens)
+
+@inline function _lod_huber_loss(z::T) where {T<:AbstractFloat}
+    z <= one(T) ? T(0.5) * z * z : z - T(0.5)
+end
+
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::AbstractSparseDesignMatrix{Ti,T},
-    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
+    spectral_scores::Vector{SpectralScoresMainSearch{U,V}},
+    scan_lod::T = zero(T)
    ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
+
+    lod = max(scan_lod, zero(T))
 
     # Zero residual vector
     @turbo for i in range(1, H.m)
@@ -69,7 +100,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
@@ -89,6 +120,8 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient
         sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
+        lod_huber_loss = zero(T)
+        lod_huber_weight = zero(T)
         fitted_frag1_int = zero(T)
         fitted_frag2_int = zero(T)
         fitted_frag3_int = zero(T)
@@ -120,6 +153,16 @@ function getDistanceMetrics(w::Vector{T},
             sum_fitted += fitted_peak
             sum_shadow += x_i
             bc_sum += sqrt(fitted_peak * x_i)
+
+            detectable_peak = max(fitted_peak - lod, zero(T))
+            if detectable_peak > zero(T)
+                observed_floor = max(x_i, lod)
+                deficit = max(fitted_peak - observed_floor, zero(T))
+                z = deficit / detectable_peak
+                lod_huber_loss += detectable_peak * _lod_huber_loss(z)
+                lod_huber_weight += detectable_peak
+            end
+
             rank = rank_at(H, i)
             if rank == UInt8(1)
                 fitted_frag1_int += fitted_peak
@@ -172,6 +215,9 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_denom = sqrt(sum_fitted * sum_shadow)
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
+        fitted_lod_huber = lod_huber_weight > zero(T) ?
+            -log2(lod_huber_loss / lod_huber_weight + T(1e-10)) :
+            zero(T)
 
         spectral_scores[col] = SpectralScoresMainSearch(
             U(gof),
@@ -179,6 +225,7 @@ function getDistanceMetrics(w::Vector{T},
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             U(fitted_hellinger),
+            U(fitted_lod_huber),
             V(fitted_frag1_int),
             V(fitted_frag2_int),
             V(fitted_frag3_int),
