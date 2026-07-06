@@ -28,7 +28,7 @@ Pipeline:
 # Per-file PEP threshold applied to best-per-precursor PSMs. Precursors with
 # PEP > MAIN_PEP_FILTER_THR are dropped before being written to the second-pass
 # arrows ScoringSearch reads. Set ≥ 1.0 to disable the filter entirely.
-const MAIN_PEP_FILTER_THR = 0.9f0
+const MAIN_PEP_FILTER_THR = 0.999f0
 
 # Minimum number of high-confidence target precursors required to fit the
 # cross-fold iRT refinement model. Files with fewer than this many high-
