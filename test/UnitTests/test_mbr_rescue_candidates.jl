@@ -5,6 +5,7 @@ using Pioneer
 
 @testset "MBR rescue candidate helpers" begin
     @testset "main-search PEP partition bounds MBR rescue candidates" begin
+        @test Pioneer.MAIN_PEP_FILTER_THR == 0.99f0
         @test Pioneer.MAIN_MBR_RESCUE_PEP_MAX == 0.99f0
 
         peps = Float32[0.0, 0.9, 0.9001, 0.98, 0.99, 1.0]
@@ -13,6 +14,13 @@ using Pioneer
         @test part.keep_mask == Bool[true, true, false, false, false, false]
         @test part.rescue_mask == Bool[false, false, true, true, true, false]
         @test part.discard_mask == Bool[false, false, false, false, false, true]
+
+        default_part = Pioneer._mainsearch_pep_partition(
+            peps,
+            Pioneer.MAIN_PEP_FILTER_THR,
+            Pioneer.MAIN_MBR_RESCUE_PEP_MAX,
+        )
+        @test !any(default_part.rescue_mask)
     end
 
     @testset "rescue path discovery mirrors main_search_psms layout" begin

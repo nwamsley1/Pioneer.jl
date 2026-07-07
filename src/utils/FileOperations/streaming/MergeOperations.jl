@@ -64,7 +64,7 @@ function fillColumn!(
 ) where {T<:Real}
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::T
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -80,7 +80,7 @@ function fillColumn!(
 ) where {T<:Real}
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Union{Missing, T}
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -96,7 +96,7 @@ function fillColumn!(
 )
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::String
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -112,7 +112,7 @@ function fillColumn!(
 )
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Union{Missing, String}
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -128,7 +128,7 @@ function fillColumn!(
 )
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Bool
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -144,7 +144,7 @@ function fillColumn!(
 )
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::UInt8
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -160,7 +160,7 @@ function fillColumn!(
 ) where {R<:Real}
     for i in 1:n_rows
         table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Tuple{R,R}
+        batch_col[i] = tables[table_idx][col][row_idx]
     end
 end
 
@@ -192,6 +192,37 @@ function _fillColumn!(col::Vector{T}, col_symbol::Symbol,
     end
 end
 
+function fillColumn!(
+    batch_col::AbstractVector,
+    col::Symbol,
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
+    tables::Vector{Arrow.Table},
+    n_rows::Int,
+)
+    for i in 1:n_rows
+        table_idx, row_idx = sorted_tuples[i]
+        batch_col[i] = Tables.getcolumn(tables[table_idx], col)[row_idx]
+    end
+end
+
+function _fillColumn_missing_if_absent!(
+    batch_col::AbstractVector,
+    col_symbol::Symbol,
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
+    tables::Vector{Arrow.Table},
+    table_has_column::Vector{Bool},
+    n_rows::Int,
+)
+    for i in 1:n_rows
+        table_idx, row_idx = sorted_tuples[i]
+        if table_has_column[table_idx]
+            batch_col[i] = Tables.getcolumn(tables[table_idx], col_symbol)[row_idx]
+        else
+            batch_col[i] = missing
+        end
+    end
+end
+
 # Fill batch columns from sorted tuples (type-stable version)
 function _fill_batch_columns_nkey!(
     batch_df::DataFrame, 
@@ -199,9 +230,27 @@ function _fill_batch_columns_nkey!(
     sorted_tuples::Vector{Tuple{Int64, Int64}}, 
     n_rows::Int
 )
+    table_column_names = [Set(Symbol.(Tables.columnnames(table))) for table in tables]
     for col_name in names(batch_df)
         col_symbol = Symbol(col_name)
-        fillColumn!(batch_df[!, col_symbol], col_symbol, sorted_tuples, tables, n_rows)
+        batch_col = batch_df[!, col_symbol]
+        table_has_column = Bool[col_symbol in table_cols for table_cols in table_column_names]
+        if all(table_has_column)
+            fillColumn!(batch_col, col_symbol, sorted_tuples, tables, n_rows)
+        elseif Missing <: eltype(batch_col)
+            _fillColumn_missing_if_absent!(
+                batch_col,
+                col_symbol,
+                sorted_tuples,
+                tables,
+                table_has_column,
+                n_rows,
+            )
+        else
+            missing_table_idx = findfirst(!, table_has_column)
+            error("Column $col_symbol is missing from merge input table $missing_table_idx, " *
+                  "but output column type $(eltype(batch_col)) cannot store missing")
+        end
     end
 end
 
@@ -232,31 +281,79 @@ end
 
 """
 Create a type-stable empty DataFrame with pre-allocated vectors.
-Types are determined from the schema of the first table.
+Types are promoted across all input table schemas so nullable and optional
+columns can be merged without depending on input order.
 
 Note: Array element types (e.g., SubArray{Float32, ...}) are preserved as-is,
 since some Arrow columns store array data per row (List columns).
 """
-function create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int)
+function _merged_column_names(tables::Vector{Arrow.Table})
+    col_names = Symbol[]
+    seen = Set{Symbol}()
+    for table in tables
+        for col_name in Symbol.(Tables.columnnames(table))
+            col_name in seen && continue
+            push!(col_names, col_name)
+            push!(seen, col_name)
+        end
+    end
+    return col_names
+end
+
+function _promote_column_eltype(col_types::Vector{Type}, missing_from_input::Bool)::Type
+    isempty(col_types) && return Missing
+    promoted_type = Base.nonmissingtype(first(col_types))
+    for col_type in Iterators.drop(col_types, 1)
+        promoted_type = promote_type(promoted_type, Base.nonmissingtype(col_type))
+    end
+    needs_missing = missing_from_input || any(col_type -> Missing <: col_type, col_types)
+    return needs_missing ? Union{Missing, promoted_type} : promoted_type
+end
+
+function _promoted_column_eltypes(
+    tables::Vector{Arrow.Table},
+    col_names::NTuple{N, Symbol},
+) where {N}
+    table_column_names = [Set(Symbol.(Tables.columnnames(table))) for table in tables]
+    return ntuple(N) do idx
+        col_name = col_names[idx]
+        col_types = Type[]
+        missing_from_input = false
+        for (table_idx, table) in pairs(tables)
+            if col_name in table_column_names[table_idx]
+                push!(col_types, eltype(Tables.getcolumn(table, col_name)))
+            else
+                missing_from_input = true
+            end
+        end
+        _promote_column_eltype(col_types, missing_from_input)
+    end
+end
+
+function create_typed_dataframe(tables::Vector{Arrow.Table}, batch_size::Int)
     df = DataFrame()
-    col_names = Tables.columnnames(reference_table)
+    col_names = _merged_column_names(tables)
+    table_column_names = [Set(Symbol.(Tables.columnnames(table))) for table in tables]
 
     for col_name in col_names
-        col_type = eltype(Tables.getcolumn(reference_table, col_name))
-
-        # Create appropriately typed vector (preserve array types as-is)
-        if col_type isa Union && Missing <: col_type
-            # Handle Union{Missing, T} types
-            non_missing_types = Base.uniontypes(col_type)
-            actual_type = first(t for t in non_missing_types if t !== Missing)
-            df[!, col_name] = Vector{Union{Missing, actual_type}}(undef, batch_size)
-        else
-            df[!, col_name] = Vector{col_type}(undef, batch_size)
+        col_types = Type[]
+        missing_from_input = false
+        for (table_idx, table) in pairs(tables)
+            if col_name in table_column_names[table_idx]
+                push!(col_types, eltype(Tables.getcolumn(table, col_name)))
+            else
+                missing_from_input = true
+            end
         end
+        col_type = _promote_column_eltype(col_types, missing_from_input)
+        df[!, col_name] = Vector{col_type}(undef, batch_size)
     end
 
     return df
 end
+
+create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int) =
+    create_typed_dataframe(Arrow.Table[reference_table], batch_size)
 
 #==========================================================
 N-Key Implementation Support Functions
@@ -474,13 +571,9 @@ function stream_sorted_merge(
     # Normalize reverse specification
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
 
-    # Determine types from first file
-    first_table = Arrow.Table(file_path(first(refs)))
-    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
-
     # Dispatch to N-key implementation
     return _stream_sorted_merge_nkey_impl(
-        refs, output_path, sort_keys_tuple, sort_types, reverse_vec, batch_size
+        refs, output_path, sort_keys_tuple, reverse_vec, batch_size
     )
 end
 
@@ -491,10 +584,9 @@ function _stream_sorted_merge_nkey_impl(
     refs::Vector{<:FileReference},
     output_path::String,
     sort_keys::NTuple{N,Symbol},
-    sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int
-) where {N, M}
+) where {N}
     # Validate all files exist and have compatible schemas
     for ref in refs
         validate_exists(ref)
@@ -524,10 +616,11 @@ function _stream_sorted_merge_nkey_impl(
     table_indices = ones(Int64, length(tables))
     
     # Create type-stable batch DataFrame
-    batch_df = create_typed_dataframe(first(tables), batch_size)
+    batch_df = create_typed_dataframe(tables, batch_size)
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
     
     # Create heap with full type information
+    sort_types = _promoted_column_eltypes(tables, sort_keys)
     heap_tuple_type = Tuple{sort_types..., Int64}
     heap = _create_typed_heap(heap_tuple_type, reverse_vec)
     
@@ -623,12 +716,8 @@ function stream_sorted_merge_chunked(
     sort_keys_tuple = tuple(sort_keys...)
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
 
-    first_table = Arrow.Table(file_path(first(refs)))
-    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
-
     return _stream_sorted_merge_chunked_impl(
-        refs, output_dir, group_key, sort_keys_tuple, sort_types,
-        reverse_vec, batch_size, max_chunk_bytes
+        refs, output_dir, group_key, sort_keys_tuple, reverse_vec, batch_size, max_chunk_bytes
     )
 end
 
@@ -637,11 +726,10 @@ function _stream_sorted_merge_chunked_impl(
     output_dir::String,
     group_key::Symbol,
     sort_keys::NTuple{N,Symbol},
-    sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int,
     max_chunk_bytes::Int
-) where {N, M}
+) where {N}
     # Validate
     for ref in refs
         validate_exists(ref)
@@ -665,9 +753,10 @@ function _stream_sorted_merge_chunked_impl(
     estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes / total_source_rows : 0.0
     table_indices = ones(Int64, length(tables))
 
-    batch_df = create_typed_dataframe(first(tables), batch_size)
+    batch_df = create_typed_dataframe(tables, batch_size)
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
 
+    sort_types = _promoted_column_eltypes(tables, sort_keys)
     heap_tuple_type = Tuple{sort_types..., Int64}
     heap = _create_typed_heap(heap_tuple_type, reverse_vec)
 

@@ -28,7 +28,7 @@ Pipeline:
 # Per-file PEP threshold applied to best-per-precursor PSMs. Precursors with
 # PEP > MAIN_PEP_FILTER_THR are dropped before being written to the second-pass
 # arrows ScoringSearch reads. Set ≥ 1.0 to disable the filter entirely.
-const MAIN_PEP_FILTER_THR = 0.9f0
+const MAIN_PEP_FILTER_THR = 0.99f0
 
 # PEP ceiling for rows that fail the normal MainSearch gate but are retained
 # as MBR-only rescue candidates. Rows above this are discarded before the

@@ -29,6 +29,73 @@ using Pioneer: PSMFileReference, stream_sorted_merge, stream_sorted_merge_chunke
     @test length(dfm.score) == 6
 end
 
+@testset "stream_sorted_merge fills missing nullable columns absent from an input" begin
+    tmp = mktempdir()
+    f1 = joinpath(tmp, "with_optional.arrow")
+    f2 = joinpath(tmp, "without_optional.arrow")
+    out = joinpath(tmp, "merged.arrow")
+
+    df1 = DataFrame(
+        id = Int64[1, 3],
+        score = Float32[0.9, 0.7],
+        optional_pid = Union{Missing, UInt32}[UInt32(10), missing],
+    )
+    df2 = DataFrame(
+        id = Int64[2, 4],
+        score = Float32[0.8, 0.6],
+    )
+    Arrow.write(f1, df1)
+    Arrow.write(f2, df2)
+
+    ref1 = PSMFileReference(f1)
+    ref2 = PSMFileReference(f2)
+    sort_file_by_keys!(ref1, :id)
+    sort_file_by_keys!(ref2, :id)
+
+    merged_ref = stream_sorted_merge([ref1, ref2], out, :id)
+    dfm = load_dataframe(merged_ref)
+
+    @test dfm.id == collect(1:4)
+    @test isequal(dfm.optional_pid, Union{Missing, UInt32}[UInt32(10), missing, missing, missing])
+end
+
+@testset "stream_sorted_merge_chunked promotes nullable columns across inputs" begin
+    tmp = mktempdir()
+    f1 = joinpath(tmp, "nonnull.arrow")
+    f2 = joinpath(tmp, "nullable.arrow")
+
+    df1 = DataFrame(
+        group = String["A", "B"],
+        id = Int64[1, 3],
+        score = Float32[0.9, 0.7],
+    )
+    df2 = DataFrame(
+        group = String["A", "B"],
+        id = Int64[2, 4],
+        score = Union{Missing, Float32}[missing, 0.6f0],
+    )
+    Arrow.write(f1, df1)
+    Arrow.write(f2, df2)
+
+    ref1 = PSMFileReference(f1)
+    ref2 = PSMFileReference(f2)
+    sort_file_by_keys!(ref1, :group, :id)
+    sort_file_by_keys!(ref2, :group, :id)
+
+    out_dir = joinpath(tmp, "chunks")
+    chunk_refs = stream_sorted_merge_chunked(
+        [ref1, ref2],
+        out_dir,
+        :group,
+        :group,
+        :id,
+    )
+    combined = vcat((load_dataframe(ref) for ref in chunk_refs)...)
+
+    @test combined.id == collect(1:4)
+    @test isequal(combined.score, Union{Missing, Float32}[0.9f0, missing, 0.7f0, 0.6f0])
+end
+
 @testset "hierarchical merge with many files" begin
     tmp = mktempdir()
     n_files = 20  # triggers multiple stages with max_fanin=4
