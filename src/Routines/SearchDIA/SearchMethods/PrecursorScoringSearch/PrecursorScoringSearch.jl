@@ -495,10 +495,6 @@ function summarize_results!(
 
     if params.match_between_runs && !isempty(passing_refs)
         post_mbr_time = @elapsed begin
-            irt_tolerance_by_file = Dict{UInt32, Float32}()
-            for (ms_file_idx, irt_tol) in pairs(getIrtErrors(search_context))
-                irt_tolerance_by_file[UInt32(ms_file_idx)] = Float32(irt_tol)
-            end
             summary = run_mbr_after_qvalue_filter!(
                 annotated_refs,
                 passing_refs,
@@ -506,7 +502,6 @@ function summarize_results!(
                 getFragmentLookupTable(getSpecLib(search_context));
                 q_value_threshold = params.q_value_threshold,
                 donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
-                irt_tolerance_by_file = irt_tolerance_by_file,
             )
             @debug_l1 "Post-qvalue MBR completed: files=$(summary.n_files), " *
                       "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"

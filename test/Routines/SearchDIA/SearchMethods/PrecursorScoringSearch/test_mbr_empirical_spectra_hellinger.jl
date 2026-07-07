@@ -196,27 +196,27 @@ end
         @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
         @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
         @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
         @test :MBR_log2_weight_lod_ratio in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_log2_explained_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_log2_explained_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_abs_n_scans_diff_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_worst_log2_explained_ratio_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_log2_explained_ratio_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_worst_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_abs_n_scans_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE)
         @test :MBR_best_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
-        @test :MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
         @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
         @test !(:MBR_best_rt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
