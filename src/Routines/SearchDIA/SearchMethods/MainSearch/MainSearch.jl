@@ -649,7 +649,7 @@ function summarize_results!(
     t2 = time() - t2_start
 
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
-    @debug_l1 "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"
+    @user_info "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"
 
     # Step 3: Compute the RT-binned chromatographic tolerance used when
     # extracting chromatograms around each precursor's refined RT.
