@@ -5,7 +5,7 @@ index bitmask patterns to discriminate targets from decoys.
 Runs between QuadTuning and MainSearch. Cross-file pooled:
 
 process_file! (per file):
-  1. Sample MS2 scans at random (representative across the run, not top-TIC)
+  1. Sample top-TIC MS2 scans
   2. Run fragment index in accumulator mode (PatternAccumulator)
      — tallies 256-bin target/decoy counts directly in the scoring
        loop with zero tuple allocation
@@ -287,6 +287,8 @@ function _bitvec_excess_rank_table(
     return ranks
 end
 
+_bitvec_calibration_scan_order(scan_priority::AbstractVector) = scan_priority
+
 function process_file!(
     results::BitVecCalibrationResults,
     params::BitVecCalibrationParameters,
@@ -308,13 +310,8 @@ function process_file!(
     prec_mzs = getMz(precursors)
     prec_irts = getIrt(precursors)
 
-    scan_priority = get_ms2_scan_priority_order(spectra)
+    scan_priority = _bitvec_calibration_scan_order(get_ms2_scan_priority_order(spectra))
     total_ms2 = length(scan_priority)
-    # Sample scans RANDOMLY (representative across the run) instead of top-TIC. Top-TIC
-    # sampling under-represents low-TIC (e.g. early-gradient) scans, which mis-calibrates
-    # the bitvec filter in those regions and drops early-eluting precursors; a representative
-    # random sample fixes it. Shuffle in place (seeded per file for reproducibility).
-    shuffle!(MersenneTwister(1_800_017 + total_ms2), scan_priority)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
 
     # Adaptive accumulation: collect scans until total counts ≥ 1M or all scans used
