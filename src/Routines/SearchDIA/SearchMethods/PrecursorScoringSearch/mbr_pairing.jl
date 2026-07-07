@@ -6,26 +6,28 @@
 # MBR pairing.
 #
 # Builds experiment-global counterfactual-partner pools used by MBR
-# Batch F. For every unique `precursor_idx` observed across the per-file
-# second-pass Arrow tables, stores shared same-length/same-charge iRT pools
-# needed to choose the nearest valid non-self counterfactual partner for each
-# receiver file.
+# Batch F. The shared same-length/same-charge iRT pools contain every finite
+# refined-iRT observation observed across the per-file second-pass Arrow tables,
+# so a precursor seen in multiple runs can be paired by its minimum refined-iRT
+# distance to the receiver row.
 #
 # MBR streaming resolves the partner against donor availability by choosing
-# the nearest non-self same-length/same-charge precursor by library iRT that
+# the nearest non-self same-length/same-charge precursor by refined iRT that
 # has a cross-file donor.
-# Nothing here
-# mutates the spectral library or any PSM column.
+# Nothing here mutates the spectral library or any PSM column.
 #
 # Memory: streams the per-file Arrow tables read-only — never materialises
-# a concatenated PSM DataFrame. Only :precursor_idx is touched; everything
-# else (mz, charge, irt) comes from the library.
+# a concatenated PSM DataFrame. Pool iRT comes from row-level :irt_pred when
+# present and finite, falling back to raw library iRT otherwise; mz, charge,
+# and length come from the library.
 
 # Streams the per-file Arrow tables and returns one entry per unique pid with
 # target flag, library m/z, charge, length, iRT, and CV-fold metadata.
 function _collect_unique_precursors_streaming(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    ;
+    unique_precursors::Bool = true,
 )
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
@@ -48,16 +50,25 @@ function _collect_unique_precursors_streaming(
         pid_c    = tbl.precursor_idx
         target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
         fold_c   = hasproperty(tbl, :cv_fold) ? tbl.cv_fold : zeros(UInt8, n)
+        irt_pred_c = hasproperty(tbl, :irt_pred) ? tbl.irt_pred : nothing
         @inbounds for i in 1:n
             pid = UInt32(pid_c[i])
-            pid in seen && continue
-            push!(seen, pid)
+            if unique_precursors
+                pid in seen && continue
+                push!(seen, pid)
+            end
+            raw_irt = Float32(prec_irt_full[pid])
+            refined_irt = raw_irt
+            if irt_pred_c !== nothing
+                candidate_irt = Float32(irt_pred_c[i])
+                isfinite(candidate_irt) && (refined_irt = candidate_irt)
+            end
             push!(plist_pids, pid)
             push!(plist_target, Bool(target_c[i]))
             push!(plist_mz, Float32(prec_mz_full[pid]))
             push!(plist_charge, UInt8(prec_charge_full[pid]))
             push!(plist_length, UInt8(prec_length_full[pid]))
-            push!(plist_irt, Float32(prec_irt_full[pid]))
+            push!(plist_irt, refined_irt)
             push!(plist_fold, UInt8(fold_c[i]))
         end
     end
@@ -66,8 +77,10 @@ function _collect_unique_precursors_streaming(
             fold = plist_fold)
 end
 
-# A pool is a (pids, irts) NamedTuple with library iRT values sorted ascending
-# so we can do binary search for iRT-nearest lookups.
+# A pool is a (pids, irts) NamedTuple with refined iRT observations sorted
+# ascending so we can do binary search for iRT-nearest lookups. The same pid may
+# appear multiple times if it was observed with different refined iRTs in
+# different runs.
 const _IrtPool = NamedTuple{(:pids, :irts), Tuple{Vector{UInt32}, Vector{Float32}}}
 
 struct _CounterfactualEligibilityByFile
@@ -191,8 +204,8 @@ end
     partner resolution.
 
     For each receiver row, MBR streaming chooses the nearest non-self precursor
-    by library iRT that has the same length and charge and has a donor in a
-    file other than the receiver file.
+    by refined iRT that has the same length and charge and has a donor in a file
+    other than the receiver file.
 """
 function build_counterfactual_partner_pools(
     file_paths::Vector{String},
@@ -200,10 +213,16 @@ function build_counterfactual_partner_pools(
     ;
     receiver_file_paths::Vector{String} = file_paths,
 )
-    pool_unique = _collect_unique_precursors_streaming(file_paths, precursors)
-    receiver_unique = receiver_file_paths == file_paths ?
-                      pool_unique :
-                      _collect_unique_precursors_streaming(receiver_file_paths, precursors)
+    pool_unique = _collect_unique_precursors_streaming(
+        file_paths,
+        precursors;
+        unique_precursors = false,
+    )
+    receiver_unique = _collect_unique_precursors_streaming(
+        receiver_file_paths,
+        precursors;
+        unique_precursors = true,
+    )
     n_pool_precs = length(pool_unique.pids)
     n_receiver_precs = length(receiver_unique.pids)
     if n_pool_precs == 0 && n_receiver_precs == 0

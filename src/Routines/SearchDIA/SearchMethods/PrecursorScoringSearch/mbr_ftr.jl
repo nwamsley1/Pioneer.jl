@@ -6,11 +6,12 @@
 # MBR false-transfer controller as a recovery mechanism scoped to the
 # transfer-candidate cohort.
 #
-# The paired frame contains each candidate twice:
-#   * top half: candidate features using the same-precursor donor
-#   * bottom half: the same receiver with counterfactual donor features
+# The counterfactual frame contains each candidate once for the real transfer
+# and once per counterfactual:
+#   * top block: candidate features using the same-precursor donor
+#   * counterfactual blocks: the same receiver with alternate donor features
 # The FTR label is true for top-half same-precursor transfers and false for
-# bottom-half counterfactual transfers. Semi-supervised iterations use only the
+# counterfactual transfers. Semi-supervised iterations use only the
 # top-half rows passing the 3% counterfactual FTR threshold as positives for the
 # next training round and for the next stopping evaluation; unselected top-half
 # rows are omitted from the semi-supervised objective.
@@ -30,6 +31,29 @@
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
 const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
 const MBR_RECOVERY_ALPHA_DEFAULT = Float32(0.01)
+
+function _mbr_env_flag(name::AbstractString, env = ENV)::Bool
+    raw = lowercase(strip(get(env, name, "")))
+    return raw in ("1", "true", "yes", "y", "on")
+end
+
+function _mbr_debug_dir_from_env(env = ENV)::Union{Nothing, String}
+    raw = strip(get(env, "PIONEER_MBR_DEBUG_DIR", ""))
+    isempty(raw) && return nothing
+    return raw
+end
+
+function _mbr_keep_temporary_sidecars_from_env(env = ENV)::Bool
+    return _mbr_env_flag("PIONEER_MBR_KEEP_SIDECARS", env)
+end
+
+function _mbr_use_top_counterfactual_qvalues_from_env(env = ENV)::Bool
+    raw = lowercase(strip(get(env, "PIONEER_MBR_USE_TOP_COUNTERFACTUAL_QVALUES", "")))
+    isempty(raw) && return true
+    raw in ("1", "true", "yes", "y", "on") && return true
+    raw in ("0", "false", "no", "n", "off") && return false
+    error("PIONEER_MBR_USE_TOP_COUNTERFACTUAL_QVALUES must be a boolean flag, got \"$raw\"")
+end
 
 function _mbr_recovery_alpha_from_env(env = ENV)::Float32
     raw = get(env, "PIONEER_MBR_FTR_ALPHA", "")
@@ -54,10 +78,10 @@ end
 # FTR features for the Batch F controller. Same as Phase 8f's FTR_FEATURES but
 # - drops :trace_prob_mbr (Pass 2 no longer exists in Batch F)
 # - uses the _true variants for the in-place MBR features (the _false copies
-#   are swapped in for the bottom half of the doubled training frame).
+#   are swapped into the counterfactual blocks of the training frame).
 # rtv3 (2026-05-13) + rtv4 (2026-05-14) — slim FTR feature set.
 # The pre-rtv3 list had ~50 features. The ~40 non-MBR features were
-# row-level (identical between top and bottom halves of the doubled
+# row-level (identical between top and counterfactual blocks of the
 # training frame), so they couldn't directly discriminate real-vs-
 # counterfactual. Empirically the FTR LGBM was using them for
 # interaction modeling. Dropping them gained +1,015 IDs (rtv3 doc)
@@ -78,22 +102,20 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :main_search_prob,
     :trace_prob_infold,
     :MBR_best_pair_prob_true,
-    :MBR_worst_pair_prob_true,
     :MBR_log2_weight_lod_ratio,
     :MBR_best_log2_weight_ratio_true,
-    :MBR_worst_log2_weight_ratio_true,
     :MBR_best_log2_explained_ratio_true,
-    :MBR_worst_log2_explained_ratio_true,
     :MBR_best_abs_n_scans_diff_true,
-    :MBR_worst_abs_n_scans_diff_true,
     :MBR_best_log2_n_scans_ratio_true,
-    :MBR_worst_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
-    :MBR_worst_irt_diff_true,
     :MBR_best_observed_irt_diff_true,
-    :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
     :MBR_best_smoothed_frag_hellinger_true,
+    :MBR_best_smoothed_frag_hellinger_rank_true,
+]
+
+const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
+    :MBR_best_smoothed_frag_hellinger_rank_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -115,51 +137,276 @@ const FTR_FEATURES_F_TRUE = Symbol[
 #   the per-run MainSearch confidence, derived as 1 - main_pep in the slim MBR
 #   frame.
 
-# Same features but with the MBR columns swapped to _false. Used for the
-# bottom half of the doubled training frame. Each entry must mirror
+# Same features but with the MBR columns swapped to a counterfactual suffix.
+# Each entry must mirror
 # FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
 # semantic feature columns in the same order. Row-level features such as
 # trace_prob_infold pass through the default `f` branch unchanged.
-const FTR_FEATURES_F_FALSE = Symbol[
-    f === :MBR_best_pair_prob_true       ? :MBR_best_pair_prob_false :
-    f === :MBR_worst_pair_prob_true      ? :MBR_worst_pair_prob_false :
-    f === :MBR_best_log2_weight_ratio_true ? :MBR_best_log2_weight_ratio_false :
-    f === :MBR_worst_log2_weight_ratio_true ? :MBR_worst_log2_weight_ratio_false :
-    f === :MBR_best_log2_explained_ratio_true ? :MBR_best_log2_explained_ratio_false :
-    f === :MBR_worst_log2_explained_ratio_true ? :MBR_worst_log2_explained_ratio_false :
-    f === :MBR_best_abs_n_scans_diff_true ? :MBR_best_abs_n_scans_diff_false :
-    f === :MBR_worst_abs_n_scans_diff_true ? :MBR_worst_abs_n_scans_diff_false :
-    f === :MBR_best_log2_n_scans_ratio_true ? :MBR_best_log2_n_scans_ratio_false :
-    f === :MBR_worst_log2_n_scans_ratio_true ? :MBR_worst_log2_n_scans_ratio_false :
-    f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
-    f === :MBR_worst_irt_diff_true       ? :MBR_worst_irt_diff_false :
-    f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :
-    f === :MBR_best_observed_irt_diff_true ? :MBR_best_observed_irt_diff_false :
-    f === :MBR_worst_observed_irt_diff_true ? :MBR_worst_observed_irt_diff_false :
-    f === :MBR_single_donor_true         ? :MBR_single_donor_false :
-    f === :MBR_best_log_by_diff_true     ? :MBR_best_log_by_diff_false :
-    f === :MBR_best_smoothed_frag_hellinger_true ? :MBR_best_smoothed_frag_hellinger_false :
-    f === :MBR_worst_smoothed_frag_hellinger_true ? :MBR_worst_smoothed_frag_hellinger_false :
-    f === :MBR_best_donor_library_hellinger_true ? :MBR_best_donor_library_hellinger_false :
-    f === :MBR_worst_donor_library_hellinger_true ? :MBR_worst_donor_library_hellinger_false :
-    f
-    for f in FTR_FEATURES_F_TRUE
-]
+function _mbr_counterfactual_feature_name(f::Symbol, counterfactual_idx::Int)
+    s = String(f)
+    if startswith(s, "MBR_") && endswith(s, "_true")
+        stem = s[1:(end - length("_true"))]
+        suffix = counterfactual_idx == 1 ? "_false" : "_false$(counterfactual_idx)"
+        return Symbol(stem * suffix)
+    end
+    return f
+end
 
-function _mbr_transfer_training_labels(positive_top::AbstractVector{Bool})
+const FTR_FEATURES_F_FALSE_BY_COUNTERFACTUAL = ntuple(
+    counterfactual_idx -> Symbol[
+        _mbr_counterfactual_feature_name(f, counterfactual_idx)
+        for f in FTR_FEATURES_F_TRUE
+    ],
+    MBR_MAX_COUNTERFACTUALS,
+)
+
+const FTR_FEATURES_F_FALSE = FTR_FEATURES_F_FALSE_BY_COUNTERFACTUAL[1]
+const FTR_FEATURES_F_FALSE2 = FTR_FEATURES_F_FALSE_BY_COUNTERFACTUAL[2]
+const FTR_FEATURES_F_FALSE3 = FTR_FEATURES_F_FALSE_BY_COUNTERFACTUAL[3]
+const FTR_FEATURES_F_FALSE4 = FTR_FEATURES_F_FALSE_BY_COUNTERFACTUAL[4]
+
+function _mbr_ftr_features_true_from_env(env = ENV)
+    features = copy(FTR_FEATURES_F_TRUE)
+    if _mbr_env_flag("PIONEER_MBR_DISABLE_HELLINGER_CONTRAST", env)
+        filter!(f -> !(f in MBR_HELLINGER_CONTRAST_FEATURES), features)
+    end
+    return features
+end
+
+function _mbr_best_hellinger_col(counterfactual_idx::Int)
+    return counterfactual_idx == 0 ?
+        :MBR_best_smoothed_frag_hellinger_true :
+        _mbr_counterfactual_feature_name(:MBR_best_smoothed_frag_hellinger_true, counterfactual_idx)
+end
+
+function _mbr_best_hellinger_rank_col(counterfactual_idx::Int)
+    return counterfactual_idx == 0 ?
+        :MBR_best_smoothed_frag_hellinger_rank_true :
+        _mbr_counterfactual_feature_name(:MBR_best_smoothed_frag_hellinger_rank_true, counterfactual_idx)
+end
+
+function _mbr_add_best_hellinger_rank_features!(
+    psms::DataFrame;
+    n_counterfactuals::Int,
+)
+    (1 <= n_counterfactuals <= MBR_MAX_COUNTERFACTUALS) ||
+        error("n_counterfactuals must be in 1:$(MBR_MAX_COUNTERFACTUALS), got $n_counterfactuals")
+
+    n = nrow(psms)
+    best_h_cols = Symbol[_mbr_best_hellinger_col(0)]
+    for counterfactual_idx in 1:n_counterfactuals
+        push!(best_h_cols, _mbr_best_hellinger_col(counterfactual_idx))
+    end
+    for col in best_h_cols
+        hasproperty(psms, col) || error("Missing MBR Hellinger feature column $col")
+    end
+
+    @inbounds for counterfactual_idx in 0:n_counterfactuals
+        source_col = _mbr_best_hellinger_col(counterfactual_idx)
+        rank_col = _mbr_best_hellinger_rank_col(counterfactual_idx)
+        source_values = psms[!, source_col]
+        ranks = Vector{Float32}(undef, n)
+        for i in 1:n
+            source_value = Float32(source_values[i])
+            if isfinite(source_value) && source_value >= 0.0f0
+                rank = 1
+                for col in best_h_cols
+                    value = Float32(psms[i, col])
+                    if isfinite(value) && value >= 0.0f0 && value < source_value
+                        rank += 1
+                    end
+                end
+                ranks[i] = Float32(rank)
+            else
+                ranks[i] = -1.0f0
+            end
+        end
+        psms[!, rank_col] = ranks
+    end
+
+    return psms
+end
+
+function _mbr_repeat_blocks(values, n_blocks::Int)
+    return vcat((copy(values) for _ in 1:n_blocks)...)
+end
+
+function _mbr_write_ftr_debug_tables!(
+    debug_dir::AbstractString,
+    sub::DataFrame,
+    available_true::Vector{Symbol},
+    x_blocks::Vector{Matrix{Float32}},
+    ftr_score_double::AbstractVector{<:Real},
+    qvals_double::AbstractVector{<:Real},
+    pep_double::AbstractVector{<:Real},
+    eval_labels::AbstractVector{Bool},
+    eval_mask::AbstractVector{Bool},
+    recovered_in_cand::AbstractVector{Bool};
+    n_counterfactuals::Int,
+    alpha::Float32,
+    q_thresh::Float32,
+    prob_thresh::Float32,
+    best_iter::Int,
+    n_positive::Int,
+)
+    mkpath(debug_dir)
+    n_cand = nrow(sub)
+    n_blocks = 1 + n_counterfactuals
+    n_frame = n_blocks * n_cand
+    @assert length(x_blocks) == n_blocks
+    @assert length(ftr_score_double) == n_frame
+    @assert length(qvals_double) == n_frame
+    @assert length(pep_double) == n_frame
+    @assert length(eval_labels) == n_frame
+    @assert length(eval_mask) == n_frame
+
+    candidate_idx = vcat((UInt32.(1:n_cand) for _ in 1:n_blocks)...)
+    block_idx = vcat((
+        fill(UInt8(block), n_cand)
+        for block in 0:n_counterfactuals
+    )...)
+    frame = DataFrame(
+        mbr_candidate_idx = candidate_idx,
+        mbr_counterfactual_idx = block_idx,
+        mbr_is_true_block = block_idx .== UInt8(0),
+    )
+
+    id_cols = Symbol[
+        :precursor_idx,
+        :ms_file_idx,
+        :scan_idx,
+        :cv_fold,
+        :target,
+        :qval,
+        :global_qval,
+        :trace_prob_prepass,
+        :trace_prob_infold,
+        :main_search_prob,
+    ]
+    for col in id_cols
+        hasproperty(sub, col) || continue
+        frame[!, col] = _mbr_repeat_blocks(collect(sub[!, col]), n_blocks)
+    end
+
+    X = vcat(x_blocks...)
+    @assert size(X, 1) == n_frame
+    @assert size(X, 2) == length(available_true)
+    for (feature_idx, feature_name) in enumerate(available_true)
+        frame[!, feature_name] = X[:, feature_idx]
+    end
+
+    recovered_frame = vcat(Bool.(recovered_in_cand), falses(n_counterfactuals * n_cand))
+    frame[!, :mbr_ftr_score] = Float32.(ftr_score_double)
+    frame[!, :mbr_ftr_qval] = Float32.(qvals_double)
+    frame[!, :mbr_ftr_pep] = Float32.(pep_double)
+    frame[!, :mbr_eval_label] = Bool.(eval_labels)
+    frame[!, :mbr_eval_mask] = Bool.(eval_mask)
+    frame[!, :mbr_recovered_top] = recovered_frame
+    writeArrow(joinpath(debug_dir, "mbr_ftr_frame.arrow"), frame)
+
+    candidates = copy(sub)
+    candidates[!, :mbr_candidate_idx] = UInt32.(1:n_cand)
+    candidates[!, :mbr_ftr_score_true] = Float32.(ftr_score_double[1:n_cand])
+    candidates[!, :mbr_ftr_qval_true_debug] = Float32.(qvals_double[1:n_cand])
+    candidates[!, :mbr_ftr_pep_true_debug] = Float32.(pep_double[1:n_cand])
+    candidates[!, :mbr_recovered_debug] = Bool.(recovered_in_cand)
+    writeArrow(joinpath(debug_dir, "mbr_ftr_candidates.arrow"), candidates)
+
+    summary = DataFrame(
+        n_candidates = Int[n_cand],
+        n_counterfactuals = Int[n_counterfactuals],
+        n_frame_rows = Int[n_frame],
+        alpha = Float32[alpha],
+        q_thresh = Float32[q_thresh],
+        prob_thresh = Float32[prob_thresh],
+        best_iter = Int[best_iter],
+        n_positive = Int[n_positive],
+        n_recovered = Int[count(recovered_in_cand)],
+        features = [join(string.(available_true), ",")],
+    )
+    writeArrow(joinpath(debug_dir, "mbr_ftr_summary.arrow"), summary)
+
+    open(joinpath(debug_dir, "mbr_ftr_features.txt"), "w") do io
+        for feature_name in available_true
+            println(io, feature_name)
+        end
+    end
+    return nothing
+end
+
+function _mbr_n_counterfactuals_from_env(env = ENV)::Int
+    raw = get(env, "PIONEER_MBR_N_COUNTERFACTUALS", "")
+    isempty(raw) && return MBR_DEFAULT_N_COUNTERFACTUALS
+    value = tryparse(Int, raw)
+    (value === nothing || value < 1 || value > MBR_MAX_COUNTERFACTUALS) &&
+        error("PIONEER_MBR_N_COUNTERFACTUALS must be an integer in 1:$(MBR_MAX_COUNTERFACTUALS), got \"$raw\"")
+    return value
+end
+
+function _mbr_transfer_training_labels(
+    positive_top::AbstractVector{Bool};
+    n_counterfactuals::Int = 1,
+)
     n = length(positive_top)
-    labels = falses(2 * n)
+    labels = falses((1 + n_counterfactuals) * n)
     @inbounds for i in 1:n
         labels[i] = positive_top[i]
     end
     return labels
 end
 
-function _mbr_transfer_training_mask(positive_top::AbstractVector{Bool})
+function _mbr_transfer_training_mask(
+    positive_top::AbstractVector{Bool};
+    n_counterfactuals::Int = 1,
+    frame_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+)
     n = length(positive_top)
-    mask = trues(2 * n)
+    mask = trues((1 + n_counterfactuals) * n)
     @inbounds for i in 1:n
         mask[i] = positive_top[i]
+    end
+    if frame_mask !== nothing
+        @assert length(frame_mask) == length(mask)
+        mask .&= Bool.(frame_mask)
+    end
+    return mask
+end
+
+function _mbr_counterfactual_missing_col(counterfactual_idx::Int)::Symbol
+    return counterfactual_idx == 1 ?
+        :MBR_best_is_missing_false :
+        Symbol("MBR_best_is_missing_false$(counterfactual_idx)")
+end
+
+function _mbr_counterfactual_present_matrix(
+    psms::DataFrame,
+    row_idx::AbstractVector{<:Integer};
+    n_counterfactuals::Int,
+)
+    (1 <= n_counterfactuals <= MBR_MAX_COUNTERFACTUALS) ||
+        error("n_counterfactuals must be in 1:$(MBR_MAX_COUNTERFACTUALS), got $n_counterfactuals")
+    n = length(row_idx)
+    present = falses(n, n_counterfactuals)
+    @inbounds for counterfactual_idx in 1:n_counterfactuals
+        miss_col = _mbr_counterfactual_missing_col(counterfactual_idx)
+        hasproperty(psms, miss_col) ||
+            error("Missing MBR counterfactual sidecar column $miss_col")
+        miss = Bool.(psms[!, miss_col])
+        for (j, row) in enumerate(row_idx)
+            present[j, counterfactual_idx] = !miss[row]
+        end
+    end
+    return present
+end
+
+function _mbr_transfer_frame_mask(counterfactual_present::AbstractMatrix{Bool})
+    n_cand, n_counterfactuals = size(counterfactual_present)
+    mask = trues((1 + n_counterfactuals) * n_cand)
+    @inbounds for counterfactual_idx in 1:n_counterfactuals
+        offset = counterfactual_idx * n_cand
+        for i in 1:n_cand
+            mask[offset + i] = counterfactual_present[i, counterfactual_idx]
+        end
     end
     return mask
 end
@@ -176,57 +423,108 @@ function _mbr_transfer_positive_top(
     return positive_top
 end
 
-function _mbr_transfer_counterfactual_labels(n_cand::Int)
-    labels = falses(2 * n_cand)
+function _mbr_transfer_counterfactual_labels(
+    n_cand::Int;
+    n_counterfactuals::Int = 1,
+)
+    labels = falses((1 + n_counterfactuals) * n_cand)
     @inbounds for i in 1:n_cand
         labels[i] = true
     end
     return labels
 end
 
+function _mbr_top_counterfactual_eval_mask(
+    scores_double::AbstractVector{<:Real},
+    n_cand::Int;
+    n_counterfactuals::Int = 1,
+    eval_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+)
+    n_double = (1 + n_counterfactuals) * n_cand
+    @assert length(scores_double) == n_double
+    if eval_mask !== nothing
+        @assert length(eval_mask) == n_double
+    end
+
+    source_mask = eval_mask === nothing ? trues(n_double) : Bool.(eval_mask)
+    top_mask = falses(n_double)
+    @inbounds for i in 1:n_cand
+        top_mask[i] = source_mask[i]
+        best_idx = 0
+        best_score = -Inf32
+        for counterfactual_idx in 1:n_counterfactuals
+            idx = counterfactual_idx * n_cand + i
+            source_mask[idx] || continue
+            score = Float32(scores_double[idx])
+            rank_score = isfinite(score) ? score : -Inf32
+            if best_idx == 0 || rank_score > best_score
+                best_idx = idx
+                best_score = rank_score
+            end
+        end
+        best_idx != 0 && (top_mask[best_idx] = true)
+    end
+    return top_mask
+end
+
 function _mbr_transfer_iteration_metrics(
     scores_double::AbstractVector{<:Real},
     n_cand::Int;
     ftr_threshold::Float32 = MBR_SEMISUPERVISED_FTR_THRESHOLD,
-    eval_labels::AbstractVector{Bool} = _mbr_transfer_counterfactual_labels(n_cand),
+    n_counterfactuals::Int = 1,
+    eval_labels::AbstractVector{Bool} = _mbr_transfer_counterfactual_labels(
+        n_cand;
+        n_counterfactuals = n_counterfactuals,
+    ),
     eval_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+    use_top_counterfactual_qvalues::Bool = _mbr_use_top_counterfactual_qvalues_from_env(),
 )
-    n_double = 2 * n_cand
+    n_double = (1 + n_counterfactuals) * n_cand
     @assert length(scores_double) == n_double
     @assert length(eval_labels) == n_double
+    if eval_mask !== nothing
+        @assert length(eval_mask) == n_double
+    end
 
     qvals_double = fill(Inf32, n_double)
     pep_double = fill(Inf32, n_double)
-    if eval_mask === nothing
-        get_qvalues!(scores_double, eval_labels, qvals_double)
-        get_PEP!(scores_double, eval_labels, pep_double)
+    qvalue_eval_mask = if use_top_counterfactual_qvalues
+        _mbr_top_counterfactual_eval_mask(
+            scores_double,
+            n_cand;
+            n_counterfactuals = n_counterfactuals,
+            eval_mask = eval_mask,
+        )
     else
-        @assert length(eval_mask) == n_double
-        eval_idx = findall(eval_mask)
-        if !isempty(eval_idx)
-            scores_eval = Float32.(scores_double[eval_idx])
-            labels_eval = eval_labels[eval_idx]
-            qvals_eval = Vector{Float32}(undef, length(eval_idx))
-            pep_eval = Vector{Float32}(undef, length(eval_idx))
-            get_qvalues!(scores_eval, labels_eval, qvals_eval)
-            get_PEP!(scores_eval, labels_eval, pep_eval)
-            @inbounds for (j, i) in enumerate(eval_idx)
-                qvals_double[i] = qvals_eval[j]
-                pep_double[i] = pep_eval[j]
-            end
+        eval_mask === nothing ? trues(n_double) : Bool.(eval_mask)
+    end
+    eval_idx = findall(qvalue_eval_mask)
+    if !isempty(eval_idx)
+        scores_eval = Float32.(scores_double[eval_idx])
+        labels_eval = eval_labels[eval_idx]
+        qvals_eval = Vector{Float32}(undef, length(eval_idx))
+        pep_eval = Vector{Float32}(undef, length(eval_idx))
+        get_qvalues!(scores_eval, labels_eval, qvals_eval)
+        get_PEP!(scores_eval, labels_eval, pep_eval)
+        @inbounds for (j, i) in enumerate(eval_idx)
+            qvals_double[i] = qvals_eval[j]
+            pep_double[i] = pep_eval[j]
         end
     end
 
+    qvals_top = qvals_double[1:n_cand]
+    pep_top = pep_double[1:n_cand]
     positive_top = _mbr_transfer_positive_top(
-        @view(qvals_double[1:n_cand]),
+        qvals_top,
         ftr_threshold = ftr_threshold,
     )
 
     return (
         qvals_double = qvals_double,
         pep_double = pep_double,
-        qvals_top = qvals_double[1:n_cand],
-        pep_top = pep_double[1:n_cand],
+        qvals_top = qvals_top,
+        pep_top = pep_top,
+        qvalue_eval_mask = qvalue_eval_mask,
         positive_top = positive_top,
         n_positive = count(positive_top),
     )
@@ -239,14 +537,16 @@ MBR Batch F — paired-counterfactual FTR controller.
 
 Algorithm (see BATCH_F_PLAN.md):
 1. Candidate gate = (pre_qvals > q_thresh) & (MBR_best_pair_prob_true ≥
-   prob_thresh) & (!MBR_best_is_missing_true) & (!MBR_best_is_missing_false).
-2. Build a row-doubled training frame:
+   prob_thresh) & true donor present. Missing counterfactual donor blocks are
+   masked out of FTR training/evaluation rather than dropping the candidate.
+2. Build a training frame with one true block and one block per counterfactual:
    - top half: candidate rows with FTR_FEATURES_F_TRUE values.
-   - bottom half: same receivers with FTR_FEATURES_F_FALSE values.
+   - counterfactual blocks: same receivers with the nearest
+     FTR_FEATURES_F_FALSE* values when available.
 3. Train iterative 2-fold CV LightGBM. Each iteration uses the previous round's
-   3% counterfactual-FTR top-half rows as positives, plus counterfactual rows
-   as negatives.
-4. Compute q-values and PEPs on the doubled frame. Recover candidate rows whose
+   3% counterfactual-FTR top-half rows as positives, plus available
+   counterfactual rows as negatives.
+4. Compute q-values and PEPs on the counterfactual frame. Recover candidate rows whose
    top-half row has q-value ≤ alpha.
 
 Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:mbr_target_decoy_prob`,
@@ -263,6 +563,7 @@ function apply_mbr_filter_paired!(
     prob_thresh_override::Union{Nothing, Float32} = nothing,
 )
     t0 = time()
+    n_counterfactuals = _mbr_n_counterfactuals_from_env()
 
     n = nrow(psms)
     if n == 0
@@ -300,21 +601,20 @@ function apply_mbr_filter_paired!(
         Float32(Inf)
     end
 
-    # ── 2. Candidates: failed q-cut, have BOTH _true and _false donors ──
+    # ── 2. Candidates: failed q-cut, have a true donor. Counterfactual rows
+    # can be partial; missing counterfactual blocks are masked below.
     mbr_pp_t       = Float32.(psms[!, :MBR_best_pair_prob_true])
     mbr_miss_t     = Bool.(psms[!, :MBR_best_is_missing_true])
-    mbr_miss_f     = Bool.(psms[!, :MBR_best_is_missing_false])
     candidate_mask = global_pass .&
                      (pre_qvals .> q_thresh) .&
                      (mbr_pp_t  .>= prob_thresh) .&
-                     (.!mbr_miss_t) .&
-                     (.!mbr_miss_f)
+                     (.!mbr_miss_t)
     n_cand = count(candidate_mask)
     cand_idx = findall(candidate_mask)
 
     @debug_l1 "MBR Batch F — paired FTR recovery:"
     @debug_l1 "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
-    @debug_l1 "  candidates (pre-MBR q>$q_thresh + both donors): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
+    @debug_l1 "  candidates (pre-MBR q>$q_thresh + true donor; $(n_counterfactuals) counterfactuals): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
     @debug_l1 "  α (q-value FTR budget): $alpha"
 
     if n_cand == 0
@@ -326,37 +626,67 @@ function apply_mbr_filter_paired!(
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=time()-t0)
     end
 
-    # ── 3. Build the doubled training frame ──
+    # ── 3. Build the true + selected-counterfactual training frame ──
     # Top half: true-donor rows, positive under the counterfactual FTR label.
-    # Bottom half: same receivers with counterfactual MBR values, always negative.
+    # Counterfactual blocks: same receivers with counterfactual MBR values,
+    # always negative.
+    counterfactual_present = _mbr_counterfactual_present_matrix(
+        psms,
+        cand_idx;
+        n_counterfactuals = n_counterfactuals,
+    )
+    available_counterfactual_counts = vec(sum(counterfactual_present; dims = 2))
+    n_full_counterfactuals = count(==(n_counterfactuals), available_counterfactual_counts)
+    n_zero_counterfactuals = count(==(0), available_counterfactual_counts)
+    n_available_counterfactual_rows = sum(available_counterfactual_counts)
+    @debug_l1 "  counterfactual coverage: available rows=$n_available_counterfactual_rows / $(n_cand * n_counterfactuals); " *
+              "full=$n_full_counterfactuals; zero=$n_zero_counterfactuals"
+
     sub = psms[cand_idx, :]
-    available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
-    # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
+    true_features_all = _mbr_ftr_features_true_from_env()
+    if any(f -> f in true_features_all, MBR_HELLINGER_CONTRAST_FEATURES)
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+        )
+    end
+    available_true  = filter(f -> hasproperty(sub, f), true_features_all)
+    # Position-aligned _false sets (only matters that the MBR cols flip; non-MBR
     # cols are identical between TRUE and FALSE lists, so available_true tells
     # us which non-MBR cols actually exist).
     feat_to_idx = Dict{Symbol, Int}()
-    for (i, f) in enumerate(FTR_FEATURES_F_TRUE); feat_to_idx[f] = i; end
-    available_false = Symbol[]
-    for f in available_true
-        push!(available_false, FTR_FEATURES_F_FALSE[feat_to_idx[f]])
+    for (i, f) in enumerate(true_features_all); feat_to_idx[f] = i; end
+    x_blocks = Matrix{Float32}[feature_matrix(sub, available_true)]
+    for counterfactual_idx in 1:n_counterfactuals
+        available_false = Symbol[]
+        false_features = Symbol[
+            _mbr_counterfactual_feature_name(f, counterfactual_idx)
+            for f in true_features_all
+        ]
+        for f in available_true
+            push!(available_false, false_features[feat_to_idx[f]])
+        end
+        push!(x_blocks, feature_matrix(sub, available_false))
     end
-    X_true  = feature_matrix(sub, available_true)
-    X_false = feature_matrix(sub, available_false)
-    X       = vcat(X_true, X_false)              # 2 n_cand × n_features
-    eval_labels = _mbr_transfer_counterfactual_labels(n_cand)
-    eval_mask = trues(2 * n_cand)
-    cv_double = vcat(sub[!, :cv_fold], sub[!, :cv_fold])
+    X = vcat(x_blocks...)
+    eval_labels = _mbr_transfer_counterfactual_labels(
+        n_cand;
+        n_counterfactuals = n_counterfactuals,
+    )
+    frame_eval_mask = _mbr_transfer_frame_mask(counterfactual_present)
+    eval_mask = copy(frame_eval_mask)
+    cv_double = vcat((sub[!, :cv_fold] for _ in 1:(1 + n_counterfactuals))...)
 
-    # ── 4. Semi-supervised 2-fold CV LightGBM on the doubled frame ──
+    # ── 4. Semi-supervised 2-fold CV LightGBM on the counterfactual frame ──
     pos0 = findall(cv_double .== 0)
     pos1 = findall(cv_double .== 1)
     training_labels = eval_labels
-    training_mask = trues(2 * n_cand)
+    training_mask = copy(frame_eval_mask)
     best_state = nothing
     previous_positive_count = -1
 
     for iter_idx in 1:SCORING_SEMISUPERVISED_MAX_ITERATIONS
-        ftr_score_double = fill(NaN32, 2 * n_cand)
+        ftr_score_double = fill(NaN32, (1 + n_counterfactuals) * n_cand)
         last_cls_iter = nothing
         n_train_targets = 0
         n_train_decoys = 0
@@ -385,6 +715,7 @@ function apply_mbr_filter_paired!(
             n_cand,
             eval_labels = eval_labels,
             eval_mask = eval_mask,
+            n_counterfactuals = n_counterfactuals,
         )
         state = (
             iter = iter_idx,
@@ -394,6 +725,8 @@ function apply_mbr_filter_paired!(
             n_positive = metrics.n_positive,
             n_train_targets = n_train_targets,
             n_train_decoys = n_train_decoys,
+            eval_labels = copy(eval_labels),
+            eval_mask = copy(eval_mask),
         )
         if best_state === nothing || state.n_positive >= best_state.n_positive
             best_state = state
@@ -422,15 +755,22 @@ function apply_mbr_filter_paired!(
         end
 
         previous_positive_count = state.n_positive
-        valid_transfer_labels = _mbr_transfer_training_labels(metrics.positive_top)
-        valid_transfer_mask = _mbr_transfer_training_mask(metrics.positive_top)
+        valid_transfer_labels = _mbr_transfer_training_labels(
+            metrics.positive_top;
+            n_counterfactuals = n_counterfactuals,
+        )
+        valid_transfer_mask = _mbr_transfer_training_mask(
+            metrics.positive_top;
+            n_counterfactuals = n_counterfactuals,
+            frame_mask = frame_eval_mask,
+        )
         training_labels = valid_transfer_labels
         training_mask = valid_transfer_mask
         eval_labels = valid_transfer_labels
         eval_mask = valid_transfer_mask
     end
 
-    # ── 5. Q-value AND PEP on the doubled frame ──
+    # ── 5. Q-value AND PEP on the counterfactual frame ──
     ftr_score_double = best_state.scores
     qvals_double = best_state.metrics.qvals_double
     pep_double = best_state.metrics.pep_double
@@ -446,6 +786,29 @@ function apply_mbr_filter_paired!(
     pep_top   = pep_double[1:n_cand]
     recovered_in_cand = _mbr_recovery_mask(qvals_top, pep_top, alpha)
     n_recovered = count(recovered_in_cand)
+
+    debug_dir = _mbr_debug_dir_from_env()
+    if debug_dir !== nothing
+        _mbr_write_ftr_debug_tables!(
+            debug_dir,
+            sub,
+            available_true,
+            x_blocks,
+            ftr_score_double,
+            qvals_double,
+            pep_double,
+            best_state.eval_labels,
+            best_state.metrics.qvalue_eval_mask,
+            recovered_in_cand;
+            n_counterfactuals = n_counterfactuals,
+            alpha = alpha,
+            q_thresh = q_thresh,
+            prob_thresh = prob_thresh,
+            best_iter = best_state.iter,
+            n_positive = best_state.n_positive,
+        )
+        @debug_l1 "  Wrote MBR FTR debug tables to $debug_dir"
+    end
 
     mbr_recovered_full = falses(n)
     target_decoy_prob_full = fill(NaN32, n)
@@ -481,7 +844,7 @@ function apply_mbr_filter_paired!(
     n_t_rec = count(i -> mbr_recovered_full[i] && target_col[i], 1:n)
     n_d_rec = n_recovered - n_t_rec
 
-    @debug_l1 "  doubled-frame rows: $(2*n_cand)  (top=true donor, bottom=counterfactual)"
+    @debug_l1 "  FTR frame rows: $((1 + n_counterfactuals) * n_cand)  (true donors=1, counterfactuals=$(n_counterfactuals))"
     @debug_l1 "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
     @debug_l1 "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
     @debug_l1 "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"

@@ -46,8 +46,33 @@ function _mbr_post_q_fragment_lookup()
             false, true, false, false,
             UInt8(1), UInt8(6), UInt8(2), UInt8(1), UInt8(0),
         ),
+        Pioneer.CompactFrag(
+            UInt32(5), 900.0f0, Float16(1),
+            true, false, false, false,
+            UInt8(1), UInt8(7), UInt8(2), UInt8(1), UInt8(0),
+        ),
+        Pioneer.CompactFrag(
+            UInt32(6), 1000.0f0, Float16(1),
+            true, false, false, false,
+            UInt8(1), UInt8(8), UInt8(2), UInt8(1), UInt8(0),
+        ),
+        Pioneer.CompactFrag(
+            UInt32(7), 1100.0f0, Float16(1),
+            true, false, false, false,
+            UInt8(1), UInt8(9), UInt8(2), UInt8(1), UInt8(0),
+        ),
+        Pioneer.CompactFrag(
+            UInt32(8), 1200.0f0, Float16(1),
+            true, false, false, false,
+            UInt8(1), UInt8(10), UInt8(2), UInt8(1), UInt8(0),
+        ),
+        Pioneer.CompactFrag(
+            UInt32(9), 1300.0f0, Float16(1),
+            true, false, false, false,
+            UInt8(1), UInt8(11), UInt8(2), UInt8(1), UInt8(0),
+        ),
     ]
-    return Pioneer.StandardFragmentLookup{Float32}(frags, UInt64[1, 2, 3, 4, 5])
+    return Pioneer.StandardFragmentLookup{Float32}(frags, UInt64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 end
 
 function _mbr_post_q_main_table(; ms_file_idx, scan_offset = 0)
@@ -209,7 +234,7 @@ end
     end
 end
 
-@testset "MBR counterfactuals only pair to receiver-run eligible precursors" begin
+@testset "post-qvalue MBR counterfactuals can pair to receiver-run passing precursors" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         donor_path = joinpath(dir, "donor.arrow")
@@ -257,37 +282,34 @@ end
 
         Arrow.write(receiver_path, receiver_df)
         Arrow.write(donor_path, donor_df)
-        for (path, df) in ((receiver_path, receiver_df), (donor_path, donor_df))
-            Arrow.write(path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
-                precursor_idx = df.precursor_idx,
-                scan_idx = df.scan_idx,
-                trace_prob_prepass = df.trace_prob_prepass,
-                trace_prob_infold = df.trace_prob_infold,
-            ))
+
+        old_keep_sidecars = get(ENV, "PIONEER_MBR_KEEP_SIDECARS", nothing)
+        old_cf = get(ENV, "PIONEER_MBR_N_COUNTERFACTUALS", nothing)
+        ENV["PIONEER_MBR_KEEP_SIDECARS"] = "1"
+        ENV["PIONEER_MBR_N_COUNTERFACTUALS"] = "1"
+        try
+            Pioneer.run_mbr_after_qvalue_filter!(
+                [Pioneer.PSMFileReference(receiver_path)],
+                [Pioneer.PSMFileReference(donor_path)],
+                MBRPostQMockPrecursors(Float32[500, 501, 502], Float32[10.0, 10.02, 10.20]),
+                _mbr_post_q_fragment_lookup(),
+            )
+            side = DataFrame(Arrow.Table(receiver_path * Pioneer.MBR_SIDECAR_SUFFIX))
+
+            @test side.MBR_best_pair_prob_false[1] == 0.99f0
+            @test !side.MBR_best_is_missing_false[1]
+        finally
+            if old_keep_sidecars === nothing
+                delete!(ENV, "PIONEER_MBR_KEEP_SIDECARS")
+            else
+                ENV["PIONEER_MBR_KEEP_SIDECARS"] = old_keep_sidecars
+            end
+            if old_cf === nothing
+                delete!(ENV, "PIONEER_MBR_N_COUNTERFACTUALS")
+            else
+                ENV["PIONEER_MBR_N_COUNTERFACTUALS"] = old_cf
+            end
         end
-
-        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1([donor_path])
-        partner_pools = Pioneer.build_counterfactual_partner_pools(
-            [receiver_path],
-            MBRPostQMockPrecursors(Float32[500, 501, 502], Float32[10.0, 10.02, 10.20]),
-        )
-        eligible_by_file = Pioneer.build_counterfactual_receiver_eligibility(
-            [receiver_path];
-            q_value_threshold = 0.01f0,
-        )
-
-        side_path = Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
-            receiver_path,
-            donor_dict,
-            partner_pools,
-            Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
-            counterfactual_eligibility_by_file = eligible_by_file,
-            passing_score_floor = 0.0f0,
-        )
-        side = DataFrame(Arrow.Table(side_path))
-
-        @test side.MBR_best_pair_prob_false[1] == 0.70f0
-        @test !side.MBR_best_is_missing_false[1]
     end
 end
 
@@ -550,37 +572,37 @@ end
             frag8_smoothed_intensity = zeros(Float32, 1),
         )
         other_df = DataFrame(
-            precursor_idx = UInt32[2, 3, 4],
-            scan_idx = UInt32[202, 203, 204],
-            weight = Float32[2, 3, 4],
-            log2_intensity_explained = Float16[0.5, 0.5, 0.5],
-            irt_pred = Float32[10.01, 10.50, 12.00],
-            irt_obs = Float32[10.1, 10.1, 10.1],
-            log_by_ratio_m0 = zeros(Float16, 3),
-            rt = Float32[5.1, 5.2, 5.3],
-            n_scans = Float32[4, 5, 6],
-            main_pep = Float32[0.001, 0.001, 0.001],
-            smoothed_2d_shadow_hellinger = Float32[0.2, 0.3, 0.4],
-            ms_file_idx = fill(UInt32(2), 3),
-            target = trues(3),
-            cv_fold = zeros(UInt8, 3),
-            trace_prob = Float32[0.60, 0.80, 0.95],
-            trace_prob_prepass = Float32[0.60, 0.80, 0.95],
-            trace_prob_infold = Float32[0.60, 0.80, 0.95],
-            prec_prob = Float32[0.60, 0.80, 0.95],
-            qval = Float32[0.001, 0.001, 0.001],
-            pep = Float32[0.001, 0.001, 0.001],
-            global_qval = Float32[0.001, 0.001, 0.001],
-            global_pep = Float32[0.001, 0.001, 0.001],
-            mbr_recovered = falses(3),
-            frag1_smoothed_intensity = Float32[80, 60, 40],
-            frag2_smoothed_intensity = Float32[20, 40, 60],
-            frag3_smoothed_intensity = zeros(Float32, 3),
-            frag4_smoothed_intensity = zeros(Float32, 3),
-            frag5_smoothed_intensity = zeros(Float32, 3),
-            frag6_smoothed_intensity = zeros(Float32, 3),
-            frag7_smoothed_intensity = zeros(Float32, 3),
-            frag8_smoothed_intensity = zeros(Float32, 3),
+            precursor_idx = UInt32[2, 3, 4, 5, 6, 7, 8, 9],
+            scan_idx = UInt32[202, 203, 204, 205, 206, 207, 208, 209],
+            weight = Float32[2, 3, 4, 5, 6, 7, 8, 9],
+            log2_intensity_explained = Float16[0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+            irt_pred = Float32[10.01, 10.50, 12.00, 13.00, 14.00, 15.00, 16.00, 17.00],
+            irt_obs = fill(10.1f0, 8),
+            log_by_ratio_m0 = zeros(Float16, 8),
+            rt = Float32[5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8],
+            n_scans = Float32[4, 5, 6, 7, 8, 9, 10, 11],
+            main_pep = fill(0.001f0, 8),
+            smoothed_2d_shadow_hellinger = Float32[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            ms_file_idx = fill(UInt32(2), 8),
+            target = trues(8),
+            cv_fold = zeros(UInt8, 8),
+            trace_prob = Float32[0.60, 0.80, 0.95, 0.70, 0.65, 0.55, 0.45, 0.35],
+            trace_prob_prepass = Float32[0.60, 0.80, 0.95, 0.70, 0.65, 0.55, 0.45, 0.35],
+            trace_prob_infold = Float32[0.60, 0.80, 0.95, 0.70, 0.65, 0.55, 0.45, 0.35],
+            prec_prob = Float32[0.60, 0.80, 0.95, 0.70, 0.65, 0.55, 0.45, 0.35],
+            qval = fill(0.001f0, 8),
+            pep = fill(0.001f0, 8),
+            global_qval = fill(0.001f0, 8),
+            global_pep = fill(0.001f0, 8),
+            mbr_recovered = falses(8),
+            frag1_smoothed_intensity = Float32[80, 60, 40, 20, 10, 10, 10, 10],
+            frag2_smoothed_intensity = Float32[20, 40, 60, 80, 90, 90, 90, 90],
+            frag3_smoothed_intensity = zeros(Float32, 8),
+            frag4_smoothed_intensity = zeros(Float32, 8),
+            frag5_smoothed_intensity = zeros(Float32, 8),
+            frag6_smoothed_intensity = zeros(Float32, 8),
+            frag7_smoothed_intensity = zeros(Float32, 8),
+            frag8_smoothed_intensity = zeros(Float32, 8),
         )
 
         Arrow.write(receiver_path, receiver_df)
@@ -598,9 +620,9 @@ end
         partner_pools = Pioneer.build_counterfactual_partner_pools(
             [receiver_path, other_path],
             MBRPostQMockPrecursorsWithLength(
-                Float32[500.0, 650.0, 500.2, 500.1],
-                Float32[10.0, 10.01, 10.50, 12.0],
-                UInt8[9, 9, 9, 9],
+                Float32[500.0, 650.0, 500.2, 500.1, 500.3, 500.4, 500.5, 500.6, 500.7],
+                Float32[10.0, 10.01, 10.50, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0],
+                UInt8[9, 9, 9, 9, 9, 9, 9, 9, 9],
             ),
         )
         eligible_by_file = Pioneer.build_counterfactual_receiver_eligibility(
@@ -614,13 +636,26 @@ end
             partner_pools,
             Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
             counterfactual_eligibility_by_file = eligible_by_file,
-            irt_tolerance_by_file = Dict(UInt32(1) => 0.75f0),
             passing_score_floor = 0.0f0,
         )
         side = DataFrame(Arrow.Table(side_path))
 
         @test side.MBR_best_pair_prob_false[1] == 0.60f0
+        @test side.MBR_best_pair_prob_false2[1] == 0.80f0
+        @test side.MBR_best_pair_prob_false3[1] == 0.95f0
+        @test side.MBR_best_pair_prob_false4[1] == 0.70f0
+        @test side.MBR_best_pair_prob_false5[1] == 0.65f0
+        @test side.MBR_best_pair_prob_false6[1] == 0.55f0
+        @test side.MBR_best_pair_prob_false7[1] == 0.45f0
+        @test side.MBR_best_pair_prob_false8[1] == 0.35f0
         @test !side.MBR_best_is_missing_false[1]
+        @test !side.MBR_best_is_missing_false2[1]
+        @test !side.MBR_best_is_missing_false3[1]
+        @test !side.MBR_best_is_missing_false4[1]
+        @test !side.MBR_best_is_missing_false5[1]
+        @test !side.MBR_best_is_missing_false6[1]
+        @test !side.MBR_best_is_missing_false7[1]
+        @test !side.MBR_best_is_missing_false8[1]
     end
 end
 
@@ -647,6 +682,53 @@ end
     @test Pioneer._mbr_recovery_mask(qvals, peps, 0.01f0) == Bool[true, false, true]
 end
 
+@testset "MBR candidates do not require an available counterfactual" begin
+    old_cf = get(ENV, "PIONEER_MBR_N_COUNTERFACTUALS", nothing)
+    old_disable_hellinger = get(ENV, "PIONEER_MBR_DISABLE_HELLINGER_CONTRAST", nothing)
+    ENV["PIONEER_MBR_N_COUNTERFACTUALS"] = "1"
+    ENV["PIONEER_MBR_DISABLE_HELLINGER_CONTRAST"] = "1"
+    try
+        psms = DataFrame(
+            precursor_idx = UInt32[10, 20],
+            scan_idx = UInt32[100, 200],
+            ms_file_idx = UInt32[1, 2],
+            cv_fold = UInt8[0, 1],
+            target = Bool[true, true],
+            qval = Float32[0.02, 0.02],
+            global_qval = Float32[0.001, 0.001],
+            trace_prob_prepass = Float32[0.95, 0.96],
+            trace_prob_infold = Float32[0.80, 0.81],
+            main_search_prob = Float32[0.70, 0.71],
+            MBR_best_pair_prob_true = Float32[0.90, 0.91],
+            MBR_best_pair_prob_false = Float32[-1.0, -1.0],
+            MBR_best_is_missing_true = Bool[false, false],
+            MBR_best_is_missing_false = Bool[true, true],
+        )
+
+        summary = Pioneer.apply_mbr_filter_paired!(
+            psms;
+            alpha = 0.01f0,
+            q_thresh = 0.01f0,
+            prob_thresh_override = 0.0f0,
+        )
+
+        @test summary.n_candidates == 2
+        @test psms.MBR_transfer_candidate == Bool[true, true]
+        @test all(isfinite, psms.ftr_qval_true)
+    finally
+        if old_cf === nothing
+            delete!(ENV, "PIONEER_MBR_N_COUNTERFACTUALS")
+        else
+            ENV["PIONEER_MBR_N_COUNTERFACTUALS"] = old_cf
+        end
+        if old_disable_hellinger === nothing
+            delete!(ENV, "PIONEER_MBR_DISABLE_HELLINGER_CONTRAST")
+        else
+            ENV["PIONEER_MBR_DISABLE_HELLINGER_CONTRAST"] = old_disable_hellinger
+        end
+    end
+end
+
 @testset "MBR recovery alpha can be overridden for threshold sweeps" begin
     @test Pioneer._mbr_recovery_alpha_from_env(Dict{String, String}()) == 0.01f0
     @test Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0.02")) == 0.02f0
@@ -654,6 +736,118 @@ end
     @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0"))
     @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "1.1"))
     @test_throws ErrorException Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "nope"))
+end
+
+@testset "MBR counterfactual count can be selected for sweeps" begin
+    @test Pioneer._mbr_n_counterfactuals_from_env(Dict{String, String}()) == 2
+    @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "3")) == 3
+    @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "4")) == 4
+    @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "8")) == 8
+    @test_throws ErrorException Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "0"))
+    @test_throws ErrorException Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "9"))
+    @test_throws ErrorException Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "nope"))
+end
+
+@testset "MBR partial counterfactual coverage keeps candidates and masks missing blocks" begin
+    psms = DataFrame(
+        MBR_best_is_missing_true = Bool[false, false, false, false],
+        MBR_best_is_missing_false = Bool[false, true, false, true],
+        MBR_best_is_missing_false2 = Bool[true, false, true, true],
+        MBR_best_is_missing_false3 = Bool[true, true, true, true],
+    )
+    present = Pioneer._mbr_counterfactual_present_matrix(
+        psms,
+        [1, 2, 3, 4];
+        n_counterfactuals = 3,
+    )
+    @test present == Bool[
+        true false false
+        false true false
+        true false false
+        false false false
+    ]
+
+    frame_mask = Pioneer._mbr_transfer_frame_mask(present)
+    @test frame_mask == Bool[
+        true, true, true, true,
+        true, false, true, false,
+        false, true, false, false,
+        false, false, false, false,
+    ]
+    @test frame_mask[4]
+
+    training_mask = Pioneer._mbr_transfer_training_mask(
+        Bool[true, false, true, true];
+        n_counterfactuals = 3,
+        frame_mask = frame_mask,
+    )
+    @test training_mask == Bool[
+        true, false, true, true,
+        true, false, true, false,
+        false, true, false, false,
+        false, false, false, false,
+    ]
+    @test training_mask[4]
+end
+
+@testset "MBR FTR q-values use the top scoring counterfactual per candidate" begin
+    @test Pioneer._mbr_use_top_counterfactual_qvalues_from_env(Dict{String,String}())
+    @test !Pioneer._mbr_use_top_counterfactual_qvalues_from_env(Dict(
+        "PIONEER_MBR_USE_TOP_COUNTERFACTUAL_QVALUES" => "0",
+    ))
+
+    scores = Float32[
+        0.50, 0.50, 0.50,
+        0.10, 0.90, 0.30,
+        0.80, 0.20, 0.40,
+    ]
+    base_mask = Bool[
+        true, true, true,
+        true, true, false,
+        true, true, true,
+    ]
+    top_cf_mask = Pioneer._mbr_top_counterfactual_eval_mask(
+        scores,
+        3;
+        n_counterfactuals = 2,
+        eval_mask = base_mask,
+    )
+
+    @test top_cf_mask == Bool[
+        true, true, true,
+        false, true, false,
+        true, false, true,
+    ]
+
+    hard_cf_scores = Float32[
+        0.90, 0.80,
+        0.95, 0.10,
+        0.20, 0.70,
+    ]
+    metrics = Pioneer._mbr_transfer_iteration_metrics(
+        hard_cf_scores,
+        2;
+        n_counterfactuals = 2,
+    )
+
+    @test metrics.qvalue_eval_mask == Bool[
+        true, true,
+        true, false,
+        false, true,
+    ]
+    @test metrics.qvals_top[1] ≈ 0.5f0
+    @test metrics.qvals_top[2] ≈ 0.5f0
+    @test isinf(metrics.qvals_double[4])
+    @test isinf(metrics.qvals_double[5])
+
+    all_cf_metrics = Pioneer._mbr_transfer_iteration_metrics(
+        hard_cf_scores,
+        2;
+        n_counterfactuals = 2,
+        use_top_counterfactual_qvalues = false,
+    )
+    @test all_cf_metrics.qvalue_eval_mask == trues(6)
+    @test all(isfinite, all_cf_metrics.qvals_double)
 end
 
 @testset "MBR semi-supervised transfer training uses counterfactual FTR labels" begin
@@ -688,6 +882,84 @@ end
     @test labels == Bool[true, false, false, false, false, false, false, false]
     @test mask == Bool[true, false, false, false, true, true, true, true]
 
+    two_counterfactual_labels = Pioneer._mbr_transfer_counterfactual_labels(
+        length(positive_top);
+        n_counterfactuals = 2,
+    )
+    two_counterfactual_training_labels = Pioneer._mbr_transfer_training_labels(
+        positive_top;
+        n_counterfactuals = 2,
+    )
+    two_counterfactual_training_mask = Pioneer._mbr_transfer_training_mask(
+        positive_top;
+        n_counterfactuals = 2,
+    )
+
+    @test two_counterfactual_labels == Bool[
+        true, true, true, true,
+        false, false, false, false,
+        false, false, false, false,
+    ]
+    @test two_counterfactual_training_labels == Bool[
+        true, false, false, false,
+        false, false, false, false,
+        false, false, false, false,
+    ]
+    @test two_counterfactual_training_mask == Bool[
+        true, false, false, false,
+        true, true, true, true,
+        true, true, true, true,
+    ]
+
+    four_counterfactual_labels = Pioneer._mbr_transfer_counterfactual_labels(
+        length(positive_top);
+        n_counterfactuals = 4,
+    )
+    four_counterfactual_training_mask = Pioneer._mbr_transfer_training_mask(
+        positive_top;
+        n_counterfactuals = 4,
+    )
+    @test length(four_counterfactual_labels) == 20
+    @test four_counterfactual_labels[1:4] == trues(4)
+    @test all(.!four_counterfactual_labels[5:20])
+    @test four_counterfactual_training_mask == Bool[
+        true, false, false, false,
+        true, true, true, true,
+        true, true, true, true,
+        true, true, true, true,
+        true, true, true, true,
+    ]
+
+    two_cf_scores = Float32[0.97, 0.98, 0.10]
+    two_cf_training_metrics = Pioneer._mbr_transfer_iteration_metrics(
+        two_cf_scores,
+        1;
+        n_counterfactuals = 2,
+    )
+
+    @test_throws MethodError Pioneer._mbr_transfer_iteration_metrics(
+        two_cf_scores,
+        1;
+        n_counterfactuals = 2,
+        scale_qvalues_by_counterfactuals = true,
+    )
+
+    @test two_cf_training_metrics.qvals_top[1] ≈ 1.0f0
+
+    partial_cf_mask = Bool[
+        true,
+        true,
+        false,
+    ]
+    partial_cf_training_metrics = Pioneer._mbr_transfer_iteration_metrics(
+        two_cf_scores,
+        1;
+        n_counterfactuals = 2,
+        eval_mask = partial_cf_mask,
+    )
+
+    @test partial_cf_training_metrics.qvals_top[1] ≈ 1.0f0
+
     valid_transfer_top = Bool[true, false, true, false]
     valid_labels = Pioneer._mbr_transfer_training_labels(valid_transfer_top)
     valid_mask = Pioneer._mbr_transfer_training_mask(valid_transfer_top)
@@ -706,52 +978,134 @@ end
     @test isinf(valid_metrics.qvals_top[4])
 end
 
-@testset "MBR FTR model uses best/worst precursor features while ablating RT, b/y, and non-best Hellinger" begin
+@testset "MBR Hellinger rank uses only selected counterfactuals" begin
+    psms = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = Float32[0.20, 0.80],
+        MBR_best_smoothed_frag_hellinger_false = Float32[0.60, 0.10],
+        MBR_best_smoothed_frag_hellinger_false2 = Float32[0.40, 0.90],
+        MBR_best_smoothed_frag_hellinger_false3 = Float32[0.05, 0.20],
+    )
+
+    Pioneer._mbr_add_best_hellinger_rank_features!(
+        psms;
+        n_counterfactuals = 2,
+    )
+
+    @test psms.MBR_best_smoothed_frag_hellinger_rank_true == Float32[1, 2]
+    @test psms.MBR_best_smoothed_frag_hellinger_rank_false == Float32[3, 1]
+    @test psms.MBR_best_smoothed_frag_hellinger_rank_false2 == Float32[2, 3]
+    @test !(:MBR_best_smoothed_frag_hellinger_rank_false3 in propertynames(psms))
+end
+
+@testset "MBR FTR debug export writes selected true and counterfactual blocks" begin
+    mktempdir() do dir
+        sub = DataFrame(
+            precursor_idx = UInt32[10, 20],
+            ms_file_idx = UInt32[1, 2],
+            scan_idx = UInt32[100, 200],
+            cv_fold = UInt8[0, 1],
+            target = Bool[true, true],
+            qval = Float32[0.02, 0.03],
+            global_qval = Float32[0.001, 0.001],
+            trace_prob_prepass = Float32[0.50, 0.60],
+            trace_prob_infold = Float32[0.55, 0.65],
+            main_search_prob = Float32[0.70, 0.80],
+            MBR_best_pair_prob_true = Float32[0.90, 0.85],
+            MBR_best_pair_prob_false = Float32[0.40, 0.30],
+        )
+        available_true = Symbol[:main_search_prob, :MBR_best_pair_prob_true]
+        x_blocks = Matrix{Float32}[
+            Float32[0.70 0.90; 0.80 0.85],
+            Float32[0.70 0.40; 0.80 0.30],
+        ]
+
+        Pioneer._mbr_write_ftr_debug_tables!(
+            dir,
+            sub,
+            available_true,
+            x_blocks,
+            Float32[0.99, 0.80, 0.20, 0.10],
+            Float32[0.00, 0.01, 1.00, 1.00],
+            Float32[0.00, 0.02, 0.90, 0.95],
+            Bool[true, true, false, false],
+            Bool[true, true, true, true],
+            Bool[true, false];
+            n_counterfactuals = 1,
+            alpha = 0.01f0,
+            q_thresh = 0.01f0,
+            prob_thresh = 0.5f0,
+            best_iter = 1,
+            n_positive = 2,
+        )
+
+        frame = DataFrame(Arrow.Table(joinpath(dir, "mbr_ftr_frame.arrow")))
+        @test nrow(frame) == 4
+        @test frame.mbr_counterfactual_idx == UInt8[0, 0, 1, 1]
+        @test frame.mbr_is_true_block == Bool[true, true, false, false]
+        @test frame.MBR_best_pair_prob_true == Float32[0.90, 0.85, 0.40, 0.30]
+        @test frame.mbr_recovered_top == Bool[true, false, false, false]
+
+        candidates = DataFrame(Arrow.Table(joinpath(dir, "mbr_ftr_candidates.arrow")))
+        @test candidates.mbr_candidate_idx == UInt32[1, 2]
+        @test candidates.mbr_ftr_qval_true_debug == Float32[0.00, 0.01]
+        @test candidates.mbr_recovered_debug == Bool[true, false]
+
+        summary = DataFrame(Arrow.Table(joinpath(dir, "mbr_ftr_summary.arrow")))
+        @test only(summary.n_counterfactuals) == 1
+        @test only(summary.n_recovered) == 1
+        @test read(joinpath(dir, "mbr_ftr_features.txt"), String) ==
+            "main_search_prob\nMBR_best_pair_prob_true\n"
+    end
+end
+
+@testset "MBR FTR model uses true/counterfactual best features while ablating worst, RT, b/y, and non-best Hellinger" begin
     expected_true = Symbol[
         :main_search_prob,
         :trace_prob_infold,
         :MBR_best_pair_prob_true,
-        :MBR_worst_pair_prob_true,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_true,
-        :MBR_worst_log2_weight_ratio_true,
         :MBR_best_log2_explained_ratio_true,
-        :MBR_worst_log2_explained_ratio_true,
         :MBR_best_abs_n_scans_diff_true,
-        :MBR_worst_abs_n_scans_diff_true,
         :MBR_best_log2_n_scans_ratio_true,
-        :MBR_worst_log2_n_scans_ratio_true,
         :MBR_best_irt_diff_true,
-        :MBR_worst_irt_diff_true,
         :MBR_best_observed_irt_diff_true,
-        :MBR_worst_observed_irt_diff_true,
         :MBR_single_donor_true,
         :MBR_best_smoothed_frag_hellinger_true,
+        :MBR_best_smoothed_frag_hellinger_rank_true,
     ]
     expected_false = Symbol[
         :main_search_prob,
         :trace_prob_infold,
         :MBR_best_pair_prob_false,
-        :MBR_worst_pair_prob_false,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_false,
-        :MBR_worst_log2_weight_ratio_false,
         :MBR_best_log2_explained_ratio_false,
-        :MBR_worst_log2_explained_ratio_false,
         :MBR_best_abs_n_scans_diff_false,
-        :MBR_worst_abs_n_scans_diff_false,
         :MBR_best_log2_n_scans_ratio_false,
-        :MBR_worst_log2_n_scans_ratio_false,
         :MBR_best_irt_diff_false,
-        :MBR_worst_irt_diff_false,
         :MBR_best_observed_irt_diff_false,
-        :MBR_worst_observed_irt_diff_false,
         :MBR_single_donor_false,
         :MBR_best_smoothed_frag_hellinger_false,
+        :MBR_best_smoothed_frag_hellinger_rank_false,
     ]
 
     @test Pioneer.FTR_FEATURES_F_TRUE == expected_true
     @test Pioneer.FTR_FEATURES_F_FALSE == expected_false
+    @test Pioneer._mbr_ftr_features_true_from_env(Dict{String, String}()) == expected_true
+    no_contrast_features = Pioneer._mbr_ftr_features_true_from_env(
+        Dict("PIONEER_MBR_DISABLE_HELLINGER_CONTRAST" => "1"),
+    )
+    @test :MBR_best_smoothed_frag_hellinger_true in no_contrast_features
+    @test !(:MBR_best_smoothed_frag_hellinger_rank_true in no_contrast_features)
+    @test length(no_contrast_features) == length(expected_true) - 1
+    @test Pioneer.FTR_FEATURES_F_FALSE2 == Symbol[
+        f === :main_search_prob ? f :
+        f === :trace_prob_infold ? f :
+        f === :MBR_log2_weight_lod_ratio ? f :
+        Symbol(replace(String(f), "_true" => "_false2"))
+        for f in expected_true
+    ]
 
     all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
     @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
@@ -760,8 +1114,8 @@ end
     @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
-    @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
@@ -769,21 +1123,25 @@ end
     @test !(:MBR_best_rt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_best_log_by_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_best_log_by_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
-    @test :MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
-    @test :MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test :MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
-    @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test :MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
-    @test :MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_log2_weight_ratio_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_smoothed_frag_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_smoothed_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_smoothed_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_best_smoothed_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_best_smoothed_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_worst_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_worst_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
@@ -870,10 +1228,16 @@ end
         min_weight_donor_residual = min_weight_donor_df.irt_pred[1] - min_weight_donor_df.irt_obs[1]
         min_weight_false_residual = min_weight_donor_df.irt_pred[2] - min_weight_donor_df.irt_obs[2]
 
+        @test side.MBR_best_pair_prob_true[1] == 0.95f0
         @test side.MBR_best_observed_irt_diff_true[1] == abs(14.25f0 - 11.5f0)
+        @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
+        @test isapprox(
+            side.MBR_best_log2_n_scans_ratio_true[1],
+            log2((receiver_df.n_scans[1] + 1.0f0) / (best_donor_df.n_scans[1] + 1.0f0));
+            atol = 1.0f-6,
+        )
         @test side.MBR_worst_pair_prob_true[1] == 0.90f0
         @test side.MBR_worst_observed_irt_diff_true[1] == abs(14.25f0 - 13.0f0)
-        @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
         @test side.MBR_worst_irt_diff_true[1] == abs(receiver_residual - min_weight_donor_residual)
         @test side.MBR_best_rt_diff_true[1] == abs(6.25f0 - best_donor_df.rt[1])
         @test side.MBR_best_log_by_diff_true[1] == 1.5f0
