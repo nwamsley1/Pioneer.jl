@@ -108,11 +108,24 @@ function generate_isomer_decoys!(precursors_df::DataFrame, fragments_df::DataFra
             (ismissing(ms) || isempty(ms)) && continue
             mods = _parse_mod_tuples(ms)
             isempty(mods) && continue
+            # A localization decoy is only meaningful for a mod TYPE with genuine
+            # positional ambiguity: candidate acceptor sites c exceed mods present n
+            # (C(c,n) > 1). Single-site and fully-saturated mod types are unique at the
+            # precursor m/z — nothing to mislocalize. Only such mods may be moved, and a
+            # peptidoform with no ambiguous mod type gets no decoy.
+            ambiguous_names = Set{String}()
+            for name in unique(m[3] for m in mods)
+                c = length(get(real_by, name, Int[]))
+                n = count(m -> m[3] == name, mods)
+                c > n && push!(ambiguous_names, name)
+            end
+            isempty(ambiguous_names) && continue
             z = chargecol === nothing ? 0 : Int(chargecol[r])
-            # candidate decoys: move one mod (pos,name) to a shadow site of that name
+            # candidate decoys: move one mislocalizable mod to a shadow site of its type
             cand_str = String[]; cand_mods = Vector{Tuple{Int,Char,String}}[]
             cand_move = Tuple{Int,Int,String}[]
             for (pos, res, name) in mods
+                name in ambiguous_names || continue
                 haskey(shadow, name) || continue
                 for d in shadow[name]
                     nm = [(p == pos && n == name) ? (d, seq[d], n) : (p, a, n) for (p, a, n) in mods]

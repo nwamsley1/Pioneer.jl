@@ -71,8 +71,12 @@ end
     shadow = _P.shadow_decoy_sites(seq, rb; seed = _P.seq_seed(seq))
     shad_all = Set(vcat(values(shadow)...))
 
+    # peptidoform 1: 1 phospho on 2 S sites (C(2,1)=2, ambiguous) + 1 ox on the
+    #   only M (C(1,1)=1, NOT ambiguous) -> gets a decoy, but only the phospho moves.
+    # peptidoform 2: 2 phospho on both S sites + ox on the only M -> fully saturated
+    #   (C(2,2)=1, C(1,1)=1) -> unique at its m/z -> NO decoy.
     mods = ["(1,S,Unimod:21)(7,M,Unimod:35)",           # 1 phospho + 1 ox
-            "(1,S,Unimod:21)(4,S,Unimod:21)(7,M,Unimod:35)"]  # 2 phospho + 1 ox
+            "(1,S,Unimod:21)(4,S,Unimod:21)(7,M,Unimod:35)"]  # 2 phospho + 1 ox (saturated)
     prec = DataFrame(sequence = fill(seq, 2), mods = mods,
                      mz = Float32[500, 600], prec_charge = fill(UInt8(2), 2),
                      pair_id = UInt32[1, 2])
@@ -82,15 +86,43 @@ end
 
     prec, frag = _P.generate_isomer_decoys!(prec, frag, vm, masses)
     dec = prec[prec.is_loc_decoy, :]
-    @test nrow(dec) == 2
-    for i in 1:nrow(dec)
-        s = _sites(dec.mods[i]); b = _sites(prec.mods[Int(dec.loc_base_prec_id[i])])
-        # per-mod-name composition preserved
+    @test nrow(dec) == 1                       # only the ambiguous peptidoform 1
+    @test Int(dec.loc_base_prec_id[1]) == 1    # decoy derived from peptidoform 1
+    let s = _sites(dec.mods[1]), b = _sites(prec.mods[1])
         countname(set) = Dict(n => count(x -> x[2] == n, set) for n in unique(x[2] for x in set))
-        @test countname(s) == countname(b)
-        # exactly one mod moved onto a shadow site
-        @test count(sp -> sp[1] in shad_all, s) == 1
+        @test countname(s) == countname(b)     # per-mod-name composition preserved
+        @test count(sp -> sp[1] in shad_all, s) == 1     # exactly one mod on a shadow
+        # the moved mod is the phospho (ambiguous); the ox (Unimod:35) stays on M7
+        @test (7, "Unimod:35") in s
     end
+end
+
+@testset "no decoy for unambiguous localization (C(c,n) == 1)" begin
+    vm = VM[(p = r"[STY]", r = "Unimod:21")]
+    masses = Dict("Unimod:21" => 79.966331f0)
+    # single phosphosite: 1 S, 1 phospho -> C(1,1)=1 -> no decoy
+    prec1 = DataFrame(sequence = ["AASAAK"], mods = ["(3,S,Unimod:21)"],
+                      mz = Float32[400], prec_charge = UInt8[2], pair_id = UInt32[1])
+    frag1 = DataFrame(precursor_idx = UInt32[1], annotation = ["b3"],
+                      mz = Float32[300], intensities = Float32[1])
+    p1, _ = _P.generate_isomer_decoys!(prec1, frag1, vm, masses)
+    @test nrow(p1) == 1 && !any(p1.is_loc_decoy)
+
+    # fully saturated: 2 S, 2 phospho -> C(2,2)=1 -> no decoy
+    prec2 = DataFrame(sequence = ["ASASAK"], mods = ["(2,S,Unimod:21)(4,S,Unimod:21)"],
+                      mz = Float32[500], prec_charge = UInt8[2], pair_id = UInt32[1])
+    frag2 = DataFrame(precursor_idx = UInt32[1], annotation = ["b3"],
+                      mz = Float32[300], intensities = Float32[1])
+    p2, _ = _P.generate_isomer_decoys!(prec2, frag2, vm, masses)
+    @test nrow(p2) == 1 && !any(p2.is_loc_decoy)
+
+    # 2 S, 1 phospho -> C(2,1)=2 -> DOES get a decoy (control)
+    prec3 = DataFrame(sequence = ["ASASAK"], mods = ["(2,S,Unimod:21)"],
+                      mz = Float32[420], prec_charge = UInt8[2], pair_id = UInt32[1])
+    frag3 = DataFrame(precursor_idx = UInt32[1], annotation = ["b3"],
+                      mz = Float32[300], intensities = Float32[1])
+    p3, _ = _P.generate_isomer_decoys!(prec3, frag3, vm, masses)
+    @test nrow(p3) == 2 && count(p3.is_loc_decoy) == 1
 end
 
 @testset "unmodified peptidoform gets no decoy" begin
@@ -100,6 +132,23 @@ end
     frag = DataFrame(precursor_idx = UInt32[1], annotation = ["b2"], mz = Float32[200], intensities = Float32[1])
     prec, frag = _P.generate_isomer_decoys!(prec, frag, vm, Dict("Unimod:21"=>79.966331f0))
     @test nrow(prec) == 1 && all(.!prec.is_loc_decoy)
+end
+
+@testset "multi-mod: ambiguity requires c>n for at least ONE mod type" begin
+    # phospho (STY) + oxidation (M). Decoy iff C(c_p,n_p)*C(c_o,n_o) > 1.
+    vm = VM[(p = r"[STY]", r = "Unimod:21"), (p = r"M", r = "Unimod:35")]
+    masses = Dict("Unimod:21" => 79.966331f0, "Unimod:35" => 15.994915f0)
+    mk(seq, mods, mz) = (DataFrame(sequence=[seq], mods=[mods], mz=Float32[mz], prec_charge=UInt8[2], pair_id=UInt32[1]),
+                         DataFrame(precursor_idx=UInt32[1], annotation=["b3"], mz=Float32[300], intensities=Float32[1]))
+    # 1 phospho site (S3) + 1 ox site (M5), 1 phospho + 1 ox -> C=1*1=1 -> NO decoy (the caveat)
+    p, f = mk("AASAMK", "(3,S,Unimod:21)(5,M,Unimod:35)", 500); r, _ = _P.generate_isomer_decoys!(p, f, vm, masses)
+    @test nrow(r) == 1 && !any(r.is_loc_decoy)
+    # 2 phospho sites (S3,S4) + 1 ox site, 1 phospho + 1 ox -> phospho ambiguous -> decoy
+    p, f = mk("AASSMK", "(3,S,Unimod:21)(5,M,Unimod:35)", 520); r, _ = _P.generate_isomer_decoys!(p, f, vm, masses)
+    @test nrow(r) == 2 && count(r.is_loc_decoy) == 1
+    # 1 phospho site + 2 ox sites (M5,M6), 1 phospho + 1 ox -> OX ambiguous -> decoy
+    p, f = mk("AASAMM", "(3,S,Unimod:21)(5,M,Unimod:35)", 540); r, _ = _P.generate_isomer_decoys!(p, f, vm, masses)
+    @test nrow(r) == 2 && count(r.is_loc_decoy) == 1
 end
 
 @testset "loc-decoy pair_id preserves real target/decoy pairing" begin

@@ -2,6 +2,84 @@
 
 Living record of empirical results per phase. See `PLAN.md` for the design.
 
+## Koina Prosit PTM model landscape (probed 2026-07-06)
+
+Empirically tested via Koina `/v2/models/<m>/infer`. **All phospho-capable Prosit intensity models
+cap peptide length at 30** (tokenizer limit -> HTTP 400 above 30). Confirmed phospho(UNIMOD:21) +
+ox(UNIMOD:35) support and length cap:
+
+| model | phospho | ox | length cap |
+|---|---|---|---|
+| Prosit_2024_intensity_PTMs_gl | yes | yes | 30 |
+| Prosit_2025_intensity_22PTM | yes | yes | 30 |
+| Prosit_2025_intensity_40PTM | yes | yes | 30 |
+| Prosit_2025_intensity_ptm2 | **NO** | yes | 60 |
+
+So "phospho + length>30" is UNREACHABLE with Prosit (ptm2 lifts length to 60 but drops phospho ->
+would need AlphaPeptDeep/MS2PIP). **Prosit_2025_intensity_40PTM is a format-identical DROP-IN** for
+2024 (same y1+1 annotation, same mz/intensity outputs; only values differ; Chronologer RT is model-
+independent). Integrated into Pioneer registry (src/Pioneer.jl MODEL_CONFIGS + KOINA_URLS) as
+prediction_model="prosit_2025_40ptm" — no parser changes (all dispatch is `isa InstrumentAgnosticModel`,
+name is just a URL-key label). 22PTM/40PTM = #PTM TYPES supported, NOT length. Model list:
+POST /v2/repository/index.
+
+**A/B (same phospho-std digest MC2/7-30/2-4/+Ox, 12-file combined search; data model_compare/):**
+2025_40PTM vs 2024_PTMs_gl are EQUIVALENT — total IDs 95,557 vs 95,403 (+0.2%), C>1 decoy-FLR@0.75
+(MBR-excl) 9.6% vs 9.5%, empirical@0.75 4.2% vs 3.8% (small-N noise), stratified@<=5% 40,376 vs
+41,915. Newer model = safe modernization, no measurable gain here -> keep 2025_40PTM. **The DIGEST is
+the real lever, not the model:** phospho-std (MC2/charge2-4/+Ox, yps_std, 34.8M precs) = 95,557 IDs vs
+phospho-only MC1 (yps_decoy2, 10.1M) 64,354 (+48%). With Ox: C==1 share 4%->9% (ox adds unambiguous
+single-site cases), C>1 91%; decoy-FLR 7.6%->9.6%@0.75 (richer lib genuinely harder); decoy still
+conservative vs empirical (~4%). Library C==1 loc-decoys=0 (multi-mod product rule C(cp,np)*C(co,no)
+verified). Non-Prosit long-peptide models (AlphaPeptDeep_ms2_generic, UniSpec) do phospho+len40 but
+need new annotation parser + instrument_types input — deferred.
+
+## Combined 12-file phospho search vs C>1 decoy library (yps_decoy2) — 2026-07-06
+
+Library yps_decoy2.poin (C>1-restricted decoys). Single COMBINED search over all 12 good dilution
+files (experiment-wide global FDR + MBR), localization+L2. Data: ~/prosit_phospho_test/
+dilution_curve2/combined/, analyze_combined.jl. **GLOBAL:**
+- Total UNIQUE peptidoform IDs @1% FDR: **64,354**. Breakdown: 0 unmodified (lib min_var_mods=1),
+  **2,642 (4%) C(c,n)==1** (unambiguous -> FDR only, no loc score), **61,712 (96%) C(c,n)>1**
+  (need localization). This 96/4 split is the (b) payoff — correctly separates the no-loc-needed set.
+- **C>1 per-file decoy-FLR: 7.6% @frac>=0.75 (MBR-excluded), 9.6% with MBR.** Matches standards
+  **empirical ~7.1%** -> decoy method behaves correctly. STABLE ~7.3-7.8% across all 5 dilution points
+  (256x); decoy-FLR flat by design (constant yeast background).
+- **Empirical at the PROPER stratified operating point (not flat frac>=0.75):** per-C thresholds for
+  target decoy-FLR<=10% (C2@0.5,C3@0.5,drop C4-6/7+) -> 118/201 standards, **empirical 1.7%**;
+  <=5% (C2@0.56) -> 76/201, **empirical 0.0%**. => **decoy-FLR is CONSERVATIVE (over-estimates)** —
+  a safe upper bound. Empirical drops with frac because frac is a genuine confidence (working).
+
+**Two methodology traps found:** (1) NEVER dedup localization by max-frac across files — cherry-picks,
+gave a spurious 27%; use PER-FILE instances (-> 7.6%). (2) MBR adds ~2 pts localization error: loc-
+decoys MBR-recovered 29% vs reals 10% (decoy iRT==parent gives every decoy an always-present anchor);
+MBR genuinely propagates mislocalizations.
+
+**Global vs C-stratified localized instances (C>1, per-file, MBR-excluded; base FLR 70.8%):**
+
+| target | global 1-threshold | C-stratified |
+|---|---|---|
+| none | 519,465 | 519,465 |
+| <=50% | 388,093 | 373,672 |
+| <=20% | 204,899 | 183,739 |
+| <=10% | 138,349 | 79,157 |
+| <=5% | 0 | 35,490 |
+| <=1% | 0 | 0 |
+
+Crossover ~5-10%: at loose targets GLOBAL keeps more IDs, but global "<=10%" is a DILUTED average
+(high-C localizations inside are ~20-40% wrong, masked by easy low-C). Stratified guarantees EACH
+stratum <=target -> uniform per-localization reliability. Stratification's value = honest uniform FLR,
+not raw ID count; it's the only option at <5%.
+
+**Library-design notes:** unmodified peptides (min_var_mods=0) don't affect localization/FLR (different
+prec m/z, -80/site) — optional, ID-completeness only, sample is phospho-enriched. Standard phospho
+search = fixed CAM(C) [have] + variable Phospho(STY) [have] + variable Ox(M) [MISSING] (+ often N-term
+acetyl). Adding Ox(M) is more standard and exercises C(c,n) with a 2nd ambiguous mod type; competes for
+max_var_mods=2 budget. Also flagged for phospho: max_frag_rank=10 (+gap-cover retention), b_start=2/
+y_start=3 excludes b1/y1/y2 (terminal sites unlocalizable), max_frag_charge=3 & include_neutral_diff=
+true permitted. Digest currently MC=1/len7-30/charge2-3 (conservative; phospho standard = MC2/7-40/2-4;
+NOT charge 1 — phosphate lowers net charge but tryptic peptides stay >=2+).
+
 ## Phase 1 (non-PTM parity) — yeast MTAC 3-min, 2026-07-02
 
 **Result: Prosit performs on par with Altimeter.** Phase-1 definition of done met.
@@ -270,3 +348,185 @@ in the single-point comparison (decoys too easy) -> a short-distance-biased draw
 And this is per-reported (max-weight winner per group); per-precursor rates are higher.
 Pipeline/data: ~/prosit_phospho_test/{run_dilution_curve.sh, dilution_curve/SUMMARY.tsv, yps_decoy.poin}.
 See memory: [[localization-isomer-competition]], [[data-download-and-convert]].
+
+---
+
+## Canonical terminology (standardize on this — never write bare "decoy" for localization)
+
+Two orthogonal decoy axes, two questions, two flags already in the code:
+
+| Term | Question | FDR estimated | Code flag | Construction |
+|---|---|---|---|---|
+| **Sequence decoy** | Is this *peptide* real? | ID / detection FDR | `is_decoy` | reversed / shuffled sequence |
+| **Positional isomer decoy** | Did we pick the correct *positional isomer*? | localization FDR (FLR) | `is_loc_decoy` | same sequence/mass, mod on a wrong position |
+
+("Positional isomer decoy" is the precise name; "peptidoform decoy" / "loc-decoy" are older synonyms
+for the same `is_loc_decoy` flag.) A positional isomer decoy winning the assignment = we placed the
+mod on the wrong position = a localization error; **FLR = decoy-isomer-wins / real-isomer-wins**.
+
+**Existence condition (falls straight out of the definition):** a positional isomer decoy can only
+exist if there are >=2 positional isomers to choose among — i.e. for some mod type X, candidate
+acceptor sites `c_X` > mods present `n_X`, so `C(c_X, n_X) > 1`. Single-site-per-mod peptidoforms
+(1 phospho / 1 S-T-Y; phospho + 1 oxidizable M; 2 phospho / exactly 2 sites) have ONE arrangement,
+nothing to mislocalize -> **no decoy**. This is not a special case; it is what "positional isomer
+decoy" means. Consequence: the current library over-generates (decoys on single-site peptides), which
+only measures ID-level leakage (the 3.1% 1-site floor), not localization error — restrict generation
+to `c_X > n_X` peptidoforms.
+
+**Construction tension (open):** a *true* positional isomer keeps the mod on a valid acceptor at a
+different position. The current **shadow-site** design puts it on a *non-acceptor* residue — a
+"position" that is not a real isomer, chemically implausible, easy for the search to reject -> decoys
+too easy -> FLR under-shoots the standards. The ideal positional isomer decoy sits on a *plausible
+alternative acceptor-like position* (the short-distance-biased draw reaches toward this). Note the
+irreducible difficulty: a *real* alternative acceptor site is itself a legitimate target isomer, so
+the decoy must be a position the search will entertain yet that we can label wrong — the shadow-site
+is the current compromise.
+
+Peptidoform-decoy **construction methods** (name the axis + method, e.g. "peptidoform decoy
+(shadow-site move-one-random)"):
+- **shadow-site move-one-random** — CURRENT (`yps_decoy.poin`). Per peptide draw count-matched random
+  *non-acceptor* shadow sites (deterministic per-seq seed); per modified peptidoform relocate ONE
+  random variable mod to a random shadow site (partial displacement, siblings kept). Verified in the
+  library: e.g. `(1,Y)(4,Y)->(1,Y)(15,D)`, `(5,S)(6,C:CAM)(21,S)->(3,A)(5,S)(6,C:CAM)`.
+- **adjacent move-one** — retired ±1 draft.
+- **short-distance-biased** — proposed next (same shadow scheme, draw biased to the real site-distance
+  distribution, to stop under-shooting the standards' known FLR).
+
+## How the localization score / FLR is computed (target-decoy competition)
+
+1. **Group** by `sequence | charge | precursor-m/z`. A peptidoform decoy has identical precursor m/z
+   (phospho mass is residue-independent), so it competes INSIDE its reals' group.
+2. **Select + score:** winner = `argmax(weight)` in the group (real or decoy). Localization SCORE =
+   winner's `iso_weight_fraction_at_scan` (winner weight / Σ sibling isomer weights at apex scan).
+   Selection is by weight; the fraction is the winner's confidence (bad selector, good confidence).
+3. **Threshold + FLR:** sweep cutoff `t` on the winner fraction. Among groups with winner `frac >= t`:
+   `R`=real winners, `D`=decoy winners, **decoy-FLR = D/R**; reported IDs = unique real-winner
+   peptidoforms. A decoy winning its group = proxy for a real mislocalization.
+   OPEN: normalization is `D/R` at ~1:1 decoy:real — revisit vs `D/(R+D)` / `2D` if the ratio changes.
+   Rate is per-reported (one winner/group); per-precursor FLR is higher.
+   Code: ~/prosit_phospho_test/analyze_dilution_point.jl.
+
+## Multi-peptidoform reporting: fraction alone floors at ~10.7% FLR (2026-07-06)
+
+Goal: report >1 peptidoform per peptide (multiple positional isomers can be genuinely co-present)
+instead of one max-weight winner per group. Data already supports it — each isomer is its own
+precursor_idx, deconvolved per-scan + FDR'd independently; `precursors_long` carries each
+peptidoform's best-PSM `iso_weight_fraction_at_scan` (its apex value). So: drop the argmax collapse,
+filter to real targets passing BOTH `qval<=0.01` (run) AND `global_qval<=0.01` (experiment-wide),
+dedup to unique precursor_idx (max frac across reps), sweep the fraction cutoff, FLR = loc-decoys /
+reals passing. Ran on 10k-amol (3 reps): 54,066 real + 40,814 loc-decoy peptidoforms post-qval.
+
+| frac >= t | all: real / decoy / FLR | contested(gsz>=2): real / decoy / FLR |
+|---|---|---|
+| 0.75 | 11,762 / 1,348 / **11.5%** | 6,046 / 683 / 11.3% |
+| 0.90 | 7,987 / 851 / 10.7% | 2,271 / 186 / 8.2% |
+| 0.95 | 6,831 / 739 / 10.8% | 1,115 / 74 / **6.6%** |
+| 1.00 | 5,716 / 665 / 11.6% | 0 / 0 / — |
+
+**Fraction alone CANNOT push per-peptidoform FLR below ~10%** (flat from 0.75->1.0). Cause:
+**singletons**. At frac>=0.75, ~half the confident calls (5,716 real + 665 decoy) are singletons
+(`iso_group_size_at_scan==1`) — alone in their group that scan, so frac=1.0 AUTOMATICALLY and carries
+ZERO localization info; their ~11.6% FLR IS the floor. A peptidoform is a singleton at its apex
+exactly when its siblings elute at a DIFFERENT RT — i.e. the "genuinely co-present isomers" case we
+want to report. **The sibling-fraction measures co-elution competition; RT-separated isomers don't
+compete, so a peptidoform decoy that separates in RT with a clean permuted spectrum is
+indistinguishable from a real second form.** Multi-reporting therefore has intrinsically higher FLR
+than winner-take-one, and the fraction can't close it. Restricting to contested (gsz>=2) reaches
+~6.6% at frac>=0.95 but costs most IDs and still isn't 1%.
+
+**Design implication — two regimes, two scores:** (a) contested/co-eluting peptidoforms -> the
+iso_weight_fraction is the right localization confidence (~6.6% at 0.95); (b) singleton/RT-resolved
+peptidoforms -> fraction is uninformative, confidence must come from **site-determining-ion evidence**
+(b/y ions distinguishing the candidate sites) and/or the PSM score, thresholded against loc-decoys.
+The singleton FLR is a detection/PSM-score property (did the search reject the decoy's permuted
+spectrum?), not a competition property. Next: prototype a per-peptidoform site-determining-ion score
+for the singleton regime — that's the actual bottleneck for low-FLR multi-reporting.
+Prototype code: inline (this session); numbers from dilution_curve/amol_10000/results.
+
+## Phase 0: what singletons actually are — deconv collapse + acceptor-count floor (2026-07-06)
+
+Investigated WHY singletons (`iso_group_size_at_scan==1`) exist. `iso_group_size_at_scan` counts
+sibling PSM rows in the deconv output at the apex scan; `Score!` (ScoredPSMs.jl:27) DROPS any
+precursor with `weight < 1e-6`. So a singleton = the only isomer of its peptide with NONZERO
+deconvolution weight at that scan. But positional isomers share every non-site-determining b/y ion,
+so siblings are co-selected as fragment-index candidates and enter the SAME design matrix; the L2
+ridge collapses the group onto one winner. 4,374 / 5,716 real singletons (77%) are >=2-acceptor-site
+peptides where a sibling isomer provably exists. **=> deconvolution is already doing localization;
+`gsz==1` mostly means "the ridge collapsed this isomer group to one winner," NOT "nothing competed."
+frac=1.0 for a singleton is therefore NOT information-free (earlier claim too strong) — it encodes a
+site choice driven by site-determining ions + L2.**
+
+**CANDIDATE CHECK (single-file diagnostic, env-gated dump of per-scan fragment-index candidates,
+scan_idx aligned 100% self-hit; hook reverted):** Of 2,654 real singletons, at the gsz scan:
+**54% had ZERO sibling positional isomer as a candidate** (median sibling-candidates=0); only 46% had
+>=1 sibling candidate (39% among those with a real sibling). So the "deconvolution collapsed a
+co-candidate group" story holds for only ~46%; the other ~54% were **genuinely uncontested — the only
+positional isomer even proposed at that scan.** WHY siblings weren't candidates is NOT retention time:
+predicted-iRT |gap| singleton-vs-non-candidate-sibling is small (median 0.62, only 5% >2 iRT), ~same
+as candidate siblings. Since RT puts them in-window, siblings fail at the **fragment-index candidate
+score** — their mod-bearing (site-determining) ions are at the wrong m/z, so they don't accumulate
+enough matched fragments. **=> localization happens at TWO implicit stages, both keyed on
+site-determining ions: (1) candidate selection (the fragment index filters wrong-position isomers
+before deconv — handles the 54%), (2) deconvolution ridge (collapses the 46% that still competed).**
+Corrects the earlier framing that deconv alone does localization. This STRENGTHENS the SDI-score case:
+a per-peptidoform site-determining-ion score just formalizes what both stages already use implicitly.
+And it re-explains the shadow-decoy weakness: a positional isomer decoy only registers as a false
+localization if it PASSES candidate selection, but shadow (non-acceptor) decoys often fail the
+fragment-index score (mod ions at implausible m/z) -> they don't compete -> FLR under-shoots. A useful
+decoy must be "matchable enough to be proposed, yet labelable wrong."
+
+## C(c,n) — the localization-multiplicity difficulty prior + decoy-iRT=parent (2026-07-06)
+
+FLR is only needed when >=2 positional isomers exist at a precursor m/z, i.e. `C(c,n) > 1` where
+c = candidate acceptor sites (#S/T/Y), n = mods present (#phospho). Single-site (C(1,1)=1) AND
+fully-saturated (C(2,2)=1) are UNIQUE at their m/z -> **FDR only, no FLR**. Targets with no
+localization question shouldn't be in the FLR at all (neither the real nor its shadow decoy).
+
+**Removing non-localizable (C==1) peptidoforms RAISES the FLR** (they were the easy low-FLR stratum
+diluting it): all vs localizable-only at frac>=0.9 = 10.7% -> 12.4%; frac>=0.95 = 10.8% -> 13.0%.
+So the honest FLR on genuinely-localizable peptidoforms is ~12-13%, not ~11%. The C==1 removal is a
+bias correction, not an improvement.
+
+**C(c,n) is a strong, monotonic difficulty prior — and it rescues the singleton regime** (where
+frac=1 is information-free). Singleton FLR by C: C1=3.2%, C2=6.6%, C3=11.2%, C4-6=20.3%, C7+=38.0%.
+So a lone uncontested call's trustworthiness is set by C even though its fraction says nothing.
+**Proposed FLR-model features (cheap, library-only, no extraction): #sites c, #phosphorylated n,
+combinations C(c,n) (or log C = chance-baseline info content 1/C).** c,n not fully redundant with C
+(same C, different site-determining geometry). Two multiplicities: C(c,n)=theoretical/prior (always
+defined incl. singletons) vs iso_group_size_at_scan=actual competition (evidence); C is the prior,
+fraction/SDI the evidence -> combine = localization posterior. Usable as model feature OR stratified
+per-C thresholds (near-free). SDI evidence matters most in high-C strata (4-6, 7+) where prior alone
+leaves 20-38%.
+
+**Decoy iRT == parent iRT, exactly (100%, 5,285,076/5,285,076, max gap 0.0):** the generator copies
+the parent's retention time (Koina can't predict shadow-site phospho iRT). => a positional isomer
+decoy is ALWAYS RT-eligible wherever its parent elutes (only its permuted fragments can exclude it —
+isolates the localization decision to site-determining ions), but is structurally locked to the
+co-eluting regime (can never be an RT-resolved singleton). Real positional isomers DO shift RT
+(median ~0.6 iRT between real siblings). For the core FLR question ("could a wrong site win at THIS
+peak?") evaluating at the parent RT is correct; but it's on the decoy-construction "reconsider" list
+alongside shadow-site and C>1-restriction. Numbers: dilution_curve/amol_10000 (3 reps).
+
+Multi-form reality (per-run, real): 63% of detected phosphopeptides have >=2 peptidoforms passing
+FDR, but ~96% CO-ELUTE (median closest-pair |Δrt| = 0.0 min); only ~1,230 peptide-instances (~2%)
+are RT-resolved. So genuine "co-present isomer" multi-reporting is a small prize; most multi-form is
+co-eluting isomers already in the contested regime.
+
+**Singleton FLR is acceptor-count-driven (the real story behind the ~11.6% floor):**
+
+| # S/T/Y | real singletons | decoy | FLR | note |
+|---|---|---|---|---|
+| 1 | 1,342 | 41 | **3.1%** | localization trivial (one possible site); 3.1% = pure ID-level leakage of shadow decoys on non-acceptor residues |
+| 2 | 1,562 | 103 | 6.6% | |
+| 3 | 1,190 | 133 | 11.2% | |
+| 4+ | 1,622 | 388 | **23.9%** | genuinely hard; deconv collapse unreliable |
+
+**Implications:** (1) SDI-score target is the >=3-site singletons (11-24%), NOT singletons broadly;
+1-site are already ~3% with nothing to localize. (2) Localization difficulty scales cleanly with
+acceptor count -> **acceptor-count-stratified per-peptidoform thresholds (or per-stratum FLR
+reporting) is a cheap win with no new extraction** — try before the full SDI extractor. (3) The 3.1%
+1-site floor is the decoy method's own ID-leakage baseline (shadow decoys occasionally too matchable)
+-> relevant to the short-distance-biased-decoy retune. Numbers: dilution_curve/amol_10000 (3 reps).
+NOTE: "siblings were co-candidates" is inferred (shared fragments + acceptor-count evidence);
+confirm definitively by re-running one file with delete_temp=false + localization and inspecting
+design-matrix membership if certainty is needed.

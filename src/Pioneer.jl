@@ -733,6 +733,15 @@ const MODEL_CONFIGS = Dict(
         instruments = Set([]),
         fragmentation_type = "HCD",
     ),
+    # Prosit 2025 40-PTM model: format-identical drop-in for prosit_2024_ptm
+    # (same y1+1 annotation, same mz/intensity outputs). Phospho + oxidation
+    # supported; peptide length still capped at 30 (Prosit tokenizer limit).
+    "prosit_2025_40ptm" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2025_40ptm"),
+        instruments = Set([]),
+        fragmentation_type = "HCD",
+    ),
 )
 
 
@@ -741,6 +750,7 @@ const KOINA_URLS = Dict(
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
+    "prosit_2025_40ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2025_intensity_40PTM/infer",
 )
 
 function __init__()
