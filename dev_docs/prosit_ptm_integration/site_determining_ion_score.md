@@ -58,9 +58,21 @@ means: the mod is on $a$, not on any alternative $a'$.
 
 ## 3.2 Site-determining ions
 
-A fragment ion **distinguishes** placement $a$ from $a'$ iff its cleavage falls **between** them — the
-ion contains exactly one of $\{a, a'\}$, so the mod mass ($+79.966$ for phospho) shifts the ion's m/z
-for one placement but not the other.
+**General definition (competitors may differ at more than one site).** A fragment distinguishes two
+same-composition isomers $A$ and $B$ iff their **cumulative modification content differs at that
+cleavage**: $(\#\,A\text{-mods at pos}\le i) \ne (\#\,B\text{-mods}\le i)$. Then $A$ and $B$ predict
+**different m/z** for it, offset by $(\Delta\text{count})\times \text{mod\_mass}$ — which may be
+$\pm 1\times, \pm 2\times, \dots$ the mod mass where mods pile up before a cleavage. Match each isomer at
+its **own** predicted m/z; the distinguishing-fragment set is per **competitor pair** and can be
+**non-contiguous and multi-magnitude** (e.g. $\{S_1,S_7\}$ vs $\{S_4,S_{10}\}$ distinguishes on
+$[1,4)$ and $[7,10)$ separately; $\{S_1,S_4\}$ vs $\{S_7,S_{10}\}$ gives a $+2\times$ shift on $[4,7)$).
+So a distinguishing ion is **not** attributable to a single adjacent-site gap, and the competitor set
+is **all** same-composition isomers (not just single-site moves).
+
+**Single-site special case (the common one, used in the worked example below).** When $A$ and $B$
+differ at exactly one site — the mod is on $a$ vs $a'$ — the general test reduces to: the ion's cleavage
+falls **between** $a$ and $a'$ (it contains exactly one of $\{a, a'\}$), so the mod mass ($+79.966$ for
+phospho) shifts the m/z for one placement but not the other.
 
 - $b_i$ (prefix, cleavage after residue $i$) contains positions $1..i$. It is site-determining for
   $\{a,a'\}$ iff exactly one of $a, a' \le i$.
@@ -79,8 +91,8 @@ y-ions   :     y9 y8 y7 y6 y5 y4 y3 y2 y1   (y_j covers L-j+1..L)
 
 Ions whose cleavage lies in the gap $[4,7)$ are site-determining:
 
-- $b_4, b_5, b_6$ — contain $S_4$ but not $S_7$ → carry $+80$ if the site is $S_4$, unmodified if $S_7$.
-- $y_4, y_5, y_6$ — contain $S_7$ but not $S_4$ → carry $+80$ if the site is $S_7$, unmodified if $S_4$.
+- $b_4, b_5, b_6$ — contain $S_4$ but not $S_7$ -> carry $+80$ if the site is $S_4$, unmodified if $S_7$.
+- $y_4, y_5, y_6$ — contain $S_7$ but not $S_4$ -> carry $+80$ if the site is $S_7$, unmodified if $S_4$.
 
 So the real peptide (site $S_4$) shows $b_{4,5,6}$ at $+80$ and $y_{4,5,6}$ unmodified. A decoy claiming
 $S_7$ predicts the opposite and will **not** match the observed peaks on those six ions. The gap of
