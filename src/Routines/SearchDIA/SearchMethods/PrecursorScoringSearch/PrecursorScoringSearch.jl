@@ -188,7 +188,7 @@ function _initial_precursor_qvalue_filter(q_value_threshold::Float32)
 end
 
 function _normalize_optional_mbr_columns!(df::DataFrame)
-    for col in (:mbr_recovered, :MBR_transfer_candidate, :mbr_rescue_candidate)
+    for col in (:mbr_recovered, :MBR_transfer_candidate)
         hasproperty(df, col) || continue
         values = df[!, col]
         df[!, col] = Bool[!ismissing(x) && Bool(x) for x in values]
@@ -325,12 +325,6 @@ function summarize_results!(
         return nothing
     end
 
-    mbr_rescue_fold_paths = params.match_between_runs ?
-                            get_existing_mbr_rescue_fold_paths(valid_fold_paths) :
-                            String[]
-    !isempty(mbr_rescue_fold_paths) && @debug_l1 "MBR rescue pool: found " *
-        "$(length(mbr_rescue_fold_paths)) fold files before cross-run scoring"
-
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
@@ -343,7 +337,6 @@ function summarize_results!(
             params.q_value_threshold,
             FORCE_OOM;
             match_between_runs = params.match_between_runs,
-            mbr_rescue_file_paths = mbr_rescue_fold_paths,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -376,13 +369,6 @@ function summarize_results!(
         end
         isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
         isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
-
-        for fold in UInt8[0, 1]
-            rescue_path = mbr_rescue_recovered_path(mbr_rescue_fold_path("$(base_path)_fold$(fold).arrow"))
-            isfile(rescue_path) || continue
-            rescue_df = _load_fold(rescue_path)
-            nrow(rescue_df) > 0 && push!(fold_dfs, rescue_df)
-        end
 
         if !isempty(fold_dfs)
             # Merge and write combined file
@@ -447,8 +433,7 @@ function summarize_results!(
             build_precursor_global_prob_dicts(
                 filtered_refs,
                 sqrt_n_runs,
-                n_precursors;
-                exclude_mbr_rescue_recovered = true,
+                n_precursors,
             )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)

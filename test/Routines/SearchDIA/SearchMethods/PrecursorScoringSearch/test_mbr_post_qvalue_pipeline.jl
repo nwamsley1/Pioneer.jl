@@ -698,7 +698,6 @@ end
             global_qval = Float32[0.001, 0.001],
             trace_prob_prepass = Float32[0.95, 0.96],
             trace_prob_infold = Float32[0.80, 0.81],
-            main_search_prob = Float32[0.70, 0.71],
             MBR_best_pair_prob_true = Float32[0.90, 0.91],
             MBR_best_pair_prob_false = Float32[-1.0, -1.0],
             MBR_best_is_missing_true = Bool[false, false],
@@ -1009,14 +1008,13 @@ end
             global_qval = Float32[0.001, 0.001],
             trace_prob_prepass = Float32[0.50, 0.60],
             trace_prob_infold = Float32[0.55, 0.65],
-            main_search_prob = Float32[0.70, 0.80],
             MBR_best_pair_prob_true = Float32[0.90, 0.85],
             MBR_best_pair_prob_false = Float32[0.40, 0.30],
         )
-        available_true = Symbol[:main_search_prob, :MBR_best_pair_prob_true]
+        available_true = Symbol[:trace_prob_infold, :MBR_best_pair_prob_true]
         x_blocks = Matrix{Float32}[
-            Float32[0.70 0.90; 0.80 0.85],
-            Float32[0.70 0.40; 0.80 0.30],
+            Float32[0.55 0.90; 0.65 0.85],
+            Float32[0.55 0.40; 0.65 0.30],
         ]
 
         Pioneer._mbr_write_ftr_debug_tables!(
@@ -1054,37 +1052,49 @@ end
         @test only(summary.n_counterfactuals) == 1
         @test only(summary.n_recovered) == 1
         @test read(joinpath(dir, "mbr_ftr_features.txt"), String) ==
-            "main_search_prob\nMBR_best_pair_prob_true\n"
+            "trace_prob_infold\nMBR_best_pair_prob_true\n"
     end
 end
 
-@testset "MBR FTR model uses true/counterfactual best features while ablating worst, RT, b/y, and non-best Hellinger" begin
+@testset "MBR FTR model uses cross-run, best, and worst donor features while ablating RT, b/y, and non-best Hellinger" begin
     expected_true = Symbol[
-        :main_search_prob,
-        :trace_prob_infold,
+        Pioneer.MBR_CROSS_RUN_FTR_FEATURES...,
         :MBR_best_pair_prob_true,
+        :MBR_worst_pair_prob_true,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_true,
+        :MBR_worst_log2_weight_ratio_true,
         :MBR_best_log2_explained_ratio_true,
+        :MBR_worst_log2_explained_ratio_true,
         :MBR_best_abs_n_scans_diff_true,
+        :MBR_worst_abs_n_scans_diff_true,
         :MBR_best_log2_n_scans_ratio_true,
+        :MBR_worst_log2_n_scans_ratio_true,
         :MBR_best_irt_diff_true,
+        :MBR_worst_irt_diff_true,
         :MBR_best_observed_irt_diff_true,
+        :MBR_worst_observed_irt_diff_true,
         :MBR_single_donor_true,
         :MBR_best_smoothed_frag_hellinger_true,
         :MBR_best_smoothed_frag_hellinger_rank_true,
     ]
     expected_false = Symbol[
-        :main_search_prob,
-        :trace_prob_infold,
+        Pioneer.MBR_CROSS_RUN_FTR_FEATURES...,
         :MBR_best_pair_prob_false,
+        :MBR_worst_pair_prob_false,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_false,
+        :MBR_worst_log2_weight_ratio_false,
         :MBR_best_log2_explained_ratio_false,
+        :MBR_worst_log2_explained_ratio_false,
         :MBR_best_abs_n_scans_diff_false,
+        :MBR_worst_abs_n_scans_diff_false,
         :MBR_best_log2_n_scans_ratio_false,
+        :MBR_worst_log2_n_scans_ratio_false,
         :MBR_best_irt_diff_false,
+        :MBR_worst_irt_diff_false,
         :MBR_best_observed_irt_diff_false,
+        :MBR_worst_observed_irt_diff_false,
         :MBR_single_donor_false,
         :MBR_best_smoothed_frag_hellinger_false,
         :MBR_best_smoothed_frag_hellinger_rank_false,
@@ -1100,22 +1110,23 @@ end
     @test !(:MBR_best_smoothed_frag_hellinger_rank_true in no_contrast_features)
     @test length(no_contrast_features) == length(expected_true) - 1
     @test Pioneer.FTR_FEATURES_F_FALSE2 == Symbol[
-        f === :main_search_prob ? f :
-        f === :trace_prob_infold ? f :
         f === :MBR_log2_weight_lod_ratio ? f :
         Symbol(replace(String(f), "_true" => "_false2"))
         for f in expected_true
     ]
 
     all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
-    @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
-    @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
-    @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
-    @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_FALSE)
+    @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE)
+    @test Pioneer.MBR_CROSS_RUN_FTR_FEATURES == Symbol[Pioneer.ADVANCED_FEATURE_SET...]
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_TRUE, Pioneer.ADVANCED_FEATURE_SET)
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_FALSE, Pioneer.ADVANCED_FEATURE_SET)
     @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test !(:MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
@@ -1123,16 +1134,22 @@ end
     @test !(:MBR_best_rt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_best_log_by_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_best_log_by_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
-    @test !(:MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_worst_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test !(:MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_worst_observed_irt_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test !(:MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_worst_log2_explained_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_log2_explained_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_worst_abs_n_scans_diff_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_abs_n_scans_diff_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_worst_log2_n_scans_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_worst_log2_n_scans_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_log2_weight_ratio_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_smoothed_frag_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)

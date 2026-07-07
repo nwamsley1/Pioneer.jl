@@ -96,8 +96,7 @@ Reads only (precursor_idx, prec_prob, target) via mmap.
 function build_precursor_global_prob_dicts(
     refs::Vector{PSMFileReference},
     sqrt_n_runs::Int,
-    n_precursors::Int;
-    exclude_mbr_rescue_recovered::Bool = false,
+    n_precursors::Int,
 )
     # Pre-allocate accumulation dictionaries with known upper bound
     prob_acc = Dict{UInt32, Vector{Float32}}()
@@ -108,25 +107,14 @@ function build_precursor_global_prob_dicts(
     for ref in refs
         # prec_prob lives in a sidecar after aggregate_per_file!; pull it
         # from wherever it's registered.
-        exclude_rescue = exclude_mbr_rescue_recovered &&
-                         has_column_anywhere(ref, :mbr_recovered) &&
-                         has_column_anywhere(ref, :mbr_rescue_candidate)
-        columns = exclude_rescue ?
-                  [:precursor_idx, :prec_prob, :target, :mbr_recovered, :mbr_rescue_candidate] :
-                  [:precursor_idx, :prec_prob, :target]
-        cols_df = materialize_columns(ref, columns)
+        cols_df = materialize_columns(ref, [:precursor_idx, :prec_prob, :target])
         n = nrow(cols_df)
         n == 0 && continue
         prec_ids = cols_df.precursor_idx
         prec_probs = cols_df.prec_prob
         targets = cols_df.target
-        recovered = exclude_rescue ? cols_df.mbr_recovered : nothing
-        rescue_candidate = exclude_rescue ? cols_df.mbr_rescue_candidate : nothing
 
         @inbounds for i in 1:n
-            if exclude_rescue && Bool(recovered[i]) && Bool(rescue_candidate[i])
-                continue
-            end
             pid = prec_ids[i]
             if !haskey(prob_acc, pid)
                 prob_acc[pid] = Float32[]

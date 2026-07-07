@@ -98,17 +98,25 @@ end
 #     already encodes missingness)
 #   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
 #     both subsequently dropped along with the other M0 frag-6-vector features)
+const MBR_CROSS_RUN_FTR_FEATURES = Symbol[ADVANCED_FEATURE_SET...]
+
 const FTR_FEATURES_F_TRUE = Symbol[
-    :main_search_prob,
-    :trace_prob_infold,
+    MBR_CROSS_RUN_FTR_FEATURES...,
     :MBR_best_pair_prob_true,
+    :MBR_worst_pair_prob_true,
     :MBR_log2_weight_lod_ratio,
     :MBR_best_log2_weight_ratio_true,
+    :MBR_worst_log2_weight_ratio_true,
     :MBR_best_log2_explained_ratio_true,
+    :MBR_worst_log2_explained_ratio_true,
     :MBR_best_abs_n_scans_diff_true,
+    :MBR_worst_abs_n_scans_diff_true,
     :MBR_best_log2_n_scans_ratio_true,
+    :MBR_worst_log2_n_scans_ratio_true,
     :MBR_best_irt_diff_true,
+    :MBR_worst_irt_diff_true,
     :MBR_best_observed_irt_diff_true,
+    :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_rank_true,
@@ -131,17 +139,15 @@ const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
 #
 # Ablated 2026-07-03:
 #   :MBR_best_rt_diff_true, :MBR_best_log_by_diff_true, worst Hellinger inputs,
-#   and donor-library Hellinger inputs. The best/worst precursor summaries are
-#   kept, with :MBR_single_donor_* marking rows whose worst donor columns are
-#   sentinel-valued because only one donor was available. :main_search_prob is
-#   the per-run MainSearch confidence, derived as 1 - main_pep in the slim MBR
-#   frame.
+#   and donor-library Hellinger inputs. Non-Hellinger best/worst precursor
+#   summaries are kept, with :MBR_single_donor_* marking rows whose worst donor
+#   columns are sentinel-valued because only one donor was available.
 
 # Same features but with the MBR columns swapped to a counterfactual suffix.
 # Each entry must mirror
 # FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
-# semantic feature columns in the same order. Row-level features such as
-# trace_prob_infold pass through the default `f` branch unchanged.
+# semantic feature columns in the same order. Row-level features pass through
+# the default `f` branch unchanged.
 function _mbr_counterfactual_feature_name(f::Symbol, counterfactual_idx::Int)
     s = String(f)
     if startswith(s, "MBR_") && endswith(s, "_true")
@@ -281,7 +287,6 @@ function _mbr_write_ftr_debug_tables!(
         :global_qval,
         :trace_prob_prepass,
         :trace_prob_infold,
-        :main_search_prob,
     ]
     for col in id_cols
         hasproperty(sub, col) || continue
