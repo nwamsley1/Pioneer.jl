@@ -65,6 +65,15 @@ function library_search(
         get_fragment_index(spec_lib, params)
     end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Sciex ZT scanning DIA (PIONEER_ZT_METASCAN_K>0): use two square quad models.
+    # The fragment index gets a tight 1-bin box (overhang 0) for center-bin matching;
+    # deconvolution gets a wide box spanning the ±k-bin meta-scan (overhang = k·S) so
+    # every bin passes full transmission for any in-meta-scan precursor and the deconv
+    # weights reflect the actual (triangular) ion current instead of being masked by a
+    # narrow fitted quad. qtm_deconv is finalized after S is measured (below).
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    _zt = _zt_k > 0
+    qtm_frag = _zt ? SquareQuadModel(0.0f0) : qtm
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -115,7 +124,7 @@ function library_search(
         Profile.init(n=50_000_000, delay=0.0005)
         Profile.@profile precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
             scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-            Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+            Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
             getMz(precursors);
             score_filter = score_filter, max_peaks = max_peaks,
             scratch = getFragIndexScratch(search_context))
@@ -126,7 +135,7 @@ function library_search(
     else
         precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
             scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-            Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+            Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
             getMz(precursors);
             score_filter = score_filter, max_peaks = max_peaks,
             scratch = getFragIndexScratch(search_context))
@@ -136,6 +145,18 @@ function library_search(
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
     # Applies RT and precursor m/z filtering (same as selectTransitions!) for realistic counts.
+    # --- 2a''. Sciex ZT: filter the emitted candidates down to the center bin.
+    # The partitioned index can emit precursors slightly outside a bin's ±half-bin
+    # window (partition granularity); keep only |prec_mz - centerMz| ≤ isoWidth/2 so
+    # each (precursor, scan) is a clean single-center-bin assignment before the ±k
+    # meta-scan expansion. ---
+    if _zt
+        n_before_cb = length(precursors_passed)
+        precursors_passed = filter_to_center_bin!(
+            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
+        @debug_l1 "ZT center-bin filter: $n_before_cb → $(length(precursors_passed)) candidates"
+    end
+
     # --- 2a. Pre-filter: require candidates to appear in ≥ N scans ---
     prefilter_n = getPrefilterMinScanCount(params)
     if prefilter_n > 1
@@ -151,14 +172,19 @@ function library_search(
     # 2k+1 bins; the fragment index only matched its center bin, so we add it
     # as a candidate to the neighboring bins before deconvolution estimates a
     # per-bin weight. Off (k=0) by default. ---
-    metascan_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
-    if metascan_k > 0
+    qtm_deconv = qtm
+    if _zt
         n_before_ms = length(precursors_passed)
         precursors_passed = expand_to_metascans!(
-            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, metascan_k)
-        @debug_l1 "ZT meta-scan expansion (k=$metascan_k): $n_before_ms → " *
+            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, _zt_k)
+        # Wide square deconv box: overhang = k·S so the box spans the whole
+        # (2k+1)-bin meta-scan (S = median Q1 bin step).
+        S_est = _zt_bin_step(spectra, all_scan_idxs)
+        qtm_deconv = SquareQuadModel(Float32(_zt_k) * S_est)
+        @debug_l1 "ZT meta-scan expansion (k=$_zt_k): $n_before_ms → " *
                   "$(length(precursors_passed)) candidates " *
-                  "($(round(length(precursors_passed)/max(1,n_before_ms), digits=2))×)"
+                  "($(round(length(precursors_passed)/max(1,n_before_ms), digits=2))×); " *
+                  "S=$(round(S_est,digits=3)), deconv box≈$(round(S_est*(2*_zt_k+1),digits=1)) m/z"
     end
 
     # --- 2b. Build precursor index ---
@@ -176,7 +202,7 @@ function library_search(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                nce_model, qtm, mem, rt_to_irt, irt_tol)
+                nce_model, qtm_deconv, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
@@ -285,6 +311,60 @@ function filter_by_bitvec!(
             (start:length(new_passed)) : missing
     end
     return new_passed
+end
+
+"""
+    filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, prec_mzs)
+
+Sciex ZT: keep only candidates whose precursor m/z lies within the bin's own
+±(isolationWidth/2) window, i.e. its single center bin. Removes the frag index's
+partition-granularity over-emission so the ±k meta-scan expansion is well-defined.
+Rebuilds `precursors_passed` / reindexes `scan_to_prec_idx`; returns the new vector.
+"""
+function filter_to_center_bin!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    prec_mzs::AbstractVector{Float32},
+)
+    new_precursors = UInt32[]
+    sizehint!(new_precursors, length(precursors_passed))
+    @inbounds for si in all_scan_idxs
+        rng = scan_to_prec_idx[si]
+        ismissing(rng) && continue
+        cv = getCenterMz(spectra, si)
+        wv = getIsolationWidthMz(spectra, si)
+        start = length(new_precursors) + 1
+        if ismissing(cv) || ismissing(wv)
+            for r in rng
+                push!(new_precursors, precursors_passed[r])
+            end
+        else
+            c = Float32(cv); hw = Float32(wv) / 2
+            for r in rng
+                p = precursors_passed[r]
+                abs(prec_mzs[p] - c) <= hw && push!(new_precursors, p)
+            end
+        end
+        scan_to_prec_idx[si] = length(new_precursors) >= start ?
+            (start:length(new_precursors)) : missing
+    end
+    return new_precursors
+end
+
+# Median MS2 isolation width (≈ Q1 bin step S) — sizes the ZT deconv box.
+function _zt_bin_step(spectra::MassSpecData, all_scan_idxs::Vector{Int})
+    ws = Float32[]
+    @inbounds for si in all_scan_idxs
+        w = getIsolationWidthMz(spectra, si)
+        ismissing(w) && continue
+        push!(ws, Float32(w))
+        length(ws) >= 5000 && break
+    end
+    isempty(ws) && return 1.0f0
+    sort!(ws)
+    return ws[cld(length(ws), 2)]
 end
 
 """
