@@ -146,6 +146,21 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
+    # --- 2a'. Sciex ZT scanning DIA: expand each candidate to its ±k adjacent
+    # Q1 bins (same cycle). A precursor's ions spread across a meta-scan of
+    # 2k+1 bins; the fragment index only matched its center bin, so we add it
+    # as a candidate to the neighboring bins before deconvolution estimates a
+    # per-bin weight. Off (k=0) by default. ---
+    metascan_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    if metascan_k > 0
+        n_before_ms = length(precursors_passed)
+        precursors_passed = expand_to_metascans!(
+            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, metascan_k)
+        @debug_l1 "ZT meta-scan expansion (k=$metascan_k): $n_before_ms → " *
+                  "$(length(precursors_passed)) candidates " *
+                  "($(round(length(precursors_passed)/max(1,n_before_ms), digits=2))×)"
+    end
+
     # --- 2b. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
@@ -270,6 +285,72 @@ function filter_by_bitvec!(
             (start:length(new_passed)) : missing
     end
     return new_passed
+end
+
+"""
+    expand_to_metascans!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, k)
+
+Sciex ZT scanning-DIA meta-scan expansion. The scanning quadrupole spreads a
+precursor's ions across ~`2k+1` adjacent Q1 bins (consecutive MS2 scans within a
+cycle), peaking at the center bin. The fragment index only matched a precursor to
+its center bin (±half-bin tolerance); this replaces each scan's candidate set with
+the UNION of the candidates of all scans within ±`k` of it in the SAME cycle, so
+downstream deconvolution estimates a per-bin weight for the precursor across its
+whole meta-scan (which the triangular-reduction step then exploits).
+
+Bins are consecutive scan indices within a cycle, so neighbors are `si±j` guarded
+by `getMsOrder == 2` and equal `getCycleIdx` (never crosses a cycle/MS1 boundary).
+Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
+`merge_precursors_by_window!`). Returns the new `precursors_passed`.
+"""
+function expand_to_metascans!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    k::Int,
+)
+    (k <= 0 || isempty(all_scan_idxs)) && return precursors_passed
+    n = length(all_scan_idxs)
+    nspec = length(spectra)
+
+    # Pass 1: per searched scan, union candidates from neighbors si±j (same cycle,
+    # MS2). Reads the OLD scan_to_prec_idx / precursors_passed; no mutation yet.
+    new_sets = Vector{Set{UInt32}}(undef, n)
+    @inbounds for i in 1:n
+        si = all_scan_idxs[i]
+        ci = getCycleIdx(spectra, si)
+        s = Set{UInt32}()
+        for j in -k:k
+            sj = si + j
+            (sj < 1 || sj > nspec) && continue
+            isassigned(scan_to_prec_idx, sj) || continue
+            (getMsOrder(spectra, sj) == 2) || continue
+            (getCycleIdx(spectra, sj) == ci) || continue
+            rng = scan_to_prec_idx[sj]
+            ismissing(rng) && continue
+            for r in rng
+                push!(s, precursors_passed[r])
+            end
+        end
+        new_sets[i] = s
+    end
+
+    # Pass 2: build the new flat candidate vector and reindex scan_to_prec_idx.
+    new_precursors = UInt32[]
+    sizehint!(new_precursors, sum(length, new_sets; init = 0))
+    @inbounds for i in 1:n
+        si = all_scan_idxs[i]
+        s = new_sets[i]
+        if isempty(s)
+            scan_to_prec_idx[si] = missing
+        else
+            start = length(new_precursors) + 1
+            append!(new_precursors, s)
+            scan_to_prec_idx[si] = start:length(new_precursors)
+        end
+    end
+    return new_precursors
 end
 
 """

@@ -266,6 +266,22 @@ function process_file!(
 
     _log_psm_table_footprint(psms, "post-deconv (before best-per-precursor)", ms_file_idx)
 
+    # Diagnostic (PIONEER_DUMP_RAW_PSMS=<dir>): dump the raw per-(precursor,scan)
+    # post-deconvolution PSMs BEFORE best-per-precursor collapse and scoring. For
+    # Sciex ZT this is the meta-scan weight sequence (one :weight per Q1 bin) used
+    # to compare observed vs the expected triangular profile.
+    _raw_dump_dir = get(ENV, "PIONEER_DUMP_RAW_PSMS", "")
+    if !isempty(_raw_dump_dir)
+        _dump_cols = intersect([:precursor_idx, :scan_idx, :weight, :gof,
+                                :matched_ratio, :scribe, :city_block, :error],
+                               Symbol.(names(psms)))
+        mkpath(_raw_dump_dir)
+        _dump_path = joinpath(_raw_dump_dir, "raw_psms_file$(ms_file_idx).arrow")
+        writeArrow(_dump_path, psms[!, _dump_cols])
+        @user_info "PIONEER_DUMP_RAW_PSMS: wrote $(nrow(psms)) raw post-deconv PSMs " *
+                   "(cols=$(_dump_cols)) to $_dump_path"
+    end
+
     @debug_l1 "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
                "scan_comp=$(round(t_scan_comp * 1000, digits=0))ms  " *
