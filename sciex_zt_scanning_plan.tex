@@ -1,0 +1,197 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\lstset{basicstyle=\ttfamily\small,breaklines=true,columns=fullflexible,frame=single,
+        backgroundcolor=\color{gray!8}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\title{\textbf{Supporting Sciex ZT scanning-quadrupole DIA in Pioneer.jl}}
+\author{Pioneer.jl --- branch \code{feat/sciex-zt-scanning} (off \code{perf/pep099-bitvec-random})}
+\date{2026-07-08}
+\begin{document}
+\maketitle
+
+\section{Summary}
+Sciex ``ZT scanning'' DIA (a.k.a.\ Scanning SWATH) sweeps a narrow-ish quadrupole transmission
+window of physical width $W$ continuously across the precursor range, sampling as it moves. Groups of
+overlapping samples are merged on-instrument into ``merged scans''; ProteoWizard then re-bins these into
+\emph{contiguous $\approx$1\,m/z Q1 bins}. We never see the true underlying scan --- only the merged
+bins. A precursor at true $m/z$ $p$ therefore contributes ions to \emph{several adjacent bins}, most to
+the bin centered nearest $p$ and decaying $\approx$linearly to either side. This document plans (1) a
+principled mzML$\to$Pioneer conversion and (2) the search-side handling: run the fragment index at the
+\emph{bin} tolerance, expand each precursor--scan hit to its neighboring bins (a ``meta-scan''),
+deconvolve per bin, then reduce the meta-scan to a single row using the observed-vs-expected
+(triangular) weight profile as both a discriminative feature and an empirical calibration of the true
+effective window.
+
+\section{What the mzML actually contains (REP1, measured)}
+File \code{LFQ_ZenoTOF8600_ZTScanDIA_5Da_5min_50ng_Condition_A_REP1.mzML} (8.1\,GB, ABI WIFF $\to$
+\code{pwiz_Reader_ABI 3.0.21229}, centroided). Exhaustive inspection (full header, every per-spectrum
+cvParam \emph{and} userParam, spectrum titles, NativeIDs, index):
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{The physical window $W=5$\,Da appears \emph{nowhere} in the mzML} --- not in
+\code{scanSettingsList} (absent), instrument config, per-scan params, titles, or index. It exists
+\emph{only} in the filename (\code{..._5Da_...}). ProteoWizard discards the true Q1 width on conversion.
+\item \textbf{Slide/bin step $S = 1.0221$\,m/z} --- exact and uniform (495/495 consecutive center steps
+identical). Bins are \emph{contiguous} (isolation lower/upper offset $=0.51$, so edges abut). So the
+reported $\approx$1\,m/z isolation width \emph{is} the bin step $S$, not $W$.
+\item \textbf{Per-bin metadata present:} isolation target $m/z$ (\code{MS:1000827}) = bin center;
+\code{preset scan configuration} = window index within a cycle; NativeID \code{cycle=C experiment=E}.
+\item Q1 center range 393.0--898.9 (span 506\,m/z); \textbf{496 MS2 windows + 1 MS1 per cycle};
+818 cycles; 406{,}250 spectra; $\approx$2\,ms/scan, $\approx$1\,s/cycle over the 5-min gradient.
+\end{itemize}
+\textbf{Consequence:} $W$ is the \emph{only} quantity external to the file (a method constant); $S$, bin
+centers, cycle boundaries, and window order are all robustly recoverable. And --- crucially --- we do
+\emph{not} need to trust $W=5$: the empirical meta-scan weight profile of confident, high-abundance
+precursors (\S\ref{sec:calib}) reveals the true effective span directly.
+
+\section{Physical / signal model}
+Let bins be indexed $b$ with centers $c_b = c_0 + bS$. A scanning window of width $W$ moving in steps
+$S$ transmits a precursor at $p$ whenever the window overlaps $p$; after re-binning, $p$'s ion current
+lands in a contiguous run of bins around $b^\ast=\arg\min_b|c_b-p|$. Define the meta-scan half-width
+\[
+k = \operatorname{round}\!\Big(\frac{W-S}{S}\Big)\quad\Rightarrow\quad
+\text{meta-scan} = \{b^\ast-k,\dots,b^\ast+k\},\ \ 2k+1\ \text{bins}.
+\]
+For $W=5,\ S=1.022$: $k=\operatorname{round}(3.89)=4$, i.e.\ a \textbf{9-bin meta-scan} ($\pm4$),
+matching the user's $(W-S)\cdot2+1=9$. The expected per-bin contribution is triangular,
+\[
+t_j \propto \max\!\big(0,\ 1 - |j|/(k+1)\big),\quad j=-k,\dots,k,
+\]
+peaking at the center bin and decaying to (near) zero at $\pm k$. (The exact shape is the convolution of
+the true Q1 transmission profile with the bin/step kernel; a triangle is the first-order approximation
+and its \emph{observed} form is what we calibrate against real data.)
+
+\section{Plan overview (pipeline stages)}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item \textbf{Conversion} --- convert mzML preserving the $\approx$1\,m/z bins; record $W$ (filename/param),
+measure $S$, tag each MS2 scan with (cycle, window-index) so bins are addressable as a grid.
+\item \textbf{Parameter tuning} --- run with a \emph{bin-width} precursor tolerance ($\approx S$): only
+the center bin, where the precursor contributes most, is used to fit mass error / iRT / NCE.
+\item \textbf{Main search --- fragment index} --- run at the \emph{bin} tolerance ($\approx S$), giving a
+list of \code{(precursor_idx, scan_idx)} on center bins only.
+\item \textbf{Meta-scan expansion} --- expand each hit to its $2k{+}1$ neighboring bins (same cycle):
+\code{(pid, b^*)} $\to$ \code{(pid, b^*-k..b^*+k)}. Re-sort. The candidate list grows $\approx(2k{+}1)\times$.
+\item \textbf{Deconvolution} --- estimate per-bin weights/features, treating each bin as a
+\emph{square} quad window of effective width $\approx(2k{+}1)S$ (defer true shape; \S\ref{sec:quad}).
+\item \textbf{Triangular reduction} --- for each precursor's $2k{+}1$ weights, compute observed-vs-triangle
+shape features and \emph{collapse to the center row}, discarding the other $2k$.
+\item \textbf{Scoring} --- proceed as normal, with the new shape features available to the classifier.
+\item \textbf{Chromatogram integration} --- treat each $2k{+}1$ group as a meta-scan; the meta-scan
+weight is the triangle-weighted average of its bin weights; integrate the meta-scan-weight chromatogram.
+\end{enumerate}
+
+\section{Conversion (\code{Routines/mzmlConverter/convertMzML.jl})}
+The converter already reads per-scan \code{centerMz} / \code{isolationWidthMz} and derives \code{cycle_idx}
+by detecting when the window returns to the first MS2 center
+(\code{CYCLE_IDX_ISOLATION_WINDOW_TOLERANCE_MZ}). ZT additions:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{$W$ input:} new conversion parameter \code{zt_window_width_mz}; convenience auto-parse of the
+\code{..._<N>Da_...} filename pattern as the default, overridable. Persist $W$ (and measured $S$) in the
+arrow/run metadata.
+\item \textbf{$S$ measurement:} median of consecutive in-cycle \code{centerMz} steps (robust to the
+$1.02/1.022$ alternation). Assert near-constant; warn otherwise.
+\item \textbf{Window index:} store \code{window_idx} (from \code{preset scan configuration} / center rank
+within a cycle) so \code{(cycle_idx, window_idx)} is a 2-D grid address for meta-scan neighbor lookup.
+\item \textbf{Keep bins as-is:} \code{centerMz} and \code{isolationWidthMz}$\approx S$ unchanged (do
+\emph{not} bake $W$ into \code{isolationWidthMz}); the $W$/meta-scan logic lives in the search so the
+per-bin structure and triangular weights are available.
+\end{itemize}
+Sanity: 818 cycles $\times$ 497 = 406{,}246 ($\approx$ the 406{,}250 count; last cycle partial).
+
+\section{Search-side handling}
+\paragraph{Fragment index at bin tolerance.} \code{get_frag_bounds.jl} builds candidate precursor
+$m/z$ bounds from \code{centerMz} $\pm$ \code{isolationWidthMz}$/2$. With bins as-is this is the
+$\approx S$ center tolerance --- exactly step (3). No change needed beyond feeding the bin width.
+
+\paragraph{Meta-scan expansion (new step, post-frag-index / pre-deconvolution).} Given the
+\code{(pid, scan)} hit list on center bins, for each hit add the $2k$ sibling bins at
+\code{window_idx}$\pm1..\pm k$ within the same \code{cycle_idx} (grid lookup). Guard edges (Q1 range
+393--899) and missing bins. Re-sort by the deconvolution key (scan, then precursor). Track, per expanded
+row, its offset $j\in[-k,k]$ from the center bin and a \code{meta_group_id = (pid, cycle, b^*)}.
+
+\paragraph{Deconvolution.} Unchanged mechanics; each bin deconvolved with a square quad of width
+$\approx(2k{+}1)S$ (\S\ref{sec:quad}). Cost: $\approx(2k{+}1)\times$ more rows through deconvolution
+(9$\times$ here) --- the dominant new expense; see \S\ref{sec:risks}.
+
+\paragraph{Triangular reduction (new step).} For each \code{meta_group_id}, gather the $2k{+}1$ deconv
+weights $w_{-k},\dots,w_k$ (ordered by $j$) and compute:
+\begin{itemize}[leftmargin=1.4em,itemsep=0pt]
+\item \code{tri_dot} $= \langle \hat w, t\rangle$, normalized cosine of observed weights vs the ideal
+triangle $t$;
+\item \code{tri_apex_offset} $= \arg\max_j w_j$ (should be $\approx 0$ for a real precursor at the
+assumed center);
+\item \code{tri_symmetry}, \code{tri_center_fraction} $= w_0/\sum_j w_j$, \code{tri_spread};
+\item \code{center_weight} $= w_0$ (the retained quant).
+\end{itemize}
+Then \textbf{keep the center row} ($j=0$), attach these features, and drop the other $2k$. A true
+precursor shows a centered, triangular profile; interference / wrong assignment shows a flat, shifted,
+or multi-modal profile --- discriminative signal the classifier can use.
+
+\paragraph{Chromatogram integration.} In the integration search, deconvolve each bin of the meta-scan
+per cycle, then set the meta-scan weight to the \emph{triangle-weighted average}
+$\bar w = \sum_j t_j w_j / \sum_j t_j$ (or the center weight; A/B). The integrated chromatogram is the
+time series of $\bar w$ over cycles. Reuse the same \code{meta_group}/offset bookkeeping.
+
+\section{Quadrupole model}\label{sec:quad}
+The true transmission is a scanning convolution, so the per-bin quad shape is ``cooked.'' For now model
+each bin as a \textbf{perfectly square} isolation window of effective width $\approx(2k{+}1)S\approx9$\,m/z
+(\code{SquareQuadModel}); skip \code{QuadTuningSearch} fitting for ZT runs (or force square). Refining to
+the real Q1 shape (estimating $W$ and the transmission profile from data) is deferred; the triangular
+weight calibration (\S\ref{sec:calib}) is the first step toward it.
+
+\section{Diagnostics \& empirical calibration of $W$}\label{sec:calib}
+For a set of \textbf{confident, high-abundance} precursors (low q-value, high intensity), plot the
+observed meta-scan weight profile $w_{-k..k}$ against the expected triangle $t$. This directly reveals:
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+\item the \textbf{true effective span} (where $w_j\to0$) --- if it is not $\pm4$, $W$ is not 5 and we
+adjust $k$ empirically from the data rather than trusting the filename;
+\item the \textbf{true shape} (triangle vs rounded/trapezoidal) --- informs the ideal $t$ and, later, the
+quad model;
+\item \textbf{apex bias} (systematic \code{tri_apex_offset}$\ne0$) --- a Q1 calibration offset.
+\end{itemize}
+Deliverable: per-precursor observed-vs-expected overlays for a panel of good and bad PSMs (env-gated
+diagnostic hook, like the existing chromatogram debug plots), plus an aggregate mean profile used to set
+$k$ and $t$.
+
+\section{Risks / open questions}\label{sec:risks}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{$9\times$ deconvolution cost} is the main expense; the meta-scan reduction happens
+\emph{after} deconvolution, so peak RAM/time scale with the expanded list. Mitigate: expand only around
+frag-index hits (already sparse), reduce as early as possible, chunk by cycle.
+\item \textbf{Exact effective width \& shape} --- calibrate from \S\ref{sec:calib}; don't hard-code
+$k=4$ without checking REP1.
+\item \textbf{Sort/ordering invariants} --- deconvolution and integration assume specific scan/precursor
+orderings; expansion must preserve them (re-sort + assertions).
+\item \textbf{iRT / cycle timing} --- a meta-scan spans $\sim$9 bins ($\sim$18\,ms) but one cycle; RT is
+the cycle time. Confirm chromatogram cycle indexing is by \code{cycle_idx}, not bin.
+\item \textbf{Interaction with the inherited scheme} --- this branch carries PEP\,0.99 + random bitvec
+sampling + candidate-count logging; verify none interfere with the ZT path (bitvec calibration on
+$\approx$1\,m/z bins in particular).
+\end{itemize}
+
+\section{Phased implementation \& tests}
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+\item \textbf{Phase 0 --- conversion + exploration.} Convert REP1 with \code{zt_window_width_mz}; verify
+$S$, cycle/window grid, bin counts. Produce the \S\ref{sec:calib} weight-profile plots from a quick
+center-bin-only search to calibrate $k$/$t$. \emph{No scoring changes yet.}
+\item \textbf{Phase 1 --- meta-scan expansion + square quad.} Expand hits $\pm k$, deconvolve, reduce to
+center row (no shape features yet). Verify IDs are non-zero and quant is sane vs the merged-bin naive run.
+\item \textbf{Phase 2 --- triangular features.} Add \code{tri_*} features + reduction; measure ID/FDR
+impact (entrapment).
+\item \textbf{Phase 3 --- meta-scan chromatogram integration.} Triangle-weighted meta-scan chromatograms;
+measure quant (CV, fold-change).
+\item \textbf{Phase 4 --- quad-shape refinement (optional).} Fit the real effective width/shape from the
+calibration data.
+\end{enumerate}
+\textbf{Success criteria:} REP1 yields a sensible number of confident IDs at 1\% FDR with a
+centered/triangular mean weight profile; entrapment FDR controlled; quant CV comparable to standard DIA.
+Data: \code{RIS:NTW/SciexZT_ZTScanDIA} (REP1--3); library = the 3P Sciex library used for the nSWATH
+bench data (\code{3P_May7-2026_bitvec_10.poin}) or a matched human library --- TBD.
+
+\end{document}
