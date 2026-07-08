@@ -582,6 +582,16 @@ function process_file!(
         initialize_models!(search_context, ms_file_idx, params)
         scan_priority = get_ms2_scan_priority_order(spectra)
         total_ms2 = length(scan_priority)
+        # Sciex ZT scanning DIA: top-TIC scans are the center bins of the most
+        # abundant precursors, and their adjacent Q1 bins are near-duplicate
+        # (overlapping ion content). Selecting calibration scans by TIC therefore
+        # clusters the sample on a few precursors / RT regions ("blips") and
+        # mis-calibrates the rest of the run. Shuffle (seeded per file) so the
+        # calibration draws a representative sample across the whole run — same
+        # rationale as the bitvec random-sampling fix.
+        if something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0) > 0
+            shuffle!(MersenneTwister(1_800_017 + total_ms2), scan_priority)
+        end
         if total_ms2 == 0
             iteration_state.failed_with_exception = true
             throw(ErrorException("No usable MS2 scans"))
