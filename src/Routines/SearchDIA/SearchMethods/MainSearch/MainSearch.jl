@@ -347,6 +347,20 @@ function process_search_results!(
         bitvec_rank_table = bitvec_rank_table,
     )
 
+    # Sciex ZT (PIONEER_ZT_METASCAN_K>0): collapse each precursor's ±k-bin
+    # meta-scan into one meta-PSM (center bin's features + the 2k+1 weight profile
+    # + ZT_PROFILE_FEATURES shape features) BEFORE the per-file LGBM, so the model
+    # trains on meta-PSMs and best-per-precursor picks the best meta-scan.
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    _zt_profile = _zt_k > 0 && get(ENV, "PIONEER_ZT_PROFILE_FEATURES", "1") != "0"
+    if _zt_k > 0
+        _n_pre_collapse = nrow(psms)
+        psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k)
+        results.psms[] = psms
+        @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
+                   "profile features $(_zt_profile ? "ON" : "OFF")"
+    end
+
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
@@ -357,6 +371,8 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
+            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES) :
+                                     collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
