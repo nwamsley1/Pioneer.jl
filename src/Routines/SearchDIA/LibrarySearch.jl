@@ -73,6 +73,10 @@ function library_search(
     # narrow fitted quad. qtm_deconv is finalized after S is measured (below).
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
     _zt = _zt_k > 0
+    # Only the MAIN search expands to meta-scans + uses the wide deconv box.
+    # Parameter/quad/NCE tuning must stay on the clean center-bin (1 m/z) path
+    # so calibrations aren't fit on the metascan-expanded, wide-box deconvolution.
+    _zt_main = _zt && (params isa MainSearchParameters)
     qtm_frag = _zt ? SquareQuadModel(0.0f0) : qtm
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
@@ -150,7 +154,7 @@ function library_search(
     # window (partition granularity); keep only |prec_mz - centerMz| ≤ isoWidth/2 so
     # each (precursor, scan) is a clean single-center-bin assignment before the ±k
     # meta-scan expansion. ---
-    if _zt
+    if _zt_main
         n_before_cb = length(precursors_passed)
         precursors_passed = filter_to_center_bin!(
             scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
@@ -172,8 +176,10 @@ function library_search(
     # 2k+1 bins; the fragment index only matched its center bin, so we add it
     # as a candidate to the neighboring bins before deconvolution estimates a
     # per-bin weight. Off (k=0) by default. ---
-    qtm_deconv = qtm
-    if _zt
+    # Tuning stages (ZT but not main search) deconvolve the clean center bins with
+    # a 1 m/z square box; only the main search expands + widens the box.
+    qtm_deconv = _zt ? SquareQuadModel(0.0f0) : qtm
+    if _zt_main
         n_before_ms = length(precursors_passed)
         precursors_passed = expand_to_metascans!(
             scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, _zt_k)
