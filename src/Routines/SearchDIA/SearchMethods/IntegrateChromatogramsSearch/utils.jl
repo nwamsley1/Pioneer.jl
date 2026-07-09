@@ -564,6 +564,28 @@ end
     return Float32(-log2(max(hellinger_sq, 1.0f-10)))
 end
 
+@inline function _chrom_manhattan_score_from_cols(
+    observed_cols,
+    fitted_cols,
+    row::Integer,
+)
+    observed = ntuple(rank -> _chrom_positive_intensity(observed_cols, row, rank), 8)
+    fitted = ntuple(rank -> _chrom_positive_intensity(fitted_cols, row, rank), 8)
+    observed_sum = observed[1] + observed[2] + observed[3] + observed[4] +
+                   observed[5] + observed[6] + observed[7] + observed[8]
+    observed_sum > 0.0f0 || return 0.0f0
+    distance =
+        abs(fitted[1] - observed[1]) +
+        abs(fitted[2] - observed[2]) +
+        abs(fitted[3] - observed[3]) +
+        abs(fitted[4] - observed[4]) +
+        abs(fitted[5] - observed[5]) +
+        abs(fitted[6] - observed[6]) +
+        abs(fitted[7] - observed[7]) +
+        abs(fitted[8] - observed[8])
+    return Float32(-log2(distance / observed_sum + 1.0f-10))
+end
+
 function _chrom_shadow_fragment_correlation_features(
     rows::Vector{Int},
     shadow_cols,
@@ -683,6 +705,7 @@ function add_mbr_integrated_spectra_to_psms!(
     passing_psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_WEIGHT_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN] = zeros(UInt8, n)
@@ -775,6 +798,8 @@ function add_mbr_integrated_spectra_to_psms!(
             if fitted_cols !== nothing
                 fitted_sqrt, _ = _chrom_spectrum_sqrt_tuple_and_sum(fitted_cols, neighbors[1])
                 apex_shadow_sqrt, _ = _chrom_spectrum_sqrt_tuple_and_sum(shadow_cols, neighbors[1])
+                passing_psms[row, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN] =
+                    _chrom_manhattan_score_from_cols(shadow_cols, fitted_cols, neighbors[1])
                 passing_psms[row, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] =
                     _chrom_hellinger_score_from_sqrt(apex_shadow_sqrt, fitted_sqrt)
                 passing_psms[row, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN] =

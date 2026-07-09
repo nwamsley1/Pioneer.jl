@@ -833,6 +833,7 @@ end
     )
 
     raw_expected = -log2(max(1.0f0 - sqrt(0.5f0), 1.0f-10))
+    manhattan_expected = -log2((abs(2.0f0 - 4.0f0) + abs(2.0f0 - 0.0f0)) / 4.0f0 + 1.0f-10)
     smoothed_expected = -log2(max(
         1.0f0 - (sqrt(2.0f0 / 3.0f0) * sqrt(0.5f0) +
                  sqrt(1.0f0 / 3.0f0) * sqrt(0.5f0)),
@@ -841,6 +842,7 @@ end
     rank_weights = Pioneer._fragment_rank_weights(8)
     @test psms.MBR_integrated_frag1_sqrt[1] ≈ sqrt(2.0f0 / 3.0f0) atol=1f-6
     @test psms.MBR_integrated_frag2_sqrt[1] ≈ sqrt(1.0f0 / 3.0f0) atol=1f-6
+    @test psms.MBR_integrated_fitted_manhattan_distance[1] ≈ manhattan_expected atol=1f-6
     @test psms.MBR_integrated_fitted_hellinger[1] ≈ raw_expected atol=1f-6
     @test psms.MBR_integrated_smoothed_2d_shadow_hellinger[1] ≈ smoothed_expected atol=1f-6
     @test psms.MBR_integrated_n_correlated_fragments[1] == UInt8(1)
@@ -971,6 +973,7 @@ end
         donor_df[!, :log2_intensity_explained] = Float16[5, 5]
         receiver_df[!, :log2_intensity_explained] = Float16[5, 5]
         receiver_df[!, :irt_error] = Float32[99, 99]
+        receiver_df[!, :fitted_manhattan_distance] = Float32[99, 99]
         receiver_df[!, :fitted_hellinger] = Float32[99, 99]
         receiver_df[!, :smoothed_2d_shadow_hellinger] = Float32[99, 99]
         receiver_df[!, :n_correlated_fragments] = UInt8[99, 99]
@@ -982,6 +985,7 @@ end
         receiver_df[!, :MBR_integrated_weight] = Float32[32, 40]
         donor_df[!, :MBR_integrated_log2_intensity_explained] = Float32[0.5, 0.75]
         receiver_df[!, :MBR_integrated_log2_intensity_explained] = Float32[2.5, 3.75]
+        receiver_df[!, :MBR_integrated_fitted_manhattan_distance] = Float32[7.25, 7.5]
         receiver_df[!, :MBR_integrated_fitted_hellinger] = Float32[4.25, 4.5]
         receiver_df[!, :MBR_integrated_smoothed_2d_shadow_hellinger] = Float32[6.25, 6.5]
         receiver_df[!, :MBR_integrated_n_correlated_fragments] = UInt8[3, 4]
@@ -1047,10 +1051,12 @@ end
         @test slim.irt_error[1] == abs(receiver_df.irt_pred[1] - receiver_df.MBR_integrated_apex_irt_obs[1])
         @test slim.weight[1] == receiver_df.MBR_integrated_weight[1]
         @test slim.log2_intensity_explained[1] == receiver_df.MBR_integrated_log2_intensity_explained[1]
+        @test slim.fitted_manhattan_distance[1] ==
+            receiver_df.MBR_integrated_fitted_manhattan_distance[1]
         @test slim.fitted_hellinger[1] == receiver_df.MBR_integrated_fitted_hellinger[1]
         @test slim.smoothed_2d_shadow_hellinger[1] ==
             receiver_df.MBR_integrated_smoothed_2d_shadow_hellinger[1]
-        @test slim.frag_corr_strength[1] == receiver_df.MBR_integrated_frag_corr_strength[1]
+        @test !(:frag_corr_strength in propertynames(slim))
         @test !(:n_correlated_fragments in propertynames(slim))
         @test !(:n_correlated_fragments_bitvec_rank in propertynames(slim))
         @test !(:n_frags_detected_union_bitvec_rank in propertynames(slim))
@@ -1607,6 +1613,10 @@ end
         :ms1_ms2_explained_delta,
         :ms1_ms2_explained_delta_pc,
         :n_scans,
+        :irt_fwhm,
+        :frag_apex_gt2x_flank_bitvec_rank,
+        :frag_apex_dispersion_irt,
+        :frag_corr_strength,
         :n_correlated_fragments,
         :n_correlated_fragments_bitvec_rank,
         :n_frags_detected_union_bitvec_rank,

@@ -67,6 +67,8 @@ const MBR_INTEGRATED_APEX_IRT_COLUMN = :MBR_integrated_apex_irt_obs
 const MBR_INTEGRATED_WEIGHT_COLUMN = :MBR_integrated_weight
 const MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN =
     :MBR_integrated_log2_intensity_explained
+const MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN =
+    :MBR_integrated_fitted_manhattan_distance
 const MBR_INTEGRATED_FITTED_HELLINGER_COLUMN =
     :MBR_integrated_fitted_hellinger
 const MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN =
@@ -2084,6 +2086,10 @@ function _mbr_ftr_cross_run_feature_values(main, c::Symbol, n::Int)
     if c === :weight &&
        hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
         return collect(Float32.(getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)))
+    end
+    if c === :fitted_manhattan_distance &&
+       hasproperty(main, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)))
     end
     if c === :fitted_hellinger &&
        hasproperty(main, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)
