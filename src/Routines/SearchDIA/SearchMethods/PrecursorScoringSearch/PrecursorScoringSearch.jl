@@ -70,6 +70,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # When false, skip post-qvalue MBR feature computation and the FTR controller.
     # Driven by global.match_between_runs.
     match_between_runs::Bool
+    main_search_params::Any
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
@@ -83,6 +84,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
             mbr,
+            MainSearchParameters(params),
         )
     end
 end
@@ -480,46 +482,21 @@ function summarize_results!(
 
     if params.match_between_runs && !isempty(passing_refs)
         post_mbr_time = @elapsed begin
-            summary = run_mbr_after_qvalue_filter!(
+            summary = prepare_mbr_after_qvalue_filter!(
                 annotated_refs,
                 passing_refs,
                 getPrecursors(getSpecLib(search_context)),
-                getFragmentLookupTable(getSpecLib(search_context));
+                getFragmentLookupTable(getSpecLib(search_context)),
+                passing_psms_folder;
                 q_value_threshold = params.q_value_threshold,
                 donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
             )
-            @debug_l1 "Post-qvalue MBR completed: files=$(summary.n_files), " *
-                      "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"
+            @debug_l1 "Post-qvalue MBR candidate staging completed: files=$(summary.n_files), " *
+                      "candidates=$(summary.n_candidates), integration_rows=$(summary.n_integration_rows)"
             annotated_refs = [PSMFileReference(file_path(ref)) for ref in annotated_refs]
-            remap_mbr_recovered_prec_probs!(
-                annotated_refs,
-                results.merged_quant_path;
-                q_value_threshold = params.q_value_threshold,
-                min_pep_points_per_bin = params.pep_bin_size,
-                fdr_scale_factor = fdr_scale,
-                global_qval_dict = global_qval_dict,
-            )
-
-            q_threshold = params.q_value_threshold
-            mbr_selection_pipeline = TransformPipeline() |>
-                ("filter_initial_pass_or_mbr_recovered" => function(df)
-                    hasproperty(df, :mbr_recovered) || return df
-                    gq = df[!, :global_qval]
-                    rq = df[!, :qval]
-                    rec = df[!, :mbr_recovered]
-                    keep = falses(nrow(df))
-                    @inbounds for i in 1:nrow(df)
-                        initial_pass =
-                            !ismissing(gq[i]) && !ismissing(rq[i]) &&
-                            Float32(gq[i]) <= q_threshold &&
-                            Float32(rq[i]) <= q_threshold
-                        keep[i] = initial_pass || rec[i]
-                    end
-                    return df[keep, :]
-                end)
-            passing_refs = apply_pipeline_batch(annotated_refs, mbr_selection_pipeline, passing_psms_folder)
+            passing_refs = summary.integration_refs
         end
-        @debug_l1 "Post-qvalue MBR elapsed: $(round(post_mbr_time, digits=2)) seconds"
+        @debug_l1 "Post-qvalue MBR candidate staging elapsed: $(round(post_mbr_time, digits=2)) seconds"
     end
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
@@ -528,23 +505,27 @@ function summarize_results!(
     # keep these files available for diagnostic inspection. Re-enable once the
     # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
-    # Step 11: Re-calculate q-values using filtered data (sidecar-based)
-    step11_time = @elapsed begin
+    # Step 11: Re-calculate q-values using filtered data (sidecar-based).
+    # For MBR-enabled searches this moves to IntegrateChromatogramSearch, after
+    # the MBR FTR controller has used integration-derived features.
+    if !params.match_between_runs
+        step11_time = @elapsed begin
         # Sidecar lifecycle for new spline (on filtered data)
-        spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            compute_pep=true,
-            min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
-        if spline_result === nothing
-            @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-        else
-            results.precursor_qval_interp[] = spline_result.qval_spline
-            results.precursor_pep_interp[] = spline_result.pep_interp
-            recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
-                filter_by_multiple_thresholds([(:qval, params.q_value_threshold)]) |>
-                add_interpolated_column(:pep, :prec_prob, spline_result.pep_interp)
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+            spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
+                compute_pep=true,
+                min_pep_points_per_bin=params.pep_bin_size,
+                fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
+            if spline_result === nothing
+                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+            else
+                results.precursor_qval_interp[] = spline_result.qval_spline
+                results.precursor_pep_interp[] = spline_result.pep_interp
+                recalc_pipeline = TransformPipeline() |>
+                    add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+                    filter_by_multiple_thresholds([(:qval, params.q_value_threshold)]) |>
+                    add_interpolated_column(:pep, :prec_prob, spline_result.pep_interp)
+                passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+            end
         end
     end
 

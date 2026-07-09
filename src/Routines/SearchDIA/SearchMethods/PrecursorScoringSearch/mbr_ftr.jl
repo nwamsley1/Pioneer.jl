@@ -98,7 +98,65 @@ end
 #     already encodes missingness)
 #   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
 #     both subsequently dropped along with the other M0 frag-6-vector features)
-const MBR_CROSS_RUN_FTR_FEATURES = Symbol[ADVANCED_FEATURE_SET...]
+const MBR_CROSS_RUN_FTR_FEATURE_DROPS = Set([
+    :total_ions,
+    :missed_cleavage,
+    :y_count,
+    :Mox,
+    :n_frags_detected_union,
+    :n_frags_detected_intersection,
+    :frag1_smoothed_intensity,
+    :frag2_smoothed_intensity,
+    :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity,
+    :frag5_smoothed_intensity,
+    :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity,
+    :frag8_smoothed_intensity,
+    :n_scans_other_windows,
+    :other_window_weight_corr,
+    :other_window_apex_delta_irt,
+    :smoothness,
+    :n_contiguous_scans,
+    :scan_prec_mz_n_precursors,
+    :delta_frame_peak_center,
+    :ms1_m1_intensity,
+    :ms1_m1_to_m0_ratio,
+    :ms1_m1_to_m0_pred,
+    :ms1_m0_mass_err_ppm,
+    :ms1_m0_peak_n_precursors,
+    :ms1_m0_peak_frag_intensity_fraction,
+    :flanking_ms1_m0_candidate_fraction,
+    :flanking_frag_candidate_fraction,
+    :flanking_ms1_frag_sum_corr,
+    :flanking_frag_corr_mean,
+    :flanking_frag_corr_strength,
+    :flanking_frag_corr_effective_n,
+    :flanking_frag_corr_best_m0,
+    :flanking_signal_support,
+    :spectrum_peak_count,
+    :prec_mz,
+    :longest_y,
+    :top3_ms2_mass_error_mean,
+    :ms1_m0_intensity,
+    :ms1_isotope_dotp_m0_m1_m2,
+    :ms1_m0_m1_m2_window_fraction,
+    :ms1_m0_m1_m2_window_fraction_pc,
+    :ms1_ms2_explained_delta,
+    :ms1_ms2_explained_delta_pc,
+    :n_scans,
+    :n_correlated_fragments,
+    :n_correlated_fragments_bitvec_rank,
+    :n_frags_detected_union_bitvec_rank,
+    :n_frags_detected_intersection_bitvec_rank,
+    :frag_corr_effective_n,
+    :frag_corr_best_m0,
+])
+
+const MBR_CROSS_RUN_FTR_FEATURES = Symbol[
+    feature for feature in ADVANCED_FEATURE_SET
+    if !(feature in MBR_CROSS_RUN_FTR_FEATURE_DROPS)
+]
 
 const FTR_FEATURES_F_TRUE = Symbol[
     MBR_CROSS_RUN_FTR_FEATURES...,

@@ -234,6 +234,41 @@ end
     end
 end
 
+@testset "post-integration MBR drops rejected staged transfer candidates before q-value recalculation" begin
+    mktempdir() do dir
+        path = joinpath(dir, "integrated.arrow")
+        main = DataFrame(
+            precursor_idx = UInt32[1, 2, 3],
+            scan_idx = UInt32[101, 102, 103],
+            prec_prob = Float32[0.99, 0.50, 0.60],
+            qval = Float32[0.001, 0.50, 0.50],
+            global_qval = Float32[0.001, 0.001, 0.001],
+        )
+        rec = DataFrame(
+            precursor_idx = UInt32[1, 2, 3],
+            scan_idx = UInt32[101, 102, 103],
+            mbr_recovered = Bool[false, false, true],
+            MBR_transfer_candidate = Bool[false, true, true],
+            mbr_target_decoy_prob = Float32[NaN32, 0.10, 0.90],
+            ftr_qval_true = Float32[NaN32, 0.20, 0.005],
+            ftr_pep_true = Float32[NaN32, 0.20, 0.005],
+        )
+        Arrow.write(path, main)
+        Arrow.write(path * Pioneer.RECOVERY_SIDECAR_SUFFIX, rec)
+
+        Pioneer.merge_mbr_recovery_sidecars_into_main!(
+            [path];
+            cleanup = false,
+            filter_unrecovered_candidates = true,
+        )
+
+        filtered = DataFrame(Arrow.Table(path))
+        @test filtered.precursor_idx == UInt32[1, 3]
+        @test filtered.MBR_transfer_candidate == Bool[false, true]
+        @test filtered.mbr_recovered == Bool[false, true]
+    end
+end
+
 @testset "post-qvalue MBR counterfactuals can pair to receiver-run passing precursors" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
@@ -728,6 +763,391 @@ end
     end
 end
 
+@testset "MBR integration staging keeps donor-supported candidates without pre-integration MBR features" begin
+    df = DataFrame(
+        precursor_idx = UInt32[1, 2, 3, 4],
+        scan_idx = UInt32[101, 102, 103, 104],
+        qval = Float32[0.001, 0.02, 0.02, 0.02],
+        global_qval = Float32[0.001, 0.001, 0.001, 0.02],
+        ms_file_idx = UInt32[1, 1, 1, 1],
+    )
+    donor_dict = Dict(
+        UInt32(2) => Pioneer._MBRDonorEntry[
+            Pioneer._MBRDonorEntry(
+                0.90f0, UInt32(2), 10f0, 1f0, 0f0, 10f0, 0f0, 5f0, 3f0,
+                (1f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0),
+                0f0, UInt32(2), false,
+            ),
+        ],
+        UInt32(3) => Pioneer._MBRDonorEntry[
+            Pioneer._MBRDonorEntry(
+                0.40f0, UInt32(3), 10f0, 1f0, 0f0, 10f0, 0f0, 5f0, 3f0,
+                (1f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0),
+                0f0, UInt32(2), false,
+            ),
+        ],
+    )
+
+    keep = Pioneer._mbr_integration_staging_mask(df, donor_dict, 0.01f0, 0.5f0)
+
+    @test keep == Bool[true, true, false, false]
+end
+
+@testset "chromatogram integration MBR spectra record apex iRT and integrated quant" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[1],
+        scan_idx = UInt32[11],
+        new_best_scan = UInt32[11],
+        peak_area = Float32[42],
+    )
+    chrom = DataFrame(
+        rt = Float32[1, 2, 3],
+        intensity = Float32[0, 4, 0],
+        scan_idx = UInt32[10, 11, 12],
+        precursor_idx = UInt32[1, 1, 1],
+        spectrum_intensity = Float32[20, 40, 60],
+        shadow_frag1_int = Float32[0, 4, 0],
+        shadow_frag2_int = Float32[4, 0, 0],
+        shadow_frag3_int = zeros(Float32, 3),
+        shadow_frag4_int = zeros(Float32, 3),
+        shadow_frag5_int = zeros(Float32, 3),
+        shadow_frag6_int = zeros(Float32, 3),
+        shadow_frag7_int = zeros(Float32, 3),
+        shadow_frag8_int = zeros(Float32, 3),
+        fitted_frag1_int = Float32[0, 2, 0],
+        fitted_frag2_int = Float32[0, 2, 0],
+        fitted_frag3_int = zeros(Float32, 3),
+        fitted_frag4_int = zeros(Float32, 3),
+        fitted_frag5_int = zeros(Float32, 3),
+        fitted_frag6_int = zeros(Float32, 3),
+        fitted_frag7_int = zeros(Float32, 3),
+        fitted_frag8_int = zeros(Float32, 3),
+    )
+
+    bitvec_rank_table = UInt16.(0:255)
+    Pioneer.add_mbr_integrated_spectra_to_psms!(
+        psms,
+        chrom,
+        rt -> Float32(10 * rt);
+        bitvec_rank_table = bitvec_rank_table,
+    )
+
+    raw_expected = -log2(max(1.0f0 - sqrt(0.5f0), 1.0f-10))
+    smoothed_expected = -log2(max(
+        1.0f0 - (sqrt(2.0f0 / 3.0f0) * sqrt(0.5f0) +
+                 sqrt(1.0f0 / 3.0f0) * sqrt(0.5f0)),
+        1.0f-10,
+    ))
+    rank_weights = Pioneer._fragment_rank_weights(8)
+    @test psms.MBR_integrated_frag1_sqrt[1] ≈ sqrt(2.0f0 / 3.0f0) atol=1f-6
+    @test psms.MBR_integrated_frag2_sqrt[1] ≈ sqrt(1.0f0 / 3.0f0) atol=1f-6
+    @test psms.MBR_integrated_fitted_hellinger[1] ≈ raw_expected atol=1f-6
+    @test psms.MBR_integrated_smoothed_2d_shadow_hellinger[1] ≈ smoothed_expected atol=1f-6
+    @test psms.MBR_integrated_n_correlated_fragments[1] == UInt8(1)
+    @test psms.MBR_integrated_n_correlated_fragments_bitvec_rank[1] == UInt16(1)
+    @test psms.MBR_integrated_frag_corr_strength[1] ≈ rank_weights[1] atol=1f-6
+    @test psms.MBR_integrated_frag_corr_effective_n[1] ≈ 1.0f0 atol=1f-6
+    @test psms.MBR_integrated_frag_corr_best_weight[1] ≈ 1.0f0 atol=1f-6
+    @test psms.MBR_integrated_apex_irt_obs[1] == 20.0f0
+    @test psms.MBR_integrated_weight[1] == 42.0f0
+    @test psms.MBR_integrated_log2_intensity_explained[1] ≈ log2(3.0f0 / 40.0f0) atol=1f-6
+end
+
+@testset "post-integration MBR donor dictionaries require integrated apex features" begin
+    mktempdir() do dir
+        path = joinpath(dir, "donor.arrow")
+        df = _mbr_post_q_main_table(ms_file_idx = 1, scan_offset = 1000)
+        df[!, :MBR_integrated_weight] = Float32[4, 5]
+        df[!, :MBR_integrated_log2_intensity_explained] = Float32[0.5, 0.75]
+        df[!, :MBR_integrated_apex_irt_obs] = Float32[12.5, 22.5]
+        df[!, :points_integrated] = UInt32[2, 7]
+        df[!, :MBR_integrated_frag1_sqrt] = Float32[0, 1]
+        df[!, :MBR_integrated_frag2_sqrt] = Float32[1, 0]
+        for rank in 3:8
+            df[!, Symbol("MBR_integrated_frag$(rank)_sqrt")] = zeros(Float32, nrow(df))
+        end
+        Arrow.write(path, df)
+        Arrow.write(path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
+            precursor_idx = df.precursor_idx,
+            scan_idx = df.scan_idx,
+            trace_prob_prepass = df.trace_prob_prepass,
+            trace_prob_infold = df.trace_prob_infold,
+        ))
+
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [path];
+            prefer_integrated_spectra = true,
+            prefer_integrated_quant = true,
+            require_integrated_irt = true,
+        )
+
+        @test donor_dict[UInt32(1)][1].smoothed_frag_sqrt[1] == 0.0f0
+        @test donor_dict[UInt32(1)][1].smoothed_frag_sqrt[2] == 1.0f0
+        @test donor_dict[UInt32(1)][1].weight == 4.0f0
+        @test donor_dict[UInt32(1)][1].log2_intensity_explained == 0.5f0
+        @test donor_dict[UInt32(1)][1].irt_obs == 12.5f0
+        @test donor_dict[UInt32(1)][1].irt_residual == df.irt_pred[1] - 12.5f0
+        @test donor_dict[UInt32(1)][1].n_scans == 2.0f0
+    end
+end
+
+@testset "post-integration counterfactual pairing uses refined library iRT" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver.arrow")
+        pool_path = joinpath(dir, "pool.arrow")
+
+        receiver = _mbr_post_q_candidate_table(ms_file_idx = 1, scan_offset = 1000)[1:1, :]
+        pool = _mbr_post_q_candidate_table(ms_file_idx = 2, scan_offset = 2000, passing = true)[2:3, :]
+        receiver[!, :irt_pred] = Float32[10.0]
+        receiver[!, :MBR_integrated_apex_irt_obs] = Float32[50.0]
+        receiver[!, :MBR_integrated_weight] = Float32[10.0]
+        receiver[!, :MBR_integrated_log2_intensity_explained] = Float32[1.0]
+
+        pool[!, :irt_pred] = Float32[10.01, 50.0]
+        pool[!, :MBR_integrated_apex_irt_obs] = Float32[10.0, 51.0]
+        pool[!, :trace_prob] = Float32[0.60, 0.80]
+        pool[!, :trace_prob_prepass] = Float32[0.60, 0.80]
+        pool[!, :trace_prob_infold] = Float32[0.60, 0.80]
+        pool[!, :prec_prob] = Float32[0.60, 0.80]
+        pool[!, :MBR_integrated_weight] = Float32[20.0, 30.0]
+        pool[!, :MBR_integrated_log2_intensity_explained] = Float32[2.0, 3.0]
+
+        for df in (receiver, pool)
+            df[!, :points_integrated] = UInt32[5 for _ in 1:nrow(df)]
+            df[!, :MBR_integrated_frag1_sqrt] = ones(Float32, nrow(df))
+            for rank in 2:8
+                df[!, Symbol("MBR_integrated_frag$(rank)_sqrt")] = zeros(Float32, nrow(df))
+            end
+        end
+
+        Arrow.write(receiver_path, receiver)
+        Arrow.write(pool_path, pool)
+        for (path, df) in ((receiver_path, receiver), (pool_path, pool))
+            Arrow.write(path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
+                precursor_idx = df.precursor_idx,
+                scan_idx = df.scan_idx,
+                trace_prob_prepass = df.trace_prob_prepass,
+                trace_prob_infold = df.trace_prob_infold,
+            ))
+        end
+
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [pool_path];
+            passing_score_floor = 0.0f0,
+            prefer_integrated_spectra = true,
+            prefer_integrated_quant = true,
+            require_integrated_irt = true,
+        )
+        partner_pools = Pioneer.build_post_integration_counterfactual_partner_pools(
+            [pool_path],
+            MBRPostQMockPrecursors(Float32[500, 501, 502], Float32[10, 50, 10]);
+            receiver_file_paths = [receiver_path],
+        )
+
+        side_path = Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            receiver_path,
+            donor_dict,
+            partner_pools,
+            Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
+            passing_score_floor = 0.0f0,
+            use_integrated_mbr_features = true,
+        )
+        side = DataFrame(Arrow.Table(side_path))
+
+        @test side.MBR_best_pair_prob_false[1] == 0.60f0
+        @test side.MBR_best_observed_irt_diff_false[1] == 40.0f0
+    end
+end
+
+@testset "post-integration MBR feature rows use integrated receiver quant and apex iRT" begin
+    mktempdir() do dir
+        donor_path = joinpath(dir, "donor.arrow")
+        receiver_path = joinpath(dir, "receiver.arrow")
+
+        donor_df = _mbr_post_q_main_table(ms_file_idx = 1, scan_offset = 1000)
+        receiver_df = _mbr_post_q_main_table(ms_file_idx = 2, scan_offset = 2000)
+        donor_df[!, :weight] = Float32[100, 100]
+        receiver_df[!, :weight] = Float32[100, 100]
+        donor_df[!, :log2_intensity_explained] = Float16[5, 5]
+        receiver_df[!, :log2_intensity_explained] = Float16[5, 5]
+        receiver_df[!, :irt_error] = Float32[99, 99]
+        receiver_df[!, :fitted_hellinger] = Float32[99, 99]
+        receiver_df[!, :smoothed_2d_shadow_hellinger] = Float32[99, 99]
+        receiver_df[!, :n_correlated_fragments] = UInt8[99, 99]
+        receiver_df[!, :n_correlated_fragments_bitvec_rank] = UInt16[99, 99]
+        receiver_df[!, :frag_corr_strength] = Float32[99, 99]
+        receiver_df[!, :frag_corr_effective_n] = Float32[99, 99]
+        receiver_df[!, :frag_corr_best_m0] = Float32[99, 99]
+        donor_df[!, :MBR_integrated_weight] = Float32[4, 5]
+        receiver_df[!, :MBR_integrated_weight] = Float32[32, 40]
+        donor_df[!, :MBR_integrated_log2_intensity_explained] = Float32[0.5, 0.75]
+        receiver_df[!, :MBR_integrated_log2_intensity_explained] = Float32[2.5, 3.75]
+        receiver_df[!, :MBR_integrated_fitted_hellinger] = Float32[4.25, 4.5]
+        receiver_df[!, :MBR_integrated_smoothed_2d_shadow_hellinger] = Float32[6.25, 6.5]
+        receiver_df[!, :MBR_integrated_n_correlated_fragments] = UInt8[3, 4]
+        receiver_df[!, :MBR_integrated_n_correlated_fragments_bitvec_rank] = UInt16[7, 8]
+        receiver_df[!, :MBR_integrated_frag_corr_strength] = Float32[1.25, 1.5]
+        receiver_df[!, :MBR_integrated_frag_corr_effective_n] = Float32[2.25, 2.5]
+        receiver_df[!, :MBR_integrated_frag_corr_best_weight] = Float32[0.25, 0.5]
+        donor_df[!, :MBR_integrated_apex_irt_obs] = Float32[12, 22]
+        receiver_df[!, :MBR_integrated_apex_irt_obs] = Float32[15, 25]
+        donor_df[!, :points_integrated] = UInt32[3, 4]
+        receiver_df[!, :points_integrated] = UInt32[10, 12]
+        for df in (donor_df, receiver_df)
+            df[!, :MBR_integrated_frag1_sqrt] = Float32[1, 0]
+            df[!, :MBR_integrated_frag2_sqrt] = Float32[0, 1]
+            for rank in 3:8
+                df[!, Symbol("MBR_integrated_frag$(rank)_sqrt")] = zeros(Float32, nrow(df))
+            end
+        end
+        Arrow.write(donor_path, donor_df)
+        Arrow.write(receiver_path, receiver_df)
+        for (path, df) in ((donor_path, donor_df), (receiver_path, receiver_df))
+            Arrow.write(path * Pioneer.PASS1_SIDECAR_SUFFIX, DataFrame(
+                precursor_idx = df.precursor_idx,
+                scan_idx = df.scan_idx,
+                trace_prob_prepass = df.trace_prob_prepass,
+                trace_prob_infold = df.trace_prob_infold,
+            ))
+        end
+
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [donor_path];
+            passing_score_floor = 0.0f0,
+            prefer_integrated_spectra = true,
+            prefer_integrated_quant = true,
+            require_integrated_irt = true,
+        )
+        partner_pools = Pioneer.build_counterfactual_partner_pools(
+            [donor_path, receiver_path],
+            MBRPostQMockPrecursors(Float32[500, 600], Float32[10, 20]);
+            irt_column = :MBR_integrated_apex_irt_obs,
+            require_irt_column = true,
+        )
+        side_path = Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            receiver_path,
+            donor_dict,
+            partner_pools,
+            Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
+            passing_score_floor = 0.0f0,
+            use_integrated_mbr_features = true,
+        )
+        side = DataFrame(Arrow.Table(side_path))
+
+        receiver_residual = receiver_df.irt_pred[1] - receiver_df.MBR_integrated_apex_irt_obs[1]
+        donor_residual = donor_df.irt_pred[1] - donor_df.MBR_integrated_apex_irt_obs[1]
+        @test side.MBR_best_log2_weight_ratio_true[1] == log2(32.0f0 / 4.0f0)
+        @test side.MBR_best_log2_explained_ratio_true[1] == 2.0f0
+        @test side.MBR_best_observed_irt_diff_true[1] == abs(15.0f0 - 12.0f0)
+        @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - donor_residual)
+        @test side.MBR_best_abs_n_scans_diff_true[1] == 7.0f0
+        @test side.MBR_best_log2_n_scans_ratio_true[1] == log2(11.0f0 / 4.0f0)
+
+        slim = Pioneer.load_ftr_slim_dataframe([receiver_path])
+        @test slim.irt_error[1] == abs(receiver_df.irt_pred[1] - receiver_df.MBR_integrated_apex_irt_obs[1])
+        @test slim.weight[1] == receiver_df.MBR_integrated_weight[1]
+        @test slim.log2_intensity_explained[1] == receiver_df.MBR_integrated_log2_intensity_explained[1]
+        @test slim.fitted_hellinger[1] == receiver_df.MBR_integrated_fitted_hellinger[1]
+        @test slim.smoothed_2d_shadow_hellinger[1] ==
+            receiver_df.MBR_integrated_smoothed_2d_shadow_hellinger[1]
+        @test slim.frag_corr_strength[1] == receiver_df.MBR_integrated_frag_corr_strength[1]
+        @test !(:n_correlated_fragments in propertynames(slim))
+        @test !(:n_correlated_fragments_bitvec_rank in propertynames(slim))
+        @test !(:n_frags_detected_union_bitvec_rank in propertynames(slim))
+        @test !(:n_frags_detected_intersection_bitvec_rank in propertynames(slim))
+        @test !(:frag_corr_effective_n in propertynames(slim))
+        @test !(:frag_corr_best_m0 in propertynames(slim))
+    end
+end
+
+@testset "post-integration MBR Hellinger uses receiver spectrum for true and counterfactual rows" begin
+    mktempdir() do dir
+        main_path = joinpath(dir, "receiver.arrow")
+        pool_path = joinpath(dir, "pool.arrow")
+        side_path = main_path * Pioneer.MBR_SIDECAR_SUFFIX
+        pass1_path = main_path * Pioneer.PASS1_SIDECAR_SUFFIX
+
+        main = DataFrame(
+            precursor_idx = UInt32[1],
+            scan_idx = UInt32[101],
+            ms_file_idx = UInt32[1],
+            irt_pred = Float32[10.0],
+            qval = Float32[0.02],
+            global_qval = Float32[0.001],
+            MBR_integrated_frag1_sqrt = Float32[sqrt(0.75f0)],
+            MBR_integrated_frag2_sqrt = Float32[sqrt(0.25f0)],
+            MBR_integrated_frag3_sqrt = Float32[0],
+            MBR_integrated_frag4_sqrt = Float32[0],
+            MBR_integrated_frag5_sqrt = Float32[0],
+            MBR_integrated_frag6_sqrt = Float32[0],
+            MBR_integrated_frag7_sqrt = Float32[0],
+            MBR_integrated_frag8_sqrt = Float32[0],
+        )
+        side = DataFrame(
+            precursor_idx = UInt32[1],
+            scan_idx = UInt32[101],
+            MBR_best_smoothed_frag_hellinger_true = Float32[1],
+            MBR_best_smoothed_frag_hellinger_false = Float32[1],
+            MBR_worst_smoothed_frag_hellinger_true = Float32[1],
+            MBR_worst_smoothed_frag_hellinger_false = Float32[1],
+            MBR_best_integrated_one_scan_hellinger_true = Float32[1],
+            MBR_best_integrated_one_scan_hellinger_false = Float32[1],
+        )
+        pass1 = DataFrame(
+            precursor_idx = UInt32[1],
+            scan_idx = UInt32[101],
+            trace_prob_prepass = Float32[0.4],
+            trace_prob_infold = Float32[0.4],
+        )
+
+        Arrow.write(main_path, main)
+        Arrow.write(pool_path, DataFrame(
+            precursor_idx = UInt32[2],
+            target = Bool[true],
+            cv_fold = UInt8[0],
+            irt_pred = Float32[10.01],
+        ))
+        Arrow.write(side_path, side)
+        Arrow.write(pass1_path, pass1)
+
+        donor_true = Pioneer._MBRDonorEntry(
+            0.9f0, UInt32(1), 10f0, 1f0, 0f0, 10f0, 0f0, 5f0, 3f0,
+            (sqrt(0.75f0), sqrt(0.25f0), 0f0, 0f0, 0f0, 0f0, 0f0, 0f0),
+            0f0, UInt32(2), false,
+        )
+        donor_false = Pioneer._MBRDonorEntry(
+            0.8f0, UInt32(2), 8f0, 1f0, 0f0, 11f0, 0f0, 6f0, 3f0,
+            (sqrt(0.25f0), sqrt(0.75f0), 0f0, 0f0, 0f0, 0f0, 0f0, 0f0),
+            0f0, UInt32(2), false,
+        )
+        donor_dict = Dict(
+            UInt32(1) => Pioneer._MBRDonorEntry[donor_true],
+            UInt32(2) => Pioneer._MBRDonorEntry[donor_false],
+        )
+        partner_pools = Pioneer.build_counterfactual_partner_pools(
+            [main_path, pool_path],
+            MBRPostQMockPrecursorsWithLength(
+                Float32[500, 501],
+                Float32[10.0, 10.01],
+                UInt8[9, 9],
+            ),
+            receiver_file_paths = [main_path],
+        )
+
+        Pioneer.update_mbr_integrated_hellinger_sidecars!(
+            [main_path],
+            donor_dict,
+            partner_pools,
+            Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
+            0.0f0,
+        )
+
+        updated = DataFrame(Arrow.Table(side_path))
+        @test updated.MBR_best_smoothed_frag_hellinger_true[1] ≈ 0.0f0 atol=1f-6
+        @test updated.MBR_best_smoothed_frag_hellinger_false[1] > 0.3f0
+    end
+end
+
 @testset "MBR recovery alpha can be overridden for threshold sweeps" begin
     @test Pioneer._mbr_recovery_alpha_from_env(Dict{String, String}()) == 0.01f0
     @test Pioneer._mbr_recovery_alpha_from_env(Dict("PIONEER_MBR_FTR_ALPHA" => "0.02")) == 0.02f0
@@ -996,6 +1416,26 @@ end
     @test !(:MBR_best_smoothed_frag_hellinger_rank_false3 in propertynames(psms))
 end
 
+@testset "Restricted MBR deconvolution can replace scan candidate sets" begin
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(fill(missing, 6))
+    allowed = Dict(
+        2 => Set(UInt32[5, 3]),
+        4 => Set{UInt32}(),
+        6 => Set(UInt32[7]),
+    )
+
+    precursors_passed = Pioneer.build_allowed_precursors_by_scan!(
+        scan_to_prec_idx,
+        Int[2, 4, 6],
+        allowed,
+    )
+
+    @test precursors_passed == UInt32[3, 5, 7]
+    @test scan_to_prec_idx[2] == 1:2
+    @test ismissing(scan_to_prec_idx[4])
+    @test scan_to_prec_idx[6] == 3:3
+end
+
 @testset "MBR FTR debug export writes selected true and counterfactual blocks" begin
     mktempdir() do dir
         sub = DataFrame(
@@ -1120,9 +1560,70 @@ end
     @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE)
-    @test Pioneer.MBR_CROSS_RUN_FTR_FEATURES == Symbol[Pioneer.ADVANCED_FEATURE_SET...]
-    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_TRUE, Pioneer.ADVANCED_FEATURE_SET)
-    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_FALSE, Pioneer.ADVANCED_FEATURE_SET)
+    mbr_cross_run_drops = Set([
+        :total_ions,
+        :missed_cleavage,
+        :y_count,
+        :Mox,
+        :n_frags_detected_union,
+        :n_frags_detected_intersection,
+        :frag1_smoothed_intensity,
+        :frag2_smoothed_intensity,
+        :frag3_smoothed_intensity,
+        :frag4_smoothed_intensity,
+        :frag5_smoothed_intensity,
+        :frag6_smoothed_intensity,
+        :frag7_smoothed_intensity,
+        :frag8_smoothed_intensity,
+        :n_scans_other_windows,
+        :other_window_weight_corr,
+        :other_window_apex_delta_irt,
+        :smoothness,
+        :n_contiguous_scans,
+        :scan_prec_mz_n_precursors,
+        :delta_frame_peak_center,
+        :ms1_m1_intensity,
+        :ms1_m1_to_m0_ratio,
+        :ms1_m1_to_m0_pred,
+        :ms1_m0_mass_err_ppm,
+        :ms1_m0_peak_n_precursors,
+        :ms1_m0_peak_frag_intensity_fraction,
+        :flanking_ms1_m0_candidate_fraction,
+        :flanking_frag_candidate_fraction,
+        :flanking_ms1_frag_sum_corr,
+        :flanking_frag_corr_mean,
+        :flanking_frag_corr_strength,
+        :flanking_frag_corr_effective_n,
+        :flanking_frag_corr_best_m0,
+        :flanking_signal_support,
+        :spectrum_peak_count,
+        :prec_mz,
+        :longest_y,
+        :top3_ms2_mass_error_mean,
+        :ms1_m0_intensity,
+        :ms1_isotope_dotp_m0_m1_m2,
+        :ms1_m0_m1_m2_window_fraction,
+        :ms1_m0_m1_m2_window_fraction_pc,
+        :ms1_ms2_explained_delta,
+        :ms1_ms2_explained_delta_pc,
+        :n_scans,
+        :n_correlated_fragments,
+        :n_correlated_fragments_bitvec_rank,
+        :n_frags_detected_union_bitvec_rank,
+        :n_frags_detected_intersection_bitvec_rank,
+        :frag_corr_effective_n,
+        :frag_corr_best_m0,
+    ])
+    expected_cross_run = Symbol[
+        feature for feature in Pioneer.ADVANCED_FEATURE_SET
+        if !(feature in mbr_cross_run_drops)
+    ]
+    @test Pioneer.MBR_CROSS_RUN_FTR_FEATURES == expected_cross_run
+    @test all(feature -> feature in Pioneer.ADVANCED_FEATURE_SET, mbr_cross_run_drops)
+    @test all(feature -> !(feature in Pioneer.FTR_FEATURES_F_TRUE), mbr_cross_run_drops)
+    @test all(feature -> !(feature in Pioneer.FTR_FEATURES_F_FALSE), mbr_cross_run_drops)
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_TRUE, expected_cross_run)
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_FALSE, expected_cross_run)
     @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
@@ -1155,6 +1656,8 @@ end
     @test !(:MBR_donor_library_hellinger_worst_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_best_integrated_one_scan_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_best_integrated_one_scan_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_smoothed_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_smoothed_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_best_smoothed_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE)

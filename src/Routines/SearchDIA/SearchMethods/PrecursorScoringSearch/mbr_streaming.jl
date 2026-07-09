@@ -59,6 +59,29 @@ const MBR_DEFAULT_N_COUNTERFACTUALS = 2
 const MBR_MAX_COUNTERFACTUALS = 8
 const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
+const MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS = ntuple(
+    rank -> Symbol("MBR_integrated_frag$(rank)_sqrt"),
+    8,
+)
+const MBR_INTEGRATED_APEX_IRT_COLUMN = :MBR_integrated_apex_irt_obs
+const MBR_INTEGRATED_WEIGHT_COLUMN = :MBR_integrated_weight
+const MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN =
+    :MBR_integrated_log2_intensity_explained
+const MBR_INTEGRATED_FITTED_HELLINGER_COLUMN =
+    :MBR_integrated_fitted_hellinger
+const MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN =
+    :MBR_integrated_smoothed_2d_shadow_hellinger
+const MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN =
+    :MBR_integrated_n_correlated_fragments
+const MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN =
+    :MBR_integrated_n_correlated_fragments_bitvec_rank
+const MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN =
+    :MBR_integrated_frag_corr_strength
+const MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN =
+    :MBR_integrated_frag_corr_effective_n
+const MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN =
+    :MBR_integrated_frag_corr_best_weight
+const MBR_INTEGRATED_N_SCANS_COLUMN = :points_integrated
 const _MBRFalseDonorTuple = NTuple{MBR_MAX_COUNTERFACTUALS, Union{Nothing, _MBRDonorEntry}}
 const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32}
 
@@ -93,6 +116,30 @@ end
         sqrt(f6 * inv_sum),
         sqrt(f7 * inv_sum),
         sqrt(f8 * inv_sum),
+    )
+end
+
+@inline function _mbr_spectrum_sqrt_tuple_from_sqrt_cols(frag_sqrt_cols, row::Integer)
+    f1 = max(Float32(frag_sqrt_cols[1][row]), 0.0f0)
+    f2 = max(Float32(frag_sqrt_cols[2][row]), 0.0f0)
+    f3 = max(Float32(frag_sqrt_cols[3][row]), 0.0f0)
+    f4 = max(Float32(frag_sqrt_cols[4][row]), 0.0f0)
+    f5 = max(Float32(frag_sqrt_cols[5][row]), 0.0f0)
+    f6 = max(Float32(frag_sqrt_cols[6][row]), 0.0f0)
+    f7 = max(Float32(frag_sqrt_cols[7][row]), 0.0f0)
+    f8 = max(Float32(frag_sqrt_cols[8][row]), 0.0f0)
+    sumsq = f1*f1 + f2*f2 + f3*f3 + f4*f4 + f5*f5 + f6*f6 + f7*f7 + f8*f8
+    sumsq > 0.0f0 || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    inv_norm = inv(sqrt(sumsq))
+    return (
+        f1 * inv_norm,
+        f2 * inv_norm,
+        f3 * inv_norm,
+        f4 * inv_norm,
+        f5 * inv_norm,
+        f6 * inv_norm,
+        f7 * inv_norm,
+        f8 * inv_norm,
     )
 end
 
@@ -202,6 +249,7 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_rt_diff"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log_by_diff"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_smoothed_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_integrated_one_scan_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_smoothed_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_donor_library_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_donor_library_hellinger"))
@@ -411,8 +459,65 @@ end
     return donor.library_hellinger
 end
 
+@inline function _mbr_recipient_spectrum_sqrt_tuple(
+    smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
+    row::Integer,
+)
+    integrated_frag_sqrt_cols === nothing &&
+        return _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, row)
+    return _mbr_spectrum_sqrt_tuple_from_sqrt_cols(integrated_frag_sqrt_cols, row)
+end
+
+const _MBRRestrictedDeconvSpectra = Dict{Tuple{UInt32, UInt32}, NTuple{8, Float32}}
+
+@inline function _mbr_integrated_spectrum_hellinger_from_donor(
+    recipient_sqrt::NTuple{8, Float32},
+    donor::Union{Nothing, _MBRDonorEntry},
+    fragment_keys::_MBRFragmentAnnotationKeys,
+    recipient_pid::UInt32,
+)
+    donor === nothing && return 1.0f0
+    return _mbr_smoothed_spectrum_hellinger_from_sqrt(
+        recipient_sqrt,
+        donor.smoothed_frag_sqrt,
+        fragment_keys,
+        recipient_pid,
+        donor.precursor_idx,
+    )
+end
+
+@inline function _mbr_integrated_spectrum_hellinger_from_donor(
+    spectra_by_scan_pid::Union{Nothing, _MBRRestrictedDeconvSpectra},
+    scan_idx::UInt32,
+    recipient_pid::UInt32,
+    donor::Union{Nothing, _MBRDonorEntry},
+    fragment_keys::_MBRFragmentAnnotationKeys,
+)
+    spectra_by_scan_pid === nothing && return 1.0f0
+    recipient_sqrt = get(spectra_by_scan_pid, (scan_idx, recipient_pid), MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT)
+    return _mbr_integrated_spectrum_hellinger_from_donor(
+        recipient_sqrt,
+        donor,
+        fragment_keys,
+        recipient_pid,
+    )
+end
+
 @inline function _mbr_same_donor(a::_MBRDonorEntry, b::_MBRDonorEntry)
     return a.precursor_idx == b.precursor_idx && a.ms_file_idx == b.ms_file_idx
+end
+
+@inline function _mbr_initial_qvalue_pass(
+    qval,
+    global_qval,
+    q_value_threshold::Float32,
+)
+    q = Float32(qval)
+    gq = Float32(global_qval)
+    return isfinite(q) && isfinite(gq) &&
+           q <= q_value_threshold &&
+           gq <= q_value_threshold
 end
 
 # Inner per-file row loop for build_mbr_donor_dict_streaming_with_pass1.
@@ -427,7 +532,7 @@ end
     side_scn::AbstractVector{UInt32},
     score_c::AbstractVector{Float32},
     w_c::AbstractVector{Float32},
-    l2ie_c::AbstractVector{Float16},
+    l2ie_c::AbstractVector,
     irtp_c::AbstractVector{Float32},
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
@@ -435,10 +540,15 @@ end
     nscans_c::AbstractVector,
     library_hellinger_c::AbstractVector{Float32},
     smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
     fidx_c::AbstractVector{UInt32},
+    qval_c::Union{Nothing, AbstractVector},
+    global_qval_c::Union{Nothing, AbstractVector},
     side_path::String,
     ;
     passing_score_floor::Float32 = Float32(Inf),
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
 )
     n = length(pid_c)
     has_logby = logby_c !== nothing
@@ -447,7 +557,15 @@ end
         # Sanity-check alignment (cheap: one cmp per row)
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
             error("Pass-1 sidecar misaligned at row $i of $side_path")
+        if require_initial_qvalue_pass
+            qval_c !== nothing || error("Initial-q donor filtering requires :qval in $side_path")
+            global_qval_c !== nothing || error("Initial-q donor filtering requires :global_qval in $side_path")
+            _mbr_initial_qvalue_pass(qval_c[i], global_qval_c[i], q_value_threshold) || continue
+        end
         pid = pid_c[i]
+        donor_spectrum_sqrt = integrated_frag_sqrt_cols === nothing ?
+            _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i) :
+            _mbr_spectrum_sqrt_tuple_from_sqrt_cols(integrated_frag_sqrt_cols, i)
         e = _MBRDonorEntry(
             score_c[i], pid, w_c[i], Float32(l2ie_c[i]),
             irtp_c[i] - irto_c[i],
@@ -455,7 +573,7 @@ end
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
             Float32(nscans_c[i]),
-            _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
+            donor_spectrum_sqrt,
             Float32(library_hellinger_c[i]),
             fidx_c[i], false,
         )
@@ -478,6 +596,51 @@ end
     return nothing
 end
 
+function _accumulate_donor_entries!(
+    all_entries::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid_c::AbstractVector{UInt32},
+    side_pid::AbstractVector{UInt32},
+    main_scn::AbstractVector{UInt32},
+    side_scn::AbstractVector{UInt32},
+    score_c::AbstractVector{Float32},
+    w_c::AbstractVector{Float32},
+    l2ie_c::AbstractVector,
+    irtp_c::AbstractVector{Float32},
+    irto_c::AbstractVector{Float32},
+    logby_c::Union{Nothing, AbstractVector{Float16}},
+    rt_c::Union{Nothing, AbstractVector{Float32}},
+    nscans_c::AbstractVector,
+    library_hellinger_c::AbstractVector{Float32},
+    smoothed_frag_cols,
+    fidx_c::AbstractVector{UInt32},
+    side_path::String;
+    passing_score_floor::Float32 = Float32(Inf),
+)
+    return _accumulate_donor_entries!(
+        all_entries,
+        pid_c,
+        side_pid,
+        main_scn,
+        side_scn,
+        score_c,
+        w_c,
+        l2ie_c,
+        irtp_c,
+        irto_c,
+        logby_c,
+        rt_c,
+        nscans_c,
+        library_hellinger_c,
+        smoothed_frag_cols,
+        nothing,
+        fidx_c,
+        nothing,
+        nothing,
+        side_path;
+        passing_score_floor = passing_score_floor,
+    )
+end
+
 # Streaming version: like build_mbr_donor_dict_streaming, but reads
 # `trace_prob_prepass` from the Pass-1 sidecar (rather than expecting it
 # in the main file). All other donor columns come from the main file.
@@ -485,6 +648,11 @@ end
 function build_mbr_donor_dict_streaming_with_pass1(
     file_paths::Vector{String};
     passing_score_floor::Float32 = Float32(Inf),
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
+    prefer_integrated_spectra::Bool = false,
+    prefer_integrated_quant::Bool = false,
+    require_integrated_irt::Bool = false,
 )
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
@@ -495,22 +663,63 @@ function build_mbr_donor_dict_streaming_with_pass1(
         n = length(main.precursor_idx)
         n == length(side.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $side_path")
+        integrated_frag_sqrt_cols =
+            prefer_integrated_spectra &&
+            hasproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) ?
+            ntuple(rank -> getproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8) :
+            nothing
+        if prefer_integrated_spectra && integrated_frag_sqrt_cols === nothing
+            error("Integrated MBR spectra require column $(MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) in $main_path")
+        end
+        weight_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+                error("Integrated MBR quant requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        else
+            main.weight
+        end
+        l2ie_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN) ||
+                error("Integrated MBR quant requires column $MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+        else
+            main.log2_intensity_explained
+        end
+        irto_c = if require_integrated_irt
+            hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN) ||
+                error("Integrated MBR iRT requires column $MBR_INTEGRATED_APEX_IRT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        else
+            main.irt_obs
+        end
+        nscans_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN) ||
+                error("Integrated MBR peak width requires column $MBR_INTEGRATED_N_SCANS_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN)
+        else
+            main.n_scans
+        end
         _accumulate_donor_entries!(
             all_entries,
             main.precursor_idx, side.precursor_idx,
             main.scan_idx, side.scan_idx,
             side.trace_prob_prepass,
-            main.weight,
-            main.log2_intensity_explained,
-            main.irt_pred, main.irt_obs,
+            weight_c,
+            l2ie_c,
+            main.irt_pred, irto_c,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
-            main.n_scans,
+            nscans_c,
             main.smoothed_2d_shadow_hellinger,
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
+            integrated_frag_sqrt_cols,
             main.ms_file_idx,
+            hasproperty(main, :qval) ? main.qval : nothing,
+            hasproperty(main, :global_qval) ? main.global_qval : nothing,
             side_path,
             passing_score_floor = passing_score_floor,
+            require_initial_qvalue_pass = require_initial_qvalue_pass,
+            q_value_threshold = q_value_threshold,
         )
     end
     return all_entries
@@ -769,9 +978,178 @@ end
     return donor
 end
 
+@inline function _mbr_row_has_restricted_deconv_candidate(
+    main,
+    row::Int,
+    donor::Union{Nothing, _MBRDonorEntry},
+    q_value_threshold::Float32,
+    passing_score_floor::Float32,
+)
+    donor === nothing && return false
+    donor.trace_prob >= passing_score_floor || return false
+    (hasproperty(main, :qval) && hasproperty(main, :global_qval)) || return false
+    qval = Float32(main.qval[row])
+    global_qval = Float32(main.global_qval[row])
+    return isfinite(qval) && isfinite(global_qval) &&
+           global_qval <= q_value_threshold && qval > q_value_threshold
+end
+
+function _mbr_collect_qpassing_irt_pairs(main, q_value_threshold::Float32)
+    pairs = Tuple{Float32, UInt32}[]
+    (hasproperty(main, :qval) && hasproperty(main, :global_qval) &&
+     hasproperty(main, :irt_obs) && hasproperty(main, :precursor_idx)) || return pairs
+
+    n = length(main.precursor_idx)
+    sizehint!(pairs, n)
+    @inbounds for i in 1:n
+        qval = Float32(main.qval[i])
+        global_qval = Float32(main.global_qval[i])
+        irt_obs = Float32(main.irt_obs[i])
+        if isfinite(qval) && isfinite(global_qval) && isfinite(irt_obs) &&
+           qval <= q_value_threshold && global_qval <= q_value_threshold
+            push!(pairs, (irt_obs, UInt32(main.precursor_idx[i])))
+        end
+    end
+    sort!(pairs; by = x -> (x[1], x[2]))
+    return pairs
+end
+
+function _mbr_add_nearby_qpassing_precursors!(
+    allowed::Set{UInt32},
+    passing_pairs::Vector{Tuple{Float32, UInt32}},
+    center_irt::Float32,
+    irt_tol::Float32,
+)
+    (isfinite(center_irt) && isfinite(irt_tol) && irt_tol >= 0.0f0) || return nothing
+    isempty(passing_pairs) && return nothing
+
+    lo = center_irt - irt_tol
+    hi = center_irt + irt_tol
+    left = searchsortedfirst(passing_pairs, (lo, UInt32(0)); by = first)
+    right = searchsortedlast(passing_pairs, (hi, typemax(UInt32)); by = first)
+    @inbounds for idx in left:right
+        push!(allowed, passing_pairs[idx][2])
+    end
+    return nothing
+end
+
+@inline function _mbr_shadow_spectrum_sqrt_tuple(shadow_frag_cols, row::Integer)
+    return _mbr_smoothed_spectrum_sqrt_tuple(shadow_frag_cols, row)
+end
+
+function _mbr_restricted_deconv_allowed_by_scan(
+    main,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    q_value_threshold::Float32,
+    passing_score_floor::Float32,
+    irt_tol::Float32,
+)
+    allowed_by_scan = Dict{Int, Set{UInt32}}()
+    n = length(main.precursor_idx)
+    n == 0 && return allowed_by_scan
+    (hasproperty(main, :qval) && hasproperty(main, :global_qval) &&
+     hasproperty(main, :irt_pred) && hasproperty(main, :irt_obs) &&
+     hasproperty(main, :scan_idx) && hasproperty(main, :ms_file_idx)) || return allowed_by_scan
+
+    passing_pairs = _mbr_collect_qpassing_irt_pairs(main, q_value_threshold)
+    local_irt_tol = isfinite(irt_tol) ? max(irt_tol, 0.0f0) : 0.0f0
+
+    @inbounds for i in 1:n
+        my_pid = UInt32(main.precursor_idx[i])
+        my_file = UInt32(main.ms_file_idx[i])
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        _mbr_row_has_restricted_deconv_candidate(
+            main,
+            i,
+            donor_t,
+            q_value_threshold,
+            passing_score_floor,
+        ) || continue
+
+        scan_idx = Int(main.scan_idx[i])
+        allowed = get!(() -> Set{UInt32}(), allowed_by_scan, scan_idx)
+        push!(allowed, my_pid)
+
+        _mbr_add_nearby_qpassing_precursors!(
+            allowed,
+            passing_pairs,
+            Float32(main.irt_obs[i]),
+            local_irt_tol,
+        )
+    end
+
+    return allowed_by_scan
+end
+
+function _mbr_restricted_deconv_spectra_by_scan_pid(
+    psms::DataFrame,
+)::_MBRRestrictedDeconvSpectra
+    spectra_by_scan_pid = _MBRRestrictedDeconvSpectra()
+    n = nrow(psms)
+    n == 0 && return spectra_by_scan_pid
+    for col in (:scan_idx, :precursor_idx, SHADOW_FRAGMENT_INTENSITY_COLUMNS...)
+        hasproperty(psms, col) ||
+            error("Restricted MBR deconvolution result is missing required column $col")
+    end
+
+    shadow_frag_cols = ntuple(rank -> psms[!, SHADOW_FRAGMENT_INTENSITY_COLUMNS[rank]], 8)
+    @inbounds for i in 1:n
+        scan_idx = UInt32(psms.scan_idx[i])
+        pid = UInt32(psms.precursor_idx[i])
+        spectra_by_scan_pid[(scan_idx, pid)] = _mbr_shadow_spectrum_sqrt_tuple(shadow_frag_cols, i)
+    end
+    return spectra_by_scan_pid
+end
+
+function _mbr_build_restricted_deconv_spectra_for_file(
+    main,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    search_context,
+    main_search_params,
+    counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    q_value_threshold::Float32,
+    passing_score_floor::Float32,
+)::Union{Nothing, _MBRRestrictedDeconvSpectra}
+    n = length(main.precursor_idx)
+    n == 0 && return nothing
+    ms_file_idx = Int(first(main.ms_file_idx))
+    irt_tol = get_irt_tolerance(search_context, main_search_params, ms_file_idx)
+    allowed_by_scan = _mbr_restricted_deconv_allowed_by_scan(
+        main,
+        donor_dict,
+        partner_pools,
+        counterfactual_eligibility_by_file,
+        q_value_threshold,
+        passing_score_floor,
+        Float32(irt_tol),
+    )
+    isempty(allowed_by_scan) && return nothing
+
+    scan_indices = sort!(collect(keys(allowed_by_scan)))
+    spectra = getMSData(getMSData(search_context), ms_file_idx)
+    redeconv_psms = library_search(
+        spectra,
+        search_context,
+        main_search_params,
+        ms_file_idx;
+        scan_indices = scan_indices,
+        allowed_precursors_by_scan = allowed_by_scan,
+        allowed_precursors_mode = :replace,
+    )
+    @debug_l1 "  restricted MBR deconv file_idx=$ms_file_idx: scans=$(length(scan_indices)), " *
+              "allowed_pairs=$(sum(length, values(allowed_by_scan))), rows=$(nrow(redeconv_psms))"
+    return _mbr_restricted_deconv_spectra_by_scan_pid(redeconv_psms)
+end
+
 function _mbr_prepass_donor_summary(
     file_paths::Vector{String};
     donor_q_threshold::Float32 = 0.01f0,
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
+    prefer_integrated_quant::Bool = false,
 )
     scores = Float32[]
     targets = Bool[]
@@ -787,14 +1165,28 @@ function _mbr_prepass_donor_summary(
         n = length(main.precursor_idx)
         n == length(pass1.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $pass1_path")
+        qval_c = hasproperty(main, :qval) ? main.qval : nothing
+        global_qval_c = hasproperty(main, :global_qval) ? main.global_qval : nothing
+        weight_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+                error("Integrated MBR donor summary requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        else
+            main.weight
+        end
         push!(row_counts, n)
         @inbounds for i in 1:n
             (main.precursor_idx[i] == pass1.precursor_idx[i] &&
              main.scan_idx[i] == pass1.scan_idx[i]) ||
                 error("Pass-1 sidecar misaligned at row $i of $pass1_path")
+            if require_initial_qvalue_pass
+                qval_c !== nothing || error("Initial-q donor summary requires :qval in $main_path")
+                global_qval_c !== nothing || error("Initial-q donor summary requires :global_qval in $main_path")
+                _mbr_initial_qvalue_pass(qval_c[i], global_qval_c[i], q_value_threshold) || continue
+            end
             push!(scores, Float32(pass1.trace_prob_prepass[i]))
             push!(targets, Bool(main.target[i]))
-            push!(weights, Float32(main.weight[i]))
+            push!(weights, Float32(weight_c[i]))
             push!(file_indices, UInt32(main.ms_file_idx[i]))
         end
     end
@@ -914,9 +1306,10 @@ end
     pid_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
-    l2ie_v::AbstractVector{Float16},
+    l2ie_v::AbstractVector,
     irtp_v::AbstractVector{Float32},
-    irto_v::AbstractVector{Float32},
+    irto_v::AbstractVector,
+    cf_irt_v::AbstractVector,
     logby_v::Union{Nothing, AbstractVector},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     nscans_v::AbstractVector,
@@ -1255,6 +1648,8 @@ end
     out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_t::Vector{Float32},
     out_smoothed_hellinger_f::Vector{Vector{Float32}},
+    out_integrated_hellinger_t::Vector{Float32},
+    out_integrated_hellinger_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_worst_t::Vector{Float32},
     out_smoothed_hellinger_worst_f::Vector{Vector{Float32}},
     out_donor_library_hellinger_t::Vector{Float32},
@@ -1262,15 +1657,19 @@ end
     out_donor_library_hellinger_worst_t::Vector{Float32},
     out_donor_library_hellinger_worst_f::Vector{Vector{Float32}},
     pid_v::AbstractVector{UInt32},
+    scan_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
-    l2ie_v::AbstractVector{Float16},
+    l2ie_v::AbstractVector,
     irtp_v::AbstractVector{Float32},
-    irto_v::AbstractVector{Float32},
+    irto_v::AbstractVector,
+    cf_irt_v::AbstractVector,
     logby_v::Union{Nothing, AbstractVector},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     nscans_v::AbstractVector,
     smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
+    integrated_spectra_by_scan_pid::Union{Nothing, _MBRRestrictedDeconvSpectra},
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
@@ -1313,7 +1712,11 @@ end
             if has_logby
                 out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
             end
-            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            recipient_sqrt = _mbr_recipient_spectrum_sqrt_tuple(
+                smoothed_frag_cols,
+                integrated_frag_sqrt_cols,
+                i,
+            )
             has_recipient_spectrum = true
             out_smoothed_hellinger_t[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
                 recipient_sqrt,
@@ -1321,6 +1724,13 @@ end
                 fragment_keys,
                 my_pid,
                 donor_t.precursor_idx,
+            )
+            out_integrated_hellinger_t[i] = _mbr_integrated_spectrum_hellinger_from_donor(
+                integrated_spectra_by_scan_pid,
+                scan_v[i],
+                my_pid,
+                donor_t,
+                fragment_keys,
             )
             out_donor_library_hellinger_t[i] = donor_t.library_hellinger
             donor_worst_t = _min_weight_alternate_donor_for_pid(
@@ -1359,7 +1769,7 @@ end
             my_pid,
             my_file,
             counterfactual_eligibility_by_file,
-            Float32(irtp_v[i]),
+            Float32(cf_irt_v[i]),
         )
         for counterfactual_idx in 1:MBR_MAX_COUNTERFACTUALS
             donor_f = donor_fs[counterfactual_idx]
@@ -1379,7 +1789,11 @@ end
                 out_log_by_f[counterfactual_idx][i] = Float32(logby_v[i]) - donor_f.log_by_ratio
             end
             if !has_recipient_spectrum
-                recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+                recipient_sqrt = _mbr_recipient_spectrum_sqrt_tuple(
+                    smoothed_frag_cols,
+                    integrated_frag_sqrt_cols,
+                    i,
+                )
                 has_recipient_spectrum = true
             end
             out_smoothed_hellinger_f[counterfactual_idx][i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
@@ -1388,6 +1802,13 @@ end
                 fragment_keys,
                 my_pid,
                 donor_f.precursor_idx,
+            )
+            out_integrated_hellinger_f[counterfactual_idx][i] = _mbr_integrated_spectrum_hellinger_from_donor(
+                integrated_spectra_by_scan_pid,
+                scan_v[i],
+                my_pid,
+                donor_f,
+                fragment_keys,
             )
             out_donor_library_hellinger_f[counterfactual_idx][i] = donor_f.library_hellinger
             donor_worst_f = _min_weight_alternate_donor_for_pid(
@@ -1450,7 +1871,12 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile} = nothing,
         passing_score_floor::Float32 = Float32(Inf),
         lod_log2_weight_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
-        lod_log2_weight_global::Float32 = NaN32)
+        lod_log2_weight_global::Float32 = NaN32,
+        search_context = nothing,
+        main_search_params = nothing,
+        q_value_threshold::Float32 = 0.01f0,
+        integrated_spectra_by_scan_pid::Union{Nothing, _MBRRestrictedDeconvSpectra} = nothing,
+        use_integrated_mbr_features::Bool = false)
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -1462,14 +1888,48 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     pid_v   = main.precursor_idx
     scan_v  = main.scan_idx
     file_v  = main.ms_file_idx
-    weight_v= main.weight
-    l2ie_v  = main.log2_intensity_explained
+    weight_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+    else
+        main.weight
+    end
+    l2ie_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+    else
+        main.log2_intensity_explained
+    end
     irtp_v  = main.irt_pred
-    irto_v  = main.irt_obs
+    irto_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_APEX_IRT_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+    else
+        main.irt_obs
+    end
+    # Counterfactual pairing stays on refined library/predicted iRT. The
+    # observed apex iRT is still used for the MBR iRT-difference features.
+    cf_irt_v = irtp_v
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    nscans_v = main.n_scans
+    nscans_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN) ||
+            error("Integrated MBR peak width requires column $MBR_INTEGRATED_N_SCANS_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN)
+    else
+        main.n_scans
+    end
     smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+    integrated_frag_sqrt_cols = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) ||
+            error("Integrated MBR feature compute requires column $(MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) in $main_path")
+        ntuple(rank -> getproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
+    else
+        nothing
+    end
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -1496,6 +1956,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_rt_t = fill(-1f0, n); out_rt_f = _mbr_float_counterfactual_vectors(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = _mbr_float_counterfactual_vectors(n)
+    out_integrated_h_t = fill(1f0, n)
+    out_integrated_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_donor_library_h_t = fill(1f0, n); out_donor_library_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_donor_library_h_worst_t = fill(1f0, n)
@@ -1523,12 +1985,16 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_rt_t, out_rt_f,
         out_log_by_t, out_log_by_f,
         out_smoothed_h_t, out_smoothed_h_f,
+        out_integrated_h_t, out_integrated_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
         out_donor_library_h_t, out_donor_library_h_f,
         out_donor_library_h_worst_t, out_donor_library_h_worst_f,
-        pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
+        pid_v, scan_v, file_v, weight_v, l2ie_v, irtp_v, irto_v, cf_irt_v,
         logby_v,
-        rt_v, nscans_v, smoothed_frag_cols, fragment_keys,
+        rt_v, nscans_v, smoothed_frag_cols,
+        integrated_frag_sqrt_cols,
+        integrated_spectra_by_scan_pid,
+        fragment_keys,
         donor_dict, partner_pools, false_donor_cache,
         counterfactual_eligibility_by_file,
         lod_log2_weight_by_file, lod_log2_weight_global, passing_score_floor,
@@ -1578,6 +2044,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_log_by_diff", out_log_by_f)
     side_df[!, :MBR_best_smoothed_frag_hellinger_true] = out_smoothed_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_smoothed_frag_hellinger", out_smoothed_h_f)
+    side_df[!, :MBR_best_integrated_one_scan_hellinger_true] = out_integrated_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_integrated_one_scan_hellinger", out_integrated_h_f)
     side_df[!, :MBR_worst_smoothed_frag_hellinger_true] = out_smoothed_h_worst_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_smoothed_frag_hellinger", out_smoothed_h_worst_f)
     side_df[!, :MBR_best_donor_library_hellinger_true] = out_donor_library_h_t
@@ -1592,6 +2060,63 @@ end
 # apply_mbr_filter_paired! needs, from main + Pass-1 sidecar + MBR sidecar,
 # in main-file row order across all files. Substantially smaller than
 # best_psms (≈20 cols vs ≈80).
+function _mbr_ftr_cross_run_feature_values(main, c::Symbol, n::Int)
+    if c === :irt_error &&
+       hasproperty(main, :irt_pred) &&
+       hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        irtp = getproperty(main, :irt_pred)
+        irto = getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        values = Vector{Float32}(undef, n)
+        fallback = hasproperty(main, :irt_error) ? getproperty(main, :irt_error) : nothing
+        @inbounds for i in 1:n
+            pred = Float32(irtp[i])
+            obs = Float32(irto[i])
+            values[i] = isfinite(pred) && isfinite(obs) ?
+                abs(pred - obs) :
+                (fallback === nothing ? NaN32 : Float32(fallback[i]))
+        end
+        return values
+    end
+    if c === :log2_intensity_explained &&
+       hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)))
+    end
+    if c === :weight &&
+       hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)))
+    end
+    if c === :fitted_hellinger &&
+       hasproperty(main, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)))
+    end
+    if c === :smoothed_2d_shadow_hellinger &&
+       hasproperty(main, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)))
+    end
+    if c === :n_correlated_fragments &&
+       hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)
+        return collect(UInt8.(getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)))
+    end
+    if c === :n_correlated_fragments_bitvec_rank &&
+       hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+        return collect(UInt16.(getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)))
+    end
+    if c === :frag_corr_strength &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)))
+    end
+    if c === :frag_corr_effective_n &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)))
+    end
+    if c === :frag_corr_best_m0 &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)))
+    end
+    hasproperty(main, c) || return nothing
+    return collect(Tables.getcolumn(main, c))
+end
+
 function load_ftr_slim_dataframe(file_paths::Vector{String})
     parts = DataFrame[]
     for path in file_paths
@@ -1627,8 +2152,9 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
             d[!, :global_qval] = collect(Float32.(main.global_qval))
         end
         for c in MBR_CROSS_RUN_FTR_FEATURES
-            hasproperty(main, c) || continue
-            d[!, c] = collect(Tables.getcolumn(main, c))
+            values = _mbr_ftr_cross_run_feature_values(main, c, n)
+            values === nothing && continue
+            d[!, c] = values
         end
         # Pull all MBR_* columns from the MBR sidecar.
         for c in _MBR_SIDECAR_OUT_COLS
@@ -1734,6 +2260,7 @@ end
 function merge_mbr_recovery_sidecars_into_main!(
     file_paths::Vector{String};
     cleanup::Bool = true,
+    filter_unrecovered_candidates::Bool = false,
 )
     n_merged = 0
     for path in file_paths
@@ -1781,6 +2308,18 @@ function merge_mbr_recovery_sidecars_into_main!(
 
         rec = nothing
         GC.gc(false)
+        if filter_unrecovered_candidates
+            keep = .!Bool.(main[!, :MBR_transfer_candidate]) .| Bool.(main[!, :mbr_recovered])
+            if !all(keep)
+                main = main[keep, :]
+                for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX, RECOVERY_SIDECAR_SUFFIX)
+                    side_path = path * suffix
+                    isfile(side_path) || continue
+                    side_df = DataFrame(Tables.columntable(Arrow.Table(side_path)))
+                    nrow(side_df) == length(keep) && writeArrow(side_path, side_df[keep, :])
+                end
+            end
+        end
         writeArrow(path, main)
 
         if cleanup
@@ -1805,6 +2344,391 @@ function _cleanup_mbr_temporary_sidecars!(file_paths::Vector{String})
     return nothing
 end
 
+function _mbr_integration_staging_mask(
+    main,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    q_value_threshold::Float32,
+    donor_prob_thresh::Float32,
+)
+    n = length(main.precursor_idx)
+    hasproperty(main, :ms_file_idx) ||
+        error("MBR integration staging requires :ms_file_idx")
+    keep = falses(n)
+    @inbounds for i in 1:n
+        pid = UInt32(main.precursor_idx[i])
+        file_idx = UInt32(main.ms_file_idx[i])
+        qval = Float32(main.qval[i])
+        global_qval = Float32(main.global_qval[i])
+        global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
+        row_pass = isfinite(qval) && qval <= q_value_threshold
+        donor = _donor_for_pid(donor_dict, pid, file_idx)
+        donor_present = donor !== nothing && donor.trace_prob >= donor_prob_thresh
+        mbr_candidate = global_pass && !row_pass && donor_present
+        keep[i] = (global_pass && row_pass) || mbr_candidate
+    end
+    return keep
+end
+
+function _write_mbr_integration_inputs!(
+    candidate_paths::Vector{String},
+    output_folder::AbstractString,
+    q_value_threshold::Float32,
+    donor_prob_thresh::Float32,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+)
+    !isdir(output_folder) && mkpath(output_folder)
+    refs = PSMFileReference[]
+    n_files = 0
+    n_rows = 0
+    n_candidates = 0
+
+    for path in candidate_paths
+        pass1_path = path * PASS1_SIDECAR_SUFFIX
+        isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
+
+        main = DataFrame(Tables.columntable(Arrow.Table(path)))
+        pass1 = DataFrame(Tables.columntable(Arrow.Table(pass1_path)))
+        keep = _mbr_integration_staging_mask(
+            main,
+            donor_dict,
+            q_value_threshold,
+            donor_prob_thresh,
+        )
+
+        staged_path = joinpath(output_folder, basename(path))
+        writeArrow(staged_path, main[keep, :])
+        writeArrow(staged_path * PASS1_SIDECAR_SUFFIX, pass1[keep, :])
+        push!(refs, PSMFileReference(staged_path))
+        n_files += 1
+        n_rows += count(keep)
+        @inbounds for i in eachindex(keep)
+            if keep[i]
+                qval = Float32(main.qval[i])
+                global_qval = Float32(main.global_qval[i])
+                row_pass = isfinite(qval) && qval <= q_value_threshold
+                global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
+                n_candidates += (global_pass && !row_pass) ? 1 : 0
+            end
+        end
+    end
+    return (refs = refs, n_files = n_files, n_rows = n_rows, n_candidates = n_candidates)
+end
+
+function prepare_mbr_after_qvalue_filter!(
+    candidate_refs::Vector{PSMFileReference},
+    donor_refs::Vector{PSMFileReference},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup,
+    integration_output_folder::AbstractString;
+    q_value_threshold::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+)
+    candidate_paths = String[file_path(ref) for ref in candidate_refs if exists(ref)]
+    donor_paths = String[file_path(ref) for ref in donor_refs if exists(ref)]
+    if isempty(candidate_paths) || isempty(donor_paths)
+        return (
+            n_files = 0,
+            n_donor_files = length(donor_paths),
+            n_pass1_sidecars = 0,
+            n_integration_rows = 0,
+            n_candidates = 0,
+            integration_refs = PSMFileReference[],
+        )
+    end
+
+    @debug_l1 "MBR Batch F: preparing post-qvalue candidates for chromatogram integration..."
+    sidecar_paths = unique(vcat(candidate_paths, donor_paths))
+    n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
+
+    mbr_prepass = _mbr_prepass_donor_summary(
+        donor_paths;
+        donor_q_threshold = donor_q_threshold,
+    )
+    donor_prob_thresh = mbr_prepass.prob_thresh
+    @debug_l1 "  donor prob floor: $(round(donor_prob_thresh, digits=4)); " *
+              "LOD files: $(length(mbr_prepass.lod_log2_weight_by_file))"
+
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+        donor_paths;
+        passing_score_floor = donor_prob_thresh,
+    )
+    @debug_l1 "  donor dict pids: $(length(donor_dict))"
+
+    staged = _write_mbr_integration_inputs!(
+        candidate_paths,
+        integration_output_folder,
+        q_value_threshold,
+        donor_prob_thresh,
+        donor_dict,
+    )
+    @debug_l1 "  staged integration rows=$(staged.n_rows), MBR candidates=$(staged.n_candidates)"
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    mbr_prepass = nothing
+    GC.gc()
+
+    return (
+        n_files = length(candidate_paths),
+        n_donor_files = length(donor_paths),
+        n_pass1_sidecars = n_pass1_sidecars,
+        n_integration_rows = staged.n_rows,
+        n_candidates = staged.n_candidates,
+        integration_refs = staged.refs,
+    )
+end
+
+@inline function _mbr_integrated_spectrum_sqrt_tuple(main, row::Integer)
+    hasproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    cols = ntuple(rank -> getproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
+    return _mbr_spectrum_sqrt_tuple_from_sqrt_cols(cols, row)
+end
+
+function _update_mbr_integrated_hellinger_sidecar!(
+    main_path::String,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    fragment_keys::_MBRFragmentAnnotationKeys,
+    passing_score_floor::Float32,
+)
+    mbr_path = main_path * MBR_SIDECAR_SUFFIX
+    isfile(mbr_path) || return false
+    main = Arrow.Table(main_path)
+    mbr = DataFrame(Tables.columntable(Arrow.Table(mbr_path)))
+    n = length(main.precursor_idx)
+    n == nrow(mbr) || error("MBR sidecar row-count mismatch at $mbr_path")
+
+    out_best_t = fill(1.0f0, n)
+    out_best_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
+    out_worst_t = fill(1.0f0, n)
+    out_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
+    false_donor_cache = Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple}()
+    has_irt_pred = hasproperty(main, :irt_pred)
+
+    @inbounds for i in 1:n
+        (UInt32(main.precursor_idx[i]) == UInt32(mbr.precursor_idx[i]) &&
+         UInt32(main.scan_idx[i]) == UInt32(mbr.scan_idx[i])) ||
+            error("MBR sidecar misaligned at row $i of $mbr_path")
+        my_pid = UInt32(main.precursor_idx[i])
+        my_file = UInt32(main.ms_file_idx[i])
+        recipient_sqrt = _mbr_integrated_spectrum_sqrt_tuple(main, i)
+        target_irt = has_irt_pred ? Float32(main.irt_pred[i]) : NaN32
+
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        out_best_t[i] = _mbr_integrated_spectrum_hellinger_from_donor(
+            recipient_sqrt,
+            donor_t,
+            fragment_keys,
+            my_pid,
+        )
+        if donor_t !== nothing
+            donor_worst_t = _min_weight_alternate_donor_for_pid(
+                donor_dict,
+                my_pid,
+                my_file,
+                donor_t,
+                passing_score_floor,
+            )
+            out_worst_t[i] = _mbr_integrated_spectrum_hellinger_from_donor(
+                recipient_sqrt,
+                donor_worst_t,
+                fragment_keys,
+                my_pid,
+            )
+        end
+
+        donor_fs = _false_donors_for_pid(
+            false_donor_cache,
+            donor_dict,
+            partner_pools,
+            my_pid,
+            my_file,
+            nothing,
+            target_irt,
+        )
+        for counterfactual_idx in 1:MBR_MAX_COUNTERFACTUALS
+            donor_f = donor_fs[counterfactual_idx]
+            out_best_f[counterfactual_idx][i] = _mbr_integrated_spectrum_hellinger_from_donor(
+                recipient_sqrt,
+                donor_f,
+                fragment_keys,
+                my_pid,
+            )
+            if donor_f !== nothing
+                donor_worst_f = _min_weight_alternate_donor_for_pid(
+                    donor_dict,
+                    donor_f.precursor_idx,
+                    my_file,
+                    donor_f,
+                    passing_score_floor,
+                )
+                out_worst_f[counterfactual_idx][i] = _mbr_integrated_spectrum_hellinger_from_donor(
+                    recipient_sqrt,
+                    donor_worst_f,
+                    fragment_keys,
+                    my_pid,
+                )
+            end
+        end
+    end
+
+    mbr[!, :MBR_best_smoothed_frag_hellinger_true] = out_best_t
+    _mbr_add_counterfactual_columns!(mbr, "MBR_best_smoothed_frag_hellinger", out_best_f)
+    mbr[!, :MBR_worst_smoothed_frag_hellinger_true] = out_worst_t
+    _mbr_add_counterfactual_columns!(mbr, "MBR_worst_smoothed_frag_hellinger", out_worst_f)
+    mbr[!, :MBR_best_integrated_one_scan_hellinger_true] = out_best_t
+    _mbr_add_counterfactual_columns!(mbr, "MBR_best_integrated_one_scan_hellinger", out_best_f)
+    writeArrow(mbr_path, mbr)
+    return true
+end
+
+function update_mbr_integrated_hellinger_sidecars!(
+    main_paths::Vector{String},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    fragment_keys::_MBRFragmentAnnotationKeys,
+    passing_score_floor::Float32,
+)
+    n_updated = 0
+    for path in main_paths
+        _update_mbr_integrated_hellinger_sidecar!(
+            path,
+            donor_dict,
+            partner_pools,
+            fragment_keys,
+            passing_score_floor,
+        ) && (n_updated += 1)
+    end
+    return n_updated
+end
+
+function finalize_mbr_after_chromatogram_integration!(
+    integrated_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup;
+    q_value_threshold::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    min_pep_points_per_bin::Int = 100,
+    fdr_scale_factor::Float32 = 1.0f0,
+    merged_path::String,
+)
+    candidate_paths = String[
+        path for path in integrated_paths
+        if isfile(path) && isfile(path * PASS1_SIDECAR_SUFFIX)
+    ]
+    if isempty(candidate_paths)
+        return (
+            n_files = 0,
+            n_candidates = 0,
+            n_recovered = 0,
+            n_mbr_sidecars = 0,
+        )
+    end
+
+    @debug_l1 "MBR Batch F: finalizing after chromatogram integration..."
+    mbr_prepass = _mbr_prepass_donor_summary(
+        candidate_paths;
+        donor_q_threshold = donor_q_threshold,
+        require_initial_qvalue_pass = true,
+        q_value_threshold = q_value_threshold,
+        prefer_integrated_quant = true,
+    )
+    donor_prob_thresh = mbr_prepass.prob_thresh
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+        candidate_paths;
+        passing_score_floor = donor_prob_thresh,
+        require_initial_qvalue_pass = true,
+        q_value_threshold = q_value_threshold,
+        prefer_integrated_spectra = true,
+        prefer_integrated_quant = true,
+        require_integrated_irt = true,
+    )
+    partner_pools = build_post_integration_counterfactual_partner_pools(
+        candidate_paths,
+        precursors,
+    )
+    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
+    parallel_foreach!(length(candidate_paths)) do chunk
+        for f_idx in chunk
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                candidate_paths[f_idx],
+                donor_dict,
+                partner_pools,
+                fragment_keys,
+                passing_score_floor = donor_prob_thresh,
+                lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
+                lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                q_value_threshold = q_value_threshold,
+                use_integrated_mbr_features = true,
+            )
+        end
+    end
+    n_mbr_sidecars = count(path -> isfile(path * MBR_SIDECAR_SUFFIX), candidate_paths)
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    partner_pools = nothing
+    fragment_keys = nothing
+    mbr_prepass = nothing
+    GC.gc()
+
+    psms = load_ftr_slim_dataframe(candidate_paths)
+    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
+    ftr_summary = apply_mbr_filter_paired!(
+        psms;
+        alpha = _mbr_recovery_alpha_from_env(),
+        q_thresh = q_value_threshold,
+        prob_thresh_override = donor_prob_thresh,
+    )
+
+    write_recovery_sidecars(psms, candidate_paths)
+    psms = DataFrame()
+    GC.gc()
+    merge_mbr_recovery_sidecars_into_main!(
+        candidate_paths;
+        cleanup = false,
+        filter_unrecovered_candidates = true,
+    )
+
+    refs = PSMFileReference[PSMFileReference(path) for path in candidate_paths]
+    remap_mbr_recovered_prec_probs!(
+        refs,
+        merged_path;
+        q_value_threshold = q_value_threshold,
+        min_pep_points_per_bin = min_pep_points_per_bin,
+        fdr_scale_factor = fdr_scale_factor,
+        global_qval_dict = nothing,
+    )
+
+    spline_result = build_qvalue_spline_from_refs(
+        refs,
+        :prec_prob,
+        merged_path;
+        compute_pep = true,
+        min_pep_points_per_bin = min_pep_points_per_bin,
+        fdr_scale_factor = fdr_scale_factor,
+        temp_prefix = "post_integration_mbr_recalc_sidecar",
+    )
+    if spline_result !== nothing
+        recalc_pipeline = TransformPipeline() |>
+            add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+            filter_by_multiple_thresholds([(:qval, q_value_threshold)]) |>
+            add_interpolated_column(:pep, :prec_prob, spline_result.pep_interp)
+        apply_pipeline!(refs, recalc_pipeline; parallel = false)
+    end
+
+    if _mbr_keep_temporary_sidecars_from_env()
+        @debug_l1 "MBR Batch F: keeping temporary sidecars because PIONEER_MBR_KEEP_SIDECARS is enabled"
+    else
+        _cleanup_mbr_temporary_sidecars!(candidate_paths)
+    end
+
+    return (
+        n_files = length(candidate_paths),
+        n_candidates = ftr_summary.n_candidates,
+        n_recovered = ftr_summary.n_recovered,
+        n_mbr_sidecars = n_mbr_sidecars,
+    )
+end
+
 function run_mbr_after_qvalue_filter!(
     candidate_refs::Vector{PSMFileReference},
     donor_refs::Vector{PSMFileReference},
@@ -1812,6 +2736,8 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    search_context = nothing,
+    main_search_params = nothing,
 )
     candidate_paths = String[file_path(ref) for ref in candidate_refs if exists(ref)]
     donor_paths = String[file_path(ref) for ref in donor_refs if exists(ref)]
@@ -1851,8 +2777,8 @@ function run_mbr_after_qvalue_filter!(
     @debug_l1 "  donor dict pids: $(length(donor_dict))"
 
     @debug_l1 "MBR Batch F: writing post-qvalue per-file MBR sidecars..."
-    parallel_foreach!(length(candidate_paths)) do chunk
-        for f_idx in chunk
+    if search_context !== nothing && main_search_params !== nothing
+        for f_idx in eachindex(candidate_paths)
             compute_mbr_features_per_file_to_sidecar_with_pass1!(
                 candidate_paths[f_idx],
                 donor_dict,
@@ -1861,7 +2787,25 @@ function run_mbr_after_qvalue_filter!(
                 passing_score_floor = donor_prob_thresh,
                 lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
                 lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                search_context = search_context,
+                main_search_params = main_search_params,
+                q_value_threshold = q_value_threshold,
             )
+        end
+    else
+        parallel_foreach!(length(candidate_paths)) do chunk
+            for f_idx in chunk
+                compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                    candidate_paths[f_idx],
+                    donor_dict,
+                    cf_partner_pools,
+                    fragment_keys,
+                    passing_score_floor = donor_prob_thresh,
+                    lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
+                    lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                    q_value_threshold = q_value_threshold,
+                )
+            end
         end
     end
 
@@ -1917,6 +2861,8 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    search_context = nothing,
+    main_search_params = nothing,
 )
     return run_mbr_after_qvalue_filter!(
         refs,
@@ -1925,6 +2871,8 @@ function run_mbr_after_qvalue_filter!(
         fragment_lookup;
         q_value_threshold = q_value_threshold,
         donor_q_threshold = donor_q_threshold,
+        search_context = search_context,
+        main_search_params = main_search_params,
     )
 end
 

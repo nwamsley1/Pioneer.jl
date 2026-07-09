@@ -170,6 +170,7 @@ end
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
         @test isapprox(mbr.MBR_best_smoothed_frag_hellinger_false[1], 1.0f0; atol = 1.0f-6)
+        @test isapprox(mbr.MBR_best_integrated_one_scan_hellinger_false[1], 1.0f0; atol = 1.0f-6)
         @test isapprox(mbr.MBR_worst_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
         @test mbr.MBR_best_is_missing_false[1] == false
         @test !(:MBR_max_pair_prob_false in propertynames(mbr))
@@ -188,12 +189,14 @@ end
         all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
         @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_best_integrated_one_scan_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_best_integrated_one_scan_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
         @test !(:MBR_worst_smoothed_frag_hellinger_true in all_features)
         @test !(:MBR_worst_smoothed_frag_hellinger_false in all_features)
-        @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
-        @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
-        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
-        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE)
         @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE

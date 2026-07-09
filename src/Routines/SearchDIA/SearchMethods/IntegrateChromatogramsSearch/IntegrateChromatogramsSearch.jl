@@ -142,6 +142,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # Analysis strategies
     isotope_tracetype::I
     prec_estimation::P
+    match_between_runs::Bool
+    q_value_threshold::Float32
+    pep_bin_size::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -161,6 +164,10 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # n_isotopes lives at search.n_isotopes; falls back to the legacy
         # nested location for old configs (see _resolve_n_isotopes).
         n_isotopes_val = _resolve_n_isotopes(search_params)
+        ml_params = params.optimization.machine_learning
+        global_params = params.global_settings
+        mbr = hasproperty(global_params, :match_between_runs) ?
+              Bool(global_params.match_between_runs) : true
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(1), UInt8(0)),  # isotope err_bounds
@@ -179,6 +186,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             isotope_trace_type,
             prec_estimation,
+            mbr,
+            _resolve_q_value_threshold(global_params),
+            Int64(ml_params.pep_bin_size),
         )
     end
 end
@@ -200,6 +210,17 @@ function init_search_results(::IntegrateChromatogramSearchParameters, search_con
     return IntegrateChromatogramSearchResults(
         Ref(DataFrame())
     )
+end
+
+function _filter_mbr_sidecars_by_rows!(main_path::String, selected_rows::Vector{Int})
+    for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX)
+        side_path = main_path * suffix
+        isfile(side_path) || continue
+        side = DataFrame(Tables.columntable(Arrow.Table(side_path)))
+        isempty(selected_rows) ? writeArrow(side_path, side[Int[], :]) :
+            writeArrow(side_path, side[selected_rows, :])
+    end
+    return nothing
 end
 
 """
@@ -246,7 +267,11 @@ function process_file!(
     end
 
     if !seperateTraces(params.isotope_tracetype)
-        passing_psms = select_combined_trace_seed_psms_by_score(passing_psms)
+        selected_rows = select_combined_trace_seed_rows_by_score(passing_psms)
+        if params.match_between_runs
+            _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+        end
+        passing_psms = passing_psms[selected_rows, :]
     end
 
     # Initialize columns written by chromatogram integration.
@@ -315,6 +340,24 @@ function process_file!(
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
+        add_mbr_integrated_spectra_to_psms!(
+            passing_psms,
+            chromatograms,
+            getRtIrtModel(search_context, ms_file_idx),
+            bitvec_rank_table = getBitVecExcessRanks(search_context, ms_file_idx),
+        )
+        if params.match_between_runs && isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            selected_rows = Int[
+                row for row in axes(passing_psms, 1)
+                if isfinite(Float32(passing_psms[row, :peak_area])) &&
+                   Float32(passing_psms[row, :peak_area]) > 0.0f0 &&
+                   isfinite(Float32(passing_psms[row, MBR_INTEGRATED_APEX_IRT_COLUMN]))
+            ]
+            if length(selected_rows) != nrow(passing_psms)
+                _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+                passing_psms = passing_psms[selected_rows, :]
+            end
+        end
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(
                 chromatograms,
@@ -354,6 +397,12 @@ function process_search_results!(
     end
 
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    output_path = getPassingPsms(getMSData(search_context))[ms_file_idx]
+    if params.match_between_runs && isfile(output_path * PASS1_SIDECAR_SUFFIX)
+        writeArrow(output_path, passing_psms)
+        return nothing
+    end
+
     # Process final PSMs
     process_final_psms!(
         passing_psms,
@@ -362,7 +411,7 @@ function process_search_results!(
         ms_file_idx
     )
     # Save results
-    writeArrow(getPassingPsms(getMSData(search_context))[ms_file_idx], passing_psms)
+    writeArrow(output_path, passing_psms)
     return nothing
 end
 
@@ -374,8 +423,43 @@ end
 
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    ::P,
-    ::SearchContext
+    params::P,
+    search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
+    passing_paths = String[
+        path for path in getPassingPsms(getMSData(search_context))
+        if !isempty(path) && isfile(path)
+    ]
+    if params.match_between_runs &&
+       any(path -> isfile(path * PASS1_SIDECAR_SUFFIX), passing_paths)
+        summary = finalize_mbr_after_chromatogram_integration!(
+            passing_paths,
+            getPrecursors(getSpecLib(search_context)),
+            getFragmentLookupTable(getSpecLib(search_context));
+            q_value_threshold = params.q_value_threshold,
+            donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+            merged_path = joinpath(getDataOutDir(search_context), "merged_quant.arrow"),
+        )
+        @debug_l1 "Post-integration MBR completed: files=$(summary.n_files), " *
+                  "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"
+
+        for (ms_file_idx, path) in enumerate(getPassingPsms(getMSData(search_context)))
+            (isempty(path) || !isfile(path)) && continue
+            psms = DataFrame(Tables.columntable(Arrow.Table(path)))
+            if nrow(psms) == 0 || ncol(psms) == 0
+                writeArrow(path, psms)
+                continue
+            end
+            process_final_psms!(
+                psms,
+                search_context,
+                getFileIdToName(getMSData(search_context), ms_file_idx),
+                ms_file_idx,
+            )
+            writeArrow(path, psms)
+        end
+    end
     return nothing
 end

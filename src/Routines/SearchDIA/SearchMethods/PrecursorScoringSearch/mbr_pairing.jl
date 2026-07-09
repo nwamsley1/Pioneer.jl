@@ -28,6 +28,8 @@ function _collect_unique_precursors_streaming(
     precursors::LibraryPrecursors,
     ;
     unique_precursors::Bool = true,
+    irt_column::Symbol = :irt_pred,
+    require_irt_column::Bool = false,
 )
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
@@ -50,7 +52,10 @@ function _collect_unique_precursors_streaming(
         pid_c    = tbl.precursor_idx
         target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
         fold_c   = hasproperty(tbl, :cv_fold) ? tbl.cv_fold : zeros(UInt8, n)
-        irt_pred_c = hasproperty(tbl, :irt_pred) ? tbl.irt_pred : nothing
+        irt_c = hasproperty(tbl, irt_column) ? getproperty(tbl, irt_column) : nothing
+        if irt_c === nothing && require_irt_column
+            error("MBR counterfactual pairing requires column $irt_column in $fpath")
+        end
         @inbounds for i in 1:n
             pid = UInt32(pid_c[i])
             if unique_precursors
@@ -59,9 +64,15 @@ function _collect_unique_precursors_streaming(
             end
             raw_irt = Float32(prec_irt_full[pid])
             refined_irt = raw_irt
-            if irt_pred_c !== nothing
-                candidate_irt = Float32(irt_pred_c[i])
-                isfinite(candidate_irt) && (refined_irt = candidate_irt)
+            if irt_c !== nothing
+                candidate_irt = Float32(irt_c[i])
+                if isfinite(candidate_irt)
+                    refined_irt = candidate_irt
+                elseif require_irt_column
+                    error("MBR counterfactual pairing found non-finite $irt_column for precursor $pid in $fpath")
+                end
+            elseif require_irt_column
+                error("MBR counterfactual pairing requires column $irt_column in $fpath")
             end
             push!(plist_pids, pid)
             push!(plist_target, Bool(target_c[i]))
@@ -212,16 +223,22 @@ function build_counterfactual_partner_pools(
     precursors::LibraryPrecursors,
     ;
     receiver_file_paths::Vector{String} = file_paths,
+    irt_column::Symbol = :irt_pred,
+    require_irt_column::Bool = false,
 )
     pool_unique = _collect_unique_precursors_streaming(
         file_paths,
         precursors;
         unique_precursors = false,
+        irt_column = irt_column,
+        require_irt_column = require_irt_column,
     )
     receiver_unique = _collect_unique_precursors_streaming(
         receiver_file_paths,
         precursors;
         unique_precursors = true,
+        irt_column = irt_column,
+        require_irt_column = require_irt_column,
     )
     n_pool_precs = length(pool_unique.pids)
     n_receiver_precs = length(receiver_unique.pids)
@@ -277,6 +294,20 @@ function build_counterfactual_partner_pools(
         pools,
         fold_charge_length_pool,
         charge_length_pool,
+    )
+end
+
+function build_post_integration_counterfactual_partner_pools(
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors;
+    receiver_file_paths::Vector{String} = file_paths,
+)
+    return build_counterfactual_partner_pools(
+        file_paths,
+        precursors;
+        receiver_file_paths = receiver_file_paths,
+        irt_column = :irt_pred,
+        require_irt_column = true,
     )
 end
 

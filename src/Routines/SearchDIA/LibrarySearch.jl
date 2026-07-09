@@ -46,6 +46,8 @@ function library_search(
     params::P,
     ms_file_idx::Int64;
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
+    allowed_precursors_by_scan = nothing,
+    allowed_precursors_mode::Symbol = :intersect,
     fragment_index = nothing,
     max_peaks::Int = 0,
 ) where {P<:FragmentIndexSearchParameters}
@@ -110,7 +112,15 @@ function library_search(
     # scan_to_prec_idx[scan] = range into precursors_passed (or missing if no candidates)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     t_frag_start = time()
-    if PROFILE_FRAG_INDEX && params isa MainSearchParameters
+    if allowed_precursors_by_scan !== nothing && allowed_precursors_mode === :replace
+        fill!(scan_to_prec_idx, missing)
+        precursors_passed = build_allowed_precursors_by_scan!(
+            scan_to_prec_idx,
+            all_scan_idxs,
+            allowed_precursors_by_scan,
+        )
+        scores_passed = UInt8[]
+    elseif PROFILE_FRAG_INDEX && params isa MainSearchParameters
         Profile.clear()
         Profile.init(n=50_000_000, delay=0.0005)
         Profile.@profile precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
@@ -130,6 +140,13 @@ function library_search(
             getMz(precursors);
             score_filter = score_filter, max_peaks = max_peaks,
             scratch = getFragIndexScratch(search_context))
+        if allowed_precursors_by_scan !== nothing
+            precursors_passed = filter_allowed_precursors_by_scan!(
+                scan_to_prec_idx,
+                precursors_passed,
+                allowed_precursors_by_scan,
+            )
+        end
     end
     t_frag = time() - t_frag_start
 
@@ -199,6 +216,72 @@ function library_search(
     end
 
     return result
+end
+
+"""
+    build_allowed_precursors_by_scan!(scan_to_prec_idx, all_scan_idxs, allowed_precursors_by_scan)
+
+Replace fragment-index candidates with a caller-specified precursor universe for
+each scan. Used by restricted one-scan MBR deconvolution, where the candidate
+set is defined by the MBR row plus nearby q-passing competitors rather than by
+the normal fragment-index prefilter.
+"""
+function build_allowed_precursors_by_scan!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    all_scan_idxs::AbstractVector{<:Integer},
+    allowed_precursors_by_scan,
+)
+    precursors_passed = UInt32[]
+    for scan_idx_raw in all_scan_idxs
+        scan_idx = Int(scan_idx_raw)
+        allowed = get(allowed_precursors_by_scan, scan_idx, nothing)
+        if allowed === nothing || isempty(allowed)
+            scan_to_prec_idx[scan_idx] = missing
+            continue
+        end
+
+        start = length(precursors_passed) + 1
+        sorted_allowed = sort!(UInt32.(collect(allowed)))
+        append!(precursors_passed, sorted_allowed)
+        scan_to_prec_idx[scan_idx] = start:length(precursors_passed)
+    end
+    return precursors_passed
+end
+
+"""
+    filter_allowed_precursors_by_scan!(scan_to_prec_idx, precursors_passed, allowed_precursors_by_scan)
+
+Intersect existing fragment-index candidates with a caller-specified per-scan
+allowed set. This keeps the normal fragment-index search in control while
+letting specialized callers narrow the candidate universe.
+"""
+function filter_allowed_precursors_by_scan!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    allowed_precursors_by_scan,
+)
+    new_passed = UInt32[]
+    sizehint!(new_passed, length(precursors_passed))
+    for scan_idx in eachindex(scan_to_prec_idx)
+        range = scan_to_prec_idx[scan_idx]
+        ismissing(range) && continue
+        allowed = get(allowed_precursors_by_scan, scan_idx, nothing)
+        if allowed === nothing || isempty(allowed)
+            scan_to_prec_idx[scan_idx] = missing
+            continue
+        end
+
+        start = length(new_passed) + 1
+        for i in range
+            pid = precursors_passed[i]
+            if pid in allowed
+                push!(new_passed, pid)
+            end
+        end
+        scan_to_prec_idx[scan_idx] = length(new_passed) >= start ?
+            (start:length(new_passed)) : missing
+    end
+    return new_passed
 end
 
 """
