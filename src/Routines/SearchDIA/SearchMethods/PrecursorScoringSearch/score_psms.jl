@@ -63,14 +63,29 @@ function score_precursor_isotope_traces(
     # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
     # MBR features, FTR recovery) — best_psms is never materialised as the
     # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
-    if match_between_runs
+    #
+    # MBR is meaningless with a single raw file (nothing to match *between*), and
+    # the counterfactual "false donor" search (_nearest_cross_file_donor) requires
+    # a donor from another file — with one file it can never succeed, so it scans
+    # the entire iRT pool per precursor and returns nothing, degenerating to an
+    # always-failing O(n_precursors^2) hang. Fall back to the non-MBR path.
+    if match_between_runs && _n_distinct_raw_files(file_paths) >= 2
         return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
     else
+        if match_between_runs
+            @user_warn "match_between_runs=true but only one raw file was found; MBR requires ≥2 files — using the non-MBR scoring path."
+        end
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
         )
     end
 end
+
+# Count distinct raw files, collapsing any `_fold<N>` CV-split suffix so that a
+# single file split into per-fold paths still counts as one file.
+_mbr_raw_file_key(p::AbstractString) = replace(p, r"_fold\d+\.arrow$" => ".arrow")
+_n_distinct_raw_files(file_paths::Vector{String}) =
+    length(Set{String}(_mbr_raw_file_key(p) for p in file_paths))
 
 function _scoring_semisupervised_train_mask(
     targets::AbstractVector{Bool},
