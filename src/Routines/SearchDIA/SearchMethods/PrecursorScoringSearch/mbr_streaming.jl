@@ -59,8 +59,9 @@ const MBR_DEFAULT_N_COUNTERFACTUALS = 2
 const MBR_MAX_COUNTERFACTUALS = 8
 const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
+const MBR_ANY_DONOR_FILE = typemax(UInt32)
 const _MBRFalseDonorTuple = NTuple{MBR_MAX_COUNTERFACTUALS, Union{Nothing, _MBRDonorEntry}}
-const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32}
+const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32, UInt32}
 
 struct _MBRFragmentAnnotationKeys
     keys::Vector{UInt16}
@@ -586,6 +587,19 @@ end
     return nothing
 end
 
+@inline function _donor_for_pid_in_file(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    donor_file::UInt32,
+)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    @inbounds for e in entries
+        e.ms_file_idx == donor_file && return e
+    end
+    return nothing
+end
+
 @inline function _counterfactual_receiver_eligible(
     ::Nothing,
     receiver_file::UInt32,
@@ -661,6 +675,46 @@ end
     return ntuple(idx -> donors[idx], MBR_MAX_COUNTERFACTUALS)
 end
 
+@inline function _nearest_irt_same_file_donors(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pool::_IrtPool,
+    target_irt::Float32,
+    my_file::UInt32,
+    my_pid::UInt32,
+    donor_file::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+)
+    n = length(pool.irts)
+    n == 0 && return _empty_false_donors()
+
+    right = searchsortedfirst(pool.irts, target_irt)
+    left = right - 1
+    donors = Union{Nothing, _MBRDonorEntry}[nothing for _ in 1:MBR_MAX_COUNTERFACTUALS]
+    n_found = 0
+    @inbounds while left >= 1 || right <= n
+        use_left = if right > n
+            true
+        elseif left < 1
+            false
+        else
+            abs(target_irt - pool.irts[left]) <= abs(pool.irts[right] - target_irt)
+        end
+        pool_idx = use_left ? left : right
+        use_left ? (left -= 1) : (right += 1)
+        pool_pid = pool.pids[pool_idx]
+        pool_pid == my_pid && continue
+        _counterfactual_receiver_eligible(eligibility_by_file, my_file, pool_pid) || continue
+        donor = _donor_for_pid_in_file(donor_dict, pool_pid, donor_file)
+        donor === nothing && continue
+        _mbr_false_donor_seen(donor, donors, n_found) && continue
+        n_found += 1
+        donors[n_found] = donor
+        n_found == MBR_MAX_COUNTERFACTUALS &&
+            return ntuple(idx -> donors[idx], MBR_MAX_COUNTERFACTUALS)
+    end
+    return ntuple(idx -> donors[idx], MBR_MAX_COUNTERFACTUALS)
+end
+
 @inline function _resolve_false_donors_for_pid(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
@@ -680,6 +734,31 @@ end
         my_irt,
         my_file,
         my_pid,
+        eligibility_by_file,
+    )
+end
+
+@inline function _resolve_false_donors_for_pid(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    my_pid::UInt32,
+    my_file::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    donor_file::UInt32,
+    target_irt::Float32 = NaN32,
+)
+    pid_idx = Int(my_pid)
+    my_irt = isfinite(target_irt) ? target_irt : partner_pools.irt_by_pid[pid_idx]
+    my_charge = Int(partner_pools.charge_by_pid[pid_idx])
+    my_length = Int(partner_pools.length_by_pid[pid_idx])
+
+    return _nearest_irt_same_file_donors(
+        donor_dict,
+        get(partner_pools.file_charge_length_pool, (donor_file, my_charge, my_length), _empty_irt_pool()),
+        my_irt,
+        my_file,
+        my_pid,
+        donor_file,
         eligibility_by_file,
     )
 end
@@ -712,7 +791,7 @@ end
     target_irt::Float32 = NaN32,
 )
     cache_irt = isfinite(target_irt) ? target_irt : partner_pools.irt_by_pid[Int(my_pid)]
-    cache_key = (my_file, my_pid, cache_irt)
+    cache_key = (my_file, my_pid, cache_irt, MBR_ANY_DONOR_FILE)
     if haskey(false_donor_cache, cache_key)
         return false_donor_cache[cache_key]
     end
@@ -722,6 +801,34 @@ end
         my_pid,
         my_file,
         eligibility_by_file,
+        target_irt,
+    )
+    false_donor_cache[cache_key] = donors
+    return donors
+end
+
+@inline function _false_donors_for_pid(
+    false_donor_cache::Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_pools::_CounterfactualPartnerPools,
+    my_pid::UInt32,
+    my_file::UInt32,
+    eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    donor_file::UInt32,
+    target_irt::Float32 = NaN32,
+)
+    cache_irt = isfinite(target_irt) ? target_irt : partner_pools.irt_by_pid[Int(my_pid)]
+    cache_key = (my_file, my_pid, cache_irt, donor_file)
+    if haskey(false_donor_cache, cache_key)
+        return false_donor_cache[cache_key]
+    end
+    donors = _resolve_false_donors_for_pid(
+        donor_dict,
+        partner_pools,
+        my_pid,
+        my_file,
+        eligibility_by_file,
+        donor_file,
         target_irt,
     )
     false_donor_cache[cache_key] = donors
@@ -1001,13 +1108,14 @@ end
             end
             out_miss_t[i] = false
         end
-        donor_fs = _false_donors_for_pid(
+        donor_fs = donor_t === nothing ? _empty_false_donors() : _false_donors_for_pid(
             false_donor_cache,
             donor_dict,
             partner_pools,
             my_pid,
             my_file,
             counterfactual_eligibility_by_file,
+            donor_t.ms_file_idx,
             Float32(irtp_v[i]),
         )
         donor_f = donor_fs[1]
@@ -1352,13 +1460,14 @@ end
             out_miss_t[i] = false
         end
 
-        donor_fs = _false_donors_for_pid(
+        donor_fs = donor_t === nothing ? _empty_false_donors() : _false_donors_for_pid(
             false_donor_cache,
             donor_dict,
             partner_pools,
             my_pid,
             my_file,
             counterfactual_eligibility_by_file,
+            donor_t.ms_file_idx,
             Float32(irtp_v[i]),
         )
         for counterfactual_idx in 1:MBR_MAX_COUNTERFACTUALS
@@ -1831,7 +1940,11 @@ function run_mbr_after_qvalue_filter!(
     sidecar_paths = unique(vcat(candidate_paths, donor_paths))
     n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
 
-    cf_partner_pools = build_counterfactual_partner_pools(candidate_paths, precursors)
+    cf_partner_pools = build_counterfactual_partner_pools(
+        sidecar_paths,
+        precursors;
+        receiver_file_paths = candidate_paths,
+    )
     fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
 
     @debug_l1 "MBR Batch F: computing post-qvalue donor score floor..."

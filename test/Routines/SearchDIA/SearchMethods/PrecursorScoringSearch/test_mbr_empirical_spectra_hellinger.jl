@@ -112,21 +112,21 @@ end
         ))
 
         Arrow.write(f2, _mbr_empirical_main_table(
-            precursor_idx = [2],
-            scan_idx = [2001],
+            precursor_idx = [1, 2],
+            scan_idx = [2000, 2001],
             ms_file_idx = 2,
-            target = [false],
-            weight = [2],
-            log2_intensity_explained = [0.75],
-            n_scans = [5],
-            library_hellinger = [0.25],
-            frag1 = [0],
-            frag2 = [100],
+            target = [true, false],
+            weight = [8, 2],
+            log2_intensity_explained = [1.0, 0.75],
+            n_scans = [9, 5],
+            library_hellinger = [0.10, 0.25],
+            frag1 = [100, 0],
+            frag2 = [0, 100],
         ))
         Arrow.write(f2 * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
-            precursor_idx = [2],
-            scan_idx = [2001],
-            score = [0.91],
+            precursor_idx = [1, 2],
+            scan_idx = [2000, 2001],
+            score = [0.80, 0.91],
         ))
 
         Arrow.write(f3, _mbr_empirical_main_table(
@@ -190,10 +190,10 @@ end
         @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
         @test !(:MBR_worst_smoothed_frag_hellinger_true in all_features)
         @test !(:MBR_worst_smoothed_frag_hellinger_false in all_features)
-        @test :main_search_prob in Pioneer.FTR_FEATURES_F_TRUE
-        @test :main_search_prob in Pioneer.FTR_FEATURES_F_FALSE
-        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE
-        @test :trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_FALSE)
+        @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE)
         @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
         @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
         @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
