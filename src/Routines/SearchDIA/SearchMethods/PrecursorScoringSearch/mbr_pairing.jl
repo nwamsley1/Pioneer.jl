@@ -42,12 +42,14 @@ function _collect_unique_precursors_streaming(
     plist_length = UInt8[]
     plist_irt    = Float32[]
     plist_fold   = UInt8[]
+    plist_file   = UInt32[]
 
     for fpath in file_paths
         tbl = Arrow.Table(fpath)
         n = length(tbl.precursor_idx)
         n == 0 && continue
         pid_c    = tbl.precursor_idx
+        file_c   = hasproperty(tbl, :ms_file_idx) ? tbl.ms_file_idx : nothing
         target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
         fold_c   = hasproperty(tbl, :cv_fold) ? tbl.cv_fold : zeros(UInt8, n)
         irt_pred_c = hasproperty(tbl, :irt_pred) ? tbl.irt_pred : nothing
@@ -57,6 +59,7 @@ function _collect_unique_precursors_streaming(
                 pid in seen && continue
                 push!(seen, pid)
             end
+            file_idx = file_c === nothing ? UInt32(0) : UInt32(file_c[i])
             raw_irt = Float32(prec_irt_full[pid])
             refined_irt = raw_irt
             if irt_pred_c !== nothing
@@ -70,11 +73,12 @@ function _collect_unique_precursors_streaming(
             push!(plist_length, UInt8(prec_length_full[pid]))
             push!(plist_irt, refined_irt)
             push!(plist_fold, UInt8(fold_c[i]))
+            push!(plist_file, file_idx)
         end
     end
     return (pids = plist_pids, target = plist_target, mz = plist_mz,
             charge = plist_charge, length = plist_length, irt = plist_irt,
-            fold = plist_fold)
+            fold = plist_fold, file_idx = plist_file)
 end
 
 # A pool is a (pids, irts) NamedTuple with refined iRT observations sorted
@@ -101,7 +105,31 @@ struct _CounterfactualPartnerPools
     pools::Dict{Tuple{Int, Int, Int, Int}, _IrtPool}
     fold_charge_length_pool::Dict{Tuple{Int, Int, Int}, _IrtPool}
     charge_length_pool::Dict{Tuple{Int, Int}, _IrtPool}
+    file_charge_length_pool::Dict{Tuple{UInt32, Int, Int}, _IrtPool}
 end
+
+_CounterfactualPartnerPools(
+    target_by_pid,
+    fold_by_pid,
+    mz_bin_by_pid,
+    charge_by_pid,
+    length_by_pid,
+    irt_by_pid,
+    pools,
+    fold_charge_length_pool,
+    charge_length_pool,
+) = _CounterfactualPartnerPools(
+    target_by_pid,
+    fold_by_pid,
+    mz_bin_by_pid,
+    charge_by_pid,
+    length_by_pid,
+    irt_by_pid,
+    pools,
+    fold_charge_length_pool,
+    charge_length_pool,
+    Dict{Tuple{UInt32, Int, Int}, _IrtPool}(),
+)
 
 _CounterfactualPartnerPools(
     mz_by_pid::Vector{Float32},
@@ -196,6 +224,21 @@ function _build_charge_length_pools(
     return Dict{Tuple{Int, Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
 end
 
+function _build_file_charge_length_pools(
+    pids::Vector{UInt32},
+    file_idx::Vector{UInt32},
+    charge::Vector{UInt8},
+    length::Vector{UInt8},
+    irt::Vector{Float32},
+)
+    tmp = Dict{Tuple{UInt32, Int, Int}, Vector{Tuple{Float32, UInt32}}}()
+    @inbounds for i in eachindex(pids)
+        key = (file_idx[i], Int(charge[i]), Int(length[i]))
+        push!(get!(() -> Tuple{Float32, UInt32}[], tmp, key), (irt[i], pids[i]))
+    end
+    return Dict{Tuple{UInt32, Int, Int}, _IrtPool}(k => _sort_to_pool(v) for (k, v) in tmp)
+end
+
 """
     build_counterfactual_partner_pools(file_paths, precursors) -> _CounterfactualPartnerPools
 
@@ -231,6 +274,7 @@ function build_counterfactual_partner_pools(
             Dict{Tuple{Int, Int, Int, Int}, _IrtPool}(),
             Dict{Tuple{Int, Int, Int}, _IrtPool}(),
             Dict{Tuple{Int, Int}, _IrtPool}(),
+            Dict{Tuple{UInt32, Int, Int}, _IrtPool}(),
         )
     end
 
@@ -246,6 +290,13 @@ function build_counterfactual_partner_pools(
     )
     charge_length_pool = _build_charge_length_pools(
         pool_unique.pids, pool_unique.charge, pool_unique.length, pool_unique.irt,
+    )
+    file_charge_length_pool = _build_file_charge_length_pools(
+        pool_unique.pids,
+        pool_unique.file_idx,
+        pool_unique.charge,
+        pool_unique.length,
+        pool_unique.irt,
     )
 
     max_pid = Int(maximum(receiver_unique.pids))
@@ -277,6 +328,7 @@ function build_counterfactual_partner_pools(
         pools,
         fold_charge_length_pool,
         charge_length_pool,
+        file_charge_length_pool,
     )
 end
 
