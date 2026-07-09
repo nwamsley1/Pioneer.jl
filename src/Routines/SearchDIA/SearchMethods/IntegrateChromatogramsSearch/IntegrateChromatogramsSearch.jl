@@ -270,22 +270,38 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    # Sciex ZT scanning DIA: collapse each precursor's ±k metascan bins per cycle
+    # into one triangle-weighted point (see collapse_chromatograms_to_metascans)
+    # before smoothing/integration. Off (k=0) → byte-identical to the base path.
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    if _zt_k > 0 && nrow(chromatograms) > 0
+        chromatograms = collapse_chromatograms_to_metascans(
+            chromatograms, spectra,
+            getPrecursors(getSpecLib(search_context)), _zt_k)
+    end
     if nrow(chromatograms) > 0
-        # WH smoothing uses precursor transmission as both a correction factor
-        # and an observation weight. Separate-trace mode also uses isotope
-        # labels for chromatogram grouping.
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra),
-            compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
-        )
+        if _zt_k > 0
+            # Metascan points already integrate the full transmission window, so
+            # WH smoothing applies no per-point transmission correction.
+            chromatograms[!, :precursor_fraction_transmitted] =
+                ones(Float32, nrow(chromatograms))
+        else
+            # WH smoothing uses precursor transmission as both a correction factor
+            # and an observation weight. Separate-trace mode also uses isotope
+            # labels for chromatogram grouping.
+            get_isotopes_captured!(
+                chromatograms,
+                getQuadTransmissionModel(search_context, ms_file_idx),
+                getSearchData(search_context),
+                chromatograms[!, :scan_idx],
+                getCharge(getPrecursors(getSpecLib(search_context))),
+                getMz(getPrecursors(getSpecLib(search_context))),
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),
+                getCenterMzs(spectra),
+                getIsolationWidthMzs(spectra),
+                compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
+            )
+        end
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
 

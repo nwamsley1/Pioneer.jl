@@ -747,7 +747,17 @@ function build_chromatograms(
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
     mass_error_model = getMassErrorModel(search_context, ms_file_idx)
-    quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Sciex ZT scanning DIA: widen the extraction quad to the full ±k metascan
+    # box (SquareQuad, box ≈ (2k+1)·S) so each precursor is enumerated across all
+    # 2k+1 adjacent Q1 bins and deconvolution records a per-bin weight — mirroring
+    # the main-search deconvolution box. These per-bin points are collapsed back to
+    # one triangle-weighted point per cycle downstream (see process_file!).
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    quad_model = if _zt_k > 0
+        SquareQuadModel(Float32(_zt_k) * _zt_bin_step(spectra, collect(Int, scan_range)))
+    else
+        getQuadTransmissionModel(search_context, ms_file_idx)
+    end
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)
     prec_mz_arr = getMz(precursors)
@@ -876,6 +886,82 @@ function build_chromatograms(
     end
 
     return DataFrame(@view(chromatograms[1:rt_idx]))
+end
+
+# ---------------------------------------------------------------------------
+# Sciex ZT scanning DIA: collapse a precursor's ±k metascan bins within each
+# cycle into a single chromatogram point. The scanning quad spreads a precursor's
+# ions across ~2k+1 adjacent Q1 bins (consecutive MS2 scans in one cycle) with a
+# triangular transmission profile; build_chromatograms (run with the wide ZT quad
+# box) records a per-bin deconvolution weight for each. This reduces those bins to
+# one metascan intensity per cycle = a theoretical-triangle-weighted average of the
+# bin weights (Σ wⱼ·tⱼ / Σ tⱼ, tⱼ = 1 − |j|/(k+1) for bin offset j, Σ tⱼ = k+1),
+# keeping the center bin's scan_idx/rt as the representative point so the resulting
+# per-cycle sequence integrates like an ordinary chromatogram.
+# ---------------------------------------------------------------------------
+function collapse_chromatograms_to_metascans(
+    chroms::DataFrame,
+    spectra::MassSpecData,
+    precursors,
+    k::Int,
+)
+    n = nrow(chroms)
+    (n == 0 || k <= 0) && return chroms
+    pidx = chroms.precursor_idx
+    sidx = chroms.scan_idx
+    inten = chroms.intensity
+    rts = chroms.rt
+    prec_mz = getMz(precursors)
+
+    cyc = Vector{UInt32}(undef, n)
+    @inbounds for i in 1:n
+        cyc[i] = getCycleIdx(spectra, sidx[i])
+    end
+
+    # Group rows by (precursor_idx, cycle).
+    ord = sortperm(1:n, by = i -> (pidx[i], cyc[i]))
+
+    out_p = UInt32[]; out_s = UInt32[]; out_rt = Float32[]; out_i = Float32[]
+    hint = cld(n, k + 1)
+    sizehint!(out_p, hint); sizehint!(out_s, hint)
+    sizehint!(out_rt, hint); sizehint!(out_i, hint)
+
+    inv_sum = 1.0f0 / Float32(k + 1)   # Σ triangle weights = k+1
+    i = 1
+    @inbounds while i <= n
+        gstart = i
+        p0 = pidx[ord[i]]; c0 = cyc[ord[i]]
+        while i <= n && pidx[ord[i]] == p0 && cyc[ord[i]] == c0
+            i += 1
+        end
+        # Representative bin = the one whose center m/z is closest to the precursor.
+        pmz = prec_mz[p0]
+        crow = ord[gstart]; dbest = Inf32
+        for r in gstart:(i - 1)
+            row = ord[r]
+            cm = getCenterMz(spectra, sidx[row])
+            ismissing(cm) && continue
+            d = abs(Float32(cm) - pmz)
+            if d < dbest
+                dbest = d; crow = row
+            end
+        end
+        center_scan = sidx[crow]
+        # Triangle-weighted average over bin offset (scan_idx − center_scan).
+        acc = 0.0f0
+        for r in gstart:(i - 1)
+            row = ord[r]
+            off = Int(sidx[row]) - Int(center_scan)
+            abs(off) > k && continue
+            t = 1.0f0 - Float32(abs(off)) / Float32(k + 1)
+            acc += inten[row] * t
+        end
+        push!(out_p, p0); push!(out_s, center_scan)
+        push!(out_rt, rts[crow]); push!(out_i, acc * inv_sum)
+    end
+
+    return DataFrame(rt = out_rt, intensity = out_i,
+                     scan_idx = out_s, precursor_idx = out_p)
 end
 
 # MS1 chromatogram extraction is currently unwired (the ms1_quant knob
