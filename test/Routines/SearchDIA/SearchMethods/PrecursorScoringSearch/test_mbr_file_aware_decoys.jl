@@ -268,6 +268,63 @@ end
     end
 end
 
+@testset "MBR counterfactual donor selection uses the true donor file" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver.arrow")
+        true_donor_path = joinpath(dir, "true_donor_file.arrow")
+        other_donor_path = joinpath(dir, "other_donor_file.arrow")
+
+        base = DataFrame(
+            precursor_idx = UInt32[],
+            scan_idx = UInt32[],
+            irt_pred = Float32[],
+            ms_file_idx = UInt32[],
+            target = Bool[],
+            cv_fold = UInt8[],
+        )
+        receiver = copy(base)
+        push!(receiver, (UInt32(1), UInt32(101), 10.0f0, UInt32(1), true, UInt8(0)))
+        true_donor = copy(base)
+        push!(true_donor, (UInt32(1), UInt32(201), 10.0f0, UInt32(2), true, UInt8(0)))
+        push!(true_donor, (UInt32(3), UInt32(202), 10.05f0, UInt32(2), true, UInt8(0)))
+        other_donor = copy(base)
+        push!(other_donor, (UInt32(2), UInt32(301), 10.01f0, UInt32(3), true, UInt8(0)))
+
+        Arrow.write(receiver_path, receiver)
+        Arrow.write(true_donor_path, true_donor)
+        Arrow.write(other_donor_path, other_donor)
+
+        precursors = FileAwareMockPrecursors(
+            Float32[500.0, 501.0, 502.0],
+            Float32[10.0, 10.01, 10.05],
+            UInt8[2, 2, 2],
+            UInt8[9, 9, 9],
+        )
+        partner_pools = Pioneer.build_counterfactual_partner_pools(
+            [receiver_path, true_donor_path, other_donor_path],
+            precursors,
+        )
+        donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+            UInt32(2) => [_test_mbr_donor(0.95f0, UInt32(3); precursor_idx = UInt32(2))],
+            UInt32(3) => [_test_mbr_donor(0.85f0, UInt32(2); precursor_idx = UInt32(3))],
+        )
+
+        donors = Pioneer._resolve_false_donors_for_pid(
+            donor_dict,
+            partner_pools,
+            UInt32(1),
+            UInt32(1),
+            nothing,
+            UInt32(2),
+            10.0f0,
+        )
+
+        @test donors[1] !== nothing
+        @test donors[1].precursor_idx == UInt32(3)
+        @test donors[1].ms_file_idx == UInt32(2)
+    end
+end
+
 @testset "MBR false donor selection uses nearest cross-file iRT partner" begin
     donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}()
     for pid in UInt32(2):UInt32(10)
