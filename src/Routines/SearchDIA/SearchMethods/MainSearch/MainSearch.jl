@@ -273,6 +273,10 @@ function process_file!(
     _raw_dump_dir = get(ENV, "PIONEER_DUMP_RAW_PSMS", "")
     if !isempty(_raw_dump_dir)
         _dump_cols = intersect([:precursor_idx, :scan_idx, :weight, :gof,
+                                :fitted_hellinger, :fitted_manhattan_distance,
+                                :log2_intensity_explained, :max_matched_residual,
+                                :max_unmatched_residual, :poisson,
+                                :fitted_frag1_int, :shadow_frag1_int,
                                 :matched_ratio, :scribe, :city_block, :error],
                                Symbol.(names(psms)))
         mkpath(_raw_dump_dir)
