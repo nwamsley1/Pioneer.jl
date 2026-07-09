@@ -397,10 +397,15 @@ function searchFragmentIndexPartitionMajorHinted(
         precursor_irts::AbstractVector{Float32} = Float32[],
         max_peaks::Int = 0,
         scratch::Union{Nothing, FragIndexScratch} = nothing,
+        iso_bounds_override::Union{Nothing, Tuple{UInt8, UInt8}} = nothing,
         ) where {M<:AbstractMassErrorModel, Q<:QuadTransmissionModel,
                  P<:FragmentIndexSearchParameters}
 
-    iso_bounds = getIsotopeErrBounds(params)
+    # `iso_bounds_override` lets a caller narrow the precursor-selection window
+    # independently of the params (used by Sciex ZT main search: the center-bin
+    # filter deletes isotope-error catches anyway, so the (1,0) down-extension is
+    # wasted frag-index work — override to (0,0)).
+    iso_bounds = iso_bounds_override === nothing ? getIsotopeErrBounds(params) : iso_bounds_override
     n_scans = length(all_scan_idxs)
 
     # ── 1. Pre-compute per-scan properties ─────────────────────────────────
