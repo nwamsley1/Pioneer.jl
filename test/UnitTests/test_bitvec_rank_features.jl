@@ -18,8 +18,14 @@ using Pioneer
     @test Pioneer._bitvec_pattern_rank(nothing, UInt16(0x05)) == UInt16(0)
 end
 
-@testset "bitvec calibration keeps MS2 priority order" begin
-    priority = Int32[9, 4, 7, 2]
+@testset "bitvec calibration samples MS2 scans randomly and reproducibly" begin
+    priority = Int32[9, 4, 7, 2, 10, 3, 8, 1, 6, 5]
 
-    @test Pioneer._bitvec_calibration_scan_order(priority) == priority
+    first_order = Pioneer._bitvec_calibration_scan_order(priority)
+    second_order = Pioneer._bitvec_calibration_scan_order(priority)
+
+    @test first_order == second_order
+    @test first_order != priority
+    @test sort(first_order) == sort(priority)
+    @test priority == Int32[9, 4, 7, 2, 10, 3, 8, 1, 6, 5]
 end

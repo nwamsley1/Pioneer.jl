@@ -5,7 +5,7 @@ index bitmask patterns to discriminate targets from decoys.
 Runs between QuadTuning and MainSearch. Cross-file pooled:
 
 process_file! (per file):
-  1. Sample top-TIC MS2 scans
+  1. Sample MS2 scans at random
   2. Run fragment index in accumulator mode (PatternAccumulator)
      — tallies 256-bin target/decoy counts directly in the scoring
        loop with zero tuple allocation
@@ -287,7 +287,11 @@ function _bitvec_excess_rank_table(
     return ranks
 end
 
-_bitvec_calibration_scan_order(scan_priority::AbstractVector) = scan_priority
+function _bitvec_calibration_scan_order(scan_priority::AbstractVector)
+    shuffled = collect(scan_priority)
+    shuffle!(MersenneTwister(1_800_017 + length(shuffled)), shuffled)
+    return shuffled
+end
 
 function process_file!(
     results::BitVecCalibrationResults,
