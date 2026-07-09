@@ -18,6 +18,25 @@ The caller must have:
 1. Verified library m/z-sortedness (via `verify_mz_sorted`) — once per run.
 2. Set `params.use_fused_scan = true` (dispatch decision happens upstream).
 """
+# Set is_center[col] for each active design-matrix column: true iff the precursor
+# at that column has its monoisotope m/z within the scan's center bin
+# (|prec_mz − centerMz| ≤ isoWidth/2), matching filter_to_center_bin!. Columns not
+# referenced by a candidate default to false (they carry no weight / aren't emitted).
+@inline function fill_is_center!(is_center::Vector{Bool}, ncol::Int, id_to_col,
+                                 precs, prec_range, prec_mzs::AbstractVector{Float32},
+                                 cmz::Float32, hw::Float32)
+    @inbounds for c in 1:ncol
+        is_center[c] = false
+    end
+    @inbounds for ri in prec_range
+        p = precs[ri]
+        c = id_to_col[p]
+        c == 0 && continue
+        is_center[c] = abs(prec_mzs[p] - cmz) <= hw
+    end
+    return nothing
+end
+
 function process_scans_fused!(
     scan_range::Vector{Int64},
     spectra::MassSpecData,
@@ -62,6 +81,13 @@ function process_scans_fused!(
 
     last_val  = 0
     cycle_idxs = getCycleIdxs(spectra)
+
+    # Sciex ZT lightweight neighbors: only the center bin of each (precursor,
+    # cycle) meta-scan needs full spectral scoring; neighbor bins are kept only
+    # for their weight. Gate scoring on a per-column center mask (reused buffer).
+    _zt_lightweight = (params isa MainSearchParameters) &&
+        something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0) > 0
+    is_center_buf = Bool[]
 
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
@@ -123,7 +149,22 @@ function process_scans_fused!(
                 if !converged
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)
                 else
-                    compute_distance_metrics!(Hs, search_data, params)
+                    if _zt_lightweight
+                        _cmz = getCenterMz(spectra, scan_idx)
+                        _hw = getIsolationWidthMz(spectra, scan_idx)
+                        if !ismissing(_cmz) && !ismissing(_hw)
+                            ncol = Hs.n
+                            ncol > length(is_center_buf) && resize!(is_center_buf, ncol)
+                            fill_is_center!(is_center_buf, ncol, id_to_col, precs_vec,
+                                            prec_range, prec_mzs, Float32(_cmz), Float32(_hw)/2)
+                            compute_distance_metrics!(Hs, search_data, params;
+                                is_center = view(is_center_buf, 1:ncol))
+                        else
+                            compute_distance_metrics!(Hs, search_data, params)
+                        end
+                    else
+                        compute_distance_metrics!(Hs, search_data, params)
+                    end
                     last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
                                           spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
                     reset_scan_arrays!(id_to_col, Hs, unscored_psms)

@@ -42,7 +42,8 @@ end
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::AbstractSparseDesignMatrix{Ti,T},
-    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
+    spectral_scores::Vector{SpectralScoresMainSearch{U,V}};
+    is_center::Union{Nothing, AbstractVector{Bool}} = nothing
    ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
 
     # Zero residual vector
@@ -68,6 +69,22 @@ function getDistanceMetrics(w::Vector{T},
     for col in 1:H.n
         # Skip zero-weight columns
         if w[col] <= zero(T)
+            spectral_scores[col] = SpectralScoresMainSearch(
+                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V)
+            )
+            continue
+        end
+
+        # Sciex ZT lightweight neighbors: a non-center (precursor, scan) row is
+        # kept in the collapse only for its `weight` (already solved above and
+        # unchanged), so skip its per-precursor spectral scoring entirely. The
+        # residual `r` is built from ALL weights, so every CENTER row's scores —
+        # including its shadow (interference from these neighbors) — are identical.
+        if is_center !== nothing && !(@inbounds is_center[col])
             spectral_scores[col] = SpectralScoresMainSearch(
                 zero(U), zero(U), zero(U), zero(U), zero(U),
                 zero(V), zero(V), zero(V), zero(V),

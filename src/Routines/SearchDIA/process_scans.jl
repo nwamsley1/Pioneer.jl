@@ -153,9 +153,10 @@ Compute spectral distance metrics between observed and predicted spectra.
 - Simple path: iterative peak removal with relative improvement threshold.
 - MainSearch: single-pass metrics using deconvolution weights and residuals.
 """
-function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::SearchDataStructures, params::MainSearchParameters)
+function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::SearchDataStructures, params::MainSearchParameters;
+                                   is_center::Union{Nothing, AbstractVector{Bool}} = nothing)
     getDistanceMetrics(getTempWeights(search_data), getResiduals(search_data),
-        Hs, getMainSearchSpectralScores(search_data))
+        Hs, getMainSearchSpectralScores(search_data); is_center = is_center)
 end
 
 function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::SearchDataStructures, params::ParameterTuningSearchParameters)
