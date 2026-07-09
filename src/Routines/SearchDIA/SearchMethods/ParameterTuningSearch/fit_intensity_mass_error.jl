@@ -671,48 +671,6 @@ function fit_best_monotone_bias(x::Vector{Float64}, y::Vector{Float64};
     end
 end
 
-# No-op projection: an unconstrained (but still λ-regularized) smoothing spline.
-_noop_project!(c::Vector{Float64}) = nothing
-
-"""
-    fit_free_bias_spline(x, y; n_knots, λ, ...)
-
-Unconstrained λ-regularized smoothing spline (same penalized-IRLS fit as
-`fit_monotone_bias_spline` but with no monotonicity projection), so it can
-represent a non-monotone bias such as the rise-then-dip intensity bias seen on
-Sciex ZenoTOF ZT-scanning data. Returns a UniformSpline or nothing.
-"""
-function fit_free_bias_spline(x::Vector{Float64}, y::Vector{Float64};
-                              n_knots::Int = 10, λ::Float64 = 1.0,
-                              max_iter::Int = 5000, lr::Float64 = 0.0001,
-                              tol::Float64 = 1e-10, n_irls::Int = 3)
-    n_pts = length(x)
-    n_pts < n_knots && return nothing
-    basis = _make_uniform_spline_basis(x, n_knots)
-    c = _projected_irls_coeffs(basis.X, y, basis.n_coeffs, _noop_project!;
-                               λ=λ, max_iter=max_iter, lr=lr, tol=tol, n_irls=n_irls)
-    return _coeffs_to_spline(c, basis)
-end
-
-"""
-    fit_intensity_bias_spline(x, y; ...) -> (spline, label)
-
-Dispatch the intensity-bias fit by acquisition. Sciex ZT scanning DIA
-(PIONEER_ZT_METASCAN_K>0) has a non-monotone intensity bias, so use the
-unconstrained `fit_free_bias_spline`; all other data keep the robust
-monotone-best fit (`fit_best_monotone_bias`).
-"""
-function fit_intensity_bias_spline(x::Vector{Float64}, y::Vector{Float64};
-                                   n_knots::Int = 10, λ::Float64 = 1.0,
-                                   lr::Float64 = 0.0001)
-    if something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0) > 0
-        sp = fit_free_bias_spline(x, y; n_knots=n_knots, λ=λ, lr=lr)
-        return sp, "free (non-monotone, ZT)"
-    else
-        return fit_best_monotone_bias(x, y; n_knots=n_knots, λ=λ, lr=lr)
-    end
-end
-
 #==========================================================
 Regularized spline for Laplace spread
 ==========================================================#
@@ -848,7 +806,7 @@ function fit_intensity_mass_error_model(
     mz_residuals = da_errs .- [mz_spline_f64(m) for m in mz_f64]
 
     # Step 2: intensity bias — monotone spline on ALL mz-corrected data
-    I_spline_f64, I_label = fit_intensity_bias_spline(log2I, mz_residuals;
+    I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
         n_knots=10, λ=1.0, lr=0.0001)
 
     if I_spline_f64 === nothing
@@ -1130,7 +1088,7 @@ function fit_scout_calibrated_model(
     full_residuals = mz_residuals
 
     if with_intensity
-        I_spline_f64, I_label = fit_intensity_bias_spline(log2I, mz_residuals;
+        I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
             n_knots=10, λ=1.0, lr=0.0001)
         if I_spline_f64 !== nothing
             full_residuals = mz_residuals .- [I_spline_f64(li) for li in log2I]
