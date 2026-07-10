@@ -104,6 +104,15 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_strength,
     :frag_corr_effective_n,
     :frag_corr_best_m0,
+    # Sciex ZT within-metascan (shape) fragment features — present only when the
+    # meta-scan collapse ran (PIONEER_ZT_METASCAN_K>0); filtered out by hasproperty
+    # on all other datasets.
+    :frag_corr_strength_shape,
+    :frag_corr_effective_n_shape,
+    :frag_corr_best_shape,
+    :frag_apex_dispersion_shape,
+    :n_correlated_fragments_shape,
+    :n_correlated_fragments_bitvec_rank_shape,
     :n_frags_detected_union,
     :n_frags_detected_intersection,
     :n_frags_detected_union_bitvec_rank,

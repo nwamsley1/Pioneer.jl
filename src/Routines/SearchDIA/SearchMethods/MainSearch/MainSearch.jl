@@ -359,7 +359,9 @@ function process_search_results!(
     _zt_profile = _zt_k > 0 && get(ENV, "PIONEER_ZT_PROFILE_FEATURES", "1") != "0"
     if _zt_k > 0
         _n_pre_collapse = nrow(psms)
-        psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k)
+        _bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+        psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
+                                     bitvec_rank_table = _bitvec_rank_table)
         results.psms[] = psms
         @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
                    "profile features $(_zt_profile ? "ON" : "OFF")"
@@ -375,7 +377,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
-            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES) :
+            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES) :
                                      collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores

@@ -25,6 +25,21 @@ const ZT_PROFILE_FEATURES = Symbol[
     :zt_monotonicity,   # fraction of outward steps where weight decreases
 ]
 
+# Within-metascan (shape) fragment features: across the 2k+1 bins of ONE cycle,
+# how well does each fragment's intensity profile track the weight/transmission
+# triangle? Mirrors the develop across-precursor frag-corr aggregation
+# (_frag_pcor / _positive_corr_summary / _bitvec_pattern_rank in features.jl) but on
+# the per-cycle profile. The elution (across-cycle) counterparts are added in a
+# separate post-collapse pass. `_shape` suffix parallels the develop feature names.
+const ZT_SHAPE_FEATURES = Symbol[
+    :frag_corr_strength_shape,               # rank-weighted positive-corr strength
+    :frag_corr_effective_n_shape,            # effective # of positively-correlated frags
+    :frag_corr_best_shape,                   # best-consensus fragment's shape corr vs weight
+    :frag_apex_dispersion_shape,             # std of fragment apex bin-offsets (0 = all centered)
+    :n_correlated_fragments_shape,           # # fragments with shape corr > 0.7
+    :n_correlated_fragments_bitvec_rank_shape,  # bitvec rank of the >0.7 pattern
+]
+
 # Compute the 9 shape features from a length-(2k+1) weight vector `w` (j=-k..k,
 # center at index k+1), given the ideal triangle template `tri` (+ its norm).
 @inline function _zt_profile_features(w::Vector{Float32}, k::Int, tri::Vector{Float32}, tnorm::Float32)
@@ -74,7 +89,18 @@ that scan's ±(isolationWidth/2) window; the meta-scan is that center ±k bins
 (consecutive scan indices within a cycle). Keeps center rows, adds `metascan_w_*`
 (2k+1 raw weights) and the ZT_PROFILE_FEATURES shape columns.
 """
-function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int)
+# `_zt_std`: population-free std used for the within-metascan apex dispersion
+# (avoids a Statistics dependency in the hot collapse loop).
+@inline function _zt_std(a::AbstractVector{Float32})
+    m = length(a)
+    m < 2 && return 0f0
+    mu = 0f0; @inbounds for x in a; mu += x; end; mu /= m
+    s = 0f0; @inbounds for x in a; s += (x - mu) * (x - mu); end
+    return sqrt(s / (m - 1))
+end
+
+function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int;
+                               bitvec_rank_table = nothing)
     n = nrow(psms)
     (n == 0 || k <= 0) && return psms
     prec_mz = getMz(precursors)
@@ -92,8 +118,20 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     tri = Float32[max(0f0, 1f0 - abs(Float32(j))/Float32(k+1)) for j in -k:k]
     tnorm = sqrt(sum(x->x*x, tri))
 
+    # Fragment intensity columns for the within-metascan shape features (guarded —
+    # absent only in degenerate tables). Mirror the develop frag-corr aggregation.
+    _have_frags = all(r -> hasproperty(psms, Symbol("frag$(r)_int")), 1:8)
+    fcols = _have_frags ? ntuple(r -> Float32.(psms[!, Symbol("frag$(r)_int")]), 8) : nothing
+    rank_weights = _fragment_rank_weights(8)
+
     center_rows = Int[]
     profiles = Vector{Vector{Float32}}()
+    sh_str = Float32[]; sh_effn = Float32[]; sh_best = Float32[]
+    sh_disp = Float32[]; sh_n70 = UInt8[]; sh_rank = UInt16[]
+    Fbuf = [zeros(Float32, L) for _ in 1:8]
+    cfw = zeros(Float32, 8)
+    has_sig = falses(8)
+    apx = Float32[]
 
     i = 1
     @inbounds while i <= n
@@ -105,14 +143,60 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             (abs(pm - Float32(cmzs[scn[r]])) <= Float32(hws[scn[r]])/2) || continue
             c = Int(scn[r])
             w = zeros(Float32, L)
+            if fcols !== nothing
+                for b in 1:8; fill!(Fbuf[b], 0f0); end
+            end
             # neighbors: bins are ~contiguous rows around r (sorted by scan);
             # scan a small window and bin by scan-index offset.
             lo = max(blk_lo, r - L); hi = min(blk_hi, r + L)
             for rr in lo:hi
                 d = Int(scn[rr]) - c
-                (-k <= d <= k) && (w[d+k+1] += wt[rr])
+                if -k <= d <= k
+                    w[d+k+1] += wt[rr]
+                    if fcols !== nothing
+                        @inbounds for b in 1:8; Fbuf[b][d+k+1] += fcols[b][rr]; end
+                    end
+                end
             end
             push!(center_rows, r); push!(profiles, w)
+
+            # ---- within-metascan shape features (fragment profile vs weight) ----
+            str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)
+            if fcols !== nothing
+                mask = UInt16(0); empty!(apx)
+                for b in 1:8
+                    fp = Fbuf[b]
+                    mx = 0f0; @inbounds for v in fp; v > mx && (mx = v); end
+                    has_sig[b] = mx > 0f0
+                    if has_sig[b]
+                        cfw[b] = _frag_pcor(fp, w)
+                        if cfw[b] > 0.7f0; n70 += UInt8(1); mask |= UInt16(1) << (b - 1); end
+                        ai = 1; vm = fp[1]; @inbounds for t in 2:L; fp[t] > vm && (vm = fp[t]; ai = t); end
+                        push!(apx, Float32(ai - (k + 1)))
+                    else
+                        cfw[b] = 0f0
+                    end
+                end
+                str, effn = _positive_corr_summary(cfw, rank_weights)
+                # best-consensus fragment (mean corr to the other signal fragments)
+                best_r = 0; best_cons = typemin(Float32)
+                for b in 1:8
+                    has_sig[b] || continue
+                    cons = 0f0; np = 0
+                    for b2 in 1:8
+                        (b2 == b || !has_sig[b2]) && continue
+                        cons += _frag_pcor(Fbuf[b], Fbuf[b2]); np += 1
+                    end
+                    avg = np > 0 ? cons / np : typemin(Float32)
+                    if avg > best_cons; best_cons = avg; best_r = b; end
+                end
+                best = best_r > 0 ? cfw[best_r] : 0f0
+                disp = _zt_std(apx)
+                rnk = bitvec_rank_table === nothing ? UInt16(0) :
+                      _bitvec_pattern_rank(bitvec_rank_table, mask)
+            end
+            push!(sh_str, str); push!(sh_effn, effn); push!(sh_best, best)
+            push!(sh_disp, disp); push!(sh_n70, n70); push!(sh_rank, rnk)
         end
     end
 
@@ -123,10 +207,18 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         col = Symbol("metascan_w_", j < 0 ? "m$(abs(j))" : "$(j)")
         meta[!, col] = Float32[profiles[m][jj] for m in 1:nm]
     end
-    # shape features
+    # weight-profile shape features
     feats = [_zt_profile_features(profiles[m], k, tri, tnorm) for m in 1:nm]
     for (fi, fname) in enumerate(ZT_PROFILE_FEATURES)
         meta[!, fname] = Float32[feats[m][fi] for m in 1:nm]
     end
+    # within-metascan fragment shape features (new; additive — existing frag_corr_*
+    # columns kept unchanged, still computed on the pre-collapse trace for now)
+    meta[!, :frag_corr_strength_shape]              = sh_str
+    meta[!, :frag_corr_effective_n_shape]           = sh_effn
+    meta[!, :frag_corr_best_shape]                  = sh_best
+    meta[!, :frag_apex_dispersion_shape]            = sh_disp
+    meta[!, :n_correlated_fragments_shape]          = sh_n70
+    meta[!, :n_correlated_fragments_bitvec_rank_shape] = sh_rank
     return meta
 end
