@@ -362,9 +362,16 @@ function process_search_results!(
         _bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
         psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
                                      bitvec_rank_table = _bitvec_rank_table)
+        # Across-cycle elution features on the collapsed meta trace (fixes the broken
+        # MS1 correlations; adds fragment co-elution). Intensity per cycle:
+        # triangle-weighted combined (default) or center-bin.
+        _zt_elu_tri = get(ENV, "PIONEER_ZT_ELUTION_INTENSITY", "triangle") != "center"
+        psms = add_zt_elution_features!(psms; bitvec_rank_table = _bitvec_rank_table,
+                                        use_triangle = _zt_elu_tri)
         results.psms[] = psms
         @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
-                   "profile features $(_zt_profile ? "ON" : "OFF")"
+                   "profile features $(_zt_profile ? "ON" : "OFF"); " *
+                   "elution intensity=$(_zt_elu_tri ? "triangle" : "center")"
     end
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
@@ -377,7 +384,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
-            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES) :
+            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES, ZT_ELUTION_FEATURES) :
                                      collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores
