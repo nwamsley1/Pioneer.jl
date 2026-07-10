@@ -29,7 +29,7 @@
 # Tighter (0.001) → only very confident donors → fewer candidates, safer FTR.
 # Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
-const MBR_INITIAL_RECEIVER_Q_THRESHOLD = Float32(0.05)
+const MBR_INITIAL_HELLINGER_FTR_THRESHOLD = Float32(0.30)
 const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
 const MBR_RECOVERY_ALPHA_DEFAULT = Float32(0.01)
 
@@ -62,6 +62,15 @@ function _mbr_recovery_alpha_from_env(env = ENV)::Float32
     value = tryparse(Float32, raw)
     (value === nothing || !isfinite(value) || value <= 0.0f0 || value > 1.0f0) &&
         error("PIONEER_MBR_FTR_ALPHA must be a finite number in (0, 1], got \"$raw\"")
+    return value
+end
+
+function _mbr_initial_hellinger_ftr_threshold_from_env(env = ENV)::Float32
+    raw = get(env, "PIONEER_MBR_INITIAL_HELLINGER_FTR_THRESHOLD", "")
+    isempty(raw) && return MBR_INITIAL_HELLINGER_FTR_THRESHOLD
+    value = tryparse(Float32, raw)
+    (value === nothing || !isfinite(value) || value <= 0.0f0 || value > 1.0f0) &&
+        error("PIONEER_MBR_INITIAL_HELLINGER_FTR_THRESHOLD must be a finite number in (0, 1], got \"$raw\"")
     return value
 end
 
@@ -450,23 +459,46 @@ function _mbr_transfer_positive_top(
     return positive_top
 end
 
-function _mbr_initial_receiver_positive_top(
-    receiver_scores::AbstractVector{<:Real},
-    target_top::AbstractVector{Bool};
-    q_threshold::Float32 = MBR_INITIAL_RECEIVER_Q_THRESHOLD,
+function _mbr_hellinger_ftr_scores(
+    psms::DataFrame;
+    n_counterfactuals::Int,
 )
-    n = length(receiver_scores)
-    @assert length(target_top) == n
-    qvals = Vector{Float32}(undef, n)
-    if n == 0
-        return (Bool[], qvals)
+    (1 <= n_counterfactuals <= MBR_MAX_COUNTERFACTUALS) ||
+        error("n_counterfactuals must be in 1:$(MBR_MAX_COUNTERFACTUALS), got $n_counterfactuals")
+    n = nrow(psms)
+    scores = Vector{Float32}(undef, (1 + n_counterfactuals) * n)
+    @inbounds for counterfactual_idx in 0:n_counterfactuals
+        col = _mbr_best_hellinger_col(counterfactual_idx)
+        hasproperty(psms, col) || error("Missing MBR initial Hellinger FTR feature column $col")
+        values = psms[!, col]
+        offset = counterfactual_idx * n
+        for i in 1:n
+            value = Float32(values[i])
+            scores[offset + i] = (isfinite(value) && value >= 0.0f0) ? -value : -Inf32
+        end
     end
-    get_qvalues!(Float32.(receiver_scores), target_top, qvals)
-    positive_top = falses(n)
-    @inbounds for i in 1:n
-        positive_top[i] = target_top[i] && qvals[i] <= q_threshold
-    end
-    return (positive_top, qvals)
+    return scores
+end
+
+function _mbr_initial_hellinger_positive_top(
+    psms::DataFrame;
+    n_counterfactuals::Int,
+    frame_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+    ftr_threshold::Float32 = MBR_INITIAL_HELLINGER_FTR_THRESHOLD,
+)
+    n = nrow(psms)
+    scores = _mbr_hellinger_ftr_scores(
+        psms;
+        n_counterfactuals = n_counterfactuals,
+    )
+    metrics = _mbr_transfer_iteration_metrics(
+        scores,
+        n;
+        ftr_threshold = ftr_threshold,
+        n_counterfactuals = n_counterfactuals,
+        eval_mask = frame_mask,
+    )
+    return (metrics.positive_top, metrics.qvals_top)
 end
 
 function _mbr_transfer_counterfactual_labels(
@@ -744,9 +776,12 @@ function apply_mbr_filter_paired!(
     frame_eval_mask = _mbr_transfer_frame_mask(counterfactual_present)
     eval_mask = copy(frame_eval_mask)
     cv_double = vcat((sub[!, :cv_fold] for _ in 1:(1 + n_counterfactuals))...)
-    initial_positive_top, initial_receiver_qvals = _mbr_initial_receiver_positive_top(
-        Float32.(sub[!, :trace_prob_prepass]),
-        Bool.(sub[!, :target]),
+    initial_hellinger_ftr_threshold = _mbr_initial_hellinger_ftr_threshold_from_env()
+    initial_positive_top, initial_hellinger_qvals = _mbr_initial_hellinger_positive_top(
+        sub;
+        n_counterfactuals = n_counterfactuals,
+        frame_mask = frame_eval_mask,
+        ftr_threshold = initial_hellinger_ftr_threshold,
     )
 
     # ── 4. Semi-supervised 2-fold CV LightGBM on the counterfactual frame ──
@@ -764,8 +799,8 @@ function apply_mbr_filter_paired!(
     best_state = nothing
     previous_positive_count = -1
     @debug_l1 "  initial MBR training positives: $(count(initial_positive_top)) / $n_cand " *
-              "(receiver candidate-local q≤$(MBR_INITIAL_RECEIVER_Q_THRESHOLD)); " *
-              "min receiver q=$(round(minimum(initial_receiver_qvals), digits=4))"
+              "(MBR_best_smoothed_frag_hellinger FTR≤$(initial_hellinger_ftr_threshold)); " *
+              "min initial FTR q=$(round(minimum(initial_hellinger_qvals), digits=4))"
 
     for iter_idx in 1:SCORING_SEMISUPERVISED_MAX_ITERATIONS
         ftr_score_double = fill(NaN32, (1 + n_counterfactuals) * n_cand)

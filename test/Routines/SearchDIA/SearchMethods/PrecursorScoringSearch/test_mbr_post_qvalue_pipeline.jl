@@ -700,6 +700,8 @@ end
             trace_prob_infold = Float32[0.80, 0.81],
             MBR_best_pair_prob_true = Float32[0.90, 0.91],
             MBR_best_pair_prob_false = Float32[-1.0, -1.0],
+            MBR_best_smoothed_frag_hellinger_true = Float32[0.10, 0.11],
+            MBR_best_smoothed_frag_hellinger_false = Float32[-1.0, -1.0],
             MBR_best_is_missing_true = Bool[false, false],
             MBR_best_is_missing_false = Bool[true, true],
         )
@@ -849,32 +851,114 @@ end
     @test all(isfinite, all_cf_metrics.qvals_double)
 end
 
-@testset "MBR initial positives use candidate-local receiver q-values" begin
-    @test Pioneer.MBR_INITIAL_RECEIVER_Q_THRESHOLD == 0.05f0
+@testset "MBR initial positives use Hellinger-based counterfactual FTR" begin
+    @test Pioneer.MBR_INITIAL_HELLINGER_FTR_THRESHOLD == 0.30f0
+    @test Pioneer._mbr_initial_hellinger_ftr_threshold_from_env(
+        Dict("PIONEER_MBR_INITIAL_HELLINGER_FTR_THRESHOLD" => "0.15"),
+    ) == 0.15f0
 
-    receiver_scores = Float32[
-        0.99, 0.98, 0.97, 0.96, 0.95, 0.94,
-        0.93, 0.92, 0.91, 0.90, 0.89, 0.88,
-    ]
-    target_top = Bool[
-        true, true, true, true, true, true,
-        true, true, true, true, false, true,
-    ]
-
-    positive_top, receiver_qvals = Pioneer._mbr_initial_receiver_positive_top(
-        receiver_scores,
-        target_top,
+    candidates = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = Float32[0.01, 0.02, 0.03, 0.10],
+        MBR_best_smoothed_frag_hellinger_false = Float32[0.05, 0.06, 0.07, 0.08],
+    )
+    positive_top, qvals_top = Pioneer._mbr_initial_hellinger_positive_top(
+        candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(8),
     )
 
-    @test positive_top == Bool[
-        true, true, true, true, true, true,
-        true, true, true, true, false, false,
-    ]
-    @test receiver_qvals[1] == 0.0f0
-    @test receiver_qvals[10] <= 0.05f0
-    @test receiver_qvals[11] > 0.05f0
-    @test receiver_qvals[12] > 0.05f0
-    @test !positive_top[11]
+    @test positive_top == Bool[true, true, true, false]
+    @test qvals_top[1] == 0.0f0
+    @test qvals_top[3] <= 0.03f0
+    @test qvals_top[4] > 0.03f0
+
+    candidates.MBR_best_smoothed_frag_hellinger_true[4] = 0.04f0
+    positive_top, qvals_top = Pioneer._mbr_initial_hellinger_positive_top(
+        candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(8),
+    )
+    @test positive_top == trues(4)
+    @test qvals_top[4] <= 0.03f0
+
+    threshold_candidates = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = vcat(
+            collect(Float32.(range(0.001, 0.040; length = 40))),
+            Float32[0.050],
+        ),
+        MBR_best_smoothed_frag_hellinger_false = vcat(
+            Float32[0.045],
+            fill(0.5f0, 40),
+        ),
+    )
+    positive_top, qvals_top = Pioneer._mbr_initial_hellinger_positive_top(
+        threshold_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(82),
+    )
+    @test positive_top[end]
+    @test 0.01f0 < qvals_top[end] <= 0.03f0
+
+    one_percent_positive_top, _ = Pioneer._mbr_initial_hellinger_positive_top(
+        threshold_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(82),
+        ftr_threshold = 0.01f0,
+    )
+    @test !one_percent_positive_top[end]
+
+    five_percent_candidates = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = vcat(
+            collect(Float32.(range(0.001, 0.020; length = 20))),
+            Float32[0.030],
+        ),
+        MBR_best_smoothed_frag_hellinger_false = vcat(
+            Float32[0.025],
+            fill(0.5f0, 20),
+        ),
+    )
+    positive_top, qvals_top = Pioneer._mbr_initial_hellinger_positive_top(
+        five_percent_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(42),
+    )
+    @test positive_top[end]
+    @test 0.03f0 < qvals_top[end] <= 0.05f0
+
+    three_percent_positive_top, _ = Pioneer._mbr_initial_hellinger_positive_top(
+        five_percent_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(42),
+        ftr_threshold = 0.03f0,
+    )
+    @test !three_percent_positive_top[end]
+
+    ten_percent_candidates = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = vcat(
+            collect(Float32.(range(0.001, 0.010; length = 10))),
+            Float32[0.020],
+        ),
+        MBR_best_smoothed_frag_hellinger_false = vcat(
+            Float32[0.015],
+            fill(0.5f0, 10),
+        ),
+    )
+    positive_top, qvals_top = Pioneer._mbr_initial_hellinger_positive_top(
+        ten_percent_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(22),
+    )
+    @test positive_top[end]
+    @test 0.05f0 < qvals_top[end] <= 0.10f0
+
+    five_percent_positive_top, _ = Pioneer._mbr_initial_hellinger_positive_top(
+        ten_percent_candidates;
+        n_counterfactuals = 1,
+        frame_mask = trues(22),
+        ftr_threshold = 0.05f0,
+    )
+    @test !five_percent_positive_top[end]
+
 end
 
 @testset "MBR semi-supervised transfer training uses counterfactual FTR labels" begin
