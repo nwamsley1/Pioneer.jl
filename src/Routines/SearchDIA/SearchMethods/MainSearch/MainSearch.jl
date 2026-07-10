@@ -345,40 +345,30 @@ function process_search_results!(
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
-    t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
-        psms,
-        spectra;
-        bitvec_rank_table = bitvec_rank_table,
-    )
-
-    # Sciex ZT (PIONEER_ZT_METASCAN_K>0): collapse each precursor's ±k-bin
-    # meta-scan into one meta-PSM (center bin's features + the 2k+1 weight profile
-    # + ZT_PROFILE_FEATURES shape features) BEFORE the per-file LGBM, so the model
-    # trains on meta-PSMs and best-per-precursor picks the best meta-scan.
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
     _zt_profile = _zt_k > 0 && get(ENV, "PIONEER_ZT_PROFILE_FEATURES", "1") != "0"
-    if _zt_k > 0
+
+    # Per-precursor chromatogram-trace features (frag_corr_*, ms1_corr_*, n_scans,
+    # delta_frame_peak_center). Conventional DIA runs them here on the full trace.
+    # Sciex ZT runs them AFTER the meta-scan collapse instead (below), so they use the
+    # clean one-point-per-cycle trace — develop's exact math + names, correctly
+    # re-leveled: frag_corr on the elution trace, the MS1 correlations un-broken (MS1
+    # is constant within a cycle), n_scans = the real cycle count. The new
+    # within-metascan _shape features (fragment vs transmission triangle) come from the
+    # collapse itself.
+    t_ms1 = 0.0
+    if _zt_k == 0
+        t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
+            psms, spectra; bitvec_rank_table = bitvec_rank_table)
+    else
         _n_pre_collapse = nrow(psms)
-        _bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
         psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
-                                     bitvec_rank_table = _bitvec_rank_table)
-        # Across-cycle elution features on the collapsed meta trace (fixes the broken
-        # MS1 correlations; adds fragment co-elution). Intensity per cycle:
-        # triangle-weighted combined (default) or center-bin.
-        _zt_elu_tri = get(ENV, "PIONEER_ZT_ELUTION_INTENSITY", "triangle") != "center"
-        psms = add_zt_elution_features!(psms; bitvec_rank_table = _bitvec_rank_table,
-                                        use_triangle = _zt_elu_tri)
-        # Retire the pre-collapse (jagged 39-point) frag_corr_* / broken ms1_corr_*
-        # in favour of the clean shape + elution split (both LGBM models filter by
-        # hasproperty, so dropping the columns removes them from scoring).
-        if get(ENV, "PIONEER_ZT_DROP_ORIG_FRAGCORR", "1") != "0"
-            _drop = intersect(Symbol.(names(psms)), ZT_REDUNDANT_ORIGINALS)
-            isempty(_drop) || select!(psms, Not(_drop))
-        end
+                                     bitvec_rank_table = bitvec_rank_table)
+        t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
+            psms, spectra; bitvec_rank_table = bitvec_rank_table)
         results.psms[] = psms
         @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
-                   "profile features $(_zt_profile ? "ON" : "OFF"); " *
-                   "elution intensity=$(_zt_elu_tri ? "triangle" : "center")"
+                   "profile features $(_zt_profile ? "ON" : "OFF")"
     end
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
@@ -391,7 +381,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
-            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES, ZT_ELUTION_FEATURES) :
+            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES) :
                                      collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores

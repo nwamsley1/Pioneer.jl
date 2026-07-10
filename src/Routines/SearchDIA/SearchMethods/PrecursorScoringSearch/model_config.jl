@@ -113,18 +113,9 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_shape,
     :n_correlated_fragments_shape,
     :n_correlated_fragments_bitvec_rank_shape,
-    # Sciex ZT across-cycle (elution) fragment/MS1 features + real cycle count.
-    :ms1_corr_weight_m0_elution,
-    :ms1_corr_m0_m1_elution,
-    :ms1_apex_offset_irt_elution,
-    :ms1_weight_apex_to_m0_apex_irt_elution,
-    :frag_corr_strength_elution,
-    :frag_corr_effective_n_elution,
-    :frag_corr_best_elution,
-    :frag_apex_dispersion_elution,
-    :n_correlated_fragments_elution,
-    :n_correlated_fragments_bitvec_rank_elution,
-    :n_scans_metascan,
+    # ZT across-cycle (elution) MS1/fragment features are NOT listed separately: for
+    # ZT they are the develop chromatogram features (frag_corr_strength, ms1_corr_*,
+    # n_scans, etc. above), recomputed on the collapsed one-point-per-cycle meta trace.
     :n_frags_detected_union,
     :n_frags_detected_intersection,
     :n_frags_detected_union_bitvec_rank,

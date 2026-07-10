@@ -40,32 +40,13 @@ const ZT_SHAPE_FEATURES = Symbol[
     :n_correlated_fragments_bitvec_rank_shape,  # bitvec rank of the >0.7 pattern
 ]
 
-# Across-cycle ELUTION features, computed post-collapse on the one-point-per-cycle
-# meta trace: the correctly-leveled counterparts of the develop MS1/fragment
-# chromatogram features. The MS1 four are the FIX (develop's are broken — MS1 is one
-# scan per cycle, so constant within a cycle → correlated vs the within-cycle weight
-# triangle = noise). n_scans_metascan = number of cycles (real peak width vs the
-# 13×cycles `n_scans` artifact).
-const ZT_ELUTION_FEATURES = Symbol[
-    :ms1_corr_weight_m0_elution, :ms1_corr_m0_m1_elution,
-    :ms1_apex_offset_irt_elution, :ms1_weight_apex_to_m0_apex_irt_elution,
-    :frag_corr_strength_elution, :frag_corr_effective_n_elution,
-    :frag_corr_best_elution, :frag_apex_dispersion_elution,
-    :n_correlated_fragments_elution, :n_correlated_fragments_bitvec_rank_elution,
-    :n_scans_metascan,
-]
-
-# Pre-collapse (develop) chromatogram features now superseded by the clean shape +
-# elution split. Computed on the jagged 13-per-cycle trace, so they mix the two axes
-# (frag_corr_*) or are outright broken (ms1_corr_*, ~0 gain). Dropped from the ZT
-# meta-PSM (both LGBM models filter by hasproperty) so the model uses only the split
-# versions; env-toggle PIONEER_ZT_DROP_ORIG_FRAGCORR=0 keeps them for A/B. Non-ZT
-# datasets never collapse, so their originals are untouched.
-const ZT_REDUNDANT_ORIGINALS = Symbol[
-    :frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
-    :frag_apex_dispersion_irt, :n_correlated_fragments, :n_correlated_fragments_bitvec_rank,
-    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_apex_offset_irt,
-]
+# The across-cycle ELUTION features (frag_corr_*, ms1_corr_*, n_scans) are NOT a
+# separate feature set: for ZT they are exactly the develop chromatogram features,
+# run on the collapsed one-point-per-cycle meta trace (add_chromatogram_features!
+# called post-collapse in MainSearch.jl). Develop's math on the meta trace is
+# identical to a bespoke "elution" implementation, so we reuse it directly for
+# maximum compatibility (same names, same code). Only the within-metascan SHAPE
+# features above are genuinely new.
 
 # Compute the 9 shape features from a length-(2k+1) weight vector `w` (j=-k..k,
 # center at index k+1), given the ideal triangle template `tri` (+ its norm).
@@ -155,9 +136,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     profiles = Vector{Vector{Float32}}()
     sh_str = Float32[]; sh_effn = Float32[]; sh_best = Float32[]
     sh_disp = Float32[]; sh_n70 = UInt8[]; sh_rank = UInt16[]
-    # triangle-weighted combined per-cycle intensities (weight + 8 fragments) for the
-    # across-cycle elution trace (PIONEER_ZT_ELUTION_INTENSITY=triangle option).
-    mw = Float32[]; mf = [Float32[] for _ in 1:8]
     Fbuf = [zeros(Float32, L) for _ in 1:8]
     cfw = zeros(Float32, 8)
     has_sig = falses(8)
@@ -227,18 +205,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             end
             push!(sh_str, str); push!(sh_effn, effn); push!(sh_best, best)
             push!(sh_disp, disp); push!(sh_n70, n70); push!(sh_rank, rnk)
-
-            # triangle-weighted combined per-cycle intensities
-            mwi = 0f0; @inbounds for t in 1:L; mwi += w[t] * tri[t]; end
-            push!(mw, mwi)
-            if fcols !== nothing
-                for b in 1:8
-                    mfi = 0f0; @inbounds for t in 1:L; mfi += Fbuf[b][t] * tri[t]; end
-                    push!(mf[b], mfi)
-                end
-            else
-                for b in 1:8; push!(mf[b], 0f0); end
-            end
         end
     end
 
@@ -262,113 +228,5 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     meta[!, :frag_apex_dispersion_shape]            = sh_disp
     meta[!, :n_correlated_fragments_shape]          = sh_n70
     meta[!, :n_correlated_fragments_bitvec_rank_shape] = sh_rank
-    # triangle-weighted combined per-cycle intensities (consumed by the post-collapse
-    # elution feature pass; scratch, dropped before writing the second-pass table)
-    meta[!, :zt_meta_weight] = mw
-    for b in 1:8
-        meta[!, Symbol("zt_meta_frag", b)] = mf[b]
-    end
-    return meta
-end
-
-# Post-collapse across-cycle ELUTION features on the collapsed meta-PSMs (one row per
-# (precursor, cycle), already sorted by (precursor_idx, scan_idx) ≈ cycle order).
-# Mirrors the develop MS1/fragment chromatogram aggregation but on the clean
-# one-point-per-cycle trace. `use_triangle` picks the per-cycle intensity: the
-# triangle-weighted combined value (zt_meta_*) or the center-bin value
-# (metascan_w_0 / frag*_int). Per-precursor features are replicated across the
-# precursor's cycle rows; best-per-precursor selects one downstream.
-function add_zt_elution_features!(meta::DataFrame; bitvec_rank_table = nothing,
-                                  use_triangle::Bool = true)
-    n = nrow(meta)
-    n == 0 && return meta
-    pid = meta[!, :precursor_idx]::Vector{UInt32}
-    irt = hasproperty(meta, :irt_obs) ? Float32.(meta[!, :irt_obs]) : zeros(Float32, n)
-    wcol = use_triangle ? Float32.(meta[!, :zt_meta_weight]) : Float32.(meta[!, :metascan_w_0])
-    m0col = hasproperty(meta, :ms1_m0_intensity) ? Float32.(meta[!, :ms1_m0_intensity]) : zeros(Float32, n)
-    m1col = hasproperty(meta, :ms1_m1_intensity) ? Float32.(meta[!, :ms1_m1_intensity]) : zeros(Float32, n)
-    fcols = ntuple(r -> use_triangle ? Float32.(meta[!, Symbol("zt_meta_frag", r)]) :
-                                       Float32.(meta[!, Symbol("frag", r, "_int")]), 8)
-    rank_weights = _fragment_rank_weights(8)
-
-    out_wm0 = zeros(Float32, n); out_m01 = zeros(Float32, n)
-    out_aoff = zeros(Float32, n); out_w2m0 = zeros(Float32, n)
-    out_fstr = zeros(Float32, n); out_feffn = zeros(Float32, n); out_fbest = zeros(Float32, n)
-    out_fdisp = zeros(Float32, n); out_fn70 = zeros(UInt8, n); out_frank = zeros(UInt16, n)
-    out_ncyc = ones(UInt32, n)
-
-    Wg = Float32[]; M0g = Float32[]; M1g = Float32[]; IRTg = Float32[]
-    Fg = [Float32[] for _ in 1:8]
-    cfw = zeros(Float32, 8); has_sig = falses(8); apxg = Float32[]
-
-    i = 1
-    @inbounds while i <= n
-        j0 = i
-        while i <= n && pid[i] == pid[j0]; i += 1; end
-        lo = j0; hi = i - 1; m = hi - lo + 1
-        for c in lo:hi; out_ncyc[c] = UInt32(m); end
-        m < 2 && continue
-        resize!(Wg, m); resize!(M0g, m); resize!(M1g, m); resize!(IRTg, m)
-        for b in 1:8; resize!(Fg[b], m); end
-        for (kk, c) in enumerate(lo:hi)
-            Wg[kk] = wcol[c]; M0g[kk] = m0col[c]; M1g[kk] = m1col[c]; IRTg[kk] = irt[c]
-            for b in 1:8; Fg[b][kk] = fcols[b][c]; end
-        end
-        c_wm0 = _frag_pcor(Wg, M0g); c_m01 = _frag_pcor(M0g, M1g)
-        ai_m0 = argmax(M0g); ai_w = argmax(Wg)
-        w2m0 = abs(IRTg[ai_w] - IRTg[ai_m0])
-        empty!(apxg); mask = UInt16(0)
-        for b in 1:8
-            mx = 0f0; for v in Fg[b]; v > mx && (mx = v); end
-            has_sig[b] = mx > 0f0
-            if has_sig[b]
-                cfw[b] = _frag_pcor(Fg[b], Wg)
-                cfw[b] > 0.7f0 && (mask |= UInt16(1) << (b - 1))
-                push!(apxg, IRTg[argmax(Fg[b])])
-            else
-                cfw[b] = 0f0
-            end
-        end
-        n70 = UInt8(0); for b in 1:8; (has_sig[b] && cfw[b] > 0.7f0) && (n70 += UInt8(1)); end
-        strv, effnv = _positive_corr_summary(cfw, rank_weights)
-        best_r = 0; best_cons = typemin(Float32)
-        for b in 1:8
-            has_sig[b] || continue
-            cons = 0f0; np = 0
-            for b2 in 1:8
-                (b2 == b || !has_sig[b2]) && continue
-                cons += _frag_pcor(Fg[b], Fg[b2]); np += 1
-            end
-            avg = np > 0 ? cons / np : typemin(Float32)
-            if avg > best_cons; best_cons = avg; best_r = b; end
-        end
-        c_best = 0f0
-        if best_r > 0
-            mxm0 = 0f0; for v in M0g; v > mxm0 && (mxm0 = v); end
-            mxm0 > 0f0 && (c_best = _frag_pcor(Fg[best_r], M0g))
-        end
-        disp = length(apxg) >= 2 ? _zt_std(apxg) : 0f0
-        rnk = bitvec_rank_table === nothing ? UInt16(0) : _bitvec_pattern_rank(bitvec_rank_table, mask)
-        for (kk, c) in enumerate(lo:hi)
-            out_wm0[c] = c_wm0; out_m01[c] = c_m01
-            out_aoff[c] = abs(IRTg[kk] - IRTg[ai_m0]); out_w2m0[c] = w2m0
-            out_fstr[c] = strv; out_feffn[c] = effnv; out_fbest[c] = c_best
-            out_fdisp[c] = disp; out_fn70[c] = n70; out_frank[c] = rnk
-        end
-    end
-
-    meta[!, :ms1_corr_weight_m0_elution]              = out_wm0
-    meta[!, :ms1_corr_m0_m1_elution]                  = out_m01
-    meta[!, :ms1_apex_offset_irt_elution]             = out_aoff
-    meta[!, :ms1_weight_apex_to_m0_apex_irt_elution]  = out_w2m0
-    meta[!, :frag_corr_strength_elution]              = out_fstr
-    meta[!, :frag_corr_effective_n_elution]           = out_feffn
-    meta[!, :frag_corr_best_elution]                  = out_fbest
-    meta[!, :frag_apex_dispersion_elution]            = out_fdisp
-    meta[!, :n_correlated_fragments_elution]          = out_fn70
-    meta[!, :n_correlated_fragments_bitvec_rank_elution] = out_frank
-    meta[!, :n_scans_metascan]                        = out_ncyc
-    # drop the per-cycle combined-intensity scratch (consumed above)
-    select!(meta, Not(vcat([:zt_meta_weight], [Symbol("zt_meta_frag", b) for b in 1:8])))
     return meta
 end
