@@ -277,7 +277,12 @@ function process_file!(
                                 :log2_intensity_explained, :max_matched_residual,
                                 :max_unmatched_residual, :poisson,
                                 :fitted_frag1_int, :shadow_frag1_int,
-                                :matched_ratio, :scribe, :city_block, :error],
+                                :matched_ratio, :scribe, :city_block, :error,
+                                # frag*_int: per-bin fragment intensities the collapse
+                                # sums into the within-metascan shape profiles (for the
+                                # shape-feature correctness recompute).
+                                :frag1_int, :frag2_int, :frag3_int, :frag4_int,
+                                :frag5_int, :frag6_int, :frag7_int, :frag8_int],
                                Symbol.(names(psms)))
         mkpath(_raw_dump_dir)
         _dump_path = joinpath(_raw_dump_dir, "raw_psms_file$(ms_file_idx).arrow")
@@ -371,6 +376,20 @@ function process_search_results!(
         @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs " *
                    "(collapse $(round(t_collapse; digits=1))s, chromatogram $(round(t_ms1; digits=1))s); " *
                    "profile features $(_zt_profile ? "ON" : "OFF")"
+        # Diagnostic (PIONEER_DUMP_METASCANS=<dir>): dump the collapsed meta-PSM table —
+        # metascan_w_* weight profile + all ZT profile/shape features + id/target — so a
+        # standalone script can independently recompute the features and verify the math.
+        _meta_dump_dir = get(ENV, "PIONEER_DUMP_METASCANS", "")
+        if !isempty(_meta_dump_dir)
+            _wcols = [Symbol("metascan_w_", j < 0 ? "m$(abs(j))" : "$(j)") for j in -_zt_k:_zt_k]
+            _mcols = intersect(vcat([:precursor_idx, :scan_idx, :target],
+                                    _wcols, ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES),
+                               Symbol.(names(psms)))
+            mkpath(_meta_dump_dir)
+            _mpath = joinpath(_meta_dump_dir, "meta_psms_file$(ms_file_idx).arrow")
+            writeArrow(_mpath, psms[!, _mcols])
+            @user_info "PIONEER_DUMP_METASCANS: wrote $(nrow(psms)) meta-PSMs (cols=$_mcols) to $_mpath"
+        end
     end
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
