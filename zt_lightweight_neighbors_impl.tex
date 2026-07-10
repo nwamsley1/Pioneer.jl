@@ -1,0 +1,233 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\definecolor{codebg}{gray}{0.96}
+\definecolor{cmt}{rgb}{0.30,0.45,0.30}
+\lstset{
+  basicstyle=\ttfamily\scriptsize, backgroundcolor=\color{codebg},
+  breaklines=true, frame=single, framesep=3pt,
+  commentstyle=\color{cmt}\itshape, showstringspaces=false,
+  numbers=left, numberstyle=\tiny\color{gray}, xleftmargin=2.2em,
+}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\textbf{ZT Main Search: Lightweight Neighbor Rows}\\[4pt]
+\large A byte-identical way to stop scoring the 12/13 of PSMs we discard}
+\author{feat/sciex-zt-scanning}
+\date{2026-07-09}
+
+\begin{document}
+\maketitle
+
+\section{Idea and why it is byte-identical}
+
+For ZT, meta-scan expansion makes each precursor a candidate in $2k{+}1{=}13$ bins per
+cycle, so deconvolution emits $\approx$35M PSMs/file; \code{collapse\_to\_metascans}
+then keeps the \textbf{one center bin} per (precursor, cycle) ($\approx$3.2M) and, from
+the other 12 bins, reads \textbf{only the \code{weight} scalar}. Everything else on a
+non-center row --- the spectral scores (\code{gof}, \code{hellinger}, residuals), the
+16 fitted/shadow fragment intensities, and every downstream feature --- is computed and
+thrown away.
+
+\textbf{The plan:} compute full scores + emit a full row only for center bins; for
+neighbor bins emit just \code{(precursor\_idx, scan\_idx, weight)}. This is
+\emph{byte-identical} because:
+\begin{enumerate}
+\item The Huber/LS \emph{solve} that produces every \code{weight} is untouched (it needs
+all candidates).
+\item The shared residual $r = \text{observed} - \sum_p w_p H_p$ is built from all
+weights, untouched.
+\item A \emph{center} row's scores --- including its \code{shadow\_frag*} (interference
+from co-eluting precursors) --- read $r$ and the neighbors' \emph{weights}, never the
+neighbors' \emph{scores}. So center rows come out identical.
+\item The collapse reads identical weights (center + neighbor) and identical center-row
+features.
+\end{enumerate}
+$\Rightarrow$ verify with an exact diff of \code{precursors\_long.arrow}, not an A/B.
+
+\section{Current call chain}
+
+\code{process\_scans\_fused.jl} (per scan) $\to$ \code{compute\_distance\_metrics!}
+($\to$ \code{getDistanceMetrics}) $\to$ \code{score\_psms!} ($\to$ \code{Score!},
+appends \code{MainSearchScoredPSM} rows) $\to$ [ZT] \code{collapse\_to\_metascans}.
+
+\subsection*{(a) The scoring kernel --- \code{spectralDistanceMetrics.jl:59}}
+\begin{lstlisting}[firstnumber=59]
+for col in range(1, H.n)               # build shared residual r from ALL weights
+    for n in H.colptr[col]:H.colptr[col+1]-1
+        r[H.rowval[n]] += w[col]*H.nzval[n]
+    end
+end
+for col in 1:H.n                       # Single-pass scoring per precursor (SEPARABLE)
+    if w[col] <= zero(T)
+        spectral_scores[col] = SpectralScoresMainSearch(zero(U), ...); continue
+    end
+    ...
+    @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)   # <-- the expensive body
+        fitted_peak = w[col]*H.nzval[i]
+        shadow_peak = fitted_peak - r[H.rowval[i]]     # reads SHARED r (all neighbors' weights)
+        ... gof / hellinger / fitted_frag* / shadow_frag* ...
+    end
+    spectral_scores[col] = SpectralScoresMainSearch(...)
+end
+\end{lstlisting}
+
+\subsection*{(b) The row emit --- \code{ScoredPSMs.jl:173}}
+\begin{lstlisting}[firstnumber=173]
+for i in range(1, n_vals)
+    precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+    scores_idx = IDtoCOL[precursor_idx]
+    if weight[scores_idx] < Float32(1e-6)
+        skipped += 1; continue
+    end
+    ...
+    scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(   # 61-col row
+        unscored_PSMs[i].longest_y, ..., weight[scores_idx],
+        L(spectral_scores[scores_idx].gof), ...,
+        H(spectral_scores[scores_idx].shadow_frag8_int), ...)
+end
+\end{lstlisting}
+
+\subsection*{(c) The collapse gather --- \code{metascan\_collapse.jl:104}}
+\begin{lstlisting}[firstnumber=104]
+for r in blk_lo:blk_hi                          # rows of one precursor, sorted by scan
+    (abs(pm - Float32(cmzs[scn[r]])) <= Float32(hws[scn[r]])/2) || continue  # center test
+    c = Int(scn[r])
+    lo = max(blk_lo, r - L); hi = min(blk_hi, r + L)
+    for rr in lo:hi
+        d = Int(scn[rr]) - c
+        (-k <= d <= k) && (w[d+k+1] += wt[rr])   # gather +/-k WEIGHTS from neighbor rows
+    end
+    push!(center_rows, r); push!(profiles, w)
+end
+\end{lstlisting}
+
+\section{The change, step by step}
+
+Everything below is gated on \code{\_zt\_main} (a \code{use\_lightweight::Bool}
+threaded down from \code{library\_search}); non-ZT keeps the exact current path.
+
+\subsection*{Step 1 --- a per-column \code{is\_center} mask (in \code{process\_scans\_fused.jl})}
+The center test is exactly \code{filter\_to\_center\_bin!}'s: is this precursor's m/z in
+the scan's center bin. Compute it once per scan into a per-thread scratch
+\code{is\_center::Vector{Bool}} indexed by design-matrix column, using data already in
+scope (\code{scan\_idx}, \code{prec\_mzs}, \code{id\_to\_col}).
+\begin{lstlisting}[firstnumber=1]
+# after run_fused! populates id_to_col, before compute_distance_metrics!:
+if use_lightweight
+    cmz = getCenterMz(spectra, scan_idx); hw = getIsolationWidthMz(spectra, scan_idx)/2
+    fill_is_center!(is_center, id_to_col, precs_vec, sub_indices, prec_mzs, cmz, hw)
+end
+# fill_is_center!: for each candidate precursor p at column col=id_to_col[p],
+#   is_center[col] = !ismissing(cmz) && abs(prec_mzs[p] - cmz) <= hw
+\end{lstlisting}
+
+\subsection*{Step 2 --- skip the scoring body for non-center columns (\code{getDistanceMetrics})}
+Add \code{is\_center} (optional; \code{nothing} $\Rightarrow$ score all, i.e.\ non-ZT).
+The residual build (lines 59--65) is unchanged; only the per-precursor scoring loop is
+gated. Non-center \code{spectral\_scores[col]} is never read downstream, so we simply
+skip it.
+\begin{lstlisting}[firstnumber=1]
+for col in 1:H.n
+    if w[col] <= zero(T)
+        spectral_scores[col] = SpectralScoresMainSearch(zero(U), ...); continue
+    end
+    if is_center !== nothing && !is_center[col]
+        continue                     # <-- NEW: neighbor -> weight already in w[col]; skip scoring
+    end
+    ...                              # unchanged expensive body, only for centers (+ non-ZT: all)
+end
+\end{lstlisting}
+The shadow of a center still reads the shared \code{r}, which was built from
+\emph{all} weights including this neighbor's --- hence identical.
+
+\subsection*{Step 3 --- route neighbors to a compact side-buffer (\code{Score!})}
+Add \code{is\_center} and a per-thread \code{NeighborWeights} SoA. Center $\Rightarrow$
+full \code{MainSearchScoredPSM} exactly as today; neighbor $\Rightarrow$ 12-byte record.
+\begin{lstlisting}[firstnumber=1]
+for i in range(1, n_vals)
+    precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+    scores_idx = IDtoCOL[precursor_idx]
+    weight[scores_idx] < Float32(1e-6) && (skipped += 1; continue)
+
+    if is_center !== nothing && !is_center[scores_idx]
+        push!(nbr.precursor_idx, precursor_idx)      # <-- NEW compact neighbor row
+        push!(nbr.scan_idx, UInt32(scan_idx))
+        push!(nbr.weight, weight[scores_idx])
+        skipped += 1                                 # keep scored_psms compaction intact
+        continue
+    end
+    ... scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(...)   # unchanged (centers)
+end
+\end{lstlisting}
+\begin{lstlisting}[firstnumber=1]
+struct NeighborWeights                 # Struct-of-Arrays: 12 B/row, Arrow-friendly
+    precursor_idx::Vector{UInt32}
+    scan_idx::Vector{UInt32}
+    weight::Vector{Float32}
+end
+\end{lstlisting}
+Per-thread instances are concatenated after the scan loop, exactly like
+\code{scored\_psms} (\code{process\_scans\_fused.jl:135}). \code{library\_search} returns
+\code{(psms, neighbor\_weights)} for ZT.
+
+\subsection*{Step 4 --- collapse gathers from centers + neighbor buffer}
+Today's gather (2c) reads $\pm k$ weights from the one sorted PSM table. Now the
+$\pm k$ weights come from two sources. Build a combined, \code{(precursor\_idx,
+scan\_idx)}-sorted weight list --- center weights from \code{psms.weight}, neighbor
+weights from the buffer --- and gather against it, while the kept \emph{rows} (and all
+features) remain the center table only.
+\begin{lstlisting}[firstnumber=1]
+# combined weight index (only 3 small columns, ~35M x 12 B, no 61-col rows):
+cw_pid  = vcat(psms.precursor_idx, nbr.precursor_idx)
+cw_scan = vcat(psms.scan_idx,      nbr.scan_idx)
+cw_wt   = vcat(psms.weight,        nbr.weight)
+ord = sortperm(1:length(cw_pid); by = j -> (cw_pid[j], cw_scan[j]))   # replaces Sort 2 on wide rows
+# then, per center row c (precursor pc, scan sc): walk ord within pc for scans in [sc-k, sc+k],
+# w[scan - sc + k + 1] += cw_wt[...]   -- identical arithmetic to 2c, lighter payload.
+\end{lstlisting}
+The center table itself is already the reduced output; its \code{metascan\_w\_*} and 9
+shape features are filled from this combined gather exactly as before.
+
+\section{What is saved}
+
+\begin{center}
+\begin{tabular}{p{0.46\textwidth} p{0.46\textwidth}}
+\toprule
+Cost today (on $\approx$35M rows) & After \\
+\midrule
+per-precursor scoring body (2a) for all candidates & only $\approx$3.2M centers ($\sim$11$\times$ less) \\
+$\approx$35M $\times$ 61-col \code{MainSearchScoredPSM} materialization & 3.2M full rows $+$ $\approx$32M $\times$ 12\,B \\
+\code{scan\_competition} / \code{ms1} / \code{prepare} / \code{chromatogram} features on 35M & on 3.2M \\
+Sort 1 (\code{permute\_by\_precursor}, 4.2\,s, 61-col) & gone; one sort on the 12\,B weight list \\
+\bottomrule
+\end{tabular}
+\end{center}
+The Huber/LS solve and the residual build (legitimately all-candidate) are unchanged.
+
+\section{Verification and rollout}
+
+\begin{itemize}
+\item \textbf{Byte-identical check:} run the 3 ZT files with the flag off vs on; require
+\code{precursors\_long.arrow} to be \emph{identical} (same precursor\_idx set, same
+\code{peak\_area}, \code{gof}, \code{lgbm\_prob}, \dots). Any diff is a bug in the
+center predicate or the gather, not an expected shift.
+\item \textbf{Guard:} the center predicate must match \code{filter\_to\_center\_bin!}
+and the collapse's center test \emph{exactly} (same \code{cmz}/\code{hw}), or a row could
+be ``center'' in the emit but ``neighbor'' in the collapse (lost) or vice versa
+(duplicated). One shared helper \code{is\_center\_bin(prec\_mz, cmz, hw)} used in all three.
+\item \textbf{Rollout:} env/ZT-gated (\code{use\_lightweight = \_zt\_main}); non-ZT takes
+the \code{is\_center === nothing} path and is untouched. Land Step 2 first (skip scoring,
+still emit all rows) to confirm identical scores, then Steps 3--4 (compact neighbors).
+\item \textbf{Constraint (from the shadow discussion):} this forecloses computing any
+\emph{new} multi-precursor feature after the collapse --- neighbor rows no longer carry
+scores. Any such feature must be produced inside \code{getDistanceMetrics} (at solve
+time) before neighbors are dropped.
+\end{itemize}
+
+\end{document}

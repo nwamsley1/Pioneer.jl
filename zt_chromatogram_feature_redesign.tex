@@ -1,0 +1,263 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\definecolor{codebg}{gray}{0.96}
+\lstset{basicstyle=\ttfamily\footnotesize, backgroundcolor=\color{codebg},
+  breaklines=true, frame=single, framesep=3pt, showstringspaces=false,
+  numbers=left, numberstyle=\tiny\color{gray}, xleftmargin=2.2em}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\textbf{ZT Chromatogram-Feature Redesign}\\[4pt]
+\large Two axes, computed at the right level: fixes broken features \emph{and} the memory win}
+\author{feat/sciex-zt-scanning}
+\date{2026-07-09}
+
+\begin{document}
+\maketitle
+
+\section{The core insight}
+
+For ZT scanning DIA the per-precursor ``chromatogram'' (its weight/fragment trace
+across all its PSM rows) mixes \textbf{two orthogonal axes} that the current code
+treats as one:
+
+\begin{itemize}
+\item \textbf{Within-metascan (shape) axis} --- across the $2k{+}1{=}13$ Q1 bins of
+\emph{one} cycle, the weight and each fragment intensity follow the transmission
+\textbf{triangle}. This encodes ``do the fragments ride the metascan shape?'' ---
+discriminative (real precursors ride the triangle; interference does not).
+\item \textbf{Across-metascan (RT / elution) axis} --- one point per cycle: ``do the
+fragments co-elute over the gradient?'' The classic chromatogram feature.
+\end{itemize}
+
+Today both are computed on the raw \textbf{13-per-cycle jagged trace}, so:
+\begin{enumerate}
+\item \textbf{The fragment correlations are dominated by the shape axis} (13
+within-cycle points per $\sim$n\_cycles elution points), so \code{frag\_corr\_strength}
+etc.\ are really \emph{shape} features that happen to score well --- while the
+\emph{elution} signal they were meant to capture is diluted.
+\item \textbf{The MS1 correlations are broken} (see §2).
+\item \textbf{\code{n\_scans} is an artifact} ($\approx 13\times$ the true peak width).
+\end{enumerate}
+
+\textbf{The plan:} compute each feature at its natural level --- shape features from
+the within-cycle profile, elution features from the clean one-point-per-cycle trace.
+This corrects the features \emph{and}, because everything is computed at the
+meta-scan level (from data the collapse already gathers, plus a per-cycle fragment
+profile), it is the memory/efficiency win we were chasing.
+
+\section{Evidence: the MS1 features are broken}
+
+\code{features.jl:1026--1038} (\code{\_add\_ms1\_chromatogram\_features!}):
+\begin{lstlisting}[firstnumber=1026]
+for k in 1:npts
+    v_m0[k] = m0[i_orig]     # MS1 M0 intensity for this (precursor, scan) row
+    v_w[k]  = w[i_orig]      # deconv weight for this bin
+end
+c_wm0 = _frag_pcor(v_w, v_m0)   # Pearson(weight trace, M0 trace)
+\end{lstlisting}
+There is \textbf{one MS1 scan per cycle}, so all 13 bins of a cycle read the
+\emph{same} \code{m0} $\Rightarrow$ \code{v\_m0} is a step function (13 identical
+values/cycle), while \code{v\_w} is the triangle (13 varying values/cycle). The
+Pearson is then $\mathrm{corr}(\text{within-cycle triangle},\ \text{within-cycle
+constant})$ --- the within-cycle variation is pure noise against a flat line. This
+is why all four MS1-chromatogram features have \textbf{$\approx$0 LGBM gain}. At the
+meta-scan level (one weight vs one M0 per cycle) it becomes
+$\mathrm{corr}(\text{elution},\text{elution})$ --- the correlation it was meant to be.
+
+\section{Feature-by-feature redesign}
+
+Current LGBM gains (MainSearch per-file / 2nd-pass Pass-1) shown to prioritise.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{>{\raggedright}p{0.30\textwidth} c c >{\raggedright\arraybackslash}p{0.40\textwidth}}
+\toprule
+Feature (gain MS / P1) & Axis today & Axis in redesign & Action \\
+\midrule
+\multicolumn{4}{l}{\textit{MS1-chromatogram (all $\approx$0 gain --- broken)}}\\
+\code{ms1\_corr\_weight\_m0} (0/0) & mixed & \textbf{elution} & recompute on clean per-cycle trace (fix) \\
+\code{ms1\_corr\_m0\_m1} (0/0) & mixed & \textbf{elution} & recompute on clean per-cycle trace (fix) \\
+\code{ms1\_apex\_offset\_irt} (0/0) & mixed & \textbf{elution} & apex on clean trace \\
+\code{ms1\_weight\_apex\_to\_m0\_apex\_irt} (115/249) & mixed & \textbf{elution} & apex on clean trace \\
+\midrule
+\multicolumn{4}{l}{\textit{Fragment-chromatogram --- split the axes}}\\
+\code{frag\_corr\_strength} (2871/1001) & shape-dom. & \textbf{split} & shape + elution \\
+\code{frag\_corr\_effective\_n} (1419/1586) & shape-dom. & \textbf{split} & shape + elution \\
+\code{frag\_apex\_dispersion\_irt} (827/\textbf{2249}) & mixed & \textbf{split} & shape (within-cycle apex spread) + elution (across-cycle) \\
+\code{frag\_corr\_best\_m0} (87/95) & shape-dom. & \textbf{split} & shape + elution \\
+\code{n\_correlated\_fragments} (80/14) & shape-dom. & \textbf{split} & count over shape corr $>$thr + over elution corr $>$thr \\
+\code{n\_correlated\_fragments\_bitvec\_rank} (71/312) & shape-dom. & \textbf{split} & shape + elution (thresholded) \\
+\code{delta\_frame\_peak\_center} (226/230) & mixed & \textbf{elution} & peak-center drift over cycles \\
+\code{n\_scans} (2275/16) & raw count & \textbf{meta count} & = number of cycles (peak width) \\
+\midrule
+\multicolumn{4}{l}{\textit{New shape features (the discriminative part, now explicit)}}\\
+\code{frag\_shape\_corr} (new) & --- & \textbf{shape} & mean over cycles of Pearson(frag profile, weight triangle) \\
+\code{frag\_shape\_corr\_apex} (new) & --- & \textbf{shape} & same, at the apex cycle only \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Guiding rule: \textbf{a correlation ``across the 13 bins'' is a shape
+feature; a correlation ``across cycles'' is an elution feature.} We currently only
+have the (mislabelled) former; we add the latter and fix MS1.
+
+\medskip
+\noindent\textbf{Per review (2026-07-09): split \emph{all} of the fragment
+correlations} into a within-metascan \emph{shape} version and an across-cycle
+\emph{elution} version --- not just the top-gain three. So each of
+\code{frag\_corr\_strength}, \code{frag\_corr\_effective\_n},
+\code{frag\_apex\_dispersion\_irt}, \code{frag\_corr\_best\_m0},
+\code{n\_correlated\_fragments}, \code{n\_correlated\_fragments\_bitvec\_rank} gets a
+\code{*\_shape} and a \code{*\_elution} column. Generate the full set first, then
+\textbf{whittle down by LGBM gain} after the first A/B. The elution versions
+\textbf{mirror the current (develop) computation} but at the meta-scan/cycle level.
+
+\section{Existing precedent: the flanking core already does this right}
+
+The codebase \emph{already} computes a cycle-based contiguity/gap measure at the
+meta-scan level --- we should mirror it rather than invent new machinery.
+
+\code{\_mainsearch\_flanking\_core\_bounds!} (scoring.jl:799), called from
+\code{add\_trace\_and\_fragment\_features!(best\_psms, psms)} \textbf{after the
+collapse}, sorts a precursor's rows by \code{cycle\_idx} and walks outward from the
+apex, admitting a neighbour \emph{only if it is the adjacent cycle}:
+\begin{lstlisting}[firstnumber=854]
+UInt32(cycle_idxs[previous]) == UInt32(cycle_idxs[current]) - UInt32(1) || break  # walk left
+...
+UInt32(cycle_idxs[next_row]) == UInt32(cycle_idxs[current]) + UInt32(1) || break  # walk right
+\end{lstlisting}
+i.e.\ it stops at a cycle gap (``a large enough gap $\Rightarrow$ not the same
+sequence''), keyed on \textbf{cycles, not raw scans}. Because its input is the
+collapsed meta-PSM table (one row per cycle), this is \emph{already correct for ZT}
+and produces \code{n\_contiguous\_scans}.
+
+\textbf{Consequences for this plan:}
+\begin{itemize}
+\item The broken features (\code{frag\_corr\_*}, \code{ms1\_corr\_*}, and the artifact
+\code{n\_scans}) are exactly the ones in \code{add\_chromatogram\_features!}, which
+runs \emph{pre}-collapse on the 13-per-cycle jagged trace. The redesign moves them
+into a post-collapse pass that reuses the same cycle-contiguity idea for the
+\emph{elution} gap/adjacency.
+\item \code{n\_scans} (pre-collapse, $\approx 13\times$cycles, an artifact --- yet gain
+2275) vs \code{n\_contiguous\_scans} (post-collapse, real cycle count) is an existing
+inconsistency; the redesign's \code{n\_scans} $=$ cycle count aligns them.
+\item The elution \code{frag\_corr} should build each fragment's per-cycle trace over
+the \emph{contiguous cycle core} (or gap-aware), not a naive correlation over all
+rows --- matching the flanking core's notion of ``the same eluting peak''.
+\end{itemize}
+
+\section{What the collapse must carry}
+
+\code{collapse\_to\_metascans} already gathers the 13 weights/cycle into
+\code{metascan\_w\_*} (metascan\_collapse.jl:113). Extend it to also gather, per
+(precursor, cycle):
+\begin{itemize}
+\item the \textbf{per-fragment profile}: for each of the 8 fragments, its intensity
+in each of the 13 bins (from \code{frag1\_int..frag8\_int} on the raw rows) --- used
+for the \emph{shape} correlations and to form each fragment's per-cycle intensity;
+\item the \textbf{per-cycle combined values} for the \emph{elution} trace: one weight
+and one intensity per fragment per cycle (triangle-weighted sum, matching the
+integration collapse), plus the cycle's M0/M1 (already per-cycle).
+\end{itemize}
+Two economical options:
+\begin{enumerate}
+\item \textbf{Compute shape features inside the collapse} (it already has the 13
+weights; add the 13$\times$8 fragment gather) and emit \emph{scalars}
+(\code{frag\_shape\_corr}, \code{frag\_shape\_corr\_apex}) + the per-cycle combined
+fragment intensities. Smallest footprint; no 13$\times$8 columns stored.
+\item Store the raw per-cycle fragment profiles as columns and compute everything in
+a ZT chromatogram pass. More flexible, more columns.
+\end{enumerate}
+Option 1 is preferred (keeps the meta-PSM table narrow).
+
+\section{Implementation}
+
+\begin{enumerate}
+\item \textbf{\code{metascan\_collapse.jl}} --- extend the per-(precursor,cycle) gather
+to also read \code{frag1..8\_int}; compute \code{frag\_shape\_corr} /
+\code{frag\_shape\_corr\_apex}; emit per-cycle combined fragment intensities
+(triangle-weighted) as 8 columns (or a packed form) on each meta-PSM. Keep
+\code{metascan\_w\_*} + the existing \code{ZT\_PROFILE\_FEATURES}.
+\item \textbf{New \code{\_add\_zt\_elution\_features!}} (features.jl, ZT-gated) ---
+replaces \code{\_add\_ms1\_chromatogram\_features!} + \code{\_add\_fragment\_chromatogram\_features!}
+for ZT. Operates on the collapsed meta-PSMs (one point/cycle): builds each
+precursor's clean per-cycle traces (weight, M0, M1, per-fragment combined intensity)
+and computes the \emph{elution} versions of the features above + \code{n\_scans} =
+n\_cycles. Non-ZT keeps the current functions unchanged.
+\item \textbf{\code{MainSearch.jl process\_search\_results!}} --- for ZT, collapse first
+(as in the reverted reorder), then call \code{\_add\_zt\_elution\_features!} on the
+3.2M meta-PSMs; \code{prepare\_psm\_features!} runs there too (byte-identical). Drop
+the 35M \code{permute} (collapse re-sorts).
+\item \textbf{Feature lists} --- add the new shape/elution columns to
+\code{PRESCORE\_FEATURES} and the 2nd-pass config (\code{model\_config.jl}); the
+LGBM \code{hasproperty} filter means non-ZT simply won't have them.
+\end{enumerate}
+
+\section{Verification \& rollout}
+
+\textbf{This is a feature \emph{change}, not byte-identical} --- the goal is
+\emph{better or equal} IDs at lower cost. Use the harness we built:
+\begin{itemize}
+\item 3-file A/B vs \code{results\_3rep\_iso00} baseline (73,657 prec / 12,228 PG /
+CV 8.48\% / 6.47 min). Success = IDs $\ge$ baseline, CV $\le$ baseline, and
+\textbf{candidate count into 2nd-pass $\le$ baseline} (the naive meta reduction
+inflated it +36\%; the shape features should prevent that).
+\item Inspect the new features' LGBM gains --- expect the elution MS1 corr to go from
+$\approx$0 to non-trivial, and the shape corr to retain the discriminative power.
+\item Env/ZT-gated (\code{PIONEER\_ZT\_METASCAN\_K}); non-ZT path byte-identical.
+Land the collapse-first + \code{prepare} move (byte-identical part) first, then the
+feature functions.
+\end{itemize}
+
+\textbf{Efficiency:} all new features compute at the meta-scan level (3.2M) or inside
+the collapse (from data it already touches), so we get the memory reduction
+($\sim$$-$17\% Main Search alloc, $-$7\,GB peak RSS from the reorder measurement)
+\emph{without} the candidate inflation --- because we no longer discard the shape
+axis.
+
+\section{Decisions from review (2026-07-09)}
+
+\begin{enumerate}
+\item \textbf{Shape corr (fragment-vs-weight within a metascan): KEEP.} Expected to
+add information beyond \code{zt\_tri\_cosine} (which is weight-vs-triangle only). This
+is fragment-vs-weight, per fragment. \emph{Follow-up:} once implemented, also try
+fragment-vs-\emph{triangle} variants and compare.
+\item \textbf{Elution intensity per cycle: implement BOTH and test.} Provide the
+triangle-weighted combined intensity \emph{and} the center-bin intensity as an
+env-gated toggle; A/B them (no strong prior which wins).
+\item \textbf{\code{delta\_frame\_peak\_center} + elution features: mirror develop at
+the cycle level.} Post-collapse our cycle notion is accurate, so keep develop's
+computation but drive it off the one-point-per-cycle trace / contiguous cycle core.
+Don't redesign the math, just re-level it.
+\item \textbf{Split scope: split ALL fragment correlations} into
+\code{*\_shape} + \code{*\_elution} initially (six pairs; see §3), generate the full
+set, then \textbf{whittle down by LGBM gain} after the first A/B. Feature-count
+ballooning is fine as a first pass since the \code{hasproperty} filter + gains will
+prune.
+\end{enumerate}
+
+\paragraph{Resulting first-pass feature set (ZT).}
+\begin{itemize}
+\item MS1 (4): elution recompute of \code{ms1\_corr\_weight\_m0},
+\code{ms1\_corr\_m0\_m1}, \code{ms1\_apex\_offset\_irt},
+\code{ms1\_weight\_apex\_to\_m0\_apex\_irt}.
+\item Fragment (12 = 6 pairs): \{\code{frag\_corr\_strength},
+\code{frag\_corr\_effective\_n}, \code{frag\_apex\_dispersion\_irt},
+\code{frag\_corr\_best\_m0}, \code{n\_correlated\_fragments},
+\code{n\_correlated\_fragments\_bitvec\_rank}\} $\times$ \{\code{\_shape},
+\code{\_elution}\}.
+\item \code{n\_scans} $=$ cycle count; \code{delta\_frame\_peak\_center} (elution,
+cycle-leveled).
+\item Elution intensity toggle: \code{PIONEER\_ZT\_ELUTION\_INTENSITY} $\in$
+\{triangle, center\}.
+\end{itemize}
+Then A/B (IDs $\ge$, CV $\le$, candidates $\le$ baseline), read the gains, and prune.
+
+\end{document}

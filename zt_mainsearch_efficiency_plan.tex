@@ -1,0 +1,156 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\textbf{Main Search Efficiency Plan (Sciex ZT)}\\[4pt]
+\large Cutting the 13$\times$ meta-scan overhead}
+\author{feat/sciex-zt-scanning}
+\date{2026-07-09}
+
+\begin{document}
+\maketitle
+
+\section{The problem, measured}
+
+Main Search is 56\% of runtime ($\approx$249\,s / 3 files) and allocates
+$\approx$213\,GB cumulatively. Per file (from the debug log):
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+deconv PSMs emitted (per precursor $\times$ bin $\times$ scan) & $\approx$35{,}000{,}000 \\
+after \code{collapse\_to\_metascans} (per precursor $\times$ cycle) & $\approx$3{,}200{,}000 \\
+reduction & \textbf{11$\times$} \\
+columns per PSM & 61 \\
+\code{permute\_psms\_by\_precursor\_idx!} (Sort 1) & $\approx$4.2\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{The waste:} every feature stage runs on the full 35M rows, and only then
+does the collapse keep $\approx$1/12 of them. We compute and allocate features for
+$\approx$32M rows we immediately throw away.
+
+\section{Current order (per file)}
+
+\begin{quote}
+\code{library\_search} $\to$ \textbf{35M} PSMs (deconv, 47 fields)\\
+\code{add\_scan\_competition\_features!} \hfill [35M, \emph{per-scan}, 147\,ms]\\
+\code{add\_ms1\_lookup\_features!} \hfill [35M, \emph{per-scan}, 1.8\,s]\\
+\code{permute\_psms\_by\_precursor\_idx!} \hfill [Sort 1, 4.2\,s]\\
+--- \code{process\_search\_results!} ---\\
+\code{prepare\_psm\_features!} \hfill [35M, \emph{per-PSM}, 14 cols]\\
+\code{add\_chromatogram\_features!} \hfill [35M, \emph{per-precursor}, 12+ cols]\\
+\code{collapse\_to\_metascans} \hfill [Sort 2; \textbf{35M $\to$ 3.2M}]\\
+\code{train\_lgbm\_and\_select\_best}
+\end{quote}
+
+\section{Feature-dependency map (what can move)}
+
+The collapse only needs \code{:weight}, \code{:precursor\_idx}, \code{:scan\_idx}
+(all from deconv) --- \emph{no} computed features. So the question is which feature
+stages \emph{must} run on the full 35M (they need per-scan context) vs.\ which are
+pure per-PSM / per-precursor transforms that can run on the 3.2M meta-PSMs.
+
+\begin{center}
+\begin{tabular}{p{0.33\textwidth} p{0.28\textwidth} c}
+\toprule
+Stage & Context & Movable after collapse? \\
+\midrule
+\code{scan\_competition} & per-scan (all candidates in a scan) & \textbf{No} -- keep before (cheap, 147\,ms) \\
+\code{ms1\_lookup} & per-scan (scan-contiguous MS1 cache) & No -- keep before (1.8\,s) \\
+\code{prepare\_psm\_features!} & per-PSM (lookups by prec/scan idx) & \textbf{Yes} -- identical on center rows \\
+\code{add\_chromatogram\_features!} & per-precursor chromatogram, scattered to all 13 bins & \textbf{Yes} -- and \emph{cleaner} (see below) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Bonus insight:} \code{add\_chromatogram\_features!} builds each precursor's
+chromatogram from its PSMs --- currently the 13-points-per-cycle jagged trace (the
+same artifact we fixed in IntegrateChromatograms). Running it \emph{after} the
+collapse feeds it the clean one-point-per-cycle trace, so it is both cheaper
+\emph{and} more correct. (This means it is not byte-identical --- it must be A/B'd,
+but the expected direction is neutral-to-better.)
+
+\section{Options}
+
+\subsection*{Option 1 --- Reorder: collapse before the per-PSM features (recommended first)}
+Move \code{collapse\_to\_metascans} up to right after \code{ms1\_lookup} (still ZT-gated),
+so \code{prepare\_psm\_features!} and \code{add\_chromatogram\_features!} run on 3.2M
+instead of 35M. Because the collapse already sorts by (precursor, scan), its output is
+precursor-grouped, so \textbf{Sort 1 (\code{permute}, 4.2\,s) is eliminated}.
+\begin{itemize}
+\item \textbf{Savings:} $\approx$11$\times$ on the two big feature stages (allocation +
+scatter) $+$ the 4.2\,s sort. Deconv (39\,s) and the two per-scan stages unchanged.
+\item \textbf{Risk:} moderate. \code{prepare\_psm\_features!} is byte-identical on center
+rows; \code{add\_chromatogram\_features!} changes value (cleaner input) $\Rightarrow$
+verify IDs/quant. Well-contained (moves one call, drops one sort, all ZT-gated).
+\item \textbf{Sub-option 1a (byte-identical):} move only \code{prepare\_psm\_features!}
+after the collapse and leave chromatogram features before it --- smaller win, zero
+result change, good as a first safe landing.
+\end{itemize}
+
+\subsection*{Option 2 --- Lightweight neighbor rows}
+In the deconv loop, emit full 47-field rows only for \emph{center} bins ($\approx$3.2M);
+for the $\approx$32M neighbor bins emit only \code{(precursor\_idx, scan\_idx, weight)}
+($\approx$12\,B vs a 61-col row) into a compact side-array the collapse reads for its
+$\pm k$ profile.
+\begin{itemize}
+\item \textbf{Savings:} kills most of the 35M full-row materialization (the 3.5\,GB
+deconv-output block $+$ every 35M-scale feature column) while preserving the per-bin
+weights. Stacks on Option 1.
+\item \textbf{Risk:} higher --- touches the deconv emit path (\code{ScoredPSMs.jl} /
+\code{process\_scans\_fused.jl}) and the collapse's gather.
+\end{itemize}
+
+\subsection*{Option 3 --- Streaming / fused collapse (your ``condense as we go'')}
+Accumulate per-(precursor, cycle) weights \emph{during} the deconv scan loop into a
+per-precursor accumulator, materializing only the center row. Never build the 35M
+table; no Sort 1, no Sort 2.
+\begin{itemize}
+\item \textbf{Savings:} the largest --- eliminates the 35M table, both sorts, and the
+disk round-trip, and runs all features on 3.2M.
+\item \textbf{Risk:} highest --- the deconv loop is scan-major and the per-scan stages
+(\code{scan\_competition}, \code{ms1\_lookup}) must be folded into the loop. Effectively
+Options 1+2 plus loop fusion. Do last.
+\end{itemize}
+
+\subsection*{Option 4 --- Smaller $k$ (independent, trivial)}
+The triangle edge weights are tiny ($t_{\pm6}=0.14$); $k$=4--5 cuts the expansion
+$\approx$40\% for likely-negligible ID/quant loss. One-line env change, stacks with
+everything. Worth a quick A/B regardless.
+
+\subsection*{On your ``no additional sorts'' idea}
+Deconv is inherently scan-major, so the sort exists to group by precursor. Avoiding it
+entirely means \emph{bucketing into per-precursor accumulators as you emit}
+(radix-style) --- which is exactly Option 3. On its own, reordering emission only
+removes one sort; the 11$\times$ feature waste needs the collapse-before-features move
+(Option 1). So the sort elimination is a \emph{consequence} of Options 1/3, not a
+separate lever.
+
+\section{Recommended sequence}
+
+\begin{enumerate}
+\item \textbf{Option 1a} (move \code{prepare\_psm\_features!} after collapse):
+byte-identical, drops Sort 1, first safe win. Verify IDs/quant \emph{identical} +
+measure Main Search time.
+\item \textbf{Option 1} (also move \code{add\_chromatogram\_features!}): A/B IDs/quant
+(expect neutral-to-better from the clean chromatogram); measure the full 11$\times$
+feature-stage saving.
+\item \textbf{Option 4} ($k$=5) A/B in parallel --- free if neutral.
+\item \textbf{Option 2}, then \textbf{Option 3} if we want to also remove the 35M
+materialization and the deconv-output allocation.
+\end{enumerate}
+
+\textbf{Verification protocol for each step:} run the 3 ZT files (k=6, MBR off),
+compare precursor rows / protein-group rows / across-replicate median CV against the
+\code{results\_3rep\_iso00} baseline (73{,}657 / 12{,}228 / 8.48\%), plus the Main
+Search stage time and cumulative alloc from the report. A step ``passes'' if IDs and
+CV are within noise and Main Search time / alloc drop.
+
+\end{document}

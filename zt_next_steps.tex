@@ -1,0 +1,179 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  breaklines=true, frame=single, framesep=4pt,
+  showstringspaces=false, xleftmargin=1em,
+}
+
+\title{\textbf{Sciex ZT Scanning-DIA: Change Audit \& Next Steps}\\[4pt]
+\large What we changed, keeping it minimal, and where to go}
+\author{feat/sciex-zt-scanning}
+\date{2026-07-08}
+
+\begin{document}
+\maketitle
+
+\section{Where we are}
+
+The full pipeline now runs end-to-end on ZT scanning-DIA data. A 3-file run
+(MBR on) completes in $\sim$7.3 min and yields $\sim$85.7k precursor rows /
+$\sim$13.2k protein-group rows, with clean per-cycle chromatograms and sane peak
+areas. Everything ZT is gated on the environment variable
+\texttt{PIONEER\_ZT\_METASCAN\_K} ($k$); with $k=0$ the code is byte-identical to
+the base branch, so \textbf{no other dataset is affected today}.
+
+\section{What we have changed for ZT (audit)}
+
+Net footprint vs.\ the branch base: \textbf{9 files, +523 / -22 lines}. Grouped by
+role:
+
+\begin{center}
+\begin{tabular}{p{0.34\textwidth} r p{0.42\textwidth}}
+\toprule
+File & $\Delta$lines & Role \\
+\midrule
+\multicolumn{3}{l}{\textit{Core acquisition model (the actual ZT algorithm)}}\\
+\texttt{LibrarySearch.jl} & +173 & two-width square quad (frag-index center bin
+$\approx$1 m/z; deconv $(2k{+}1)\,S$ box), meta-scan candidate expansion,
+center-bin filter, \texttt{\_zt\_bin\_step}\\
+\texttt{MainSearch.jl} & +32 & call the collapse before the per-file LGBM\\
+\texttt{metascan\_collapse.jl} & +132 (new) & collapse $\pm k$ bins $\to$ 1
+meta-PSM + 13 weight cols + 9 profile features\\
+\texttt{IntegrateChromatogramsSearch.jl} & +46 & wide extraction quad + per-cycle
+collapse wiring\\
+\texttt{...IntegrateChroms/utils.jl} & +88 & \texttt{collapse\_chromatograms\_to\_metascans} (triangle-weighted)\\
+\texttt{importScripts.jl} & +1 & include the new file\\
+\midrule
+\multicolumn{3}{l}{\textit{Tuning / calibration (we want this minimal)}}\\
+\texttt{ParameterTuningSearch.jl} & \textbf{+10} & env-gated \texttt{shuffle!} of
+calibration scan sampling\\
+\texttt{fit\_intensity\_mass\_error.jl} & +46 & free (non-monotone) bias spline,
+dispatched ZT$\to$free else monotone\\
+\midrule
+\multicolumn{3}{l}{\textit{Orthogonal (a pre-existing bug, not ZT)}}\\
+\texttt{score\_psms.jl} & +16 & skip MBR when only one raw file (committed
+separately)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Parameter-tuning minimality --- assessment}
+
+This is the part we most want to keep small, and it already is:
+
+\begin{itemize}
+\item \textbf{Calibration shuffle (+10 lines).} Entirely env-gated on
+\texttt{PIONEER\_ZT\_METASCAN\_K > 0}. Non-ZT runs never execute it $\Rightarrow$
+byte-identical. \emph{Keep.}
+\item \textbf{Free bias spline (+46 lines).} Adds a non-monotone spline option and
+dispatches ZT$\to$free, else the original monotone-best fit, so non-ZT results are
+unchanged. Its ZT benefit was never isolated in an A/B. \emph{Candidate to drop} if
+it isn't clearly helping --- that would take Parameter Tuning down to the single
+10-line shuffle.
+\item \textbf{Already reverted (dead ends):} the $\pm 3$ m/z tuning window
+(\textbf{worse}: 20{,}318$\to$18{,}783) and the PSM-target 1200$\to$5000
+(\textbf{neutral}). Neither is in the tree.
+\end{itemize}
+
+\noindent\textbf{Bottom line:} the only tuning change we truly need is the 10-line,
+env-gated calibration shuffle. Everything else ZT lives in the acquisition-model
+code, not in the tuning/calibration logic.
+
+\section{Next steps}
+
+\subsection{1. Efficiency --- the $13\times$ candidate blow-up (highest value)}
+
+Main Search is \textbf{56\% of runtime} because meta-scan expansion multiplies
+candidates by $2k{+}1$ ($\approx$13$\times$ at $k{=}6$), producing $\sim$29M deconv
+PSMs per file; the wide-quad chromatogram extraction has the same blow-up. Levers:
+\begin{itemize}
+\item \textbf{Option B chromatogram collapse}: accumulate $\sum w_j t_j$ per
+(precursor, cycle) \emph{inside} \texttt{build\_chromatograms} and emit one point
+per cycle, instead of materialising $13\times$ points then collapsing
+($13\times$ fewer objects + memory).
+\item \textbf{Prune profile features} 9 $\to$ $\sim$3 (\texttt{zt\_tri\_cosine},
+\texttt{zt\_tail\_frac}, \texttt{zt\_entropy}); drop the 13 stored weight columns
+once features are computed.
+\item \textbf{Bound the expansion} to bins that actually carry signal, and confirm
+\texttt{expand\_to\_metascans!} never over-expands beyond center-matched precursors.
+\end{itemize}
+
+\subsection{2. Auto-detect the acquisition (remove the env flag)}
+
+Replace \texttt{PIONEER\_ZT\_METASCAN\_K} with values \emph{read from the raw file}:
+the per-scan center-m/z step $S$ (does the center advance within a cycle?) and the
+physical window width $W$. This makes ZT handling automatic and removes a manual knob.
+
+\subsection{3. Correctness / quant}
+DIA-NN reference on these exact three files (the only fair yardstick vs.\ the paper);
+entrapment / EFDR; verify quant CV against the reported $\sim$2.8\%.
+
+\section{The unification: treat \emph{all} data as ZT}
+
+The cleanest long-term design (and the stated goal): parameterise the search by two
+per-acquisition numbers and run \emph{one} algorithm.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Parameter & Conventional DIA & ZT scanning \\
+\midrule
+$S$ = center-m/z step per scan & $0$ & $\approx$1.022 m/z \\
+$W$ = physical window width    & reported isolation width & swept window $=(k{+}1)S$ \\
+$\Rightarrow k$ (bins each side) & $0$ & $\approx 6$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent With $k$ derived from $(S, W)$, every ZT stage degenerates \emph{exactly}
+to today's conventional path when $S = 0 \Rightarrow k = 0$:
+
+\begin{center}
+\begin{tabular}{p{0.42\textwidth} p{0.5\textwidth}}
+\toprule
+ZT stage & Behaviour at $k = 0$ (conventional) \\
+\midrule
+meta-scan expansion & no neighbours $\Rightarrow$ no-op \\
+two-width quad (deconv box $(2k{+}1)S$) & box $=$ reported isolation width $\Rightarrow$ unchanged \\
+center-bin filter & the window \emph{is} the bin $\Rightarrow$ identity \\
+chromatogram collapse & one bin per cycle already $\Rightarrow$ identity \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent So the ZT code path \textbf{becomes the general path}, and conventional DIA
+is just the special case $S=0$. Payoff: delete the \texttt{if \_zt} branches and the
+env gate, one code path to maintain, and ZT is continuously exercised by the existing
+regression suite (conventional data flowing through the same kernels).
+
+\paragraph{What it takes.}
+\begin{enumerate}
+\item Derive $(S, W)\to k$ from the raw file (step 2 above).
+\item Replace each \texttt{\_zt}/\texttt{\_zt\_main} gate with the $k$-parameterised
+form, ensuring the $k=0$ reduction is \emph{provably} identical to the current
+conventional code.
+\item \textbf{Byte-identical regression tests}: run existing conventional datasets
+through the unified path and require identical output to today's ($k=0$ must not move
+a single number).
+\item Keep the two \emph{non}-acquisition tuning tweaks (calibration shuffle, bias
+spline) decided separately --- they are sampling/fitting choices, not part of the
+$(S,W)$ model, and should stay gated on $k>0$ (or be dropped) rather than folded into
+the unified kernel.
+\end{enumerate}
+
+\paragraph{Risk.} The only real risk is the $k=0$ byte-identical guarantee: the
+two-width quad, the wide extraction quad, and the collapse must each reduce \emph{to
+the exact current arithmetic}, not merely ``close''. The regression tests in step 3
+are the gate that makes this safe.
+
+\end{document}

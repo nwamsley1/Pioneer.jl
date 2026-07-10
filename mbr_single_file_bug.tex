@@ -1,0 +1,258 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\definecolor{codebg}{gray}{0.96}
+\definecolor{cmt}{rgb}{0.30,0.45,0.30}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  commentstyle=\color{cmt}\itshape,
+  showstringspaces=false,
+  captionpos=b,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  xleftmargin=2.5em,
+}
+% Julia-ish keyword coloring is optional; keep it plain for fidelity.
+
+\title{\textbf{Pioneer MBR ``Batch F'' Single-File Hang}\\[4pt]
+\large Root-cause walkthrough for the Sciex ZT scanning-DIA work}
+\author{feat/sciex-zt-scanning}
+\date{2026-07-08}
+
+\begin{document}
+\maketitle
+
+\section{Symptom}
+
+Every single-file ZT search stalled in the \textbf{Precursor Scoring} stage, at the
+match-between-runs (MBR) step, and never reached Chromatogram Integration. The
+process stayed alive at only $\sim$2 cores for $>$14 minutes with no new log output
+after this line:
+
+\begin{Verbatim}[fontsize=\footnotesize,frame=single]
+[..:20:31] [DEBUG1] MBR Batch F: writing per-file MBR sidecars...
+\end{Verbatim}
+
+Running the \emph{same} data as a \textbf{3-file} experiment, the identical step
+finishes in under a second:
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+Files & MBR ``per-file sidecar'' step & Whole MBR Batch F \\
+\hline
+1 file  & $>$14 min (never completes; killed) & --- \\
+3 files & $\sim$0.9 s (18:14:49.5 $\to$ 18:14:50.4) & $\sim$3 s \\
+\hline
+\end{tabular}
+\end{center}
+
+So the cost is not proportional to the data size --- one file is dramatically
+\emph{slower} than three. That inversion is the tell: the single-file case hits a
+degenerate code path, not simply ``more work''.
+
+\section{Where it happens (call chain)}
+
+All paths are relative to the worktree
+\texttt{pio-sciex-jl} (\texttt{.../pio-sciex-zt/}).
+
+\begin{enumerate}
+\item \textbf{Stage entry / dispatch} ---
+\texttt{src/Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/score\_psms.jl:53}
+\item \textbf{MBR driver} \texttt{\_score\_precursor\_isotope\_traces\_mbr}, the
+per-file sidecar fan-out ---
+\texttt{.../score\_psms.jl:266} (loop at line 314)
+\item \textbf{Per-file feature compute} ---
+\texttt{.../mbr\_streaming.jl:592}
+\texttt{compute\_mbr\_features\_per\_file\_to\_sidecar\_with\_pass1!}
+\item \textbf{Inner per-row loop} ---
+\texttt{.../mbr\_streaming.jl:499} \texttt{\_compute\_mbr\_inner!}
+\item \textbf{The hot spot: counterfactual ``false donor'' search} ---
+\texttt{.../mbr\_streaming.jl:416} \texttt{\_nearest\_cross\_file\_donor}
+(via \texttt{\_false\_donor\_for\_pid}, line 479, and
+\texttt{\_resolve\_false\_donor\_for\_pid}, line 443)
+\end{enumerate}
+
+\section{The relevant code}
+
+\subsection{Dispatch: MBR on $\Rightarrow$ streaming MBR path (score\_psms.jl:53)}
+
+\begin{lstlisting}[firstnumber=53]
+function score_precursor_isotope_traces(
+    second_pass_folder::String,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup,
+    ::Int64, ::Float32 = 0.01f0, ::Bool = false;
+    match_between_runs::Bool = true,
+)
+    if match_between_runs
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
+    else
+        return _score_precursor_isotope_traces_no_mbr(second_pass_folder, file_paths, precursors)
+    end
+end
+\end{lstlisting}
+
+\noindent With \texttt{match\_between\_runs=true} (the default, and what our config
+uses), the streaming MBR path runs \emph{regardless of how many files there are}.
+
+\subsection{The fan-out over files (score\_psms.jl:304)}
+
+\begin{lstlisting}[firstnumber=304]
+@debug_l1 "MBR Batch F: building donor dict via sweep-1..."
+donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+@debug_l1 "  donor dict pids: $(length(donor_dict))"
+
+@debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
+parallel_foreach!(length(file_paths)) do chunk
+    for f_idx in chunk
+        compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            file_paths[f_idx], donor_dict, cf_partner_pools, fragment_keys)
+    end
+end
+\end{lstlisting}
+
+\noindent Note: \texttt{parallel\_foreach!} parallelises \emph{across files}. With one
+file there is exactly one work item, so this is effectively single-threaded --- which
+is why we saw only $\sim$2 cores busy.
+
+\subsection{The per-row loop calls the false-donor search (mbr\_streaming.jl:558)}
+
+For every PSM row, \texttt{\_compute\_mbr\_inner!} looks up a real donor and a
+``false'' (counterfactual) donor:
+
+\begin{lstlisting}[firstnumber=558]
+donor_f = _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, my_pid, my_file)
+\end{lstlisting}
+
+\subsection{The false-donor resolver (mbr\_streaming.jl:479, 443)}
+
+\begin{lstlisting}[firstnumber=479]
+@inline function _false_donor_for_pid(false_donor_cache, donor_dict, partner_pools, my_pid, my_file)
+    if haskey(false_donor_cache, my_pid)
+        return false_donor_cache[my_pid]          # cached per precursor id
+    end
+    donor = _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
+    false_donor_cache[my_pid] = donor
+    return donor
+end
+\end{lstlisting}
+
+\begin{lstlisting}[firstnumber=443]
+@inline function _resolve_false_donor_for_pid(donor_dict, partner_pools, my_pid, my_file)
+    # ... pick fold / m/z-bin for my_pid ...
+    # tries three progressively broader iRT pools, each via _nearest_cross_file_donor:
+    donor = _nearest_cross_file_donor(donor_dict, <m/z-bin pool>, my_irt, my_file)
+    donor !== nothing && return donor
+    donor = _nearest_cross_file_donor(donor_dict, <fold pool>,   my_irt, my_file)
+    donor !== nothing && return donor
+    return        _nearest_cross_file_donor(donor_dict, <global pool>, my_irt, my_file)
+end
+\end{lstlisting}
+
+\subsection{The hot spot (mbr\_streaming.jl:416)}
+
+\begin{lstlisting}[firstnumber=416]
+@inline function _nearest_cross_file_donor(donor_dict, pool, target_irt, my_file)
+    n = length(pool.irts)
+    n == 0 && return nothing
+    right = searchsortedfirst(pool.irts, target_irt)   # O(log n): nearest by iRT
+    left = right - 1
+    @inbounds while left >= 1 || right <= n            # <-- walks OUTWARD across pool
+        use_left = ...                                 #     (nearest-iRT-first order)
+        pool_idx = use_left ? left : right
+        use_left ? (left -= 1) : (right += 1)
+        donor = _donor_for_pid(donor_dict, pool.pids[pool_idx], my_file)
+        donor !== nothing && return donor              # first CROSS-FILE hit wins
+    end
+    return nothing                                     # scanned the WHOLE pool, found none
+end
+\end{lstlisting}
+
+\subsection{The ``different file'' requirement (mbr\_streaming.jl:406)}
+
+\begin{lstlisting}[firstnumber=406]
+@inline function _donor_for_pid(donor_dict, pid, my_file)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    @inbounds for e in entries
+        e.ms_file_idx != my_file && return e           # <-- must come from ANOTHER file
+    end
+    return nothing
+end
+\end{lstlisting}
+
+\section{Root cause}
+
+The counterfactual (``false donor'') feature is, by construction, a donor from a
+\emph{different run}: \texttt{\_donor\_for\_pid} only returns an entry whose
+\texttt{ms\_file\_idx != my\_file} (line 410--411).
+
+\medskip
+\noindent\textbf{With a single file}, no entry can ever satisfy that test. So for
+\emph{every} precursor:
+\begin{itemize}
+\item \texttt{\_nearest\_cross\_file\_donor} does its \texttt{searchsortedfirst}, then
+walks \emph{outward over the entire pool} (the \texttt{while} loop, line 427),
+calling \texttt{\_donor\_for\_pid} on every member, and \textbf{never finds a
+cross-file donor}, so it scans all $n$ pool entries and returns \texttt{nothing}.
+\item \texttt{\_resolve\_false\_donor\_for\_pid} then repeats this for \emph{all three}
+pools (m/z-bin $\to$ fold $\to$ global), the last of which contains essentially
+every precursor.
+\end{itemize}
+
+The \texttt{false\_donor\_cache} caches one result per precursor id, so this exhaustive
+scan happens once per \emph{distinct} precursor. With $P$ distinct precursors and a
+global pool of size $\approx P$:
+\[
+\text{cost} \;\approx\; P \times P \times (\text{3 pools}) \;=\; O(P^2).
+\]
+For this data $P \approx 3.5\times10^5$, so $P^2 \approx 1.2\times10^{11}$ dictionary
+probes --- i.e.\ the observed 14+ minutes. And the whole effort is wasted: the answer
+is always \texttt{nothing}.
+
+\medskip
+\noindent\textbf{With $\ge$2 files}, the pool is dense with precursors that
+\emph{were} seen in other runs, so the outward walk from the nearest-iRT position
+finds a cross-file donor within a handful of steps: $O(\log n)$ per precursor. That is
+why 3 files finish the same step in $\sim$0.9~s.
+
+\medskip
+\noindent\textbf{In one sentence:} MBR-across-runs is meaningless with a single file
+(there is nothing to match \emph{between}), but the code still executes the full
+counterfactual search, which degenerates into an always-failing $O(P^2)$ scan.
+
+\section{Proposed fixes}
+
+\begin{enumerate}
+\item \textbf{Guard at the dispatch (primary fix).} In
+\texttt{score\_precursor\_isotope\_traces} (score\_psms.jl:53), if the experiment has
+only one raw file, skip the MBR path and use the existing non-MBR path
+(\texttt{\_score\_precursor\_isotope\_traces\_no\_mbr}), emitting a one-line warning.
+This is correct: with one file the MBR features would all be ``missing'' anyway. (Care:
+files may be split into \texttt{\_fold0}/\texttt{\_fold1} paths, so count \emph{distinct
+raw files}, not \texttt{length(file\_paths)}.)
+
+\item \textbf{Belt-and-suspenders (optional).} In \texttt{\_nearest\_cross\_file\_donor}
+(mbr\_streaming.jl:416), short-circuit when the pool contains no file other than
+\texttt{my\_file} (precompute the set of \texttt{ms\_file\_idx} present once), so any
+future no-cross-file-donor situation is $O(1)$ instead of $O(n)$. This leaves all
+multi-file behaviour unchanged.
+\end{enumerate}
+
+\noindent Fix (1) resolves the reported hang directly; fix (2) hardens the kernel
+against the same failure mode in edge cases (e.g.\ a precursor whose entire iRT
+neighbourhood is single-file-only).
+
+\end{document}
