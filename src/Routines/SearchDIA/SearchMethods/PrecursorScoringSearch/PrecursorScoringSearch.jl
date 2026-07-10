@@ -75,8 +75,11 @@ struct PrecursorScoringSearchParameters <: SearchParameters
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
-        mbr = hasproperty(global_params, :match_between_runs) ?
-                Bool(global_params.match_between_runs) : true
+        # BRANCH OVERRIDE: force match-between-runs OFF regardless of config.
+        # This branch is for MBR-off regression testing, so global.match_between_runs
+        # is intentionally ignored (skips MBR features, the MBR-boosted second pass,
+        # the FTR controller, and the qval bypass).
+        mbr = false
 
         new(
             Float64(ml_params.max_psm_memory_mb),
