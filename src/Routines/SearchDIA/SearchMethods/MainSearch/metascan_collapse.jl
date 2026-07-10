@@ -55,6 +55,18 @@ const ZT_ELUTION_FEATURES = Symbol[
     :n_scans_metascan,
 ]
 
+# Pre-collapse (develop) chromatogram features now superseded by the clean shape +
+# elution split. Computed on the jagged 13-per-cycle trace, so they mix the two axes
+# (frag_corr_*) or are outright broken (ms1_corr_*, ~0 gain). Dropped from the ZT
+# meta-PSM (both LGBM models filter by hasproperty) so the model uses only the split
+# versions; env-toggle PIONEER_ZT_DROP_ORIG_FRAGCORR=0 keeps them for A/B. Non-ZT
+# datasets never collapse, so their originals are untouched.
+const ZT_REDUNDANT_ORIGINALS = Symbol[
+    :frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
+    :frag_apex_dispersion_irt, :n_correlated_fragments, :n_correlated_fragments_bitvec_rank,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_apex_offset_irt,
+]
+
 # Compute the 9 shape features from a length-(2k+1) weight vector `w` (j=-k..k,
 # center at index k+1), given the ideal triangle template `tri` (+ its norm).
 @inline function _zt_profile_features(w::Vector{Float32}, k::Int, tri::Vector{Float32}, tnorm::Float32)

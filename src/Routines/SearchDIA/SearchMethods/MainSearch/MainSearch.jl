@@ -368,6 +368,13 @@ function process_search_results!(
         _zt_elu_tri = get(ENV, "PIONEER_ZT_ELUTION_INTENSITY", "triangle") != "center"
         psms = add_zt_elution_features!(psms; bitvec_rank_table = _bitvec_rank_table,
                                         use_triangle = _zt_elu_tri)
+        # Retire the pre-collapse (jagged 39-point) frag_corr_* / broken ms1_corr_*
+        # in favour of the clean shape + elution split (both LGBM models filter by
+        # hasproperty, so dropping the columns removes them from scoring).
+        if get(ENV, "PIONEER_ZT_DROP_ORIG_FRAGCORR", "1") != "0"
+            _drop = intersect(Symbol.(names(psms)), ZT_REDUNDANT_ORIGINALS)
+            isempty(_drop) || select!(psms, Not(_drop))
+        end
         results.psms[] = psms
         @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
                    "profile features $(_zt_profile ? "ON" : "OFF"); " *
