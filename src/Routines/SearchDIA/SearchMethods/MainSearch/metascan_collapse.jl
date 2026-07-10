@@ -38,6 +38,18 @@ const ZT_SHAPE_FEATURES = Symbol[
     :frag_apex_dispersion_shape,             # std of fragment apex bin-offsets (0 = all centered)
     :n_correlated_fragments_shape,           # # fragments with shape corr > 0.7
     :n_correlated_fragments_bitvec_rank_shape,  # bitvec rank of the >0.7 pattern
+    # weight-profile-vs-triangle match, mean-centered Pearson (not a fragment feature —
+    # grouped here for model wiring). Complements the uncentered zt_tri_cosine; a top-3
+    # feature in the 2nd-pass. 3-file: +2.9% prec / +3.0% PG over the shape-only baseline.
+    :zt_tri_pcor,
+]
+
+# Experimental shape-feature candidates (env `PIONEER_ZT_SHAPE_EXP`, default off →
+# columns absent → hasproperty-filtered out of both LGBMs → byte-identical). Tested
+# one at a time in isolation; this vector holds only the candidate currently under
+# test (see zt_shape_feature_experiments_plan.md). Confirmed winners graduate to the
+# permanent lists above. Next up: (a) zt_tri_spectral_angle.
+const ZT_SHAPE_EXP_FEATURES = Symbol[
 ]
 
 # The across-cycle ELUTION features (frag_corr_*, ms1_corr_*, n_scans) are NOT a
@@ -228,5 +240,12 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     meta[!, :frag_apex_dispersion_shape]            = sh_disp
     meta[!, :n_correlated_fragments_shape]          = sh_n70
     meta[!, :n_correlated_fragments_bitvec_rank_shape] = sh_rank
+    # zt_tri_pcor (promoted): mean-centered Pearson of the weight profile vs the triangle.
+    # Computed from the stored profiles so the hot per-meta-PSM loop is untouched.
+    meta[!, :zt_tri_pcor] = Float32[_frag_pcor(profiles[m], tri) for m in 1:nm]
+    # Experimental shape candidates under test (env-gated; additive — absent by default).
+    if get(ENV, "PIONEER_ZT_SHAPE_EXP", "0") != "0"
+        # (next candidate columns go here; keep in sync with ZT_SHAPE_EXP_FEATURES)
+    end
     return meta
 end

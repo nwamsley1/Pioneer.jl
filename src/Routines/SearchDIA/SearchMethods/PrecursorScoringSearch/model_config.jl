@@ -113,6 +113,9 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_shape,
     :n_correlated_fragments_shape,
     :n_correlated_fragments_bitvec_rank_shape,
+    # weight-profile-vs-triangle match (mean-centered Pearson) — top-3 in this 2nd-pass
+    # model; the zt_* profile features are otherwise main-search-only. +3.0% PG (3-file).
+    :zt_tri_pcor,
     # ZT across-cycle (elution) MS1/fragment features are NOT listed separately: for
     # ZT they are the develop chromatogram features (frag_corr_strength, ms1_corr_*,
     # n_scans, etc. above), recomputed on the collapsed one-point-per-cycle meta trace.

@@ -383,7 +383,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
-            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES) :
+            features = _zt_profile ? vcat(collect(PRESCORE_FEATURES), ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES, ZT_SHAPE_EXP_FEATURES) :
                                      collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores
