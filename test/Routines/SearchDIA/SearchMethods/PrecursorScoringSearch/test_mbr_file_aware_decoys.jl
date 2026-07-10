@@ -93,6 +93,80 @@ end
     @test Pioneer._donor_for_pid(donor_dict, UInt32(1), UInt32(10)).ms_file_idx == UInt32(40)
 end
 
+@testset "MBR donor dictionary can retain all donor files for similarity selection" begin
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}()
+
+    Pioneer._accumulate_donor_entries!(
+        donor_dict,
+        UInt32[1, 1, 1, 1],
+        UInt32[1, 1, 1, 1],
+        UInt32[10, 11, 12, 13],
+        UInt32[10, 11, 12, 13],
+        Float32[0.95, 0.90, 0.70, 0.60],
+        Float32[1, 1, 1, 1],
+        Float16[0.5, 0.5, 0.5, 0.5],
+        Float32[12, 12, 12, 12],
+        Float32[11, 11, 11, 11],
+        nothing,
+        nothing,
+        Float32[5, 5, 5, 5],
+        Float32[0.25, 0.25, 0.25, 0.25],
+        ntuple(_ -> zeros(Float32, 4), 8),
+        UInt32[10, 20, 30, 40],
+        "unit-test",
+        max_donor_files_per_precursor = typemax(Int),
+    )
+
+    @test [entry.ms_file_idx for entry in donor_dict[UInt32(1)]] == UInt32[10, 20, 30, 40]
+end
+
+@testset "MBR true donor selection uses receiver-to-donor run coverage" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver.arrow")
+        donor_low_path = joinpath(dir, "donor_low.arrow")
+        donor_high_path = joinpath(dir, "donor_high.arrow")
+        donor_equal_path = joinpath(dir, "donor_equal.arrow")
+
+        function write_similarity_table(path, file_idx, pids, qvals)
+            Arrow.write(path, DataFrame(
+                precursor_idx = UInt32.(pids),
+                ms_file_idx = fill(UInt32(file_idx), length(pids)),
+                target = trues(length(pids)),
+                qval = Float32.(qvals),
+            ))
+        end
+
+        write_similarity_table(receiver_path, 1, [1, 2, 3, 10], [0.001, 0.001, 0.001, 0.05])
+        write_similarity_table(donor_low_path, 2, [1, 10], [0.001, 0.001])
+        write_similarity_table(donor_high_path, 3, [1, 2, 10], [0.001, 0.001, 0.001])
+        write_similarity_table(donor_equal_path, 4, [1, 10], [0.001, 0.001])
+
+        similarity = Pioneer.build_mbr_run_similarity(
+            [receiver_path, donor_low_path, donor_high_path, donor_equal_path];
+            q_value_threshold = 0.01f0,
+        )
+
+        donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+            UInt32(10) => [
+                _test_mbr_donor(0.99f0, UInt32(2); precursor_idx = UInt32(10)),
+                _test_mbr_donor(0.70f0, UInt32(3); precursor_idx = UInt32(10)),
+            ],
+            UInt32(11) => [
+                _test_mbr_donor(0.90f0, UInt32(2); precursor_idx = UInt32(11)),
+                _test_mbr_donor(0.80f0, UInt32(4); precursor_idx = UInt32(11)),
+            ],
+        )
+
+        selected = Pioneer._donor_for_pid(donor_dict, UInt32(10), UInt32(1), similarity)
+        tied = Pioneer._donor_for_pid(donor_dict, UInt32(11), UInt32(1), similarity)
+
+        @test selected !== nothing
+        @test selected.ms_file_idx == UInt32(3)
+        @test tied !== nothing
+        @test tied.ms_file_idx == UInt32(2)
+    end
+end
+
 @testset "MBR counterfactual partner pool allows same-class non-self precursors" begin
     target_by_pid = trues(3)
     fold_by_pid = zeros(UInt8, 3)
