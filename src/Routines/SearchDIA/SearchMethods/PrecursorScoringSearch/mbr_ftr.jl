@@ -29,6 +29,7 @@
 # Tighter (0.001) → only very confident donors → fewer candidates, safer FTR.
 # Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
+const MBR_INITIAL_RECEIVER_Q_THRESHOLD = Float32(0.05)
 const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
 const MBR_RECOVERY_ALPHA_DEFAULT = Float32(0.01)
 
@@ -120,10 +121,22 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_single_donor_true,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_rank_true,
+    :MBR_best_corr_frag_hellinger_true,
+    :MBR_best_corr_frag_hellinger_rank_true,
+    :MBR_best_donor_frag_corr_bitvec_rank_true,
+    :MBR_best_receiver_corr_frag_hellinger_true,
+    :MBR_best_receiver_corr_frag_hellinger_rank_true,
+    :MBR_receiver_frag_corr_bitvec_rank,
+    :MBR_best_shared_corr_frag_hellinger_true,
+    :MBR_best_shared_corr_frag_hellinger_rank_true,
+    :MBR_best_shared_corr_frag_bitvec_rank_true,
 ]
 
 const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
     :MBR_best_smoothed_frag_hellinger_rank_true,
+    :MBR_best_corr_frag_hellinger_rank_true,
+    :MBR_best_receiver_corr_frag_hellinger_rank_true,
+    :MBR_best_shared_corr_frag_hellinger_rank_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -179,37 +192,46 @@ function _mbr_ftr_features_true_from_env(env = ENV)
     return features
 end
 
-function _mbr_best_hellinger_col(counterfactual_idx::Int)
+function _mbr_best_hellinger_col(
+    counterfactual_idx::Int,
+    base::AbstractString = "MBR_best_smoothed_frag_hellinger",
+)
+    true_col = Symbol(base * "_true")
     return counterfactual_idx == 0 ?
-        :MBR_best_smoothed_frag_hellinger_true :
-        _mbr_counterfactual_feature_name(:MBR_best_smoothed_frag_hellinger_true, counterfactual_idx)
+        true_col :
+        _mbr_counterfactual_feature_name(true_col, counterfactual_idx)
 end
 
-function _mbr_best_hellinger_rank_col(counterfactual_idx::Int)
+function _mbr_best_hellinger_rank_col(
+    counterfactual_idx::Int,
+    base::AbstractString = "MBR_best_smoothed_frag_hellinger",
+)
+    true_col = Symbol(base * "_rank_true")
     return counterfactual_idx == 0 ?
-        :MBR_best_smoothed_frag_hellinger_rank_true :
-        _mbr_counterfactual_feature_name(:MBR_best_smoothed_frag_hellinger_rank_true, counterfactual_idx)
+        true_col :
+        _mbr_counterfactual_feature_name(true_col, counterfactual_idx)
 end
 
 function _mbr_add_best_hellinger_rank_features!(
     psms::DataFrame;
     n_counterfactuals::Int,
+    base::AbstractString = "MBR_best_smoothed_frag_hellinger",
 )
     (1 <= n_counterfactuals <= MBR_MAX_COUNTERFACTUALS) ||
         error("n_counterfactuals must be in 1:$(MBR_MAX_COUNTERFACTUALS), got $n_counterfactuals")
 
     n = nrow(psms)
-    best_h_cols = Symbol[_mbr_best_hellinger_col(0)]
+    best_h_cols = Symbol[_mbr_best_hellinger_col(0, base)]
     for counterfactual_idx in 1:n_counterfactuals
-        push!(best_h_cols, _mbr_best_hellinger_col(counterfactual_idx))
+        push!(best_h_cols, _mbr_best_hellinger_col(counterfactual_idx, base))
     end
     for col in best_h_cols
         hasproperty(psms, col) || error("Missing MBR Hellinger feature column $col")
     end
 
     @inbounds for counterfactual_idx in 0:n_counterfactuals
-        source_col = _mbr_best_hellinger_col(counterfactual_idx)
-        rank_col = _mbr_best_hellinger_rank_col(counterfactual_idx)
+        source_col = _mbr_best_hellinger_col(counterfactual_idx, base)
+        rank_col = _mbr_best_hellinger_rank_col(counterfactual_idx, base)
         source_values = psms[!, source_col]
         ranks = Vector{Float32}(undef, n)
         for i in 1:n
@@ -426,6 +448,25 @@ function _mbr_transfer_positive_top(
         positive_top[i] = Float32(ftr_qvals_top[i]) <= ftr_threshold
     end
     return positive_top
+end
+
+function _mbr_initial_receiver_positive_top(
+    receiver_scores::AbstractVector{<:Real},
+    target_top::AbstractVector{Bool};
+    q_threshold::Float32 = MBR_INITIAL_RECEIVER_Q_THRESHOLD,
+)
+    n = length(receiver_scores)
+    @assert length(target_top) == n
+    qvals = Vector{Float32}(undef, n)
+    if n == 0
+        return (Bool[], qvals)
+    end
+    get_qvalues!(Float32.(receiver_scores), target_top, qvals)
+    positive_top = falses(n)
+    @inbounds for i in 1:n
+        positive_top[i] = target_top[i] && qvals[i] <= q_threshold
+    end
+    return (positive_top, qvals)
 end
 
 function _mbr_transfer_counterfactual_labels(
@@ -649,10 +690,32 @@ function apply_mbr_filter_paired!(
 
     sub = psms[cand_idx, :]
     true_features_all = _mbr_ftr_features_true_from_env()
-    if any(f -> f in true_features_all, MBR_HELLINGER_CONTRAST_FEATURES)
+    if :MBR_best_smoothed_frag_hellinger_rank_true in true_features_all
         _mbr_add_best_hellinger_rank_features!(
             sub;
             n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_smoothed_frag_hellinger",
+        )
+    end
+    if :MBR_best_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_receiver_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_receiver_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_shared_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_shared_corr_frag_hellinger",
         )
     end
     available_true  = filter(f -> hasproperty(sub, f), true_features_all)
@@ -681,14 +744,28 @@ function apply_mbr_filter_paired!(
     frame_eval_mask = _mbr_transfer_frame_mask(counterfactual_present)
     eval_mask = copy(frame_eval_mask)
     cv_double = vcat((sub[!, :cv_fold] for _ in 1:(1 + n_counterfactuals))...)
+    initial_positive_top, initial_receiver_qvals = _mbr_initial_receiver_positive_top(
+        Float32.(sub[!, :trace_prob_prepass]),
+        Bool.(sub[!, :target]),
+    )
 
     # ── 4. Semi-supervised 2-fold CV LightGBM on the counterfactual frame ──
     pos0 = findall(cv_double .== 0)
     pos1 = findall(cv_double .== 1)
-    training_labels = eval_labels
-    training_mask = copy(frame_eval_mask)
+    training_labels = _mbr_transfer_training_labels(
+        initial_positive_top;
+        n_counterfactuals = n_counterfactuals,
+    )
+    training_mask = _mbr_transfer_training_mask(
+        initial_positive_top;
+        n_counterfactuals = n_counterfactuals,
+        frame_mask = frame_eval_mask,
+    )
     best_state = nothing
     previous_positive_count = -1
+    @debug_l1 "  initial MBR training positives: $(count(initial_positive_top)) / $n_cand " *
+              "(receiver candidate-local q≤$(MBR_INITIAL_RECEIVER_Q_THRESHOLD)); " *
+              "min receiver q=$(round(minimum(initial_receiver_qvals), digits=4))"
 
     for iter_idx in 1:SCORING_SEMISUPERVISED_MAX_ITERATIONS
         ftr_score_double = fill(NaN32, (1 + n_counterfactuals) * n_cand)

@@ -49,8 +49,11 @@ function _mbr_empirical_main_table(;
     n_scans = ones(Float32, length(precursor_idx)),
     main_pep = fill(0.5f0, length(precursor_idx)),
     library_hellinger = fill(0.25f0, length(precursor_idx)),
+    frag_corr_bitvec = fill(UInt8(0x03), length(precursor_idx)),
+    frag_corr_rank = fill(UInt16(11), length(precursor_idx)),
     frag1,
     frag2,
+    frag3 = zeros(Float32, length(precursor_idx)),
 )
     n = length(precursor_idx)
     return DataFrame(
@@ -65,12 +68,14 @@ function _mbr_empirical_main_table(;
         n_scans = Float32.(n_scans),
         main_pep = Float32.(main_pep),
         smoothed_2d_shadow_hellinger = Float32.(library_hellinger),
+        frag_corr_bitvec = UInt8.(frag_corr_bitvec),
+        n_correlated_fragments_bitvec_rank = UInt16.(frag_corr_rank),
         ms_file_idx = fill(UInt32(ms_file_idx), n),
         target = Bool.(target),
         cv_fold = zeros(UInt8, n),
         frag1_smoothed_intensity = Float32.(frag1),
         frag2_smoothed_intensity = Float32.(frag2),
-        frag3_smoothed_intensity = zeros(Float32, n),
+        frag3_smoothed_intensity = Float32.(frag3),
         frag4_smoothed_intensity = zeros(Float32, n),
         frag5_smoothed_intensity = zeros(Float32, n),
         frag6_smoothed_intensity = zeros(Float32, n),
@@ -86,6 +91,110 @@ function _mbr_empirical_pass1_table(; precursor_idx, scan_idx, score)
         trace_prob_prepass = Float32.(score),
         trace_prob_infold = Float32.(score),
     )
+end
+
+@testset "MBR correlated-fragment Hellinger uses the donor mask" begin
+    recipient = (
+        sqrt(0.5f0), sqrt(0.5f0), 0.0f0, 0.0f0,
+        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+    )
+    donor = (
+        sqrt(0.5f0), 0.0f0, sqrt(0.5f0), 0.0f0,
+        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+    )
+    fragment_keys = Pioneer._MBRFragmentAnnotationKeys(UInt16[])
+
+    all_rank_hellinger = Pioneer._mbr_smoothed_spectrum_hellinger_from_sqrt(
+        recipient,
+        donor,
+        fragment_keys,
+        UInt32(1),
+        UInt32(2),
+    )
+    masked_hellinger = Pioneer._mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+        recipient,
+        donor,
+        UInt8(0x05),
+    )
+
+    expected = sqrt(0.5f0 * ((1.0f0 - sqrt(0.5f0))^2 + (0.0f0 - sqrt(0.5f0))^2))
+    @test masked_hellinger ≈ expected
+    @test masked_hellinger < all_rank_hellinger
+    @test Pioneer._mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+        recipient,
+        donor,
+        UInt8(0x01),
+    ) == 1.0f0
+end
+
+@testset "MBR receiver-correlated Hellinger uses the receiver mask" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver_fold0.arrow")
+        donor_path = joinpath(dir, "donor_fold0.arrow")
+
+        Arrow.write(receiver_path, _mbr_empirical_main_table(
+            precursor_idx = [1],
+            scan_idx = [1001],
+            ms_file_idx = 1,
+            target = [true],
+            frag_corr_bitvec = [0x03],
+            frag_corr_rank = [42],
+            frag1 = [100],
+            frag2 = [100],
+        ))
+        Arrow.write(receiver_path * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
+            precursor_idx = [1],
+            scan_idx = [1001],
+            score = [0.40],
+        ))
+
+        Arrow.write(donor_path, _mbr_empirical_main_table(
+            precursor_idx = [1],
+            scan_idx = [2001],
+            ms_file_idx = 2,
+            target = [true],
+            frag_corr_bitvec = [0x07],
+            frag_corr_rank = [77],
+            frag1 = [100],
+            frag2 = [100],
+            frag3 = [100],
+        ))
+        Arrow.write(donor_path * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
+            precursor_idx = [1],
+            scan_idx = [2001],
+            score = [0.90],
+        ))
+
+        precursors = MBREmpiricalMockPrecursors(Float32[500], Float32[10])
+        fragment_keys = Pioneer.build_mbr_fragment_annotation_keys(_mbr_empirical_fragment_lookup())
+        partner_pools = Pioneer.build_counterfactual_partner_pools([receiver_path, donor_path], precursors)
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [receiver_path, donor_path];
+            passing_score_floor = 0.20f0,
+        )
+        receiver_rank_table = zeros(UInt16, 256)
+        receiver_rank_table[Int(0x03) + 1] = UInt16(66)
+
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            receiver_path,
+            donor_dict,
+            partner_pools,
+            fragment_keys,
+            passing_score_floor = 0.20f0,
+            bitvec_rank_tables_by_file = Dict(UInt32(1) => receiver_rank_table),
+        )
+
+        mbr = DataFrame(Arrow.Table(receiver_path * Pioneer.MBR_SIDECAR_SUFFIX))
+        @test :MBR_best_receiver_corr_frag_hellinger_true in propertynames(mbr)
+        @test :MBR_receiver_frag_corr_bitvec_rank in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_hellinger_true in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_bitvec_rank_true in propertynames(mbr)
+        @test mbr.MBR_receiver_frag_corr_bitvec_rank[1] == 42.0f0
+        @test isapprox(mbr.MBR_best_receiver_corr_frag_hellinger_true[1], 0.0f0; atol = 1.0f-6)
+        @test mbr.MBR_best_corr_frag_hellinger_true[1] > 0.25f0
+        @test isapprox(mbr.MBR_best_shared_corr_frag_hellinger_true[1], 0.0f0; atol = 1.0f-6)
+        @test mbr.MBR_best_shared_corr_frag_bitvec_rank_true[1] == 66.0f0
+    end
 end
 
 @testset "MBR empirical smoothed Hellinger aligns spectra by rank" begin
@@ -170,6 +279,19 @@ end
         mbr = DataFrame(Arrow.Table(f1 * Pioneer.MBR_SIDECAR_SUFFIX))
 
         @test isapprox(mbr.MBR_best_smoothed_frag_hellinger_false[1], 1.0f0; atol = 1.0f-6)
+        @test :MBR_best_corr_frag_hellinger_true in propertynames(mbr)
+        @test :MBR_best_corr_frag_hellinger_false in propertynames(mbr)
+        @test :MBR_best_donor_frag_corr_bitvec_rank_true in propertynames(mbr)
+        @test :MBR_best_donor_frag_corr_bitvec_rank_false in propertynames(mbr)
+        @test :MBR_best_receiver_corr_frag_hellinger_true in propertynames(mbr)
+        @test :MBR_best_receiver_corr_frag_hellinger_false in propertynames(mbr)
+        @test :MBR_receiver_frag_corr_bitvec_rank in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_hellinger_true in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_hellinger_false in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_bitvec_rank_true in propertynames(mbr)
+        @test :MBR_best_shared_corr_frag_bitvec_rank_false in propertynames(mbr)
+        @test mbr.MBR_best_donor_frag_corr_bitvec_rank_false[1] == 11.0f0
+        @test mbr.MBR_receiver_frag_corr_bitvec_rank[1] == 11.0f0
         @test isapprox(mbr.MBR_worst_smoothed_frag_hellinger_false[1], 0.0f0; atol = 1.0f-6)
         @test mbr.MBR_best_is_missing_false[1] == false
         @test !(:MBR_max_pair_prob_false in propertynames(mbr))

@@ -43,6 +43,7 @@ end
         (rank_weights[1]^2 + rank_weights[2]^2 + rank_weights[6]^2 + rank_weights[8]^2)
 
     @test psms.n_correlated_fragments == UInt8[4, 4, 4]
+    @test psms.frag_corr_bitvec == UInt8[0xa3, 0xa3, 0xa3]
     @test psms.frag_corr_strength ≈ fill(expected_strength, 3)
     @test psms.frag_corr_effective_n ≈ fill(expected_effective_n, 3)
 end
@@ -68,6 +69,7 @@ end
     Pioneer._add_fragment_chromatogram_features!(psms; bitvec_rank_table=rank_table)
 
     @test psms.n_correlated_fragments == UInt8[4, 4, 4]
+    @test psms.frag_corr_bitvec == UInt8[0xa3, 0xa3, 0xa3]
     @test psms.n_correlated_fragments_bitvec_rank == UInt16[7, 7, 7]
 end
 
@@ -100,6 +102,7 @@ end
 
     @test psms.n_scans == UInt32[2, 2, 2, 2]
     @test psms.n_correlated_fragments == UInt8[2, 2, 0, 0]
+    @test psms.frag_corr_bitvec == UInt8[0x03, 0x03, 0x00, 0x00]
     @test psms.frag_corr_strength[1] > psms.frag_corr_strength[3]
 end
 

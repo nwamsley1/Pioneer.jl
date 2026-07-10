@@ -1,0 +1,23 @@
+{
+    "paths": {
+        "ms_data": "/Users/dennisgoldfarb/Documents/pioneer/data/MTAC/3P_standard/3P_standard_V2",
+        "library": "/Users/dennisgoldfarb/Documents/pioneer/libraries/3P_May7-2026_bitvec_10.poin",
+        "results": "/Users/dennisgoldfarb/Documents/pioneer/results/mbr_same_true_donor_file_cf2_shared_corrfrag_20260709/MTAC_3P_MBR_2CF_shared_corrfrag"
+    },
+    "output": {
+        "write_csv": false,
+        "write_decoys": false,
+        "delete_temp": true
+    },
+    "global": {
+        "q_value_threshold": 0.01,
+        "match_between_runs": true
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "logging": {
+        "debug_console_level": 1,
+        "max_message_bytes": 4096
+    }
+}

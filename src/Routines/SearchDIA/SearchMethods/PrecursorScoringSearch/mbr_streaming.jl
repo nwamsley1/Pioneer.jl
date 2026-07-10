@@ -48,6 +48,8 @@ struct _MBRDonorEntry
     n_scans::Float32
     smoothed_frag_sqrt::NTuple{8, Float32}
     library_hellinger::Float32
+    frag_corr_bitvec::UInt8
+    frag_corr_bitvec_rank::UInt16
     ms_file_idx::UInt32
     is_decoy::Bool
 end
@@ -155,6 +157,50 @@ end
     return sqrt(max(0.0f0, 0.5f0 * dist2))
 end
 
+@inline function _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+    recipient_sqrt::NTuple{8, Float32},
+    donor_sqrt::NTuple{8, Float32},
+    donor_corr_mask::UInt8,
+)
+    count_ones(donor_corr_mask) >= 2 || return 1.0f0
+
+    recipient_mass = 0.0f0
+    donor_mass = 0.0f0
+    @inbounds for rank in 1:8
+        ((donor_corr_mask >> (rank - 1)) & 0x01) == 0x01 || continue
+        recipient_mass += recipient_sqrt[rank] * recipient_sqrt[rank]
+        donor_mass += donor_sqrt[rank] * donor_sqrt[rank]
+    end
+    (isfinite(recipient_mass) && isfinite(donor_mass) &&
+     recipient_mass > 0.0f0 && donor_mass > 0.0f0) || return 1.0f0
+
+    inv_recipient_sqrt = inv(sqrt(recipient_mass))
+    inv_donor_sqrt = inv(sqrt(donor_mass))
+    dist2 = 0.0f0
+    @inbounds for rank in 1:8
+        ((donor_corr_mask >> (rank - 1)) & 0x01) == 0x01 || continue
+        delta = recipient_sqrt[rank] * inv_recipient_sqrt -
+                donor_sqrt[rank] * inv_donor_sqrt
+        dist2 += delta * delta
+    end
+    return sqrt(max(0.0f0, 0.5f0 * dist2))
+end
+
+@inline function _mbr_shared_corr_mask(receiver_corr_mask::UInt8, donor::_MBRDonorEntry)
+    return receiver_corr_mask & donor.frag_corr_bitvec
+end
+
+@inline function _mbr_shared_corr_bitvec_rank(
+    bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}},
+    receiver_file::UInt32,
+    shared_corr_mask::UInt8,
+)
+    bitvec_rank_tables_by_file === nothing && return -1.0f0
+    rank_table = get(bitvec_rank_tables_by_file, receiver_file, nothing)
+    rank_table === nothing && return -1.0f0
+    return Float32(_bitvec_pattern_rank(rank_table, shared_corr_mask))
+end
+
 # Columns the donor dict reads from each (main + pass1 sidecar) pair.
 # Listed once so reader and consumer stay in sync. `is_decoy` is hardcoded
 # false on donor entries (the field is unused downstream), so we don't read
@@ -162,6 +208,7 @@ end
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
     :n_scans, :ms_file_idx, :smoothed_2d_shadow_hellinger,
+    :frag_corr_bitvec, :n_correlated_fragments_bitvec_rank,
     SMOOTHED_FRAGMENT_INTENSITY_COLUMNS...)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
@@ -204,6 +251,14 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log_by_diff"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_smoothed_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_smoothed_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_donor_frag_corr_bitvec_rank"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_donor_frag_corr_bitvec_rank"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_receiver_corr_frag_hellinger"))
+    push!(cols, :MBR_receiver_frag_corr_bitvec_rank)
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_shared_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_shared_corr_frag_bitvec_rank"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_donor_library_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_donor_library_hellinger"))
     return Tuple(cols)
@@ -407,6 +462,18 @@ end
     )
 end
 
+@inline function _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(
+    recipient_sqrt::NTuple{8, Float32},
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor === nothing && return 1.0f0
+    return _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+        recipient_sqrt,
+        donor.smoothed_frag_sqrt,
+        donor.frag_corr_bitvec,
+    )
+end
+
 @inline function _mbr_donor_library_hellinger(donor::Union{Nothing, _MBRDonorEntry})
     donor === nothing && return 1.0f0
     return donor.library_hellinger
@@ -439,11 +506,15 @@ end
     fidx_c::AbstractVector{UInt32},
     side_path::String,
     ;
+    frag_corr_bitvec_c::Union{Nothing, AbstractVector} = nothing,
+    frag_corr_rank_c::Union{Nothing, AbstractVector} = nothing,
     passing_score_floor::Float32 = Float32(Inf),
 )
     n = length(pid_c)
     has_logby = logby_c !== nothing
     has_rt    = rt_c    !== nothing
+    has_frag_corr_bitvec = frag_corr_bitvec_c !== nothing
+    has_frag_corr_rank = frag_corr_rank_c !== nothing
     @inbounds for i in 1:n
         # Sanity-check alignment (cheap: one cmp per row)
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
@@ -458,6 +529,8 @@ end
             Float32(nscans_c[i]),
             _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
             Float32(library_hellinger_c[i]),
+            has_frag_corr_bitvec ? UInt8(frag_corr_bitvec_c[i]) : UInt8(0),
+            has_frag_corr_rank ? UInt16(frag_corr_rank_c[i]) : UInt16(0),
             fidx_c[i], false,
         )
         entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -511,6 +584,9 @@ function build_mbr_donor_dict_streaming_with_pass1(
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
             main.ms_file_idx,
             side_path,
+            frag_corr_bitvec_c = hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing,
+            frag_corr_rank_c = hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
+                main.n_correlated_fragments_bitvec_rank : nothing,
             passing_score_floor = passing_score_floor,
         )
     end
@@ -1365,6 +1441,21 @@ end
     out_smoothed_hellinger_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_worst_t::Vector{Float32},
     out_smoothed_hellinger_worst_f::Vector{Vector{Float32}},
+    out_corr_hellinger_t::Vector{Float32},
+    out_corr_hellinger_f::Vector{Vector{Float32}},
+    out_corr_hellinger_worst_t::Vector{Float32},
+    out_corr_hellinger_worst_f::Vector{Vector{Float32}},
+    out_corr_rank_t::Vector{Float32},
+    out_corr_rank_f::Vector{Vector{Float32}},
+    out_corr_rank_worst_t::Vector{Float32},
+    out_corr_rank_worst_f::Vector{Vector{Float32}},
+    out_receiver_corr_hellinger_t::Vector{Float32},
+    out_receiver_corr_hellinger_f::Vector{Vector{Float32}},
+    out_receiver_corr_rank::Vector{Float32},
+    out_shared_corr_hellinger_t::Vector{Float32},
+    out_shared_corr_hellinger_f::Vector{Vector{Float32}},
+    out_shared_corr_rank_t::Vector{Float32},
+    out_shared_corr_rank_f::Vector{Vector{Float32}},
     out_donor_library_hellinger_t::Vector{Float32},
     out_donor_library_hellinger_f::Vector{Vector{Float32}},
     out_donor_library_hellinger_worst_t::Vector{Float32},
@@ -1378,12 +1469,15 @@ end
     logby_v::Union{Nothing, AbstractVector},
     rt_v::Union{Nothing, AbstractVector{Float32}},
     nscans_v::AbstractVector,
+    receiver_corr_bitvec_v::Union{Nothing, AbstractVector},
+    receiver_corr_rank_v::Union{Nothing, AbstractVector},
     smoothed_frag_cols,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     partner_pools::_CounterfactualPartnerPools,
     false_donor_cache::Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple},
     counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
+    bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}},
     lod_log2_weight_by_file::Dict{UInt32, Float32},
     lod_log2_weight_global::Float32,
     passing_score_floor::Float32,
@@ -1391,12 +1485,16 @@ end
     n = length(pid_v)
     has_logby = logby_v !== nothing
     has_rt = rt_v !== nothing
+    has_receiver_corr_bitvec = receiver_corr_bitvec_v !== nothing
+    has_receiver_corr_rank = receiver_corr_rank_v !== nothing
     @inbounds for i in 1:n
         my_file = file_v[i]
         my_pid = pid_v[i]
         my_weight = weight_v[i]
         my_l2ie = Float32(l2ie_v[i])
         my_n_scans = Float32(nscans_v[i])
+        receiver_corr_mask = has_receiver_corr_bitvec ? UInt8(receiver_corr_bitvec_v[i]) : UInt8(0)
+        out_receiver_corr_rank[i] = has_receiver_corr_rank ? Float32(receiver_corr_rank_v[i]) : -1.0f0
         out_lw_lod[i] = _mbr_log2_weight_lod_ratio(
             my_weight,
             my_file,
@@ -1430,6 +1528,27 @@ end
                 my_pid,
                 donor_t.precursor_idx,
             )
+            out_corr_hellinger_t[i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_t)
+            out_corr_rank_t[i] = Float32(donor_t.frag_corr_bitvec_rank)
+            out_receiver_corr_hellinger_t[i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                    recipient_sqrt,
+                    donor_t.smoothed_frag_sqrt,
+                    receiver_corr_mask,
+                )
+            shared_corr_mask = _mbr_shared_corr_mask(receiver_corr_mask, donor_t)
+            out_shared_corr_hellinger_t[i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                    recipient_sqrt,
+                    donor_t.smoothed_frag_sqrt,
+                    shared_corr_mask,
+                )
+            out_shared_corr_rank_t[i] = _mbr_shared_corr_bitvec_rank(
+                bitvec_rank_tables_by_file,
+                my_file,
+                shared_corr_mask,
+            )
             out_donor_library_hellinger_t[i] = donor_t.library_hellinger
             donor_worst_t = _min_weight_alternate_donor_for_pid(
                 donor_dict,
@@ -1452,6 +1571,9 @@ end
                     fragment_keys,
                     my_pid,
                 )
+                out_corr_hellinger_worst_t[i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_worst_t)
+                out_corr_rank_worst_t[i] = Float32(donor_worst_t.frag_corr_bitvec_rank)
                 out_donor_library_hellinger_worst_t[i] =
                     _mbr_donor_library_hellinger(donor_worst_t)
             else
@@ -1498,6 +1620,27 @@ end
                 my_pid,
                 donor_f.precursor_idx,
             )
+            out_corr_hellinger_f[counterfactual_idx][i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_f)
+            out_corr_rank_f[counterfactual_idx][i] = Float32(donor_f.frag_corr_bitvec_rank)
+            out_receiver_corr_hellinger_f[counterfactual_idx][i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                    recipient_sqrt,
+                    donor_f.smoothed_frag_sqrt,
+                    receiver_corr_mask,
+                )
+            shared_corr_mask_f = _mbr_shared_corr_mask(receiver_corr_mask, donor_f)
+            out_shared_corr_hellinger_f[counterfactual_idx][i] =
+                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                    recipient_sqrt,
+                    donor_f.smoothed_frag_sqrt,
+                    shared_corr_mask_f,
+                )
+            out_shared_corr_rank_f[counterfactual_idx][i] = _mbr_shared_corr_bitvec_rank(
+                bitvec_rank_tables_by_file,
+                my_file,
+                shared_corr_mask_f,
+            )
             out_donor_library_hellinger_f[counterfactual_idx][i] = donor_f.library_hellinger
             donor_worst_f = _min_weight_alternate_donor_for_pid(
                 donor_dict,
@@ -1520,6 +1663,9 @@ end
                     fragment_keys,
                     my_pid,
                 )
+                out_corr_hellinger_worst_f[counterfactual_idx][i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_worst_f)
+                out_corr_rank_worst_f[counterfactual_idx][i] = Float32(donor_worst_f.frag_corr_bitvec_rank)
                 out_donor_library_hellinger_worst_f[counterfactual_idx][i] =
                     _mbr_donor_library_hellinger(donor_worst_f)
             else
@@ -1558,6 +1704,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         fragment_keys::_MBRFragmentAnnotationKeys;
         counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile} = nothing,
         passing_score_floor::Float32 = Float32(Inf),
+        bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
         lod_log2_weight_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
         lod_log2_weight_global::Float32 = NaN32)
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
@@ -1578,6 +1725,9 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
     nscans_v = main.n_scans
+    receiver_corr_bitvec_v = hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing
+    receiver_corr_rank_v = hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
+        main.n_correlated_fragments_bitvec_rank : nothing
     smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
 
     @inbounds for i in 1:n
@@ -1606,6 +1756,14 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_log_by_t = fill(-1f0, n); out_log_by_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
+    out_corr_h_t = fill(-1f0, n); out_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_corr_h_worst_t = fill(1f0, n); out_corr_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
+    out_corr_rank_t = fill(-1f0, n); out_corr_rank_f = _mbr_float_counterfactual_vectors(n)
+    out_corr_rank_worst_t = fill(-1f0, n); out_corr_rank_worst_f = _mbr_float_counterfactual_vectors(n)
+    out_receiver_corr_h_t = fill(-1f0, n); out_receiver_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_receiver_corr_rank = fill(-1f0, n)
+    out_shared_corr_h_t = fill(-1f0, n); out_shared_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_shared_corr_rank_t = fill(-1f0, n); out_shared_corr_rank_f = _mbr_float_counterfactual_vectors(n)
     out_donor_library_h_t = fill(1f0, n); out_donor_library_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_donor_library_h_worst_t = fill(1f0, n)
     out_donor_library_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
@@ -1633,13 +1791,23 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_log_by_t, out_log_by_f,
         out_smoothed_h_t, out_smoothed_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
+        out_corr_h_t, out_corr_h_f,
+        out_corr_h_worst_t, out_corr_h_worst_f,
+        out_corr_rank_t, out_corr_rank_f,
+        out_corr_rank_worst_t, out_corr_rank_worst_f,
+        out_receiver_corr_h_t, out_receiver_corr_h_f,
+        out_receiver_corr_rank,
+        out_shared_corr_h_t, out_shared_corr_h_f,
+        out_shared_corr_rank_t, out_shared_corr_rank_f,
         out_donor_library_h_t, out_donor_library_h_f,
         out_donor_library_h_worst_t, out_donor_library_h_worst_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v,
-        rt_v, nscans_v, smoothed_frag_cols, fragment_keys,
+        rt_v, nscans_v, receiver_corr_bitvec_v, receiver_corr_rank_v,
+        smoothed_frag_cols, fragment_keys,
         donor_dict, partner_pools, false_donor_cache,
         counterfactual_eligibility_by_file,
+        bitvec_rank_tables_by_file,
         lod_log2_weight_by_file, lod_log2_weight_global, passing_score_floor,
     )
 
@@ -1689,6 +1857,21 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_smoothed_frag_hellinger", out_smoothed_h_f)
     side_df[!, :MBR_worst_smoothed_frag_hellinger_true] = out_smoothed_h_worst_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_smoothed_frag_hellinger", out_smoothed_h_worst_f)
+    side_df[!, :MBR_best_corr_frag_hellinger_true] = out_corr_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_corr_frag_hellinger", out_corr_h_f)
+    side_df[!, :MBR_worst_corr_frag_hellinger_true] = out_corr_h_worst_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_worst_corr_frag_hellinger", out_corr_h_worst_f)
+    side_df[!, :MBR_best_donor_frag_corr_bitvec_rank_true] = out_corr_rank_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_donor_frag_corr_bitvec_rank", out_corr_rank_f)
+    side_df[!, :MBR_worst_donor_frag_corr_bitvec_rank_true] = out_corr_rank_worst_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_worst_donor_frag_corr_bitvec_rank", out_corr_rank_worst_f)
+    side_df[!, :MBR_best_receiver_corr_frag_hellinger_true] = out_receiver_corr_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_receiver_corr_frag_hellinger", out_receiver_corr_h_f)
+    side_df[!, :MBR_receiver_frag_corr_bitvec_rank] = out_receiver_corr_rank
+    side_df[!, :MBR_best_shared_corr_frag_hellinger_true] = out_shared_corr_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_shared_corr_frag_hellinger", out_shared_corr_h_f)
+    side_df[!, :MBR_best_shared_corr_frag_bitvec_rank_true] = out_shared_corr_rank_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_shared_corr_frag_bitvec_rank", out_shared_corr_rank_f)
     side_df[!, :MBR_best_donor_library_hellinger_true] = out_donor_library_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_donor_library_hellinger", out_donor_library_h_f)
     side_df[!, :MBR_worst_donor_library_hellinger_true] = out_donor_library_h_worst_t
@@ -1921,6 +2104,7 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
 )
     candidate_paths = String[file_path(ref) for ref in candidate_refs if exists(ref)]
     donor_paths = String[file_path(ref) for ref in donor_refs if exists(ref)]
@@ -1972,6 +2156,7 @@ function run_mbr_after_qvalue_filter!(
                 cf_partner_pools,
                 fragment_keys,
                 passing_score_floor = donor_prob_thresh,
+                bitvec_rank_tables_by_file = bitvec_rank_tables_by_file,
                 lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
                 lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
             )
@@ -2030,6 +2215,7 @@ function run_mbr_after_qvalue_filter!(
     fragment_lookup::LibraryFragmentLookup;
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
 )
     return run_mbr_after_qvalue_filter!(
         refs,
@@ -2038,6 +2224,7 @@ function run_mbr_after_qvalue_filter!(
         fragment_lookup;
         q_value_threshold = q_value_threshold,
         donor_q_threshold = donor_q_threshold,
+        bitvec_rank_tables_by_file = bitvec_rank_tables_by_file,
     )
 end
 
