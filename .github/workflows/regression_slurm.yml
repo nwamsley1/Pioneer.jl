@@ -20,6 +20,11 @@ on:
           - fast
           - fastest
           - APMS_Astral
+          - APMS_Astral_1
+          - APMS_Astral_2
+          - APMS_Astral_5
+          - APMS_Astral_10
+          - APMS_Astral_20
           - EWZ_2P_MBR_Exploris
           - KEAP1KO_Eclipse
           - MacCoss_Eclipse_Normalization
