@@ -362,12 +362,14 @@ function process_search_results!(
             psms, spectra; bitvec_rank_table = bitvec_rank_table)
     else
         _n_pre_collapse = nrow(psms)
-        psms = collapse_to_metascans(psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
-                                     bitvec_rank_table = bitvec_rank_table)
+        t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
+            psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
+            bitvec_rank_table = bitvec_rank_table)
         t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
             psms, spectra; bitvec_rank_table = bitvec_rank_table)
         results.psms[] = psms
-        @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs; " *
+        @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs " *
+                   "(collapse $(round(t_collapse; digits=1))s, chromatogram $(round(t_ms1; digits=1))s); " *
                    "profile features $(_zt_profile ? "ON" : "OFF")"
     end
 
