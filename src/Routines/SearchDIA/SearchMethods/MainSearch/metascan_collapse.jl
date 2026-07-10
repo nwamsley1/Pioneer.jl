@@ -119,21 +119,38 @@ that scan's ±(isolationWidth/2) window; the meta-scan is that center ±k bins
     return sqrt(s / (m - 1))
 end
 
+# Gather `col[perm]` into a fresh concrete Vector{Float32} in one pass (no intermediate
+# Float32.(col) copy). Used to sort only the columns the collapse loop reads.
+@inline function _permute_f32(col, perm::Vector{Int})
+    out = Vector{Float32}(undef, length(perm))
+    @inbounds for i in eachindex(perm); out[i] = Float32(col[perm[i]]); end
+    return out
+end
+
 function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int;
                                bitvec_rank_table = nothing)
     n = nrow(psms)
     (n == 0 || k <= 0) && return psms
-    prec_mz = getMz(precursors)
-    cmzs = getCenterMzs(spectra)
-    hws  = getIsolationWidthMzs(spectra)
+    # Concrete Float32 vectors (function barrier): the accessors return an
+    # Arrow.Primitive (getMz) and a Vector{Union{Missing,Float32}} (getCenterMzs on
+    # FilteredMassSpecData), whose element type boxes on every index — and these are
+    # indexed 35M times in the per-row center guard below. Materialize once; MS1 scans
+    # (missing center m/z) coalesce to NaN32 and are never indexed by the MS2 PSMs.
+    prec_mz::Vector{Float32} = Vector{Float32}(getMz(precursors))
+    cmzs::Vector{Float32} = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
+    hws::Vector{Float32}  = Float32.(coalesce.(getIsolationWidthMzs(spectra), NaN32))
 
     # sort by (precursor_idx, scan_idx): meta-scan bins become contiguous rows
-    pid0 = psms[!, :precursor_idx]; scn0 = psms[!, :scan_idx]
+    _diag = haskey(ENV, "PIONEER_DIAG_ALLOC")
+    _b0 = Base.gc_bytes()
+    pid0 = psms[!, :precursor_idx]::Vector{UInt32}; scn0 = psms[!, :scan_idx]::Vector{UInt32}
     perm = sortperm(1:n; by = i -> (pid0[i], scn0[i]), alg = QuickSort)
-    psms = psms[perm, :]
-    pid = psms[!, :precursor_idx]::Vector{UInt32}
-    scn = psms[!, :scan_idx]::Vector{UInt32}
-    wt  = Float32.(psms[!, :weight])
+    # Sort only the columns the loop reads (pid/scn/weight/8 frags), NOT the full ~60-col
+    # table; meta rows are pulled from the original `psms` via perm[center_rows] at the end.
+    pid = pid0[perm]; scn = scn0[perm]
+    wt  = _permute_f32(psms[!, :weight], perm)
+    _diag && @user_print string("[ALLOC]   collapse.sort_cols: ", round((Base.gc_bytes()-_b0)/1e9, digits=3), " GB")
+    _b0 = Base.gc_bytes()
     L = 2k + 1
     tri = Float32[max(0f0, 1f0 - abs(Float32(j))/Float32(k+1)) for j in -k:k]
     tnorm = sqrt(sum(x->x*x, tri))
@@ -141,7 +158,12 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     # Fragment intensity columns for the within-metascan shape features (guarded —
     # absent only in degenerate tables). Mirror the develop frag-corr aggregation.
     _have_frags = all(r -> hasproperty(psms, Symbol("frag$(r)_int")), 1:8)
-    fcols = _have_frags ? ntuple(r -> Float32.(psms[!, Symbol("frag$(r)_int")]), 8) : nothing
+    # Concrete NTuple{8,Vector{Float32}} (never Union{Nothing,…}): a Union here boxes
+    # fcols[b] on every one of the ~680M inner-gather iterations. Gate use with the
+    # `_have_frags` Bool instead of a `fcols !== nothing` check.
+    fcols::NTuple{8,Vector{Float32}} = _have_frags ?
+        ntuple(r -> _permute_f32(psms[!, Symbol("frag$(r)_int")], perm), 8) :
+        ntuple(_ -> Float32[], 8)
     rank_weights = _fragment_rank_weights(8)
 
     center_rows = Int[]
@@ -163,7 +185,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             (abs(pm - Float32(cmzs[scn[r]])) <= Float32(hws[scn[r]])/2) || continue
             c = Int(scn[r])
             w = zeros(Float32, L)
-            if fcols !== nothing
+            if _have_frags
                 for b in 1:8; fill!(Fbuf[b], 0f0); end
             end
             # neighbors: bins are ~contiguous rows around r (sorted by scan);
@@ -173,7 +195,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
                 d = Int(scn[rr]) - c
                 if -k <= d <= k
                     w[d+k+1] += wt[rr]
-                    if fcols !== nothing
+                    if _have_frags
                         @inbounds for b in 1:8; Fbuf[b][d+k+1] += fcols[b][rr]; end
                     end
                 end
@@ -182,7 +204,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
 
             # ---- within-metascan shape features (fragment profile vs weight) ----
             str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)
-            if fcols !== nothing
+            if _have_frags
                 mask = UInt16(0); empty!(apx)
                 for b in 1:8
                     fp = Fbuf[b]
@@ -219,9 +241,14 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(sh_disp, disp); push!(sh_n70, n70); push!(sh_rank, rnk)
         end
     end
+    _diag && @user_print string("[ALLOC]   collapse.main_loop: ", round((Base.gc_bytes()-_b0)/1e9, digits=3), " GB")
+    _b0 = Base.gc_bytes()
 
-    meta = psms[center_rows, :]
+    # center_rows are positions in the PERMED order; map back to original psms rows.
+    meta = psms[perm[center_rows], :]
     nm = length(center_rows)
+    _diag && @user_print string("[ALLOC]   collapse.center_subset: ", round((Base.gc_bytes()-_b0)/1e9, digits=3), " GB")
+    _b0 = Base.gc_bytes()
     # raw meta-scan weight columns
     for (jj, j) in enumerate(-k:k)
         col = Symbol("metascan_w_", j < 0 ? "m$(abs(j))" : "$(j)")
@@ -247,5 +274,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     if get(ENV, "PIONEER_ZT_SHAPE_EXP", "0") != "0"
         # (next candidate columns go here; keep in sync with ZT_SHAPE_EXP_FEATURES)
     end
+    _diag && @user_print string("[ALLOC]   collapse.materialize_cols: ", round((Base.gc_bytes()-_b0)/1e9, digits=3), " GB")
     return meta
 end
