@@ -15,9 +15,9 @@
 # Two main-file sweeps drive MBR feature compute:
 #   Sweep 1 (build_mbr_donor_dict_streaming_with_pass1)
 #     Streams each (main + pass1 sidecar) pair to build the donor dict keyed
-#     by precursor_idx. Each pid keeps the two best donor rows from distinct
-#     files, sorted by score, so `_donor_for_pid` can choose the best cross-file
-#     donor without storage growing with file count.
+#     by precursor_idx. The default helper keeps the two best donor rows from
+#     distinct files, but post-qvalue MBR can request all donor files so
+#     `_donor_for_pid` can choose the most receiver-similar cross-file donor.
 #
 #   Sweep 2 (compute_mbr_features_per_file_to_sidecar_with_pass1!)
 #     Loads ONE file's main + pass1 sidecar at a time, computes the MBR_*
@@ -64,6 +64,10 @@ const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 const MBR_ANY_DONOR_FILE = typemax(UInt32)
 const _MBRFalseDonorTuple = NTuple{MBR_MAX_COUNTERFACTUALS, Union{Nothing, _MBRDonorEntry}}
 const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32, UInt32}
+
+struct _MBRRunSimilarity
+    coverage::Dict{Tuple{UInt32, UInt32}, Float32}
+end
 
 struct _MBRFragmentAnnotationKeys
     keys::Vector{UInt16}
@@ -270,6 +274,52 @@ const _MBR_SIDECAR_OUT_COLS = _mbr_sidecar_output_columns()
 # pipeline. All sidecars carry (:precursor_idx, :scan_idx) as alignment keys.
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
+
+@inline _mbr_run_similarity(::Nothing, _receiver_file::UInt32, _donor_file::UInt32) = 0.0f0
+
+@inline function _mbr_run_similarity(
+    run_similarity::_MBRRunSimilarity,
+    receiver_file::UInt32,
+    donor_file::UInt32,
+)
+    return get(run_similarity.coverage, (receiver_file, donor_file), 0.0f0)
+end
+
+function build_mbr_run_similarity(
+    file_paths::Vector{String};
+    q_value_threshold::Float32 = 0.01f0,
+)
+    passed_by_file = Dict{UInt32, BitSet}()
+    for path in file_paths
+        tbl = Arrow.Table(path)
+        for col in (:precursor_idx, :ms_file_idx, :qval)
+            hasproperty(tbl, col) ||
+                error("MBR run similarity requires column $col in $path")
+        end
+        n = length(tbl.precursor_idx)
+        target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
+        @inbounds for i in 1:n
+            Bool(target_c[i]) || continue
+            Float32(tbl.qval[i]) <= q_value_threshold || continue
+            file_idx = UInt32(tbl.ms_file_idx[i])
+            push!(get!(() -> BitSet(), passed_by_file, file_idx), Int(tbl.precursor_idx[i]))
+        end
+    end
+
+    coverage = Dict{Tuple{UInt32, UInt32}, Float32}()
+    for (receiver_file, receiver_ids) in passed_by_file
+        denom = length(receiver_ids)
+        denom == 0 && continue
+        for (donor_file, donor_ids) in passed_by_file
+            shared = 0
+            for pid in receiver_ids
+                pid in donor_ids && (shared += 1)
+            end
+            coverage[(receiver_file, donor_file)] = Float32(shared / denom)
+        end
+    end
+    return _MBRRunSimilarity(coverage)
+end
 
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
 # sidecar at `side_path`. Concrete `AbstractVector{T}` signatures force Julia
@@ -509,7 +559,10 @@ end
     frag_corr_bitvec_c::Union{Nothing, AbstractVector} = nothing,
     frag_corr_rank_c::Union{Nothing, AbstractVector} = nothing,
     passing_score_floor::Float32 = Float32(Inf),
+    max_donor_files_per_precursor::Int = MBR_MAX_DONOR_FILES_PER_PRECURSOR,
 )
+    max_donor_files_per_precursor >= 1 ||
+        error("max_donor_files_per_precursor must be positive, got $max_donor_files_per_precursor")
     n = length(pid_c)
     has_logby = logby_c !== nothing
     has_rt    = rt_c    !== nothing
@@ -546,8 +599,8 @@ end
             deleteat!(entries, same_file_idx)
         end
         _insert_sorted_donor_entry!(entries, e)
-        length(entries) > MBR_MAX_DONOR_FILES_PER_PRECURSOR &&
-            _prune_donor_entries!(entries, passing_score_floor)
+        length(entries) > max_donor_files_per_precursor &&
+            _prune_donor_entries!(entries, passing_score_floor, max_donor_files_per_precursor)
     end
     return nothing
 end
@@ -559,6 +612,7 @@ end
 function build_mbr_donor_dict_streaming_with_pass1(
     file_paths::Vector{String};
     passing_score_floor::Float32 = Float32(Inf),
+    max_donor_files_per_precursor::Int = MBR_MAX_DONOR_FILES_PER_PRECURSOR,
 )
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
@@ -588,6 +642,7 @@ function build_mbr_donor_dict_streaming_with_pass1(
             frag_corr_rank_c = hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
                 main.n_correlated_fragments_bitvec_rank : nothing,
             passing_score_floor = passing_score_floor,
+            max_donor_files_per_precursor = max_donor_files_per_precursor,
         )
     end
     return all_entries
@@ -617,10 +672,11 @@ end
 function _prune_donor_entries!(
     entries::Vector{_MBRDonorEntry},
     passing_score_floor::Float32,
+    max_donor_files_per_precursor::Int = MBR_MAX_DONOR_FILES_PER_PRECURSOR,
 )
     sort!(entries, by = entry -> entry.trace_prob, rev = true)
     keep = falses(length(entries))
-    @inbounds for idx in 1:min(length(entries), MBR_MAX_DONOR_FILES_PER_PRECURSOR)
+    @inbounds for idx in 1:min(length(entries), max_donor_files_per_precursor)
         keep[idx] = true
     end
 
@@ -654,13 +710,28 @@ end
 # Find the donor entry for `pid` from a file OTHER than `my_file`. Pulled
 # out of the inner loop so Julia specializes on the donor_dict value type.
 @inline function _donor_for_pid(donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-                                 pid::UInt32, my_file::UInt32)
+                                 pid::UInt32, my_file::UInt32,
+                                 run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing)
     entries = get(donor_dict, pid, nothing)
     entries === nothing && return nothing
-    @inbounds for e in entries
-        e.ms_file_idx != my_file && return e
+    if run_similarity === nothing
+        @inbounds for e in entries
+            e.ms_file_idx != my_file && return e
+        end
+        return nothing
     end
-    return nothing
+
+    best_entry = nothing
+    best_similarity = -Inf32
+    @inbounds for e in entries
+        e.ms_file_idx == my_file && continue
+        similarity = _mbr_run_similarity(run_similarity, my_file, e.ms_file_idx)
+        if best_entry === nothing || similarity > best_similarity
+            best_entry = e
+            best_similarity = similarity
+        end
+    end
+    return best_entry
 end
 
 @inline function _donor_for_pid_in_file(
@@ -1106,6 +1177,7 @@ end
     smoothed_frag_cols,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    run_similarity::Union{Nothing, _MBRRunSimilarity},
     partner_pools::_CounterfactualPartnerPools,
     false_donor_cache::Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple},
     counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
@@ -1131,7 +1203,7 @@ end
         recipient_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
         has_recipient_spectrum = false
 
-        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file, run_similarity)
         if donor_t !== nothing
             out_best_pair_t[i] = donor_t.trace_prob
             out_lw_t[i] = _mbr_log2_weight_ratio(my_weight, donor_t)
@@ -1474,6 +1546,7 @@ end
     smoothed_frag_cols,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    run_similarity::Union{Nothing, _MBRRunSimilarity},
     partner_pools::_CounterfactualPartnerPools,
     false_donor_cache::Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple},
     counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
@@ -1504,7 +1577,7 @@ end
         recipient_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
         has_recipient_spectrum = false
 
-        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file, run_similarity)
         if donor_t !== nothing
             out_best_pair_t[i] = donor_t.trace_prob
             out_lw_t[i] = _mbr_log2_weight_ratio(my_weight, donor_t)
@@ -1706,7 +1779,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         passing_score_floor::Float32 = Float32(Inf),
         bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
         lod_log2_weight_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
-        lod_log2_weight_global::Float32 = NaN32)
+        lod_log2_weight_global::Float32 = NaN32,
+        run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing)
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -1805,7 +1879,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         logby_v,
         rt_v, nscans_v, receiver_corr_bitvec_v, receiver_corr_rank_v,
         smoothed_frag_cols, fragment_keys,
-        donor_dict, partner_pools, false_donor_cache,
+        donor_dict, run_similarity, partner_pools, false_donor_cache,
         counterfactual_eligibility_by_file,
         bitvec_rank_tables_by_file,
         lod_log2_weight_by_file, lod_log2_weight_global, passing_score_floor,
@@ -2124,6 +2198,13 @@ function run_mbr_after_qvalue_filter!(
     sidecar_paths = unique(vcat(candidate_paths, donor_paths))
     n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
 
+    @debug_l1 "MBR Batch F: computing receiver-to-donor run similarity..."
+    run_similarity = build_mbr_run_similarity(
+        sidecar_paths;
+        q_value_threshold = q_value_threshold,
+    )
+    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+
     cf_partner_pools = build_counterfactual_partner_pools(
         sidecar_paths,
         precursors;
@@ -2144,8 +2225,9 @@ function run_mbr_after_qvalue_filter!(
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(
         donor_paths;
         passing_score_floor = donor_prob_thresh,
+        max_donor_files_per_precursor = typemax(Int),
     )
-    @debug_l1 "  donor dict pids: $(length(donor_dict))"
+    @debug_l1 "  donor dict pids: $(length(donor_dict)); entries: $(sum(length, values(donor_dict)))"
 
     @debug_l1 "MBR Batch F: writing post-qvalue per-file MBR sidecars..."
     parallel_foreach!(length(candidate_paths)) do chunk
@@ -2159,6 +2241,7 @@ function run_mbr_after_qvalue_filter!(
                 bitvec_rank_tables_by_file = bitvec_rank_tables_by_file,
                 lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
                 lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                run_similarity = run_similarity,
             )
         end
     end
