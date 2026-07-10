@@ -849,6 +849,34 @@ end
     @test all(isfinite, all_cf_metrics.qvals_double)
 end
 
+@testset "MBR initial positives use candidate-local receiver q-values" begin
+    @test Pioneer.MBR_INITIAL_RECEIVER_Q_THRESHOLD == 0.05f0
+
+    receiver_scores = Float32[
+        0.99, 0.98, 0.97, 0.96, 0.95, 0.94,
+        0.93, 0.92, 0.91, 0.90, 0.89, 0.88,
+    ]
+    target_top = Bool[
+        true, true, true, true, true, true,
+        true, true, true, true, false, true,
+    ]
+
+    positive_top, receiver_qvals = Pioneer._mbr_initial_receiver_positive_top(
+        receiver_scores,
+        target_top,
+    )
+
+    @test positive_top == Bool[
+        true, true, true, true, true, true,
+        true, true, true, true, false, false,
+    ]
+    @test receiver_qvals[1] == 0.0f0
+    @test receiver_qvals[10] <= 0.05f0
+    @test receiver_qvals[11] > 0.05f0
+    @test receiver_qvals[12] > 0.05f0
+    @test !positive_top[11]
+end
+
 @testset "MBR semi-supervised transfer training uses counterfactual FTR labels" begin
     @test Pioneer.MBR_SEMISUPERVISED_FTR_THRESHOLD == 0.03f0
     @test !isdefined(Pioneer, :MBR_SEMISUPERVISED_FDR_THRESHOLD)
@@ -1077,6 +1105,15 @@ end
         :MBR_single_donor_true,
         :MBR_best_smoothed_frag_hellinger_true,
         :MBR_best_smoothed_frag_hellinger_rank_true,
+        :MBR_best_corr_frag_hellinger_true,
+        :MBR_best_corr_frag_hellinger_rank_true,
+        :MBR_best_donor_frag_corr_bitvec_rank_true,
+        :MBR_best_receiver_corr_frag_hellinger_true,
+        :MBR_best_receiver_corr_frag_hellinger_rank_true,
+        :MBR_receiver_frag_corr_bitvec_rank,
+        :MBR_best_shared_corr_frag_hellinger_true,
+        :MBR_best_shared_corr_frag_hellinger_rank_true,
+        :MBR_best_shared_corr_frag_bitvec_rank_true,
     ]
     expected_false = Symbol[
         Pioneer.MBR_CROSS_RUN_FTR_FEATURES...,
@@ -1098,6 +1135,15 @@ end
         :MBR_single_donor_false,
         :MBR_best_smoothed_frag_hellinger_false,
         :MBR_best_smoothed_frag_hellinger_rank_false,
+        :MBR_best_corr_frag_hellinger_false,
+        :MBR_best_corr_frag_hellinger_rank_false,
+        :MBR_best_donor_frag_corr_bitvec_rank_false,
+        :MBR_best_receiver_corr_frag_hellinger_false,
+        :MBR_best_receiver_corr_frag_hellinger_rank_false,
+        :MBR_receiver_frag_corr_bitvec_rank,
+        :MBR_best_shared_corr_frag_hellinger_false,
+        :MBR_best_shared_corr_frag_hellinger_rank_false,
+        :MBR_best_shared_corr_frag_bitvec_rank_false,
     ]
 
     @test Pioneer.FTR_FEATURES_F_TRUE == expected_true
@@ -1107,8 +1153,17 @@ end
         Dict("PIONEER_MBR_DISABLE_HELLINGER_CONTRAST" => "1"),
     )
     @test :MBR_best_smoothed_frag_hellinger_true in no_contrast_features
+    @test :MBR_best_corr_frag_hellinger_true in no_contrast_features
+    @test :MBR_best_donor_frag_corr_bitvec_rank_true in no_contrast_features
+    @test :MBR_best_receiver_corr_frag_hellinger_true in no_contrast_features
+    @test :MBR_receiver_frag_corr_bitvec_rank in no_contrast_features
+    @test :MBR_best_shared_corr_frag_hellinger_true in no_contrast_features
+    @test :MBR_best_shared_corr_frag_bitvec_rank_true in no_contrast_features
     @test !(:MBR_best_smoothed_frag_hellinger_rank_true in no_contrast_features)
-    @test length(no_contrast_features) == length(expected_true) - 1
+    @test !(:MBR_best_corr_frag_hellinger_rank_true in no_contrast_features)
+    @test !(:MBR_best_receiver_corr_frag_hellinger_rank_true in no_contrast_features)
+    @test !(:MBR_best_shared_corr_frag_hellinger_rank_true in no_contrast_features)
+    @test length(no_contrast_features) == length(expected_true) - 4
     @test Pioneer.FTR_FEATURES_F_FALSE2 == Symbol[
         f === :MBR_log2_weight_lod_ratio ? f :
         Symbol(replace(String(f), "_true" => "_false2"))
@@ -1157,6 +1212,24 @@ end
     @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_smoothed_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_smoothed_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_donor_frag_corr_bitvec_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_donor_frag_corr_bitvec_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_receiver_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_receiver_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_receiver_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_receiver_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_receiver_frag_corr_bitvec_rank in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_receiver_frag_corr_bitvec_rank in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_shared_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_shared_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_shared_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_shared_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_shared_corr_frag_bitvec_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_shared_corr_frag_bitvec_rank_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_best_smoothed_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_best_smoothed_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_worst_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)

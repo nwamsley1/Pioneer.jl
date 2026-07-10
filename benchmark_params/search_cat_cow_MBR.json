@@ -1,0 +1,23 @@
+{
+    "paths": {
+        "ms_data": "/Users/dennisgoldfarb/Documents/pioneer/data/meta-proteome/arrow_out",
+        "library": "/Users/dennisgoldfarb/Documents/pioneer/libraries/cat_cow.poin",
+        "results": "/Users/dennisgoldfarb/Documents/pioneer/results/cat_cow_MBR"
+    },
+    "output": {
+        "write_csv": true,
+        "write_decoys": false,
+        "delete_temp": true
+    },
+    "global": {
+        "q_value_threshold": 0.01,
+        "match_between_runs": true
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "logging": {
+        "debug_console_level": 0,
+        "max_message_bytes": 4096
+    }
+}

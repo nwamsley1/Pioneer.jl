@@ -487,6 +487,10 @@ function summarize_results!(
                 getFragmentLookupTable(getSpecLib(search_context));
                 q_value_threshold = params.q_value_threshold,
                 donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+                bitvec_rank_tables_by_file = Dict(
+                    UInt32(file_idx) => ranks
+                    for (file_idx, ranks) in search_context.bitvec_excess_rank
+                ),
             )
             @debug_l1 "Post-qvalue MBR completed: files=$(summary.n_files), " *
                       "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"

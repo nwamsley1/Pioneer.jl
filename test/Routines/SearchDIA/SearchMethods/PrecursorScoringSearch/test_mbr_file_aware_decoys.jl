@@ -28,6 +28,8 @@ function _test_mbr_donor(prob::Float32, file_idx::UInt32; precursor_idx::UInt32 
         8.0f0,
         Pioneer.MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT,
         0.25f0,
+        UInt8(0x03),
+        UInt16(11),
         file_idx,
         false,
     )

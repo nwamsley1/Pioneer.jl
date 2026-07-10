@@ -1,0 +1,23 @@
+{
+    "paths": {
+        "ms_data": "/Users/dennisgoldfarb/Documents/pioneer/data/SingleCell/250pg/24ms/arrow_out",
+        "library": "/Users/dennisgoldfarb/Documents/pioneer/libraries/human_May7-2026_bitvec_10.poin",
+        "results": "/Users/dennisgoldfarb/Documents/pioneer/results/mbr_same_true_donor_file_cf2_receiver_corrfrag_20260709/SCP_250pg_MBR_2CF_receiver_corrfrag"
+    },
+    "output": {
+        "write_csv": false,
+        "write_decoys": false,
+        "delete_temp": true
+    },
+    "global": {
+        "q_value_threshold": 0.01,
+        "match_between_runs": true
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "logging": {
+        "debug_console_level": 1,
+        "max_message_bytes": 4096
+    }
+}

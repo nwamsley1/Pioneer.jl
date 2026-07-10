@@ -1313,6 +1313,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # sort + ~10 vector allocations per precursor.
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
+    psms[!, :frag_corr_bitvec]            = zeros(UInt8,  n)
     psms[!, :n_correlated_fragments_bitvec_rank] = zeros(UInt16, n)
     psms[!, :frag_corr_strength]          = zeros(Float32, n)
     psms[!, :frag_corr_effective_n]       = zeros(Float32, n)
@@ -1486,6 +1487,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             # boxes a value per row.
             out_disp   = psms.frag_apex_dispersion_irt::Vector{Float32}
             out_ncorr  = psms.n_correlated_fragments::Vector{UInt8}
+            out_bitvec = psms.frag_corr_bitvec::Vector{UInt8}
             out_rank   = psms.n_correlated_fragments_bitvec_rank::Vector{UInt16}
             out_str    = psms.frag_corr_strength::Vector{Float32}
             out_effn   = psms.frag_corr_effective_n::Vector{Float32}
@@ -1495,6 +1497,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 i_orig = perm[i_start + k - 1]
                 out_disp[i_orig]   = apex_disp
                 out_ncorr[i_orig]  = n_corr_70
+                out_bitvec[i_orig] = UInt8(corr_mask & 0x00ff)
                 out_rank[i_orig]   = corr_rank
                 out_str[i_orig]    = corr_strength
                 out_effn[i_orig]   = corr_effective_n
