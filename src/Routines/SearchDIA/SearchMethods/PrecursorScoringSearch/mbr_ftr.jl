@@ -370,6 +370,9 @@ function _mbr_write_ftr_debug_tables!(
         summary[!, :mbr_targets] = Int[combined_diagnostics.mbr_targets]
         summary[!, :mbr_decoys] = Int[combined_diagnostics.mbr_decoys]
         summary[!, :mbr_false_transfers] = Int[combined_diagnostics.mbr_false_transfers]
+        summary[!, :internal_ftr_targets] = Int[combined_diagnostics.internal_ftr_targets]
+        summary[!, :internal_ftr_errors] = Int[combined_diagnostics.internal_ftr_errors]
+        summary[!, :internal_ftr_estimate] = Float32[combined_diagnostics.internal_ftr_estimate]
         summary[!, :total_errors] = Int[combined_diagnostics.total_errors]
         summary[!, :total_targets] = Int[combined_diagnostics.total_targets]
         summary[!, :combined_error_rate] = Float32[combined_diagnostics.combined_error_rate]
@@ -626,6 +629,8 @@ function _mbr_recovery_mask(qvals_top, pep_top, alpha::Float32)
 end
 
 @inline _mbr_rank_score(x) = isfinite(Float32(x)) ? Float32(x) : -Inf32
+@inline _mbr_internal_ftr_estimate(errors::Integer, targets::Integer) =
+    targets > 0 ? Float32(errors / targets) : NaN32
 
 function _mbr_top_counterfactual_scores(
     scores_double::AbstractVector{<:Real},
@@ -685,6 +690,9 @@ function _mbr_combined_error_recovery(
             mbr_targets = 0,
             mbr_decoys = 0,
             mbr_false_transfers = 0,
+            internal_ftr_targets = 0,
+            internal_ftr_errors = 0,
+            internal_ftr_estimate = NaN32,
             total_errors = base_decoys_i,
             total_targets = base_targets_i,
             combined_error_rate = baseline_error_rate,
@@ -709,6 +717,9 @@ function _mbr_combined_error_recovery(
             mbr_targets = 0,
             mbr_decoys = 0,
             mbr_false_transfers = 0,
+            internal_ftr_targets = 0,
+            internal_ftr_errors = 0,
+            internal_ftr_estimate = NaN32,
             total_errors = base_decoys_i,
             total_targets = base_targets_i,
             combined_error_rate = baseline_error_rate,
@@ -783,6 +794,9 @@ function _mbr_combined_error_recovery(
             mbr_targets = 0,
             mbr_decoys = 0,
             mbr_false_transfers = 0,
+            internal_ftr_targets = 0,
+            internal_ftr_errors = 0,
+            internal_ftr_estimate = NaN32,
             total_errors = base_decoys_i,
             total_targets = base_targets_i,
             combined_error_rate = baseline_error_rate,
@@ -812,6 +826,9 @@ function _mbr_combined_error_recovery(
     total_targets = base_targets_i + mbr_targets
     total_errors = base_decoys_i + mbr_decoys + mbr_false_transfers
     combined_error_rate = total_targets > 0 ? Float32(total_errors / total_targets) : Inf32
+    internal_ftr_targets = mbr_targets
+    internal_ftr_errors = mbr_false_transfers
+    internal_ftr_estimate = _mbr_internal_ftr_estimate(internal_ftr_errors, internal_ftr_targets)
 
     return (
         recovered = recovered,
@@ -825,6 +842,9 @@ function _mbr_combined_error_recovery(
         mbr_targets = mbr_targets,
         mbr_decoys = mbr_decoys,
         mbr_false_transfers = mbr_false_transfers,
+        internal_ftr_targets = internal_ftr_targets,
+        internal_ftr_errors = internal_ftr_errors,
+        internal_ftr_estimate = internal_ftr_estimate,
         total_errors = total_errors,
         total_targets = total_targets,
         combined_error_rate = combined_error_rate,
@@ -861,6 +881,9 @@ function apply_mbr_filter_paired!(
             mbr_targets=0,
             mbr_decoys=0,
             mbr_false_transfers=0,
+            internal_ftr_targets=0,
+            internal_ftr_errors=0,
+            internal_ftr_estimate=NaN32,
             total_errors=0,
             total_targets=0,
             combined_error_rate=NaN32,
@@ -932,6 +955,9 @@ function apply_mbr_filter_paired!(
             mbr_targets=0,
             mbr_decoys=0,
             mbr_false_transfers=0,
+            internal_ftr_targets=0,
+            internal_ftr_errors=0,
+            internal_ftr_estimate=NaN32,
             total_errors=base_decoys,
             total_targets=base_targets,
             combined_error_rate=baseline_error_rate,
@@ -1230,6 +1256,9 @@ function apply_mbr_filter_paired!(
     @debug_l1 "  combined errors: total=$(combined.total_errors) / targets=$(combined.total_targets) " *
               "($(round(100 * combined.combined_error_rate, digits=4))%); " *
               "MBR target-decoys=$(combined.mbr_decoys), MBR false-transfers=$(combined.mbr_false_transfers)"
+    @debug_l1 "  internal FTR estimate for final accepted MBR target candidates: " *
+              "$(combined.internal_ftr_errors)/$(combined.internal_ftr_targets) " *
+              "($(round(100 * combined.internal_ftr_estimate, digits=4))%)"
     @debug_l1 "  internal FTR-q≤$(alpha) would recover $(count(_mbr_recovery_mask(qvals_top, pep_top, alpha))) candidates"
     @debug_l1 "  RECOVERED (combined total error ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
     @debug_l1 "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
@@ -1260,6 +1289,9 @@ function apply_mbr_filter_paired!(
         mbr_targets = combined.mbr_targets,
         mbr_decoys = combined.mbr_decoys,
         mbr_false_transfers = combined.mbr_false_transfers,
+        internal_ftr_targets = combined.internal_ftr_targets,
+        internal_ftr_errors = combined.internal_ftr_errors,
+        internal_ftr_estimate = combined.internal_ftr_estimate,
         total_errors = combined.total_errors,
         total_targets = combined.total_targets,
         combined_error_rate = combined.combined_error_rate,

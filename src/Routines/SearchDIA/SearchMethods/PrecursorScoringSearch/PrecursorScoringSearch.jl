@@ -499,6 +499,9 @@ function summarize_results!(
                       "MBR decoys=$(summary.mbr_decoys), MBR false-transfers=$(summary.mbr_false_transfers), " *
                       "total=$(summary.total_errors)/$(summary.total_targets) " *
                       "($(round(100 * summary.combined_error_rate, digits=4))%)"
+            @debug_l1 "Post-qvalue MBR internal FTR for final accepted target transfers: " *
+                      "$(summary.internal_ftr_errors)/$(summary.internal_ftr_targets) " *
+                      "($(round(100 * summary.internal_ftr_estimate, digits=4))%)"
             annotated_refs = [PSMFileReference(file_path(ref)) for ref in annotated_refs]
             remap_mbr_recovered_prec_probs!(
                 annotated_refs,
