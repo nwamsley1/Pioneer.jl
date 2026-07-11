@@ -277,6 +277,9 @@ function _mbr_write_ftr_debug_tables!(
     prob_thresh::Float32,
     best_iter::Int,
     n_positive::Int,
+    combined_error_qvals_top = nothing,
+    combined_error_rates_top = nothing,
+    combined_diagnostics = nothing,
 )
     mkpath(debug_dir)
     n_cand = nrow(sub)
@@ -337,6 +340,14 @@ function _mbr_write_ftr_debug_tables!(
     candidates[!, :mbr_ftr_score_true] = Float32.(ftr_score_double[1:n_cand])
     candidates[!, :mbr_ftr_qval_true_debug] = Float32.(qvals_double[1:n_cand])
     candidates[!, :mbr_ftr_pep_true_debug] = Float32.(pep_double[1:n_cand])
+    if combined_error_qvals_top !== nothing
+        @assert length(combined_error_qvals_top) == n_cand
+        candidates[!, :mbr_total_error_qval_true_debug] = Float32.(combined_error_qvals_top)
+    end
+    if combined_error_rates_top !== nothing
+        @assert length(combined_error_rates_top) == n_cand
+        candidates[!, :mbr_total_error_rate_true_debug] = Float32.(combined_error_rates_top)
+    end
     candidates[!, :mbr_recovered_debug] = Bool.(recovered_in_cand)
     writeArrow(joinpath(debug_dir, "mbr_ftr_candidates.arrow"), candidates)
 
@@ -352,6 +363,17 @@ function _mbr_write_ftr_debug_tables!(
         n_recovered = Int[count(recovered_in_cand)],
         features = [join(string.(available_true), ",")],
     )
+    if combined_diagnostics !== nothing
+        summary[!, :base_targets] = Int[combined_diagnostics.base_targets]
+        summary[!, :base_decoys] = Int[combined_diagnostics.base_decoys]
+        summary[!, :baseline_error_rate] = Float32[combined_diagnostics.baseline_error_rate]
+        summary[!, :mbr_targets] = Int[combined_diagnostics.mbr_targets]
+        summary[!, :mbr_decoys] = Int[combined_diagnostics.mbr_decoys]
+        summary[!, :mbr_false_transfers] = Int[combined_diagnostics.mbr_false_transfers]
+        summary[!, :total_errors] = Int[combined_diagnostics.total_errors]
+        summary[!, :total_targets] = Int[combined_diagnostics.total_targets]
+        summary[!, :combined_error_rate] = Float32[combined_diagnostics.combined_error_rate]
+    end
     writeArrow(joinpath(debug_dir, "mbr_ftr_summary.arrow"), summary)
 
     open(joinpath(debug_dir, "mbr_ftr_features.txt"), "w") do io
@@ -603,6 +625,212 @@ function _mbr_recovery_mask(qvals_top, pep_top, alpha::Float32)
     return Float32.(qvals_top) .<= alpha
 end
 
+@inline _mbr_rank_score(x) = isfinite(Float32(x)) ? Float32(x) : -Inf32
+
+function _mbr_top_counterfactual_scores(
+    scores_double::AbstractVector{<:Real},
+    n_cand::Int;
+    n_counterfactuals::Int,
+    eval_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+)
+    n_double = (1 + n_counterfactuals) * n_cand
+    @assert length(scores_double) == n_double
+    if eval_mask !== nothing
+        @assert length(eval_mask) == n_double
+    end
+
+    source_mask = eval_mask === nothing ? trues(n_double) : Bool.(eval_mask)
+    scores = fill(-Inf32, n_cand)
+    @inbounds for i in 1:n_cand
+        best_score = -Inf32
+        for counterfactual_idx in 1:n_counterfactuals
+            idx = counterfactual_idx * n_cand + i
+            source_mask[idx] || continue
+            score = _mbr_rank_score(scores_double[idx])
+            score > best_score && (best_score = score)
+        end
+        scores[i] = best_score
+    end
+    return scores
+end
+
+function _mbr_combined_error_recovery(
+    scores_top::AbstractVector{<:Real},
+    target_top::AbstractVector{Bool},
+    top_counterfactual_scores::AbstractVector{<:Real};
+    base_targets::Integer,
+    base_decoys::Integer,
+    alpha::Float32,
+)
+    n = length(scores_top)
+    @assert length(target_top) == n
+    @assert length(top_counterfactual_scores) == n
+
+    combined_error_qvals = fill(Inf32, n)
+    combined_error_rates = fill(Inf32, n)
+    recovered = falses(n)
+    base_targets_i = Int(base_targets)
+    base_decoys_i = Int(base_decoys)
+    baseline_error_rate = base_targets_i > 0 ? Float32(base_decoys_i / base_targets_i) : Inf32
+    if n == 0 || base_targets_i <= 0 || baseline_error_rate >= alpha
+        return (
+            recovered = recovered,
+            combined_error_qvals = combined_error_qvals,
+            combined_error_rates = combined_error_rates,
+            threshold = Float32(Inf),
+            n_recovered = 0,
+            base_targets = base_targets_i,
+            base_decoys = base_decoys_i,
+            baseline_error_rate = baseline_error_rate,
+            mbr_targets = 0,
+            mbr_decoys = 0,
+            mbr_false_transfers = 0,
+            total_errors = base_decoys_i,
+            total_targets = base_targets_i,
+            combined_error_rate = baseline_error_rate,
+        )
+    end
+
+    valid_idx = Int[]
+    sizehint!(valid_idx, n)
+    @inbounds for i in 1:n
+        isfinite(Float32(scores_top[i])) && push!(valid_idx, i)
+    end
+    if isempty(valid_idx)
+        return (
+            recovered = recovered,
+            combined_error_qvals = combined_error_qvals,
+            combined_error_rates = combined_error_rates,
+            threshold = Float32(Inf),
+            n_recovered = 0,
+            base_targets = base_targets_i,
+            base_decoys = base_decoys_i,
+            baseline_error_rate = baseline_error_rate,
+            mbr_targets = 0,
+            mbr_decoys = 0,
+            mbr_false_transfers = 0,
+            total_errors = base_decoys_i,
+            total_targets = base_targets_i,
+            combined_error_rate = baseline_error_rate,
+        )
+    end
+
+    order = sort(valid_idx, by = i -> Float32(scores_top[i]), rev = true)
+    false_event_scores = Float32[]
+    sizehint!(false_event_scores, count(target_top))
+    @inbounds for i in 1:n
+        target_top[i] || continue
+        score = Float32(scores_top[i])
+        cf_score = Float32(top_counterfactual_scores[i])
+        if isfinite(score) && isfinite(cf_score)
+            push!(false_event_scores, min(score, cf_score))
+        end
+    end
+    sort!(false_event_scores, rev = true)
+
+    group_starts = Int[]
+    group_ends = Int[]
+    group_rates = Float32[]
+    n_targets = 0
+    n_decoys = 0
+    false_ptr = 0
+    pos = 1
+    @inbounds while pos <= length(order)
+        group_start = pos
+        threshold = Float32(scores_top[order[pos]])
+        while pos <= length(order) && Float32(scores_top[order[pos]]) == threshold
+            idx = order[pos]
+            if target_top[idx]
+                n_targets += 1
+            else
+                n_decoys += 1
+            end
+            pos += 1
+        end
+        while false_ptr < length(false_event_scores) && false_event_scores[false_ptr + 1] >= threshold
+            false_ptr += 1
+        end
+        total_targets = base_targets_i + n_targets
+        total_errors = base_decoys_i + n_decoys + false_ptr
+        rate = total_targets > 0 ? Float32(total_errors / total_targets) : Inf32
+        push!(group_starts, group_start)
+        push!(group_ends, pos - 1)
+        push!(group_rates, rate)
+    end
+
+    running_min = Inf32
+    @inbounds for group_idx in length(group_rates):-1:1
+        running_min = min(running_min, group_rates[group_idx])
+        for pos_idx in group_starts[group_idx]:group_ends[group_idx]
+            idx = order[pos_idx]
+            combined_error_qvals[idx] = running_min
+            combined_error_rates[idx] = group_rates[group_idx]
+        end
+    end
+
+    recovered .= combined_error_qvals .<= alpha
+    n_recovered = count(recovered)
+    if n_recovered == 0
+        return (
+            recovered = recovered,
+            combined_error_qvals = combined_error_qvals,
+            combined_error_rates = combined_error_rates,
+            threshold = Float32(Inf),
+            n_recovered = 0,
+            base_targets = base_targets_i,
+            base_decoys = base_decoys_i,
+            baseline_error_rate = baseline_error_rate,
+            mbr_targets = 0,
+            mbr_decoys = 0,
+            mbr_false_transfers = 0,
+            total_errors = base_decoys_i,
+            total_targets = base_targets_i,
+            combined_error_rate = baseline_error_rate,
+        )
+    end
+
+    threshold = minimum(Float32.(scores_top[recovered]))
+    mbr_targets = 0
+    mbr_decoys = 0
+    mbr_false_transfers = 0
+    @inbounds for i in 1:n
+        if recovered[i]
+            if target_top[i]
+                mbr_targets += 1
+            else
+                mbr_decoys += 1
+            end
+        end
+        if target_top[i]
+            score = Float32(scores_top[i])
+            cf_score = Float32(top_counterfactual_scores[i])
+            if isfinite(score) && isfinite(cf_score) && score >= threshold && cf_score >= threshold
+                mbr_false_transfers += 1
+            end
+        end
+    end
+    total_targets = base_targets_i + mbr_targets
+    total_errors = base_decoys_i + mbr_decoys + mbr_false_transfers
+    combined_error_rate = total_targets > 0 ? Float32(total_errors / total_targets) : Inf32
+
+    return (
+        recovered = recovered,
+        combined_error_qvals = combined_error_qvals,
+        combined_error_rates = combined_error_rates,
+        threshold = threshold,
+        n_recovered = n_recovered,
+        base_targets = base_targets_i,
+        base_decoys = base_decoys_i,
+        baseline_error_rate = baseline_error_rate,
+        mbr_targets = mbr_targets,
+        mbr_decoys = mbr_decoys,
+        mbr_false_transfers = mbr_false_transfers,
+        total_errors = total_errors,
+        total_targets = total_targets,
+        combined_error_rate = combined_error_rate,
+    )
+end
+
 function apply_mbr_filter_paired!(
     psms::DataFrame;
     alpha::Float32    = 0.01f0,
@@ -620,7 +848,24 @@ function apply_mbr_filter_paired!(
         psms[!, :mbr_target_decoy_prob]  = Float32[]
         psms[!, :ftr_qval_true]          = Float32[]
         psms[!, :ftr_pep_true]           = Float32[]
-        return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
+        psms[!, :mbr_total_error_qval_true] = Float32[]
+        psms[!, :mbr_total_error_rate_true] = Float32[]
+        return (
+            n_candidates=0,
+            threshold=Float32(Inf),
+            n_recovered=0,
+            prob_thresh=Float32(Inf),
+            base_targets=0,
+            base_decoys=0,
+            baseline_error_rate=NaN32,
+            mbr_targets=0,
+            mbr_decoys=0,
+            mbr_false_transfers=0,
+            total_errors=0,
+            total_targets=0,
+            combined_error_rate=NaN32,
+            elapsed_s=0.0,
+        )
     end
 
     # ── 1. Pre-MBR q-values from the non-MBR (pass-1) score ──
@@ -670,7 +915,28 @@ function apply_mbr_filter_paired!(
         psms[!, :mbr_target_decoy_prob]  = fill(NaN32, n)
         psms[!, :ftr_qval_true]          = fill(NaN32, n)
         psms[!, :ftr_pep_true]           = fill(NaN32, n)
-        return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=time()-t0)
+        psms[!, :mbr_total_error_qval_true] = fill(NaN32, n)
+        psms[!, :mbr_total_error_rate_true] = fill(NaN32, n)
+        base_pass = global_pass .& (pre_qvals .<= q_thresh)
+        base_targets = count(base_pass .& target_col)
+        base_decoys = count(base_pass .& .!target_col)
+        baseline_error_rate = base_targets > 0 ? Float32(base_decoys / base_targets) : Inf32
+        return (
+            n_candidates=0,
+            threshold=Float32(Inf),
+            n_recovered=0,
+            prob_thresh=prob_thresh,
+            base_targets=base_targets,
+            base_decoys=base_decoys,
+            baseline_error_rate=baseline_error_rate,
+            mbr_targets=0,
+            mbr_decoys=0,
+            mbr_false_transfers=0,
+            total_errors=base_decoys,
+            total_targets=base_targets,
+            combined_error_rate=baseline_error_rate,
+            elapsed_s=time()-t0,
+        )
     end
 
     # ── 3. Build the true + selected-counterfactual training frame ──
@@ -867,7 +1133,30 @@ function apply_mbr_filter_paired!(
     # decision uses the paired FTR q-value.
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    recovered_in_cand = _mbr_recovery_mask(qvals_top, pep_top, alpha)
+    ftr_score_top = ftr_score_double[1:n_cand]
+    base_pass = global_pass .& (pre_qvals .<= q_thresh)
+    base_targets = count(base_pass .& target_col)
+    base_decoys = count(base_pass .& .!target_col)
+    combined_score_top = copy(ftr_score_top)
+    eval_top = Bool.(best_state.metrics.qvalue_eval_mask[1:n_cand])
+    @inbounds for i in 1:n_cand
+        eval_top[i] || (combined_score_top[i] = NaN32)
+    end
+    top_counterfactual_scores = _mbr_top_counterfactual_scores(
+        ftr_score_double,
+        n_cand;
+        n_counterfactuals = n_counterfactuals,
+        eval_mask = best_state.metrics.qvalue_eval_mask,
+    )
+    combined = _mbr_combined_error_recovery(
+        combined_score_top,
+        Bool.(sub[!, :target]),
+        top_counterfactual_scores;
+        base_targets = base_targets,
+        base_decoys = base_decoys,
+        alpha = alpha,
+    )
+    recovered_in_cand = combined.recovered
     n_recovered = count(recovered_in_cand)
 
     debug_dir = _mbr_debug_dir_from_env()
@@ -889,6 +1178,9 @@ function apply_mbr_filter_paired!(
             prob_thresh = prob_thresh,
             best_iter = best_state.iter,
             n_positive = best_state.n_positive,
+            combined_error_qvals_top = combined.combined_error_qvals,
+            combined_error_rates_top = combined.combined_error_rates,
+            combined_diagnostics = combined,
         )
         @debug_l1 "  Wrote MBR FTR debug tables to $debug_dir"
     end
@@ -897,10 +1189,13 @@ function apply_mbr_filter_paired!(
     target_decoy_prob_full = fill(NaN32, n)
     ftr_qval_full      = fill(NaN32, n)
     ftr_pep_full       = fill(NaN32, n)
-    ftr_score_top      = ftr_score_double[1:n_cand]
+    combined_qval_full = fill(NaN32, n)
+    combined_rate_full = fill(NaN32, n)
     @inbounds for (k, i) in enumerate(cand_idx)
         ftr_qval_full[i] = qvals_top[k]
         ftr_pep_full[i]  = pep_top[k]
+        combined_qval_full[i] = combined.combined_error_qvals[k]
+        combined_rate_full[i] = combined.combined_error_rates[k]
         if recovered_in_cand[k]
             mbr_recovered_full[i] = true
             target_decoy_prob_full[i] = ftr_score_top[k]
@@ -911,11 +1206,12 @@ function apply_mbr_filter_paired!(
     psms[!, :mbr_target_decoy_prob]  = target_decoy_prob_full
     psms[!, :ftr_qval_true]          = ftr_qval_full
     psms[!, :ftr_pep_true]           = ftr_pep_full
+    psms[!, :mbr_total_error_qval_true] = combined_qval_full
+    psms[!, :mbr_total_error_rate_true] = combined_rate_full
 
-    # ── 7. Threshold for log: highest ftr_score on a top-half row with q ≤ α ──
-    τ = n_recovered > 0 ?
-        minimum(ftr_score_top[recovered_in_cand]) :
-        Float32(Inf)
+    # ── 7. Threshold for log: highest ftr_score on a top-half row within the
+    # combined target/decoy + counterfactual error budget.
+    τ = combined.threshold
 
     # ── 8. Recovered transfer composition ──
     # Use library label + MBR_is_best_decoy-equivalent — donor polarity from
@@ -928,8 +1224,14 @@ function apply_mbr_filter_paired!(
     n_d_rec = n_recovered - n_t_rec
 
     @debug_l1 "  FTR frame rows: $((1 + n_counterfactuals) * n_cand)  (true donors=1, counterfactuals=$(n_counterfactuals))"
-    @debug_l1 "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
-    @debug_l1 "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
+    @debug_l1 "  τ (combined-error score, total error ≤ α): $(round(τ, digits=4))"
+    @debug_l1 "  baseline errors: decoys=$(combined.base_decoys) / targets=$(combined.base_targets) " *
+              "($(round(100 * combined.baseline_error_rate, digits=4))%)"
+    @debug_l1 "  combined errors: total=$(combined.total_errors) / targets=$(combined.total_targets) " *
+              "($(round(100 * combined.combined_error_rate, digits=4))%); " *
+              "MBR target-decoys=$(combined.mbr_decoys), MBR false-transfers=$(combined.mbr_false_transfers)"
+    @debug_l1 "  internal FTR-q≤$(alpha) would recover $(count(_mbr_recovery_mask(qvals_top, pep_top, alpha))) candidates"
+    @debug_l1 "  RECOVERED (combined total error ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
     @debug_l1 "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
 
     if last_cls !== nothing
@@ -952,6 +1254,15 @@ function apply_mbr_filter_paired!(
         threshold    = τ,
         n_recovered  = n_recovered,
         prob_thresh  = prob_thresh,
+        base_targets = combined.base_targets,
+        base_decoys = combined.base_decoys,
+        baseline_error_rate = combined.baseline_error_rate,
+        mbr_targets = combined.mbr_targets,
+        mbr_decoys = combined.mbr_decoys,
+        mbr_false_transfers = combined.mbr_false_transfers,
+        total_errors = combined.total_errors,
+        total_targets = combined.total_targets,
+        combined_error_rate = combined.combined_error_rate,
         elapsed_s    = elapsed,
     )
 end

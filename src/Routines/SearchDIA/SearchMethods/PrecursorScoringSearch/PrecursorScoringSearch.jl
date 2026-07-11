@@ -494,6 +494,11 @@ function summarize_results!(
             )
             @debug_l1 "Post-qvalue MBR completed: files=$(summary.n_files), " *
                       "candidates=$(summary.n_candidates), recovered=$(summary.n_recovered)"
+            @debug_l1 "Post-qvalue MBR combined error: baseline=$(summary.base_decoys)/$(summary.base_targets) " *
+                      "($(round(100 * summary.baseline_error_rate, digits=4))%), " *
+                      "MBR decoys=$(summary.mbr_decoys), MBR false-transfers=$(summary.mbr_false_transfers), " *
+                      "total=$(summary.total_errors)/$(summary.total_targets) " *
+                      "($(round(100 * summary.combined_error_rate, digits=4))%)"
             annotated_refs = [PSMFileReference(file_path(ref)) for ref in annotated_refs]
             remap_mbr_recovered_prec_probs!(
                 annotated_refs,
