@@ -236,6 +236,7 @@ function _mbr_sidecar_output_columns()
     cols = Symbol[:precursor_idx, :scan_idx]
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_pair_prob"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_pair_prob"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_run_similarity"))
     push!(cols, :MBR_log2_weight_lod_ratio)
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log2_weight_ratio"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_log2_weight_ratio"))
@@ -1492,6 +1493,7 @@ end
 @inline function _compute_mbr_inner_v2!(
     out_best_pair_t::Vector{Float32}, out_best_pair_f::Vector{Vector{Float32}},
     out_worst_pair_t::Vector{Float32}, out_worst_pair_f::Vector{Vector{Float32}},
+    out_run_similarity_t::Vector{Float32}, out_run_similarity_f::Vector{Vector{Float32}},
     out_lw_lod::Vector{Float32},
     out_lw_t::Vector{Float32}, out_lw_f::Vector{Vector{Float32}},
     out_lw_worst_t::Vector{Float32}, out_lw_worst_f::Vector{Vector{Float32}},
@@ -1580,6 +1582,7 @@ end
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file, run_similarity)
         if donor_t !== nothing
             out_best_pair_t[i] = donor_t.trace_prob
+            out_run_similarity_t[i] = _mbr_run_similarity(run_similarity, my_file, donor_t.ms_file_idx)
             out_lw_t[i] = _mbr_log2_weight_ratio(my_weight, donor_t)
             out_le_t[i] = _mbr_log2_explained_ratio(my_l2ie, donor_t)
             out_nscans_t[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_t)
@@ -1670,6 +1673,8 @@ end
             donor_f === nothing && continue
 
             out_best_pair_f[counterfactual_idx][i] = donor_f.trace_prob
+            out_run_similarity_f[counterfactual_idx][i] =
+                _mbr_run_similarity(run_similarity, my_file, donor_f.ms_file_idx)
             out_lw_f[counterfactual_idx][i] = _mbr_log2_weight_ratio(my_weight, donor_f)
             out_le_f[counterfactual_idx][i] = _mbr_log2_explained_ratio(my_l2ie, donor_f)
             out_nscans_f[counterfactual_idx][i] = _mbr_abs_n_scans_diff(my_n_scans, donor_f)
@@ -1811,6 +1816,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
 
     out_best_pair_t = fill(-1f0, n); out_best_pair_f = _mbr_float_counterfactual_vectors(n)
     out_worst_pair_t = fill(-1f0, n); out_worst_pair_f = _mbr_float_counterfactual_vectors(n)
+    out_run_similarity_t = fill(-1f0, n); out_run_similarity_f = _mbr_float_counterfactual_vectors(n)
     out_lw_lod = fill(-1f0, n)
     out_lw_t  = fill(-1f0, n); out_lw_f  = _mbr_float_counterfactual_vectors(n)
     out_lw_worst_t = fill(-1f0, n); out_lw_worst_f = _mbr_float_counterfactual_vectors(n)
@@ -1846,6 +1852,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _compute_mbr_inner_v2!(
         out_best_pair_t, out_best_pair_f,
         out_worst_pair_t, out_worst_pair_f,
+        out_run_similarity_t, out_run_similarity_f,
         out_lw_lod,
         out_lw_t, out_lw_f,
         out_lw_worst_t, out_lw_worst_f,
@@ -1894,6 +1901,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_pair_prob", out_best_pair_f)
     side_df[!, :MBR_worst_pair_prob_true] = out_worst_pair_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_pair_prob", out_worst_pair_f)
+    side_df[!, :MBR_best_run_similarity_true] = out_run_similarity_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_run_similarity", out_run_similarity_f)
     side_df[!, :MBR_log2_weight_lod_ratio] = out_lw_lod
     side_df[!, :MBR_best_log2_weight_ratio_true] = out_lw_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_log2_weight_ratio", out_lw_f)

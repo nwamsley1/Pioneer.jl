@@ -105,6 +105,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
     MBR_CROSS_RUN_FTR_FEATURES...,
     :MBR_best_pair_prob_true,
     :MBR_worst_pair_prob_true,
+    :MBR_best_run_similarity_true,
     :MBR_log2_weight_lod_ratio,
     :MBR_best_log2_weight_ratio_true,
     :MBR_worst_log2_weight_ratio_true,

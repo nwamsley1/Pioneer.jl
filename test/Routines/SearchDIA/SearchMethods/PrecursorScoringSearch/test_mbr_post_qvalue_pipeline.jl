@@ -1089,6 +1089,7 @@ end
         Pioneer.MBR_CROSS_RUN_FTR_FEATURES...,
         :MBR_best_pair_prob_true,
         :MBR_worst_pair_prob_true,
+        :MBR_best_run_similarity_true,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_true,
         :MBR_worst_log2_weight_ratio_true,
@@ -1119,6 +1120,7 @@ end
         Pioneer.MBR_CROSS_RUN_FTR_FEATURES...,
         :MBR_best_pair_prob_false,
         :MBR_worst_pair_prob_false,
+        :MBR_best_run_similarity_false,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_false,
         :MBR_worst_log2_weight_ratio_false,
@@ -1182,6 +1184,8 @@ end
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
@@ -1310,6 +1314,11 @@ end
             partner_pools,
             Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
             passing_score_floor = 0.0f0,
+            run_similarity = Pioneer._MBRRunSimilarity(Dict(
+                (UInt32(3), UInt32(1)) => 0.75f0,
+                (UInt32(3), UInt32(2)) => 0.50f0,
+                (UInt32(3), UInt32(6)) => 0.25f0,
+            )),
         )
         side = DataFrame(Arrow.Table(side_path))
 
@@ -1319,6 +1328,8 @@ end
         min_weight_false_residual = min_weight_donor_df.irt_pred[2] - min_weight_donor_df.irt_obs[2]
 
         @test side.MBR_best_pair_prob_true[1] == 0.95f0
+        @test side.MBR_best_run_similarity_true[1] == 0.75f0
+        @test side.MBR_best_run_similarity_false[1] == 0.75f0
         @test side.MBR_best_observed_irt_diff_true[1] == abs(14.25f0 - 11.5f0)
         @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
         @test isapprox(
