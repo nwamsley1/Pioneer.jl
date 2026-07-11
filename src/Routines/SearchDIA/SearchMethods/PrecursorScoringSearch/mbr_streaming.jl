@@ -237,6 +237,8 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_pair_prob"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_pair_prob"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_run_similarity"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_run_similarity"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_median_run_similarity"))
     push!(cols, :MBR_log2_weight_lod_ratio)
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log2_weight_ratio"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_log2_weight_ratio"))
@@ -746,6 +748,47 @@ end
         e.ms_file_idx == donor_file && return e
     end
     return nothing
+end
+
+@inline function _median_run_similarity_for_pid(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    my_file::UInt32,
+    run_similarity::Union{Nothing, _MBRRunSimilarity},
+    median_run_similarity_cache::Dict{Tuple{UInt32, UInt32}, Float32},
+    median_run_similarity_scratch::Vector{Float32},
+)
+    cache_key = (pid, my_file)
+    cached = get(median_run_similarity_cache, cache_key, NaN32)
+    isfinite(cached) && return cached
+
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return -1.0f0
+
+    if run_similarity === nothing
+        @inbounds for e in entries
+            if e.ms_file_idx != my_file
+                median_run_similarity_cache[cache_key] = 0.0f0
+                return 0.0f0
+            end
+        end
+        return -1.0f0
+    end
+
+    empty!(median_run_similarity_scratch)
+    @inbounds for e in entries
+        e.ms_file_idx == my_file && continue
+        push!(median_run_similarity_scratch, _mbr_run_similarity(run_similarity, my_file, e.ms_file_idx))
+    end
+    n = length(median_run_similarity_scratch)
+    n == 0 && return -1.0f0
+    sort!(median_run_similarity_scratch)
+    mid = n >>> 1
+    value = isodd(n) ?
+        median_run_similarity_scratch[mid + 1] :
+        (median_run_similarity_scratch[mid] + median_run_similarity_scratch[mid + 1]) / 2.0f0
+    median_run_similarity_cache[cache_key] = value
+    return value
 end
 
 @inline function _counterfactual_receiver_eligible(
@@ -1494,6 +1537,8 @@ end
     out_best_pair_t::Vector{Float32}, out_best_pair_f::Vector{Vector{Float32}},
     out_worst_pair_t::Vector{Float32}, out_worst_pair_f::Vector{Vector{Float32}},
     out_run_similarity_t::Vector{Float32}, out_run_similarity_f::Vector{Vector{Float32}},
+    out_run_similarity_worst_t::Vector{Float32}, out_run_similarity_worst_f::Vector{Vector{Float32}},
+    out_run_similarity_median_t::Vector{Float32}, out_run_similarity_median_f::Vector{Vector{Float32}},
     out_lw_lod::Vector{Float32},
     out_lw_t::Vector{Float32}, out_lw_f::Vector{Vector{Float32}},
     out_lw_worst_t::Vector{Float32}, out_lw_worst_f::Vector{Vector{Float32}},
@@ -1551,6 +1596,8 @@ end
     run_similarity::Union{Nothing, _MBRRunSimilarity},
     partner_pools::_CounterfactualPartnerPools,
     false_donor_cache::Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple},
+    median_run_similarity_cache::Dict{Tuple{UInt32, UInt32}, Float32},
+    median_run_similarity_scratch::Vector{Float32},
     counterfactual_eligibility_by_file::Union{Nothing, _CounterfactualEligibilityByFile},
     bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}},
     lod_log2_weight_by_file::Dict{UInt32, Float32},
@@ -1583,6 +1630,14 @@ end
         if donor_t !== nothing
             out_best_pair_t[i] = donor_t.trace_prob
             out_run_similarity_t[i] = _mbr_run_similarity(run_similarity, my_file, donor_t.ms_file_idx)
+            out_run_similarity_median_t[i] = _median_run_similarity_for_pid(
+                donor_dict,
+                my_pid,
+                my_file,
+                run_similarity,
+                median_run_similarity_cache,
+                median_run_similarity_scratch,
+            )
             out_lw_t[i] = _mbr_log2_weight_ratio(my_weight, donor_t)
             out_le_t[i] = _mbr_log2_explained_ratio(my_l2ie, donor_t)
             out_nscans_t[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_t)
@@ -1635,6 +1690,8 @@ end
             )
             if donor_worst_t !== nothing
                 out_worst_pair_t[i] = donor_worst_t.trace_prob
+                out_run_similarity_worst_t[i] =
+                    _mbr_run_similarity(run_similarity, my_file, donor_worst_t.ms_file_idx)
                 out_lw_worst_t[i] = _mbr_log2_weight_ratio(my_weight, donor_worst_t)
                 out_le_worst_t[i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_t)
                 out_nscans_worst_t[i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_t)
@@ -1675,6 +1732,14 @@ end
             out_best_pair_f[counterfactual_idx][i] = donor_f.trace_prob
             out_run_similarity_f[counterfactual_idx][i] =
                 _mbr_run_similarity(run_similarity, my_file, donor_f.ms_file_idx)
+            out_run_similarity_median_f[counterfactual_idx][i] = _median_run_similarity_for_pid(
+                donor_dict,
+                donor_f.precursor_idx,
+                my_file,
+                run_similarity,
+                median_run_similarity_cache,
+                median_run_similarity_scratch,
+            )
             out_lw_f[counterfactual_idx][i] = _mbr_log2_weight_ratio(my_weight, donor_f)
             out_le_f[counterfactual_idx][i] = _mbr_log2_explained_ratio(my_l2ie, donor_f)
             out_nscans_f[counterfactual_idx][i] = _mbr_abs_n_scans_diff(my_n_scans, donor_f)
@@ -1729,6 +1794,8 @@ end
             )
             if donor_worst_f !== nothing
                 out_worst_pair_f[counterfactual_idx][i] = donor_worst_f.trace_prob
+                out_run_similarity_worst_f[counterfactual_idx][i] =
+                    _mbr_run_similarity(run_similarity, my_file, donor_worst_f.ms_file_idx)
                 out_lw_worst_f[counterfactual_idx][i] = _mbr_log2_weight_ratio(my_weight, donor_worst_f)
                 out_le_worst_f[counterfactual_idx][i] = _mbr_log2_explained_ratio(my_l2ie, donor_worst_f)
                 out_nscans_worst_f[counterfactual_idx][i] = _mbr_abs_n_scans_diff(my_n_scans, donor_worst_f)
@@ -1817,6 +1884,10 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_best_pair_t = fill(-1f0, n); out_best_pair_f = _mbr_float_counterfactual_vectors(n)
     out_worst_pair_t = fill(-1f0, n); out_worst_pair_f = _mbr_float_counterfactual_vectors(n)
     out_run_similarity_t = fill(-1f0, n); out_run_similarity_f = _mbr_float_counterfactual_vectors(n)
+    out_run_similarity_worst_t = fill(-1f0, n)
+    out_run_similarity_worst_f = _mbr_float_counterfactual_vectors(n)
+    out_run_similarity_median_t = fill(-1f0, n)
+    out_run_similarity_median_f = _mbr_float_counterfactual_vectors(n)
     out_lw_lod = fill(-1f0, n)
     out_lw_t  = fill(-1f0, n); out_lw_f  = _mbr_float_counterfactual_vectors(n)
     out_lw_worst_t = fill(-1f0, n); out_lw_worst_f = _mbr_float_counterfactual_vectors(n)
@@ -1848,11 +1919,15 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_donor_library_h_worst_t = fill(1f0, n)
     out_donor_library_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     false_donor_cache = Dict{_MBRFalseDonorCacheKey, _MBRFalseDonorTuple}()
+    median_run_similarity_cache = Dict{Tuple{UInt32, UInt32}, Float32}()
+    median_run_similarity_scratch = Float32[]
 
     _compute_mbr_inner_v2!(
         out_best_pair_t, out_best_pair_f,
         out_worst_pair_t, out_worst_pair_f,
         out_run_similarity_t, out_run_similarity_f,
+        out_run_similarity_worst_t, out_run_similarity_worst_f,
+        out_run_similarity_median_t, out_run_similarity_median_f,
         out_lw_lod,
         out_lw_t, out_lw_f,
         out_lw_worst_t, out_lw_worst_f,
@@ -1887,6 +1962,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         rt_v, nscans_v, receiver_corr_bitvec_v, receiver_corr_rank_v,
         smoothed_frag_cols, fragment_keys,
         donor_dict, run_similarity, partner_pools, false_donor_cache,
+        median_run_similarity_cache, median_run_similarity_scratch,
         counterfactual_eligibility_by_file,
         bitvec_rank_tables_by_file,
         lod_log2_weight_by_file, lod_log2_weight_global, passing_score_floor,
@@ -1903,6 +1979,10 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_pair_prob", out_worst_pair_f)
     side_df[!, :MBR_best_run_similarity_true] = out_run_similarity_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_run_similarity", out_run_similarity_f)
+    side_df[!, :MBR_worst_run_similarity_true] = out_run_similarity_worst_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_worst_run_similarity", out_run_similarity_worst_f)
+    side_df[!, :MBR_median_run_similarity_true] = out_run_similarity_median_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_median_run_similarity", out_run_similarity_median_f)
     side_df[!, :MBR_log2_weight_lod_ratio] = out_lw_lod
     side_df[!, :MBR_best_log2_weight_ratio_true] = out_lw_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_log2_weight_ratio", out_lw_f)
@@ -2016,7 +2096,7 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
     return vcat(parts...)
 end
 
-# After apply_mbr_filter_paired! adds the four recovery columns to the slim
+# After apply_mbr_filter_paired! adds the recovery columns to the slim
 # DataFrame, distribute them back to per-file recovery sidecars in the SAME
 # row order as the main files.
 function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
@@ -2058,6 +2138,8 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
                 mbr_target_decoy_prob  = collect(Float32.(g[!, :mbr_target_decoy_prob])),
                 ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
                 ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
+                mbr_total_error_qval_true = collect(Float32.(g[!, :mbr_total_error_qval_true])),
+                mbr_total_error_rate_true = collect(Float32.(g[!, :mbr_total_error_rate_true])),
             )
             writeArrow(side_path, d)
             n_written += 1
@@ -2076,6 +2158,8 @@ function write_recovery_sidecars(slim_df::DataFrame, file_paths::Vector{String})
                 mbr_target_decoy_prob  = collect(Float32.(g[!, :mbr_target_decoy_prob])),
                 ftr_qval_true          = collect(Float32.(g[!, :ftr_qval_true])),
                 ftr_pep_true           = collect(Float32.(g[!, :ftr_pep_true])),
+                mbr_total_error_qval_true = collect(Float32.(g[!, :mbr_total_error_qval_true])),
+                mbr_total_error_rate_true = collect(Float32.(g[!, :mbr_total_error_rate_true])),
             )
             writeArrow(side_path, d)
             n_written += 1
@@ -2142,17 +2226,27 @@ function merge_mbr_recovery_sidecars_into_main!(
         old_pep = hasproperty(main, :ftr_pep_true) ?
                   collect(Float32.(main[!, :ftr_pep_true])) :
                   fill(NaN32, n)
+        old_total_qval = hasproperty(main, :mbr_total_error_qval_true) ?
+                         collect(Float32.(main[!, :mbr_total_error_qval_true])) :
+                         fill(NaN32, n)
+        old_total_rate = hasproperty(main, :mbr_total_error_rate_true) ?
+                         collect(Float32.(main[!, :mbr_total_error_rate_true])) :
+                         fill(NaN32, n)
 
         rec_candidate = collect(Bool.(rec.MBR_transfer_candidate))
         rec_prob = collect(Float32.(rec.mbr_target_decoy_prob))
         rec_qval = collect(Float32.(rec.ftr_qval_true))
         rec_pep = collect(Float32.(rec.ftr_pep_true))
+        rec_total_qval = collect(Float32.(rec.mbr_total_error_qval_true))
+        rec_total_rate = collect(Float32.(rec.mbr_total_error_rate_true))
 
         main[!, :mbr_recovered] = old_recovered .| rec_recovered
         main[!, :MBR_transfer_candidate] = old_candidate .| rec_candidate
         main[!, :mbr_target_decoy_prob] = ifelse.(rec_recovered, rec_prob, old_prob)
         main[!, :ftr_qval_true] = ifelse.(rec_recovered, rec_qval, old_qval)
         main[!, :ftr_pep_true] = ifelse.(rec_recovered, rec_pep, old_pep)
+        main[!, :mbr_total_error_qval_true] = ifelse.(rec_candidate, rec_total_qval, old_total_qval)
+        main[!, :mbr_total_error_rate_true] = ifelse.(rec_candidate, rec_total_rate, old_total_rate)
 
         rec = nothing
         GC.gc(false)
@@ -2298,6 +2392,15 @@ function run_mbr_after_qvalue_filter!(
         n_merged = n_merged,
         n_candidates = ftr_summary.n_candidates,
         n_recovered = ftr_summary.n_recovered,
+        base_targets = ftr_summary.base_targets,
+        base_decoys = ftr_summary.base_decoys,
+        baseline_error_rate = ftr_summary.baseline_error_rate,
+        mbr_targets = ftr_summary.mbr_targets,
+        mbr_decoys = ftr_summary.mbr_decoys,
+        mbr_false_transfers = ftr_summary.mbr_false_transfers,
+        total_errors = ftr_summary.total_errors,
+        total_targets = ftr_summary.total_targets,
+        combined_error_rate = ftr_summary.combined_error_rate,
     )
 end
 
@@ -2363,6 +2466,8 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         side_df[!, :mbr_target_decoy_prob] = collect(Float32.(rec.mbr_target_decoy_prob))
         side_df[!, :ftr_qval_true]        = collect(Float32.(rec.ftr_qval_true))
         side_df[!, :ftr_pep_true]         = collect(Float32.(rec.ftr_pep_true))
+        side_df[!, :mbr_total_error_qval_true] = collect(Float32.(rec.mbr_total_error_qval_true))
+        side_df[!, :mbr_total_error_rate_true] = collect(Float32.(rec.mbr_total_error_rate_true))
 
         new_sidecar_path = path * ".mbr_outputs.sidecar.arrow"
         writeArrow(new_sidecar_path, side_df)

@@ -682,6 +682,51 @@ end
     @test Pioneer._mbr_recovery_mask(qvals, peps, 0.01f0) == Bool[true, false, true]
 end
 
+@testset "MBR combined error cutoff spends unused global FDR budget" begin
+    slack_result = Pioneer._mbr_combined_error_recovery(
+        Float32[0.95, 0.90, 0.85, 0.80],
+        Bool[true, true, true, true],
+        Float32[0.10, 0.89, 0.84, 0.80];
+        base_targets = 100,
+        base_decoys = 0,
+        alpha = 0.01f0,
+    )
+
+    @test slack_result.recovered == Bool[true, true, true, false]
+    @test slack_result.n_recovered == 3
+    @test slack_result.mbr_false_transfers == 1
+    @test slack_result.mbr_decoys == 0
+    @test slack_result.combined_error_rate <= 0.01f0
+    @test slack_result.combined_error_qvals[3] <= 0.01f0
+    @test slack_result.combined_error_qvals[4] > 0.01f0
+
+    decoy_result = Pioneer._mbr_combined_error_recovery(
+        Float32[0.95, 0.94],
+        Bool[false, true],
+        Float32[0.95, 0.10];
+        base_targets = 100,
+        base_decoys = 0,
+        alpha = 0.01f0,
+    )
+
+    @test decoy_result.recovered == Bool[true, true]
+    @test decoy_result.mbr_decoys == 1
+    @test decoy_result.mbr_false_transfers == 0
+    @test decoy_result.total_errors == 1
+
+    no_dilution_result = Pioneer._mbr_combined_error_recovery(
+        fill(0.99f0, 200),
+        trues(200),
+        fill(-Inf32, 200);
+        base_targets = 100,
+        base_decoys = 2,
+        alpha = 0.01f0,
+    )
+
+    @test no_dilution_result.n_recovered == 0
+    @test all(>(0.01f0), no_dilution_result.combined_error_qvals)
+end
+
 @testset "MBR candidates do not require an available counterfactual" begin
     old_cf = get(ENV, "PIONEER_MBR_N_COUNTERFACTUALS", nothing)
     old_disable_hellinger = get(ENV, "PIONEER_MBR_DISABLE_HELLINGER_CONTRAST", nothing)
@@ -1186,6 +1231,10 @@ end
     @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test !(:MBR_worst_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_worst_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test !(:MBR_median_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE)
+    @test !(:MBR_median_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_max_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_max_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test :MBR_best_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
@@ -1330,6 +1379,10 @@ end
         @test side.MBR_best_pair_prob_true[1] == 0.95f0
         @test side.MBR_best_run_similarity_true[1] == 0.75f0
         @test side.MBR_best_run_similarity_false[1] == 0.75f0
+        @test side.MBR_worst_run_similarity_true[1] == 0.25f0
+        @test side.MBR_worst_run_similarity_false[1] == 0.25f0
+        @test side.MBR_median_run_similarity_true[1] == 0.50f0
+        @test side.MBR_median_run_similarity_false[1] == 0.50f0
         @test side.MBR_best_observed_irt_diff_true[1] == abs(14.25f0 - 11.5f0)
         @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
         @test isapprox(
@@ -1375,6 +1428,8 @@ end
 
         @test single_side.MBR_single_donor_true[1] == 1.0f0
         @test single_side.MBR_worst_pair_prob_true[1] == -1.0f0
+        @test single_side.MBR_worst_run_similarity_true[1] == -1.0f0
+        @test single_side.MBR_median_run_similarity_true[1] == 0.0f0
         @test single_side.MBR_worst_log2_weight_ratio_true[1] == -1.0f0
         @test single_side.MBR_worst_log2_explained_ratio_true[1] == -1.0f0
         @test single_side.MBR_worst_abs_n_scans_diff_true[1] == -1.0f0
@@ -1383,6 +1438,8 @@ end
         @test single_side.MBR_worst_irt_diff_true[1] == -1.0f0
         @test single_side.MBR_single_donor_false[1] == 1.0f0
         @test single_side.MBR_worst_pair_prob_false[1] == -1.0f0
+        @test single_side.MBR_worst_run_similarity_false[1] == -1.0f0
+        @test single_side.MBR_median_run_similarity_false[1] == 0.0f0
         @test single_side.MBR_worst_log2_weight_ratio_false[1] == -1.0f0
         @test single_side.MBR_worst_log2_explained_ratio_false[1] == -1.0f0
         @test single_side.MBR_worst_abs_n_scans_diff_false[1] == -1.0f0
