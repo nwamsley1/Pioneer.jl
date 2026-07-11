@@ -696,6 +696,9 @@ end
     @test slack_result.n_recovered == 3
     @test slack_result.mbr_false_transfers == 1
     @test slack_result.mbr_decoys == 0
+    @test slack_result.internal_ftr_targets == 3
+    @test slack_result.internal_ftr_errors == 1
+    @test slack_result.internal_ftr_estimate == Float32(1 / 3)
     @test slack_result.combined_error_rate <= 0.01f0
     @test slack_result.combined_error_qvals[3] <= 0.01f0
     @test slack_result.combined_error_qvals[4] > 0.01f0
@@ -712,6 +715,9 @@ end
     @test decoy_result.recovered == Bool[true, true]
     @test decoy_result.mbr_decoys == 1
     @test decoy_result.mbr_false_transfers == 0
+    @test decoy_result.internal_ftr_targets == 1
+    @test decoy_result.internal_ftr_errors == 0
+    @test decoy_result.internal_ftr_estimate == 0.0f0
     @test decoy_result.total_errors == 1
 
     no_dilution_result = Pioneer._mbr_combined_error_recovery(
@@ -724,6 +730,7 @@ end
     )
 
     @test no_dilution_result.n_recovered == 0
+    @test isnan(no_dilution_result.internal_ftr_estimate)
     @test all(>(0.01f0), no_dilution_result.combined_error_qvals)
 end
 
