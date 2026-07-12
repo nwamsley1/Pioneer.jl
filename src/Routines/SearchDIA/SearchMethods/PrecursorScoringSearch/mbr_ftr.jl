@@ -181,6 +181,7 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_best_observed_irt_diff_true,
     :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
+    :MBR_best_hellinger_source_prob_true,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_rank_true,
     :MBR_best_smoothed_frag_hellinger_margin_true,
