@@ -183,22 +183,30 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_single_donor_true,
     :MBR_best_smoothed_frag_hellinger_true,
     :MBR_best_smoothed_frag_hellinger_rank_true,
+    :MBR_best_smoothed_frag_hellinger_margin_true,
     :MBR_best_corr_frag_hellinger_true,
     :MBR_best_corr_frag_hellinger_rank_true,
+    :MBR_best_corr_frag_hellinger_margin_true,
     :MBR_best_donor_frag_corr_bitvec_rank_true,
     :MBR_best_receiver_corr_frag_hellinger_true,
     :MBR_best_receiver_corr_frag_hellinger_rank_true,
+    :MBR_best_receiver_corr_frag_hellinger_margin_true,
     :MBR_receiver_frag_corr_bitvec_rank,
     :MBR_best_shared_corr_frag_hellinger_true,
     :MBR_best_shared_corr_frag_hellinger_rank_true,
+    :MBR_best_shared_corr_frag_hellinger_margin_true,
     :MBR_best_shared_corr_frag_bitvec_rank_true,
 ]
 
 const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
     :MBR_best_smoothed_frag_hellinger_rank_true,
+    :MBR_best_smoothed_frag_hellinger_margin_true,
     :MBR_best_corr_frag_hellinger_rank_true,
+    :MBR_best_corr_frag_hellinger_margin_true,
     :MBR_best_receiver_corr_frag_hellinger_rank_true,
+    :MBR_best_receiver_corr_frag_hellinger_margin_true,
     :MBR_best_shared_corr_frag_hellinger_rank_true,
+    :MBR_best_shared_corr_frag_hellinger_margin_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -274,6 +282,16 @@ function _mbr_best_hellinger_rank_col(
         _mbr_counterfactual_feature_name(true_col, counterfactual_idx)
 end
 
+function _mbr_best_hellinger_margin_col(
+    counterfactual_idx::Int,
+    base::AbstractString = "MBR_best_smoothed_frag_hellinger",
+)
+    true_col = Symbol(base * "_margin_true")
+    return counterfactual_idx == 0 ?
+        true_col :
+        _mbr_counterfactual_feature_name(true_col, counterfactual_idx)
+end
+
 function _mbr_add_best_hellinger_rank_features!(
     psms::DataFrame;
     n_counterfactuals::Int,
@@ -312,6 +330,50 @@ function _mbr_add_best_hellinger_rank_features!(
             end
         end
         psms[!, rank_col] = ranks
+    end
+
+    return psms
+end
+
+function _mbr_add_best_hellinger_margin_features!(
+    psms::DataFrame;
+    n_counterfactuals::Int,
+    base::AbstractString = "MBR_best_smoothed_frag_hellinger",
+)
+    (1 <= n_counterfactuals <= MBR_MAX_COUNTERFACTUALS) ||
+        error("n_counterfactuals must be in 1:$(MBR_MAX_COUNTERFACTUALS), got $n_counterfactuals")
+
+    n = nrow(psms)
+    best_h_cols = Symbol[_mbr_best_hellinger_col(0, base)]
+    for counterfactual_idx in 1:n_counterfactuals
+        push!(best_h_cols, _mbr_best_hellinger_col(counterfactual_idx, base))
+    end
+    for col in best_h_cols
+        hasproperty(psms, col) || error("Missing MBR Hellinger feature column $col")
+    end
+
+    @inbounds for counterfactual_idx in 0:n_counterfactuals
+        source_col = _mbr_best_hellinger_col(counterfactual_idx, base)
+        margin_col = _mbr_best_hellinger_margin_col(counterfactual_idx, base)
+        source_values = psms[!, source_col]
+        margins = Vector{Float32}(undef, n)
+        for i in 1:n
+            source_value = Float32(source_values[i])
+            if isfinite(source_value) && source_value >= 0.0f0
+                best_other = Inf32
+                for (other_idx, col) in enumerate(best_h_cols)
+                    other_idx == counterfactual_idx + 1 && continue
+                    value = Float32(psms[i, col])
+                    if isfinite(value) && value >= 0.0f0 && value < best_other
+                        best_other = value
+                    end
+                end
+                margins[i] = isfinite(best_other) ? best_other - source_value : -1.0f0
+            else
+                margins[i] = -1.0f0
+            end
+        end
+        psms[!, margin_col] = margins
     end
 
     return psms
@@ -1056,8 +1118,22 @@ function apply_mbr_filter_paired!(
             base = "MBR_best_smoothed_frag_hellinger",
         )
     end
+    if :MBR_best_smoothed_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_smoothed_frag_hellinger",
+        )
+    end
     if :MBR_best_corr_frag_hellinger_rank_true in true_features_all
         _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
             sub;
             n_counterfactuals = n_counterfactuals,
             base = "MBR_best_corr_frag_hellinger",
@@ -1070,8 +1146,22 @@ function apply_mbr_filter_paired!(
             base = "MBR_best_receiver_corr_frag_hellinger",
         )
     end
+    if :MBR_best_receiver_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_receiver_corr_frag_hellinger",
+        )
+    end
     if :MBR_best_shared_corr_frag_hellinger_rank_true in true_features_all
         _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_shared_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_shared_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
             sub;
             n_counterfactuals = n_counterfactuals,
             base = "MBR_best_shared_corr_frag_hellinger",

@@ -1,0 +1,23 @@
+{
+    "paths": {
+        "ms_data": "/Users/dennisgoldfarb/Documents/pioneer/data/FTR_all",
+        "library": "/Users/dennisgoldfarb/Documents/pioneer/libraries/yeast_human_May7-2026_bitvec_10.poin",
+        "results": "/Users/dennisgoldfarb/Documents/pioneer/results/mbr_same_true_donor_file_cf2_shared_corrfrag_seed_hellinger40_20260710/2P_FTR_MBR_2CF_shared_corrfrag_seed_hellinger40"
+    },
+    "output": {
+        "write_csv": false,
+        "write_decoys": false,
+        "delete_temp": true
+    },
+    "global": {
+        "q_value_threshold": 0.01,
+        "match_between_runs": true
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "logging": {
+        "debug_console_level": 1,
+        "max_message_bytes": 4096
+    }
+}

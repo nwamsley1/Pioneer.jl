@@ -1087,6 +1087,25 @@ end
     @test !(:MBR_best_smoothed_frag_hellinger_rank_false3 in propertynames(psms))
 end
 
+@testset "MBR Hellinger margin uses only selected counterfactuals" begin
+    psms = DataFrame(
+        MBR_best_smoothed_frag_hellinger_true = Float32[0.20, 0.80],
+        MBR_best_smoothed_frag_hellinger_false = Float32[0.60, 0.10],
+        MBR_best_smoothed_frag_hellinger_false2 = Float32[0.40, 0.90],
+        MBR_best_smoothed_frag_hellinger_false3 = Float32[0.05, 0.20],
+    )
+
+    Pioneer._mbr_add_best_hellinger_margin_features!(
+        psms;
+        n_counterfactuals = 2,
+    )
+
+    @test psms.MBR_best_smoothed_frag_hellinger_margin_true ≈ Float32[0.20, -0.70]
+    @test psms.MBR_best_smoothed_frag_hellinger_margin_false ≈ Float32[-0.40, 0.70]
+    @test psms.MBR_best_smoothed_frag_hellinger_margin_false2 ≈ Float32[-0.20, -0.80]
+    @test !(:MBR_best_smoothed_frag_hellinger_margin_false3 in propertynames(psms))
+end
+
 @testset "MBR FTR debug export writes selected true and counterfactual blocks" begin
     mktempdir() do dir
         sub = DataFrame(
@@ -1169,14 +1188,18 @@ end
         :MBR_single_donor_true,
         :MBR_best_smoothed_frag_hellinger_true,
         :MBR_best_smoothed_frag_hellinger_rank_true,
+        :MBR_best_smoothed_frag_hellinger_margin_true,
         :MBR_best_corr_frag_hellinger_true,
         :MBR_best_corr_frag_hellinger_rank_true,
+        :MBR_best_corr_frag_hellinger_margin_true,
         :MBR_best_donor_frag_corr_bitvec_rank_true,
         :MBR_best_receiver_corr_frag_hellinger_true,
         :MBR_best_receiver_corr_frag_hellinger_rank_true,
+        :MBR_best_receiver_corr_frag_hellinger_margin_true,
         :MBR_receiver_frag_corr_bitvec_rank,
         :MBR_best_shared_corr_frag_hellinger_true,
         :MBR_best_shared_corr_frag_hellinger_rank_true,
+        :MBR_best_shared_corr_frag_hellinger_margin_true,
         :MBR_best_shared_corr_frag_bitvec_rank_true,
     ]
     expected_false = Symbol[
@@ -1200,14 +1223,18 @@ end
         :MBR_single_donor_false,
         :MBR_best_smoothed_frag_hellinger_false,
         :MBR_best_smoothed_frag_hellinger_rank_false,
+        :MBR_best_smoothed_frag_hellinger_margin_false,
         :MBR_best_corr_frag_hellinger_false,
         :MBR_best_corr_frag_hellinger_rank_false,
+        :MBR_best_corr_frag_hellinger_margin_false,
         :MBR_best_donor_frag_corr_bitvec_rank_false,
         :MBR_best_receiver_corr_frag_hellinger_false,
         :MBR_best_receiver_corr_frag_hellinger_rank_false,
+        :MBR_best_receiver_corr_frag_hellinger_margin_false,
         :MBR_receiver_frag_corr_bitvec_rank,
         :MBR_best_shared_corr_frag_hellinger_false,
         :MBR_best_shared_corr_frag_hellinger_rank_false,
+        :MBR_best_shared_corr_frag_hellinger_margin_false,
         :MBR_best_shared_corr_frag_bitvec_rank_false,
     ]
 
@@ -1225,10 +1252,14 @@ end
     @test :MBR_best_shared_corr_frag_hellinger_true in no_contrast_features
     @test :MBR_best_shared_corr_frag_bitvec_rank_true in no_contrast_features
     @test !(:MBR_best_smoothed_frag_hellinger_rank_true in no_contrast_features)
+    @test !(:MBR_best_smoothed_frag_hellinger_margin_true in no_contrast_features)
     @test !(:MBR_best_corr_frag_hellinger_rank_true in no_contrast_features)
+    @test !(:MBR_best_corr_frag_hellinger_margin_true in no_contrast_features)
     @test !(:MBR_best_receiver_corr_frag_hellinger_rank_true in no_contrast_features)
+    @test !(:MBR_best_receiver_corr_frag_hellinger_margin_true in no_contrast_features)
     @test !(:MBR_best_shared_corr_frag_hellinger_rank_true in no_contrast_features)
-    @test length(no_contrast_features) == length(expected_true) - 4
+    @test !(:MBR_best_shared_corr_frag_hellinger_margin_true in no_contrast_features)
+    @test length(no_contrast_features) == length(expected_true) - 8
     @test Pioneer.FTR_FEATURES_F_FALSE2 == Symbol[
         f === :MBR_log2_weight_lod_ratio ? f :
         Symbol(replace(String(f), "_true" => "_false2"))
@@ -1351,22 +1382,28 @@ end
     @test :MBR_best_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_corr_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_corr_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_donor_frag_corr_bitvec_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_donor_frag_corr_bitvec_rank_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_receiver_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_receiver_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_receiver_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_receiver_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_receiver_corr_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_receiver_corr_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_receiver_frag_corr_bitvec_rank in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_receiver_frag_corr_bitvec_rank in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_shared_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_shared_corr_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_shared_corr_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_shared_corr_frag_hellinger_rank_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_shared_corr_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_shared_corr_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_shared_corr_frag_bitvec_rank_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_shared_corr_frag_bitvec_rank_false in Pioneer.FTR_FEATURES_F_FALSE
-    @test !(:MBR_best_smoothed_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE)
-    @test !(:MBR_best_smoothed_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE)
+    @test :MBR_best_smoothed_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_smoothed_frag_hellinger_margin_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_worst_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_worst_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_best_donor_library_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
