@@ -252,18 +252,19 @@ function run_protein_scoring!(
     search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
     sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+    # PEP is computed once, AFTER the protein filter (recalc below), on the survivor
+    # population — so :pg_pep is conditioned on the same set as :pg_qval. No pre-filter
+    # PEP is built here (nothing consumes it before the recalc).
     spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000, compute_pep = true,
+        batch_size = 1_000_000,
         min_pep_points_per_bin = q_value_interpolation_points_per_bin,
         temp_prefix = "pg_sidecar")
     search_context.pg_score_to_qval[] = spline_result.qval_spline
-    search_context.pg_score_to_pep[] = spline_result.pep_interp
 
     protein_combined_pipeline = TransformPipeline() |>
         add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
         add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
         add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-        add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
         filter_by_multiple_thresholds([
             (:global_pg_qval, q_value_threshold),
             (:pg_qval, q_value_threshold)
@@ -272,13 +273,15 @@ function run_protein_scoring!(
     apply_pipeline!(pg_refs, protein_combined_pipeline)
 
     spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000,
+        batch_size = 1_000_000, compute_pep = true,
         min_pep_points_per_bin = q_value_interpolation_points_per_bin,
         temp_prefix = "pg_recalc")
     search_context.pg_score_to_qval[] = spline_result.qval_spline
+    search_context.pg_score_to_pep[]  = spline_result.pep_interp
 
     recalc_pg_pipeline = TransformPipeline() |>
-        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
+        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
+        add_interpolated_column(:pg_pep,  :pg_score, search_context.pg_score_to_pep[])
 
     pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
 

@@ -308,13 +308,15 @@ function summarize_results!(
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
 
-        # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
+        # A3-A5: Sidecar lifecycle → q-value spline.
+        # PEP is deliberately NOT computed here. It is built once, AFTER the global
+        # filter (Step 11), on the survivor population — so :pep is conditioned on the
+        # same set as :qval. Nothing consumes a pre-global PEP before Step 11.
         spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
-            compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
+            min_pep_points_per_bin=params.pep_bin_size,
             fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
         qval_spline = spline_result.qval_spline
         results.precursor_qval_interp[] = qval_spline
-        results.precursor_pep_interp[] = spline_result.pep_interp
 
         # Phase B — Single per-file pipeline combining Steps 5+10.
         # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
@@ -344,7 +346,6 @@ function summarize_results!(
             add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
             mbr_qval_bypass |>
-            add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds(qval_conditions)
 
         passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
@@ -360,16 +361,18 @@ function summarize_results!(
     step11_time = @elapsed begin
         # Sidecar lifecycle for new spline (on filtered data)
         spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
+            compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
             fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
         if spline_result === nothing
             @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
         else
-            # SEQUENTIAL FILTER (experiment): recompute experiment-wide qval on the
-            # global-passing survivors, THEN apply the deferred :qval ≤ threshold
-            # filter to that recomputed value.
+            # SEQUENTIAL FILTER (experiment): recompute experiment-wide qval AND PEP on
+            # the global-passing survivors (so :pep is conditioned on the same population
+            # as :qval), THEN apply the deferred :qval ≤ threshold filter.
+            results.precursor_pep_interp[] = spline_result.pep_interp
             recalc_pipeline = TransformPipeline() |>
                 add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+                add_interpolated_column(:pep,  :prec_prob, spline_result.pep_interp) |>
                 filter_by_multiple_thresholds([(:qval, params.q_value_threshold)])
             passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
         end
