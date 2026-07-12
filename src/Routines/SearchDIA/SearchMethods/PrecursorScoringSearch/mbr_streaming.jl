@@ -256,6 +256,7 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_is_missing"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_rt_diff"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log_by_diff"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_hellinger_source_prob"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_smoothed_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_smoothed_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_corr_frag_hellinger"))
@@ -735,6 +736,19 @@ end
         end
     end
     return best_entry
+end
+
+@inline function _top_scoring_donor_for_pid(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    my_file::UInt32,
+)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    @inbounds for e in entries
+        e.ms_file_idx != my_file && return e
+    end
+    return nothing
 end
 
 @inline function _donor_for_pid_in_file(
@@ -1556,6 +1570,8 @@ end
     out_miss_t::BitVector, out_miss_f::Vector{BitVector},
     out_rt_t::Vector{Float32}, out_rt_f::Vector{Vector{Float32}},
     out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Vector{Float32}},
+    out_hellinger_source_prob_t::Vector{Float32},
+    out_hellinger_source_prob_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_t::Vector{Float32},
     out_smoothed_hellinger_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_worst_t::Vector{Float32},
@@ -1652,34 +1668,38 @@ end
             end
             recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
             has_recipient_spectrum = true
-            out_smoothed_hellinger_t[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
-                recipient_sqrt,
-                donor_t.smoothed_frag_sqrt,
-                fragment_keys,
-                my_pid,
-                donor_t.precursor_idx,
-            )
-            out_corr_hellinger_t[i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_t)
-            out_corr_rank_t[i] = Float32(donor_t.frag_corr_bitvec_rank)
-            out_receiver_corr_hellinger_t[i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+            hellinger_donor_t = _top_scoring_donor_for_pid(donor_dict, my_pid, my_file)
+            if hellinger_donor_t !== nothing
+                out_hellinger_source_prob_t[i] = hellinger_donor_t.trace_prob
+                out_smoothed_hellinger_t[i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
                     recipient_sqrt,
-                    donor_t.smoothed_frag_sqrt,
-                    receiver_corr_mask,
+                    hellinger_donor_t.smoothed_frag_sqrt,
+                    fragment_keys,
+                    my_pid,
+                    hellinger_donor_t.precursor_idx,
                 )
-            shared_corr_mask = _mbr_shared_corr_mask(receiver_corr_mask, donor_t)
-            out_shared_corr_hellinger_t[i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
-                    recipient_sqrt,
-                    donor_t.smoothed_frag_sqrt,
+                out_corr_hellinger_t[i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, hellinger_donor_t)
+                out_corr_rank_t[i] = Float32(hellinger_donor_t.frag_corr_bitvec_rank)
+                out_receiver_corr_hellinger_t[i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                        recipient_sqrt,
+                        hellinger_donor_t.smoothed_frag_sqrt,
+                        receiver_corr_mask,
+                    )
+                shared_corr_mask = _mbr_shared_corr_mask(receiver_corr_mask, hellinger_donor_t)
+                out_shared_corr_hellinger_t[i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                        recipient_sqrt,
+                        hellinger_donor_t.smoothed_frag_sqrt,
+                        shared_corr_mask,
+                    )
+                out_shared_corr_rank_t[i] = _mbr_shared_corr_bitvec_rank(
+                    bitvec_rank_tables_by_file,
+                    my_file,
                     shared_corr_mask,
                 )
-            out_shared_corr_rank_t[i] = _mbr_shared_corr_bitvec_rank(
-                bitvec_rank_tables_by_file,
-                my_file,
-                shared_corr_mask,
-            )
+            end
             out_donor_library_hellinger_t[i] = donor_t.library_hellinger
             donor_worst_t = _min_weight_alternate_donor_for_pid(
                 donor_dict,
@@ -1756,34 +1776,42 @@ end
                 recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
                 has_recipient_spectrum = true
             end
-            out_smoothed_hellinger_f[counterfactual_idx][i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
-                recipient_sqrt,
-                donor_f.smoothed_frag_sqrt,
-                fragment_keys,
-                my_pid,
+            hellinger_donor_f = _top_scoring_donor_for_pid(
+                donor_dict,
                 donor_f.precursor_idx,
+                my_file,
             )
-            out_corr_hellinger_f[counterfactual_idx][i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, donor_f)
-            out_corr_rank_f[counterfactual_idx][i] = Float32(donor_f.frag_corr_bitvec_rank)
-            out_receiver_corr_hellinger_f[counterfactual_idx][i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+            if hellinger_donor_f !== nothing
+                out_hellinger_source_prob_f[counterfactual_idx][i] = hellinger_donor_f.trace_prob
+                out_smoothed_hellinger_f[counterfactual_idx][i] = _mbr_smoothed_spectrum_hellinger_from_sqrt(
                     recipient_sqrt,
-                    donor_f.smoothed_frag_sqrt,
-                    receiver_corr_mask,
+                    hellinger_donor_f.smoothed_frag_sqrt,
+                    fragment_keys,
+                    my_pid,
+                    hellinger_donor_f.precursor_idx,
                 )
-            shared_corr_mask_f = _mbr_shared_corr_mask(receiver_corr_mask, donor_f)
-            out_shared_corr_hellinger_f[counterfactual_idx][i] =
-                _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
-                    recipient_sqrt,
-                    donor_f.smoothed_frag_sqrt,
+                out_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, hellinger_donor_f)
+                out_corr_rank_f[counterfactual_idx][i] = Float32(hellinger_donor_f.frag_corr_bitvec_rank)
+                out_receiver_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                        recipient_sqrt,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                        receiver_corr_mask,
+                    )
+                shared_corr_mask_f = _mbr_shared_corr_mask(receiver_corr_mask, hellinger_donor_f)
+                out_shared_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
+                        recipient_sqrt,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                        shared_corr_mask_f,
+                    )
+                out_shared_corr_rank_f[counterfactual_idx][i] = _mbr_shared_corr_bitvec_rank(
+                    bitvec_rank_tables_by_file,
+                    my_file,
                     shared_corr_mask_f,
                 )
-            out_shared_corr_rank_f[counterfactual_idx][i] = _mbr_shared_corr_bitvec_rank(
-                bitvec_rank_tables_by_file,
-                my_file,
-                shared_corr_mask_f,
-            )
+            end
             out_donor_library_hellinger_f[counterfactual_idx][i] = donor_f.library_hellinger
             donor_worst_f = _min_weight_alternate_donor_for_pid(
                 donor_dict,
@@ -1905,6 +1933,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_miss_t = trues(n); out_miss_f = _mbr_bit_counterfactual_vectors(n)
     out_rt_t = fill(-1f0, n); out_rt_f = _mbr_float_counterfactual_vectors(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = _mbr_float_counterfactual_vectors(n)
+    out_hellinger_source_prob_t = fill(-1f0, n)
+    out_hellinger_source_prob_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_corr_h_t = fill(-1f0, n); out_corr_h_f = _mbr_float_counterfactual_vectors(n)
@@ -1945,6 +1975,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_miss_t, out_miss_f,
         out_rt_t, out_rt_f,
         out_log_by_t, out_log_by_f,
+        out_hellinger_source_prob_t, out_hellinger_source_prob_f,
         out_smoothed_h_t, out_smoothed_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
         out_corr_h_t, out_corr_h_f,
@@ -2016,6 +2047,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_rt_diff", out_rt_f)
     side_df[!, :MBR_best_log_by_diff_true] = out_log_by_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_log_by_diff", out_log_by_f)
+    side_df[!, :MBR_best_hellinger_source_prob_true] = out_hellinger_source_prob_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_hellinger_source_prob", out_hellinger_source_prob_f)
     side_df[!, :MBR_best_smoothed_frag_hellinger_true] = out_smoothed_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_smoothed_frag_hellinger", out_smoothed_h_f)
     side_df[!, :MBR_worst_smoothed_frag_hellinger_true] = out_smoothed_h_worst_t

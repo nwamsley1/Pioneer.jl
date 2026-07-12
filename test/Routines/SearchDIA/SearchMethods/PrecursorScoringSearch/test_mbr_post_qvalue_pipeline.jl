@@ -1186,6 +1186,7 @@ end
         :MBR_best_observed_irt_diff_true,
         :MBR_worst_observed_irt_diff_true,
         :MBR_single_donor_true,
+        :MBR_best_hellinger_source_prob_true,
         :MBR_best_smoothed_frag_hellinger_true,
         :MBR_best_smoothed_frag_hellinger_rank_true,
         :MBR_best_smoothed_frag_hellinger_margin_true,
@@ -1221,6 +1222,7 @@ end
         :MBR_best_observed_irt_diff_false,
         :MBR_worst_observed_irt_diff_false,
         :MBR_single_donor_false,
+        :MBR_best_hellinger_source_prob_false,
         :MBR_best_smoothed_frag_hellinger_false,
         :MBR_best_smoothed_frag_hellinger_rank_false,
         :MBR_best_smoothed_frag_hellinger_margin_false,
@@ -1363,6 +1365,8 @@ end
     @test :MBR_worst_observed_irt_diff_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_single_donor_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_single_donor_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_best_hellinger_source_prob_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_best_hellinger_source_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_log2_weight_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_worst_log2_weight_ratio_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_log2_explained_ratio_true in Pioneer.FTR_FEATURES_F_TRUE
@@ -1423,12 +1427,16 @@ end
 
         best_donor_df = _mbr_post_q_main_table(ms_file_idx = 1, scan_offset = 1000)
         best_donor_df[!, :irt_obs] = Float32[11.5, 19.0]
+        best_donor_df[!, :trace_prob_prepass] = Float32[0.80, 0.60]
+        best_donor_df[!, :trace_prob_infold] = Float32[0.80, 0.60]
+        best_donor_df[!, :frag1_smoothed_intensity] = Float32[0, 0]
+        best_donor_df[!, :frag2_smoothed_intensity] = Float32[100, 100]
         worst_donor_df = _mbr_post_q_main_table(ms_file_idx = 2, scan_offset = 2000)
         worst_donor_df[!, :irt_obs] = Float32[17.0, 24.0]
         worst_donor_df[!, :weight] = Float32[8, 4]
         worst_donor_df[!, :n_scans] = Float32[5, 4]
-        worst_donor_df[!, :trace_prob_prepass] = Float32[0.70, 0.60]
-        worst_donor_df[!, :trace_prob_infold] = Float32[0.70, 0.60]
+        worst_donor_df[!, :trace_prob_prepass] = Float32[0.98, 0.97]
+        worst_donor_df[!, :trace_prob_infold] = Float32[0.98, 0.97]
         min_weight_donor_df = _mbr_post_q_main_table(ms_file_idx = 6, scan_offset = 6000)
         min_weight_donor_df[!, :irt_obs] = Float32[13.0, 26.0]
         min_weight_donor_df[!, :weight] = Float32[2, 0.5]
@@ -1495,13 +1503,16 @@ end
         min_weight_donor_residual = min_weight_donor_df.irt_pred[1] - min_weight_donor_df.irt_obs[1]
         min_weight_false_residual = min_weight_donor_df.irt_pred[2] - min_weight_donor_df.irt_obs[2]
 
-        @test side.MBR_best_pair_prob_true[1] == 0.95f0
+        @test side.MBR_best_pair_prob_true[1] == 0.80f0
         @test side.MBR_best_run_similarity_true[1] == 0.75f0
         @test side.MBR_best_run_similarity_false[1] == 0.75f0
         @test side.MBR_worst_run_similarity_true[1] == 0.25f0
         @test side.MBR_worst_run_similarity_false[1] == 0.25f0
         @test side.MBR_median_run_similarity_true[1] == 0.50f0
         @test side.MBR_median_run_similarity_false[1] == 0.50f0
+        @test side.MBR_best_hellinger_source_prob_true[1] == 0.98f0
+        @test side.MBR_best_hellinger_source_prob_false[1] == 0.97f0
+        @test side.MBR_best_smoothed_frag_hellinger_true[1] == 0.0f0
         @test side.MBR_best_observed_irt_diff_true[1] == abs(14.25f0 - 11.5f0)
         @test side.MBR_best_irt_diff_true[1] == abs(receiver_residual - best_donor_residual)
         @test isapprox(
