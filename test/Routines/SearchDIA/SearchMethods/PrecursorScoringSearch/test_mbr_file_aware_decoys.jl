@@ -120,7 +120,7 @@ end
     @test [entry.ms_file_idx for entry in donor_dict[UInt32(1)]] == UInt32[10, 20, 30, 40]
 end
 
-@testset "MBR true donor selection uses receiver-to-donor run coverage" begin
+@testset "MBR true donor selection uses receiver-to-donor Jaccard similarity" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         donor_low_path = joinpath(dir, "donor_low.arrow")
@@ -146,6 +146,10 @@ end
             q_value_threshold = 0.01f0,
         )
 
+        @test similarity.coverage[(UInt32(1), UInt32(2))] == 0.25f0
+        @test similarity.coverage[(UInt32(1), UInt32(3))] == 0.5f0
+        @test similarity.coverage[(UInt32(1), UInt32(4))] == 0.25f0
+
         donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
             UInt32(10) => [
                 _test_mbr_donor(0.99f0, UInt32(2); precursor_idx = UInt32(10)),
@@ -164,6 +168,47 @@ end
         @test selected.ms_file_idx == UInt32(3)
         @test tied !== nothing
         @test tied.ms_file_idx == UInt32(2)
+    end
+end
+
+@testset "MBR Jaccard run similarity penalizes donor-only IDs during donor selection" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver.arrow")
+        donor_broad_path = joinpath(dir, "donor_broad.arrow")
+        donor_focused_path = joinpath(dir, "donor_focused.arrow")
+
+        function write_similarity_table(path, file_idx, pids)
+            Arrow.write(path, DataFrame(
+                precursor_idx = UInt32.(pids),
+                ms_file_idx = fill(UInt32(file_idx), length(pids)),
+                target = trues(length(pids)),
+                qval = fill(0.001f0, length(pids)),
+            ))
+        end
+
+        write_similarity_table(receiver_path, 1, [1, 2])
+        write_similarity_table(donor_broad_path, 2, [1, 2, 3, 4, 5])
+        write_similarity_table(donor_focused_path, 3, [1])
+
+        similarity = Pioneer.build_mbr_run_similarity(
+            [receiver_path, donor_broad_path, donor_focused_path];
+            q_value_threshold = 0.01f0,
+        )
+
+        @test similarity.coverage[(UInt32(1), UInt32(2))] == 0.4f0
+        @test similarity.coverage[(UInt32(1), UInt32(3))] == 0.5f0
+
+        donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+            UInt32(10) => [
+                _test_mbr_donor(0.99f0, UInt32(2); precursor_idx = UInt32(10)),
+                _test_mbr_donor(0.70f0, UInt32(3); precursor_idx = UInt32(10)),
+            ],
+        )
+
+        selected = Pioneer._donor_for_pid(donor_dict, UInt32(10), UInt32(1), similarity)
+
+        @test selected !== nothing
+        @test selected.ms_file_idx == UInt32(3)
     end
 end
 

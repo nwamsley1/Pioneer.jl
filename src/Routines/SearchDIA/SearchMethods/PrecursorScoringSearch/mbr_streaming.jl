@@ -311,14 +311,14 @@ function build_mbr_run_similarity(
 
     coverage = Dict{Tuple{UInt32, UInt32}, Float32}()
     for (receiver_file, receiver_ids) in passed_by_file
-        denom = length(receiver_ids)
-        denom == 0 && continue
         for (donor_file, donor_ids) in passed_by_file
             shared = 0
             for pid in receiver_ids
                 pid in donor_ids && (shared += 1)
             end
-            coverage[(receiver_file, donor_file)] = Float32(shared / denom)
+            union_n = length(receiver_ids) + length(donor_ids) - shared
+            union_n == 0 && continue
+            coverage[(receiver_file, donor_file)] = Float32(shared / union_n)
         end
     end
     return _MBRRunSimilarity(coverage)
