@@ -261,13 +261,16 @@ function run_protein_scoring!(
         temp_prefix = "pg_sidecar")
     search_context.pg_score_to_qval[] = spline_result.qval_spline
 
+    # SEQUENTIAL FILTER (proteins): Part 1 filters on (:global_pg_qval ≤ threshold)
+    # ONLY, mirroring the PSM V2 filter. The experiment-wide (:pg_qval) filter is
+    # deferred to the recalc below, where it is applied to the pg_qval recomputed on
+    # the global-passing survivors. (Previously this filtered on both simultaneously.)
     protein_combined_pipeline = TransformPipeline() |>
         add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
         add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
         add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
         filter_by_multiple_thresholds([
-            (:global_pg_qval, q_value_threshold),
-            (:pg_qval, q_value_threshold)
+            (:global_pg_qval, q_value_threshold)
         ])
 
     apply_pipeline!(pg_refs, protein_combined_pipeline)
@@ -279,9 +282,12 @@ function run_protein_scoring!(
     search_context.pg_score_to_qval[] = spline_result.qval_spline
     search_context.pg_score_to_pep[]  = spline_result.pep_interp
 
+    # SEQUENTIAL FILTER (proteins): recompute experiment-wide pg_qval AND pg_pep on the
+    # global-passing survivors, THEN apply the deferred (:pg_qval ≤ threshold) filter.
     recalc_pg_pipeline = TransformPipeline() |>
         add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-        add_interpolated_column(:pg_pep,  :pg_score, search_context.pg_score_to_pep[])
+        add_interpolated_column(:pg_pep,  :pg_score, search_context.pg_score_to_pep[]) |>
+        filter_by_multiple_thresholds([(:pg_qval, q_value_threshold)])
 
     pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
 
