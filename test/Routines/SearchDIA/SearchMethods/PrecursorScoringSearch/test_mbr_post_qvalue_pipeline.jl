@@ -901,32 +901,27 @@ end
     @test all(isfinite, all_cf_metrics.qvals_double)
 end
 
-@testset "MBR initial positives use candidate-local receiver q-values" begin
-    @test Pioneer.MBR_INITIAL_RECEIVER_Q_THRESHOLD == 0.05f0
+@testset "MBR first semi-supervised iteration treats target-decoy candidates as negatives" begin
+    receiver_scores = Float32[0.99, 0.98, 0.10, 0.05]
+    target_top = Bool[true, false, true, false]
 
-    receiver_scores = Float32[
-        0.99, 0.98, 0.97, 0.96, 0.95, 0.94,
-        0.93, 0.92, 0.91, 0.90, 0.89, 0.88,
-    ]
-    target_top = Bool[
-        true, true, true, true, true, true,
-        true, true, true, true, false, true,
-    ]
-
-    positive_top, receiver_qvals = Pioneer._mbr_initial_receiver_positive_top(
+    positive_top = Pioneer._mbr_initial_transfer_positive_top(
         receiver_scores,
         target_top,
     )
 
-    @test positive_top == Bool[
-        true, true, true, true, true, true,
-        true, true, true, true, false, false,
+    @test positive_top == target_top
+
+    training_mask = Pioneer._mbr_transfer_training_mask(
+        positive_top;
+        negative_top = .!target_top,
+        n_counterfactuals = 2,
+    )
+    @test training_mask == Bool[
+        true, true, true, true,
+        true, true, true, true,
+        true, true, true, true,
     ]
-    @test receiver_qvals[1] == 0.0f0
-    @test receiver_qvals[10] <= 0.05f0
-    @test receiver_qvals[11] > 0.05f0
-    @test receiver_qvals[12] > 0.05f0
-    @test !positive_top[11]
 end
 
 @testset "MBR semi-supervised transfer training uses counterfactual FTR labels" begin
@@ -952,14 +947,30 @@ end
 
     @test metrics.qvals_top == zeros(Float32, length(target_top))
     @test metrics.positive_top == trues(length(target_top))
+    target_filtered_metrics = Pioneer._mbr_transfer_iteration_metrics(
+        scores,
+        length(target_top);
+        target_top = target_top,
+    )
+    @test target_filtered_metrics.positive_top == target_top
 
     positive_top = Bool[true, false, false, false]
 
     labels = Pioneer._mbr_transfer_training_labels(positive_top)
     mask = Pioneer._mbr_transfer_training_mask(positive_top)
+    mask_with_top_decoys = Pioneer._mbr_transfer_training_mask(
+        positive_top;
+        negative_top = Bool[false, true, false, false],
+    )
 
     @test labels == Bool[true, false, false, false, false, false, false, false]
     @test mask == Bool[true, false, false, false, true, true, true, true]
+    @test mask_with_top_decoys == Bool[true, true, false, false, true, true, true, true]
+
+    target_top = Bool[true, false, true, false]
+    @test Pioneer._mbr_target_positive_top(positive_top, target_top) == Bool[
+        true, false, false, false,
+    ]
 
     two_counterfactual_labels = Pioneer._mbr_transfer_counterfactual_labels(
         length(positive_top);
@@ -1229,9 +1240,73 @@ end
     @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:trace_prob_infold in Pioneer.FTR_FEATURES_F_FALSE)
-    @test Pioneer.MBR_CROSS_RUN_FTR_FEATURES == Symbol[Pioneer.ADVANCED_FEATURE_SET...]
-    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_TRUE, Pioneer.ADVANCED_FEATURE_SET)
-    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_FALSE, Pioneer.ADVANCED_FEATURE_SET)
+    mbr_cross_run_drops = Set([
+        :total_ions,
+        :missed_cleavage,
+        :y_count,
+        :Mox,
+        :n_frags_detected_union,
+        :n_frags_detected_intersection,
+        :frag1_smoothed_intensity,
+        :frag2_smoothed_intensity,
+        :frag3_smoothed_intensity,
+        :frag4_smoothed_intensity,
+        :frag5_smoothed_intensity,
+        :frag6_smoothed_intensity,
+        :frag7_smoothed_intensity,
+        :frag8_smoothed_intensity,
+        :n_scans_other_windows,
+        :other_window_weight_corr,
+        :other_window_apex_delta_irt,
+        :smoothness,
+        :n_contiguous_scans,
+        :scan_prec_mz_n_precursors,
+        :delta_frame_peak_center,
+        :ms1_m1_intensity,
+        :ms1_m1_to_m0_ratio,
+        :ms1_m1_to_m0_pred,
+        :ms1_m0_mass_err_ppm,
+        :ms1_m0_peak_n_precursors,
+        :ms1_m0_peak_frag_intensity_fraction,
+        :flanking_ms1_m0_candidate_fraction,
+        :flanking_frag_candidate_fraction,
+        :flanking_ms1_frag_sum_corr,
+        :flanking_frag_corr_mean,
+        :flanking_frag_corr_strength,
+        :flanking_frag_corr_effective_n,
+        :flanking_frag_corr_best_m0,
+        :flanking_signal_support,
+        :spectrum_peak_count,
+        :prec_mz,
+        :longest_y,
+        :top3_ms2_mass_error_mean,
+        :ms1_m0_intensity,
+        :ms1_isotope_dotp_m0_m1_m2,
+        :ms1_m0_m1_m2_window_fraction,
+        :ms1_m0_m1_m2_window_fraction_pc,
+        :ms1_ms2_explained_delta,
+        :ms1_ms2_explained_delta_pc,
+        :n_scans,
+        :irt_fwhm,
+        :frag_apex_gt2x_flank_bitvec_rank,
+        :frag_apex_dispersion_irt,
+        :frag_corr_strength,
+        :n_correlated_fragments,
+        :n_correlated_fragments_bitvec_rank,
+        :n_frags_detected_union_bitvec_rank,
+        :n_frags_detected_intersection_bitvec_rank,
+        :frag_corr_effective_n,
+        :frag_corr_best_m0,
+    ])
+    expected_cross_run = Symbol[
+        feature for feature in Pioneer.ADVANCED_FEATURE_SET
+        if !(feature in mbr_cross_run_drops)
+    ]
+    @test Pioneer.MBR_CROSS_RUN_FTR_FEATURES == expected_cross_run
+    @test all(feature -> !(feature in Pioneer.FTR_FEATURES_F_TRUE), mbr_cross_run_drops)
+    @test all(feature -> !(feature in Pioneer.FTR_FEATURES_F_FALSE), mbr_cross_run_drops)
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_TRUE, expected_cross_run)
+    @test all(feature -> feature in Pioneer.FTR_FEATURES_F_FALSE, expected_cross_run)
     @test :MBR_best_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_worst_pair_prob_true in Pioneer.FTR_FEATURES_F_TRUE

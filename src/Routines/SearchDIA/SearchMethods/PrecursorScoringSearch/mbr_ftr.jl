@@ -29,7 +29,6 @@
 # Tighter (0.001) → only very confident donors → fewer candidates, safer FTR.
 # Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
 const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
-const MBR_INITIAL_RECEIVER_Q_THRESHOLD = Float32(0.05)
 const MBR_SEMISUPERVISED_FTR_THRESHOLD = Float32(0.03)
 const MBR_RECOVERY_ALPHA_DEFAULT = Float32(0.01)
 
@@ -99,7 +98,69 @@ end
 #     already encodes missingness)
 #   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
 #     both subsequently dropped along with the other M0 frag-6-vector features)
-const MBR_CROSS_RUN_FTR_FEATURES = Symbol[ADVANCED_FEATURE_SET...]
+const MBR_CROSS_RUN_FTR_FEATURE_DROPS = Set([
+    :total_ions,
+    :missed_cleavage,
+    :y_count,
+    :Mox,
+    :n_frags_detected_union,
+    :n_frags_detected_intersection,
+    :frag1_smoothed_intensity,
+    :frag2_smoothed_intensity,
+    :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity,
+    :frag5_smoothed_intensity,
+    :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity,
+    :frag8_smoothed_intensity,
+    :n_scans_other_windows,
+    :other_window_weight_corr,
+    :other_window_apex_delta_irt,
+    :smoothness,
+    :n_contiguous_scans,
+    :scan_prec_mz_n_precursors,
+    :delta_frame_peak_center,
+    :ms1_m1_intensity,
+    :ms1_m1_to_m0_ratio,
+    :ms1_m1_to_m0_pred,
+    :ms1_m0_mass_err_ppm,
+    :ms1_m0_peak_n_precursors,
+    :ms1_m0_peak_frag_intensity_fraction,
+    :flanking_ms1_m0_candidate_fraction,
+    :flanking_frag_candidate_fraction,
+    :flanking_ms1_frag_sum_corr,
+    :flanking_frag_corr_mean,
+    :flanking_frag_corr_strength,
+    :flanking_frag_corr_effective_n,
+    :flanking_frag_corr_best_m0,
+    :flanking_signal_support,
+    :spectrum_peak_count,
+    :prec_mz,
+    :longest_y,
+    :top3_ms2_mass_error_mean,
+    :ms1_m0_intensity,
+    :ms1_isotope_dotp_m0_m1_m2,
+    :ms1_m0_m1_m2_window_fraction,
+    :ms1_m0_m1_m2_window_fraction_pc,
+    :ms1_ms2_explained_delta,
+    :ms1_ms2_explained_delta_pc,
+    :n_scans,
+    :irt_fwhm,
+    :frag_apex_gt2x_flank_bitvec_rank,
+    :frag_apex_dispersion_irt,
+    :frag_corr_strength,
+    :n_correlated_fragments,
+    :n_correlated_fragments_bitvec_rank,
+    :n_frags_detected_union_bitvec_rank,
+    :n_frags_detected_intersection_bitvec_rank,
+    :frag_corr_effective_n,
+    :frag_corr_best_m0,
+])
+
+const MBR_CROSS_RUN_FTR_FEATURES = Symbol[
+    feature for feature in ADVANCED_FEATURE_SET
+    if !(feature in MBR_CROSS_RUN_FTR_FEATURE_DROPS)
+]
 
 const FTR_FEATURES_F_TRUE = Symbol[
     MBR_CROSS_RUN_FTR_FEATURES...,
@@ -410,19 +471,29 @@ end
 
 function _mbr_transfer_training_mask(
     positive_top::AbstractVector{Bool};
+    negative_top::Union{Nothing, AbstractVector{Bool}} = nothing,
     n_counterfactuals::Int = 1,
     frame_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
 )
     n = length(positive_top)
+    negative_top !== nothing && @assert length(negative_top) == n
     mask = trues((1 + n_counterfactuals) * n)
     @inbounds for i in 1:n
-        mask[i] = positive_top[i]
+        mask[i] = positive_top[i] || (negative_top !== nothing && negative_top[i])
     end
     if frame_mask !== nothing
         @assert length(frame_mask) == length(mask)
         mask .&= Bool.(frame_mask)
     end
     return mask
+end
+
+function _mbr_target_positive_top(
+    positive_top::AbstractVector{Bool},
+    target_top::AbstractVector{Bool},
+)
+    @assert length(positive_top) == length(target_top)
+    return Bool.(positive_top) .& Bool.(target_top)
 end
 
 function _mbr_counterfactual_missing_col(counterfactual_idx::Int)::Symbol
@@ -476,23 +547,13 @@ function _mbr_transfer_positive_top(
     return positive_top
 end
 
-function _mbr_initial_receiver_positive_top(
+function _mbr_initial_transfer_positive_top(
     receiver_scores::AbstractVector{<:Real},
-    target_top::AbstractVector{Bool};
-    q_threshold::Float32 = MBR_INITIAL_RECEIVER_Q_THRESHOLD,
+    target_top::AbstractVector{Bool},
 )
     n = length(receiver_scores)
     @assert length(target_top) == n
-    qvals = Vector{Float32}(undef, n)
-    if n == 0
-        return (Bool[], qvals)
-    end
-    get_qvalues!(Float32.(receiver_scores), target_top, qvals)
-    positive_top = falses(n)
-    @inbounds for i in 1:n
-        positive_top[i] = target_top[i] && qvals[i] <= q_threshold
-    end
-    return (positive_top, qvals)
+    return Bool.(target_top)
 end
 
 function _mbr_transfer_counterfactual_labels(
@@ -550,10 +611,12 @@ function _mbr_transfer_iteration_metrics(
     ),
     eval_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
     use_top_counterfactual_qvalues::Bool = _mbr_use_top_counterfactual_qvalues_from_env(),
+    target_top::Union{Nothing, AbstractVector{Bool}} = nothing,
 )
     n_double = (1 + n_counterfactuals) * n_cand
     @assert length(scores_double) == n_double
     @assert length(eval_labels) == n_double
+    target_top !== nothing && @assert length(target_top) == n_cand
     if eval_mask !== nothing
         @assert length(eval_mask) == n_double
     end
@@ -590,6 +653,9 @@ function _mbr_transfer_iteration_metrics(
         qvals_top,
         ftr_threshold = ftr_threshold,
     )
+    if target_top !== nothing
+        positive_top = _mbr_target_positive_top(positive_top, target_top)
+    end
 
     return (
         qvals_double = qvals_double,
@@ -1037,10 +1103,12 @@ function apply_mbr_filter_paired!(
     frame_eval_mask = _mbr_transfer_frame_mask(counterfactual_present)
     eval_mask = copy(frame_eval_mask)
     cv_double = vcat((sub[!, :cv_fold] for _ in 1:(1 + n_counterfactuals))...)
-    initial_positive_top, initial_receiver_qvals = _mbr_initial_receiver_positive_top(
+    target_top = Bool.(sub[!, :target])
+    initial_positive_top = _mbr_initial_transfer_positive_top(
         Float32.(sub[!, :trace_prob_prepass]),
-        Bool.(sub[!, :target]),
+        target_top,
     )
+    receiver_decoy_top = .!target_top
 
     # ── 4. Semi-supervised 2-fold CV LightGBM on the counterfactual frame ──
     pos0 = findall(cv_double .== 0)
@@ -1051,14 +1119,14 @@ function apply_mbr_filter_paired!(
     )
     training_mask = _mbr_transfer_training_mask(
         initial_positive_top;
+        negative_top = receiver_decoy_top,
         n_counterfactuals = n_counterfactuals,
         frame_mask = frame_eval_mask,
     )
     best_state = nothing
     previous_positive_count = -1
     @debug_l1 "  initial MBR training positives: $(count(initial_positive_top)) / $n_cand " *
-              "(receiver candidate-local q≤$(MBR_INITIAL_RECEIVER_Q_THRESHOLD)); " *
-              "min receiver q=$(round(minimum(initial_receiver_qvals), digits=4))"
+              "(target candidates; target-decoys trained as negatives)"
 
     for iter_idx in 1:SCORING_SEMISUPERVISED_MAX_ITERATIONS
         ftr_score_double = fill(NaN32, (1 + n_counterfactuals) * n_cand)
@@ -1091,6 +1159,7 @@ function apply_mbr_filter_paired!(
             eval_labels = eval_labels,
             eval_mask = eval_mask,
             n_counterfactuals = n_counterfactuals,
+            target_top = target_top,
         )
         state = (
             iter = iter_idx,
@@ -1108,9 +1177,9 @@ function apply_mbr_filter_paired!(
         end
 
         @debug_l1 "  MBR transfer semi-supervised iter $iter_idx: " *
-                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
+                   "train positives=$n_train_targets negatives=$n_train_decoys; " *
                    "FTR≤$(round(100 * MBR_SEMISUPERVISED_FTR_THRESHOLD, digits=2))% " *
-                   "targets=$(state.n_positive)"
+                   "positives=$(state.n_positive)"
 
         if iter_idx > 1 && !_scoring_target_gain_sufficient(
             previous_positive_count,
@@ -1136,6 +1205,7 @@ function apply_mbr_filter_paired!(
         )
         valid_transfer_mask = _mbr_transfer_training_mask(
             metrics.positive_top;
+            negative_top = receiver_decoy_top,
             n_counterfactuals = n_counterfactuals,
             frame_mask = frame_eval_mask,
         )
