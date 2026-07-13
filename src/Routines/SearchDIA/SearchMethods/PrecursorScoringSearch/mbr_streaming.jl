@@ -61,6 +61,33 @@ const MBR_DEFAULT_N_COUNTERFACTUALS = 2
 const MBR_MAX_COUNTERFACTUALS = 8
 const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
+const MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS = ntuple(
+    rank -> Symbol("MBR_integrated_frag$(rank)_sqrt"),
+    8,
+)
+const MBR_INTEGRATED_APEX_IRT_COLUMN = :MBR_integrated_apex_irt_obs
+const MBR_INTEGRATED_WEIGHT_COLUMN = :MBR_integrated_weight
+const MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN =
+    :MBR_integrated_log2_intensity_explained
+const MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN =
+    :MBR_integrated_fitted_manhattan_distance
+const MBR_INTEGRATED_FITTED_HELLINGER_COLUMN =
+    :MBR_integrated_fitted_hellinger
+const MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN =
+    :MBR_integrated_smoothed_2d_shadow_hellinger
+const MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN =
+    :MBR_integrated_n_correlated_fragments
+const MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN =
+    :MBR_integrated_frag_corr_bitvec
+const MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN =
+    :MBR_integrated_n_correlated_fragments_bitvec_rank
+const MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN =
+    :MBR_integrated_frag_corr_strength
+const MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN =
+    :MBR_integrated_frag_corr_effective_n
+const MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN =
+    :MBR_integrated_frag_corr_best_weight
+const MBR_INTEGRATED_N_SCANS_COLUMN = :points_integrated
 const MBR_ANY_DONOR_FILE = typemax(UInt32)
 const _MBRFalseDonorTuple = NTuple{MBR_MAX_COUNTERFACTUALS, Union{Nothing, _MBRDonorEntry}}
 const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32, UInt32}
@@ -101,6 +128,40 @@ end
         sqrt(f7 * inv_sum),
         sqrt(f8 * inv_sum),
     )
+end
+
+@inline function _mbr_spectrum_sqrt_tuple_from_sqrt_cols(frag_sqrt_cols, row::Integer)
+    f1 = max(Float32(frag_sqrt_cols[1][row]), 0.0f0)
+    f2 = max(Float32(frag_sqrt_cols[2][row]), 0.0f0)
+    f3 = max(Float32(frag_sqrt_cols[3][row]), 0.0f0)
+    f4 = max(Float32(frag_sqrt_cols[4][row]), 0.0f0)
+    f5 = max(Float32(frag_sqrt_cols[5][row]), 0.0f0)
+    f6 = max(Float32(frag_sqrt_cols[6][row]), 0.0f0)
+    f7 = max(Float32(frag_sqrt_cols[7][row]), 0.0f0)
+    f8 = max(Float32(frag_sqrt_cols[8][row]), 0.0f0)
+    sumsq = f1*f1 + f2*f2 + f3*f3 + f4*f4 + f5*f5 + f6*f6 + f7*f7 + f8*f8
+    sumsq > 0.0f0 || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    inv_norm = inv(sqrt(sumsq))
+    return (
+        f1 * inv_norm,
+        f2 * inv_norm,
+        f3 * inv_norm,
+        f4 * inv_norm,
+        f5 * inv_norm,
+        f6 * inv_norm,
+        f7 * inv_norm,
+        f8 * inv_norm,
+    )
+end
+
+@inline function _mbr_recipient_spectrum_sqrt_tuple(
+    smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
+    row::Integer,
+)
+    return integrated_frag_sqrt_cols === nothing ?
+        _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, row) :
+        _mbr_spectrum_sqrt_tuple_from_sqrt_cols(integrated_frag_sqrt_cols, row)
 end
 
 @inline function _mbr_smoothed_spectrum_sqrt_is_valid(frag_sqrt::NTuple{8, Float32})
@@ -312,14 +373,14 @@ function build_mbr_run_similarity(
 
     coverage = Dict{Tuple{UInt32, UInt32}, Float32}()
     for (receiver_file, receiver_ids) in passed_by_file
+        denom = length(receiver_ids)
+        denom == 0 && continue
         for (donor_file, donor_ids) in passed_by_file
             shared = 0
             for pid in receiver_ids
                 pid in donor_ids && (shared += 1)
             end
-            union_n = length(receiver_ids) + length(donor_ids) - shared
-            union_n == 0 && continue
-            coverage[(receiver_file, donor_file)] = Float32(shared / union_n)
+            coverage[(receiver_file, donor_file)] = Float32(shared / denom)
         end
     end
     return _MBRRunSimilarity(coverage)
@@ -549,7 +610,7 @@ end
     side_scn::AbstractVector{UInt32},
     score_c::AbstractVector{Float32},
     w_c::AbstractVector{Float32},
-    l2ie_c::AbstractVector{Float16},
+    l2ie_c::AbstractVector,
     irtp_c::AbstractVector{Float32},
     irto_c::AbstractVector{Float32},
     logby_c::Union{Nothing, AbstractVector{Float16}},
@@ -557,13 +618,18 @@ end
     nscans_c::AbstractVector,
     library_hellinger_c::AbstractVector{Float32},
     smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
     fidx_c::AbstractVector{UInt32},
+    qval_c::Union{Nothing, AbstractVector},
+    global_qval_c::Union{Nothing, AbstractVector},
     side_path::String,
     ;
     frag_corr_bitvec_c::Union{Nothing, AbstractVector} = nothing,
     frag_corr_rank_c::Union{Nothing, AbstractVector} = nothing,
     passing_score_floor::Float32 = Float32(Inf),
     max_donor_files_per_precursor::Int = MBR_MAX_DONOR_FILES_PER_PRECURSOR,
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
 )
     max_donor_files_per_precursor >= 1 ||
         error("max_donor_files_per_precursor must be positive, got $max_donor_files_per_precursor")
@@ -576,6 +642,11 @@ end
         # Sanity-check alignment (cheap: one cmp per row)
         (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
             error("Pass-1 sidecar misaligned at row $i of $side_path")
+        if require_initial_qvalue_pass
+            qval_c !== nothing || error("Initial-q donor filtering requires :qval in $side_path")
+            global_qval_c !== nothing || error("Initial-q donor filtering requires :global_qval in $side_path")
+            _mbr_initial_qvalue_pass(qval_c[i], global_qval_c[i], q_value_threshold) || continue
+        end
         pid = pid_c[i]
         e = _MBRDonorEntry(
             score_c[i], pid, w_c[i], Float32(l2ie_c[i]),
@@ -584,7 +655,7 @@ end
             has_logby ? Float32(logby_c[i]) : 0f0,
             has_rt    ? rt_c[i]             : 0f0,
             Float32(nscans_c[i]),
-            _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i),
+            _mbr_recipient_spectrum_sqrt_tuple(smoothed_frag_cols, integrated_frag_sqrt_cols, i),
             Float32(library_hellinger_c[i]),
             has_frag_corr_bitvec ? UInt8(frag_corr_bitvec_c[i]) : UInt8(0),
             has_frag_corr_rank ? UInt16(frag_corr_rank_c[i]) : UInt16(0),
@@ -617,6 +688,11 @@ function build_mbr_donor_dict_streaming_with_pass1(
     file_paths::Vector{String};
     passing_score_floor::Float32 = Float32(Inf),
     max_donor_files_per_precursor::Int = MBR_MAX_DONOR_FILES_PER_PRECURSOR,
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
+    prefer_integrated_spectra::Bool = false,
+    prefer_integrated_quant::Bool = false,
+    require_integrated_irt::Bool = false,
 )
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     for main_path in file_paths
@@ -627,26 +703,79 @@ function build_mbr_donor_dict_streaming_with_pass1(
         n = length(main.precursor_idx)
         n == length(side.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $side_path")
+        integrated_frag_sqrt_cols =
+            prefer_integrated_spectra &&
+            hasproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) ?
+            ntuple(rank -> getproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8) :
+            nothing
+        if prefer_integrated_spectra && integrated_frag_sqrt_cols === nothing
+            error("Integrated MBR spectra require column $(MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) in $main_path")
+        end
+        weight_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+                error("Integrated MBR quant requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        else
+            main.weight
+        end
+        l2ie_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN) ||
+                error("Integrated MBR quant requires column $MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+        else
+            main.log2_intensity_explained
+        end
+        irto_c = if require_integrated_irt
+            hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN) ||
+                error("Integrated MBR iRT requires column $MBR_INTEGRATED_APEX_IRT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        else
+            main.irt_obs
+        end
+        nscans_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN) ||
+                error("Integrated MBR peak width requires column $MBR_INTEGRATED_N_SCANS_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN)
+        else
+            main.n_scans
+        end
+        frag_corr_bitvec_c = if prefer_integrated_spectra &&
+                                hasproperty(main, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)
+            getproperty(main, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)
+        else
+            hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing
+        end
+        frag_corr_rank_c = if prefer_integrated_spectra &&
+                              hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+            getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+        else
+            hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
+                main.n_correlated_fragments_bitvec_rank : nothing
+        end
         _accumulate_donor_entries!(
             all_entries,
             main.precursor_idx, side.precursor_idx,
             main.scan_idx, side.scan_idx,
             side.trace_prob_prepass,
-            main.weight,
-            main.log2_intensity_explained,
-            main.irt_pred, main.irt_obs,
+            weight_c,
+            l2ie_c,
+            main.irt_pred, irto_c,
             hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
             hasproperty(main, :rt) ? main.rt : nothing,
-            main.n_scans,
+            nscans_c,
             main.smoothed_2d_shadow_hellinger,
             ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8),
+            integrated_frag_sqrt_cols,
             main.ms_file_idx,
+            hasproperty(main, :qval) ? main.qval : nothing,
+            hasproperty(main, :global_qval) ? main.global_qval : nothing,
             side_path,
-            frag_corr_bitvec_c = hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing,
-            frag_corr_rank_c = hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
-                main.n_correlated_fragments_bitvec_rank : nothing,
+            frag_corr_bitvec_c = frag_corr_bitvec_c,
+            frag_corr_rank_c = frag_corr_rank_c,
             passing_score_floor = passing_score_floor,
             max_donor_files_per_precursor = max_donor_files_per_precursor,
+            require_initial_qvalue_pass = require_initial_qvalue_pass,
+            q_value_threshold = q_value_threshold,
         )
     end
     return all_entries
@@ -1084,6 +1213,9 @@ end
 function _mbr_prepass_donor_summary(
     file_paths::Vector{String};
     donor_q_threshold::Float32 = 0.01f0,
+    require_initial_qvalue_pass::Bool = false,
+    q_value_threshold::Float32 = 0.01f0,
+    prefer_integrated_quant::Bool = false,
 )
     scores = Float32[]
     targets = Bool[]
@@ -1100,13 +1232,23 @@ function _mbr_prepass_donor_summary(
         n == length(pass1.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $pass1_path")
         push!(row_counts, n)
+        weight_c = if prefer_integrated_quant
+            hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+                error("Integrated MBR quant requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+            getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        else
+            main.weight
+        end
         @inbounds for i in 1:n
             (main.precursor_idx[i] == pass1.precursor_idx[i] &&
              main.scan_idx[i] == pass1.scan_idx[i]) ||
                 error("Pass-1 sidecar misaligned at row $i of $pass1_path")
+            if require_initial_qvalue_pass
+                _mbr_initial_qvalue_pass(main.qval[i], main.global_qval[i], q_value_threshold) || continue
+            end
             push!(scores, Float32(pass1.trace_prob_prepass[i]))
             push!(targets, Bool(main.target[i]))
-            push!(weights, Float32(main.weight[i]))
+            push!(weights, Float32(weight_c[i]))
             push!(file_indices, UInt32(main.ms_file_idx[i]))
         end
     end
@@ -1140,6 +1282,14 @@ function _mbr_prepass_donor_summary(
         lod_log2_weight_by_file = lod_log2_weight_by_file,
         lod_log2_weight_global = _mbr_lod_log2_weight!(lod_samples_global),
     )
+end
+
+@inline function _mbr_initial_qvalue_pass(qval, global_qval, q_value_threshold::Float32)
+    q = Float32(qval)
+    gq = Float32(global_qval)
+    return isfinite(q) && isfinite(gq) &&
+           q <= q_value_threshold &&
+           gq <= q_value_threshold
 end
 
 # Inner per-row MBR-feature compute. Extracted from
@@ -1598,7 +1748,7 @@ end
     pid_v::AbstractVector{UInt32},
     file_v::AbstractVector{UInt32},
     weight_v::AbstractVector{Float32},
-    l2ie_v::AbstractVector{Float16},
+    l2ie_v::AbstractVector,
     irtp_v::AbstractVector{Float32},
     irto_v::AbstractVector{Float32},
     logby_v::Union{Nothing, AbstractVector},
@@ -1607,6 +1757,7 @@ end
     receiver_corr_bitvec_v::Union{Nothing, AbstractVector},
     receiver_corr_rank_v::Union{Nothing, AbstractVector},
     smoothed_frag_cols,
+    integrated_frag_sqrt_cols,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     run_similarity::Union{Nothing, _MBRRunSimilarity},
@@ -1666,7 +1817,11 @@ end
             if has_logby
                 out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
             end
-            recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+            recipient_sqrt = _mbr_recipient_spectrum_sqrt_tuple(
+                smoothed_frag_cols,
+                integrated_frag_sqrt_cols,
+                i,
+            )
             has_recipient_spectrum = true
             hellinger_donor_t = _top_scoring_donor_for_pid(donor_dict, my_pid, my_file)
             if hellinger_donor_t !== nothing
@@ -1773,7 +1928,11 @@ end
                 out_log_by_f[counterfactual_idx][i] = Float32(logby_v[i]) - donor_f.log_by_ratio
             end
             if !has_recipient_spectrum
-                recipient_sqrt = _mbr_smoothed_spectrum_sqrt_tuple(smoothed_frag_cols, i)
+                recipient_sqrt = _mbr_recipient_spectrum_sqrt_tuple(
+                    smoothed_frag_cols,
+                    integrated_frag_sqrt_cols,
+                    i,
+                )
                 has_recipient_spectrum = true
             end
             hellinger_donor_f = _top_scoring_donor_for_pid(
@@ -1880,7 +2039,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
         lod_log2_weight_by_file::Dict{UInt32, Float32} = Dict{UInt32, Float32}(),
         lod_log2_weight_global::Float32 = NaN32,
-        run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing)
+        run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing,
+        use_integrated_mbr_features::Bool = false)
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -1892,17 +2052,58 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     pid_v   = main.precursor_idx
     scan_v  = main.scan_idx
     file_v  = main.ms_file_idx
-    weight_v= main.weight
-    l2ie_v  = main.log2_intensity_explained
+    weight_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_WEIGHT_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+    else
+        main.weight
+    end
+    l2ie_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+    else
+        main.log2_intensity_explained
+    end
     irtp_v  = main.irt_pred
-    irto_v  = main.irt_obs
+    irto_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN) ||
+            error("Integrated MBR feature compute requires column $MBR_INTEGRATED_APEX_IRT_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+    else
+        main.irt_obs
+    end
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    nscans_v = main.n_scans
-    receiver_corr_bitvec_v = hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing
-    receiver_corr_rank_v = hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
-        main.n_correlated_fragments_bitvec_rank : nothing
+    nscans_v = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN) ||
+            error("Integrated MBR peak width requires column $MBR_INTEGRATED_N_SCANS_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_N_SCANS_COLUMN)
+    else
+        main.n_scans
+    end
+    receiver_corr_bitvec_v = if use_integrated_mbr_features &&
+                                hasproperty(main, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)
+        getproperty(main, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)
+    else
+        hasproperty(main, :frag_corr_bitvec) ? main.frag_corr_bitvec : nothing
+    end
+    receiver_corr_rank_v = if use_integrated_mbr_features &&
+                              hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+        getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+    else
+        hasproperty(main, :n_correlated_fragments_bitvec_rank) ?
+            main.n_correlated_fragments_bitvec_rank : nothing
+    end
     smoothed_frag_cols = ntuple(rank -> getproperty(main, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[rank]), 8)
+    integrated_frag_sqrt_cols = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) ||
+            error("Integrated MBR feature compute requires column $(MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[1]) in $main_path")
+        ntuple(rank -> getproperty(main, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
+    else
+        nothing
+    end
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -1991,7 +2192,7 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v,
         rt_v, nscans_v, receiver_corr_bitvec_v, receiver_corr_rank_v,
-        smoothed_frag_cols, fragment_keys,
+        smoothed_frag_cols, integrated_frag_sqrt_cols, fragment_keys,
         donor_dict, run_similarity, partner_pools, false_donor_cache,
         median_run_similarity_cache, median_run_similarity_scratch,
         counterfactual_eligibility_by_file,
@@ -2080,6 +2281,67 @@ end
 # apply_mbr_filter_paired! needs, from main + Pass-1 sidecar + MBR sidecar,
 # in main-file row order across all files. Substantially smaller than
 # best_psms (≈20 cols vs ≈80).
+function _mbr_ftr_cross_run_feature_values(main, c::Symbol, n::Int)
+    if c === :irt_error &&
+       hasproperty(main, :irt_pred) &&
+       hasproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        irtp = getproperty(main, :irt_pred)
+        irto = getproperty(main, MBR_INTEGRATED_APEX_IRT_COLUMN)
+        values = Vector{Float32}(undef, n)
+        fallback = hasproperty(main, :irt_error) ? getproperty(main, :irt_error) : nothing
+        @inbounds for i in 1:n
+            pred = Float32(irtp[i])
+            obs = Float32(irto[i])
+            values[i] = isfinite(pred) && isfinite(obs) ?
+                abs(pred - obs) :
+                (fallback === nothing ? NaN32 : Float32(fallback[i]))
+        end
+        return values
+    end
+    if c === :log2_intensity_explained &&
+       hasproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)))
+    end
+    if c === :weight &&
+       hasproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)))
+    end
+    if c === :fitted_manhattan_distance &&
+       hasproperty(main, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)))
+    end
+    if c === :fitted_hellinger &&
+       hasproperty(main, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)))
+    end
+    if c === :smoothed_2d_shadow_hellinger &&
+       hasproperty(main, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)))
+    end
+    if c === :n_correlated_fragments &&
+       hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)
+        return collect(UInt8.(getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)))
+    end
+    if c === :n_correlated_fragments_bitvec_rank &&
+       hasproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)
+        return collect(UInt16.(getproperty(main, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN)))
+    end
+    if c === :frag_corr_strength &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)))
+    end
+    if c === :frag_corr_effective_n &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)))
+    end
+    if c === :frag_corr_best_m0 &&
+       hasproperty(main, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)
+        return collect(Float32.(getproperty(main, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)))
+    end
+    hasproperty(main, c) || return nothing
+    return collect(Tables.getcolumn(main, c))
+end
+
 function load_ftr_slim_dataframe(file_paths::Vector{String})
     parts = DataFrame[]
     for path in file_paths
@@ -2115,8 +2377,9 @@ function load_ftr_slim_dataframe(file_paths::Vector{String})
             d[!, :global_qval] = collect(Float32.(main.global_qval))
         end
         for c in MBR_CROSS_RUN_FTR_FEATURES
-            hasproperty(main, c) || continue
-            d[!, c] = collect(Tables.getcolumn(main, c))
+            values = _mbr_ftr_cross_run_feature_values(main, c, n)
+            values === nothing && continue
+            d[!, c] = values
         end
         # Pull all MBR_* columns from the MBR sidecar.
         for c in _MBR_SIDECAR_OUT_COLS
@@ -2226,6 +2489,7 @@ end
 function merge_mbr_recovery_sidecars_into_main!(
     file_paths::Vector{String};
     cleanup::Bool = true,
+    filter_unrecovered_candidates::Bool = false,
 )
     n_merged = 0
     for path in file_paths
@@ -2283,6 +2547,18 @@ function merge_mbr_recovery_sidecars_into_main!(
 
         rec = nothing
         GC.gc(false)
+        if filter_unrecovered_candidates
+            keep = .!Bool.(main[!, :MBR_transfer_candidate]) .| Bool.(main[!, :mbr_recovered])
+            if !all(keep)
+                main = main[keep, :]
+                for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX, RECOVERY_SIDECAR_SUFFIX)
+                    side_path = path * suffix
+                    isfile(side_path) || continue
+                    side_df = DataFrame(Tables.columntable(Arrow.Table(side_path)))
+                    nrow(side_df) == length(keep) && writeArrow(side_path, side_df[keep, :])
+                end
+            end
+        end
         writeArrow(path, main)
 
         if cleanup
@@ -2305,6 +2581,316 @@ function _cleanup_mbr_temporary_sidecars!(file_paths::Vector{String})
         end
     end
     return nothing
+end
+
+function _mbr_integration_staging_mask(
+    main,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    run_similarity::Union{Nothing, _MBRRunSimilarity},
+    q_value_threshold::Float32,
+    donor_prob_thresh::Float32,
+)
+    n = length(main.precursor_idx)
+    hasproperty(main, :ms_file_idx) ||
+        error("MBR integration staging requires :ms_file_idx")
+    keep = falses(n)
+    @inbounds for i in 1:n
+        pid = UInt32(main.precursor_idx[i])
+        file_idx = UInt32(main.ms_file_idx[i])
+        qval = Float32(main.qval[i])
+        global_qval = Float32(main.global_qval[i])
+        global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
+        row_pass = isfinite(qval) && qval <= q_value_threshold
+        donor = _donor_for_pid(donor_dict, pid, file_idx, run_similarity)
+        donor_present = donor !== nothing && donor.trace_prob >= donor_prob_thresh
+        mbr_candidate = global_pass && !row_pass && donor_present
+        keep[i] = (global_pass && row_pass) || mbr_candidate
+    end
+    return keep
+end
+
+function _write_mbr_integration_inputs!(
+    candidate_paths::Vector{String},
+    output_folder::AbstractString,
+    q_value_threshold::Float32,
+    donor_prob_thresh::Float32,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    run_similarity::Union{Nothing, _MBRRunSimilarity},
+)
+    !isdir(output_folder) && mkpath(output_folder)
+    refs = PSMFileReference[]
+    n_files = 0
+    n_rows = 0
+    n_candidates = 0
+
+    for path in candidate_paths
+        pass1_path = path * PASS1_SIDECAR_SUFFIX
+        isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
+
+        main = DataFrame(Tables.columntable(Arrow.Table(path)))
+        pass1 = DataFrame(Tables.columntable(Arrow.Table(pass1_path)))
+        keep = _mbr_integration_staging_mask(
+            main,
+            donor_dict,
+            run_similarity,
+            q_value_threshold,
+            donor_prob_thresh,
+        )
+
+        staged_path = joinpath(output_folder, basename(path))
+        writeArrow(staged_path, main[keep, :])
+        writeArrow(staged_path * PASS1_SIDECAR_SUFFIX, pass1[keep, :])
+        push!(refs, PSMFileReference(staged_path))
+        n_files += 1
+        n_rows += count(keep)
+        @inbounds for i in eachindex(keep)
+            if keep[i]
+                qval = Float32(main.qval[i])
+                global_qval = Float32(main.global_qval[i])
+                row_pass = isfinite(qval) && qval <= q_value_threshold
+                global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
+                n_candidates += (global_pass && !row_pass) ? 1 : 0
+            end
+        end
+    end
+    return (refs = refs, n_files = n_files, n_rows = n_rows, n_candidates = n_candidates)
+end
+
+function prepare_mbr_after_qvalue_filter!(
+    candidate_refs::Vector{PSMFileReference},
+    donor_refs::Vector{PSMFileReference},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup,
+    integration_output_folder::AbstractString;
+    q_value_threshold::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+)
+    candidate_paths = String[file_path(ref) for ref in candidate_refs if exists(ref)]
+    donor_paths = String[file_path(ref) for ref in donor_refs if exists(ref)]
+    if isempty(candidate_paths) || isempty(donor_paths)
+        return (
+            n_files = 0,
+            n_donor_files = length(donor_paths),
+            n_pass1_sidecars = 0,
+            n_integration_rows = 0,
+            n_candidates = 0,
+            integration_refs = PSMFileReference[],
+        )
+    end
+
+    @debug_l1 "MBR Batch F: preparing post-qvalue candidates for chromatogram integration..."
+    sidecar_paths = unique(vcat(candidate_paths, donor_paths))
+    n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
+
+    run_similarity = build_mbr_run_similarity(
+        sidecar_paths;
+        q_value_threshold = q_value_threshold,
+    )
+    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+
+    mbr_prepass = _mbr_prepass_donor_summary(
+        donor_paths;
+        donor_q_threshold = donor_q_threshold,
+    )
+    donor_prob_thresh = mbr_prepass.prob_thresh
+    @debug_l1 "  donor prob floor: $(round(donor_prob_thresh, digits=4)); " *
+              "LOD files: $(length(mbr_prepass.lod_log2_weight_by_file))"
+
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+        donor_paths;
+        passing_score_floor = donor_prob_thresh,
+        max_donor_files_per_precursor = typemax(Int),
+    )
+    @debug_l1 "  donor dict pids: $(length(donor_dict)); entries: $(sum(length, values(donor_dict)))"
+
+    staged = _write_mbr_integration_inputs!(
+        candidate_paths,
+        integration_output_folder,
+        q_value_threshold,
+        donor_prob_thresh,
+        donor_dict,
+        run_similarity,
+    )
+    @debug_l1 "  staged integration rows=$(staged.n_rows), MBR candidates=$(staged.n_candidates)"
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    mbr_prepass = nothing
+    run_similarity = nothing
+    GC.gc()
+
+    return (
+        n_files = length(candidate_paths),
+        n_donor_files = length(donor_paths),
+        n_pass1_sidecars = n_pass1_sidecars,
+        n_integration_rows = staged.n_rows,
+        n_candidates = staged.n_candidates,
+        integration_refs = staged.refs,
+    )
+end
+
+function finalize_mbr_after_chromatogram_integration!(
+    integrated_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    fragment_lookup::LibraryFragmentLookup;
+    q_value_threshold::Float32 = 0.01f0,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    min_pep_points_per_bin::Int = 100,
+    fdr_scale_factor::Float32 = 1.0f0,
+    merged_path::String,
+    bitvec_rank_tables_by_file::Union{Nothing, Dict{UInt32, Vector{UInt16}}} = nothing,
+)
+    candidate_paths = String[
+        path for path in integrated_paths
+        if isfile(path) && isfile(path * PASS1_SIDECAR_SUFFIX)
+    ]
+    if isempty(candidate_paths)
+        return (
+            n_files = 0,
+            n_candidates = 0,
+            n_recovered = 0,
+            n_mbr_sidecars = 0,
+            base_targets = 0,
+            base_decoys = 0,
+            baseline_error_rate = 0.0f0,
+            mbr_targets = 0,
+            mbr_decoys = 0,
+            mbr_false_transfers = 0,
+            internal_ftr_targets = 0,
+            internal_ftr_errors = 0,
+            internal_ftr_estimate = 0.0f0,
+            total_errors = 0,
+            total_targets = 0,
+            combined_error_rate = 0.0f0,
+        )
+    end
+
+    @debug_l1 "MBR Batch F: finalizing after chromatogram integration..."
+    run_similarity = build_mbr_run_similarity(
+        candidate_paths;
+        q_value_threshold = q_value_threshold,
+    )
+    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+
+    mbr_prepass = _mbr_prepass_donor_summary(
+        candidate_paths;
+        donor_q_threshold = donor_q_threshold,
+        require_initial_qvalue_pass = true,
+        q_value_threshold = q_value_threshold,
+        prefer_integrated_quant = true,
+    )
+    donor_prob_thresh = mbr_prepass.prob_thresh
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(
+        candidate_paths;
+        passing_score_floor = donor_prob_thresh,
+        max_donor_files_per_precursor = typemax(Int),
+        require_initial_qvalue_pass = true,
+        q_value_threshold = q_value_threshold,
+        prefer_integrated_spectra = true,
+        prefer_integrated_quant = true,
+        require_integrated_irt = true,
+    )
+    @debug_l1 "  donor dict pids: $(length(donor_dict)); entries: $(sum(length, values(donor_dict)))"
+
+    partner_pools = build_post_integration_counterfactual_partner_pools(
+        candidate_paths,
+        precursors,
+    )
+    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
+    parallel_foreach!(length(candidate_paths)) do chunk
+        for f_idx in chunk
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(
+                candidate_paths[f_idx],
+                donor_dict,
+                partner_pools,
+                fragment_keys,
+                passing_score_floor = donor_prob_thresh,
+                bitvec_rank_tables_by_file = bitvec_rank_tables_by_file,
+                lod_log2_weight_by_file = mbr_prepass.lod_log2_weight_by_file,
+                lod_log2_weight_global = mbr_prepass.lod_log2_weight_global,
+                run_similarity = run_similarity,
+                use_integrated_mbr_features = true,
+            )
+        end
+    end
+    n_mbr_sidecars = count(path -> isfile(path * MBR_SIDECAR_SUFFIX), candidate_paths)
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    partner_pools = nothing
+    fragment_keys = nothing
+    mbr_prepass = nothing
+    run_similarity = nothing
+    GC.gc()
+
+    psms = load_ftr_slim_dataframe(candidate_paths)
+    @debug_l1 "  slim FTR rows: $(nrow(psms))"
+    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
+    ftr_summary = apply_mbr_filter_paired!(
+        psms;
+        alpha = _mbr_recovery_alpha_from_env(),
+        q_thresh = q_value_threshold,
+        prob_thresh_override = donor_prob_thresh,
+    )
+
+    write_recovery_sidecars(psms, candidate_paths)
+    psms = DataFrame()
+    GC.gc()
+    merge_mbr_recovery_sidecars_into_main!(
+        candidate_paths;
+        cleanup = false,
+        filter_unrecovered_candidates = true,
+    )
+
+    refs = PSMFileReference[PSMFileReference(path) for path in candidate_paths]
+    remap_mbr_recovered_prec_probs!(
+        refs,
+        merged_path;
+        q_value_threshold = q_value_threshold,
+        min_pep_points_per_bin = min_pep_points_per_bin,
+        fdr_scale_factor = fdr_scale_factor,
+        global_qval_dict = nothing,
+    )
+
+    spline_result = build_qvalue_spline_from_refs(
+        refs,
+        :prec_prob,
+        merged_path;
+        compute_pep = true,
+        min_pep_points_per_bin = min_pep_points_per_bin,
+        fdr_scale_factor = fdr_scale_factor,
+        temp_prefix = "post_integration_mbr_recalc_sidecar",
+    )
+    if spline_result !== nothing
+        recalc_pipeline = TransformPipeline() |>
+            add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+            filter_by_multiple_thresholds([(:qval, q_value_threshold)]) |>
+            add_interpolated_column(:pep, :prec_prob, spline_result.pep_interp)
+        apply_pipeline!(refs, recalc_pipeline; parallel = false)
+    end
+
+    if _mbr_keep_temporary_sidecars_from_env()
+        @debug_l1 "MBR Batch F: keeping temporary sidecars because PIONEER_MBR_KEEP_SIDECARS is enabled"
+    else
+        _cleanup_mbr_temporary_sidecars!(candidate_paths)
+    end
+
+    return (
+        n_files = length(candidate_paths),
+        n_candidates = ftr_summary.n_candidates,
+        n_recovered = ftr_summary.n_recovered,
+        n_mbr_sidecars = n_mbr_sidecars,
+        base_targets = ftr_summary.base_targets,
+        base_decoys = ftr_summary.base_decoys,
+        baseline_error_rate = ftr_summary.baseline_error_rate,
+        mbr_targets = ftr_summary.mbr_targets,
+        mbr_decoys = ftr_summary.mbr_decoys,
+        mbr_false_transfers = ftr_summary.mbr_false_transfers,
+        internal_ftr_targets = ftr_summary.internal_ftr_targets,
+        internal_ftr_errors = ftr_summary.internal_ftr_errors,
+        internal_ftr_estimate = ftr_summary.internal_ftr_estimate,
+        total_errors = ftr_summary.total_errors,
+        total_targets = ftr_summary.total_targets,
+        combined_error_rate = ftr_summary.combined_error_rate,
+    )
 end
 
 function run_mbr_after_qvalue_filter!(
