@@ -126,7 +126,7 @@ end
     @test [entry.ms_file_idx for entry in donor_dict[UInt32(1)]] == UInt32[10, 20, 30, 40]
 end
 
-@testset "MBR true donor selection uses receiver-to-donor run coverage" begin
+@testset "MBR true donor selection uses IDF-weighted receiver containment" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         donor_low_path = joinpath(dir, "donor_low.arrow")
@@ -142,7 +142,12 @@ end
             ))
         end
 
-        write_similarity_table(receiver_path, 1, [1, 2, 3, 10], [0.001, 0.001, 0.001, 0.05])
+        write_similarity_table(
+            receiver_path,
+            1,
+            [1, 1, 2, 3, 10],
+            [0.001, 0.001, 0.001, 0.001, 0.05],
+        )
         write_similarity_table(donor_low_path, 2, [1, 10], [0.001, 0.001])
         write_similarity_table(donor_high_path, 3, [1, 2, 10], [0.001, 0.001, 0.001])
         write_similarity_table(donor_equal_path, 4, [1, 10], [0.001, 0.001])
@@ -152,9 +157,12 @@ end
             q_value_threshold = 0.01f0,
         )
 
-        @test similarity.coverage[(UInt32(1), UInt32(2))] == Float32(1 / 3)
-        @test similarity.coverage[(UInt32(1), UInt32(3))] == Float32(2 / 3)
-        @test similarity.coverage[(UInt32(1), UInt32(4))] == Float32(1 / 3)
+        idf_pid2 = log(5 / 3)
+        idf_pid3 = log(5 / 2)
+        expected_high = Float32(idf_pid2 / (idf_pid2 + idf_pid3))
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(2)) == 0.0f0
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(3)) ≈ expected_high
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(4)) == 0.0f0
 
         donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
             UInt32(10) => [
@@ -177,7 +185,7 @@ end
     end
 end
 
-@testset "MBR run coverage does not penalize donor-only IDs during donor selection" begin
+@testset "MBR weighted containment does not penalize donor-only IDs during donor selection" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")
         donor_broad_path = joinpath(dir, "donor_broad.arrow")
@@ -201,8 +209,11 @@ end
             q_value_threshold = 0.01f0,
         )
 
-        @test similarity.coverage[(UInt32(1), UInt32(2))] == 1.0f0
-        @test similarity.coverage[(UInt32(1), UInt32(3))] == 0.5f0
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(2)) == 1.0f0
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(3)) == 0.0f0
+        donor_only_weight = 3 * log(4 / 2)
+        expected_reverse = Float32(log(4 / 3) / (log(4 / 3) + donor_only_weight))
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(2), UInt32(1)) ≈ expected_reverse
 
         donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
             UInt32(10) => [
@@ -216,6 +227,27 @@ end
         @test selected !== nothing
         @test selected.ms_file_idx == UInt32(2)
     end
+end
+
+@testset "MBR IDF containment uses sparse complements for common precursors" begin
+    passed_by_file = Dict{UInt32, BitSet}()
+    for file_idx in UInt32(1):UInt32(100)
+        ids = BitSet((1, 1000 + Int(file_idx)))
+        file_idx < UInt32(100) && push!(ids, 2)
+        passed_by_file[file_idx] = ids
+    end
+
+    similarity = Pioneer._build_mbr_run_similarity_from_passed(passed_by_file)
+    common_idf = log(101 / 100)
+    unique_idf = log(101 / 2)
+    expected_shared = Float32(common_idf / (common_idf + unique_idf))
+
+    @test isempty(similarity.coverage)
+    @test isempty(similarity.shared_weight)
+    @test length(similarity.missing_weight) == 99
+    @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(2)) ≈ expected_shared
+    @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(100)) == 0.0f0
+    @test Pioneer._mbr_run_similarity(similarity, UInt32(100), UInt32(1)) == 0.0f0
 end
 
 @testset "MBR counterfactual partner pool allows same-class non-self precursors" begin

@@ -92,8 +92,29 @@ const MBR_ANY_DONOR_FILE = typemax(UInt32)
 const _MBRFalseDonorTuple = NTuple{MBR_MAX_COUNTERFACTUALS, Union{Nothing, _MBRDonorEntry}}
 const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32, UInt32}
 
+const _MBRRunPair = Tuple{UInt32, UInt32}
+
 struct _MBRRunSimilarity
-    coverage::Dict{Tuple{UInt32, UInt32}, Float32}
+    # Direct values are retained for small fixtures and callers that construct
+    # a similarity object explicitly. Streamed searches use the sparse IDF
+    # components below and evaluate directional containment on demand.
+    coverage::Dict{_MBRRunPair, Float32}
+    shared_weight::Dict{_MBRRunPair, Float32}
+    missing_weight::Dict{_MBRRunPair, Float32}
+    total_weight_by_file::Dict{UInt32, Float32}
+    common_weight_by_file::Dict{UInt32, Float32}
+    active_files::BitSet
+end
+
+function _MBRRunSimilarity(coverage::Dict{_MBRRunPair, Float32})
+    return _MBRRunSimilarity(
+        coverage,
+        Dict{_MBRRunPair, Float32}(),
+        Dict{_MBRRunPair, Float32}(),
+        Dict{UInt32, Float32}(),
+        Dict{UInt32, Float32}(),
+        BitSet(),
+    )
 end
 
 struct _MBRFragmentAnnotationKeys
@@ -347,7 +368,141 @@ const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
     receiver_file::UInt32,
     donor_file::UInt32,
 )
-    return get(run_similarity.coverage, (receiver_file, donor_file), 0.0f0)
+    direct_key = (receiver_file, donor_file)
+    haskey(run_similarity.coverage, direct_key) &&
+        return run_similarity.coverage[direct_key]
+
+    receiver_file in run_similarity.active_files || return 0.0f0
+    donor_file in run_similarity.active_files || return 0.0f0
+    denominator = get(run_similarity.total_weight_by_file, receiver_file, 0.0f0)
+    denominator > 0.0f0 || return 0.0f0
+    receiver_file == donor_file && return 1.0f0
+
+    pair_key = receiver_file < donor_file ?
+        (receiver_file, donor_file) : (donor_file, receiver_file)
+    rare_shared = get(run_similarity.shared_weight, pair_key, 0.0f0)
+    common_shared = get(run_similarity.common_weight_by_file, receiver_file, 0.0f0) -
+                    get(run_similarity.missing_weight, direct_key, 0.0f0)
+    numerator = clamp(rare_shared + common_shared, 0.0f0, denominator)
+    return numerator / denominator
+end
+
+@inline function _mbr_run_similarity_sparse_entries(run_similarity::_MBRRunSimilarity)
+    return length(run_similarity.coverage) +
+           length(run_similarity.shared_weight) +
+           length(run_similarity.missing_weight)
+end
+
+function _build_mbr_run_similarity_from_passed(
+    passed_by_file::Dict{UInt32, BitSet},
+)
+    file_ids = sort!(collect(keys(passed_by_file)))
+    n_files = length(file_ids)
+    if n_files == 0
+        return _MBRRunSimilarity(Dict{_MBRRunPair, Float32}())
+    end
+
+    # Inverted index: each precursor is listed once per run because the source
+    # BitSets have already removed duplicate PSM rows.
+    files_by_precursor = Dict{UInt32, Vector{UInt32}}()
+    for file_idx in file_ids
+        for precursor_idx in passed_by_file[file_idx]
+            push!(
+                get!(() -> UInt32[], files_by_precursor, UInt32(precursor_idx)),
+                file_idx,
+            )
+        end
+    end
+
+    total_weight_by_file = Dict{UInt32, Float64}(
+        file_idx => 0.0 for file_idx in file_ids
+    )
+    common_weight_by_file = Dict{UInt32, Float64}(
+        file_idx => 0.0 for file_idx in file_ids
+    )
+    shared_weight = Dict{_MBRRunPair, Float64}()
+    missing_weight = Dict{_MBRRunPair, Float64}()
+    missing_files = UInt32[]
+    n_shared_postings = 0
+    n_complement_postings = 0
+    n_zero_idf_postings = 0
+
+    for run_files in values(files_by_precursor)
+        document_frequency = length(run_files)
+        idf = log(Float64(n_files + 1) / Float64(document_frequency + 1))
+        if !(idf > 0.0)
+            n_zero_idf_postings += 1
+            continue
+        end
+
+        for file_idx in run_files
+            total_weight_by_file[file_idx] += idf
+        end
+
+        shared_updates = document_frequency * (document_frequency - 1) ÷ 2
+        missing_updates = document_frequency * (n_files - document_frequency)
+        if shared_updates <= missing_updates
+            n_shared_postings += 1
+            @inbounds for left_idx in 1:(document_frequency - 1)
+                left_file = run_files[left_idx]
+                for right_idx in (left_idx + 1):document_frequency
+                    key = (left_file, run_files[right_idx])
+                    shared_weight[key] = get(shared_weight, key, 0.0) + idf
+                end
+            end
+        else
+            # For common precursors, recording the few files where the ID is
+            # absent is cheaper than materializing every shared run pair.
+            n_complement_postings += 1
+            for file_idx in run_files
+                common_weight_by_file[file_idx] += idf
+            end
+
+            empty!(missing_files)
+            posting_idx = 1
+            @inbounds for file_idx in file_ids
+                if posting_idx <= document_frequency && run_files[posting_idx] == file_idx
+                    posting_idx += 1
+                else
+                    push!(missing_files, file_idx)
+                end
+            end
+            @inbounds for receiver_file in run_files
+                for donor_file in missing_files
+                    key = (receiver_file, donor_file)
+                    missing_weight[key] = get(missing_weight, key, 0.0) + idf
+                end
+            end
+        end
+    end
+
+    shared_weight_f32 = Dict{_MBRRunPair, Float32}(
+        key => Float32(value) for (key, value) in shared_weight
+    )
+    missing_weight_f32 = Dict{_MBRRunPair, Float32}(
+        key => Float32(value) for (key, value) in missing_weight
+    )
+    total_weight_f32 = Dict{UInt32, Float32}(
+        file_idx => Float32(value) for (file_idx, value) in total_weight_by_file
+    )
+    common_weight_f32 = Dict{UInt32, Float32}(
+        file_idx => Float32(value) for (file_idx, value) in common_weight_by_file
+    )
+    active_files = BitSet(Int(file_idx) for file_idx in file_ids)
+
+    @debug_l1 "  run-similarity inverted index: files=$n_files, " *
+              "precursors=$(length(files_by_precursor)), shared-postings=$n_shared_postings, " *
+              "complement-postings=$n_complement_postings, zero-IDF=$n_zero_idf_postings, " *
+              "sparse-entries=$(length(shared_weight_f32) + length(missing_weight_f32))"
+
+    return _MBRRunSimilarity(
+        Dict{_MBRRunPair, Float32}(),
+        shared_weight_f32,
+        missing_weight_f32,
+        total_weight_f32,
+        common_weight_f32,
+        active_files,
+    )
 end
 
 function build_mbr_run_similarity(
@@ -370,20 +525,7 @@ function build_mbr_run_similarity(
             push!(get!(() -> BitSet(), passed_by_file, file_idx), Int(tbl.precursor_idx[i]))
         end
     end
-
-    coverage = Dict{Tuple{UInt32, UInt32}, Float32}()
-    for (receiver_file, receiver_ids) in passed_by_file
-        denom = length(receiver_ids)
-        denom == 0 && continue
-        for (donor_file, donor_ids) in passed_by_file
-            shared = 0
-            for pid in receiver_ids
-                pid in donor_ids && (shared += 1)
-            end
-            coverage[(receiver_file, donor_file)] = Float32(shared / denom)
-        end
-    end
-    return _MBRRunSimilarity(coverage)
+    return _build_mbr_run_similarity_from_passed(passed_by_file)
 end
 
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
@@ -2686,7 +2828,7 @@ function prepare_mbr_after_qvalue_filter!(
         sidecar_paths;
         q_value_threshold = q_value_threshold,
     )
-    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
 
     mbr_prepass = _mbr_prepass_donor_summary(
         donor_paths;
@@ -2769,7 +2911,7 @@ function finalize_mbr_after_chromatogram_integration!(
         candidate_paths;
         q_value_threshold = q_value_threshold,
     )
-    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
 
     mbr_prepass = _mbr_prepass_donor_summary(
         candidate_paths;
@@ -2925,7 +3067,7 @@ function run_mbr_after_qvalue_filter!(
         sidecar_paths;
         q_value_threshold = q_value_threshold,
     )
-    @debug_l1 "  run-similarity pairs: $(length(run_similarity.coverage))"
+    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
 
     cf_partner_pools = build_counterfactual_partner_pools(
         sidecar_paths,
