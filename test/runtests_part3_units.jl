@@ -40,6 +40,7 @@ include("./UnitTests/test_bitvec_rank_features.jl")
 include("./UnitTests/test_fragment_correlation_summaries.jl")
 include("./UnitTests/test_chromatogram_integration_trace_order.jl")
 include("./UnitTests/test_chromatogram_integration_bounds.jl")
+include("./UnitTests/test_mbr_chromatogram_spectrum_schema.jl")
 include("./UnitTests/test_huber_tuning_global.jl")
 
 # FileOperations focused tests

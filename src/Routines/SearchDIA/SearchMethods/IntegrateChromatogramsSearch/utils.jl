@@ -516,6 +516,304 @@ function integrate_precursors(chromatograms::DataFrame,
     )
 end
 
+@inline function _chrom_shadow_intensity(shadow_cols, row::Integer, rank::Integer)
+    return max(Float32(shadow_cols[rank][row]), 0.0f0)
+end
+
+@inline function _chrom_positive_intensity(cols, row::Integer, rank::Integer)
+    value = Float32(cols[rank][row])
+    return isfinite(value) ? max(value, 0.0f0) : 0.0f0
+end
+
+@inline function _chrom_spectrum_sqrt_tuple_and_sum(cols, row::Integer)
+    values = ntuple(rank -> _chrom_positive_intensity(cols, row, rank), 8)
+    total = values[1] + values[2] + values[3] + values[4] +
+            values[5] + values[6] + values[7] + values[8]
+    total > 0.0f0 || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0
+    inv_total = 1.0f0 / total
+    return (
+        sqrt(values[1] * inv_total),
+        sqrt(values[2] * inv_total),
+        sqrt(values[3] * inv_total),
+        sqrt(values[4] * inv_total),
+        sqrt(values[5] * inv_total),
+        sqrt(values[6] * inv_total),
+        sqrt(values[7] * inv_total),
+        sqrt(values[8] * inv_total),
+    ), total
+end
+
+@inline function _chrom_hellinger_score_from_sqrt(
+    spectrum_a::NTuple{8, Float32},
+    spectrum_b::NTuple{8, Float32},
+)
+    sum_a = spectrum_a[1] + spectrum_a[2] + spectrum_a[3] + spectrum_a[4] +
+            spectrum_a[5] + spectrum_a[6] + spectrum_a[7] + spectrum_a[8]
+    sum_b = spectrum_b[1] + spectrum_b[2] + spectrum_b[3] + spectrum_b[4] +
+            spectrum_b[5] + spectrum_b[6] + spectrum_b[7] + spectrum_b[8]
+    (sum_a > 0.0f0 && sum_b > 0.0f0) || return 0.0f0
+    bc_sum = spectrum_a[1] * spectrum_b[1] +
+             spectrum_a[2] * spectrum_b[2] +
+             spectrum_a[3] * spectrum_b[3] +
+             spectrum_a[4] * spectrum_b[4] +
+             spectrum_a[5] * spectrum_b[5] +
+             spectrum_a[6] * spectrum_b[6] +
+             spectrum_a[7] * spectrum_b[7] +
+             spectrum_a[8] * spectrum_b[8]
+    hellinger_sq = max(0.0f0, 1.0f0 - bc_sum)
+    return Float32(-log2(max(hellinger_sq, 1.0f-10)))
+end
+
+@inline function _chrom_manhattan_score_from_cols(
+    observed_cols,
+    fitted_cols,
+    row::Integer,
+)
+    observed = ntuple(rank -> _chrom_positive_intensity(observed_cols, row, rank), 8)
+    fitted = ntuple(rank -> _chrom_positive_intensity(fitted_cols, row, rank), 8)
+    observed_sum = observed[1] + observed[2] + observed[3] + observed[4] +
+                   observed[5] + observed[6] + observed[7] + observed[8]
+    observed_sum > 0.0f0 || return 0.0f0
+    distance =
+        abs(fitted[1] - observed[1]) +
+        abs(fitted[2] - observed[2]) +
+        abs(fitted[3] - observed[3]) +
+        abs(fitted[4] - observed[4]) +
+        abs(fitted[5] - observed[5]) +
+        abs(fitted[6] - observed[6]) +
+        abs(fitted[7] - observed[7]) +
+        abs(fitted[8] - observed[8])
+    return Float32(-log2(distance / observed_sum + 1.0f-10))
+end
+
+function _chrom_shadow_fragment_correlation_features(
+    rows::Vector{Int},
+    shadow_cols,
+    weight_col,
+    bitvec_rank_table,
+)
+    npts = length(rows)
+    npts < 2 && return (
+        n_correlated = UInt8(0),
+        corr_mask = UInt8(0),
+        bitvec_rank = UInt16(0),
+        strength = 0.0f0,
+        effective_n = 0.0f0,
+        best_weight = 0.0f0,
+    )
+
+    frag_traces = [Vector{Float32}(undef, npts) for _ in 1:8]
+    weight_trace = Vector{Float32}(undef, npts)
+    @inbounds for k in 1:npts
+        chrom_row = rows[k]
+        weight_trace[k] = _chrom_positive_intensity((weight_col,), chrom_row, 1)
+        for rank in 1:8
+            frag_traces[rank][k] = _chrom_shadow_intensity(shadow_cols, chrom_row, rank)
+        end
+    end
+
+    has_signal = ntuple(rank -> maximum(frag_traces[rank]) > 0.0f0, 8)
+    corr_to_weight = Vector{Float32}(undef, 8)
+    @inbounds for rank in 1:8
+        corr_to_weight[rank] = has_signal[rank] ?
+            _frag_pcor(frag_traces[rank], weight_trace) :
+            0.0f0
+    end
+
+    n_corr = UInt8(0)
+    corr_mask = UInt8(0)
+    @inbounds for rank in 1:8
+        has_signal[rank] || continue
+        if corr_to_weight[rank] > 0.7f0
+            n_corr += UInt8(1)
+            corr_mask |= UInt8(1) << (rank - 1)
+        end
+    end
+    rank_weights = _fragment_rank_weights(8)
+    corr_strength, corr_effective_n =
+        _positive_corr_summary(corr_to_weight, rank_weights)
+
+    best_rank = 0
+    best_consensus = typemin(Float32)
+    @inbounds for rank in 1:8
+        has_signal[rank] || continue
+        consensus = 0.0f0
+        npairs = 0
+        for other_rank in 1:8
+            (other_rank == rank || !has_signal[other_rank]) && continue
+            consensus += _frag_pcor(frag_traces[rank], frag_traces[other_rank])
+            npairs += 1
+        end
+        avg = npairs > 0 ? consensus / npairs : typemin(Float32)
+        if avg > best_consensus
+            best_consensus = avg
+            best_rank = rank
+        end
+    end
+    best_weight = best_rank > 0 ? corr_to_weight[best_rank] : 0.0f0
+
+    return (
+        n_correlated = n_corr,
+        corr_mask = corr_mask,
+        bitvec_rank = _bitvec_pattern_rank(bitvec_rank_table, corr_mask),
+        strength = corr_strength,
+        effective_n = corr_effective_n,
+        best_weight = best_weight,
+    )
+end
+
+@inline function _chrom_smoothed_shadow_sqrt_tuple_and_sum(
+    shadow_cols,
+    apex_row::Integer,
+    left_row::Integer,
+    right_row::Integer,
+)
+    denom = 2.0f0
+    left_row > 0 && (denom += 1.0f0)
+    right_row > 0 && (denom += 1.0f0)
+    values = ntuple(rank -> begin
+        signal = 2.0f0 * _chrom_shadow_intensity(shadow_cols, apex_row, rank)
+        left_row > 0 && (signal += _chrom_shadow_intensity(shadow_cols, left_row, rank))
+        right_row > 0 && (signal += _chrom_shadow_intensity(shadow_cols, right_row, rank))
+        Float32(signal / denom)
+    end, 8)
+    total = values[1] + values[2] + values[3] + values[4] +
+            values[5] + values[6] + values[7] + values[8]
+    total > 0.0f0 || return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0
+    inv_total = 1.0f0 / total
+    return (
+        sqrt(values[1] * inv_total),
+        sqrt(values[2] * inv_total),
+        sqrt(values[3] * inv_total),
+        sqrt(values[4] * inv_total),
+        sqrt(values[5] * inv_total),
+        sqrt(values[6] * inv_total),
+        sqrt(values[7] * inv_total),
+        sqrt(values[8] * inv_total),
+    ), total
+end
+
+function add_mbr_integrated_spectra_to_psms!(
+    passing_psms::DataFrame,
+    chromatograms::DataFrame,
+    rt_to_irt;
+    bitvec_rank_table = nothing,
+)
+    n = nrow(passing_psms)
+    for col in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
+        passing_psms[!, col] = zeros(Float32, n)
+    end
+    passing_psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_WEIGHT_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN] = zeros(UInt8, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN] = zeros(UInt8, n)
+    passing_psms[!, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN] = zeros(UInt16, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN] = zeros(Float32, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN] = zeros(Float32, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN] = zeros(Float32, n)
+    n == 0 && return passing_psms
+    nrow(chromatograms) == 0 && return passing_psms
+    hasproperty(chromatograms, :shadow_frag1_int) ||
+        error("MBR integrated spectra require chromatogram shadow fragment columns")
+    hasproperty(chromatograms, :spectrum_intensity) ||
+        error("MBR integrated quant requires chromatogram :spectrum_intensity")
+    hasproperty(chromatograms, :intensity) ||
+        error("MBR integrated fragment-correlation features require chromatogram :intensity")
+    hasproperty(passing_psms, :peak_area) ||
+        error("MBR integrated quant requires PSM :peak_area")
+
+    shadow_cols = ntuple(rank -> chromatograms[!, Symbol("shadow_frag$(rank)_int")], 8)
+    has_fitted_cols = all(c -> hasproperty(chromatograms, c), FITTED_FRAGMENT_INTENSITY_COLUMNS)
+    fitted_cols = has_fitted_cols ?
+        ntuple(rank -> chromatograms[!, FITTED_FRAGMENT_INTENSITY_COLUMNS[rank]], 8) :
+        nothing
+    spectrum_intensity_col = chromatograms[!, :spectrum_intensity]
+    rt_col = chromatograms[!, :rt]
+    neighbors_by_key = Dict{Tuple{UInt32, UInt32}, NTuple{3, Int}}()
+    rows_by_pid = Dict{UInt32, Vector{Int}}()
+    prec_col = chromatograms[!, :precursor_idx]
+    scan_col = chromatograms[!, :scan_idx]
+    @inbounds for row in 1:nrow(chromatograms)
+        pid = UInt32(prec_col[row])
+        push!(get!(() -> Int[], rows_by_pid, pid), row)
+    end
+    for (pid, rows) in rows_by_pid
+        sort!(rows, by = row -> UInt32(scan_col[row]))
+        @inbounds for pos in eachindex(rows)
+            apex_row = rows[pos]
+            left_row = pos > firstindex(rows) ? rows[pos - 1] : 0
+            right_row = pos < lastindex(rows) ? rows[pos + 1] : 0
+            neighbors_by_key[(pid, UInt32(scan_col[apex_row]))] = (apex_row, left_row, right_row)
+        end
+    end
+    corr_by_pid = Dict{UInt32, NamedTuple}()
+    weight_col = chromatograms[!, :intensity]
+    for (pid, rows) in rows_by_pid
+        corr_by_pid[pid] = _chrom_shadow_fragment_correlation_features(
+            rows,
+            shadow_cols,
+            weight_col,
+            bitvec_rank_table,
+        )
+    end
+
+    @inbounds for row in 1:n
+        pid = UInt32(passing_psms[row, :precursor_idx])
+        selected_scan = UInt32(passing_psms[row, :new_best_scan])
+        selected_scan == UInt32(0) && (selected_scan = UInt32(passing_psms[row, :scan_idx]))
+        neighbors = get(neighbors_by_key, (pid, selected_scan), (0, 0, 0))
+        frag_sqrt, shadow_sum = neighbors[1] == 0 ?
+            (MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0) :
+            _chrom_smoothed_shadow_sqrt_tuple_and_sum(
+                shadow_cols,
+                neighbors[1],
+                neighbors[2],
+                neighbors[3],
+            )
+        for rank in 1:8
+            passing_psms[row, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]] = frag_sqrt[rank]
+        end
+        corr_features = get(corr_by_pid, pid, nothing)
+        if corr_features !== nothing
+            passing_psms[row, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN] =
+                corr_features.n_correlated
+            passing_psms[row, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN] =
+                corr_features.corr_mask
+            passing_psms[row, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN] =
+                corr_features.bitvec_rank
+            passing_psms[row, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN] =
+                corr_features.strength
+            passing_psms[row, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN] =
+                corr_features.effective_n
+            passing_psms[row, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN] =
+                corr_features.best_weight
+        end
+        if neighbors[1] != 0
+            apex_rt = Float32(rt_col[neighbors[1]])
+            passing_psms[row, MBR_INTEGRATED_APEX_IRT_COLUMN] = Float32(rt_to_irt(apex_rt))
+            passing_psms[row, MBR_INTEGRATED_WEIGHT_COLUMN] = Float32(passing_psms[row, :peak_area])
+            apex_spectrum_intensity = Float32(spectrum_intensity_col[neighbors[1]])
+            passing_psms[row, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] =
+                log2(max(shadow_sum, 1.0f-20) / max(apex_spectrum_intensity, 1.0f-20))
+            if fitted_cols !== nothing
+                fitted_sqrt, _ = _chrom_spectrum_sqrt_tuple_and_sum(fitted_cols, neighbors[1])
+                apex_shadow_sqrt, _ = _chrom_spectrum_sqrt_tuple_and_sum(shadow_cols, neighbors[1])
+                passing_psms[row, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN] =
+                    _chrom_manhattan_score_from_cols(shadow_cols, fitted_cols, neighbors[1])
+                passing_psms[row, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] =
+                    _chrom_hellinger_score_from_sqrt(apex_shadow_sqrt, fitted_sqrt)
+                passing_psms[row, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN] =
+                    _chrom_hellinger_score_from_sqrt(frag_sqrt, fitted_sqrt)
+            end
+        end
+    end
+    return passing_psms
+end
+
 #==========================================================
 Chromatogram Building Functions
 ==========================================================#
@@ -722,6 +1020,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    spectral_scores = getMainSearchSpectralScores(search_data)
     fused_scratch = getFusedScratch(search_data)
     corr_mz = getScanCorrectedMz(search_data)
     obs_low = getScanObsLow(search_data)
@@ -764,6 +1063,7 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
+        spectrum_intensity = Float32(sum(skipmissing(getIntensityArray(spectra, scan_idx))))
 
         if rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
@@ -834,6 +1134,7 @@ function build_chromatograms(
                 new_entries = n_active_cols - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
                 resize!(colnorm2, length(colnorm2) + new_entries)
+                resize!(spectral_scores, length(spectral_scores) + new_entries)
             end
 
             initialize_weights!(id_to_col, weights, precursor_weights)
@@ -843,6 +1144,7 @@ function build_chromatograms(
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff)
+            getDistanceMetrics(weights, residuals, Hs, spectral_scores)
 
             # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
@@ -851,11 +1153,29 @@ function build_chromatograms(
                     resize!(chromatograms, length(chromatograms) * 2)
                 end
                 col = id_to_col[precs_temp[j]]
+                score = iszero(col) ? nothing : spectral_scores[col]
                 chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
                     iszero(col) ? zero(Float32) : weights[col],
                     scan_idx,
-                    precs_temp[j])
+                    precs_temp[j],
+                    spectrum_intensity,
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag1_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag2_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag3_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag4_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag5_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag6_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag7_int),
+                    score === nothing ? 0.0f0 : Float32(score.shadow_frag8_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag1_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag2_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag3_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag4_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag5_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag6_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag7_int),
+                    score === nothing ? 0.0f0 : Float32(score.fitted_frag8_int))
             end
 
             update_precursor_weights!(id_to_col, weights, precursor_weights)
@@ -868,7 +1188,12 @@ function build_chromatograms(
                 end
                 chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
-                    zero(Float32), scan_idx, precs_temp[j])
+                    zero(Float32), scan_idx, precs_temp[j],
+                    spectrum_intensity,
+                    0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                    0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                    0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                    0.0f0, 0.0f0, 0.0f0, 0.0f0)
             end
         end
 
