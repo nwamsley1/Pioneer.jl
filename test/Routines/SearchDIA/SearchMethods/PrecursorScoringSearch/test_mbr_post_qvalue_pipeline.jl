@@ -790,7 +790,7 @@ end
 end
 
 @testset "MBR counterfactual count can be selected for sweeps" begin
-    @test Pioneer._mbr_n_counterfactuals_from_env(Dict{String, String}()) == 2
+    @test Pioneer._mbr_n_counterfactuals_from_env(Dict{String, String}()) == 3
     @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "3")) == 3
     @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "4")) == 4
     @test Pioneer._mbr_n_counterfactuals_from_env(Dict("PIONEER_MBR_N_COUNTERFACTUALS" => "8")) == 8
