@@ -266,6 +266,7 @@ function importScripts()
             "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
             "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
+            "two_round_scoring.jl",            # optional round-2 cross-run features (twin_score, delta_irt; env-gated TWO_ROUND)
             "score_psms.jl",                   # PSM scoring functions
             "wide_window_features.jl",          # Raw same-window MS1/MS2 support features
             "scoring_interface.jl",            # Interface functions

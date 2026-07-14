@@ -412,6 +412,23 @@ function _score_precursor_isotope_traces_no_mbr(
     )
     @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
 
+    # Optional round-2: derive cross-run features (twin_score, delta_irt) from the
+    # round-1 OOF sidecars and re-train on [base ; twin_score ; delta_irt]. The
+    # round-2 pass overwrites each `.pass1_sidecar.arrow`, so trace_prob (set from
+    # trace_prob_prepass in the merge below) becomes the round-2 OOF score.
+    if TWO_ROUND_ENABLED
+        write_two_round_feature_columns!(file_paths)
+        features2 = vcat(copy(ADVANCED_FEATURE_SET), TWO_ROUND_FEATURES)
+        pass1 = train_and_predict_pass1_oom!(
+            file_paths;
+            features        = features2,
+            compute_infold  = false,
+            lgbm_hp         = SCORING_LGBM_HP,
+            semisupervised  = true,
+        )
+        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. twin_score, delta_irt)"
+    end
+
     if pass1.last_classifier !== nothing
         lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
         imp = importance(lgbm_model)
