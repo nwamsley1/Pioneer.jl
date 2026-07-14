@@ -269,6 +269,7 @@ function importScripts()
             "score_psms.jl",                   # PSM scoring functions
             "wide_window_features.jl",          # Raw same-window MS1/MS2 support features
             "scoring_interface.jl",            # Interface functions
+            "precursor_filters.jl",            # optional iRT/file-q precursor filters (env-gated, Phase-0 study)
             "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch
             "PrecursorScoringSearch.jl"        # Main implementation - depends on utils.jl
         ]

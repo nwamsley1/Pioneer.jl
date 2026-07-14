@@ -49,7 +49,7 @@ const MIN_FRAGS_FOR_INTENSITY_MODEL = Int64(2000) # Minimum fragments for Intens
 const TUNING_GAUSSIAN_COVERAGE = Float64(0.95)
 
 # iRT tolerance: σ_iRT × this multiplier
-const TUNING_IRT_TOL_SIGMA = Int64(3)
+const TUNING_IRT_TOL_SIGMA = parse(Int64, get(ENV, "TUNING_IRT_SIGMA", "3"))
 
 # Score tier backoff and top-N fragment requirement
 const TUNING_SCORE_TIERS = (UInt8(8), UInt8(7), UInt8(6), UInt8(5))

@@ -124,11 +124,13 @@ function build_precursor_global_prob_dicts(
         end
     end
 
-    # Compute logodds per precursor
+    # Compute global score per precursor (logodds of top-sqrt(n); or max-across-runs
+    # when env GLOBAL_AGG=max, Phase-0 study).
+    use_max = get(ENV, "GLOBAL_AGG", "") == "max"
     global_prob_dict = Dict{UInt32, Float32}()
     sizehint!(global_prob_dict, length(prob_acc))
     for (pid, probs) in prob_acc
-        global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
+        global_prob_dict[pid] = use_max ? maximum(probs) : logodds(probs, sqrt_n_runs)
     end
 
     return global_prob_dict, target_dict

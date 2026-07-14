@@ -312,11 +312,15 @@ function summarize_results!(
         # PEP is deliberately NOT computed here. It is built once, AFTER the global
         # filter (Step 11), on the survivor population — so :pep is conditioned on the
         # same set as :qval. Nothing consumes a pre-global PEP before Step 11.
+        # compute_pep only when the PEP-based AND gate is active (Phase-0 study);
+        # otherwise keep the original q-only spline (pre-global PEP not needed).
+        _ewpep = get(ENV, "EWPEP_AND_THRESH", "")
         spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
+            compute_pep=!isempty(_ewpep), min_pep_points_per_bin=params.pep_bin_size,
             fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
         qval_spline = spline_result.qval_spline
         results.precursor_qval_interp[] = qval_spline
+        pre_pep_spline = isempty(_ewpep) ? nothing : spline_result.pep_interp
 
         # Phase B — Single per-file pipeline combining Steps 5+10.
         # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
@@ -339,17 +343,45 @@ function summarize_results!(
         # ONLY. The experiment-wide (:qval) filter is deferred to Step 11, where it
         # is applied to the recomputed q-value (spline refit on the global-passing
         # subset). Original simultaneous variant kept in git history.
-        qval_conditions = [(:global_qval, params.q_value_threshold)]
+        # Phase-0 study (env-gated): re-introduce the develop-style AND on the
+        # pre-global experiment-wide q (:qval), but at a *relaxed* threshold. This
+        # keeps the legit recovery band (ew_full ~1-10%) while cutting the false-
+        # transfer tail (ew_full ~20-50%). Step 11 still refits ew and filters ≤1%.
+        # Phase-0 study: optionally filter the global level on global PEP instead of
+        # global q (env GLOBAL_PEP_THRESH) — a stricter per-precursor global cut.
+        _gpt = get(ENV, "GLOBAL_PEP_THRESH", "")
+        qval_conditions = isempty(_gpt) ? [(:global_qval, params.q_value_threshold)] :
+                                          [(:global_pep, parse(Float32, _gpt))]
+        isempty(_gpt) || @user_info "Global filter on :global_pep ≤ $(_gpt) (instead of global q)"
+        let ewt = get(ENV, "EWFULL_AND_THRESH", "")
+            if !isempty(ewt)
+                push!(qval_conditions, (:qval, parse(Float32, ewt)))
+                @user_info "ew_full AND-threshold enabled: :qval ≤ $(ewt) (pre-global experiment-wide)"
+            end
+        end
+        if !isempty(_ewpep)
+            push!(qval_conditions, (:pre_pep, parse(Float32, _ewpep)))
+            @user_info "ew_full PEP AND-threshold enabled: :pre_pep ≤ $(_ewpep) (pre-global experiment-wide PEP)"
+        end
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
             add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
-            add_interpolated_column(:qval, :prec_prob, qval_spline) |>
+            add_interpolated_column(:qval, :prec_prob, qval_spline)
+        if pre_pep_spline !== nothing
+            combined_pipeline = combined_pipeline |>
+                add_interpolated_column(:pre_pep, :prec_prob, pre_pep_spline)
+        end
+        combined_pipeline = combined_pipeline |>
             mbr_qval_bypass |>
             filter_by_multiple_thresholds(qval_conditions)
 
         passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
     end
+
+    # Phase-0 study (env-gated): optional iRT-dispersion / file-specific-q precursor
+    # filters on the global-passing set, BEFORE the Step-11 experiment-wide recompute.
+    passing_refs = apply_precursor_filters!(passing_refs)
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
     # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). The

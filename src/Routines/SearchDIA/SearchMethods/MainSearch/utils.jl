@@ -13,7 +13,7 @@ function recalibrate_rt!(
     best_psms::DataFrame,
     scores::Vector{Float32};
     min_prob::Float32 = 0.9f0,
-    irt_tol_multiplier::Float32 = 4.0f0,
+    irt_tol_multiplier::Float32 = parse(Float32, get(ENV, "IRT_REFINE_MULT", "4.0")),
     min_calib_psms::Int = 30
 )
     # 1. Filter to high-confidence target PSMs for calibration

@@ -255,23 +255,39 @@ function run_protein_scoring!(
     # PEP is computed once, AFTER the protein filter (recalc below), on the survivor
     # population — so :pg_pep is conditioned on the same set as :pg_qval. No pre-filter
     # PEP is built here (nothing consumes it before the recalc).
+    # compute_pep only when the PEP-based AND gate is active (Phase-0 study); mirrors
+    # the precursor procedure (relaxed pre-filter experiment-wide PEP AND global).
+    _pg_ewpep = get(ENV, "EWPEP_AND_THRESH", "")
     spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000,
+        batch_size = 1_000_000, compute_pep = !isempty(_pg_ewpep),
         min_pep_points_per_bin = q_value_interpolation_points_per_bin,
         temp_prefix = "pg_sidecar")
     search_context.pg_score_to_qval[] = spline_result.qval_spline
+    pg_pre_pep_spline = isempty(_pg_ewpep) ? nothing : spline_result.pep_interp
 
     # SEQUENTIAL FILTER (proteins): Part 1 filters on (:global_pg_qval ≤ threshold)
     # ONLY, mirroring the PSM V2 filter. The experiment-wide (:pg_qval) filter is
     # deferred to the recalc below, where it is applied to the pg_qval recomputed on
     # the global-passing survivors. (Previously this filtered on both simultaneously.)
+    pg_conditions = [(:global_pg_qval, q_value_threshold)]
+    let pgt = get(ENV, "PG_EWQ_AND_THRESH", "")
+        if !isempty(pgt)                       # simultaneous AND on full-set experiment-wide PG q
+            push!(pg_conditions, (:pg_qval, parse(Float32, pgt)))
+            @user_info "PG ew_full q AND-threshold enabled: :pg_qval ≤ $(pgt)"
+        end
+    end
     protein_combined_pipeline = TransformPipeline() |>
         add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
         add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
-        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-        filter_by_multiple_thresholds([
-            (:global_pg_qval, q_value_threshold)
-        ])
+        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
+    if pg_pre_pep_spline !== nothing
+        protein_combined_pipeline = protein_combined_pipeline |>
+            add_interpolated_column(:pg_pep_full, :pg_score, pg_pre_pep_spline)
+        push!(pg_conditions, (:pg_pep_full, parse(Float32, _pg_ewpep)))
+        @user_info "PG ew_full PEP AND-threshold enabled: :pg_pep_full ≤ $(_pg_ewpep)"
+    end
+    protein_combined_pipeline = protein_combined_pipeline |>
+        filter_by_multiple_thresholds(pg_conditions)
 
     apply_pipeline!(pg_refs, protein_combined_pipeline)
 

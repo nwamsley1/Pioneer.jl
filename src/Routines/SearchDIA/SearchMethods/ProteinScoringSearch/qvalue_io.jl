@@ -77,8 +77,9 @@ function build_protein_global_score_dicts(
     pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
     sizehint!(pg_name_to_global_pg_score, n_observed)
 
+    use_max = get(ENV, "GLOBAL_AGG", "") == "max"
     for (key, scores) in score_acc
-        gs = logodds(scores, sqrt_n_runs)
+        gs = use_max ? maximum(scores) : logodds(scores, sqrt_n_runs)
         global_pg_score_dict[key] = gs
         pg_name_to_global_pg_score[ProteinKey(key[1], key[2], key[3])] = gs
     end
