@@ -416,7 +416,7 @@ function _score_precursor_isotope_traces_no_mbr(
     # round-1 OOF sidecars and re-train on [base ; twin_score ; delta_irt]. The
     # round-2 pass overwrites each `.pass1_sidecar.arrow`, so trace_prob (set from
     # trace_prob_prepass in the merge below) becomes the round-2 OOF score.
-    if TWO_ROUND_ENABLED
+    if two_round_enabled()
         write_two_round_feature_columns!(file_paths)
         features2 = vcat(copy(ADVANCED_FEATURE_SET), TWO_ROUND_FEATURES)
         pass1 = train_and_predict_pass1_oom!(

@@ -15,7 +15,10 @@
 # Assumes one row per precursor_idx per file (current MainSearch invariant), so
 # s1[file, precursor] is a single value — no trace->precursor aggregation needed.
 
-const TWO_ROUND_ENABLED = get(ENV, "TWO_ROUND", "") == "1"
+# Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is
+# evaluated at precompile time and baked into the cached module, so it would
+# ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
+two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [:twin_score, :delta_irt]
 
 # Most-similar run per file via cosine similarity of the per-file s1 profiles
