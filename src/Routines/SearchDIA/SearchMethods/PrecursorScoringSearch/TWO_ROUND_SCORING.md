@@ -1,11 +1,20 @@
 # Two-Round Experiment-Wide Scoring — Cross-Run Consistency Features
 
 Design & CV protocol for a second round of PSM scoring whose only new inputs are two
-cross-run features derived from the first round. Empirically (EWZ human/yeast, 3 seeds),
-adding these to a 32-feature base recovered **+124,865 experiment-wide IDs at +484 false
-yeast** (marginal transfer rate ~0.4%), whereas the naive "score − best-across-all-runs"
-variant *tripled* false transfers. The distinction is condition-matching: reference the
-score in a *comparable* run, not the global best.
+cross-run features derived from the first round. Offline on EWZ human/yeast (32-feature
+base, **precursor-keyed folds matching production**): single-twin `twin_score` recovered
+**+102,532 experiment-wide IDs at +304 false yeast** (fy rate flat: 0.130% -> 0.140%),
+whereas the naive "score − best-across-all-runs" variant *tripled* false transfers. The
+distinction is condition-matching: reference the score in a *comparable* run, not the
+global best.
+
+NOTE ON LEAKAGE: earlier prototype numbers (e.g. "+124,865") used random per-PSM folds,
+which leak through the cross-run lookups and inflate the gain ~6-10%; the figures here are
+the leakage-safe (precursor-keyed) re-measurements. A **cluster-consensus** variant (mean
+`s1` over the run's whole condition-cluster instead of one twin) roughly *doubles* the
+single-twin gain (**+214,631 IDs / +422 fy**, fy rate 0.138%) and is the recommended future
+form; a one-hot cluster indicator is inert (run-constant). This file documents the shipped
+single-twin version; see the conversation log for the cluster-consensus follow-up.
 
 ## 1. Defining "most similar" run
 
@@ -62,8 +71,9 @@ Delta_iRT(p) = | irt_obs(p) - ref_irt(pi(p)) |
 ```
 
 `Delta_iRT` uses the best instance's **iRT only, never its score**, so it carries none of
-the "confident-somewhere" pathology. Validated safe in isolation (+41,811 IDs / +171 fy).
-(Left as the validated best-instance version; a twin-referenced variant is a future A/B.)
+the "confident-somewhere" pathology. Safe in isolation (a one-directional RT signal); adds
+a small increment on top of twin_score / cluster-consensus. Left as the validated
+best-instance version; a twin/cluster-referenced variant is a future A/B.
 
 ## 3. Two-round CV protocol
 
