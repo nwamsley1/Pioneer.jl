@@ -91,10 +91,14 @@ function _silhouette(X::Matrix{Float64}, lab::Vector{Int})
             if lab[j] == own; a_sum += D[i,j]; a_n += 1
             else; t = get(others, lab[j], (0.0,0)); others[lab[j]] = (t[1]+D[i,j], t[2]+1); end
         end
-        a_n == 0 && continue
+        # singleton-cluster point: silhouette defined as 0 (matches sklearn) — counts
+        # toward the mean, so degenerate high-K (many singletons) is penalized, not skipped.
+        if a_n == 0
+            valid += 1; continue
+        end
         a = a_sum / a_n; b = Inf
         for (_, t) in others; t[2] > 0 && (b = min(b, t[1]/t[2])); end
-        b == Inf && continue
+        b == Inf && (valid += 1; continue)
         tot += (b - a) / max(a, b); valid += 1
     end
     return valid > 0 ? tot / valid : -1.0
