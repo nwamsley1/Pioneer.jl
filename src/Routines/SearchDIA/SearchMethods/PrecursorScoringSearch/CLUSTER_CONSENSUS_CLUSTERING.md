@@ -57,6 +57,39 @@ Plots (in `RegressionTestsLite/DIANN_vs_Pioneer_PEP/`): `svd_kmeans_silhouette.p
 `presence_jaccard_clustering.png`, `cluster_recovery_viz.png`, `cluster_quality_viz.png`,
 `olsen3p_clustering.png`.
 
+## Real-world cases: the K=1 floor and abundance-blindness
+
+Two single-species cohorts (searched on develop, human lib) extend the picture to the
+homogeneous / subtle end:
+
+- **Pyr (20-patient before/after; tested 6-patient subset):** silhouette peak **0.13** — the
+  weakest of any dataset; SVD ≈ rank-1. Patient signal is faint (within-patient Jaccard 0.60 vs
+  across 0.54, sep +0.066) and there is **no PRE/POST axis** (sep −0.011: treatment doesn't shift
+  *which* precursors are ID'd). Homogeneous tissue → **≈1 cluster**. Broad consensus is the right,
+  safe reference here.
+- **KEAP1KO vs WT (H292, 3+3):** silhouette **0.044**; within/across-condition Jaccard 0.736/0.727
+  (sep +0.009 ≈ zero). **Presence clustering is BLIND to KEAP1 KO** because it's an *abundance*
+  change, not composition — the same ~90k precursors are ID'd in both (only 16 KEAP1 precursors
+  genuinely differ: present in WT, 0 in KO = 0.012% of the list).
+
+**The K=1 floor (silhouette < ~0.2 → pool to one cluster).** Interpretation of silhouette:
+`s = (b−a)/max(a,b)` = how much closer a run is to its own cluster than the nearest other, as a
+fraction of local scale. >0.5 strong, 0.25–0.5 modest, **<0.2 essentially one blob**. Datasets on
+the SVD-embedding: APMS 0.61, EWZ 0.33, Olsen-3P 0.16, **Pyr 0.13, KEAP1 0.044**. A **0.2 floor**
+sits cleanly between EWZ (real 2 → keep) and Pyr/KEAP1 (→ collapse to 1). Asymmetry: over-split
+(2 when 1) is cheap (still-homogeneous sub-group); under-merge (1 when 2) is the dangerous error,
+so a LOW floor (biases toward splitting) is safer — and EWZ's 0.33 clears it comfortably.
+
+**Why the floor is SAFE for the consensus.** The dangerous merge only bites when compositions
+differ — a precursor present in one condition, absent in the other, that a merged consensus would
+under-vouch. KEAP1 IS such a case (16 precursors), but (a) 0.012% is below ANY clustering's
+resolution, and (b) those 16 are already q≈0 by spectral evidence, so a soft consensus feature
+won't drop them. When a composition difference is big enough to actually harm (EWZ: thousands of
+yeast precursors, sep +0.11), it's big enough to clear the floor and split. **Rule: cluster by
+COMPOSITION (presence), not biology — abundance-only condition differences correctly merge.**
+(Caveat: this safety is specific to the presence-based false-transfer purpose; for detecting KO
+biology or quant normalization you'd need abundance/weights, and KEAP1 KO/WT would then separate.)
+
 ## Status / next
 
 Clustering method chosen (SVD+KMeans+silhouette on stringent-presence). **Not yet wired into
