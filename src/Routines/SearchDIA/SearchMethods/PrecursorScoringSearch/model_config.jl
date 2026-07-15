@@ -85,7 +85,7 @@ const ADVANCED_FEATURE_SET = [
     # cross-run-only substitutions where the selected best PSM is known.
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
-    :Mox, :spectrum_peak_count, :sequence_length,
+    :Mox, :spectrum_peak_count, :sequence_length, :charge,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
     :ms1_m0_mass_err_ppm,

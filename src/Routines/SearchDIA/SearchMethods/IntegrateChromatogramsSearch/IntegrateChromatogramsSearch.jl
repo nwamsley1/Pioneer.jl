@@ -278,6 +278,8 @@ function process_file!(
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_start_scan] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_stop_scan] = zeros(UInt32, nrow(passing_psms))
 
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
@@ -337,6 +339,8 @@ function process_file!(
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
+            passing_psms[!, :integration_start_scan],
+            passing_psms[!, :integration_stop_scan],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )

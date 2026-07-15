@@ -380,7 +380,8 @@ end
 
 """
     integrate_precursors(chromatograms, isotope_trace_type, min_fraction_transmitted, precursor_idx,
-                         apex_scan_idx, peak_area, new_best_scan, points_integrated;
+                         apex_scan_idx, peak_area, new_best_scan, points_integrated,
+                         integration_start_scan, integration_stop_scan;
                          isotopes_captured=nothing, λ=1.0f0)
 
 Integrate chromatographic peaks for multiple precursors in parallel.
@@ -394,7 +395,8 @@ uses one trace per precursor; separate mode keys rows by
 For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
-`peak_area`, `new_best_scan`, and `points_integrated`.
+`peak_area`, `new_best_scan`, `points_integrated`, and the exact integration
+boundary scan indices.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -403,7 +405,9 @@ function integrate_precursors(chromatograms::DataFrame,
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
-                             points_integrated::AbstractVector{UInt32};
+                             points_integrated::AbstractVector{UInt32},
+                             integration_start_scan::AbstractVector{UInt32},
+                             integration_stop_scan::AbstractVector{UInt32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -460,7 +464,8 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
-                peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
+                peak_area[i], new_best_scan[i], points_integrated[i],
+                    integration_start_scan[i], integration_stop_scan[i] = integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
                     @view(intensity_all[chrom_range]),
@@ -500,7 +505,9 @@ function integrate_precursors(chromatograms::DataFrame,
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
-                             points_integrated::AbstractVector{UInt32};
+                             points_integrated::AbstractVector{UInt32},
+                             integration_start_scan::AbstractVector{UInt32},
+                             integration_stop_scan::AbstractVector{UInt32};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -511,7 +518,9 @@ function integrate_precursors(chromatograms::DataFrame,
         apex_scan_idx,
         peak_area,
         new_best_scan,
-        points_integrated;
+        points_integrated,
+        integration_start_scan,
+        integration_stop_scan;
         λ = λ,
     )
 end
@@ -693,6 +702,52 @@ end
     ), total
 end
 
+function _chrom_temporal_fragment_data(
+    rows::Vector{Int},
+    shadow_cols,
+    weight_col,
+    scan_col,
+    start_scan::UInt32,
+    stop_scan::UInt32,
+)
+    (start_scan == UInt32(0) || stop_scan == UInt32(0)) &&
+        return Float32[], MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    scan_low, scan_high = minmax(start_scan, stop_scan)
+    trace = Float32[]
+    weighted_sqrt_by_rank = zeros(Float32, 8)
+    total_weight = 0.0f0
+
+    @inbounds for chrom_row in rows
+        scan = UInt32(scan_col[chrom_row])
+        scan_low <= scan <= scan_high || continue
+
+        weight_value = Float32(weight_col[chrom_row])
+        weight = isfinite(weight_value) ? max(weight_value, 0.0f0) : 0.0f0
+        weight > 0.0f0 || continue
+        push!(trace, weight)
+
+        spectrum_total = 0.0f0
+        for rank in 1:8
+            value = _chrom_shadow_intensity(shadow_cols, chrom_row, rank)
+            push!(trace, value)
+            spectrum_total += value
+        end
+        spectrum_total > 0.0f0 || continue
+
+        inv_spectrum_total = inv(spectrum_total)
+        for rank in 1:8
+            value = _chrom_shadow_intensity(shadow_cols, chrom_row, rank)
+            weighted_sqrt_by_rank[rank] += weight * sqrt(value * inv_spectrum_total)
+        end
+        total_weight += weight
+    end
+
+    temporal_mean_sqrt = total_weight > 0.0f0 ?
+        ntuple(rank -> weighted_sqrt_by_rank[rank] / total_weight, 8) :
+        MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    return trace, temporal_mean_sqrt
+end
+
 function add_mbr_integrated_spectra_to_psms!(
     passing_psms::DataFrame,
     chromatograms::DataFrame,
@@ -703,6 +758,10 @@ function add_mbr_integrated_spectra_to_psms!(
     for col in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
         passing_psms[!, col] = zeros(Float32, n)
     end
+    for col in MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS
+        passing_psms[!, col] = zeros(Float32, n)
+    end
+    passing_psms[!, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN] = [Float32[] for _ in 1:n]
     passing_psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_WEIGHT_COLUMN] = fill(NaN32, n)
     passing_psms[!, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] = fill(NaN32, n)
@@ -725,6 +784,10 @@ function add_mbr_integrated_spectra_to_psms!(
         error("MBR integrated fragment-correlation features require chromatogram :intensity")
     hasproperty(passing_psms, :peak_area) ||
         error("MBR integrated quant requires PSM :peak_area")
+    hasproperty(passing_psms, :integration_start_scan) ||
+        error("MBR temporal spectra require PSM :integration_start_scan")
+    hasproperty(passing_psms, :integration_stop_scan) ||
+        error("MBR temporal spectra require PSM :integration_stop_scan")
 
     shadow_cols = ntuple(rank -> chromatograms[!, Symbol("shadow_frag$(rank)_int")], 8)
     has_fitted_cols = all(c -> hasproperty(chromatograms, c), FITTED_FRAGMENT_INTENSITY_COLUMNS)
@@ -735,11 +798,19 @@ function add_mbr_integrated_spectra_to_psms!(
     rt_col = chromatograms[!, :rt]
     neighbors_by_key = Dict{Tuple{UInt32, UInt32}, NTuple{3, Int}}()
     rows_by_pid = Dict{UInt32, Vector{Int}}()
+    rows_by_trace = Dict{Tuple{UInt32, Tuple{Int8, Int8}}, Vector{Int}}()
     prec_col = chromatograms[!, :precursor_idx]
     scan_col = chromatograms[!, :scan_idx]
+    use_trace_rows = hasproperty(chromatograms, :isotopes_captured) &&
+                     hasproperty(passing_psms, :isotopes_captured)
+    chrom_isotope_col = use_trace_rows ? chromatograms[!, :isotopes_captured] : nothing
     @inbounds for row in 1:nrow(chromatograms)
         pid = UInt32(prec_col[row])
         push!(get!(() -> Int[], rows_by_pid, pid), row)
+        if use_trace_rows
+            isotope_set = Tuple{Int8, Int8}(chrom_isotope_col[row])
+            push!(get!(() -> Int[], rows_by_trace, (pid, isotope_set)), row)
+        end
     end
     for (pid, rows) in rows_by_pid
         sort!(rows, by = row -> UInt32(scan_col[row]))
@@ -776,6 +847,25 @@ function add_mbr_integrated_spectra_to_psms!(
             )
         for rank in 1:8
             passing_psms[row, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]] = frag_sqrt[rank]
+        end
+        temporal_rows = if use_trace_rows
+            isotope_set = Tuple{Int8, Int8}(passing_psms[row, :isotopes_captured])
+            get(rows_by_trace, (pid, isotope_set), Int[])
+        else
+            get(rows_by_pid, pid, Int[])
+        end
+        temporal_trace, temporal_mean_sqrt = _chrom_temporal_fragment_data(
+            temporal_rows,
+            shadow_cols,
+            weight_col,
+            scan_col,
+            UInt32(passing_psms[row, :integration_start_scan]),
+            UInt32(passing_psms[row, :integration_stop_scan]),
+        )
+        passing_psms[row, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN] = temporal_trace
+        for rank in 1:8
+            passing_psms[row, MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[rank]] =
+                temporal_mean_sqrt[rank]
         end
         corr_features = get(corr_by_pid, pid, nothing)
         if corr_features !== nothing

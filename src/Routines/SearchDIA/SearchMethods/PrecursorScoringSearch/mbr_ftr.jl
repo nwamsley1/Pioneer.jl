@@ -182,32 +182,32 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_worst_observed_irt_diff_true,
     :MBR_single_donor_true,
     :MBR_best_hellinger_source_prob_true,
-    :MBR_best_smoothed_frag_hellinger_true,
-    :MBR_best_smoothed_frag_hellinger_rank_true,
-    :MBR_best_smoothed_frag_hellinger_margin_true,
-    :MBR_best_corr_frag_hellinger_true,
-    :MBR_best_corr_frag_hellinger_rank_true,
-    :MBR_best_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_frag_hellinger_true,
+    :MBR_best_temporal_frag_hellinger_rank_true,
+    :MBR_best_temporal_frag_hellinger_margin_true,
+    :MBR_best_temporal_corr_frag_hellinger_true,
+    :MBR_best_temporal_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_corr_frag_hellinger_margin_true,
     :MBR_best_donor_frag_corr_bitvec_rank_true,
-    :MBR_best_receiver_corr_frag_hellinger_true,
-    :MBR_best_receiver_corr_frag_hellinger_rank_true,
-    :MBR_best_receiver_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_receiver_corr_frag_hellinger_true,
+    :MBR_best_temporal_receiver_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_receiver_corr_frag_hellinger_margin_true,
     :MBR_receiver_frag_corr_bitvec_rank,
-    :MBR_best_shared_corr_frag_hellinger_true,
-    :MBR_best_shared_corr_frag_hellinger_rank_true,
-    :MBR_best_shared_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_shared_corr_frag_hellinger_true,
+    :MBR_best_temporal_shared_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_shared_corr_frag_hellinger_margin_true,
     :MBR_best_shared_corr_frag_bitvec_rank_true,
 ]
 
 const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
-    :MBR_best_smoothed_frag_hellinger_rank_true,
-    :MBR_best_smoothed_frag_hellinger_margin_true,
-    :MBR_best_corr_frag_hellinger_rank_true,
-    :MBR_best_corr_frag_hellinger_margin_true,
-    :MBR_best_receiver_corr_frag_hellinger_rank_true,
-    :MBR_best_receiver_corr_frag_hellinger_margin_true,
-    :MBR_best_shared_corr_frag_hellinger_rank_true,
-    :MBR_best_shared_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_frag_hellinger_rank_true,
+    :MBR_best_temporal_frag_hellinger_margin_true,
+    :MBR_best_temporal_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_receiver_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_receiver_corr_frag_hellinger_margin_true,
+    :MBR_best_temporal_shared_corr_frag_hellinger_rank_true,
+    :MBR_best_temporal_shared_corr_frag_hellinger_margin_true,
 ]
 # Dropped 2026-05-16:
 #   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
@@ -226,6 +226,13 @@ const MBR_HELLINGER_CONTRAST_FEATURES = Symbol[
 #   and donor-library Hellinger inputs. Non-Hellinger best/worst precursor
 #   summaries are kept, with :MBR_single_donor_* marking rows whose worst donor
 #   columns are sentinel-valued because only one donor was available.
+# Ablated 2026-07-14:
+#   :MBR_best_smoothed_frag_hellinger_true and its rank/margin contrasts. The
+#   temporal versions produced slightly better recovery without increasing
+#   external FTR. The raw smoothed Hellinger remains in sidecars for diagnostics.
+#   The donor-, receiver-, and shared-mask regular Hellinger trios were also
+#   replaced by their temporal versions after improving recovery without an
+#   external FTR penalty. Their raw values remain in sidecars for diagnostics.
 
 # Same features but with the MBR columns swapped to a counterfactual suffix.
 # Each entry must mirror
@@ -1126,6 +1133,20 @@ function apply_mbr_filter_paired!(
             base = "MBR_best_smoothed_frag_hellinger",
         )
     end
+    if :MBR_best_temporal_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_frag_hellinger",
+        )
+    end
     if :MBR_best_corr_frag_hellinger_rank_true in true_features_all
         _mbr_add_best_hellinger_rank_features!(
             sub;
@@ -1138,6 +1159,20 @@ function apply_mbr_filter_paired!(
             sub;
             n_counterfactuals = n_counterfactuals,
             base = "MBR_best_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_corr_frag_hellinger",
         )
     end
     if :MBR_best_receiver_corr_frag_hellinger_rank_true in true_features_all
@@ -1154,6 +1189,20 @@ function apply_mbr_filter_paired!(
             base = "MBR_best_receiver_corr_frag_hellinger",
         )
     end
+    if :MBR_best_temporal_receiver_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_receiver_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_receiver_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_receiver_corr_frag_hellinger",
+        )
+    end
     if :MBR_best_shared_corr_frag_hellinger_rank_true in true_features_all
         _mbr_add_best_hellinger_rank_features!(
             sub;
@@ -1166,6 +1215,20 @@ function apply_mbr_filter_paired!(
             sub;
             n_counterfactuals = n_counterfactuals,
             base = "MBR_best_shared_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_shared_corr_frag_hellinger_rank_true in true_features_all
+        _mbr_add_best_hellinger_rank_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_shared_corr_frag_hellinger",
+        )
+    end
+    if :MBR_best_temporal_shared_corr_frag_hellinger_margin_true in true_features_all
+        _mbr_add_best_hellinger_margin_features!(
+            sub;
+            n_counterfactuals = n_counterfactuals,
+            base = "MBR_best_temporal_shared_corr_frag_hellinger",
         )
     end
     available_true  = filter(f -> hasproperty(sub, f), true_features_all)

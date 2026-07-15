@@ -155,7 +155,7 @@ const PRESCORE_FEATURES = [
     # Core PSM / sequence metrics
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
-    :Mox, :spectrum_peak_count, :sequence_length,
+    :Mox, :spectrum_peak_count, :sequence_length, :charge,
     :fitted_hellinger,
 
     # Cross-precursor at-scan

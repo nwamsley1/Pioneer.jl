@@ -93,6 +93,172 @@ function _mbr_empirical_pass1_table(; precursor_idx, scan_idx, score)
     )
 end
 
+function _mbr_add_integrated_fixture_columns!(df, templates, temporal_means)
+    n = nrow(df)
+    df[!, Pioneer.MBR_INTEGRATED_WEIGHT_COLUMN] = Float32.(df.weight)
+    df[!, Pioneer.MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] =
+        Float32.(df.log2_intensity_explained)
+    df[!, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN] = Float32.(df.irt_obs)
+    df[!, Pioneer.MBR_INTEGRATED_N_SCANS_COLUMN] = UInt32.(df.n_scans)
+    temporal_traces = Vector{Vector{Float32}}(undef, n)
+    @inbounds for row in 1:n
+        trace = Float32[1.0f0]
+        for rank in 1:8
+            push!(trace, Float32(temporal_means[row][rank]^2))
+        end
+        temporal_traces[row] = trace
+    end
+    df[!, Pioneer.MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN] = temporal_traces
+    @inbounds for rank in 1:8
+        df[!, Pioneer.MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]] =
+            Float32[templates[row][rank] for row in 1:n]
+        df[!, Pioneer.MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[rank]] =
+            Float32[temporal_means[row][rank] for row in 1:n]
+    end
+    return df
+end
+
+@testset "MBR temporal fragment summary uses integration bounds" begin
+    passing_psms = DataFrame(
+        precursor_idx = UInt32[1],
+        scan_idx = UInt32[20],
+        new_best_scan = UInt32[20],
+        peak_area = Float32[4],
+        integration_start_scan = UInt32[20],
+        integration_stop_scan = UInt32[30],
+    )
+    chromatograms = DataFrame(
+        precursor_idx = fill(UInt32(1), 4),
+        scan_idx = UInt32[10, 20, 30, 40],
+        rt = Float32[1, 2, 3, 4],
+        intensity = Float32[100, 1, 3, 100],
+        spectrum_intensity = fill(10.0f0, 4),
+        shadow_frag1_int = Float32[0, 10, 0, 0],
+        shadow_frag2_int = Float32[0, 0, 10, 0],
+        shadow_frag3_int = Float32[1000, 0, 0, 1000],
+        shadow_frag4_int = zeros(Float32, 4),
+        shadow_frag5_int = zeros(Float32, 4),
+        shadow_frag6_int = zeros(Float32, 4),
+        shadow_frag7_int = zeros(Float32, 4),
+        shadow_frag8_int = zeros(Float32, 4),
+    )
+
+    Pioneer.add_mbr_integrated_spectra_to_psms!(
+        passing_psms,
+        chromatograms,
+        identity,
+    )
+
+    temporal_mean = ntuple(
+        rank -> passing_psms[1, Pioneer.MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[rank]],
+        8,
+    )
+    @test temporal_mean[1] ≈ 0.25f0
+    @test temporal_mean[2] ≈ 0.75f0
+    @test temporal_mean[3] == 0.0f0
+    temporal_trace = passing_psms[1, Pioneer.MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN]
+    @test length(temporal_trace) == 2 * Pioneer.MBR_TEMPORAL_TRACE_STRIDE
+    @test temporal_trace[[1, 2, 10, 12]] == Float32[1, 10, 3, 10]
+    @test Pioneer._mbr_temporal_fragment_hellinger_from_summaries(
+        temporal_mean,
+        (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0),
+    ) ≈ sqrt(0.75f0)
+end
+
+@testset "MBR masked temporal Hellinger normalizes each scan within the mask" begin
+    trace = Float32[
+        1, 1, 0, 0, 0, 0, 0, 0, 0,
+        3, 0, 0, 9, 0, 0, 0, 0, 0,
+    ]
+    donor = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
+
+    @test Pioneer._mbr_temporal_corr_masked_hellinger_from_trace(
+        trace,
+        donor,
+        UInt8(0x03),
+    ) ≈ sqrt(0.75f0)
+    @test Pioneer._mbr_temporal_corr_masked_hellinger_from_trace(
+        trace,
+        donor,
+        UInt8(0x01),
+    ) == 1.0f0
+end
+
+@testset "MBR temporal Hellinger compares every donor with the same recipient summary" begin
+    mktempdir() do dir
+        receiver_path = joinpath(dir, "receiver_fold0.arrow")
+        donor_path = joinpath(dir, "donor_fold0.arrow")
+        frag1 = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
+        frag2 = (0.0f0, 1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
+
+        receiver = _mbr_empirical_main_table(
+            precursor_idx = [1],
+            scan_idx = [1001],
+            ms_file_idx = 1,
+            target = [true],
+            frag1 = [100],
+            frag2 = [0],
+        )
+        _mbr_add_integrated_fixture_columns!(receiver, [frag1], [frag1])
+        receiver[!, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN] = Float32[12.0]
+        Arrow.write(receiver_path, receiver)
+        Arrow.write(receiver_path * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
+            precursor_idx = [1],
+            scan_idx = [1001],
+            score = [0.40],
+        ))
+
+        donor = _mbr_empirical_main_table(
+            precursor_idx = [1, 2],
+            scan_idx = [2001, 2002],
+            ms_file_idx = 2,
+            target = [true, false],
+            frag1 = [100, 0],
+            frag2 = [0, 100],
+        )
+        _mbr_add_integrated_fixture_columns!(donor, [frag1, frag2], [frag1, frag2])
+        donor[!, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN] = Float32[8.0, 20.0]
+        Arrow.write(donor_path, donor)
+        Arrow.write(donor_path * Pioneer.PASS1_SIDECAR_SUFFIX, _mbr_empirical_pass1_table(
+            precursor_idx = [1, 2],
+            scan_idx = [2001, 2002],
+            score = [0.90, 0.80],
+        ))
+
+        precursors = MBREmpiricalMockPrecursors(Float32[500, 501], Float32[10, 10.01])
+        fragment_keys = Pioneer.build_mbr_fragment_annotation_keys(_mbr_empirical_fragment_lookup())
+        partner_pools = Pioneer.build_counterfactual_partner_pools(
+            [receiver_path, donor_path],
+            precursors,
+        )
+        donor_dict = Pioneer.build_mbr_donor_dict_streaming_with_pass1(
+            [receiver_path, donor_path];
+            passing_score_floor = 0.20f0,
+            prefer_integrated_spectra = true,
+            prefer_integrated_quant = true,
+            require_integrated_irt = true,
+        )
+        Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
+            receiver_path,
+            donor_dict,
+            partner_pools,
+            fragment_keys;
+            passing_score_floor = 0.20f0,
+            use_integrated_mbr_features = true,
+        )
+
+        mbr = DataFrame(Arrow.Table(receiver_path * Pioneer.MBR_SIDECAR_SUFFIX))
+        @test mbr.MBR_best_temporal_frag_hellinger_true[1] ≈ 0.0f0
+        @test mbr.MBR_best_temporal_frag_hellinger_false[1] ≈ 1.0f0
+        @test mbr.MBR_best_temporal_corr_frag_hellinger_true[1] ≈ 0.0f0
+        @test mbr.MBR_best_temporal_corr_frag_hellinger_false[1] ≈ 1.0f0
+        @test mbr.MBR_best_temporal_receiver_corr_frag_hellinger_true[1] ≈ 0.0f0
+        @test mbr.MBR_best_temporal_receiver_corr_frag_hellinger_false[1] ≈ 1.0f0
+        @test mbr.MBR_best_temporal_shared_corr_frag_hellinger_true[1] ≈ 0.0f0
+        @test mbr.MBR_best_temporal_shared_corr_frag_hellinger_false[1] ≈ 1.0f0
+    end
+end
+
 @testset "MBR correlated-fragment Hellinger uses the donor mask" begin
     recipient = (
         sqrt(0.5f0), sqrt(0.5f0), 0.0f0, 0.0f0,
@@ -185,6 +351,7 @@ end
         )
 
         mbr = DataFrame(Arrow.Table(receiver_path * Pioneer.MBR_SIDECAR_SUFFIX))
+        @test :MBR_best_temporal_frag_hellinger_true in propertynames(mbr)
         @test :MBR_best_receiver_corr_frag_hellinger_true in propertynames(mbr)
         @test :MBR_receiver_frag_corr_bitvec_rank in propertynames(mbr)
         @test :MBR_best_shared_corr_frag_hellinger_true in propertynames(mbr)
@@ -308,8 +475,15 @@ end
         @test mbr.MBR_best_donor_library_hellinger_false[1] == 0.25f0
         @test mbr.MBR_worst_donor_library_hellinger_false[1] == 0.75f0
         all_features = Set(vcat(Pioneer.FTR_FEATURES_F_TRUE, Pioneer.FTR_FEATURES_F_FALSE))
-        @test :MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
-        @test :MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test !(:MBR_best_smoothed_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE)
+        @test !(:MBR_best_smoothed_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE)
+        @test :MBR_best_temporal_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_temporal_frag_hellinger_false in Pioneer.FTR_FEATURES_F_FALSE
+        @test :MBR_best_temporal_frag_hellinger_rank_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_temporal_frag_hellinger_margin_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_temporal_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_temporal_receiver_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
+        @test :MBR_best_temporal_shared_corr_frag_hellinger_true in Pioneer.FTR_FEATURES_F_TRUE
         @test !(:MBR_worst_smoothed_frag_hellinger_true in all_features)
         @test !(:MBR_worst_smoothed_frag_hellinger_false in all_features)
         @test !(:main_search_prob in Pioneer.FTR_FEATURES_F_TRUE)
