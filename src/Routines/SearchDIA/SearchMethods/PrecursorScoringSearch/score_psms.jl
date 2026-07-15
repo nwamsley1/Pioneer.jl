@@ -429,8 +429,8 @@ function _score_precursor_isotope_traces_no_mbr(
             lgbm_hp         = SCORING_LGBM_HP,
             semisupervised  = true,
         )
-        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. twin_score, delta_irt)"
-        log_pass_importance(pass1, "Round-2 (+twin_score,+delta_irt)")
+        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. cluster_best, delta_irt)"
+        log_pass_importance(pass1, "Round-2 (+cluster_best,+delta_irt)")
     end
 
     _merge_pass1_into_main_no_mbr!(file_paths, precursors)

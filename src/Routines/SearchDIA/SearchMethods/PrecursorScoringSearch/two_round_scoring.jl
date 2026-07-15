@@ -1,133 +1,201 @@
-# Two-round experiment-wide scoring: cross-run consistency features.
-# Design + CV protocol: see TWO_ROUND_SCORING.md.
+# Two-round experiment-wide scoring — CLUSTER-CONSENSUS variant.
+# Design + CV protocol: see TWO_ROUND_SCORING.md; clustering: CLUSTER_CONSENSUS_CLUSTERING.md.
 #
-# Enabled via ENV["TWO_ROUND"] == "1". After the round-1 Pass-1 OOM trainer has
-# written each file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass),
-# `write_two_round_feature_columns!` derives two cross-run features from s1 and
-# writes them as columns into each per-file fold Arrow, so a second
-# `train_and_predict_pass1_oom!` pass can train on [ base ; twin_score ; delta_irt ].
+# Like the twin variant, but the cross-run feature is `cluster_best` = the BEST (max)
+# round-1 score of the precursor among the OTHER runs in its CLUSTER (leave-one-out),
+# instead of the score in the single most-similar run.
 #
-# Leakage-safety rests on the existing precursor_idx-keyed CV folds (Invariant A):
-# every PSM of a precursor shares one fold, so a PSM's twin/best-instance lookups
-# land in the same held-out fold and their s1 is OOF-consistent. The round-2 trainer
-# reuses the unchanged `cv_fold` column (Invariant B).
-#
-# Assumes one row per precursor_idx per file (current MainSearch invariant), so
-# s1[file, precursor] is a single value — no trace->precursor aggregation needed.
+# Clustering (fully unsupervised): per-run stringent presence (q<0.001 on the round-1
+# score) -> cosine Gram of the binary presence vectors -> eigen-embedding -> KMeans +
+# silhouette, with a K=1 floor (best silhouette < 0.2 -> pool to one cluster). Singleton
+# cluster -> the run is its own reference (cluster_best = self). Leakage-safe via the
+# precursor_idx-keyed CV folds (all instances of a precursor share a fold, so the LOO
+# lookups are OOF-consistent). Assumes one row per precursor_idx per file.
 
-# Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is
-# evaluated at precompile time and baked into the cached module, so it would
-# ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
+using Statistics, LinearAlgebra, Random
+
+# Runtime ENV (a precompile-time const would ignore the env var on a cached load).
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-const TWO_ROUND_FEATURES = [:twin_score, :delta_irt]
+const TWO_ROUND_FEATURES = [:cluster_best, :delta_irt]
+const CLUSTER_PRESENCE_QVAL = 0.001f0     # "present" = round-1 score passes this per-run FDR
+const CLUSTER_SILHOUETTE_FLOOR = 0.2      # best silhouette below this -> K=1 (pool)
 
-# Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
-# level), top-N sorted. Used to compare round-1 vs round-2 gains.
 function log_pass_importance(pass, label::String; topn::Int = 30)
     pass.last_classifier === nothing && return nothing
     model = LightGBMModel(pass.last_classifier, pass.available_features, nothing)
     imp = importance(model)
     imp === nothing && return nothing
-    sorted_imp = sort(imp, by = x -> -x[2])
-    total = sum(x -> x[2], sorted_imp)
+    sorted_imp = sort(imp, by = x -> -x[2]); total = sum(x -> x[2], sorted_imp)
     lines = ["$label LGBM feature gains (top $(min(topn,length(sorted_imp))) of $(length(sorted_imp))):"]
     for (fname, gain) in first(sorted_imp, topn)
         pct = total > 0 ? round(100*gain/total, digits=1) : 0.0
         push!(lines, "    $(rpad(string(fname), 42)) $(rpad(round(Int, gain), 10)) ($(pct)%)")
     end
-    @user_info join(lines, "\n")
-    return nothing
+    @user_info join(lines, "\n"); return nothing
 end
 
-# Most-similar run per file via cosine similarity of the per-file s1 profiles
-# (profile[file] = vector of best-per-precursor s1 over the precursor vocabulary,
-# absent = 0). Returns (twin, dicts) where twin[f] is the index of f's most-similar
-# other file (0 if none) and dicts[f] maps precursor_idx -> s1 for lookups.
-function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
-                            file_s1::Vector{Vector{Float32}})
-    nf = length(file_pid)
-    dicts = Vector{Dict{UInt32,Float32}}(undef, nf)
-    for f in 1:nf
-        d = Dict{UInt32,Float32}(); pid = file_pid[f]; s1 = file_s1[f]
-        @inbounds for i in eachindex(pid); d[pid[i]] = s1[i]; end
-        dicts[f] = d
+# Per-run target/decoy q-values from scores (higher score = better).
+function _td_qvalues(s1::Vector{Float32}, tgt::Vector{Bool})
+    o = sortperm(s1; rev = true); n = length(s1)
+    q = Vector{Float32}(undef, n); ct = 0; cd = 0; raw = Vector{Float32}(undef, n)
+    @inbounds for i in 1:n
+        j = o[i]; tgt[j] ? (ct += 1) : (cd += 1)
+        raw[i] = ct > 0 ? Float32(cd) / Float32(ct) : 1.0f0
     end
-    # Gram matrix of profile dot-products (G[f,f] = squared L2 norm).
-    G = zeros(Float64, nf, nf)
-    for f in 1:nf, g in f:nf
-        small, big = length(dicts[f]) <= length(dicts[g]) ? (dicts[f], dicts[g]) : (dicts[g], dicts[f])
-        acc = 0.0
-        for (p, v) in small
-            acc += Float64(v) * Float64(get(big, p, 0.0f0))
+    m = Inf32
+    @inbounds for i in n:-1:1; m = min(m, raw[i]); q[o[i]] = m; end
+    return q
+end
+
+# Lloyd's k-means on the embedding (few restarts); returns labels.
+function _kmeans(X::Matrix{Float64}, K::Int; restarts = 5, iters = 50)
+    n, d = size(X); best_lab = ones(Int, n); best_inertia = Inf
+    rng = MersenneTwister(1234)
+    for _ in 1:restarts
+        cent = X[randperm(rng, n)[1:K], :]; lab = ones(Int, n)
+        for _ in 1:iters
+            changed = false
+            @inbounds for i in 1:n
+                bd = Inf; bl = 1
+                for c in 1:K
+                    dd = 0.0; for j in 1:d; e = X[i,j] - cent[c,j]; dd += e*e; end
+                    dd < bd && (bd = dd; bl = c)
+                end
+                lab[i] != bl && (lab[i] = bl; changed = true)
+            end
+            fill!(cent, 0.0); cnt = zeros(Int, K)
+            @inbounds for i in 1:n; cnt[lab[i]] += 1; for j in 1:d; cent[lab[i],j] += X[i,j]; end; end
+            for c in 1:K, j in 1:d; cnt[c] > 0 && (cent[c,j] /= cnt[c]); end
+            !changed && break
         end
-        G[f, g] = acc; G[g, f] = acc
+        inertia = 0.0
+        @inbounds for i in 1:n, j in 1:d; e = X[i,j] - cent[lab[i],j]; inertia += e*e; end
+        inertia < best_inertia && (best_inertia = inertia; best_lab = copy(lab))
     end
-    twin = zeros(Int, nf)
-    for f in 1:nf
-        norm_f = sqrt(G[f, f]); best = -Inf; bg = 0
-        norm_f <= 0 && continue
-        for g in 1:nf
-            (g == f || G[g, g] <= 0) && continue
-            c = G[f, g] / (norm_f * sqrt(G[g, g]))
-            c > best && (best = c; bg = g)
+    return best_lab
+end
+
+# Mean silhouette (euclidean) over points.
+function _silhouette(X::Matrix{Float64}, lab::Vector{Int})
+    n, d = size(X); length(unique(lab)) < 2 && return -1.0
+    D = zeros(n, n)
+    @inbounds for i in 1:n, j in i+1:n
+        s = 0.0; for k in 1:d; e = X[i,k] - X[j,k]; s += e*e; end
+        s = sqrt(s); D[i,j] = s; D[j,i] = s
+    end
+    tot = 0.0; valid = 0
+    for i in 1:n
+        own = lab[i]; a_sum = 0.0; a_n = 0; others = Dict{Int,Tuple{Float64,Int}}()
+        for j in 1:n
+            i == j && continue
+            if lab[j] == own; a_sum += D[i,j]; a_n += 1
+            else; t = get(others, lab[j], (0.0,0)); others[lab[j]] = (t[1]+D[i,j], t[2]+1); end
         end
-        twin[f] = bg
+        a_n == 0 && continue
+        a = a_sum / a_n; b = Inf
+        for (_, t) in others; t[2] > 0 && (b = min(b, t[1]/t[2])); end
+        b == Inf && continue
+        tot += (b - a) / max(a, b); valid += 1
     end
-    return twin, dicts
+    return valid > 0 ? tot / valid : -1.0
+end
+
+# Cluster the runs from per-run presence sets. Returns cluster_id (1-based) per run.
+function _cluster_runs(presence::Vector{Vector{UInt32}})
+    nr = length(presence)
+    nr <= 2 && return ones(Int, nr)
+    counts = Float64[length(p) for p in presence]; norms = sqrt.(counts)
+    pid_runs = Dict{UInt32, Vector{Int}}()
+    for r in 1:nr, p in presence[r]; push!(get!(pid_runs, p, Int[]), r); end
+    G = zeros(Float64, nr, nr)
+    for (_, rs) in pid_runs
+        for a in 1:length(rs), b in a:length(rs); G[rs[a], rs[b]] += 1.0; end
+    end
+    for r in 1:nr, s in r:nr
+        den = norms[r]*norms[s]; v = den > 0 ? G[r,s]/den : 0.0; G[r,s] = v; G[s,r] = v
+    end
+    ev = eigen(Symmetric(G)); ord = sortperm(ev.values; rev = true)
+    k = min(nr-1, 20); tix = ord[1:k]
+    emb = ev.vectors[:, tix] .* sqrt.(max.(ev.values[tix], 0.0))'
+    best_sil = -Inf; best_lab = ones(Int, nr)
+    for K in 2:min(nr-1, 40)
+        lab = _kmeans(emb, K); sil = _silhouette(emb, lab)
+        sil > best_sil && (best_sil = sil; best_lab = lab)
+    end
+    @user_info "cluster-consensus: best silhouette $(round(best_sil, digits=3)) (floor $CLUSTER_SILHOUETTE_FLOOR)"
+    best_sil < CLUSTER_SILHOUETTE_FLOOR && return ones(Int, nr)
+    return best_lab
 end
 
 """
     write_two_round_feature_columns!(file_paths)
 
-Compute `twin_score` and `delta_irt` from the round-1 OOF scores in each file's
-`.pass1_sidecar.arrow` and write them as columns into the per-file fold Arrow files,
-in place. Must run after round-1 `train_and_predict_pass1_oom!` and before round-2.
+Compute `cluster_best` (LOO max round-1 score within the run's cluster) and `delta_irt`
+from the round-1 OOF sidecars and write them as columns into the per-file fold Arrows.
 """
 function write_two_round_feature_columns!(file_paths::Vector{String})
     nf = length(file_paths)
     file_pid = Vector{Vector{UInt32}}(undef, nf)
     file_s1  = Vector{Vector{Float32}}(undef, nf)
     file_irt = Vector{Vector{Float32}}(undef, nf)
-    best_s1  = Dict{UInt32,Float32}()   # precursor -> highest s1 seen (for ref_irt)
-    ref_irt  = Dict{UInt32,Float32}()   # precursor -> irt_obs at its highest-s1 instance
+    presence = Vector{Vector{UInt32}}(undef, nf)
+    best_s1 = Dict{UInt32,Float32}(); ref_irt = Dict{UInt32,Float32}()
 
-    # Pass A: read slim (precursor_idx, irt_obs, s1) for every file; track ref_irt.
     for f in 1:nf
-        p = file_paths[f]
-        tbl = Arrow.Table(p)
-        side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
-        pid = collect(UInt32.(tbl.precursor_idx))
-        irt = collect(Float32.(tbl.irt_obs))
-        s1  = collect(Float32.(side.trace_prob_prepass))
-        length(s1) == length(pid) ||
-            error("write_two_round_feature_columns!: sidecar row mismatch at $p")
+        p = file_paths[f]; tbl = Arrow.Table(p); side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
+        pid = collect(UInt32.(tbl.precursor_idx)); irt = collect(Float32.(tbl.irt_obs))
+        s1 = collect(Float32.(side.trace_prob_prepass)); tgt = collect(Bool.(tbl.target))
+        length(s1) == length(pid) || error("cluster-consensus: sidecar row mismatch at $p")
         file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt
+        q = _td_qvalues(s1, tgt)
+        presence[f] = UInt32[pid[i] for i in eachindex(pid) if tgt[i] && q[i] < CLUSTER_PRESENCE_QVAL]
         @inbounds for i in eachindex(pid)
-            if s1[i] > get(best_s1, pid[i], -1.0f0)
-                best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]
-            end
+            if s1[i] > get(best_s1, pid[i], -1.0f0); best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]; end
         end
     end
 
-    twin, dicts = _compute_twin_runs(file_pid, file_s1)
-
-    # Pass B: per file, compute the two features and rewrite the Arrow with them.
+    cluster_id = _cluster_runs(presence); nclust = maximum(cluster_id)
+    cluster_runs = [Int[] for _ in 1:nclust]; for f in 1:nf; push!(cluster_runs[cluster_id[f]], f); end
+    # per-run pid -> s1
+    dicts = Vector{Dict{UInt32,Float32}}(undef, nf)
     for f in 1:nf
-        pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
-        tw = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
-        tdict = twin[f] > 0 ? dicts[twin[f]] : nothing
+        d = Dict{UInt32,Float32}(); pid = file_pid[f]; s1 = file_s1[f]
+        @inbounds for i in eachindex(pid); d[pid[i]] = max(get(d, pid[i], -1.0f0), s1[i]); end
+        dicts[f] = d
+    end
+    # per cluster, per precursor: top1 (val, run) and top2 val (for LOO max)
+    top1v = [Dict{UInt32,Float32}() for _ in 1:nclust]
+    top1r = [Dict{UInt32,Int}()     for _ in 1:nclust]
+    top2v = [Dict{UInt32,Float32}() for _ in 1:nclust]
+    for c in 1:nclust, f in cluster_runs[c], (p, v) in dicts[f]
+        if v > get(top1v[c], p, -1.0f0)
+            haskey(top1v[c], p) && (top2v[c][p] = top1v[c][p])
+            top1v[c][p] = v; top1r[c][p] = f
+        elseif v > get(top2v[c], p, -1.0f0)
+            top2v[c][p] = v
+        end
+    end
+
+    for f in 1:nf
+        pid = file_pid[f]; irt = file_irt[f]; s1 = file_s1[f]; n = length(pid); c = cluster_id[f]
+        singleton = length(cluster_runs[c]) <= 1
+        cb = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
         @inbounds for i in 1:n
-            tw[i] = tdict === nothing ? 0.0f0 : get(tdict, pid[i], 0.0f0)
-            di[i] = abs(irt[i] - ref_irt[pid[i]])
+            p = pid[i]
+            if singleton
+                cb[i] = s1[i]
+            else
+                loo = get(top1r[c], p, 0) == f ? get(top2v[c], p, -1.0f0) : get(top1v[c], p, -1.0f0)
+                cb[i] = loo < 0 ? 0.0f0 : loo
+            end
+            di[i] = abs(irt[i] - ref_irt[p])
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
-        nrow(main) == n ||
-            error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
-        main[!, :twin_score] = tw
-        main[!, :delta_irt]  = di
+        nrow(main) == n || error("cluster-consensus: arrow row count changed at $(file_paths[f])")
+        main[!, :cluster_best] = cb
+        main[!, :delta_irt] = di
         writeArrow(file_paths[f], main)
     end
-    n_twinned = count(>(0), twin)
-    @user_info "two-round: wrote twin_score + delta_irt to $nf files ($n_twinned with a twin, cosine s1-profile)"
+    @user_info "cluster-consensus: $nf runs -> $nclust cluster(s); wrote cluster_best + delta_irt"
     return nothing
 end
