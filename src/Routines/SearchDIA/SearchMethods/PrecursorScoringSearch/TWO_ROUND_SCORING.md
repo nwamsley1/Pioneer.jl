@@ -124,3 +124,53 @@ folds close that path.
 - Round 2 trains on base + the two columns with the SAME folds; output `s2` → exp-wide q.
 - Validation gate: confirm `s2` target/decoy calibration holds and the false-yeast **rate**
   (not just count) does not rise vs the round-1 / prec_prob baseline.
+
+## 5. Production result (EWZ, full search) — the key finding
+
+Two-round's benefit depends **entirely on the filter ordering**. Measured end-to-end (40 files:
+20 GO113 human-only + 20 GO114 human+yeast; `yeast_human.poin`; MBR off; log-odds global; ~12 min).
+
+| config | target inst | unique | false-yeast inst | fy rate |
+|---|---:|---:|---:|---:|
+| global-first, vanilla | 2,039,698 | 62,946 | 10,547 | 0.517% |
+| global-first, two-round | 2,045,219 | 62,295 | 10,956 | 0.536% |
+| **AND, vanilla** | 1,797,588 | 62,946 | **1,494** | 0.083% |
+| **AND, two-round** | **1,891,551** | 62,295 | **1,821** | 0.096% |
+| DIA-NN (reference) | 2,047,659 | 63,560 | 1,648 | 0.080% |
+
+- **Global-first** (default: filter `global_q≤1%` FIRST, then Step-11 recalc+filter `ew_q` on the
+  survivors) — the ew filter is **inert** (survivors are already ~0.5% FDR), so two-round's ew-score
+  improvement filters nothing → **neutral / slightly negative** (+5,521 inst, −651 uniq, +409 fy).
+- **AND** (`EWFULL_AND_THRESH=0.01`: Step-10 filters `global_q≤1%` **AND** *pre-global* `ew_q≤1%`
+  simultaneously, then Step-11 recalc) — the ew filter now **bites**:
+  - AND alone cuts false yeast 10,547 → **1,494** (to DIA-NN's level), costing **−242k inst** (the
+    "recovery band": global-passing but ew-failing).
+  - **Two-round recovers +93,963 of those instances** (1,797,588 → 1,891,551) at only **+327 false
+    yeast** — marginal fy rate 0.35% (99.65% clean). Closes ~40% of the ID gap to DIA-NN while
+    holding false yeast near DIA-NN's level.
+
+**Feature gains (round-2 LGBM, from `log_pass_importance`):** `twin_score` **69.4%** of total gain
+(dominant, 5× the next feature — round-2 is essentially a re-rank on the nearest-run score);
+`delta_irt` only **0.7%** (redundant with `twin_score` + base `irt_error` — dispensable).
+
+**Takeaway:** the **AND filter is the false-yeast lever** (→ DIA-NN level); **two-round is the
+ID-recovery lever that only expresses under the AND**. Ship them together.
+
+### Reproduction
+
+Base config = `EWZ_local/ewz_combined_run/config.json` (MBR off — forced on branch
+`feat/two-round-twin-scoring`; log-odds global; `q_value_threshold` 0.01; no iRT/protein filters),
+with `paths.results` pointed at a fresh dir. Then:
+
+```bash
+# AND + two-round (the winning config)
+TWO_ROUND=1 EWFULL_AND_THRESH=0.01 \
+  julia --project=. --threads 10 --gcthreads 5,1 \
+  -e 'using Pioneer; SearchDIA("<config>.json")'
+# baselines: drop TWO_ROUND for vanilla+AND; drop EWFULL_AND_THRESH for global-first.
+```
+
+Metrics from `<results>/precursors_long.arrow`: passing = `target & qval≤0.01 & global_qval≤0.01`;
+false yeast = `species=="YEAST" & file_name startswith "GO113"`. DIA-NN reference from
+`.../DIANN/both/report.parquet` (`Q.Value≤0.01`, `Decoy==0`; yeast = `Protein.Names` contains
+`YEAST` & not `HUMAN`; GO113 runs). Round-2 gains print at `@user_info` via `log_pass_importance`.
