@@ -138,7 +138,8 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     file_pid = Vector{Vector{UInt32}}(undef, nf)
     file_s1  = Vector{Vector{Float32}}(undef, nf)
     file_irt = Vector{Vector{Float32}}(undef, nf)
-    presence = Vector{Vector{UInt32}}(undef, nf)
+    file_tgt = Vector{Vector{Bool}}(undef, nf)
+    file_run = Vector{Int}(undef, nf)   # ms_file_idx (biological run) per fold-file
     best_s1 = Dict{UInt32,Float32}(); ref_irt = Dict{UInt32,Float32}()
 
     for f in 1:nf
@@ -146,46 +147,56 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         pid = collect(UInt32.(tbl.precursor_idx)); irt = collect(Float32.(tbl.irt_obs))
         s1 = collect(Float32.(side.trace_prob_prepass)); tgt = collect(Bool.(tbl.target))
         length(s1) == length(pid) || error("cluster-consensus: sidecar row mismatch at $p")
-        file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt
-        q = _td_qvalues(s1, tgt)
-        presence[f] = UInt32[pid[i] for i in eachindex(pid) if tgt[i] && q[i] < CLUSTER_PRESENCE_QVAL]
+        file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
+        # CV fold files are per-(run,fold); group them back to the biological run via ms_file_idx.
+        file_run[f] = length(pid) > 0 ? Int(tbl.ms_file_idx[1]) : -f
         @inbounds for i in eachindex(pid)
             if s1[i] > get(best_s1, pid[i], -1.0f0); best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]; end
         end
     end
 
-    cluster_id = _cluster_runs(presence); nclust = maximum(cluster_id)
-    cluster_runs = [Int[] for _ in 1:nclust]; for f in 1:nf; push!(cluster_runs[cluster_id[f]], f); end
-    # per-run pid -> s1
-    dicts = Vector{Dict{UInt32,Float32}}(undef, nf)
-    for f in 1:nf
-        d = Dict{UInt32,Float32}(); pid = file_pid[f]; s1 = file_s1[f]
-        @inbounds for i in eachindex(pid); d[pid[i]] = max(get(d, pid[i], -1.0f0), s1[i]); end
-        dicts[f] = d
+    # --- aggregate fold-files to RUNS ---
+    runs = sort(unique(file_run)); nrun = length(runs); rix = Dict(r => i for (i, r) in enumerate(runs))
+    run_ffs = [Int[] for _ in 1:nrun]; for f in 1:nf; push!(run_ffs[rix[file_run[f]]], f); end
+    run_presence = Vector{Vector{UInt32}}(undef, nrun)   # union of confident pids over the run's folds
+    run_dict = Vector{Dict{UInt32,Float32}}(undef, nrun) # pid -> best s1 over the run's folds
+    for u in 1:nrun
+        d = Dict{UInt32,Float32}(); pres = UInt32[]
+        for f in run_ffs[u]
+            pid = file_pid[f]; s1 = file_s1[f]; tgt = file_tgt[f]; q = _td_qvalues(s1, tgt)
+            @inbounds for i in eachindex(pid)
+                d[pid[i]] = max(get(d, pid[i], -1.0f0), s1[i])
+                (tgt[i] && q[i] < CLUSTER_PRESENCE_QVAL) && push!(pres, pid[i])
+            end
+        end
+        run_presence[u] = pres; run_dict[u] = d
     end
-    # per cluster, per precursor: top1 (val, run) and top2 val (for LOO max)
+
+    cluster_id = _cluster_runs(run_presence); nclust = maximum(cluster_id)  # per RUN
+    cluster_runs = [Int[] for _ in 1:nclust]; for u in 1:nrun; push!(cluster_runs[cluster_id[u]], u); end
+    # per cluster, per precursor: top1 (val, run-unit) and top2 val (for LOO max over OTHER runs)
     top1v = [Dict{UInt32,Float32}() for _ in 1:nclust]
     top1r = [Dict{UInt32,Int}()     for _ in 1:nclust]
     top2v = [Dict{UInt32,Float32}() for _ in 1:nclust]
-    for c in 1:nclust, f in cluster_runs[c], (p, v) in dicts[f]
+    for c in 1:nclust, u in cluster_runs[c], (p, v) in run_dict[u]
         if v > get(top1v[c], p, -1.0f0)
             haskey(top1v[c], p) && (top2v[c][p] = top1v[c][p])
-            top1v[c][p] = v; top1r[c][p] = f
+            top1v[c][p] = v; top1r[c][p] = u
         elseif v > get(top2v[c], p, -1.0f0)
             top2v[c][p] = v
         end
     end
 
     for f in 1:nf
-        pid = file_pid[f]; irt = file_irt[f]; s1 = file_s1[f]; n = length(pid); c = cluster_id[f]
-        singleton = length(cluster_runs[c]) <= 1
+        pid = file_pid[f]; irt = file_irt[f]; s1 = file_s1[f]; n = length(pid)
+        u = rix[file_run[f]]; c = cluster_id[u]; singleton = length(cluster_runs[c]) <= 1
         cb = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
         @inbounds for i in 1:n
             p = pid[i]
             if singleton
                 cb[i] = s1[i]
             else
-                loo = get(top1r[c], p, 0) == f ? get(top2v[c], p, -1.0f0) : get(top1v[c], p, -1.0f0)
+                loo = get(top1r[c], p, 0) == u ? get(top2v[c], p, -1.0f0) : get(top1v[c], p, -1.0f0)
                 cb[i] = loo < 0 ? 0.0f0 : loo
             end
             di[i] = abs(irt[i] - ref_irt[p])
@@ -196,6 +207,6 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         main[!, :delta_irt] = di
         writeArrow(file_paths[f], main)
     end
-    @user_info "cluster-consensus: $nf runs -> $nclust cluster(s); wrote cluster_best + delta_irt"
+    @user_info "cluster-consensus: $nrun runs ($nf fold-files) -> $nclust cluster(s); wrote cluster_best + delta_irt"
     return nothing
 end
