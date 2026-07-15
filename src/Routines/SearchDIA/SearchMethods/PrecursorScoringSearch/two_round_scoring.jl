@@ -21,6 +21,24 @@
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [:twin_score, :delta_irt]
 
+# Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
+# level), top-N sorted. Used to compare round-1 vs round-2 gains.
+function log_pass_importance(pass, label::String; topn::Int = 30)
+    pass.last_classifier === nothing && return nothing
+    model = LightGBMModel(pass.last_classifier, pass.available_features, nothing)
+    imp = importance(model)
+    imp === nothing && return nothing
+    sorted_imp = sort(imp, by = x -> -x[2])
+    total = sum(x -> x[2], sorted_imp)
+    lines = ["$label LGBM feature gains (top $(min(topn,length(sorted_imp))) of $(length(sorted_imp))):"]
+    for (fname, gain) in first(sorted_imp, topn)
+        pct = total > 0 ? round(100*gain/total, digits=1) : 0.0
+        push!(lines, "    $(rpad(string(fname), 42)) $(rpad(round(Int, gain), 10)) ($(pct)%)")
+    end
+    @user_info join(lines, "\n")
+    return nothing
+end
+
 # Most-similar run per file via cosine similarity of the per-file s1 profiles
 # (profile[file] = vector of best-per-precursor s1 over the precursor vocabulary,
 # absent = 0). Returns (twin, dicts) where twin[f] is the index of f's most-similar

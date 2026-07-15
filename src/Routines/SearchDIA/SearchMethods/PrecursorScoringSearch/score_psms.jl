@@ -411,6 +411,7 @@ function _score_precursor_isotope_traces_no_mbr(
         semisupervised  = true,
     )
     @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
+    log_pass_importance(pass1, two_round_enabled() ? "Round-1" : "Pass-1")
 
     # Optional round-2: derive cross-run features (twin_score, delta_irt) from the
     # round-1 OOF sidecars and re-train on [base ; twin_score ; delta_irt]. The
@@ -427,19 +428,7 @@ function _score_precursor_isotope_traces_no_mbr(
             semisupervised  = true,
         )
         @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. twin_score, delta_irt)"
-    end
-
-    if pass1.last_classifier !== nothing
-        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
-            for (fname, gain) in sorted_imp
-                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
-            end
-            @debug_l1 join(lines, "\n")
-        end
+        log_pass_importance(pass1, "Round-2 (+twin_score,+delta_irt)")
     end
 
     _merge_pass1_into_main_no_mbr!(file_paths, precursors)
