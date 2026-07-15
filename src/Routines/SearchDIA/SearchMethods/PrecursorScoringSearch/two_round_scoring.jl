@@ -121,8 +121,11 @@ function _cluster_runs(presence::Vector{Vector{UInt32}})
     ev = eigen(Symmetric(G)); ord = sortperm(ev.values; rev = true)
     k = min(nr-1, 20); tix = ord[1:k]
     emb = ev.vectors[:, tix] .* sqrt.(max.(ev.values[tix], 0.0))'
+    # Cap K at floor(nr/2): a valid consensus group needs >= 2 runs, and allowing more
+    # clusters than that lets a few lucky-close singleton pairs win the silhouette at
+    # small nr (the KEAP1 degeneracy: 6 runs -> K=5 sil 0.22 vs K<=3 sil 0.14 < floor).
     best_sil = -Inf; best_lab = ones(Int, nr)
-    for K in 2:min(nr-1, 40)
+    for K in 2:min(nr ÷ 2, 40)
         lab = _kmeans(emb, K); sil = _silhouette(emb, lab)
         sil > best_sil && (best_sil = sil; best_lab = lab)
     end
