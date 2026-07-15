@@ -46,6 +46,50 @@ const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
 const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
 
+# Experiment-wide evidence is represented by the distribution of the existing
+# per-run precursor score. This preserves the calibrated run-level model and
+# lets the global model learn how much repeated/top-run support is persuasive.
+const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
+    :empirical_global_score,
+    :top1_prec_prob,
+    :top2_prec_prob,
+    :top3_prec_prob,
+    :top2_logodds_score,
+    :top3_logodds_score,
+    :mean_prec_prob,
+    :median_prec_prob,
+    :std_prec_prob,
+    :min_prec_prob,
+    :top1_top2_gap,
+    :top2_top3_gap,
+    :n_runs_observed,
+    :observed_run_fraction,
+    :n_prob_gt_0_5,
+    :n_prob_gt_0_9,
+    :n_prob_gt_0_99,
+]
+
+# The global scorer has substantially fewer training rows than the trace-level
+# ScoringSearch model, so it uses shallower trees and a smaller leaf floor.
+const GLOBAL_PRECURSOR_LGBM_HP = (
+    num_iterations = 100,
+    learning_rate = 0.05,
+    max_depth = 4,
+    num_leaves = 15,
+    min_data_in_leaf = 100,
+    min_gain_to_split = 0.0,
+    feature_fraction = 1.0,
+    bagging_fraction = 0.8,
+    bagging_freq = 1,
+    is_unbalance = true,
+    max_bin = 255,
+    lambda_l1 = 1.0,
+    lambda_l2 = 1.0,
+)
+
+const GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT = 100
+const GLOBAL_PRECURSOR_MAX_TRAIN = 1_000_000
+
 const FLANKING_WINDOW_FEATURES = [
     :flanking_ms1_m0_candidate_fraction,
     :flanking_frag_candidate_fraction,

@@ -434,6 +434,7 @@ function summarize_results!(
                 filtered_refs,
                 sqrt_n_runs,
                 n_precursors,
+                n_runs_total = n_files_total,
             )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
