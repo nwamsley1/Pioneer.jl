@@ -42,7 +42,7 @@ struct _MBRDonorEntry
     weight::Float32
     log2_intensity_explained::Float32
     irt_residual::Float32  # irt_pred − irt_obs of the donor row
-    irt_obs::Float32       # raw observed iRT of the donor row
+    irt_obs::Float32       # observed iRT; integrated apex iRT when available
     log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
     rt_obs::Float32        # literal scan RT (minutes) of the donor row
     n_scans::Float32
@@ -65,6 +65,13 @@ const MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS = ntuple(
     rank -> Symbol("MBR_integrated_frag$(rank)_sqrt"),
     8,
 )
+const MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS = ntuple(
+    rank -> Symbol("MBR_integrated_temporal_mean_frag$(rank)_sqrt"),
+    8,
+)
+const MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN = :MBR_integrated_temporal_shadow_trace
+# Each scan is stored as deconvolution weight followed by eight raw shadow intensities.
+const MBR_TEMPORAL_TRACE_STRIDE = 9
 const MBR_INTEGRATED_APEX_IRT_COLUMN = :MBR_integrated_apex_irt_obs
 const MBR_INTEGRATED_WEIGHT_COLUMN = :MBR_integrated_weight
 const MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN =
@@ -175,6 +182,14 @@ end
     )
 end
 
+@inline function _mbr_temporal_mean_sqrt_tuple(temporal_mean_sqrt_cols, row::Integer)
+    temporal_mean_sqrt_cols === nothing && return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    return ntuple(rank -> begin
+        value = Float32(temporal_mean_sqrt_cols[rank][row])
+        isfinite(value) ? max(value, 0.0f0) : 0.0f0
+    end, 8)
+end
+
 @inline function _mbr_recipient_spectrum_sqrt_tuple(
     smoothed_frag_cols,
     integrated_frag_sqrt_cols,
@@ -241,6 +256,74 @@ end
         dist2 += delta * delta
     end
     return sqrt(max(0.0f0, 0.5f0 * dist2))
+end
+
+@inline function _mbr_temporal_fragment_hellinger_from_summaries(
+    recipient_temporal_mean_sqrt::NTuple{8, Float32},
+    donor_smoothed_sqrt::NTuple{8, Float32},
+)
+    # The recipient tuple is E_t[sqrt(p_t)] under deconvolution-intensity
+    # weights. Its dot product with sqrt(q_donor) is therefore the weighted
+    # mean scan-level Bhattacharyya coefficient.
+    (_mbr_smoothed_spectrum_sqrt_is_valid(recipient_temporal_mean_sqrt) &&
+     _mbr_smoothed_spectrum_sqrt_is_valid(donor_smoothed_sqrt)) || return -1.0f0
+
+    bhattacharyya = 0.0f0
+    @inbounds for rank in 1:8
+        bhattacharyya += recipient_temporal_mean_sqrt[rank] * donor_smoothed_sqrt[rank]
+    end
+    return sqrt(clamp(1.0f0 - bhattacharyya, 0.0f0, 1.0f0))
+end
+
+@inline function _mbr_temporal_corr_masked_hellinger_from_trace(
+    recipient_trace::AbstractVector,
+    donor_sqrt::NTuple{8, Float32},
+    corr_mask::UInt8,
+)
+    count_ones(corr_mask) >= 2 || return 1.0f0
+    length(recipient_trace) % MBR_TEMPORAL_TRACE_STRIDE == 0 || return 1.0f0
+
+    donor_mass = 0.0f0
+    @inbounds for rank in 1:8
+        ((corr_mask >> (rank - 1)) & 0x01) == 0x01 || continue
+        donor_mass += donor_sqrt[rank] * donor_sqrt[rank]
+    end
+    (isfinite(donor_mass) && donor_mass > 0.0f0) || return 1.0f0
+    inv_donor_sqrt = inv(sqrt(donor_mass))
+
+    weighted_bhattacharyya = 0.0f0
+    total_weight = 0.0f0
+    @inbounds for offset in 1:MBR_TEMPORAL_TRACE_STRIDE:length(recipient_trace)
+        weight_value = Float32(recipient_trace[offset])
+        weight = isfinite(weight_value) ? max(weight_value, 0.0f0) : 0.0f0
+        weight > 0.0f0 || continue
+        total_weight += weight
+
+        # Keep zero-support scans in total_weight so a mask cannot discard its
+        # unfavorable time points merely by having no signal there.
+        recipient_mass = 0.0f0
+        for rank in 1:8
+            ((corr_mask >> (rank - 1)) & 0x01) == 0x01 || continue
+            value = Float32(recipient_trace[offset + rank])
+            recipient_mass += isfinite(value) ? max(value, 0.0f0) : 0.0f0
+        end
+        recipient_mass > 0.0f0 || continue
+
+        inv_recipient_sqrt = inv(sqrt(recipient_mass))
+        scan_bhattacharyya = 0.0f0
+        for rank in 1:8
+            ((corr_mask >> (rank - 1)) & 0x01) == 0x01 || continue
+            value = Float32(recipient_trace[offset + rank])
+            intensity = isfinite(value) ? max(value, 0.0f0) : 0.0f0
+            scan_bhattacharyya += sqrt(intensity) * inv_recipient_sqrt *
+                                     donor_sqrt[rank] * inv_donor_sqrt
+        end
+        weighted_bhattacharyya += weight * scan_bhattacharyya
+    end
+
+    total_weight > 0.0f0 || return 1.0f0
+    mean_bhattacharyya = weighted_bhattacharyya / total_weight
+    return sqrt(clamp(1.0f0 - mean_bhattacharyya, 0.0f0, 1.0f0))
 end
 
 @inline function _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
@@ -340,14 +423,18 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log_by_diff"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_hellinger_source_prob"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_smoothed_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_temporal_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_smoothed_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_temporal_corr_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_corr_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_donor_frag_corr_bitvec_rank"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_donor_frag_corr_bitvec_rank"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_receiver_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_temporal_receiver_corr_frag_hellinger"))
     push!(cols, :MBR_receiver_frag_corr_bitvec_rank)
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_shared_corr_frag_hellinger"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_best_temporal_shared_corr_frag_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_shared_corr_frag_bitvec_rank"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_donor_library_hellinger"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_donor_library_hellinger"))
@@ -1868,8 +1955,12 @@ end
     out_smoothed_hellinger_f::Vector{Vector{Float32}},
     out_smoothed_hellinger_worst_t::Vector{Float32},
     out_smoothed_hellinger_worst_f::Vector{Vector{Float32}},
+    out_temporal_hellinger_t::Vector{Float32},
+    out_temporal_hellinger_f::Vector{Vector{Float32}},
     out_corr_hellinger_t::Vector{Float32},
     out_corr_hellinger_f::Vector{Vector{Float32}},
+    out_temporal_corr_hellinger_t::Vector{Float32},
+    out_temporal_corr_hellinger_f::Vector{Vector{Float32}},
     out_corr_hellinger_worst_t::Vector{Float32},
     out_corr_hellinger_worst_f::Vector{Vector{Float32}},
     out_corr_rank_t::Vector{Float32},
@@ -1878,9 +1969,13 @@ end
     out_corr_rank_worst_f::Vector{Vector{Float32}},
     out_receiver_corr_hellinger_t::Vector{Float32},
     out_receiver_corr_hellinger_f::Vector{Vector{Float32}},
+    out_temporal_receiver_corr_hellinger_t::Vector{Float32},
+    out_temporal_receiver_corr_hellinger_f::Vector{Vector{Float32}},
     out_receiver_corr_rank::Vector{Float32},
     out_shared_corr_hellinger_t::Vector{Float32},
     out_shared_corr_hellinger_f::Vector{Vector{Float32}},
+    out_temporal_shared_corr_hellinger_t::Vector{Float32},
+    out_temporal_shared_corr_hellinger_f::Vector{Vector{Float32}},
     out_shared_corr_rank_t::Vector{Float32},
     out_shared_corr_rank_f::Vector{Vector{Float32}},
     out_donor_library_hellinger_t::Vector{Float32},
@@ -1900,6 +1995,8 @@ end
     receiver_corr_rank_v::Union{Nothing, AbstractVector},
     smoothed_frag_cols,
     integrated_frag_sqrt_cols,
+    temporal_mean_sqrt_cols,
+    temporal_trace_col,
     fragment_keys::_MBRFragmentAnnotationKeys,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     run_similarity::Union{Nothing, _MBRRunSimilarity},
@@ -1934,6 +2031,9 @@ end
         )
         recipient_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
         has_recipient_spectrum = false
+        recipient_temporal_mean_sqrt = MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+        has_recipient_temporal_summary = false
+        recipient_temporal_trace = temporal_trace_col === nothing ? Float32[] : temporal_trace_col[i]
 
         donor_t = _donor_for_pid(donor_dict, my_pid, my_file, run_similarity)
         if donor_t !== nothing
@@ -1975,8 +2075,23 @@ end
                     my_pid,
                     hellinger_donor_t.precursor_idx,
                 )
+                recipient_temporal_mean_sqrt = _mbr_temporal_mean_sqrt_tuple(
+                    temporal_mean_sqrt_cols,
+                    i,
+                )
+                has_recipient_temporal_summary = true
+                out_temporal_hellinger_t[i] = _mbr_temporal_fragment_hellinger_from_summaries(
+                    recipient_temporal_mean_sqrt,
+                    hellinger_donor_t.smoothed_frag_sqrt,
+                )
                 out_corr_hellinger_t[i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, hellinger_donor_t)
+                out_temporal_corr_hellinger_t[i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
+                        hellinger_donor_t.smoothed_frag_sqrt,
+                        hellinger_donor_t.frag_corr_bitvec,
+                    )
                 out_corr_rank_t[i] = Float32(hellinger_donor_t.frag_corr_bitvec_rank)
                 out_receiver_corr_hellinger_t[i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
@@ -1984,10 +2099,22 @@ end
                         hellinger_donor_t.smoothed_frag_sqrt,
                         receiver_corr_mask,
                     )
+                out_temporal_receiver_corr_hellinger_t[i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
+                        hellinger_donor_t.smoothed_frag_sqrt,
+                        receiver_corr_mask,
+                    )
                 shared_corr_mask = _mbr_shared_corr_mask(receiver_corr_mask, hellinger_donor_t)
                 out_shared_corr_hellinger_t[i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
                         recipient_sqrt,
+                        hellinger_donor_t.smoothed_frag_sqrt,
+                        shared_corr_mask,
+                    )
+                out_temporal_shared_corr_hellinger_t[i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
                         hellinger_donor_t.smoothed_frag_sqrt,
                         shared_corr_mask,
                     )
@@ -2091,8 +2218,26 @@ end
                     my_pid,
                     hellinger_donor_f.precursor_idx,
                 )
+                if !has_recipient_temporal_summary
+                    recipient_temporal_mean_sqrt = _mbr_temporal_mean_sqrt_tuple(
+                        temporal_mean_sqrt_cols,
+                        i,
+                    )
+                    has_recipient_temporal_summary = true
+                end
+                out_temporal_hellinger_f[counterfactual_idx][i] =
+                    _mbr_temporal_fragment_hellinger_from_summaries(
+                        recipient_temporal_mean_sqrt,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                    )
                 out_corr_hellinger_f[counterfactual_idx][i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_donor(recipient_sqrt, hellinger_donor_f)
+                out_temporal_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                        hellinger_donor_f.frag_corr_bitvec,
+                    )
                 out_corr_rank_f[counterfactual_idx][i] = Float32(hellinger_donor_f.frag_corr_bitvec_rank)
                 out_receiver_corr_hellinger_f[counterfactual_idx][i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
@@ -2100,10 +2245,22 @@ end
                         hellinger_donor_f.smoothed_frag_sqrt,
                         receiver_corr_mask,
                     )
+                out_temporal_receiver_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                        receiver_corr_mask,
+                    )
                 shared_corr_mask_f = _mbr_shared_corr_mask(receiver_corr_mask, hellinger_donor_f)
                 out_shared_corr_hellinger_f[counterfactual_idx][i] =
                     _mbr_corr_masked_smoothed_spectrum_hellinger_from_sqrt(
                         recipient_sqrt,
+                        hellinger_donor_f.smoothed_frag_sqrt,
+                        shared_corr_mask_f,
+                    )
+                out_temporal_shared_corr_hellinger_f[counterfactual_idx][i] =
+                    _mbr_temporal_corr_masked_hellinger_from_trace(
+                        recipient_temporal_trace,
                         hellinger_donor_f.smoothed_frag_sqrt,
                         shared_corr_mask_f,
                     )
@@ -2246,6 +2403,20 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     else
         nothing
     end
+    temporal_mean_sqrt_cols = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[1]) ||
+            error("Integrated temporal MBR feature compute requires column $(MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[1]) in $main_path")
+        ntuple(rank -> getproperty(main, MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[rank]), 8)
+    else
+        nothing
+    end
+    temporal_trace_col = if use_integrated_mbr_features
+        hasproperty(main, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN) ||
+            error("Integrated temporal MBR feature compute requires column $MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN in $main_path")
+        getproperty(main, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN)
+    else
+        nothing
+    end
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -2280,13 +2451,20 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_hellinger_source_prob_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_t = fill(-1f0, n); out_smoothed_h_f = _mbr_float_counterfactual_vectors(n)
     out_smoothed_h_worst_t = fill(1f0, n); out_smoothed_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
+    out_temporal_h_t = fill(-1f0, n); out_temporal_h_f = _mbr_float_counterfactual_vectors(n)
     out_corr_h_t = fill(-1f0, n); out_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_temporal_corr_h_t = fill(1f0, n)
+    out_temporal_corr_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_corr_h_worst_t = fill(1f0, n); out_corr_h_worst_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_corr_rank_t = fill(-1f0, n); out_corr_rank_f = _mbr_float_counterfactual_vectors(n)
     out_corr_rank_worst_t = fill(-1f0, n); out_corr_rank_worst_f = _mbr_float_counterfactual_vectors(n)
     out_receiver_corr_h_t = fill(-1f0, n); out_receiver_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_temporal_receiver_corr_h_t = fill(1f0, n)
+    out_temporal_receiver_corr_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_receiver_corr_rank = fill(-1f0, n)
     out_shared_corr_h_t = fill(-1f0, n); out_shared_corr_h_f = _mbr_float_counterfactual_vectors(n)
+    out_temporal_shared_corr_h_t = fill(1f0, n)
+    out_temporal_shared_corr_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_shared_corr_rank_t = fill(-1f0, n); out_shared_corr_rank_f = _mbr_float_counterfactual_vectors(n)
     out_donor_library_h_t = fill(1f0, n); out_donor_library_h_f = _mbr_float_counterfactual_vectors(n, sentinel = 1.0f0)
     out_donor_library_h_worst_t = fill(1f0, n)
@@ -2321,20 +2499,25 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_hellinger_source_prob_t, out_hellinger_source_prob_f,
         out_smoothed_h_t, out_smoothed_h_f,
         out_smoothed_h_worst_t, out_smoothed_h_worst_f,
+        out_temporal_h_t, out_temporal_h_f,
         out_corr_h_t, out_corr_h_f,
+        out_temporal_corr_h_t, out_temporal_corr_h_f,
         out_corr_h_worst_t, out_corr_h_worst_f,
         out_corr_rank_t, out_corr_rank_f,
         out_corr_rank_worst_t, out_corr_rank_worst_f,
         out_receiver_corr_h_t, out_receiver_corr_h_f,
+        out_temporal_receiver_corr_h_t, out_temporal_receiver_corr_h_f,
         out_receiver_corr_rank,
         out_shared_corr_h_t, out_shared_corr_h_f,
+        out_temporal_shared_corr_h_t, out_temporal_shared_corr_h_f,
         out_shared_corr_rank_t, out_shared_corr_rank_f,
         out_donor_library_h_t, out_donor_library_h_f,
         out_donor_library_h_worst_t, out_donor_library_h_worst_f,
         pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
         logby_v,
         rt_v, nscans_v, receiver_corr_bitvec_v, receiver_corr_rank_v,
-        smoothed_frag_cols, integrated_frag_sqrt_cols, fragment_keys,
+        smoothed_frag_cols, integrated_frag_sqrt_cols, temporal_mean_sqrt_cols,
+        temporal_trace_col, fragment_keys,
         donor_dict, run_similarity, partner_pools, false_donor_cache,
         median_run_similarity_cache, median_run_similarity_scratch,
         counterfactual_eligibility_by_file,
@@ -2394,10 +2577,14 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_hellinger_source_prob", out_hellinger_source_prob_f)
     side_df[!, :MBR_best_smoothed_frag_hellinger_true] = out_smoothed_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_smoothed_frag_hellinger", out_smoothed_h_f)
+    side_df[!, :MBR_best_temporal_frag_hellinger_true] = out_temporal_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_temporal_frag_hellinger", out_temporal_h_f)
     side_df[!, :MBR_worst_smoothed_frag_hellinger_true] = out_smoothed_h_worst_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_smoothed_frag_hellinger", out_smoothed_h_worst_f)
     side_df[!, :MBR_best_corr_frag_hellinger_true] = out_corr_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_corr_frag_hellinger", out_corr_h_f)
+    side_df[!, :MBR_best_temporal_corr_frag_hellinger_true] = out_temporal_corr_h_t
+    _mbr_add_counterfactual_columns!(side_df, "MBR_best_temporal_corr_frag_hellinger", out_temporal_corr_h_f)
     side_df[!, :MBR_worst_corr_frag_hellinger_true] = out_corr_h_worst_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_corr_frag_hellinger", out_corr_h_worst_f)
     side_df[!, :MBR_best_donor_frag_corr_bitvec_rank_true] = out_corr_rank_t
@@ -2406,9 +2593,23 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_donor_frag_corr_bitvec_rank", out_corr_rank_worst_f)
     side_df[!, :MBR_best_receiver_corr_frag_hellinger_true] = out_receiver_corr_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_receiver_corr_frag_hellinger", out_receiver_corr_h_f)
+    side_df[!, :MBR_best_temporal_receiver_corr_frag_hellinger_true] =
+        out_temporal_receiver_corr_h_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_best_temporal_receiver_corr_frag_hellinger",
+        out_temporal_receiver_corr_h_f,
+    )
     side_df[!, :MBR_receiver_frag_corr_bitvec_rank] = out_receiver_corr_rank
     side_df[!, :MBR_best_shared_corr_frag_hellinger_true] = out_shared_corr_h_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_shared_corr_frag_hellinger", out_shared_corr_h_f)
+    side_df[!, :MBR_best_temporal_shared_corr_frag_hellinger_true] =
+        out_temporal_shared_corr_h_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_best_temporal_shared_corr_frag_hellinger",
+        out_temporal_shared_corr_h_f,
+    )
     side_df[!, :MBR_best_shared_corr_frag_bitvec_rank_true] = out_shared_corr_rank_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_shared_corr_frag_bitvec_rank", out_shared_corr_rank_f)
     side_df[!, :MBR_best_donor_library_hellinger_true] = out_donor_library_h_t
