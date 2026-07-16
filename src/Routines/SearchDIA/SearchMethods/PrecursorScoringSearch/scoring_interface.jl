@@ -89,11 +89,62 @@ end
 Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
 ==========================================================#
 
+struct _GlobalRunScore
+    ms_file_idx::UInt32
+    probability::Float32
+end
+
+"""
+    build_mbr_run_similarity_from_score_floor(refs, score_floor)
+
+Build the global IDF/complement run-similarity representation and the sparse
+log2-weight precursor clusters from pre-global precursor scores. Target and
+decoy rows are treated identically. A row contributes when its score reaches
+the run-level score floor and its deconvolution weight is positive. Legacy
+tables without a weight column still receive the global presence-only atlas.
+"""
+function build_mbr_run_similarity_from_score_floor(
+    refs::Vector{PSMFileReference},
+    score_floor::Float32,
+)
+    passed_by_file = Dict{UInt32, BitSet}()
+    nonempty_refs = filter(ref -> ref.row_count > 0, refs)
+    has_weight = !isempty(nonempty_refs) &&
+                 all(ref -> :weight in column_names(ref), nonempty_refs)
+    intensity_postings = has_weight ?
+        Dict{UInt32, Vector{_MBRIntensityPosting}}() : nothing
+    for ref in refs
+        ref.row_count == 0 && continue
+        requested = Symbol[:precursor_idx, :ms_file_idx, :prec_prob]
+        has_weight && push!(requested, :weight)
+        cols = materialize_columns(ref, requested)
+        @inbounds for row in 1:nrow(cols)
+            file_idx = UInt32(cols.ms_file_idx[row])
+            passed = get!(() -> BitSet(), passed_by_file, file_idx)
+            Float32(cols.prec_prob[row]) >= score_floor || continue
+            precursor_idx = UInt32(cols.precursor_idx[row])
+            if has_weight
+                weight = Float32(cols.weight[row])
+                (isfinite(weight) && weight > 0.0f0) || continue
+                push!(
+                    get!(() -> _MBRIntensityPosting[], intensity_postings, precursor_idx),
+                    _MBRIntensityPosting(file_idx, log2(weight)),
+                )
+            end
+            push!(passed, Int(precursor_idx))
+        end
+    end
+    return _build_mbr_run_similarity_from_passed(
+        passed_by_file;
+        intensity_postings = intensity_postings,
+    )
+end
+
 """
     build_precursor_global_prob_dicts(refs, sqrt_n_runs, n_precursors; kwargs...)
     → (global_prob_dict, target_dict)
 
-Build one score-distribution feature row per precursor, train a dedicated
+Build one score-and-run-context feature row per precursor, train a dedicated
 global LightGBM with the existing protein-group two-fold split, and return
 out-of-fold precursor scores. Features summarize the existing per-run
 `prec_prob` values, including the exact empirical global score being replaced.
@@ -105,7 +156,7 @@ function _collect_global_precursor_inputs(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
 )
-    prob_acc = Dict{UInt32, Vector{Float32}}()
+    prob_acc = Dict{UInt32, Vector{_GlobalRunScore}}()
     sizehint!(prob_acc, n_precursors)
     target_dict = Dict{UInt32, Bool}()
     sizehint!(target_dict, n_precursors)
@@ -115,14 +166,18 @@ function _collect_global_precursor_inputs(
     nonempty_refs = filter(ref -> ref.row_count > 0, refs)
     has_cv_fold = !isempty(nonempty_refs) &&
                   all(ref -> :cv_fold in column_names(ref), nonempty_refs)
+    has_ms_file_idx = !isempty(nonempty_refs) &&
+                      all(ref -> :ms_file_idx in column_names(ref), nonempty_refs)
 
-    for ref in nonempty_refs
+    for (ref_position, ref) in enumerate(nonempty_refs)
         requested = Symbol[:precursor_idx, :prec_prob, :target]
+        has_ms_file_idx && push!(requested, :ms_file_idx)
         has_cv_fold && push!(requested, :cv_fold)
         cols_df = materialize_columns(ref, requested)
         n = nrow(cols_df)
         n == 0 && continue
         prec_ids = cols_df.precursor_idx
+        file_ids = has_ms_file_idx ? cols_df.ms_file_idx : nothing
         prec_probs = cols_df.prec_prob
         targets = cols_df.target
         folds = has_cv_fold ? cols_df.cv_fold : nothing
@@ -130,7 +185,7 @@ function _collect_global_precursor_inputs(
         @inbounds for i in 1:n
             pid = UInt32(prec_ids[i])
             if !haskey(prob_acc, pid)
-                prob_acc[pid] = Float32[]
+                prob_acc[pid] = _GlobalRunScore[]
                 target_dict[pid] = Bool(targets[i])
                 has_cv_fold && (fold_dict[pid] = UInt8(folds[i]))
             else
@@ -141,7 +196,13 @@ function _collect_global_precursor_inputs(
                         error("Inconsistent cv_fold for precursor $pid")
                 end
             end
-            push!(prob_acc[pid], Float32(prec_probs[i]))
+            push!(
+                prob_acc[pid],
+                _GlobalRunScore(
+                    has_ms_file_idx ? UInt32(file_ids[i]) : UInt32(ref_position),
+                    Float32(prec_probs[i]),
+                ),
+            )
         end
     end
 
@@ -154,12 +215,13 @@ function _collect_global_precursor_inputs(
 end
 
 function _empirical_global_prob_dict(
-    prob_acc::Dict{UInt32, Vector{Float32}},
+    prob_acc::Dict{UInt32, Vector{_GlobalRunScore}},
     sqrt_n_runs::Int,
 )
     global_prob_dict = Dict{UInt32, Float32}()
     sizehint!(global_prob_dict, length(prob_acc))
-    for (pid, probs) in prob_acc
+    for (pid, run_scores) in prob_acc
+        probs = Float32[run_score.probability for run_score in run_scores]
         global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
     end
     return global_prob_dict
@@ -175,6 +237,8 @@ function _build_global_precursor_feature_table(
     inputs;
     sqrt_n_runs::Int,
     n_runs_total::Int,
+    run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing,
+    run_score_floor::Float32 = 0.0f0,
 )
     pids = sort!(collect(keys(inputs.target_dict)))
     n_precursors = length(pids)
@@ -187,11 +251,16 @@ function _build_global_precursor_feature_table(
         feature => Vector{Float32}(undef, n_precursors)
         for feature in GLOBAL_PRECURSOR_SCORE_FEATURES
     )
-    denominator = Float32(max(n_runs_total, 1))
+    mean_similarity_by_file = run_similarity === nothing ?
+        Dict{UInt32, Float32}() :
+        _mbr_mean_run_similarity_by_file(run_similarity, n_runs_total)
 
     @inbounds for (row, pid) in enumerate(pids)
-        probs = inputs.prob_acc[pid]
-        sorted_probs = sort(probs; rev = true)
+        run_scores = inputs.prob_acc[pid]
+        sorted_probs = sort!(
+            Float32[run_score.probability for run_score in run_scores];
+            rev = true,
+        )
         n_observed = length(sorted_probs)
         top1 = sorted_probs[1]
         top2 = n_observed >= 2 ? sorted_probs[2] : 0.0f0
@@ -204,17 +273,36 @@ function _build_global_precursor_feature_table(
         feature_columns[:top3_prec_prob][row] = top3
         feature_columns[:top2_logodds_score][row] = _logodds_from_sorted(sorted_probs, 2)
         feature_columns[:top3_logodds_score][row] = _logodds_from_sorted(sorted_probs, 3)
-        feature_columns[:mean_prec_prob][row] = Float32(mean(probs))
-        feature_columns[:median_prec_prob][row] = Float32(median(probs))
-        feature_columns[:std_prec_prob][row] = n_observed > 1 ? Float32(std(probs)) : 0.0f0
-        feature_columns[:min_prec_prob][row] = minimum(probs)
+        feature_columns[:mean_prec_prob][row] = Float32(mean(sorted_probs))
+        feature_columns[:median_prec_prob][row] = Float32(median(sorted_probs))
+        feature_columns[:std_prec_prob][row] =
+            n_observed > 1 ? Float32(std(sorted_probs)) : 0.0f0
+        feature_columns[:min_prec_prob][row] = minimum(sorted_probs)
         feature_columns[:top1_top2_gap][row] = n_observed >= 2 ? top1 - top2 : 0.0f0
         feature_columns[:top2_top3_gap][row] = n_observed >= 3 ? top2 - top3 : 0.0f0
         feature_columns[:n_runs_observed][row] = Float32(n_observed)
-        feature_columns[:observed_run_fraction][row] = Float32(n_observed) / denominator
-        feature_columns[:n_prob_gt_0_5][row] = Float32(count(>(0.5f0), probs))
-        feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), probs))
-        feature_columns[:n_prob_gt_0_99][row] = Float32(count(>(0.99f0), probs))
+        feature_columns[:n_prob_gt_0_5][row] = Float32(count(>(0.5f0), sorted_probs))
+        feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), sorted_probs))
+        feature_columns[:n_prob_gt_0_99][row] = Float32(count(>(0.99f0), sorted_probs))
+
+        similarity_sum = 0.0f0
+        similarity_max = 0.0f0
+        n_identified = 0
+        for run_score in run_scores
+            run_score.probability >= run_score_floor || continue
+            n_identified += 1
+            similarity = get(mean_similarity_by_file, run_score.ms_file_idx, 0.0f0)
+            similarity_sum += similarity
+            similarity_max = max(similarity_max, similarity)
+        end
+        similarity_mean = n_identified > 0 ?
+            similarity_sum / Float32(n_identified) : 0.0f0
+        n_missing = max(n_runs_total - n_identified, 0)
+        feature_columns[:n_runs_passing_local_q][row] = Float32(n_identified)
+        feature_columns[:observed_run_centrality_mean][row] = similarity_mean
+        feature_columns[:observed_run_centrality_max][row] = similarity_max
+        feature_columns[:missing_run_similarity_mass_approx][row] =
+            similarity_mean * Float32(n_missing)
     end
 
     for feature in GLOBAL_PRECURSOR_SCORE_FEATURES
@@ -395,6 +483,8 @@ function build_precursor_global_prob_dicts(
     sqrt_n_runs::Int,
     n_precursors::Int;
     n_runs_total::Int = max(length(refs), 1),
+    run_similarity::Union{Nothing, _MBRRunSimilarity} = nothing,
+    run_score_floor::Float32 = 0.0f0,
     lgbm_hp::NamedTuple = GLOBAL_PRECURSOR_LGBM_HP,
     min_training_class_count::Int = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
     max_train::Int = GLOBAL_PRECURSOR_MAX_TRAIN,
@@ -428,6 +518,8 @@ function build_precursor_global_prob_dicts(
         inputs;
         sqrt_n_runs = sqrt_n_runs,
         n_runs_total = n_runs_total,
+        run_similarity = run_similarity,
+        run_score_floor = run_score_floor,
     )
 
     scored = _score_global_precursor_features_oof(
@@ -449,7 +541,7 @@ function build_precursor_global_prob_dicts(
         global_prob_dict[built.table.precursor_idx[row]] = scored.scores[row]
     end
     @debug_l1 "Global precursor LightGBM scored $(length(global_prob_dict)) precursors " *
-              "with $(length(built.features)) score-distribution features; " *
+              "with $(length(built.features)) score-and-run-context features; " *
               "selected semi-supervised iter $(scored.iter)"
     return global_prob_dict, inputs.target_dict
 end

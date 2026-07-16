@@ -47,8 +47,9 @@ const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
 
 # Experiment-wide evidence is represented by the distribution of the existing
-# per-run precursor score. This preserves the calibrated run-level model and
-# lets the global model learn how much repeated/top-run support is persuasive.
+# per-run precursor score plus the similarity context of its locally passing
+# runs. This preserves the calibrated run-level model and lets the global model
+# learn how much repeated/top-run support is persuasive.
 const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :empirical_global_score,
     :top1_prec_prob,
@@ -63,10 +64,13 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :top1_top2_gap,
     :top2_top3_gap,
     :n_runs_observed,
-    :observed_run_fraction,
+    :n_runs_passing_local_q,
     :n_prob_gt_0_5,
     :n_prob_gt_0_9,
     :n_prob_gt_0_99,
+    :observed_run_centrality_mean,
+    :observed_run_centrality_max,
+    :missing_run_similarity_mass_approx,
 ]
 
 # The global scorer has substantially fewer training rows than the trace-level

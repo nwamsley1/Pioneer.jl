@@ -41,13 +41,17 @@
             run2_path = joinpath(dir, "run2.arrow")
             Arrow.write(run1_path, DataFrame(
                 precursor_idx = UInt32[1, 2],
+                ms_file_idx = UInt32[1, 1],
                 prec_prob = Float32[0.9, 0.7],
+                weight = Float32[100.0, 25.0],
                 target = Bool[true, false],
                 cv_fold = UInt8[0, 1],
             ))
             Arrow.write(run2_path, DataFrame(
                 precursor_idx = UInt32[1, 3],
+                ms_file_idx = UInt32[2, 2],
                 prec_prob = Float32[0.8, 0.6],
+                weight = Float32[80.0, 20.0],
                 target = Bool[true, false],
                 cv_fold = UInt8[0, 1],
             ))
@@ -55,11 +59,26 @@
                 Pioneer.PSMFileReference(run1_path),
                 Pioneer.PSMFileReference(run2_path),
             ]
+            score_similarity = Pioneer.build_mbr_run_similarity_from_score_floor(
+                refs,
+                0.65f0,
+            )
+            @test score_similarity.total_weight_by_file[UInt32(1)] > 0.0f0
+            @test score_similarity.total_weight_by_file[UInt32(2)] == 0.0f0
+            @test score_similarity.cluster_by_precursor == UInt32[1, 1]
+            @test score_similarity.cluster_n_runs_observed == UInt16[2, 1]
+
             inputs = Pioneer._collect_global_precursor_inputs(refs, 3)
+            run_similarity = Pioneer._build_mbr_run_similarity_from_passed(Dict(
+                UInt32(1) => BitSet((100, 101)),
+                UInt32(2) => BitSet((100, 101)),
+                UInt32(3) => BitSet((102,)),
+            ))
             built = Pioneer._build_global_precursor_feature_table(
                 inputs;
                 sqrt_n_runs = 2,
                 n_runs_total = 4,
+                run_similarity = run_similarity,
             )
 
             row1 = findfirst(==(UInt32(1)), built.table.precursor_idx)
@@ -81,13 +100,30 @@
             @test built.table.top1_top2_gap[row1] ≈ 0.1f0
             @test built.table.top2_top3_gap[row1] == 0.0f0
             @test built.table.n_runs_observed[row1] == 2.0f0
-            @test built.table.observed_run_fraction[row1] == 0.5f0
+            @test built.table.n_runs_passing_local_q[row1] == 2.0f0
+            @test !hasproperty(built.table, :observed_run_fraction)
             @test built.table.n_prob_gt_0_5[row1] == 2.0f0
             @test built.table.n_prob_gt_0_9[row1] == 0.0f0
             @test built.table.n_prob_gt_0_99[row1] == 0.0f0
+            @test built.table.observed_run_centrality_mean[row1] ≈ 1.0f0 / 3.0f0
+            @test built.table.observed_run_centrality_max[row1] ≈ 1.0f0 / 3.0f0
+            @test built.table.missing_run_similarity_mass_approx[row1] ≈ 2.0f0 / 3.0f0
+            @test built.table.missing_run_similarity_mass_approx[row2] ≈ 1.0f0
             @test built.table.std_prec_prob[row2] == 0.0f0
             @test built.table.top1_top2_gap[row2] == 0.0f0
             @test !(:fitted_manhattan_distance_max in built.features)
+
+            passing_only = Pioneer._build_global_precursor_feature_table(
+                inputs;
+                sqrt_n_runs = 2,
+                n_runs_total = 4,
+                run_similarity = run_similarity,
+                run_score_floor = 0.85f0,
+            ).table
+            @test passing_only.n_runs_passing_local_q[row1] == 1.0f0
+            @test passing_only.missing_run_similarity_mass_approx[row1] ≈ 1.0f0
+            @test passing_only.n_runs_passing_local_q[row2] == 0.0f0
+            @test passing_only.missing_run_similarity_mass_approx[row2] == 0.0f0
         end
     end
 

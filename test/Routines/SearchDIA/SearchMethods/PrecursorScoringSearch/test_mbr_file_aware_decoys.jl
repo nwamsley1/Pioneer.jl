@@ -185,6 +185,370 @@ end
     end
 end
 
+@testset "MBR donor selection ignores cluster-conditioned similarity" begin
+    active_files = BitSet((1, 2, 3))
+    similarity = Pioneer._MBRRunSimilarity(
+        Dict(
+            (UInt32(1), UInt32(2)) => 0.8f0,
+            (UInt32(1), UInt32(3)) => 0.2f0,
+        ),
+        Dict{Tuple{UInt32, UInt32}, Float32}(),
+        Dict{Tuple{UInt32, UInt32}, Float32}(),
+        Dict{UInt32, Float32}(),
+        Dict{UInt32, Float32}(),
+        active_files,
+        Dict{UInt32, BitSet}(),
+        UInt32[1],
+        Float32[1.0],
+        Float32[1.0],
+        UInt16[2],
+        Pioneer._MBRClusterRunSimilarity[
+            Pioneer._MBRClusterRunSimilarity(
+                Dict(
+                    (UInt32(1), UInt32(2)) => 2.0f0,
+                    (UInt32(1), UInt32(3)) => 9.0f0,
+                ),
+                Dict{Tuple{UInt32, UInt32}, Float32}(),
+                Dict(UInt32(1) => 10.0f0),
+                Dict{UInt32, Float32}(),
+                UInt32(10),
+            ),
+        ],
+    )
+    donor_dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}(
+        UInt32(1) => [
+            _test_mbr_donor(0.70f0, UInt32(2)),
+            _test_mbr_donor(0.99f0, UInt32(3)),
+        ],
+    )
+
+    @test Pioneer._mbr_cluster_shared_support(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(3),
+    ) > Pioneer._mbr_cluster_shared_support(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(2),
+    )
+    selected = Pioneer._donor_for_pid(
+        donor_dict,
+        UInt32(1),
+        UInt32(1),
+        similarity,
+    )
+    @test selected !== nothing
+    @test selected.ms_file_idx == UInt32(2)
+end
+
+@testset "MBR run similarity includes passing decoy postings" begin
+    mktempdir() do dir
+        paths = [joinpath(dir, "run$(idx).arrow") for idx in 1:3]
+        Arrow.write(paths[1], DataFrame(
+            precursor_idx = UInt32[1, 2],
+            ms_file_idx = UInt32[1, 1],
+            target = Bool[true, false],
+            qval = Float32[0.001, 0.001],
+        ))
+        Arrow.write(paths[2], DataFrame(
+            precursor_idx = UInt32[1],
+            ms_file_idx = UInt32[2],
+            target = Bool[true],
+            qval = Float32[0.001],
+        ))
+        Arrow.write(paths[3], DataFrame(
+            precursor_idx = UInt32[3],
+            ms_file_idx = UInt32[3],
+            target = Bool[true],
+            qval = Float32[0.001],
+        ))
+
+        similarity = Pioneer.build_mbr_run_similarity(paths; q_value_threshold = 0.01f0)
+        shared_idf = log(4 / 3)
+        decoy_idf = log(4 / 2)
+        expected = Float32(shared_idf / (shared_idf + decoy_idf))
+        @test Pioneer._mbr_run_similarity(similarity, UInt32(1), UInt32(2)) ≈ expected
+
+        means = Pioneer._mbr_mean_run_similarity_by_file(similarity, 3)
+        @test means[UInt32(1)] ≈ expected / 2.0f0
+        @test means[UInt32(2)] ≈ 0.5f0
+        @test means[UInt32(3)] == 0.0f0
+    end
+end
+
+@testset "MBR run similarity builds intensity clusters from search outputs" begin
+    mktempdir() do dir
+        paths = [joinpath(dir, "run$(idx).arrow") for idx in 1:2]
+        for (file_idx, path) in enumerate(paths)
+            Arrow.write(path, DataFrame(
+                precursor_idx = UInt32[1, 2, 3, 4],
+                ms_file_idx = fill(UInt32(file_idx), 4),
+                target = trues(4),
+                qval = fill(0.001f0, 4),
+                weight = Float32[100, 200, 300, 400],
+            ))
+        end
+
+        similarity = Pioneer.build_mbr_run_similarity(paths)
+
+        @test !isempty(similarity.cluster_run_similarity)
+        @test length(similarity.cluster_by_precursor) == 4
+        @test Pioneer._mbr_precursor_present(similarity, UInt32(1), UInt32(1))
+        @test Pioneer._mbr_cluster_agreement(
+            similarity,
+            UInt32(1),
+            UInt32(1),
+            UInt32(2),
+        ) == 1.0f0
+        @test Pioneer._mbr_cluster_active_fraction(
+            similarity,
+            UInt32(1),
+            UInt32(1),
+            UInt32(2),
+        ) == 1.0f0
+        @test Pioneer._mbr_cluster_peer_count(similarity, UInt32(1)) == 3.0f0
+    end
+end
+
+@testset "MBR intensity clustering adapts leaf count to precursor population" begin
+    file_ids = UInt32[1, 2]
+    identical_postings = Dict(
+        precursor_idx => Pioneer._MBRIntensityPosting[
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(100.0f0)),
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(100.0f0)),
+        ]
+        for precursor_idx in UInt32(1):UInt32(1024)
+    )
+    identical_fit = Pioneer._fit_mbr_intensity_clusters(
+        identical_postings,
+        file_ids,
+    )
+    identical_sizes = Dict{UInt32, Int}()
+    for cluster_idx in identical_fit.cluster_by_precursor
+        identical_sizes[cluster_idx] = get(identical_sizes, cluster_idx, 0) + 1
+    end
+
+    @test eltype(identical_fit.cluster_by_precursor) == UInt32
+    @test identical_fit.n_clusters == 4
+    @test all(==(256), values(identical_sizes))
+    @test all(iszero, identical_fit.assignment_margin)
+
+    separated_postings = Dict{UInt32, Vector{Pioneer._MBRIntensityPosting}}()
+    for precursor_idx in UInt32(1):UInt32(128)
+        separated_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(100.0f0)),
+        ]
+    end
+    for precursor_idx in UInt32(129):UInt32(256)
+        separated_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(100.0f0)),
+        ]
+    end
+    separated_fit = Pioneer._fit_mbr_intensity_clusters(
+        separated_postings,
+        file_ids,
+    )
+
+    @test separated_fit.n_clusters == 2
+    @test length(unique(separated_fit.cluster_by_precursor)) == 2
+    @test all(==(1.0f0), separated_fit.assignment_similarity)
+    @test all(==(1.0f0), separated_fit.assignment_margin)
+end
+
+@testset "MBR intensity clusters measure peer agreement" begin
+    passed_by_file = Dict(
+        UInt32(1) => BitSet(vcat(1:15)),
+        UInt32(2) => BitSet(vcat(1:9, 13:18)),
+    )
+    intensity_postings = Dict{UInt32, Vector{Pioneer._MBRIntensityPosting}}()
+    for precursor_idx in UInt32(1):UInt32(6)
+        intensity_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(100.0f0)),
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(100.0f0)),
+        ]
+    end
+    for precursor_idx in UInt32(7):UInt32(9)
+        intensity_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(900.0f0)),
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(100.0f0)),
+        ]
+    end
+    for precursor_idx in UInt32(10):UInt32(12)
+        intensity_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(900.0f0)),
+        ]
+    end
+    for precursor_idx in UInt32(13):UInt32(15)
+        intensity_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(1), log2(100.0f0)),
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(900.0f0)),
+        ]
+    end
+    for precursor_idx in UInt32(16):UInt32(18)
+        intensity_postings[precursor_idx] = [
+            Pioneer._MBRIntensityPosting(UInt32(2), log2(900.0f0)),
+        ]
+    end
+
+    similarity = Pioneer._build_mbr_run_similarity_from_passed(
+        passed_by_file;
+        intensity_postings = intensity_postings,
+        target_cluster_size = 6,
+        max_cluster_size = 6,
+        min_child_size = 2,
+        min_cluster_gain = 0.001f0,
+    )
+
+    human_cluster = similarity.cluster_by_precursor[1]
+    yeast_cluster = similarity.cluster_by_precursor[7]
+    ecoli_cluster = similarity.cluster_by_precursor[13]
+    @test length(unique(similarity.cluster_by_precursor)) == 3
+    @test all(==(human_cluster), similarity.cluster_by_precursor[1:6])
+    @test all(==(yeast_cluster), similarity.cluster_by_precursor[7:12])
+    @test all(==(ecoli_cluster), similarity.cluster_by_precursor[13:18])
+    @test length(unique((human_cluster, yeast_cluster, ecoli_cluster))) == 3
+
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(7),
+        UInt32(1),
+        UInt32(2),
+    ) == 0.4f0
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(7),
+        UInt32(2),
+        UInt32(1),
+    ) == 0.4f0
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(13),
+        UInt32(1),
+        UInt32(2),
+    ) == 0.4f0
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(13),
+        UInt32(2),
+        UInt32(1),
+    ) == 0.4f0
+    @test Pioneer._mbr_cluster_active_fraction(
+        similarity,
+        UInt32(7),
+        UInt32(1),
+        UInt32(2),
+    ) == 1.0f0
+    @test Pioneer._mbr_cluster_shared_support(
+        similarity,
+        UInt32(7),
+        UInt32(1),
+        UInt32(2),
+    ) == 3.0f0
+    @test Pioneer._mbr_cluster_shared_support(
+        similarity,
+        UInt32(7),
+        UInt32(2),
+        UInt32(1),
+    ) == 3.0f0
+    @test Pioneer._mbr_cluster_peer_count(similarity, UInt32(7)) == 5.0f0
+    @test Pioneer._mbr_cluster_n_runs_observed(similarity, UInt32(10)) == 1.0f0
+    @test all(>(0.0f0), similarity.cluster_assignment_similarity)
+end
+
+@testset "MBR cluster agreement excludes the candidate precursor" begin
+    cluster_files = Dict(
+        UInt32(1) => UInt32[2, 4, 6, 7],
+        UInt32(2) => UInt32[2, 3, 4, 6],
+        UInt32(3) => UInt32[2],
+        UInt32(4) => UInt32[2],
+    )
+    cluster = Pioneer._build_mbr_cluster_run_similarity(
+        cluster_files,
+        UInt32[1, 2, 3, 4, 5, 6, 7],
+    )
+    passed_by_file = Dict(
+        file_idx => BitSet(
+            Int(precursor_idx)
+            for (precursor_idx, run_files) in cluster_files
+            if file_idx in run_files
+        )
+        for file_idx in UInt32(1):UInt32(7)
+    )
+    similarity = Pioneer._MBRRunSimilarity(
+        Dict{Tuple{UInt32, UInt32}, Float32}(),
+        Dict{Tuple{UInt32, UInt32}, Float32}(),
+        Dict{Tuple{UInt32, UInt32}, Float32}(),
+        Dict{UInt32, Float32}(),
+        Dict{UInt32, Float32}(),
+        BitSet(1:7),
+        passed_by_file,
+        fill(UInt32(1), 4),
+        ones(Float32, 4),
+        ones(Float32, 4),
+        ones(UInt16, 4),
+        Pioneer._MBRClusterRunSimilarity[cluster],
+    )
+
+    # All three peers are present in the donor and absent in the receiver.
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(2),
+    ) == 0.0f0
+    @test Pioneer._mbr_cluster_active_fraction(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(2),
+    ) == 1.0f0
+
+    # One peer is present in both runs; the other two are absent in both.
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(1),
+        UInt32(3),
+        UInt32(4),
+    ) == 1.0f0
+    @test Pioneer._mbr_cluster_active_fraction(
+        similarity,
+        UInt32(1),
+        UInt32(3),
+        UInt32(4),
+    ) ≈ 1.0f0 / 3.0f0
+
+    # One peer is donor-only; the other two are absent in both runs.
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(1),
+        UInt32(5),
+        UInt32(6),
+    ) ≈ 2.0f0 / 3.0f0
+    @test Pioneer._mbr_cluster_active_fraction(
+        similarity,
+        UInt32(1),
+        UInt32(5),
+        UInt32(6),
+    ) ≈ 1.0f0 / 3.0f0
+
+    # Shared absence is agreement, while active fraction shows no peer support.
+    @test Pioneer._mbr_cluster_agreement(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(7),
+    ) == 1.0f0
+    @test Pioneer._mbr_cluster_active_fraction(
+        similarity,
+        UInt32(1),
+        UInt32(1),
+        UInt32(7),
+    ) == 0.0f0
+    @test Pioneer._mbr_cluster_peer_count(similarity, UInt32(1)) == 3.0f0
+end
+
 @testset "MBR weighted containment does not penalize donor-only IDs during donor selection" begin
     mktempdir() do dir
         receiver_path = joinpath(dir, "receiver.arrow")

@@ -59,6 +59,11 @@ const MBR_MAX_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_DEFAULT_N_COUNTERFACTUALS = 3
 const MBR_MAX_COUNTERFACTUALS = 8
+const MBR_INTENSITY_CLUSTER_TARGET_SIZE = 128
+const MBR_INTENSITY_CLUSTER_MAX_SIZE = 256
+const MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE = 32
+const MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS = 4
+const MBR_INTENSITY_CLUSTER_MIN_GAIN = 0.01f0
 const MBR_LOD_WEIGHT_QUANTILE = Float32(0.05)
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 const MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS = ntuple(
@@ -101,6 +106,36 @@ const _MBRFalseDonorCacheKey = Tuple{UInt32, UInt32, Float32, UInt32}
 
 const _MBRRunPair = Tuple{UInt32, UInt32}
 
+struct _MBRIntensityPosting
+    file_idx::UInt32
+    log2_weight::Float32
+end
+
+struct _MBRIntensityProfile
+    precursor_idx::UInt32
+    file_columns::Vector{Int32}
+    values::Vector{Float32}
+end
+
+struct _MBRClusterRunSimilarity
+    shared_weight::Dict{_MBRRunPair, Float32}
+    missing_weight::Dict{_MBRRunPair, Float32}
+    total_weight_by_file::Dict{UInt32, Float32}
+    common_weight_by_file::Dict{UInt32, Float32}
+    cluster_size::UInt32
+end
+
+struct _MBRSparseCentroid
+    file_columns::Vector{Int32}
+    values::Vector{Float32}
+end
+
+struct _MBRSphericalCluster
+    members::Vector{Int}
+    centroid::_MBRSparseCentroid
+    similarity_sum::Float64
+end
+
 struct _MBRRunSimilarity
     # Direct values are retained for small fixtures and callers that construct
     # a similarity object explicitly. Streamed searches use the sparse IDF
@@ -111,6 +146,12 @@ struct _MBRRunSimilarity
     total_weight_by_file::Dict{UInt32, Float32}
     common_weight_by_file::Dict{UInt32, Float32}
     active_files::BitSet
+    passed_by_file::Dict{UInt32, BitSet}
+    cluster_by_precursor::Vector{UInt32}
+    cluster_assignment_similarity::Vector{Float32}
+    cluster_assignment_margin::Vector{Float32}
+    cluster_n_runs_observed::Vector{UInt16}
+    cluster_run_similarity::Vector{_MBRClusterRunSimilarity}
 end
 
 function _MBRRunSimilarity(coverage::Dict{_MBRRunPair, Float32})
@@ -121,6 +162,12 @@ function _MBRRunSimilarity(coverage::Dict{_MBRRunPair, Float32})
         Dict{UInt32, Float32}(),
         Dict{UInt32, Float32}(),
         BitSet(),
+        Dict{UInt32, BitSet}(),
+        UInt32[],
+        Float32[],
+        Float32[],
+        UInt16[],
+        _MBRClusterRunSimilarity[],
     )
 end
 
@@ -404,6 +451,12 @@ function _mbr_sidecar_output_columns()
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_run_similarity"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_run_similarity"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_median_run_similarity"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_agreement"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_active_fraction"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_peer_count"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_assignment_similarity"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_assignment_margin"))
+    append!(cols, _mbr_true_false_sidecar_columns("MBR_cluster_n_runs_observed"))
     push!(cols, :MBR_log2_weight_lod_ratio)
     append!(cols, _mbr_true_false_sidecar_columns("MBR_best_log2_weight_ratio"))
     append!(cols, _mbr_true_false_sidecar_columns("MBR_worst_log2_weight_ratio"))
@@ -474,14 +527,846 @@ const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
     return numerator / denominator
 end
 
-@inline function _mbr_run_similarity_sparse_entries(run_similarity::_MBRRunSimilarity)
-    return length(run_similarity.coverage) +
-           length(run_similarity.shared_weight) +
-           length(run_similarity.missing_weight)
+@inline function _mbr_precursor_cluster(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+)
+    precursor_int = Int(precursor_idx)
+    precursor_int <= length(run_similarity.cluster_by_precursor) || return 0
+    return Int(run_similarity.cluster_by_precursor[precursor_int])
+end
+
+@inline function _mbr_cluster_shared_support(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+    receiver_file::UInt32,
+    donor_file::UInt32,
+)
+    cluster_idx = _mbr_precursor_cluster(run_similarity, precursor_idx)
+    1 <= cluster_idx <= length(run_similarity.cluster_run_similarity) || return 0.0f0
+    cluster = run_similarity.cluster_run_similarity[cluster_idx]
+    receiver_file in run_similarity.active_files || return 0.0f0
+    donor_file in run_similarity.active_files || return 0.0f0
+    if receiver_file == donor_file
+        return min(
+            get(cluster.total_weight_by_file, receiver_file, 0.0f0),
+            Float32(cluster.cluster_size),
+        )
+    end
+
+    pair_key = receiver_file < donor_file ?
+        (receiver_file, donor_file) : (donor_file, receiver_file)
+    direct_key = (receiver_file, donor_file)
+    rare_shared = get(cluster.shared_weight, pair_key, 0.0f0)
+    common_shared = get(cluster.common_weight_by_file, receiver_file, 0.0f0) -
+                    get(cluster.missing_weight, direct_key, 0.0f0)
+    return clamp(
+        rare_shared + common_shared,
+        0.0f0,
+        Float32(cluster.cluster_size),
+    )
+end
+
+@inline function _mbr_precursor_present(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+    file_idx::UInt32,
+)
+    passed = get(run_similarity.passed_by_file, file_idx, nothing)
+    passed === nothing && return false
+    return Int(precursor_idx) in passed
+end
+
+@inline function _mbr_cluster_presence_features(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+    receiver_file::UInt32,
+    donor_file::UInt32,
+)
+    cluster_idx = _mbr_precursor_cluster(run_similarity, precursor_idx)
+    1 <= cluster_idx <= length(run_similarity.cluster_run_similarity) ||
+        return (agreement = 0.0f0, active_fraction = 0.0f0)
+    cluster = run_similarity.cluster_run_similarity[cluster_idx]
+    cluster.cluster_size > 1 ||
+        return (agreement = 0.0f0, active_fraction = 0.0f0)
+
+    # Compare the donor and receiver across the candidate's cluster peers. The
+    # candidate itself is removed from the denominator and from whichever run
+    # counts contain it, so its known donor/receiver state cannot contribute to
+    # its own compatibility feature.
+    peer_count = Float32(cluster.cluster_size - UInt32(1))
+    receiver_count = get(cluster.total_weight_by_file, receiver_file, 0.0f0)
+    donor_count = get(cluster.total_weight_by_file, donor_file, 0.0f0)
+    shared_support = _mbr_cluster_shared_support(
+        run_similarity,
+        precursor_idx,
+        receiver_file,
+        donor_file,
+    )
+    candidate_in_receiver = _mbr_precursor_present(
+        run_similarity,
+        precursor_idx,
+        receiver_file,
+    )
+    candidate_in_donor = _mbr_precursor_present(
+        run_similarity,
+        precursor_idx,
+        donor_file,
+    )
+    receiver_peer_count = receiver_count - Float32(candidate_in_receiver)
+    donor_peer_count = donor_count - Float32(candidate_in_donor)
+    shared_peer_count = shared_support - Float32(
+        candidate_in_receiver && candidate_in_donor,
+    )
+
+    receiver_peer_count = clamp(receiver_peer_count, 0.0f0, peer_count)
+    donor_peer_count = clamp(donor_peer_count, 0.0f0, peer_count)
+    shared_peer_count = clamp(
+        shared_peer_count,
+        0.0f0,
+        min(receiver_peer_count, donor_peer_count),
+    )
+    union_peer_count = clamp(
+        receiver_peer_count + donor_peer_count - shared_peer_count,
+        0.0f0,
+        peer_count,
+    )
+    mismatch_count = clamp(
+        receiver_peer_count + donor_peer_count - 2.0f0 * shared_peer_count,
+        0.0f0,
+        peer_count,
+    )
+    return (
+        agreement = (peer_count - mismatch_count) / peer_count,
+        active_fraction = union_peer_count / peer_count,
+    )
+end
+
+@inline function _mbr_cluster_agreement(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+    receiver_file::UInt32,
+    donor_file::UInt32,
+)
+    return _mbr_cluster_presence_features(
+        run_similarity,
+        precursor_idx,
+        receiver_file,
+        donor_file,
+    ).agreement
+end
+
+@inline function _mbr_cluster_active_fraction(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+    receiver_file::UInt32,
+    donor_file::UInt32,
+)
+    return _mbr_cluster_presence_features(
+        run_similarity,
+        precursor_idx,
+        receiver_file,
+        donor_file,
+    ).active_fraction
+end
+
+@inline function _mbr_cluster_peer_count(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+)
+    cluster_idx = _mbr_precursor_cluster(run_similarity, precursor_idx)
+    1 <= cluster_idx <= length(run_similarity.cluster_run_similarity) ||
+        return 0.0f0
+    cluster_size = run_similarity.cluster_run_similarity[cluster_idx].cluster_size
+    return Float32(cluster_size > 0 ? cluster_size - UInt32(1) : UInt32(0))
+end
+
+@inline function _mbr_cluster_assignment_similarity(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+)
+    precursor_int = Int(precursor_idx)
+    precursor_int <= length(run_similarity.cluster_assignment_similarity) || return 0.0f0
+    return run_similarity.cluster_assignment_similarity[precursor_int]
+end
+
+@inline function _mbr_cluster_assignment_margin(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+)
+    precursor_int = Int(precursor_idx)
+    precursor_int <= length(run_similarity.cluster_assignment_margin) || return 0.0f0
+    return run_similarity.cluster_assignment_margin[precursor_int]
+end
+
+@inline function _mbr_cluster_n_runs_observed(
+    run_similarity::_MBRRunSimilarity,
+    precursor_idx::UInt32,
+)
+    precursor_int = Int(precursor_idx)
+    precursor_int <= length(run_similarity.cluster_n_runs_observed) || return 0.0f0
+    return Float32(run_similarity.cluster_n_runs_observed[precursor_int])
+end
+
+"""
+    _mbr_mean_run_similarity_by_file(run_similarity, n_files)
+
+Compute each run's mean directional similarity to every other experiment run
+without enumerating the run-by-run matrix. The sparse shared weights and
+complement missing weights are reduced once, so runtime is proportional to the
+stored similarity representation rather than `n_files^2`.
+"""
+function _mbr_mean_run_similarity_by_file(
+    run_similarity::_MBRRunSimilarity,
+    n_files::Int,
+)
+    n_peers = max(n_files - 1, 0)
+    n_peers == 0 && return Dict{UInt32, Float32}()
+
+    shared_sum_by_file = Dict{UInt32, Float64}()
+    for ((left_file, right_file), weight) in run_similarity.shared_weight
+        shared_sum_by_file[left_file] =
+            get(shared_sum_by_file, left_file, 0.0) + Float64(weight)
+        shared_sum_by_file[right_file] =
+            get(shared_sum_by_file, right_file, 0.0) + Float64(weight)
+    end
+
+    missing_sum_by_file = Dict{UInt32, Float64}()
+    for ((receiver_file, _), weight) in run_similarity.missing_weight
+        missing_sum_by_file[receiver_file] =
+            get(missing_sum_by_file, receiver_file, 0.0) + Float64(weight)
+    end
+
+    coverage_sum_by_file = Dict{UInt32, Float64}()
+    for ((receiver_file, _), similarity) in run_similarity.coverage
+        coverage_sum_by_file[receiver_file] =
+            get(coverage_sum_by_file, receiver_file, 0.0) + Float64(similarity)
+    end
+
+    means = Dict{UInt32, Float32}()
+    file_ids = union(
+        UInt32.(collect(run_similarity.active_files)),
+        collect(keys(run_similarity.total_weight_by_file)),
+        collect(keys(coverage_sum_by_file)),
+    )
+    for file_idx in file_ids
+        if haskey(coverage_sum_by_file, file_idx) &&
+           !haskey(run_similarity.total_weight_by_file, file_idx)
+            means[file_idx] = Float32(clamp(
+                coverage_sum_by_file[file_idx] / Float64(n_peers),
+                0.0,
+                1.0,
+            ))
+            continue
+        end
+
+        denominator = Float64(get(run_similarity.total_weight_by_file, file_idx, 0.0f0))
+        if !(denominator > 0.0)
+            means[file_idx] = 0.0f0
+            continue
+        end
+        common_weight = Float64(get(
+            run_similarity.common_weight_by_file,
+            file_idx,
+            0.0f0,
+        ))
+        numerator_sum = get(shared_sum_by_file, file_idx, 0.0) +
+                        Float64(n_peers) * common_weight -
+                        get(missing_sum_by_file, file_idx, 0.0)
+        means[file_idx] = Float32(clamp(
+            numerator_sum / (Float64(n_peers) * denominator),
+            0.0,
+            1.0,
+        ))
+    end
+    return means
+end
+
+@inline function _mbr_profile_centroid_dot(
+    profile::_MBRIntensityProfile,
+    centroid::Vector{Float32},
+)
+    value = 0.0f0
+    @inbounds for idx in eachindex(profile.file_columns)
+        value += profile.values[idx] * centroid[profile.file_columns[idx]]
+    end
+    return value
+end
+
+@inline function _mbr_set_dense_centroid!(
+    dense_centroid::Vector{Float32},
+    centroid::_MBRSparseCentroid,
+)
+    @inbounds for idx in eachindex(centroid.file_columns)
+        dense_centroid[centroid.file_columns[idx]] = centroid.values[idx]
+    end
+    return nothing
+end
+
+@inline function _mbr_clear_dense_centroid!(
+    dense_centroid::Vector{Float32},
+    centroid::_MBRSparseCentroid,
+)
+    @inbounds for file_column in centroid.file_columns
+        dense_centroid[file_column] = 0.0f0
+    end
+    return nothing
+end
+
+@inline function _mbr_profile_dot(
+    left::_MBRIntensityProfile,
+    right::_MBRIntensityProfile,
+)
+    value = 0.0f0
+    left_idx = 1
+    right_idx = 1
+    @inbounds while left_idx <= length(left.file_columns) &&
+                    right_idx <= length(right.file_columns)
+        left_col = left.file_columns[left_idx]
+        right_col = right.file_columns[right_idx]
+        if left_col == right_col
+            value += left.values[left_idx] * right.values[right_idx]
+            left_idx += 1
+            right_idx += 1
+        elseif left_col < right_col
+            left_idx += 1
+        else
+            right_idx += 1
+        end
+    end
+    return value
+end
+
+function _mbr_intensity_profiles(
+    postings_by_precursor::Dict{UInt32, Vector{_MBRIntensityPosting}},
+    file_ids::Vector{UInt32},
+)
+    # Missing run entries remain implicit zeros. Observed entries use the
+    # within-precursor transform agreed for this atlas:
+    #   1 + log2(weight) - minimum_observed(log2(weight))
+    # L2 normalization makes the following spherical clustering depend on the
+    # run pattern and relative intensity profile rather than absolute scale.
+    file_to_column = Dict{UInt32, Int32}(
+        file_idx => Int32(column_idx)
+        for (column_idx, file_idx) in enumerate(file_ids)
+    )
+    profiles = _MBRIntensityProfile[]
+    sizehint!(profiles, length(postings_by_precursor))
+
+    for precursor_idx in sort!(collect(keys(postings_by_precursor)))
+        postings = postings_by_precursor[precursor_idx]
+        isempty(postings) && continue
+        sort!(postings; by = posting -> posting.file_idx)
+
+        file_columns = Int32[]
+        log2_weights = Float32[]
+        posting_idx = 1
+        while posting_idx <= length(postings)
+            file_idx = postings[posting_idx].file_idx
+            best_log2_weight = postings[posting_idx].log2_weight
+            posting_idx += 1
+            while posting_idx <= length(postings) &&
+                  postings[posting_idx].file_idx == file_idx
+                best_log2_weight = max(
+                    best_log2_weight,
+                    postings[posting_idx].log2_weight,
+                )
+                posting_idx += 1
+            end
+            column_idx = get(file_to_column, file_idx, Int32(0))
+            column_idx == 0 && continue
+            push!(file_columns, column_idx)
+            push!(log2_weights, best_log2_weight)
+        end
+        isempty(file_columns) && continue
+
+        min_log2_weight = minimum(log2_weights)
+        values = Vector{Float32}(undef, length(log2_weights))
+        sum_squares = 0.0f0
+        @inbounds for idx in eachindex(log2_weights)
+            value = 1.0f0 + log2_weights[idx] - min_log2_weight
+            values[idx] = value
+            sum_squares += value * value
+        end
+        sum_squares > 0.0f0 || continue
+        inv_norm = inv(sqrt(sum_squares))
+        @inbounds for idx in eachindex(values)
+            values[idx] *= inv_norm
+        end
+        push!(profiles, _MBRIntensityProfile(precursor_idx, file_columns, values))
+    end
+    return profiles
+end
+
+function _mbr_sparse_centroid(
+    profiles::Vector{_MBRIntensityProfile},
+    members::Vector{Int},
+    centroid_accumulator::Vector{Float64},
+    touched_columns::Vector{Int32},
+)
+    empty!(touched_columns)
+    for profile_idx in members
+        profile = profiles[profile_idx]
+        @inbounds for idx in eachindex(profile.file_columns)
+            file_column = profile.file_columns[idx]
+            if centroid_accumulator[file_column] == 0.0
+                push!(touched_columns, file_column)
+            end
+            centroid_accumulator[file_column] += Float64(profile.values[idx])
+        end
+    end
+
+    sort!(touched_columns)
+    norm_squared = 0.0
+    @inbounds for file_column in touched_columns
+        norm_squared += abs2(centroid_accumulator[file_column])
+    end
+    inv_norm = norm_squared > 0.0 ? inv(sqrt(norm_squared)) : 0.0
+    file_columns = copy(touched_columns)
+    values = Vector{Float32}(undef, length(file_columns))
+    @inbounds for idx in eachindex(file_columns)
+        file_column = file_columns[idx]
+        values[idx] = Float32(centroid_accumulator[file_column] * inv_norm)
+        centroid_accumulator[file_column] = 0.0
+    end
+    empty!(touched_columns)
+    return _MBRSparseCentroid(file_columns, values)
+end
+
+function _mbr_spherical_cluster(
+    profiles::Vector{_MBRIntensityProfile},
+    members::Vector{Int},
+    centroid_accumulator::Vector{Float64},
+    touched_columns::Vector{Int32},
+    dense_centroid::Vector{Float32},
+)
+    centroid = _mbr_sparse_centroid(
+        profiles,
+        members,
+        centroid_accumulator,
+        touched_columns,
+    )
+    _mbr_set_dense_centroid!(dense_centroid, centroid)
+    similarity_sum = 0.0
+    for profile_idx in members
+        similarity_sum += Float64(_mbr_profile_centroid_dot(
+            profiles[profile_idx],
+            dense_centroid,
+        ))
+    end
+    _mbr_clear_dense_centroid!(dense_centroid, centroid)
+    return _MBRSphericalCluster(members, centroid, similarity_sum)
+end
+
+@inline function _mbr_profile_as_centroid(profile::_MBRIntensityProfile)
+    return _MBRSparseCentroid(copy(profile.file_columns), copy(profile.values))
+end
+
+function _mbr_partition_spherical_members(
+    profiles::Vector{_MBRIntensityProfile},
+    parent_members::Vector{Int},
+    dense_centroid1::Vector{Float32},
+    dense_centroid2::Vector{Float32},
+    seed1::Int,
+    seed2::Int,
+    min_child_size::Int,
+)
+    members1 = Int[]
+    members2 = Int[]
+    sizehint!(members1, length(parent_members) >>> 1)
+    sizehint!(members2, length(parent_members) >>> 1)
+    for profile_idx in parent_members
+        if profile_idx == seed1
+            push!(members1, profile_idx)
+        elseif profile_idx == seed2
+            push!(members2, profile_idx)
+        else
+            similarity1 = _mbr_profile_centroid_dot(
+                profiles[profile_idx],
+                dense_centroid1,
+            )
+            similarity2 = _mbr_profile_centroid_dot(
+                profiles[profile_idx],
+                dense_centroid2,
+            )
+            if similarity1 >= similarity2
+                push!(members1, profile_idx)
+            else
+                push!(members2, profile_idx)
+            end
+        end
+    end
+    length(members1) >= min_child_size && length(members2) >= min_child_size &&
+        return members1, members2
+
+    # Degenerate or highly imbalanced splits are deterministically balanced by
+    # the two-centroid similarity difference. This keeps the hard maximum leaf
+    # size enforceable even when many sparse profiles are identical.
+    scored_members = Vector{Tuple{Float32, Int}}(undef, length(parent_members))
+    @inbounds for idx in eachindex(parent_members)
+        profile_idx = parent_members[idx]
+        profile = profiles[profile_idx]
+        scored_members[idx] = (
+            _mbr_profile_centroid_dot(profile, dense_centroid1) -
+            _mbr_profile_centroid_dot(profile, dense_centroid2),
+            profile_idx,
+        )
+    end
+    sort!(scored_members)
+    split_at = length(scored_members) >>> 1
+    members2 = Int[scored_members[idx][2] for idx in 1:split_at]
+    members1 = Int[
+        scored_members[idx][2]
+        for idx in (split_at + 1):length(scored_members)
+    ]
+    return members1, members2
+end
+
+function _mbr_split_spherical_cluster(
+    profiles::Vector{_MBRIntensityProfile},
+    parent::_MBRSphericalCluster,
+    centroid_accumulator::Vector{Float64},
+    touched_columns::Vector{Int32},
+    dense_centroid1::Vector{Float32},
+    dense_centroid2::Vector{Float32};
+    split_iterations::Int,
+    min_child_size::Int,
+)
+    length(parent.members) >= 2 * min_child_size || return nothing
+
+    _mbr_set_dense_centroid!(dense_centroid1, parent.centroid)
+    seed1 = parent.members[1]
+    lowest_parent_similarity = Inf32
+    for profile_idx in parent.members
+        similarity = _mbr_profile_centroid_dot(
+            profiles[profile_idx],
+            dense_centroid1,
+        )
+        if similarity < lowest_parent_similarity
+            seed1 = profile_idx
+            lowest_parent_similarity = similarity
+        end
+    end
+    _mbr_clear_dense_centroid!(dense_centroid1, parent.centroid)
+
+    seed2 = 0
+    lowest_seed_similarity = Inf32
+    for profile_idx in parent.members
+        profile_idx == seed1 && continue
+        similarity = _mbr_profile_dot(profiles[seed1], profiles[profile_idx])
+        if similarity < lowest_seed_similarity
+            seed2 = profile_idx
+            lowest_seed_similarity = similarity
+        end
+    end
+    seed2 == 0 && return nothing
+
+    centroid1 = _mbr_profile_as_centroid(profiles[seed1])
+    centroid2 = _mbr_profile_as_centroid(profiles[seed2])
+    seed_profile = profiles[seed1]
+    all_profiles_identical = all(
+        profiles[profile_idx].file_columns == seed_profile.file_columns &&
+        profiles[profile_idx].values == seed_profile.values
+        for profile_idx in parent.members
+    )
+    if all_profiles_identical
+        # If the least-similar seed is still identical to the first seed, every
+        # normalized profile in the parent is identical. A deterministic
+        # balanced split enforces the leaf-size cap without four redundant
+        # k-means iterations and similarity sorts.
+        split_at = length(parent.members) >>> 1
+        members2 = copy(parent.members[1:split_at])
+        members1 = copy(parent.members[(split_at + 1):end])
+        child1 = _mbr_spherical_cluster(
+            profiles,
+            members1,
+            centroid_accumulator,
+            touched_columns,
+            dense_centroid1,
+        )
+        child2 = _mbr_spherical_cluster(
+            profiles,
+            members2,
+            centroid_accumulator,
+            touched_columns,
+            dense_centroid1,
+        )
+        gain = Float32(
+            (child1.similarity_sum + child2.similarity_sum - parent.similarity_sum) /
+            Float64(length(parent.members))
+        )
+        return (child1 = child1, child2 = child2, gain = gain)
+    end
+
+    child1 = parent
+    child2 = parent
+    for _ in 1:split_iterations
+        _mbr_set_dense_centroid!(dense_centroid1, centroid1)
+        _mbr_set_dense_centroid!(dense_centroid2, centroid2)
+        members1, members2 = _mbr_partition_spherical_members(
+            profiles,
+            parent.members,
+            dense_centroid1,
+            dense_centroid2,
+            seed1,
+            seed2,
+            min_child_size,
+        )
+        _mbr_clear_dense_centroid!(dense_centroid1, centroid1)
+        _mbr_clear_dense_centroid!(dense_centroid2, centroid2)
+        child1 = _mbr_spherical_cluster(
+            profiles,
+            members1,
+            centroid_accumulator,
+            touched_columns,
+            dense_centroid1,
+        )
+        child2 = _mbr_spherical_cluster(
+            profiles,
+            members2,
+            centroid_accumulator,
+            touched_columns,
+            dense_centroid1,
+        )
+        centroid1 = child1.centroid
+        centroid2 = child2.centroid
+    end
+
+    gain = Float32(
+        (child1.similarity_sum + child2.similarity_sum - parent.similarity_sum) /
+        Float64(length(parent.members))
+    )
+    return (child1 = child1, child2 = child2, gain = gain)
+end
+
+function _mbr_set_local_split_margins!(
+    local_margin::Vector{Float32},
+    profiles::Vector{_MBRIntensityProfile},
+    child1::_MBRSphericalCluster,
+    child2::_MBRSphericalCluster,
+    dense_centroid1::Vector{Float32},
+    dense_centroid2::Vector{Float32},
+)
+    _mbr_set_dense_centroid!(dense_centroid1, child1.centroid)
+    _mbr_set_dense_centroid!(dense_centroid2, child2.centroid)
+    for profile_idx in child1.members
+        profile = profiles[profile_idx]
+        local_margin[profile_idx] = max(
+            _mbr_profile_centroid_dot(profile, dense_centroid1) -
+            _mbr_profile_centroid_dot(profile, dense_centroid2),
+            0.0f0,
+        )
+    end
+    for profile_idx in child2.members
+        profile = profiles[profile_idx]
+        local_margin[profile_idx] = max(
+            _mbr_profile_centroid_dot(profile, dense_centroid2) -
+            _mbr_profile_centroid_dot(profile, dense_centroid1),
+            0.0f0,
+        )
+    end
+    _mbr_clear_dense_centroid!(dense_centroid1, child1.centroid)
+    _mbr_clear_dense_centroid!(dense_centroid2, child2.centroid)
+    return nothing
+end
+
+function _fit_mbr_intensity_clusters(
+    postings_by_precursor::Dict{UInt32, Vector{_MBRIntensityPosting}},
+    file_ids::Vector{UInt32};
+    target_cluster_size::Int = MBR_INTENSITY_CLUSTER_TARGET_SIZE,
+    max_cluster_size::Int = MBR_INTENSITY_CLUSTER_MAX_SIZE,
+    min_child_size::Int = MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE,
+    split_iterations::Int = MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS,
+    min_gain::Float32 = MBR_INTENSITY_CLUSTER_MIN_GAIN,
+)
+    min_child_size >= 1 ||
+        throw(ArgumentError("MBR cluster min_child_size must be positive"))
+    2 * min_child_size <= target_cluster_size <= max_cluster_size ||
+        throw(ArgumentError(
+            "MBR cluster sizes must satisfy 2*min_child_size <= " *
+            "target_cluster_size <= max_cluster_size",
+        ))
+    split_iterations >= 1 ||
+        throw(ArgumentError("MBR cluster split_iterations must be positive"))
+
+    # Deterministic depth-first bisecting spherical k-means visits every
+    # precursor. Leaf count follows the precursor population rather than a
+    # fixed K. Sparse centroids are retained only along the active split path.
+    profiles = _mbr_intensity_profiles(postings_by_precursor, file_ids)
+    isempty(profiles) && return (
+        cluster_by_precursor = UInt32[],
+        assignment_similarity = Float32[],
+        assignment_margin = Float32[],
+        n_runs_observed = UInt16[],
+        n_clusters = 0,
+    )
+
+    n_file_columns = length(file_ids)
+    centroid_accumulator = zeros(Float64, n_file_columns)
+    touched_columns = Int32[]
+    dense_centroid1 = zeros(Float32, n_file_columns)
+    dense_centroid2 = zeros(Float32, n_file_columns)
+    root = _mbr_spherical_cluster(
+        profiles,
+        collect(eachindex(profiles)),
+        centroid_accumulator,
+        touched_columns,
+        dense_centroid1,
+    )
+    pending = _MBRSphericalCluster[root]
+
+    max_precursor_idx = Int(maximum(profile.precursor_idx for profile in profiles))
+    cluster_by_precursor = zeros(UInt32, max_precursor_idx)
+    assignment_similarity = zeros(Float32, max_precursor_idx)
+    assignment_margin = zeros(Float32, max_precursor_idx)
+    n_runs_observed = zeros(UInt16, max_precursor_idx)
+    local_margin = zeros(Float32, length(profiles))
+    cluster_sizes = Int[]
+    n_clusters = 0
+
+    while !isempty(pending)
+        cluster = pop!(pending)
+        cluster_size = length(cluster.members)
+        if cluster_size > target_cluster_size &&
+           cluster_size >= 2 * min_child_size
+            split = _mbr_split_spherical_cluster(
+                profiles,
+                cluster,
+                centroid_accumulator,
+                touched_columns,
+                dense_centroid1,
+                dense_centroid2;
+                split_iterations = split_iterations,
+                min_child_size = min_child_size,
+            )
+            force_split = cluster_size > max_cluster_size
+            if split !== nothing && (force_split || split.gain >= min_gain)
+                _mbr_set_local_split_margins!(
+                    local_margin,
+                    profiles,
+                    split.child1,
+                    split.child2,
+                    dense_centroid1,
+                    dense_centroid2,
+                )
+                push!(pending, split.child2)
+                push!(pending, split.child1)
+                continue
+            end
+        end
+
+        n_clusters += 1
+        n_clusters <= Int(typemax(UInt32)) ||
+            error("MBR intensity clustering exceeded UInt32 cluster IDs")
+        cluster_idx = UInt32(n_clusters)
+        push!(cluster_sizes, cluster_size)
+        _mbr_set_dense_centroid!(dense_centroid1, cluster.centroid)
+        for profile_idx in cluster.members
+            profile = profiles[profile_idx]
+            precursor_idx = Int(profile.precursor_idx)
+            cluster_by_precursor[precursor_idx] = cluster_idx
+            assignment_similarity[precursor_idx] =
+                _mbr_profile_centroid_dot(profile, dense_centroid1)
+            assignment_margin[precursor_idx] = local_margin[profile_idx]
+            n_runs_observed[precursor_idx] = UInt16(min(
+                length(profile.file_columns),
+                Int(typemax(UInt16)),
+            ))
+        end
+        _mbr_clear_dense_centroid!(dense_centroid1, cluster.centroid)
+    end
+
+    sorted_sizes = sort!(copy(cluster_sizes))
+    size_min = first(sorted_sizes)
+    size_median = sorted_sizes[(length(sorted_sizes) + 1) >>> 1]
+    size_max = last(sorted_sizes)
+    size_mean = round(length(profiles) / n_clusters; digits = 1)
+    @debug_l1 "  run-similarity intensity clusters: clusters=$n_clusters, " *
+              "precursors=$(length(profiles)), target=$target_cluster_size, " *
+              "sizes[min/median/mean/max]=$size_min/$size_median/$size_mean/$size_max"
+    return (
+        cluster_by_precursor = cluster_by_precursor,
+        assignment_similarity = assignment_similarity,
+        assignment_margin = assignment_margin,
+        n_runs_observed = n_runs_observed,
+        n_clusters = n_clusters,
+    )
+end
+
+function _build_mbr_cluster_run_similarity(
+    files_by_precursor::Dict{UInt32, Vector{UInt32}},
+    file_ids::Vector{UInt32},
+)
+    # Retain the unweighted cluster presence counts needed to derive agreement
+    # and active-union fractions for arbitrary donor/receiver pairs.
+    n_files = length(file_ids)
+    total_weight_by_file = Dict{UInt32, Float64}()
+    common_weight_by_file = Dict{UInt32, Float64}()
+    shared_weight = Dict{_MBRRunPair, Float64}()
+    missing_weight = Dict{_MBRRunPair, Float64}()
+    missing_files = UInt32[]
+
+    for run_files in values(files_by_precursor)
+        document_frequency = length(run_files)
+        for file_idx in run_files
+            total_weight_by_file[file_idx] =
+                get(total_weight_by_file, file_idx, 0.0) + 1.0
+        end
+        shared_updates = document_frequency * (document_frequency - 1) ÷ 2
+        missing_updates = document_frequency * (n_files - document_frequency)
+        if shared_updates <= missing_updates
+            @inbounds for left_idx in 1:(document_frequency - 1)
+                left_file = run_files[left_idx]
+                for right_idx in (left_idx + 1):document_frequency
+                    key = (left_file, run_files[right_idx])
+                    shared_weight[key] = get(shared_weight, key, 0.0) + 1.0
+                end
+            end
+        else
+            for file_idx in run_files
+                common_weight_by_file[file_idx] =
+                    get(common_weight_by_file, file_idx, 0.0) + 1.0
+            end
+            empty!(missing_files)
+            posting_idx = 1
+            @inbounds for file_idx in file_ids
+                if posting_idx <= document_frequency &&
+                   run_files[posting_idx] == file_idx
+                    posting_idx += 1
+                else
+                    push!(missing_files, file_idx)
+                end
+            end
+            @inbounds for receiver_file in run_files
+                for donor_file in missing_files
+                    key = (receiver_file, donor_file)
+                    missing_weight[key] = get(missing_weight, key, 0.0) + 1.0
+                end
+            end
+        end
+    end
+
+    return _MBRClusterRunSimilarity(
+        Dict(key => Float32(value) for (key, value) in shared_weight),
+        Dict(key => Float32(value) for (key, value) in missing_weight),
+        Dict(key => Float32(value) for (key, value) in total_weight_by_file),
+        Dict(key => Float32(value) for (key, value) in common_weight_by_file),
+        UInt32(length(files_by_precursor)),
+    )
 end
 
 function _build_mbr_run_similarity_from_passed(
     passed_by_file::Dict{UInt32, BitSet},
+    ;
+    intensity_postings::Union{
+        Nothing,
+        Dict{UInt32, Vector{_MBRIntensityPosting}},
+    } = nothing,
+    target_cluster_size::Int = MBR_INTENSITY_CLUSTER_TARGET_SIZE,
+    max_cluster_size::Int = MBR_INTENSITY_CLUSTER_MAX_SIZE,
+    min_child_size::Int = MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE,
+    split_iterations::Int = MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS,
+    min_cluster_gain::Float32 = MBR_INTENSITY_CLUSTER_MIN_GAIN,
 )
     file_ids = sort!(collect(keys(passed_by_file)))
     n_files = length(file_ids)
@@ -582,6 +1467,44 @@ function _build_mbr_run_similarity_from_passed(
               "complement-postings=$n_complement_postings, zero-IDF=$n_zero_idf_postings, " *
               "sparse-entries=$(length(shared_weight_f32) + length(missing_weight_f32))"
 
+    cluster_fit = intensity_postings === nothing ? (
+        cluster_by_precursor = UInt32[],
+        assignment_similarity = Float32[],
+        assignment_margin = Float32[],
+        n_runs_observed = UInt16[],
+        n_clusters = 0,
+    ) : _fit_mbr_intensity_clusters(
+        intensity_postings,
+        file_ids;
+        target_cluster_size = target_cluster_size,
+        max_cluster_size = max_cluster_size,
+        min_child_size = min_child_size,
+        split_iterations = split_iterations,
+        min_gain = min_cluster_gain,
+    )
+    cluster_files_by_precursor = [
+        Dict{UInt32, Vector{UInt32}}()
+        for _ in 1:cluster_fit.n_clusters
+    ]
+    for (precursor_idx, run_files) in files_by_precursor
+        precursor_int = Int(precursor_idx)
+        precursor_int <= length(cluster_fit.cluster_by_precursor) || continue
+        cluster_idx = Int(cluster_fit.cluster_by_precursor[precursor_int])
+        cluster_idx == 0 && continue
+        cluster_files_by_precursor[cluster_idx][precursor_idx] = run_files
+    end
+    cluster_run_similarity = _MBRClusterRunSimilarity[
+        _build_mbr_cluster_run_similarity(cluster_files, file_ids)
+        for cluster_files in cluster_files_by_precursor
+    ]
+    if !isempty(cluster_run_similarity)
+        cluster_sparse_entries = sum(
+            length(cluster.shared_weight) + length(cluster.missing_weight)
+            for cluster in cluster_run_similarity
+        )
+        @debug_l1 "  clustered run-similarity sparse entries: $cluster_sparse_entries"
+    end
+
     return _MBRRunSimilarity(
         Dict{_MBRRunPair, Float32}(),
         shared_weight_f32,
@@ -589,6 +1512,12 @@ function _build_mbr_run_similarity_from_passed(
         total_weight_f32,
         common_weight_f32,
         active_files,
+        passed_by_file,
+        cluster_fit.cluster_by_precursor,
+        cluster_fit.assignment_similarity,
+        cluster_fit.assignment_margin,
+        cluster_fit.n_runs_observed,
+        cluster_run_similarity,
     )
 end
 
@@ -597,22 +1526,36 @@ function build_mbr_run_similarity(
     q_value_threshold::Float32 = 0.01f0,
 )
     passed_by_file = Dict{UInt32, BitSet}()
+    intensity_postings = Dict{UInt32, Vector{_MBRIntensityPosting}}()
+    have_intensity_weights = true
     for path in file_paths
         tbl = Arrow.Table(path)
         for col in (:precursor_idx, :ms_file_idx, :qval)
             hasproperty(tbl, col) ||
                 error("MBR run similarity requires column $col in $path")
         end
+        has_weight = hasproperty(tbl, :weight)
+        have_intensity_weights &= has_weight
         n = length(tbl.precursor_idx)
-        target_c = hasproperty(tbl, :target) ? tbl.target : trues(n)
         @inbounds for i in 1:n
-            Bool(target_c[i]) || continue
-            Float32(tbl.qval[i]) <= q_value_threshold || continue
             file_idx = UInt32(tbl.ms_file_idx[i])
-            push!(get!(() -> BitSet(), passed_by_file, file_idx), Int(tbl.precursor_idx[i]))
+            passed = get!(() -> BitSet(), passed_by_file, file_idx)
+            Float32(tbl.qval[i]) <= q_value_threshold || continue
+            precursor_idx = UInt32(tbl.precursor_idx[i])
+            push!(passed, Int(precursor_idx))
+            has_weight || continue
+            weight = Float32(tbl.weight[i])
+            isfinite(weight) && weight > 0.0f0 || continue
+            push!(
+                get!(() -> _MBRIntensityPosting[], intensity_postings, precursor_idx),
+                _MBRIntensityPosting(file_idx, log2(weight)),
+            )
         end
     end
-    return _build_mbr_run_similarity_from_passed(passed_by_file)
+    return _build_mbr_run_similarity_from_passed(
+        passed_by_file;
+        intensity_postings = have_intensity_weights ? intensity_postings : nothing,
+    )
 end
 
 # Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
@@ -1932,6 +2875,18 @@ end
     out_run_similarity_t::Vector{Float32}, out_run_similarity_f::Vector{Vector{Float32}},
     out_run_similarity_worst_t::Vector{Float32}, out_run_similarity_worst_f::Vector{Vector{Float32}},
     out_run_similarity_median_t::Vector{Float32}, out_run_similarity_median_f::Vector{Vector{Float32}},
+    out_cluster_agreement_t::Vector{Float32},
+    out_cluster_agreement_f::Vector{Vector{Float32}},
+    out_cluster_active_fraction_t::Vector{Float32},
+    out_cluster_active_fraction_f::Vector{Vector{Float32}},
+    out_cluster_peer_count_t::Vector{Float32},
+    out_cluster_peer_count_f::Vector{Vector{Float32}},
+    out_cluster_assignment_similarity_t::Vector{Float32},
+    out_cluster_assignment_similarity_f::Vector{Vector{Float32}},
+    out_cluster_assignment_margin_t::Vector{Float32},
+    out_cluster_assignment_margin_f::Vector{Vector{Float32}},
+    out_cluster_n_runs_observed_t::Vector{Float32},
+    out_cluster_n_runs_observed_f::Vector{Vector{Float32}},
     out_lw_lod::Vector{Float32},
     out_lw_t::Vector{Float32}, out_lw_f::Vector{Vector{Float32}},
     out_lw_worst_t::Vector{Float32}, out_lw_worst_f::Vector{Vector{Float32}},
@@ -2039,6 +2994,23 @@ end
         if donor_t !== nothing
             out_best_pair_t[i] = donor_t.trace_prob
             out_run_similarity_t[i] = _mbr_run_similarity(run_similarity, my_file, donor_t.ms_file_idx)
+            if run_similarity !== nothing
+                cluster_presence = _mbr_cluster_presence_features(
+                    run_similarity,
+                    my_pid,
+                    my_file,
+                    donor_t.ms_file_idx,
+                )
+                out_cluster_agreement_t[i] = cluster_presence.agreement
+                out_cluster_active_fraction_t[i] = cluster_presence.active_fraction
+                out_cluster_peer_count_t[i] = _mbr_cluster_peer_count(run_similarity, my_pid)
+                out_cluster_assignment_similarity_t[i] =
+                    _mbr_cluster_assignment_similarity(run_similarity, my_pid)
+                out_cluster_assignment_margin_t[i] =
+                    _mbr_cluster_assignment_margin(run_similarity, my_pid)
+                out_cluster_n_runs_observed_t[i] =
+                    _mbr_cluster_n_runs_observed(run_similarity, my_pid)
+            end
             out_run_similarity_median_t[i] = _median_run_similarity_for_pid(
                 donor_dict,
                 my_pid,
@@ -2176,6 +3148,24 @@ end
             out_best_pair_f[counterfactual_idx][i] = donor_f.trace_prob
             out_run_similarity_f[counterfactual_idx][i] =
                 _mbr_run_similarity(run_similarity, my_file, donor_f.ms_file_idx)
+            if run_similarity !== nothing
+                # These describe the receiver candidate's transfer context,
+                # which must remain fixed across its true and counterfactual
+                # donor blocks. Switching to the counterfactual precursor's
+                # cluster would expose how that synthetic negative was chosen.
+                out_cluster_agreement_f[counterfactual_idx][i] =
+                    out_cluster_agreement_t[i]
+                out_cluster_active_fraction_f[counterfactual_idx][i] =
+                    out_cluster_active_fraction_t[i]
+                out_cluster_peer_count_f[counterfactual_idx][i] =
+                    out_cluster_peer_count_t[i]
+                out_cluster_assignment_similarity_f[counterfactual_idx][i] =
+                    out_cluster_assignment_similarity_t[i]
+                out_cluster_assignment_margin_f[counterfactual_idx][i] =
+                    out_cluster_assignment_margin_t[i]
+                out_cluster_n_runs_observed_f[counterfactual_idx][i] =
+                    out_cluster_n_runs_observed_t[i]
+            end
             out_run_similarity_median_f[counterfactual_idx][i] = _median_run_similarity_for_pid(
                 donor_dict,
                 donor_f.precursor_idx,
@@ -2430,6 +3420,18 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     out_run_similarity_worst_f = _mbr_float_counterfactual_vectors(n)
     out_run_similarity_median_t = fill(-1f0, n)
     out_run_similarity_median_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_agreement_t = fill(-1f0, n)
+    out_cluster_agreement_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_active_fraction_t = fill(-1f0, n)
+    out_cluster_active_fraction_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_peer_count_t = fill(-1f0, n)
+    out_cluster_peer_count_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_assignment_similarity_t = fill(-1f0, n)
+    out_cluster_assignment_similarity_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_assignment_margin_t = fill(-1f0, n)
+    out_cluster_assignment_margin_f = _mbr_float_counterfactual_vectors(n)
+    out_cluster_n_runs_observed_t = fill(-1f0, n)
+    out_cluster_n_runs_observed_f = _mbr_float_counterfactual_vectors(n)
     out_lw_lod = fill(-1f0, n)
     out_lw_t  = fill(-1f0, n); out_lw_f  = _mbr_float_counterfactual_vectors(n)
     out_lw_worst_t = fill(-1f0, n); out_lw_worst_f = _mbr_float_counterfactual_vectors(n)
@@ -2479,6 +3481,12 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
         out_run_similarity_t, out_run_similarity_f,
         out_run_similarity_worst_t, out_run_similarity_worst_f,
         out_run_similarity_median_t, out_run_similarity_median_f,
+        out_cluster_agreement_t, out_cluster_agreement_f,
+        out_cluster_active_fraction_t, out_cluster_active_fraction_f,
+        out_cluster_peer_count_t, out_cluster_peer_count_f,
+        out_cluster_assignment_similarity_t, out_cluster_assignment_similarity_f,
+        out_cluster_assignment_margin_t, out_cluster_assignment_margin_f,
+        out_cluster_n_runs_observed_t, out_cluster_n_runs_observed_f,
         out_lw_lod,
         out_lw_t, out_lw_f,
         out_lw_worst_t, out_lw_worst_f,
@@ -2540,6 +3548,43 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(
     _mbr_add_counterfactual_columns!(side_df, "MBR_worst_run_similarity", out_run_similarity_worst_f)
     side_df[!, :MBR_median_run_similarity_true] = out_run_similarity_median_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_median_run_similarity", out_run_similarity_median_f)
+    side_df[!, :MBR_cluster_agreement_true] = out_cluster_agreement_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_agreement",
+        out_cluster_agreement_f,
+    )
+    side_df[!, :MBR_cluster_active_fraction_true] = out_cluster_active_fraction_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_active_fraction",
+        out_cluster_active_fraction_f,
+    )
+    side_df[!, :MBR_cluster_peer_count_true] = out_cluster_peer_count_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_peer_count",
+        out_cluster_peer_count_f,
+    )
+    side_df[!, :MBR_cluster_assignment_similarity_true] =
+        out_cluster_assignment_similarity_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_assignment_similarity",
+        out_cluster_assignment_similarity_f,
+    )
+    side_df[!, :MBR_cluster_assignment_margin_true] = out_cluster_assignment_margin_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_assignment_margin",
+        out_cluster_assignment_margin_f,
+    )
+    side_df[!, :MBR_cluster_n_runs_observed_true] = out_cluster_n_runs_observed_t
+    _mbr_add_counterfactual_columns!(
+        side_df,
+        "MBR_cluster_n_runs_observed",
+        out_cluster_n_runs_observed_f,
+    )
     side_df[!, :MBR_log2_weight_lod_ratio] = out_lw_lod
     side_df[!, :MBR_best_log2_weight_ratio_true] = out_lw_t
     _mbr_add_counterfactual_columns!(side_df, "MBR_best_log2_weight_ratio", out_lw_f)
@@ -3005,6 +4050,7 @@ function prepare_mbr_after_qvalue_filter!(
     precursors::LibraryPrecursors,
     fragment_lookup::LibraryFragmentLookup,
     integration_output_folder::AbstractString;
+    run_similarity::_MBRRunSimilarity,
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
 )
@@ -3024,12 +4070,6 @@ function prepare_mbr_after_qvalue_filter!(
     @debug_l1 "MBR Batch F: preparing post-qvalue candidates for chromatogram integration..."
     sidecar_paths = unique(vcat(candidate_paths, donor_paths))
     n_pass1_sidecars = _write_pass1_sidecars_from_main!(sidecar_paths)
-
-    run_similarity = build_mbr_run_similarity(
-        sidecar_paths;
-        q_value_threshold = q_value_threshold,
-    )
-    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
 
     mbr_prepass = _mbr_prepass_donor_summary(
         donor_paths;
@@ -3058,7 +4098,6 @@ function prepare_mbr_after_qvalue_filter!(
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
     mbr_prepass = nothing
-    run_similarity = nothing
     GC.gc()
 
     return (
@@ -3075,6 +4114,7 @@ function finalize_mbr_after_chromatogram_integration!(
     integrated_paths::Vector{String},
     precursors::LibraryPrecursors,
     fragment_lookup::LibraryFragmentLookup;
+    run_similarity::_MBRRunSimilarity,
     q_value_threshold::Float32 = 0.01f0,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
     min_pep_points_per_bin::Int = 100,
@@ -3108,12 +4148,6 @@ function finalize_mbr_after_chromatogram_integration!(
     end
 
     @debug_l1 "MBR Batch F: finalizing after chromatogram integration..."
-    run_similarity = build_mbr_run_similarity(
-        candidate_paths;
-        q_value_threshold = q_value_threshold,
-    )
-    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
-
     mbr_prepass = _mbr_prepass_donor_summary(
         candidate_paths;
         donor_q_threshold = donor_q_threshold,
@@ -3161,7 +4195,6 @@ function finalize_mbr_after_chromatogram_integration!(
     partner_pools = nothing
     fragment_keys = nothing
     mbr_prepass = nothing
-    run_similarity = nothing
     GC.gc()
 
     psms = load_ftr_slim_dataframe(candidate_paths)
@@ -3268,7 +4301,6 @@ function run_mbr_after_qvalue_filter!(
         sidecar_paths;
         q_value_threshold = q_value_threshold,
     )
-    @debug_l1 "  run-similarity sparse entries: $(_mbr_run_similarity_sparse_entries(run_similarity))"
 
     cf_partner_pools = build_counterfactual_partner_pools(
         sidecar_paths,

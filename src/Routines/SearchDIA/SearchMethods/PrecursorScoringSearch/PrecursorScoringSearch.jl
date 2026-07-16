@@ -40,6 +40,7 @@ struct PrecursorScoringSearchResults <: SearchResults
     precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}}  # precursor_idx → global q-value
     precursor_qval_interp::Base.Ref{Any}  # Interpolation for run-specific q-values
     precursor_pep_interp::Base.Ref{Any}   # Interpolation for experiment-wide PEPs
+    run_similarity::Base.Ref{Union{Nothing, _MBRRunSimilarity}}
     merged_quant_path::String             # Path to merged quantification results
 end
 
@@ -98,6 +99,7 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
         Ref(Dict{UInt32, Float32}()),  # precursor_global_qval_dict
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
+        Ref{Union{Nothing, _MBRRunSimilarity}}(nothing),
         joinpath(getDataOutDir(search_context), "merged_quant.arrow")
     )
 end
@@ -208,15 +210,19 @@ function remap_mbr_recovered_prec_probs!(
     min_pep_points_per_bin::Int,
     fdr_scale_factor::Float32,
     global_qval_dict::Union{Nothing, Dict{UInt32, Float32}} = nothing,
+    qval_spline = nothing,
 )
     any(ref -> has_column_anywhere(ref, :mbr_target_decoy_prob), refs) || return refs
 
-    spline_result = build_qvalue_spline_from_refs(refs, :prec_prob, merged_path;
-        compute_pep = false,
-        min_pep_points_per_bin = min_pep_points_per_bin,
-        fdr_scale_factor = fdr_scale_factor,
-        temp_prefix = "mbr_score_sidecar")
-    spline_result === nothing && return refs
+    if qval_spline === nothing
+        spline_result = build_qvalue_spline_from_refs(refs, :prec_prob, merged_path;
+            compute_pep = false,
+            min_pep_points_per_bin = min_pep_points_per_bin,
+            fdr_scale_factor = fdr_scale_factor,
+            temp_prefix = "mbr_score_sidecar")
+        spline_result === nothing && return refs
+        qval_spline = spline_result.qval_spline
+    end
 
     remap_pipeline = TransformPipeline()
     if global_qval_dict !== nothing
@@ -224,7 +230,7 @@ function remap_mbr_recovered_prec_probs!(
             gate_mbr_recovered_by_global_qvalue(global_qval_dict, q_value_threshold)
     end
     remap_pipeline = remap_pipeline |>
-        remap_mbr_recovered_prec_probs(spline_result.qval_spline, q_value_threshold)
+        remap_mbr_recovered_prec_probs(qval_spline, q_value_threshold)
     apply_pipeline!(refs, remap_pipeline; parallel = false)
     return refs
 end
@@ -428,13 +434,40 @@ function summarize_results!(
         # Pre-allocation size from spectral library
         n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-        # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
+        # Build the run-level q-value mapping before the global model so the
+        # global and cluster-conditioned run-similarity atlas can be frozen
+        # and reused downstream.
+        preglobal_spline_result = build_qvalue_spline_from_refs(
+            filtered_refs,
+            :prec_prob,
+            results.merged_quant_path;
+            compute_pep = true,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = fdr_scale,
+            temp_prefix = "preglobal_qval_sidecar",
+        )
+        preglobal_spline_result === nothing &&
+            error("Cannot build global precursor model without run-level scores")
+        preglobal_qval_spline = preglobal_spline_result.qval_spline
+        run_score_floor = _score_floor_for_qvalue(
+            preglobal_qval_spline,
+            params.q_value_threshold,
+        )
+        run_similarity = build_mbr_run_similarity_from_score_floor(
+            filtered_refs,
+            run_score_floor,
+        )
+        results.run_similarity[] = run_similarity
+
+        # A1: Stream per-file to build global_prob dictionaries.
         global_prob_dict, target_dict =
             build_precursor_global_prob_dicts(
                 filtered_refs,
                 sqrt_n_runs,
                 n_precursors,
                 n_runs_total = n_files_total,
+                run_similarity = run_similarity,
+                run_score_floor = run_score_floor,
             )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
@@ -449,13 +482,29 @@ function summarize_results!(
             min_pep_points_per_bin = params.pep_bin_size,
             fdr_scale_factor = fdr_scale,
             global_qval_dict = global_qval_dict,
+            qval_spline = preglobal_qval_spline,
         )
         filtered_refs = [PSMFileReference(file_path(ref)) for ref in filtered_refs]
 
-        # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
-        spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
-            compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
+        # Recovered MBR rows change prec_prob and require a refreshed mapping.
+        # Otherwise reuse the pre-global mapping rather than sorting twice.
+        has_recovered_scores = any(
+            ref -> has_column_anywhere(ref, :mbr_target_decoy_prob),
+            filtered_refs,
+        )
+        spline_result = if has_recovered_scores
+            build_qvalue_spline_from_refs(
+                filtered_refs,
+                :prec_prob,
+                results.merged_quant_path;
+                compute_pep = true,
+                min_pep_points_per_bin = params.pep_bin_size,
+                fdr_scale_factor = fdr_scale,
+                temp_prefix = "qval_sidecar",
+            )
+        else
+            preglobal_spline_result
+        end
         qval_spline = spline_result.qval_spline
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
@@ -487,6 +536,7 @@ function summarize_results!(
                 getPrecursors(getSpecLib(search_context)),
                 getFragmentLookupTable(getSpecLib(search_context)),
                 passing_psms_folder;
+                run_similarity = results.run_similarity[],
                 q_value_threshold = params.q_value_threshold,
                 donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
             )
@@ -536,6 +586,9 @@ function summarize_results!(
     # Build RT indices for IntegrateChromatogramsSearch (all library precursors per file)
     # The per-file count is logged inside build_rt_indices! at @debug_l1.
     build_rt_indices!(search_context, valid_file_indices, passing_refs)
+    # Only the compact atlas must survive into chromatogram integration. Do
+    # not retain the multi-million-entry global q-value dictionary with it.
+    store_results!(search_context, PrecursorScoringSearch, results.run_similarity[])
 
     # Protein inference + protein-group scoring are handled downstream by
     # ProteinInferenceSearch and ProteinScoringSearch. Per-stage timings are

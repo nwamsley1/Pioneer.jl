@@ -448,10 +448,16 @@ function summarize_results!(
     ]
     if params.match_between_runs &&
        any(path -> isfile(path * PASS1_SIDECAR_SUFFIX), passing_paths)
+        run_similarity = get_results(search_context, PrecursorScoringSearch)
+        run_similarity === nothing &&
+            error("Post-integration MBR requires PrecursorScoringSearch results")
+        run_similarity isa _MBRRunSimilarity ||
+            error("Post-integration MBR requires the pre-global run-similarity atlas")
         summary = finalize_mbr_after_chromatogram_integration!(
             passing_paths,
             getPrecursors(getSpecLib(search_context)),
             getFragmentLookupTable(getSpecLib(search_context));
+            run_similarity = run_similarity,
             q_value_threshold = params.q_value_threshold,
             donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
             min_pep_points_per_bin = params.pep_bin_size,

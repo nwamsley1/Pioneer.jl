@@ -1173,6 +1173,12 @@ end
         :MBR_best_pair_prob_true,
         :MBR_worst_pair_prob_true,
         :MBR_best_run_similarity_true,
+        :MBR_cluster_agreement_true,
+        :MBR_cluster_active_fraction_true,
+        :MBR_cluster_peer_count_true,
+        :MBR_cluster_assignment_similarity_true,
+        :MBR_cluster_assignment_margin_true,
+        :MBR_cluster_n_runs_observed_true,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_true,
         :MBR_worst_log2_weight_ratio_true,
@@ -1209,6 +1215,12 @@ end
         :MBR_best_pair_prob_false,
         :MBR_worst_pair_prob_false,
         :MBR_best_run_similarity_false,
+        :MBR_cluster_agreement_false,
+        :MBR_cluster_active_fraction_false,
+        :MBR_cluster_peer_count_false,
+        :MBR_cluster_assignment_similarity_false,
+        :MBR_cluster_assignment_margin_false,
+        :MBR_cluster_n_runs_observed_false,
         :MBR_log2_weight_lod_ratio,
         :MBR_best_log2_weight_ratio_false,
         :MBR_worst_log2_weight_ratio_false,
@@ -1355,6 +1367,10 @@ end
     @test :MBR_worst_pair_prob_false in Pioneer.FTR_FEATURES_F_FALSE
     @test :MBR_best_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE
     @test :MBR_best_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_cluster_agreement_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_cluster_agreement_false in Pioneer.FTR_FEATURES_F_FALSE
+    @test :MBR_cluster_active_fraction_true in Pioneer.FTR_FEATURES_F_TRUE
+    @test :MBR_cluster_active_fraction_false in Pioneer.FTR_FEATURES_F_FALSE
     @test !(:MBR_worst_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE)
     @test !(:MBR_worst_run_similarity_false in Pioneer.FTR_FEATURES_F_FALSE)
     @test !(:MBR_median_run_similarity_true in Pioneer.FTR_FEATURES_F_TRUE)
@@ -1493,17 +1509,61 @@ end
             precursors,
         )
 
+        active_cluster_files = BitSet((1, 2, 3, 6))
+        cluster_similarity = Pioneer._MBRRunSimilarity(
+            Dict(
+                (UInt32(3), UInt32(1)) => 0.75f0,
+                (UInt32(3), UInt32(2)) => 0.50f0,
+                (UInt32(3), UInt32(6)) => 0.25f0,
+            ),
+            Dict{Tuple{UInt32, UInt32}, Float32}(),
+            Dict{Tuple{UInt32, UInt32}, Float32}(),
+            Dict{UInt32, Float32}(),
+            Dict{UInt32, Float32}(),
+            active_cluster_files,
+            Dict(
+                UInt32(1) => BitSet(1:4),
+                UInt32(2) => BitSet(1:2),
+                UInt32(3) => BitSet(2:4),
+                UInt32(6) => BitSet(2),
+            ),
+            UInt32[1, 2],
+            Float32[0.90, 0.70],
+            Float32[0.40, 0.20],
+            UInt16[2, 3],
+            Pioneer._MBRClusterRunSimilarity[
+                Pioneer._MBRClusterRunSimilarity(
+                    Dict(
+                        (UInt32(1), UInt32(3)) => 3.0f0,
+                        (UInt32(2), UInt32(3)) => 2.0f0,
+                        (UInt32(3), UInt32(6)) => 1.0f0,
+                    ),
+                    Dict{Tuple{UInt32, UInt32}, Float32}(),
+                    Dict(
+                        UInt32(1) => 4.0f0,
+                        UInt32(2) => 2.0f0,
+                        UInt32(3) => 3.0f0,
+                        UInt32(6) => 1.0f0,
+                    ),
+                    Dict{UInt32, Float32}(),
+                    UInt32(4),
+                ),
+                Pioneer._MBRClusterRunSimilarity(
+                    Dict((UInt32(1), UInt32(3)) => 1.0f0),
+                    Dict{Tuple{UInt32, UInt32}, Float32}(),
+                    Dict(UInt32(3) => 4.0f0),
+                    Dict{UInt32, Float32}(),
+                    UInt32(4),
+                ),
+            ],
+        )
         side_path = Pioneer.compute_mbr_features_per_file_to_sidecar_with_pass1!(
             receiver_path,
             donor_dict,
             partner_pools,
             Pioneer.build_mbr_fragment_annotation_keys(_mbr_post_q_fragment_lookup()),
             passing_score_floor = 0.0f0,
-            run_similarity = Pioneer._MBRRunSimilarity(Dict(
-                (UInt32(3), UInt32(1)) => 0.75f0,
-                (UInt32(3), UInt32(2)) => 0.50f0,
-                (UInt32(3), UInt32(6)) => 0.25f0,
-            )),
+            run_similarity = cluster_similarity,
         )
         side = DataFrame(Arrow.Table(side_path))
 
@@ -1515,6 +1575,18 @@ end
         @test side.MBR_best_pair_prob_true[1] == 0.80f0
         @test side.MBR_best_run_similarity_true[1] == 0.75f0
         @test side.MBR_best_run_similarity_false[1] == 0.75f0
+        @test side.MBR_cluster_agreement_true[1] == 1.0f0
+        @test side.MBR_cluster_agreement_false[1] == 1.0f0
+        @test side.MBR_cluster_active_fraction_true[1] == 1.0f0
+        @test side.MBR_cluster_active_fraction_false[1] == 1.0f0
+        @test side.MBR_cluster_peer_count_true[1] == 3.0f0
+        @test side.MBR_cluster_peer_count_false[1] == 3.0f0
+        @test side.MBR_cluster_assignment_similarity_true[1] == 0.90f0
+        @test side.MBR_cluster_assignment_similarity_false[1] == 0.90f0
+        @test side.MBR_cluster_assignment_margin_true[1] == 0.40f0
+        @test side.MBR_cluster_assignment_margin_false[1] == 0.40f0
+        @test side.MBR_cluster_n_runs_observed_true[1] == 2.0f0
+        @test side.MBR_cluster_n_runs_observed_false[1] == 2.0f0
         @test side.MBR_worst_run_similarity_true[1] == 0.25f0
         @test side.MBR_worst_run_similarity_false[1] == 0.25f0
         @test side.MBR_median_run_similarity_true[1] == 0.50f0
