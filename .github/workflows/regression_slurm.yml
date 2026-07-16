@@ -20,6 +20,11 @@ on:
           - fast
           - fastest
           - APMS_Astral
+          - APMS_Astral_1
+          - APMS_Astral_2
+          - APMS_Astral_5
+          - APMS_Astral_10
+          - APMS_Astral_20
           - EWZ_2P_MBR_Exploris
           - KEAP1KO_Eclipse
           - MacCoss_Eclipse_Normalization
@@ -253,11 +258,8 @@ jobs:
               exit 1
             fi
             python_cmd="python3"
-            if ! command -v python3 >/dev/null 2>&1; then
-              python_cmd="python"
-            fi
             if ! command -v "$python_cmd" >/dev/null 2>&1; then
-              echo "Python not available on cluster; cannot parse dataset tags." >&2
+              echo "python3 not available on cluster; cannot parse dataset tags." >&2
               exit 1
             fi
             if [ "${REGRESSION_SET:-all}" != "all" ]; then
@@ -331,15 +333,15 @@ jobs:
               cpus=8
               mem_gb=64
               if [ -f "$resource_file" ]; then
-                if ! command -v python >/dev/null 2>&1; then
-                  echo "Python not available on cluster; cannot parse resource file." >&2
+                if ! command -v "$python_cmd" >/dev/null 2>&1; then
+                  echo "python3 not available on cluster; cannot parse resource file." >&2
                   exit 1
                 fi
                 cpus=$(
-                  python -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("cpus", 8))' "$resource_file"
+                  "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("cpus", 8))' "$resource_file"
                 )
                 mem_gb=$(
-                  python -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("mem_gb", 64))' "$resource_file"
+                  "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("mem_gb", 64))' "$resource_file"
                 )
               fi
 
@@ -857,10 +859,7 @@ jobs:
 
             python_cmd="python3"
             if ! command -v "$python_cmd" >/dev/null 2>&1; then
-              python_cmd="python"
-            fi
-            if ! command -v "$python_cmd" >/dev/null 2>&1; then
-              echo "Python is required to update gh-pages history." >&2
+              echo "python3 is required to update gh-pages history." >&2
               exit 1
             fi
 
