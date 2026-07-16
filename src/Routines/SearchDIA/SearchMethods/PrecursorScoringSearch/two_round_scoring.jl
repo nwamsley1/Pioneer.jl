@@ -20,7 +20,7 @@
 # ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
 # K for the k-nearest-neighbor mean feature (mean of top-K neighbors' same-precursor
 # round-1 scores). To sweep K (1, 2, 3, ...), change this const and re-run.
-const KNN_K = 5
+const KNN_K = 10
 const KNN_COL = Symbol("knn$(KNN_K)_mean")
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
