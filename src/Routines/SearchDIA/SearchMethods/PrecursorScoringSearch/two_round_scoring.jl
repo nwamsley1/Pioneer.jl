@@ -18,8 +18,12 @@
 # Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is
 # evaluated at precompile time and baked into the cached module, so it would
 # ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
+# K for the k-nearest-neighbor mean feature (mean of top-K neighbors' same-precursor
+# round-1 scores). To sweep K (1, 2, 3, ...), change this const and re-run.
+const KNN_K = 3
+const KNN_COL = Symbol("knn$(KNN_K)_mean")
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-const TWO_ROUND_FEATURES = [:knn2_mean, :delta_irt]
+const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
 # level), top-N sorted. Used to compare round-1 vs round-2 gains.
@@ -39,10 +43,11 @@ function log_pass_importance(pass, label::String; topn::Int = 30)
     return nothing
 end
 
-# Top-2 most-similar runs per file via cosine similarity of the per-file s1 profiles
+# Top-K most-similar runs per file via cosine similarity of the per-file s1 profiles
 # (profile[file] = vector of best-per-precursor s1 over the precursor vocabulary,
-# absent = 0). Returns (top2, dicts) where top2[f] = (best, second_best) file indices
-# (0 for a slot with no valid neighbor) and dicts[f] maps precursor_idx -> s1 for lookups.
+# absent = 0). Returns (topk, dicts) where topk[f] is a length-KNN_K Vector{Int} of
+# neighbor file indices sorted descending by similarity (0 for slots with no valid
+# neighbor) and dicts[f] maps precursor_idx -> s1 for lookups.
 function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
                             file_s1::Vector{Vector{Float32}})
     nf = length(file_pid)
@@ -62,35 +67,38 @@ function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
         end
         G[f, g] = acc; G[g, f] = acc
     end
-    top2 = fill((0, 0), nf)
+    topk = [zeros(Int, KNN_K) for _ in 1:nf]
     for f in 1:nf
         norm_f = sqrt(G[f, f])
         norm_f <= 0 && continue
-        best1 = -Inf; best2 = -Inf; b1 = 0; b2 = 0
+        best_c = fill(-Inf, KNN_K)
+        best_g = topk[f]  # zeros(Int, KNN_K), filled in place
         for g in 1:nf
             (g == f || G[g, g] <= 0) && continue
             c = G[f, g] / (norm_f * sqrt(G[g, g]))
-            if c > best1
-                best2 = best1; b2 = b1
-                best1 = c;    b1 = g
-            elseif c > best2
-                best2 = c;    b2 = g
+            # Insert (c, g) into the sorted-descending top-K if c beats the worst kept.
+            c <= best_c[KNN_K] && continue
+            pos = KNN_K
+            while pos > 1 && c > best_c[pos-1]
+                best_c[pos] = best_c[pos-1]; best_g[pos] = best_g[pos-1]
+                pos -= 1
             end
+            best_c[pos] = c; best_g[pos] = g
         end
-        top2[f] = (b1, b2)
     end
-    return top2, dicts
+    return topk, dicts
 end
 
 """
     write_two_round_feature_columns!(file_paths)
 
-Compute `knn2_mean` (mean of same-precursor round-1 scores in the top-2 most-similar
+Compute `KNN_COL` (mean of same-precursor round-1 scores in the top-`KNN_K` most-similar
 other runs) and `delta_irt` from the `.pass1_sidecar.arrow` files, and write them as
 columns into the per-file fold Arrow files, in place. Must run after round-1
 `train_and_predict_pass1_oom!` and before round-2.
 
-`knn2_mean` fallback: if only one other run exists (nf=2), uses that one alone.
+Fallback: if fewer than K other runs exist, the mean is taken over the neighbors that
+do exist. If none exist (single-file experiment), the feature is 0.
 """
 function write_two_round_feature_columns!(file_paths::Vector{String})
     nf = length(file_paths)
@@ -118,34 +126,38 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         end
     end
 
-    top2, dicts = _compute_twin_runs(file_pid, file_s1)
+    topk, dicts = _compute_twin_runs(file_pid, file_s1)
 
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
-        (b1, b2) = top2[f]
-        d1 = b1 > 0 ? dicts[b1] : nothing
-        d2 = b2 > 0 ? dicts[b2] : nothing
+        # Resolve up to KNN_K neighbor dicts (contiguous from front since sorted-descending;
+        # a 0 slot means no more valid neighbors).
+        ndicts = Dict{UInt32,Float32}[]
+        for g in topk[f]
+            g == 0 && break
+            push!(ndicts, dicts[g])
+        end
+        nvalid = length(ndicts)
+        inv_nvalid = nvalid > 0 ? 1.0f0 / Float32(nvalid) : 0.0f0
         @inbounds for i in 1:n
-            v1 = d1 === nothing ? 0.0f0 : get(d1, pid[i], 0.0f0)
-            if d2 === nothing
-                km[i] = v1  # <2 neighbors available; fall back to top-1
-            else
-                v2 = get(d2, pid[i], 0.0f0)
-                km[i] = (v1 + v2) * 0.5f0
+            s = 0.0f0
+            for d in ndicts
+                s += get(d, pid[i], 0.0f0)
             end
+            km[i] = s * inv_nvalid  # 0 if nvalid == 0
             di[i] = abs(irt[i] - ref_irt[pid[i]])
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
             error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
-        main[!, :knn2_mean] = km
+        main[!, KNN_COL]    = km
         main[!, :delta_irt] = di
         writeArrow(file_paths[f], main)
     end
-    n_full = count(t -> t[1] > 0 && t[2] > 0, top2)
-    n_partial = count(t -> t[1] > 0 && t[2] == 0, top2)
-    @user_info "two-round: wrote knn2_mean + delta_irt to $nf files ($n_full with top-2 neighbors, $n_partial with top-1 fallback, cosine s1-profile)"
+    n_full    = count(nb -> all(>(0), nb), topk)
+    n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
+    @user_info "two-round: wrote $(KNN_COL) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
     return nothing
 end
