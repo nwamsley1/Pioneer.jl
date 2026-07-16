@@ -19,7 +19,7 @@
 # evaluated at precompile time and baked into the cached module, so it would
 # ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-const TWO_ROUND_FEATURES = [:twin_score, :delta_irt]
+const TWO_ROUND_FEATURES = [:knn2_mean, :delta_irt]
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
 # level), top-N sorted. Used to compare round-1 vs round-2 gains.
@@ -39,10 +39,10 @@ function log_pass_importance(pass, label::String; topn::Int = 30)
     return nothing
 end
 
-# Most-similar run per file via cosine similarity of the per-file s1 profiles
+# Top-2 most-similar runs per file via cosine similarity of the per-file s1 profiles
 # (profile[file] = vector of best-per-precursor s1 over the precursor vocabulary,
-# absent = 0). Returns (twin, dicts) where twin[f] is the index of f's most-similar
-# other file (0 if none) and dicts[f] maps precursor_idx -> s1 for lookups.
+# absent = 0). Returns (top2, dicts) where top2[f] = (best, second_best) file indices
+# (0 for a slot with no valid neighbor) and dicts[f] maps precursor_idx -> s1 for lookups.
 function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
                             file_s1::Vector{Vector{Float32}})
     nf = length(file_pid)
@@ -62,26 +62,35 @@ function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
         end
         G[f, g] = acc; G[g, f] = acc
     end
-    twin = zeros(Int, nf)
+    top2 = fill((0, 0), nf)
     for f in 1:nf
-        norm_f = sqrt(G[f, f]); best = -Inf; bg = 0
+        norm_f = sqrt(G[f, f])
         norm_f <= 0 && continue
+        best1 = -Inf; best2 = -Inf; b1 = 0; b2 = 0
         for g in 1:nf
             (g == f || G[g, g] <= 0) && continue
             c = G[f, g] / (norm_f * sqrt(G[g, g]))
-            c > best && (best = c; bg = g)
+            if c > best1
+                best2 = best1; b2 = b1
+                best1 = c;    b1 = g
+            elseif c > best2
+                best2 = c;    b2 = g
+            end
         end
-        twin[f] = bg
+        top2[f] = (b1, b2)
     end
-    return twin, dicts
+    return top2, dicts
 end
 
 """
     write_two_round_feature_columns!(file_paths)
 
-Compute `twin_score` and `delta_irt` from the round-1 OOF scores in each file's
-`.pass1_sidecar.arrow` and write them as columns into the per-file fold Arrow files,
-in place. Must run after round-1 `train_and_predict_pass1_oom!` and before round-2.
+Compute `knn2_mean` (mean of same-precursor round-1 scores in the top-2 most-similar
+other runs) and `delta_irt` from the `.pass1_sidecar.arrow` files, and write them as
+columns into the per-file fold Arrow files, in place. Must run after round-1
+`train_and_predict_pass1_oom!` and before round-2.
+
+`knn2_mean` fallback: if only one other run exists (nf=2), uses that one alone.
 """
 function write_two_round_feature_columns!(file_paths::Vector{String})
     nf = length(file_paths)
@@ -109,25 +118,34 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         end
     end
 
-    twin, dicts = _compute_twin_runs(file_pid, file_s1)
+    top2, dicts = _compute_twin_runs(file_pid, file_s1)
 
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
-        tw = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
-        tdict = twin[f] > 0 ? dicts[twin[f]] : nothing
+        km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
+        (b1, b2) = top2[f]
+        d1 = b1 > 0 ? dicts[b1] : nothing
+        d2 = b2 > 0 ? dicts[b2] : nothing
         @inbounds for i in 1:n
-            tw[i] = tdict === nothing ? 0.0f0 : get(tdict, pid[i], 0.0f0)
+            v1 = d1 === nothing ? 0.0f0 : get(d1, pid[i], 0.0f0)
+            if d2 === nothing
+                km[i] = v1  # <2 neighbors available; fall back to top-1
+            else
+                v2 = get(d2, pid[i], 0.0f0)
+                km[i] = (v1 + v2) * 0.5f0
+            end
             di[i] = abs(irt[i] - ref_irt[pid[i]])
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
             error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
-        main[!, :twin_score] = tw
-        main[!, :delta_irt]  = di
+        main[!, :knn2_mean] = km
+        main[!, :delta_irt] = di
         writeArrow(file_paths[f], main)
     end
-    n_twinned = count(>(0), twin)
-    @user_info "two-round: wrote twin_score + delta_irt to $nf files ($n_twinned with a twin, cosine s1-profile)"
+    n_full = count(t -> t[1] > 0 && t[2] > 0, top2)
+    n_partial = count(t -> t[1] > 0 && t[2] == 0, top2)
+    @user_info "two-round: wrote knn2_mean + delta_irt to $nf files ($n_full with top-2 neighbors, $n_partial with top-1 fallback, cosine s1-profile)"
     return nothing
 end
