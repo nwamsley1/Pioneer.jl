@@ -60,7 +60,6 @@ const MBR_MAX_WORST_DONOR_FILES_PER_PRECURSOR = 2
 const MBR_DEFAULT_N_COUNTERFACTUALS = 3
 const MBR_MAX_COUNTERFACTUALS = 8
 const MBR_INTENSITY_CLUSTER_TARGET_SIZE = 128
-const MBR_INTENSITY_CLUSTER_MAX_SIZE = 256
 const MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE = 32
 const MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS = 4
 const MBR_INTENSITY_CLUSTER_MIN_GAIN = 0.01f0
@@ -114,7 +113,9 @@ end
 struct _MBRIntensityProfile
     precursor_idx::UInt32
     file_columns::Vector{Int32}
+    baseline::Float32
     values::Vector{Float32}
+    sparse_sum::Float32
 end
 
 struct _MBRClusterRunSimilarity
@@ -127,7 +128,9 @@ end
 
 struct _MBRSparseCentroid
     file_columns::Vector{Int32}
+    baseline::Float32
     values::Vector{Float32}
+    sparse_sum::Float32
 end
 
 struct _MBRSphericalCluster
@@ -784,13 +787,20 @@ end
 
 @inline function _mbr_profile_centroid_dot(
     profile::_MBRIntensityProfile,
-    centroid::Vector{Float32},
+    dense_centroid::Vector{Float32},
+    centroid::_MBRSparseCentroid,
+    n_file_columns::Int,
 )
-    value = 0.0f0
+    # Profiles and centroids are represented as an implicit value shared by
+    # every run plus sparse corrections at observed runs. This evaluates the
+    # exact dense dot product without visiting the implicit missing entries.
+    value = Float32(n_file_columns) * profile.baseline * centroid.baseline +
+            profile.baseline * centroid.sparse_sum +
+            centroid.baseline * profile.sparse_sum
     @inbounds for idx in eachindex(profile.file_columns)
-        value += profile.values[idx] * centroid[profile.file_columns[idx]]
+        value += profile.values[idx] * dense_centroid[profile.file_columns[idx]]
     end
-    return value
+    return clamp(value, -1.0f0, 1.0f0)
 end
 
 @inline function _mbr_set_dense_centroid!(
@@ -816,8 +826,11 @@ end
 @inline function _mbr_profile_dot(
     left::_MBRIntensityProfile,
     right::_MBRIntensityProfile,
+    n_file_columns::Int,
 )
-    value = 0.0f0
+    value = Float32(n_file_columns) * left.baseline * right.baseline +
+            left.baseline * right.sparse_sum +
+            right.baseline * left.sparse_sum
     left_idx = 1
     right_idx = 1
     @inbounds while left_idx <= length(left.file_columns) &&
@@ -834,18 +847,20 @@ end
             right_idx += 1
         end
     end
-    return value
+    return clamp(value, -1.0f0, 1.0f0)
 end
 
 function _mbr_intensity_profiles(
     postings_by_precursor::Dict{UInt32, Vector{_MBRIntensityPosting}},
     file_ids::Vector{UInt32},
 )
-    # Missing run entries remain implicit zeros. Observed entries use the
-    # within-precursor transform agreed for this atlas:
-    #   1 + log2(weight) - minimum_observed(log2(weight))
-    # L2 normalization makes the following spherical clustering depend on the
-    # run pattern and relative intensity profile rather than absolute scale.
+    # Missing run entries are zeros before centering. Observed entries use
+    # log2(weight) directly, preserving the intended separation between an
+    # observed signal and a missing zero while compressing intensity scale.
+    # Each complete run vector is then mean-centered and L2-normalized, making
+    # its dot product Pearson's correlation coefficient. The centered value at
+    # every missing run is stored once as `baseline`; `values` contains sparse
+    # corrections for observed runs, so centering does not densify the atlas.
     file_to_column = Dict{UInt32, Int32}(
         file_idx => Int32(column_idx)
         for (column_idx, file_idx) in enumerate(file_ids)
@@ -880,20 +895,49 @@ function _mbr_intensity_profiles(
         end
         isempty(file_columns) && continue
 
-        min_log2_weight = minimum(log2_weights)
-        values = Vector{Float32}(undef, length(log2_weights))
+        transformed_values = Vector{Float32}(undef, length(log2_weights))
+        value_sum = 0.0
         sum_squares = 0.0f0
         @inbounds for idx in eachindex(log2_weights)
-            value = 1.0f0 + log2_weights[idx] - min_log2_weight
-            values[idx] = value
+            value = log2_weights[idx]
+            transformed_values[idx] = value
+            value_sum += Float64(value)
             sum_squares += value * value
         end
         sum_squares > 0.0f0 || continue
-        inv_norm = inv(sqrt(sum_squares))
-        @inbounds for idx in eachindex(values)
-            values[idx] *= inv_norm
+
+        n_file_columns = length(file_ids)
+        mean_value = value_sum / Float64(n_file_columns)
+        centered_norm_squared = max(
+            Float64(sum_squares) - value_sum * value_sum / Float64(n_file_columns),
+            0.0,
+        )
+        baseline = 0.0f0
+        values = transformed_values
+        if centered_norm_squared > eps(Float32) * Float64(sum_squares)
+            inv_norm = Float32(inv(sqrt(centered_norm_squared)))
+            baseline = Float32(-mean_value) * inv_norm
+            @inbounds for idx in eachindex(values)
+                # The actual observed coordinate is baseline + values[idx].
+                values[idx] *= inv_norm
+            end
+        else
+            # Pearson correlation is undefined for a completely constant
+            # profile. Retain its former unit-vector representation. A flat
+            # all-run profile is then orthogonal to every centered variable
+            # profile and identical to other flat profiles.
+            inv_norm = inv(sqrt(sum_squares))
+            @inbounds for idx in eachindex(values)
+                values[idx] *= inv_norm
+            end
         end
-        push!(profiles, _MBRIntensityProfile(precursor_idx, file_columns, values))
+        push!(profiles, _MBRIntensityProfile(
+            precursor_idx,
+            file_columns,
+            baseline,
+            values,
+            sum(values),
+        ))
     end
     return profiles
 end
@@ -903,10 +947,13 @@ function _mbr_sparse_centroid(
     members::Vector{Int},
     centroid_accumulator::Vector{Float64},
     touched_columns::Vector{Int32},
+    n_file_columns::Int,
 )
     empty!(touched_columns)
+    baseline = 0.0
     for profile_idx in members
         profile = profiles[profile_idx]
+        baseline += Float64(profile.baseline)
         @inbounds for idx in eachindex(profile.file_columns)
             file_column = profile.file_columns[idx]
             if centroid_accumulator[file_column] == 0.0
@@ -917,10 +964,16 @@ function _mbr_sparse_centroid(
     end
 
     sort!(touched_columns)
+    sparse_sum = 0.0
     norm_squared = 0.0
     @inbounds for file_column in touched_columns
-        norm_squared += abs2(centroid_accumulator[file_column])
+        value = centroid_accumulator[file_column]
+        sparse_sum += value
+        norm_squared += abs2(value)
     end
+    norm_squared += Float64(n_file_columns) * abs2(baseline) +
+                    2.0 * baseline * sparse_sum
+    norm_squared = max(norm_squared, 0.0)
     inv_norm = norm_squared > 0.0 ? inv(sqrt(norm_squared)) : 0.0
     file_columns = copy(touched_columns)
     values = Vector{Float32}(undef, length(file_columns))
@@ -930,7 +983,12 @@ function _mbr_sparse_centroid(
         centroid_accumulator[file_column] = 0.0
     end
     empty!(touched_columns)
-    return _MBRSparseCentroid(file_columns, values)
+    return _MBRSparseCentroid(
+        file_columns,
+        Float32(baseline * inv_norm),
+        values,
+        Float32(sparse_sum * inv_norm),
+    )
 end
 
 function _mbr_spherical_cluster(
@@ -945,6 +1003,7 @@ function _mbr_spherical_cluster(
         members,
         centroid_accumulator,
         touched_columns,
+        length(dense_centroid),
     )
     _mbr_set_dense_centroid!(dense_centroid, centroid)
     similarity_sum = 0.0
@@ -952,6 +1011,8 @@ function _mbr_spherical_cluster(
         similarity_sum += Float64(_mbr_profile_centroid_dot(
             profiles[profile_idx],
             dense_centroid,
+            centroid,
+            length(dense_centroid),
         ))
     end
     _mbr_clear_dense_centroid!(dense_centroid, centroid)
@@ -959,12 +1020,19 @@ function _mbr_spherical_cluster(
 end
 
 @inline function _mbr_profile_as_centroid(profile::_MBRIntensityProfile)
-    return _MBRSparseCentroid(copy(profile.file_columns), copy(profile.values))
+    return _MBRSparseCentroid(
+        copy(profile.file_columns),
+        profile.baseline,
+        copy(profile.values),
+        profile.sparse_sum,
+    )
 end
 
 function _mbr_partition_spherical_members(
     profiles::Vector{_MBRIntensityProfile},
     parent_members::Vector{Int},
+    centroid1::_MBRSparseCentroid,
+    centroid2::_MBRSparseCentroid,
     dense_centroid1::Vector{Float32},
     dense_centroid2::Vector{Float32},
     seed1::Int,
@@ -984,10 +1052,14 @@ function _mbr_partition_spherical_members(
             similarity1 = _mbr_profile_centroid_dot(
                 profiles[profile_idx],
                 dense_centroid1,
+                centroid1,
+                length(dense_centroid1),
             )
             similarity2 = _mbr_profile_centroid_dot(
                 profiles[profile_idx],
                 dense_centroid2,
+                centroid2,
+                length(dense_centroid2),
             )
             if similarity1 >= similarity2
                 push!(members1, profile_idx)
@@ -999,16 +1071,26 @@ function _mbr_partition_spherical_members(
     length(members1) >= min_child_size && length(members2) >= min_child_size &&
         return members1, members2
 
-    # Degenerate or highly imbalanced splits are deterministically balanced by
-    # the two-centroid similarity difference. This keeps the hard maximum leaf
-    # size enforceable even when many sparse profiles are identical.
+    # Degenerate or highly imbalanced candidate splits are deterministically
+    # balanced by the two-centroid similarity difference. The caller still
+    # rejects the split when its correlation gain is negligible.
     scored_members = Vector{Tuple{Float32, Int}}(undef, length(parent_members))
     @inbounds for idx in eachindex(parent_members)
         profile_idx = parent_members[idx]
         profile = profiles[profile_idx]
         scored_members[idx] = (
-            _mbr_profile_centroid_dot(profile, dense_centroid1) -
-            _mbr_profile_centroid_dot(profile, dense_centroid2),
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid1,
+                centroid1,
+                length(dense_centroid1),
+            ) -
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid2,
+                centroid2,
+                length(dense_centroid2),
+            ),
             profile_idx,
         )
     end
@@ -1041,6 +1123,8 @@ function _mbr_split_spherical_cluster(
         similarity = _mbr_profile_centroid_dot(
             profiles[profile_idx],
             dense_centroid1,
+            parent.centroid,
+            length(dense_centroid1),
         )
         if similarity < lowest_parent_similarity
             seed1 = profile_idx
@@ -1053,7 +1137,11 @@ function _mbr_split_spherical_cluster(
     lowest_seed_similarity = Inf32
     for profile_idx in parent.members
         profile_idx == seed1 && continue
-        similarity = _mbr_profile_dot(profiles[seed1], profiles[profile_idx])
+        similarity = _mbr_profile_dot(
+            profiles[seed1],
+            profiles[profile_idx],
+            length(dense_centroid1),
+        )
         if similarity < lowest_seed_similarity
             seed2 = profile_idx
             lowest_seed_similarity = similarity
@@ -1066,6 +1154,7 @@ function _mbr_split_spherical_cluster(
     seed_profile = profiles[seed1]
     all_profiles_identical = all(
         profiles[profile_idx].file_columns == seed_profile.file_columns &&
+        profiles[profile_idx].baseline == seed_profile.baseline &&
         profiles[profile_idx].values == seed_profile.values
         for profile_idx in parent.members
     )
@@ -1106,6 +1195,8 @@ function _mbr_split_spherical_cluster(
         members1, members2 = _mbr_partition_spherical_members(
             profiles,
             parent.members,
+            centroid1,
+            centroid2,
             dense_centroid1,
             dense_centroid2,
             seed1,
@@ -1152,16 +1243,36 @@ function _mbr_set_local_split_margins!(
     for profile_idx in child1.members
         profile = profiles[profile_idx]
         local_margin[profile_idx] = max(
-            _mbr_profile_centroid_dot(profile, dense_centroid1) -
-            _mbr_profile_centroid_dot(profile, dense_centroid2),
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid1,
+                child1.centroid,
+                length(dense_centroid1),
+            ) -
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid2,
+                child2.centroid,
+                length(dense_centroid2),
+            ),
             0.0f0,
         )
     end
     for profile_idx in child2.members
         profile = profiles[profile_idx]
         local_margin[profile_idx] = max(
-            _mbr_profile_centroid_dot(profile, dense_centroid2) -
-            _mbr_profile_centroid_dot(profile, dense_centroid1),
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid2,
+                child2.centroid,
+                length(dense_centroid2),
+            ) -
+            _mbr_profile_centroid_dot(
+                profile,
+                dense_centroid1,
+                child1.centroid,
+                length(dense_centroid1),
+            ),
             0.0f0,
         )
     end
@@ -1174,17 +1285,16 @@ function _fit_mbr_intensity_clusters(
     postings_by_precursor::Dict{UInt32, Vector{_MBRIntensityPosting}},
     file_ids::Vector{UInt32};
     target_cluster_size::Int = MBR_INTENSITY_CLUSTER_TARGET_SIZE,
-    max_cluster_size::Int = MBR_INTENSITY_CLUSTER_MAX_SIZE,
     min_child_size::Int = MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE,
     split_iterations::Int = MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS,
     min_gain::Float32 = MBR_INTENSITY_CLUSTER_MIN_GAIN,
 )
     min_child_size >= 1 ||
         throw(ArgumentError("MBR cluster min_child_size must be positive"))
-    2 * min_child_size <= target_cluster_size <= max_cluster_size ||
+    2 * min_child_size <= target_cluster_size ||
         throw(ArgumentError(
-            "MBR cluster sizes must satisfy 2*min_child_size <= " *
-            "target_cluster_size <= max_cluster_size",
+            "MBR cluster sizes must satisfy " *
+            "2*min_child_size <= target_cluster_size",
         ))
     split_iterations >= 1 ||
         throw(ArgumentError("MBR cluster split_iterations must be positive"))
@@ -1239,8 +1349,12 @@ function _fit_mbr_intensity_clusters(
                 split_iterations = split_iterations,
                 min_child_size = min_child_size,
             )
-            force_split = cluster_size > max_cluster_size
-            if split !== nothing && (force_split || split.gain >= min_gain)
+            # The target size controls when a split is considered, but it is
+            # deliberately not a hard cap. Near-identical populations remain
+            # together when bisecting them does not improve mean correlation
+            # by at least `min_gain`; forcing such a split would create
+            # arbitrary leaves with indistinguishable centroids.
+            if split !== nothing && split.gain >= min_gain
                 _mbr_set_local_split_margins!(
                     local_margin,
                     profiles,
@@ -1266,7 +1380,12 @@ function _fit_mbr_intensity_clusters(
             precursor_idx = Int(profile.precursor_idx)
             cluster_by_precursor[precursor_idx] = cluster_idx
             assignment_similarity[precursor_idx] =
-                _mbr_profile_centroid_dot(profile, dense_centroid1)
+                _mbr_profile_centroid_dot(
+                    profile,
+                    dense_centroid1,
+                    cluster.centroid,
+                    n_file_columns,
+                )
             assignment_margin[precursor_idx] = local_margin[profile_idx]
             n_runs_observed[precursor_idx] = UInt16(min(
                 length(profile.file_columns),
@@ -1363,7 +1482,6 @@ function _build_mbr_run_similarity_from_passed(
         Dict{UInt32, Vector{_MBRIntensityPosting}},
     } = nothing,
     target_cluster_size::Int = MBR_INTENSITY_CLUSTER_TARGET_SIZE,
-    max_cluster_size::Int = MBR_INTENSITY_CLUSTER_MAX_SIZE,
     min_child_size::Int = MBR_INTENSITY_CLUSTER_MIN_CHILD_SIZE,
     split_iterations::Int = MBR_INTENSITY_CLUSTER_SPLIT_ITERATIONS,
     min_cluster_gain::Float32 = MBR_INTENSITY_CLUSTER_MIN_GAIN,
@@ -1477,7 +1595,6 @@ function _build_mbr_run_similarity_from_passed(
         intensity_postings,
         file_ids;
         target_cluster_size = target_cluster_size,
-        max_cluster_size = max_cluster_size,
         min_child_size = min_child_size,
         split_iterations = split_iterations,
         min_gain = min_cluster_gain,

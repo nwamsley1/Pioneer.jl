@@ -331,8 +331,8 @@ end
     end
 
     @test eltype(identical_fit.cluster_by_precursor) == UInt32
-    @test identical_fit.n_clusters == 4
-    @test all(==(256), values(identical_sizes))
+    @test identical_fit.n_clusters == 1
+    @test only(values(identical_sizes)) == 1024
     @test all(iszero, identical_fit.assignment_margin)
 
     separated_postings = Dict{UInt32, Vector{Pioneer._MBRIntensityPosting}}()
@@ -353,8 +353,81 @@ end
 
     @test separated_fit.n_clusters == 2
     @test length(unique(separated_fit.cluster_by_precursor)) == 2
-    @test all(==(1.0f0), separated_fit.assignment_similarity)
-    @test all(==(1.0f0), separated_fit.assignment_margin)
+    @test all(x -> x ≈ 1.0f0, separated_fit.assignment_similarity)
+    @test all(x -> x ≈ 2.0f0, separated_fit.assignment_margin)
+
+end
+
+@testset "MBR intensity profiles use sparse Pearson correlation" begin
+    file_ids = UInt32[1, 2, 3, 4, 5, 6]
+    postings = Dict(
+        UInt32(1) => [
+            Pioneer._MBRIntensityPosting(UInt32(2), 5.0f0),
+        ],
+        UInt32(2) => [
+            Pioneer._MBRIntensityPosting(UInt32(1), 5.0f0),
+            Pioneer._MBRIntensityPosting(UInt32(2), 5.0f0),
+            Pioneer._MBRIntensityPosting(UInt32(3), 5.0f0),
+        ],
+        UInt32(3) => [
+            Pioneer._MBRIntensityPosting(UInt32(2), 8.0f0),
+        ],
+        UInt32(4) => [
+            Pioneer._MBRIntensityPosting(UInt32(1), 1.0f0),
+            Pioneer._MBRIntensityPosting(UInt32(2), 2.0f0),
+        ],
+        UInt32(5) => [
+            Pioneer._MBRIntensityPosting(UInt32(1), 10.0f0),
+            Pioneer._MBRIntensityPosting(UInt32(2), 11.0f0),
+        ],
+    )
+    profiles = Pioneer._mbr_intensity_profiles(postings, file_ids)
+
+    function dense_profile(profile)
+        values = fill(profile.baseline, length(file_ids))
+        for idx in eachindex(profile.file_columns)
+            values[profile.file_columns[idx]] += profile.values[idx]
+        end
+        return values
+    end
+
+    one_run = dense_profile(profiles[1])
+    three_runs = dense_profile(profiles[2])
+    @test sum(one_run) ≈ 0.0f0 atol = 1.0f-6
+    @test sum(abs2, one_run) ≈ 1.0f0 atol = 1.0f-6
+    @test sum(three_runs) ≈ 0.0f0 atol = 1.0f-6
+    @test sum(abs2, three_runs) ≈ 1.0f0 atol = 1.0f-6
+    @test Pioneer._mbr_profile_dot(profiles[1], profiles[2], length(file_ids)) ≈
+          inv(sqrt(5.0f0)) atol = 1.0f-6
+    @test Pioneer._mbr_profile_dot(profiles[1], profiles[3], length(file_ids)) ≈
+          1.0f0 atol = 1.0f-6
+
+    raw_left = Float32[1, 2, 0, 0, 0, 0]
+    raw_right = Float32[10, 11, 0, 0, 0, 0]
+    centered_left = raw_left .- sum(raw_left) / length(raw_left)
+    centered_right = raw_right .- sum(raw_right) / length(raw_right)
+    expected_raw_correlation = sum(centered_left .* centered_right) /
+                               sqrt(sum(abs2, centered_left) * sum(abs2, centered_right))
+    @test Pioneer._mbr_profile_dot(profiles[4], profiles[5], length(file_ids)) ≈
+          expected_raw_correlation atol = 1.0f-6
+
+    cluster = Pioneer._mbr_spherical_cluster(
+        profiles,
+        Int[1, 2],
+        zeros(Float64, length(file_ids)),
+        Int32[],
+        zeros(Float32, length(file_ids)),
+    )
+    expected_centroid = one_run + three_runs
+    expected_centroid ./= sqrt(sum(abs2, expected_centroid))
+    dense_centroid_corrections = zeros(Float32, length(file_ids))
+    Pioneer._mbr_set_dense_centroid!(dense_centroid_corrections, cluster.centroid)
+    @test Pioneer._mbr_profile_centroid_dot(
+        profiles[1],
+        dense_centroid_corrections,
+        cluster.centroid,
+        length(file_ids),
+    ) ≈ sum(one_run .* expected_centroid) atol = 1.0f-6
 end
 
 @testset "MBR intensity clusters measure peer agreement" begin
@@ -396,7 +469,6 @@ end
         passed_by_file;
         intensity_postings = intensity_postings,
         target_cluster_size = 6,
-        max_cluster_size = 6,
         min_child_size = 2,
         min_cluster_gain = 0.001f0,
     )
