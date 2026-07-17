@@ -16,77 +16,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
-    -> (global_pg_score_dict, pg_name_to_global_pg_score)
-
-Stream per-file protein group files reading only `(protein_name, target, entrap_id, pg_score)`.
-Returns composite-key dictionaries for protein global score computation while
-retaining only the top `sqrt_n_runs` scores per protein.
-"""
-function _insert_top_protein_score!(
-    scores::Vector{Float32},
-    score::Float32,
-    max_scores::Int
-)
-    max_scores <= 0 && return scores
-
-    if (length(scores) == max_scores) && (score <= scores[end])
-        return scores
-    end
-
-    insert_idx = length(scores) + 1
-    @inbounds for i in eachindex(scores)
-        if score > scores[i]
-            insert_idx = i
-            break
-        end
-    end
-
-    insert!(scores, insert_idx, score)
-    if length(scores) > max_scores
-        pop!(scores)
-    end
-
-    return scores
-end
-
-function build_protein_global_score_dicts(
-    pg_refs::Vector{ProteinGroupFileReference},
-    sqrt_n_runs::Int,
-    n_proteins::Int
-)
-    score_acc = Dict{Tuple{String,Bool,UInt8}, Vector{Float32}}()
-    sizehint!(score_acc, n_proteins)
-
-    for ref in pg_refs
-        tbl = Arrow.Table(file_path(ref))
-        n = length(tbl.protein_name)
-        n == 0 && continue
-        @inbounds for i in 1:n
-            key = (tbl.protein_name[i], tbl.target[i], tbl.entrap_id[i])
-            if !haskey(score_acc, key)
-                score_acc[key] = sizehint!(Float32[], sqrt_n_runs)
-            end
-            _insert_top_protein_score!(score_acc[key], tbl.pg_score[i], sqrt_n_runs)
-        end
-    end
-
-    n_observed = length(score_acc)
-    global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
-    sizehint!(global_pg_score_dict, n_observed)
-    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
-    sizehint!(pg_name_to_global_pg_score, n_observed)
-
-    for (key, scores) in score_acc
-        gs = logodds(scores, sqrt_n_runs)
-        global_pg_score_dict[key] = gs
-        pg_name_to_global_pg_score[ProteinKey(key[1], key[2], key[3])] = gs
-    end
-
-    return global_pg_score_dict, pg_name_to_global_pg_score
-end
-
-"""
     build_protein_global_qval_dict(global_pg_score_dict)
     → Dict{Tuple{String,Bool,UInt8}, Float32}
 
@@ -224,4 +153,3 @@ function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
     end
     return desc => op
 end
-

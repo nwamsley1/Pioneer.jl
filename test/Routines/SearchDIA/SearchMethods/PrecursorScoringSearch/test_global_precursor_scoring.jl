@@ -174,9 +174,11 @@
             lambda_l2 = 0.0,
         )
 
-        scored = Pioneer._score_global_precursor_features_oof(
+        scored = Pioneer._score_global_features_oof(
             table,
-            Symbol[:direct_evidence];
+            Symbol[:direct_evidence],
+            UInt8[0, 1];
+            scoring_name = "Global precursor",
             lgbm_hp = test_hyperparameters,
             min_training_class_count = 1,
             max_train = 1_000,
