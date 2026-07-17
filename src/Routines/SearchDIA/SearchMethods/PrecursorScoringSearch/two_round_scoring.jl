@@ -18,12 +18,29 @@
 # Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is
 # evaluated at precompile time and baked into the cached module, so it would
 # ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
-# K for the k-nearest-neighbor mean feature (mean of top-K neighbors' same-precursor
-# round-1 scores). To sweep K (1, 2, 3, ...), change this const and re-run.
+# K for the k-nearest-neighbor cross-run feature (aggregation of top-K neighbors'
+# same-precursor round-1 scores). To sweep K, change KNN_K. To switch aggregation,
+# change KNN_AGG to :mean or :median. Column name auto-derives (e.g. :knn10_median).
 const KNN_K = 10
-const KNN_COL = Symbol("knn$(KNN_K)_mean")
+const KNN_AGG = :median  # :mean | :median
+const KNN_COL = Symbol("knn$(KNN_K)_$(KNN_AGG)")
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
+
+# Median of the first `n` elements of `buf` via in-place insertion sort. Allocation-
+# free — the caller owns `buf` and reuses it across rows. Insertion sort is fine for
+# K ≤ 16 (which is all any reasonable KNN_K sweep).
+@inline function _median_first_n!(buf::AbstractVector{Float32}, n::Int)
+    @inbounds for i in 2:n
+        v = buf[i]; j = i
+        while j > 1 && buf[j-1] > v
+            buf[j] = buf[j-1]; j -= 1
+        end
+        buf[j] = v
+    end
+    return @inbounds isodd(n) ? buf[(n+1) >>> 1] :
+                                (buf[n >>> 1] + buf[(n >>> 1) + 1]) * 0.5f0
+end
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
 # level), top-N sorted. Used to compare round-1 vs round-2 gains.
@@ -129,6 +146,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     topk, dicts = _compute_twin_runs(file_pid, file_s1)
 
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
+    scratch = Vector{Float32}(undef, KNN_K)   # reused per row for the median path
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
@@ -140,14 +158,26 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
             push!(ndicts, dicts[g])
         end
         nvalid = length(ndicts)
-        inv_nvalid = nvalid > 0 ? 1.0f0 / Float32(nvalid) : 0.0f0
-        @inbounds for i in 1:n
-            s = 0.0f0
-            for d in ndicts
-                s += get(d, pid[i], 0.0f0)
+        if KNN_AGG === :mean
+            inv_nvalid = nvalid > 0 ? 1.0f0 / Float32(nvalid) : 0.0f0
+            @inbounds for i in 1:n
+                s = 0.0f0
+                for d in ndicts
+                    s += get(d, pid[i], 0.0f0)
+                end
+                km[i] = s * inv_nvalid  # 0 if nvalid == 0
+                di[i] = abs(irt[i] - ref_irt[pid[i]])
             end
-            km[i] = s * inv_nvalid  # 0 if nvalid == 0
-            di[i] = abs(irt[i] - ref_irt[pid[i]])
+        elseif KNN_AGG === :median
+            @inbounds for i in 1:n
+                for k in 1:nvalid
+                    scratch[k] = get(ndicts[k], pid[i], 0.0f0)
+                end
+                km[i] = nvalid > 0 ? _median_first_n!(scratch, nvalid) : 0.0f0
+                di[i] = abs(irt[i] - ref_irt[pid[i]])
+            end
+        else
+            error("KNN_AGG must be :mean or :median (got $KNN_AGG)")
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
@@ -158,6 +188,6 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     end
     n_full    = count(nb -> all(>(0), nb), topk)
     n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
-    @user_info "two-round: wrote $(KNN_COL) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
+    @user_info "two-round: wrote $(KNN_COL) ($(KNN_AGG) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
     return nothing
 end
