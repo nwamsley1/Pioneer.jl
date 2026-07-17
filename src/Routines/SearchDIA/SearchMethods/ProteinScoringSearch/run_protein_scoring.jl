@@ -241,11 +241,15 @@ function run_protein_scoring!(
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )
 
-    sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
     n_proteins = length(getProteins(getSpecLib(search_context)))
 
     global_pg_score_dict, pg_name_to_global_pg_score =
-        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+        build_global_protein_score_dicts(
+            pg_refs,
+            protein_to_cv_fold,
+            n_proteins,
+            length(pg_refs),
+        )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
