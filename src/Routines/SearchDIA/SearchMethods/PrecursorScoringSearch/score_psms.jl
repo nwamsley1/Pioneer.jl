@@ -421,6 +421,10 @@ function _score_precursor_isotope_traces_no_mbr(
     # (:global_qval AND :qval) filter — the ew arm bites, so twin_score matters.
     if two_round_enabled()
         write_two_round_feature_columns!(file_paths)
+        # Symmetric shadow-decoy injection (see two_round_scoring.jl). No-op when
+        # SHADOW_DECOY_MODE === :none. Adds an :is_shadow column and doubles the row
+        # count (approximately) when both classes are present per file.
+        inject_shadow_decoys!(file_paths)
         features2 = vcat(copy(ADVANCED_FEATURE_SET), TWO_ROUND_FEATURES)
         pass1 = train_and_predict_pass1_oom!(
             file_paths;
@@ -431,6 +435,10 @@ function _score_precursor_isotope_traces_no_mbr(
         )
         @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. twin_score, delta_irt)"
         log_pass_importance(pass1, "Round-2 (+twin_score,+delta_irt)")
+        # Compute BOTH FDR variants (A: real-only; B: shadow-included) as a diagnostic,
+        # then remove shadow rows so downstream sees the same schema as before.
+        log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)
+        remove_shadow_decoys!(file_paths)
     end
 
     _merge_pass1_into_main_no_mbr!(file_paths, precursors)

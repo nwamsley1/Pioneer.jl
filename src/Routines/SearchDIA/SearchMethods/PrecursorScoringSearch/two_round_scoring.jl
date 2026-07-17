@@ -25,12 +25,13 @@
 const KNN_K = 5
 const KNN_AGG = :mean      # :mean | :median | :quantile
 const KNN_Q = 0.75f0       # only used when KNN_AGG === :quantile
-# Zero out per-row round-1 s1 for rows whose LOCAL (binned target/decoy) PEP
-# exceeds this threshold BEFORE computing cosine similarity + top-K lookup.
-# 1.0 disables the filter. Only rows kept above this threshold contribute
-# either to a run's cosine similarity profile or to the neighbor lookup mean.
-const PEP_FILTER_THRESHOLD = 0.5
+# PEP filter on round-1 s1 before the cross-run feature computation. 1.0 = off.
+const PEP_FILTER_THRESHOLD = 1.0
 const PEP_FILTER_N_BINS = 100
+# Symmetric shadow-decoy injection: after mbr_score is written, for every real
+# row inject a paired shadow of the opposite class carrying the source's other
+# features but the ORIGINAL row's mbr_score. See TWO_ROUND_SCORING.md.
+const SHADOW_DECOY_MODE = :symmetric   # :none | :symmetric
 const KNN_COL = KNN_AGG === :quantile ?
     Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))") :
     Symbol("knn$(KNN_K)_$(KNN_AGG)")
@@ -283,5 +284,232 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
     agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
     @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
+    return nothing
+end
+
+# ---------- Symmetric shadow-decoy injection ----------
+#
+# For every real row in a fold-file, inject one shadow of the opposite class:
+#   real target T  → shadow_decoy  = nearest-iRT decoy's columns except mbr_score = T.mbr_score
+#   real decoy D   → shadow_target = nearest-iRT target's columns except mbr_score = D.mbr_score
+# `is_shadow` flags the shadow (false on originals).
+#
+# Row count exactly doubles when both classes are present in a file. Shadows
+# inherit their SOURCE's precursor_idx / cv_fold, so precursor-keyed CV folds
+# stay valid. LGBM trains transparently on the enlarged set.
+#
+# The shadows destroy the marginal-on-mbr_score signal (at every mbr_score
+# value from a target, there is 1 target-labeled and 1 decoy-labeled row).
+# Round-2 LGBM is therefore forced to use mbr_score jointly with the base
+# features rather than trusting it as a standalone signal.
+
+# Vector of indices into `decoy_irt` (sorted asc) whose value is nearest to `q`.
+# Binary search on the sorted array; ties break to the lower index. `perm` maps
+# sorted-position → original row index.
+@inline function _nearest_sorted_idx(sorted_vals::AbstractVector{Float32}, q::Float32)
+    n = length(sorted_vals)
+    n == 0 && return 0
+    # searchsortedfirst returns the first index whose value >= q, or n+1 if none.
+    hi = searchsortedfirst(sorted_vals, q)
+    if hi > n
+        return n
+    elseif hi == 1
+        return 1
+    end
+    lo = hi - 1
+    return (q - sorted_vals[lo]) <= (sorted_vals[hi] - q) ? lo : hi
+end
+
+# Sidecar suffix + column: mirrors the round-1 sidecar so we can also
+# extend/truncate the sidecar rows to stay aligned with the fold-file.
+const SHADOW_SIDECAR_SCORE_COL = :trace_prob_prepass
+
+"""
+    inject_shadow_decoys!(file_paths::Vector{String}) -> Int
+
+For each fold-file, symmetrically inject shadow rows (see module comment). Also
+extends `.pass1_sidecar.arrow` so its row count stays aligned; shadow sidecar
+scores are copied from the SOURCE row (they'll be overwritten when round-2
+predicts). Returns total shadows injected across all files.
+"""
+function inject_shadow_decoys!(file_paths::Vector{String})
+    SHADOW_DECOY_MODE === :none && return 0
+    total = 0
+    n_skipped_target_side = 0
+    n_skipped_decoy_side  = 0
+    for p in file_paths
+        main = DataFrame(Tables.columntable(Arrow.Table(p)))
+        # If the sidecar exists (round-1 already wrote it), we mirror row count.
+        side_path = p * PASS1_SIDECAR_SUFFIX
+        side_present = isfile(side_path)
+        side = side_present ? DataFrame(Tables.columntable(Arrow.Table(side_path))) : nothing
+        side_present && nrow(side) != nrow(main) &&
+            error("inject_shadow_decoys!: sidecar row count mismatch at $p ($(nrow(side)) vs $(nrow(main)))")
+
+        n = nrow(main)
+        n == 0 && continue
+        tgt = main.target::AbstractVector{Bool}
+        irt = Float32.(main.irt_obs)
+        target_idx = findall(tgt)
+        decoy_idx  = findall(.!tgt)
+
+        if isempty(target_idx) || isempty(decoy_idx)
+            # No opposite class present — can't build symmetric shadows.
+            n_skipped_target_side += length(target_idx)
+            n_skipped_decoy_side  += length(decoy_idx)
+            continue
+        end
+
+        # For each real target, source_row = nearest-iRT decoy → shadow_decoy(source=decoy).
+        # For each real decoy,  source_row = nearest-iRT target → shadow_target(source=target).
+        decoy_perm  = sortperm(view(irt, decoy_idx))
+        target_perm = sortperm(view(irt, target_idx))
+        decoy_irt_sorted  = irt[decoy_idx[decoy_perm]]
+        target_irt_sorted = irt[target_idx[target_perm]]
+
+        shadow_src_row = Vector{Int}(undef, n)   # source row index in main
+        shadow_mbr_row = Vector{Int}(undef, n)   # row whose mbr_score to graft
+        @inbounds for r in 1:n
+            if tgt[r]
+                pos = _nearest_sorted_idx(decoy_irt_sorted, irt[r])
+                pos == 0 && (n_skipped_target_side += 1; shadow_src_row[r] = 0; continue)
+                shadow_src_row[r] = decoy_idx[decoy_perm[pos]]
+                shadow_mbr_row[r] = r
+            else
+                pos = _nearest_sorted_idx(target_irt_sorted, irt[r])
+                pos == 0 && (n_skipped_decoy_side += 1; shadow_src_row[r] = 0; continue)
+                shadow_src_row[r] = target_idx[target_perm[pos]]
+                shadow_mbr_row[r] = r
+            end
+        end
+        valid_rows = findall(!=(0), shadow_src_row)
+        isempty(valid_rows) && continue
+
+        # Build the shadow subset in bulk by selecting rows [shadow_src_row[i] for i in valid_rows]
+        # from main, then overwrite mbr_score.
+        src_positions = shadow_src_row[valid_rows]
+        mbr_positions = shadow_mbr_row[valid_rows]
+        shadows = main[src_positions, :]
+
+        # Overwrite mbr_score column with the ORIGINAL row's value.
+        mbr_col = KNN_COL
+        if hasproperty(main, mbr_col)
+            shadows[!, mbr_col] = main[mbr_positions, mbr_col]
+        end
+
+        # Set is_shadow flag (add column to `main` too if absent — schema union).
+        if !hasproperty(main, :is_shadow)
+            main[!, :is_shadow] = falses(nrow(main))
+        end
+        shadows[!, :is_shadow] = trues(nrow(shadows))
+
+        # Concat.
+        main_out = vcat(main, shadows)
+        writeArrow(p, main_out)
+
+        # Mirror sidecar: append sidecar rows from src_positions.
+        if side_present
+            side_shadow = side[src_positions, :]
+            side_out = vcat(side, side_shadow)
+            writeArrow(side_path, side_out)
+        end
+
+        total += nrow(shadows)
+    end
+    @user_info "shadow-decoy injection: injected $total shadows across $(length(file_paths)) files (skipped $(n_skipped_target_side) target-side + $(n_skipped_decoy_side) decoy-side for missing opposite class)"
+    return total
+end
+
+"""
+    remove_shadow_decoys!(file_paths::Vector{String}) -> Int
+
+Filter out `is_shadow == true` rows from each fold-file and its sidecar. Called
+after round-2 scoring completes and after any shadow-inclusive diagnostics are
+computed. Returns total shadows removed.
+"""
+function remove_shadow_decoys!(file_paths::Vector{String})
+    total = 0
+    for p in file_paths
+        main = DataFrame(Tables.columntable(Arrow.Table(p)))
+        !hasproperty(main, :is_shadow) && continue
+        side_path = p * PASS1_SIDECAR_SUFFIX
+        side_present = isfile(side_path)
+        side = side_present ? DataFrame(Tables.columntable(Arrow.Table(side_path))) : nothing
+        side_present && nrow(side) != nrow(main) &&
+            error("remove_shadow_decoys!: sidecar row count mismatch at $p")
+
+        real_mask = .!Bool.(main.is_shadow)
+        n_removed = sum(.!real_mask)
+        n_removed == 0 && continue
+        main_kept = main[real_mask, :]
+        # Drop the flag column too so the schema matches the pre-injection layout.
+        select!(main_kept, Not(:is_shadow))
+        writeArrow(p, main_kept)
+        if side_present
+            writeArrow(side_path, side[real_mask, :])
+        end
+        total += n_removed
+    end
+    @user_info "shadow-decoy removal: removed $total shadow rows from $(length(file_paths)) files"
+    return total
+end
+
+"""
+    log_shadow_fdr_diagnostics(file_paths::Vector{String}; q_threshold::Float64 = 0.01)
+
+BEFORE removing shadows: log (A) real-only FDR count and (B) shadow-inclusive
+FDR count of REAL targets passing at the threshold. Assumes the round-2 sidecar
+(`trace_prob_prepass`) is the current OOF score.
+"""
+function log_shadow_fdr_diagnostics(file_paths::Vector{String}; q_threshold::Float64 = 0.01)
+    scores = Float32[]; is_target = Bool[]; is_shadow = Bool[]
+    for p in file_paths
+        main = Arrow.Table(p)
+        side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
+        n = length(main.precursor_idx)
+        length(side.trace_prob_prepass) == n ||
+            error("log_shadow_fdr_diagnostics: sidecar/main row count mismatch at $p")
+        append!(scores, Float32.(side.trace_prob_prepass))
+        append!(is_target, Bool.(main.target))
+        shadow_col = hasproperty(main, :is_shadow) ? Bool.(main.is_shadow) : falses(n)
+        append!(is_shadow, shadow_col)
+    end
+    isempty(scores) && (@user_info "shadow FDR diagnostics: no rows"; return nothing)
+
+    perm = sortperm(scores; rev=true)  # rank 1 = highest score
+    ntot = length(scores)
+    # A: real-only FDR — sweep high→low, at each real row compute (real_D / real_T); the
+    # q-value at that row is the min FDR from here up, but for "max targets passing ≤ q"
+    # the answer is the largest real_T seen at any point where FDR <= q_threshold.
+    countA_real_target_pass = let rT = 0, rD = 0, best = 0
+        for r in 1:ntot
+            i = perm[r]
+            is_shadow[i] && continue
+            if is_target[i]; rT += 1; else; rD += 1; end
+            fdr = rT > 0 ? rD / rT : 1.0
+            if fdr <= q_threshold; best = max(best, rT); end
+        end
+        best
+    end
+    # B: shadow-inclusive FDR (all rows count). Count REAL targets above the score where FDR = q_threshold.
+    countB_real_target_pass = let allT = 0, allD = 0, real_T = 0, best = 0
+        for r in 1:ntot
+            i = perm[r]
+            if is_target[i]; allT += 1; else; allD += 1; end
+            !is_shadow[i] && is_target[i] && (real_T += 1)
+            fdr = allT > 0 ? allD / allT : 1.0
+            if fdr <= q_threshold; best = max(best, real_T); end
+        end
+        best
+    end
+    n_real_targets = count(i -> is_target[i] && !is_shadow[i], 1:ntot)
+    n_real_decoys  = count(i -> !is_target[i] && !is_shadow[i], 1:ntot)
+    n_shadow_targets = count(i -> is_target[i] && is_shadow[i], 1:ntot)
+    n_shadow_decoys  = count(i -> !is_target[i] && is_shadow[i], 1:ntot)
+    @user_info "shadow FDR diagnostics @ q ≤ $(q_threshold):"
+    @user_info "  real:   $(n_real_targets) targets, $(n_real_decoys) decoys"
+    @user_info "  shadow: $(n_shadow_targets) shadow-targets, $(n_shadow_decoys) shadow-decoys"
+    @user_info "  A (real-only FDR):        real targets passing = $(countA_real_target_pass)"
+    @user_info "  B (shadow-included FDR):  real targets passing = $(countB_real_target_pass)"
     return nothing
 end
