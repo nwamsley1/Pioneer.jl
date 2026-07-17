@@ -295,8 +295,10 @@ function summarize_results!(
         # Pre-allocation size from spectral library
         n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-        # A1: Train the experiment-wide precursor model and collect OOF scores.
-        @user_info "Training global precursor scoring model..."
+        # A1: Build experiment-wide precursor scores.
+        if n_files_total > 1
+            @user_info "Training global precursor scoring model..."
+        end
         global_prob_dict, target_dict =
             build_global_precursor_score_dicts(
                 filtered_refs,

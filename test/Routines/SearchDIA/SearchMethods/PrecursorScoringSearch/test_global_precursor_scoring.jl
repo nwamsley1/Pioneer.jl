@@ -106,6 +106,35 @@
         end
     end
 
+    @testset "single run uses individual precursor probabilities" begin
+        mktempdir() do directory
+            run_path = joinpath(directory, "single_run.arrow")
+            Arrow.write(run_path, DataFrame(
+                precursor_idx = UInt32[1, 2, 3],
+                prec_prob = Float32[0.02, 0.5, 0.98],
+                target = Bool[false, true, true],
+            ))
+            refs = PSMFileReference[PSMFileReference(run_path)]
+
+            scores, targets = Pioneer.build_global_precursor_score_dicts(
+                refs,
+                3,
+                1,
+            )
+
+            @test scores == Dict(
+                UInt32(1) => 0.02f0,
+                UInt32(2) => 0.5f0,
+                UInt32(3) => 0.98f0,
+            )
+            @test targets == Dict(
+                UInt32(1) => false,
+                UInt32(2) => true,
+                UInt32(3) => true,
+            )
+        end
+    end
+
     @testset "two-fold out-of-fold LightGBM scoring" begin
         precursor_idx = UInt32[]
         target = Bool[]

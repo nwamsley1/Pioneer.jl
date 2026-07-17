@@ -321,13 +321,37 @@ end
     build_global_precursor_score_dicts(refs, n_precursors, n_runs_total)
 
 Build one score-distribution feature row per precursor and return out-of-fold
-global LightGBM scores with the corresponding target labels.
+global LightGBM scores with the corresponding target labels. For a single-run
+search, return the individual precursor probabilities without training a model.
 """
+function _build_single_run_precursor_score_dicts(
+    refs::Vector{PSMFileReference},
+    n_precursors::Int,
+)
+    score_dict = Dict{UInt32, Float32}()
+    target_dict = Dict{UInt32, Bool}()
+    sizehint!(score_dict, n_precursors)
+    sizehint!(target_dict, n_precursors)
+
+    for ref in refs
+        columns = materialize_columns(ref, [:precursor_idx, :prec_prob, :target])
+        @inbounds for row in axes(columns, 1)
+            precursor_idx = UInt32(columns.precursor_idx[row])
+            score_dict[precursor_idx] = Float32(columns.prec_prob[row])
+            target_dict[precursor_idx] = Bool(columns.target[row])
+        end
+    end
+    return score_dict, target_dict
+end
+
 function build_global_precursor_score_dicts(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
     n_runs_total::Int,
 )
+    n_runs_total == 1 &&
+        return _build_single_run_precursor_score_dicts(refs, n_precursors)
+
     inputs = _collect_global_precursor_inputs(refs, n_precursors)
     table = _build_global_precursor_feature_table(inputs, n_runs_total)
     scored = _score_global_precursor_features_oof(
