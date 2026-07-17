@@ -22,9 +22,15 @@
 # same-precursor round-1 scores). To sweep K, change KNN_K. To switch aggregation,
 # change KNN_AGG to :mean, :median, or :quantile (with KNN_Q). Column name auto-
 # derives (e.g. :knn10_median, :knn10_q75).
-const KNN_K = 10
-const KNN_AGG = :quantile  # :mean | :median | :quantile
+const KNN_K = 5
+const KNN_AGG = :mean      # :mean | :median | :quantile
 const KNN_Q = 0.75f0       # only used when KNN_AGG === :quantile
+# Zero out per-row round-1 s1 for rows whose LOCAL (binned target/decoy) PEP
+# exceeds this threshold BEFORE computing cosine similarity + top-K lookup.
+# 1.0 disables the filter. Only rows kept above this threshold contribute
+# either to a run's cosine similarity profile or to the neighbor lookup mean.
+const PEP_FILTER_THRESHOLD = 0.5
+const PEP_FILTER_N_BINS = 100
 const KNN_COL = KNN_AGG === :quantile ?
     Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))") :
     Symbol("knn$(KNN_K)_$(KNN_AGG)")
@@ -49,6 +55,64 @@ const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
     lo <  1 && return @inbounds buf[1]
     frac = h - Float32(lo)
     return @inbounds buf[lo] + frac * (buf[lo+1] - buf[lo])
+end
+
+# Zero out per-row s1 across all files where the global local PEP > threshold.
+# Local PEP is estimated by sorting all rows descending by s1, splitting into
+# equal-count bins, and taking bin_pep = n_decoys / n_total_in_bin per bin. A
+# row's PEP is its bin's PEP (rank-to-bin lookup). Simple, monotonically-noisy
+# in principle but fine at bin counts ≥ 50 with the row counts we see here
+# (millions of rows). Returns (n_filtered, n_kept).
+function _filter_by_local_pep!(file_s1::Vector{Vector{Float32}},
+                              file_tgt::Vector{Vector{Bool}},
+                              pep_threshold::Float64,
+                              n_bins::Int)
+    # Concat rows into a single flat view for binning.
+    nf = length(file_s1)
+    offsets = Vector{Int}(undef, nf + 1); offsets[1] = 0
+    for f in 1:nf
+        offsets[f+1] = offsets[f] + length(file_s1[f])
+    end
+    ntot = offsets[end]
+    ntot == 0 && return (0, 0)
+    scores  = Vector{Float32}(undef, ntot)
+    targets = Vector{Bool}(undef, ntot)
+    for f in 1:nf, i in eachindex(file_s1[f])
+        scores[offsets[f] + i]  = file_s1[f][i]
+        targets[offsets[f] + i] = file_tgt[f][i]
+    end
+    perm = sortperm(scores; rev=true)  # rank 1 = highest score
+    bin_size = max(1, cld(ntot, n_bins))
+    n_actual_bins = cld(ntot, bin_size)
+    bin_pep = Vector{Float64}(undef, n_actual_bins)
+    for b in 1:n_actual_bins
+        lo = 1 + (b-1) * bin_size
+        hi = min(b * bin_size, ntot)
+        n_target = 0
+        @inbounds for i in lo:hi
+            targets[perm[i]] && (n_target += 1)
+        end
+        bin_n = hi - lo + 1
+        bin_pep[b] = 1.0 - n_target / bin_n
+    end
+    # rank[i] = 1..ntot; from perm we build the inverse
+    rank = Vector{Int}(undef, ntot)
+    @inbounds for r in 1:ntot
+        rank[perm[r]] = r
+    end
+    n_filtered = 0
+    @inbounds for i in 1:ntot
+        b = min(cld(rank[i], bin_size), n_actual_bins)
+        if bin_pep[b] > pep_threshold
+            scores[i] = 0.0f0
+            n_filtered += 1
+        end
+    end
+    # Scatter filtered scores back into per-file vectors.
+    for f in 1:nf, i in eachindex(file_s1[f])
+        file_s1[f][i] = scores[offsets[f] + i]
+    end
+    return (n_filtered, ntot - n_filtered)
 end
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
@@ -131,25 +195,37 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     file_pid = Vector{Vector{UInt32}}(undef, nf)
     file_s1  = Vector{Vector{Float32}}(undef, nf)
     file_irt = Vector{Vector{Float32}}(undef, nf)
+    file_tgt = Vector{Vector{Bool}}(undef, nf)  # target flag per row, for PEP filter
     best_s1  = Dict{UInt32,Float32}()   # precursor -> highest s1 seen (for ref_irt)
     ref_irt  = Dict{UInt32,Float32}()   # precursor -> irt_obs at its highest-s1 instance
 
-    # Pass A: read slim (precursor_idx, irt_obs, s1) for every file; track ref_irt.
+    # Pass A: read slim (precursor_idx, irt_obs, s1, target) for every file; track ref_irt.
     for f in 1:nf
         p = file_paths[f]
         tbl = Arrow.Table(p)
         side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
         pid = collect(UInt32.(tbl.precursor_idx))
         irt = collect(Float32.(tbl.irt_obs))
+        tgt = collect(Bool.(tbl.target))
         s1  = collect(Float32.(side.trace_prob_prepass))
         length(s1) == length(pid) ||
             error("write_two_round_feature_columns!: sidecar row mismatch at $p")
-        file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt
+        file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
         @inbounds for i in eachindex(pid)
             if s1[i] > get(best_s1, pid[i], -1.0f0)
                 best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]
             end
         end
+    end
+
+    # PEP filter: zero out per-row s1 where the global-binned local PEP exceeds
+    # PEP_FILTER_THRESHOLD. This drops the row from BOTH the cosine similarity
+    # profile (absent = 0) AND the neighbor lookup mean (get() returns 0).
+    if PEP_FILTER_THRESHOLD < 1.0
+        n_filt, n_kept = _filter_by_local_pep!(file_s1, file_tgt,
+                                              PEP_FILTER_THRESHOLD, PEP_FILTER_N_BINS)
+        pct = n_filt + n_kept > 0 ? round(100 * n_filt / (n_filt + n_kept), digits=1) : 0.0
+        @user_info "two-round PEP filter: $(PEP_FILTER_THRESHOLD) threshold zeroed $(n_filt) of $(n_filt + n_kept) rows ($(pct)%); $(n_kept) rows kept"
     end
 
     topk, dicts = _compute_twin_runs(file_pid, file_s1)
