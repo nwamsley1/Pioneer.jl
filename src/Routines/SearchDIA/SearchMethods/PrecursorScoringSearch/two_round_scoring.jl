@@ -23,8 +23,9 @@
 # change KNN_AGG to :mean, :median, or :quantile (with KNN_Q). Column name auto-
 # derives (e.g. :knn10_median, :knn10_q75).
 const KNN_K = 5
-const KNN_AGG = :mean      # :mean | :median | :quantile
-const KNN_Q = 0.75f0       # only used when KNN_AGG === :quantile
+const KNN_SCOPE = :all_runs   # :nearest_k | :all_runs — with :all_runs, KNN_K is ignored.
+const KNN_AGG = :max          # :mean | :median | :quantile | :max
+const KNN_Q = 0.75f0          # only used when KNN_AGG === :quantile
 # PEP filter on round-1 s1 before the cross-run feature computation. 1.0 = off.
 const PEP_FILTER_THRESHOLD = 1.0
 const PEP_FILTER_N_BINS = 100
@@ -32,9 +33,13 @@ const PEP_FILTER_N_BINS = 100
 # row inject a paired shadow of the opposite class carrying the source's other
 # features but the ORIGINAL row's mbr_score. See TWO_ROUND_SCORING.md.
 const SHADOW_DECOY_MODE = :symmetric   # :none | :symmetric
-const KNN_COL = KNN_AGG === :quantile ?
-    Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))") :
+const KNN_COL = if KNN_SCOPE === :all_runs
+    Symbol("global_$(KNN_AGG)")   # :global_mean, :global_max, ...
+elseif KNN_AGG === :quantile
+    Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))")
+else
     Symbol("knn$(KNN_K)_$(KNN_AGG)")
+end
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
 
@@ -134,11 +139,12 @@ function log_pass_importance(pass, label::String; topn::Int = 30)
     return nothing
 end
 
-# Top-K most-similar runs per file via cosine similarity of the per-file s1 profiles
-# (profile[file] = vector of best-per-precursor s1 over the precursor vocabulary,
-# absent = 0). Returns (topk, dicts) where topk[f] is a length-KNN_K Vector{Int} of
-# neighbor file indices sorted descending by similarity (0 for slots with no valid
-# neighbor) and dicts[f] maps precursor_idx -> s1 for lookups.
+# Neighbor selection per file. Returns (topk, dicts) where topk[f] is a Vector{Int}
+# of neighbor file indices (0 for slots with no valid neighbor) and dicts[f] maps
+# precursor_idx -> s1 for lookups. Dispatch:
+#   KNN_SCOPE === :nearest_k: top-KNN_K by cosine similarity of s1 profiles (per-file
+#     profile = best-per-precursor s1 over the precursor vocabulary, absent = 0).
+#   KNN_SCOPE === :all_runs:  every non-self file, unranked. KNN_K is ignored.
 function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
                             file_s1::Vector{Vector{Float32}})
     nf = length(file_pid)
@@ -147,6 +153,10 @@ function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
         d = Dict{UInt32,Float32}(); pid = file_pid[f]; s1 = file_s1[f]
         @inbounds for i in eachindex(pid); d[pid[i]] = s1[i]; end
         dicts[f] = d
+    end
+    if KNN_SCOPE === :all_runs
+        topk = [Int[g for g in 1:nf if g != f] for f in 1:nf]
+        return topk, dicts
     end
     # Gram matrix of profile dot-products (G[f,f] = squared L2 norm).
     G = zeros(Float64, nf, nf)
@@ -232,7 +242,8 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     topk, dicts = _compute_twin_runs(file_pid, file_s1)
 
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
-    scratch = Vector{Float32}(undef, KNN_K)   # reused per row for the median path
+    max_neighbors = KNN_SCOPE === :all_runs ? max(nf - 1, 1) : KNN_K
+    scratch = Vector{Float32}(undef, max_neighbors)   # reused per row for the median/quantile path
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
@@ -270,8 +281,18 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
                 km[i] = nvalid > 0 ? _quantile_first_n!(scratch, nvalid, KNN_Q) : 0.0f0
                 di[i] = abs(irt[i] - ref_irt[pid[i]])
             end
+        elseif KNN_AGG === :max
+            @inbounds for i in 1:n
+                m = 0.0f0
+                for d in ndicts
+                    v = get(d, pid[i], 0.0f0)
+                    v > m && (m = v)
+                end
+                km[i] = m   # 0 if nvalid == 0
+                di[i] = abs(irt[i] - ref_irt[pid[i]])
+            end
         else
-            error("KNN_AGG must be :mean, :median, or :quantile (got $KNN_AGG)")
+            error("KNN_AGG must be :mean, :median, :quantile, or :max (got $KNN_AGG)")
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
@@ -280,10 +301,14 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         main[!, :delta_irt] = di
         writeArrow(file_paths[f], main)
     end
-    n_full    = count(nb -> all(>(0), nb), topk)
-    n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
     agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
-    @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
+    if KNN_SCOPE === :all_runs
+        @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) over all $(nf-1) other runs) + delta_irt to $nf files"
+    else
+        n_full    = count(nb -> all(>(0), nb), topk)
+        n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
+        @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
+    end
     return nothing
 end
 
