@@ -92,7 +92,7 @@ jobs:
           echo "$CLUSTER_USERNAME"
           echo "$CLUSTER_RUN_ROOT"
 
-          remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage3/fs1/d.goldfarb/Active/Automation/Pioneer}"
           remote_run_root="${remote_run_root_raw%/}/runs"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
@@ -722,7 +722,7 @@ jobs:
           set -euo pipefail
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
-          run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_root_raw="${CLUSTER_RUN_ROOT:-/storage3/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
           develop_dir="${run_root_raw%/}/metrics/develop"
 
@@ -765,7 +765,7 @@ jobs:
           set -euo pipefail
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
-          run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_root_raw="${CLUSTER_RUN_ROOT:-/storage3/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
           release_dir="${run_root_raw%/}/metrics/release/${release_tag}"
