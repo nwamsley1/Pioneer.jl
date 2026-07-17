@@ -60,79 +60,8 @@ function aggregate_per_file!(refs::Vector{PSMFileReference})
 end
 
 #==========================================================
-Additional Interface Functions
-==========================================================#
-
-"""
-    logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
-
-Combine probabilities using a log-odds average.
-The final value is converted back to a probability via the logistic function.
-"""
-function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
-    isempty(probs) && return 0.0f0
-    n = min(length(probs), top_n)
-    # Sort descending and select the top n probabilities
-    sorted = sort(probs; rev=true)
-    selected = sorted[1:n]
-    eps = 1f-6
-    # Convert to log-odds, clip to avoid Inf or negative contribution
-    logodds = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
-    avg = sum(logodds) / n
-    return 1.0f0 / (1 + exp(-avg))
-end
-
-#==========================================================
 Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
 ==========================================================#
-
-"""
-    build_precursor_global_prob_dicts(refs, sqrt_n_runs, n_precursors)
-    → (global_prob_dict, target_dict)
-
-Stream per-file to build precursor_idx → global_prob dictionaries.
-Reads only (precursor_idx, prec_prob, target) via mmap.
-"""
-function build_precursor_global_prob_dicts(
-    refs::Vector{PSMFileReference},
-    sqrt_n_runs::Int,
-    n_precursors::Int
-)
-    # Pre-allocate accumulation dictionaries with known upper bound
-    prob_acc = Dict{UInt32, Vector{Float32}}()
-    sizehint!(prob_acc, n_precursors)
-    target_dict = Dict{UInt32, Bool}()
-    sizehint!(target_dict, n_precursors)
-
-    for ref in refs
-        # prec_prob lives in a sidecar after aggregate_per_file!; pull it
-        # from wherever it's registered.
-        cols_df = materialize_columns(ref, [:precursor_idx, :prec_prob, :target])
-        n = nrow(cols_df)
-        n == 0 && continue
-        prec_ids = cols_df.precursor_idx
-        prec_probs = cols_df.prec_prob
-        targets = cols_df.target
-
-        @inbounds for i in 1:n
-            pid = prec_ids[i]
-            if !haskey(prob_acc, pid)
-                prob_acc[pid] = Float32[]
-                target_dict[pid] = targets[i]
-            end
-            push!(prob_acc[pid], prec_probs[i])
-        end
-    end
-
-    # Compute logodds per precursor
-    global_prob_dict = Dict{UInt32, Float32}()
-    sizehint!(global_prob_dict, length(prob_acc))
-    for (pid, probs) in prob_acc
-        global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
-    end
-
-    return global_prob_dict, target_dict
-end
 
 """
     build_global_qval_dict_from_scores(score_dict, target_dict, fdr_scale) → Dict{UInt32, Float32}
@@ -147,7 +76,7 @@ function build_global_qval_dict_from_scores(
     n = length(score_dict)
     pids = collect(keys(score_dict))
     scores = Float32[score_dict[pid] for pid in pids]
-    targets = Bool[get(target_dict, pid, false) for pid in pids]
+    targets = Bool[target_dict[pid] for pid in pids]
 
     # Sort descending by score
     perm = sortperm(scores; rev=true)
@@ -183,7 +112,7 @@ function build_global_pep_dict_from_scores(
     n = length(score_dict)
     pids = collect(keys(score_dict))
     scores = Float32[score_dict[pid] for pid in pids]
-    targets = Bool[get(target_dict, pid, false) for pid in pids]
+    targets = Bool[target_dict[pid] for pid in pids]
 
     peps = Vector{Float32}(undef, n)
     get_PEP!(scores, targets, peps; doSort=true, fdr_scale_factor=fdr_scale)
