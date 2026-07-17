@@ -20,17 +20,21 @@
 # ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
 # K for the k-nearest-neighbor cross-run feature (aggregation of top-K neighbors'
 # same-precursor round-1 scores). To sweep K, change KNN_K. To switch aggregation,
-# change KNN_AGG to :mean or :median. Column name auto-derives (e.g. :knn10_median).
+# change KNN_AGG to :mean, :median, or :quantile (with KNN_Q). Column name auto-
+# derives (e.g. :knn10_median, :knn10_q75).
 const KNN_K = 10
-const KNN_AGG = :median  # :mean | :median
-const KNN_COL = Symbol("knn$(KNN_K)_$(KNN_AGG)")
+const KNN_AGG = :quantile  # :mean | :median | :quantile
+const KNN_Q = 0.75f0       # only used when KNN_AGG === :quantile
+const KNN_COL = KNN_AGG === :quantile ?
+    Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))") :
+    Symbol("knn$(KNN_K)_$(KNN_AGG)")
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
 
-# Median of the first `n` elements of `buf` via in-place insertion sort. Allocation-
-# free — the caller owns `buf` and reuses it across rows. Insertion sort is fine for
-# K ≤ 16 (which is all any reasonable KNN_K sweep).
-@inline function _median_first_n!(buf::AbstractVector{Float32}, n::Int)
+# Type-7 quantile of the first `n` elements of `buf` via in-place insertion sort.
+# Allocation-free (caller owns `buf`). Insertion sort is fine for K ≤ 16. Passing
+# q=0.5f0 gives the standard median.
+@inline function _quantile_first_n!(buf::AbstractVector{Float32}, n::Int, q::Float32)
     @inbounds for i in 2:n
         v = buf[i]; j = i
         while j > 1 && buf[j-1] > v
@@ -38,8 +42,13 @@ const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
         end
         buf[j] = v
     end
-    return @inbounds isodd(n) ? buf[(n+1) >>> 1] :
-                                (buf[n >>> 1] + buf[(n >>> 1) + 1]) * 0.5f0
+    n == 1 && return @inbounds buf[1]
+    h  = 1f0 + Float32(n - 1) * q          # 1-indexed fractional position
+    lo = floor(Int, h)
+    lo >= n && return @inbounds buf[n]
+    lo <  1 && return @inbounds buf[1]
+    frac = h - Float32(lo)
+    return @inbounds buf[lo] + frac * (buf[lo+1] - buf[lo])
 end
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
@@ -173,11 +182,19 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
                 for k in 1:nvalid
                     scratch[k] = get(ndicts[k], pid[i], 0.0f0)
                 end
-                km[i] = nvalid > 0 ? _median_first_n!(scratch, nvalid) : 0.0f0
+                km[i] = nvalid > 0 ? _quantile_first_n!(scratch, nvalid, 0.5f0) : 0.0f0
+                di[i] = abs(irt[i] - ref_irt[pid[i]])
+            end
+        elseif KNN_AGG === :quantile
+            @inbounds for i in 1:n
+                for k in 1:nvalid
+                    scratch[k] = get(ndicts[k], pid[i], 0.0f0)
+                end
+                km[i] = nvalid > 0 ? _quantile_first_n!(scratch, nvalid, KNN_Q) : 0.0f0
                 di[i] = abs(irt[i] - ref_irt[pid[i]])
             end
         else
-            error("KNN_AGG must be :mean or :median (got $KNN_AGG)")
+            error("KNN_AGG must be :mean, :median, or :quantile (got $KNN_AGG)")
         end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
@@ -188,6 +205,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     end
     n_full    = count(nb -> all(>(0), nb), topk)
     n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
-    @user_info "two-round: wrote $(KNN_COL) ($(KNN_AGG) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
+    agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
+    @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
     return nothing
 end
