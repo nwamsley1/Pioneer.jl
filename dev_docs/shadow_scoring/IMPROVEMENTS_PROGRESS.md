@@ -107,6 +107,35 @@ disagreement can only withhold a transfer, never add one (shadow_hel_guard.pdf, 
   where shadow+global_max leaks +697 and MULTI leaks +1,182–2,494 — there the gate has real leak to
   cut toward the floor while (ideally) keeping the boost.
 
+### #twin_score alongside global_max (Avenue 1, both grafted)
+
+`TWIN_SCORE=1` → features `[global_max, twin_score, delta_irt]`, graft BOTH global_max and
+twin_score (keeps the 1:1 marginal, unlike raw cluster). twin_score = round-1 s1 in the single
+most-cosine-similar run. Hypothesis: it's a leak discriminator (a false transfer's twin is a
+same-condition run where the precursor is absent → twin_score≈0).
+
+| dataset | variant | IDs | vs base | leak | round-2 twin_score |
+|---|---|---|---|---|---|
+| KEAP1 | shadow+global_max | 705,821 | +6.4% | 1 | — |
+| KEAP1 | **TWIN_SCORE** | 707,251 | **+6.6%** | **1** | 0.9% |
+| EWZ | shadow+global_max | 1,935,183 | +4.9% | +931 | — |
+| EWZ | **TWIN_SCORE** | 1,951,516 | **+5.8%** | **+1,149** | 2.0% |
+
+- **Safe everywhere, small breadth win**: KEAP1 +6.6% vs +6.4% at the SAME leak floor (1); EWZ +5.8%
+  vs +4.9%. Feature IS used (0.9% KEAP1, 2.0% EWZ). Grafting kept it leak-controlled — leak 1 on
+  KEAP1, NOT the 6 the raw-cluster variants leaked. The "regularize what you use" design holds.
+- **BUT it did NOT reduce leak — hypothesis partly wrong.** EWZ leak rose +931→+1,149 (scales with
+  the extra IDs; leak/1000-new-IDs 10.3→10.7, ~flat). twin_score only discriminates CONDITION-CROSSING
+  transfer. Neither dataset's residual leak is that kind: KEAP1 has no run structure (twin is a
+  coin-flip, can be a WT run); EWZ's residual yeast leak is SYSTEMATIC-REPRODUCIBLE (~480 yeast
+  precursors matching human runs in 14–17/20 HO runs — a false transfer's HO-run twin ALSO carries
+  the false match → twin_score high, not 0). So the twin can't veto them.
+- **Verdict: twin_score is a safe incremental booster (≈ +0.2–0.9 pp over shadow+global_max, leak
+  controlled), not a leak-reducing lever on these datasets.** At matched leak it's dominated on EWZ
+  by MULTI+gate-global (+9.3% at +1,168 vs twin's +5.8% at +1,149) — but that variant is unsafe on
+  few-run data (KEAP1 leak 6), whereas twin_score stays safe across run counts. Reasonable as a small,
+  universally-safe upgrade to the shadow+global_max default; not the breakthrough we hoped.
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
