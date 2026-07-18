@@ -1,0 +1,98 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[strings]{underscore}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\definecolor{accent}{RGB}{20,80,140}
+\titleformat{\section}{\large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\title{\vspace{-1.4cm}\textbf{The \texttt{shadow\_hel} Guard}\\[2pt]
+\large Gating a cross-run transfer by spectral agreement}
+\author{}\date{\today}
+\begin{document}
+\maketitle\vspace{-1.1cm}
+
+\section{Setup}
+Let $s_1(p,r)$ be the round-1 (per-PSM) out-of-fold score for precursor $p$ in run $r$. The cross-run
+``does this appear elsewhere?'' feature is
+\[
+\mathrm{global\_max}(p,r) \;=\; \max_{r'\neq r} s_1(p,r').
+\]
+It is a strong transfer signal but a \emph{blind} one: a single confident hit in \emph{any} other run
+yields a high value, even when $p$ is truly absent from run $r$. That is the leakage it invites
+(yeast into human-only runs; a knocked-out gene into KO runs).
+
+The missing signal is \emph{spectral corroboration}. Write the top-8 smoothed fragment vector of the
+acceptor PSM as $\mathbf{a}=(a_1,\dots,a_8)$ and of its \emph{donor} (the run supplying the max,
+$r^\star=\arg\max_{r'\neq r}s_1(p,r')$) as $\mathbf{d}$. Normalize each to a probability vector,
+$\tilde a_i = a_i/\!\sum_j a_j$, $\tilde d_i = d_i/\!\sum_j d_j$, and take the Hellinger distance
+\[
+H(\mathbf{a},\mathbf{d}) \;=\; \sqrt{\tfrac12\sum_{i=1}^{8}\bigl(\sqrt{\tilde a_i}-\sqrt{\tilde d_i}\bigr)^2}\;\in[0,1],
+\qquad \text{agreement}\;\; A \;=\; 1-H \;\in[0,1].
+\]
+A \emph{true} transfer (same peptide, same fragmentation) has $A\approx1$; a \emph{false} transfer
+(acceptor is noise) has $A$ small.
+
+\section{Booster vs.\ guard}
+\textbf{Booster (current).} We hand the model $\mathrm{global\_max}$ and $\mathrm{shadow\_hel}=H$ as
+\emph{separate additive features}. Gradient boosting is free to learn any monotone response, and it
+learns roughly ``high $\mathrm{global\_max}$ \emph{and} high $A$ $\Rightarrow$ even more target-like.''
+Formally, the learned score $F$ is (weakly) increasing in \emph{both} arguments,
+\[
+\frac{\partial F}{\partial\,\mathrm{global\_max}}\ge 0,\qquad \frac{\partial F}{\partial A}\ge 0 ,
+\]
+so a large $\mathrm{global\_max}$ can still promote a row at \emph{low} $A$. Empirically this adds
+breadth but does not remove false transfers: agreement is used to \emph{add} evidence, never to
+\emph{veto} it.
+
+\textbf{Guard (proposed).} We want disagreement to be able to \emph{only subtract}. Two equivalent
+ways to impose this.
+
+\paragraph{Option 1 — gate the score.} Replace the raw feature by the \emph{gated} score
+\[
+\boxed{\;\mathrm{global\_max\_gated}(p,r) \;=\; \mathrm{global\_max}(p,r)\,\cdot\,A
+\;=\; \mathrm{global\_max}(p,r)\,\bigl(1-H(\mathbf a,\mathbf d)\bigr)\;}
+\]
+and feed \emph{that} single feature to round-2 (no separate $H$ term). Two properties make it a guard:
+\[
+0\le \mathrm{global\_max\_gated}\le \mathrm{global\_max},
+\qquad
+\mathrm{global\_max\_gated}\xrightarrow[H\to 1]{}0 .
+\]
+A borrowed score counts only to the extent the spectra agree. The residual false transfers are exactly
+the pairs with \emph{large} $\mathrm{global\_max}$ (a real donor exists) but \emph{large} $H$ (the
+acceptor does not match it); the gate multiplies those toward $0$, so they can no longer be rescued.
+A true transfer has $H\!\approx\!0$, hence $A\!\approx\!1$, and is passed through essentially untouched.
+
+\paragraph{Option 2 — monotonic constraint.} Keep $H$ as a feature but constrain the trainer so the
+learned score is monotonically \emph{non-increasing} in it,
+\[
+\frac{\partial F}{\partial H}\;\le\;0 \quad\text{everywhere}
+\]
+(LightGBM \code{monotone\_constraints}$=-1$ on that column). This is the same statement---disagreement
+can only lower the prediction---without hand-building the product; it lets the model choose \emph{how}
+strongly $H$ discounts, but never lets it help.
+
+\section{Why this is the right lever}
+\textbf{It targets the exact residual.} On the EWZ yeast/human benchmark, the selective-graft variant
+leaves $+1{,}182$ yeast identifications leaking into the human-only runs. Every such leak is a
+$\langle$high $\mathrm{global\_max}$, low $A\rangle$ pair by construction (the yeast donor is real; the
+human-only acceptor is noise). Option~1 maps precisely this set toward $0$ while leaving the
+$+13{,}156$ genuine yeast gains (high $A$) intact---so it should push the leak toward the $+697$ floor
+of plain \code{shadow+global\_max} \emph{without} sacrificing the $+10.4\%$ breadth.
+
+\textbf{It composes with the shadow-decoy regularization.} The symmetric shadow-decoy makes each
+cross-run feature's target/decoy marginal $1{:}1$, forcing \emph{joint} use with the base features.
+The guard is complementary: regularization stops the model from trusting the transfer score
+\emph{alone}; the gate stops the transfer score from being \emph{large at all} when the spectral
+evidence is absent. One acts on the estimator, the other on the feature.
+
+\textbf{Interpretation.} The booster asks ``is there evidence elsewhere?'' The guard asks ``is there
+evidence elsewhere \emph{that matches what is actually in this run}?'' Only the second question is
+false-transfer-safe, because a borrowed score can substitute for evidence, but a borrowed score
+\emph{scaled by in-run spectral agreement} cannot exceed the in-run evidence.
+
+\end{document}
