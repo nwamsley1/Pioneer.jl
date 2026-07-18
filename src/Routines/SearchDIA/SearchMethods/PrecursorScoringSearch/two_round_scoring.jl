@@ -59,6 +59,15 @@ const SHADOW_HEL_COL = Symbol("$(KNN_COL)_shadow_hel")
 gated_hel_enabled() = get(ENV, "GATED_HEL", "") == "1"
 const GATED_COL = Symbol("$(KNN_COL)_gated")
 
+# TWIN_SCORE mode (ENV["TWIN_SCORE"]=1): add `twin_score` alongside global_max, BOTH grafted.
+# twin_score = round-1 s1 of the precursor in its SINGLE most-cosine-similar run (its "twin").
+# Unlike raw cluster features it is grafted (regularized), keeping the 1:1 marginal guarantee.
+# It is a leak DISCRIMINATOR by construction: a false transfer's twin is a same-condition run
+# where the precursor is absent -> twin_score~0 (decoy-like) even when global_max~1 (borrowed
+# from a different-condition run). Historically the strongest round-2 feature. See TWO_ROUND_SCORING.md.
+twin_score_enabled() = get(ENV, "TWIN_SCORE", "") == "1"
+const TWIN_COL = :twin_score
+
 # MULTI_FEATURE mode (ENV["MULTI_FEATURE"]=1): compute several cross-run summaries at once and let
 # round-2 select. Safe BECAUSE of the shadow-decoy regularization — each feature's target/decoy
 # marginal is forced to 1:1, so the LGBM can't over-trust any single one; it uses whichever add
@@ -81,6 +90,7 @@ two_round_features() =
     gated_hel_enabled()     ? [GATED_COL, :delta_irt] :
     (multi_feature_enabled() && gate_global_enabled()) ? vcat(MULTI_GATED_COLS, [:delta_irt]) :
     multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
+    twin_score_enabled()    ? [KNN_COL, TWIN_COL, :delta_irt] :
     shadow_hel_enabled()    ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
                               [KNN_COL, :delta_irt]
 
@@ -96,6 +106,7 @@ _mbr_graft_cols() =
     multi_feature_enabled() ?
         (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
                                                        Tuple(c for c in MULTI_FEATURE_COLS)) :
+    twin_score_enabled()    ? (KNN_COL, TWIN_COL) :
     shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
                               (KNN_COL,)
 
@@ -400,10 +411,14 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
     max_neighbors = KNN_SCOPE === :all_runs ? max(nf - 1, 1) : KNN_K
     scratch = Vector{Float32}(undef, max_neighbors)   # reused per row for the median/quantile path
+    # twin_score needs the SINGLE most-cosine-similar run per file (topk above is unranked under
+    # :all_runs), so resolve it separately via the cosine-topk helper (top-1).
+    twin_topk = twin_score_enabled() ? _cosine_topk(dicts, 1) : Vector{Int}[]
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
         sh = (shadow_hel_enabled() || gated_hel_enabled()) ? Vector{Float32}(undef, n) : Float32[]
+        ts = twin_score_enabled() ? Vector{Float32}(undef, n) : Float32[]
         # Resolve up to KNN_K neighbor dicts (contiguous from front since sorted-descending;
         # a 0 slot means no more valid neighbors). Track the run index of each for the donor lookup.
         ndicts = Dict{UInt32,Float32}[]; nruns = Int[]
@@ -466,11 +481,19 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
                                 get(frag_dicts[nruns[bo]], p, ntuple(_ -> 0.0f0, 8)))
             end
         end
+        # twin_score: s1 of the precursor in the single most-similar run (0 if absent / no twin).
+        if twin_score_enabled()
+            tw = isempty(twin_topk[f]) ? 0 : twin_topk[f][1]
+            @inbounds for i in 1:n
+                ts[i] = tw == 0 ? 0.0f0 : get(dicts[tw], pid[i], 0.0f0)
+            end
+        end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
             error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
         main[!, KNN_COL]    = km
         main[!, :delta_irt] = di
+        twin_score_enabled() && (main[!, TWIN_COL] = ts)
         shadow_hel_enabled() && (main[!, SHADOW_HEL_COL] = sh)
         # GATED_HEL guard: global_max_gated = global_max * (1 - shadow_hel). Spectral disagreement
         # (high Hellinger) can only withhold the transfer, never add it. See shadow_hel_guard.pdf.
