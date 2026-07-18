@@ -51,8 +51,27 @@ two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 # same compiled build via ENV["SHADOW_HEL"]=1, without a recompile.
 shadow_hel_enabled() = get(ENV, "SHADOW_HEL", "") == "1"
 const SHADOW_HEL_COL = Symbol("$(KNN_COL)_shadow_hel")
-two_round_features() = shadow_hel_enabled() ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
-                                              [KNN_COL, :delta_irt]
+
+# MULTI_FEATURE mode (ENV["MULTI_FEATURE"]=1): compute several cross-run summaries at once and let
+# round-2 select. Safe BECAUSE of the shadow-decoy regularization — each feature's target/decoy
+# marginal is forced to 1:1, so the LGBM can't over-trust any single one; it uses whichever add
+# signal jointly with the base features. All of these are grafted onto the shadows.
+#   global_max/global_mean : max/mean s1 over ALL other runs
+#   cluster_max/cluster_mean: max/mean s1 over the top-KNN_K cosine-similar (condition) runs
+#   shadow_hel             : donor<->acceptor top-8 fragment Hellinger (donor = global_max run)
+multi_feature_enabled() = get(ENV, "MULTI_FEATURE", "") == "1"
+const MULTI_FEATURE_COLS = [:global_max, :global_mean, :cluster_max, :cluster_mean, :shadow_hel]
+
+two_round_features() =
+    multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
+    shadow_hel_enabled()    ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
+                              [KNN_COL, :delta_irt]
+
+# Cross-run mbr feature columns to graft onto shadow twins (so each stays 1:1-regularized).
+_mbr_graft_cols() =
+    multi_feature_enabled() ? Tuple(c for c in MULTI_FEATURE_COLS) :
+    shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
+                              (KNN_COL,)
 
 # Hellinger distance in [0,1] between two 8-fragment intensity vectors (each L1-normalized to a
 # probability, then sqrt). 1.0 (max distance) when either vector has no positive intensity.
@@ -226,6 +245,31 @@ columns into the per-file fold Arrow files, in place. Must run after round-1
 Fallback: if fewer than K other runs exist, the mean is taken over the neighbors that
 do exist. If none exist (single-file experiment), the feature is 0.
 """
+# Per-file top-K cosine-similar runs (condition neighbors) on the s1 profiles. Mirrors the
+# Gram-matrix path in _compute_twin_runs; used by MULTI_FEATURE for the cluster_* features.
+function _cosine_topk(dicts::Vector{Dict{UInt32,Float32}}, K::Int)
+    nf = length(dicts)
+    G = zeros(Float64, nf, nf)
+    for f in 1:nf, g in f:nf
+        small, big = length(dicts[f]) <= length(dicts[g]) ? (dicts[f], dicts[g]) : (dicts[g], dicts[f])
+        acc = 0.0
+        for (p, v) in small; acc += Float64(v) * Float64(get(big, p, 0.0f0)); end
+        G[f, g] = acc; G[g, f] = acc
+    end
+    out = [Int[] for _ in 1:nf]
+    for f in 1:nf
+        nrm = sqrt(G[f, f]); nrm <= 0 && continue
+        cand = Tuple{Int,Float64}[]
+        for g in 1:nf
+            (g == f || G[g, g] <= 0) && continue
+            push!(cand, (g, G[f, g] / (nrm * sqrt(G[g, g]))))
+        end
+        sort!(cand; by = x -> -x[2])
+        out[f] = [c[1] for c in first(cand, min(K, length(cand)))]
+    end
+    return out
+end
+
 function write_two_round_feature_columns!(file_paths::Vector{String})
     nf = length(file_paths)
     file_pid = Vector{Vector{UInt32}}(undef, nf)
@@ -254,7 +298,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
         # Shadow spectrum: top-8 smoothed fragment intensities (guarded; zeros if columns absent).
         fr = zeros(Float32, length(pid), 8); fd = Dict{UInt32,NTuple{8,Float32}}()
-        if shadow_hel_enabled() && all(c -> hasproperty(tbl, c), _FRAG_COLS)
+        if (shadow_hel_enabled() || multi_feature_enabled()) && all(c -> hasproperty(tbl, c), _FRAG_COLS)
             @inbounds for (k, c) in enumerate(_FRAG_COLS)
                 col = getproperty(tbl, c)
                 for i in eachindex(pid); fr[i, k] = Float32(col[i]); end
@@ -280,6 +324,47 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     end
 
     topk, dicts = _compute_twin_runs(file_pid, file_s1)
+
+    # MULTI_FEATURE: compute several cross-run summaries at once (all shadow-regularized downstream).
+    if multi_feature_enabled()
+        clus_topk = _cosine_topk(dicts, KNN_K)   # per-file top-K cosine-similar (condition) runs
+        for f in 1:nf
+            pid = file_pid[f]; irt = file_irt[f]; n = length(pid); fr = file_frag[f]
+            gmax = Vector{Float32}(undef, n); gmean = Vector{Float32}(undef, n)
+            cmax = Vector{Float32}(undef, n); cmean = Vector{Float32}(undef, n)
+            sh   = Vector{Float32}(undef, n); di    = Vector{Float32}(undef, n)
+            all_runs = [g for g in 1:nf if g != f]; clus = clus_topk[f]
+            @inbounds for i in 1:n
+                p = pid[i]
+                mx = 0.0f0; sm = 0.0f0; cnt = 0; dmx = -1.0f0; donor = 0
+                for g in all_runs
+                    v = get(dicts[g], p, -1.0f0)
+                    v < 0.0f0 && continue
+                    v > mx && (mx = v); sm += v; cnt += 1
+                    v > dmx && (dmx = v; donor = g)
+                end
+                gmax[i] = mx; gmean[i] = cnt > 0 ? sm / cnt : 0.0f0
+                cm = 0.0f0; cs = 0.0f0; ccnt = 0
+                for g in clus
+                    v = get(dicts[g], p, -1.0f0)
+                    v < 0.0f0 && continue
+                    v > cm && (cm = v); cs += v; ccnt += 1
+                end
+                cmax[i] = cm; cmean[i] = ccnt > 0 ? cs / ccnt : 0.0f0
+                sh[i] = donor == 0 ? 1.0f0 :
+                    _hellinger8(ntuple(k -> fr[i, k], 8), get(frag_dicts[donor], p, ntuple(_ -> 0.0f0, 8)))
+                di[i] = abs(irt[i] - ref_irt[p])
+            end
+            main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
+            nrow(main) == n || error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
+            main[!, :global_max] = gmax; main[!, :global_mean] = gmean
+            main[!, :cluster_max] = cmax; main[!, :cluster_mean] = cmean
+            main[!, :shadow_hel] = sh;   main[!, :delta_irt] = di
+            writeArrow(file_paths[f], main)
+        end
+        @user_info "two-round MULTI_FEATURE: wrote global_{max,mean} + cluster_{max,mean} (top-$KNN_K cosine) + shadow_hel + delta_irt to $nf files"
+        return
+    end
 
     # Pass B: per file, compute the two features and rewrite the Arrow with them.
     max_neighbors = KNN_SCOPE === :all_runs ? max(nf - 1, 1) : KNN_K
@@ -476,7 +561,7 @@ function inject_shadow_decoys!(file_paths::Vector{String})
         # Overwrite the cross-run transfer feature column(s) with the ORIGINAL row's value(s),
         # so each feature's target/decoy marginal is 1:1 (forces joint use with base features).
         # Both KNN_COL (the score) and SHADOW_HEL_COL (the donor<->acceptor agreement) are grafted.
-        for mbr_col in (shadow_hel_enabled() ? (KNN_COL, SHADOW_HEL_COL) : (KNN_COL,))
+        for mbr_col in _mbr_graft_cols()
             hasproperty(main, mbr_col) && (shadows[!, mbr_col] = main[mbr_positions, mbr_col])
         end
 
