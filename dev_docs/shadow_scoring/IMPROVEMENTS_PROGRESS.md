@@ -92,8 +92,14 @@ disagreement can only withhold a transfer, never add one (shadow_hel_guard.pdf, 
 | shadow + global_max | 705,821 (+6.4%) | 140,957 | 1 | global_max 2.8% |
 | shadow + shadow_hel | 714,718 (+7.7%) | 141,474 | 2 | gm 2.8%, shadow_hel 1.5% |
 | **GATED_HEL guard** | 698,774 (+5.3%) | 140,167 | 1 | **global_max_gated 2.7%** |
+| MULTI + gate-global | 744,208 (+12.2%) | 142,340 | 6 | global_mean_gated + RAW cluster |
 
 - Feature IS used (2.7%, ≈ plain global_max's 2.8%); the single gated column replaced the pair.
+- **MULTI + gate-global on KEAP1**: biggest breadth (+12.2%) but leak rises to 6. On only 6 runs
+  cluster ≈ global (not enough runs to be condition-scoped), so leaving `cluster_*` RAW reintroduces
+  the leak the gate removed from the global channel — the raw cluster channel now carries it. The
+  variant is safe *where cluster is genuinely condition-scoped* (many-run EWZ, below); on few-run
+  data raw cluster is itself a leak source. (Still 6/142k = noise-level @1% FDR, but relatively up.)
 - On KEAP1 the gate is **NOT a win**: it costs breadth (+5.3% vs +6.4%) for **no safety gain** — the
   leak was already at the floor (1). A subtract-only guard can only lose where there's no leak to
   remove. Some true WT-run transfers with imperfect spectral agreement (A<1) got damped too.
@@ -188,3 +194,26 @@ replaces the global_max+shadow_hel pair), so its fair head-to-head is **shadow+g
   channel WITHIN the multi-feature model** (gate global_max/global_mean, leave cluster_* raw) — that
   should keep selective-graft's +10.7% breadth from the leak-safe cluster features while applying the
   precision gate only where leakage originates. NEXT: MULTI + gated-global variant.
+
+### EWZ — MULTI + gate-global (ENV `MULTI_FEATURE=1 GATE_GLOBAL=1`)
+
+Gate ONLY the global channel inside the multi-feature model: feed `global_{max,mean}_gated =
+global_*·(1-shadow_hel)` + RAW `cluster_{max,mean}` + `delta_irt`; graft the gated global cols only.
+
+| variant | total | Δ% | yeast real | yeast LEAK | Δleak | leak/real-gain |
+|---|---|---|---|---|---|---|
+| baseline (MBR off) | 1,844,621 | — | 95,345 | 2,355 | — | — |
+| GATED single feature | 1,898,391 | +2.9% | 98,587 | 2,683 | +328 | 10.1% |
+| MULTI selective graft | 2,041,759 | +10.7% | 108,766 | 3,729 | +1,374 | 10.2% |
+| cluster_max | 2,035,693 | +10.4% | 107,105 | 3,637 | +1,282 | 10.9% |
+| **MULTI + gate-global** | 2,015,772 | **+9.3%** | 107,472 | 3,523 | **+1,168** | **9.6%** |
+
+- **Fixes the single gate's breadth collapse**: +2.9% → **+9.3%** (the RAW cluster features carry the
+  breadth; the gate only precision-filters the global channel). Round-2 leans on `global_mean_gated`
+  (1.9%) + cluster features; `global_max_gated` small (0.1%).
+- **Safer than multi_sel AND better precision**: leak +1,168 vs +1,374 (−15%), leak/real-gain 9.6%
+  vs 10.2% — the best precision of the high-breadth variants.
+- **The tradeoff is real but modest**: gives up ~1.4 pp breadth (26k rows) vs multi_sel for the
+  safety/precision gain. It sits exactly where predicted — between multi_sel (max breadth) and the
+  pure gate (max safety). Good default when false transfer is the priority; multi_sel when raw
+  completeness is.
