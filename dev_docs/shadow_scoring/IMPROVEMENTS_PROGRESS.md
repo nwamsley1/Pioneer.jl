@@ -32,9 +32,30 @@ Note: `global_max` is written at the **fold-file** level ("11 other runs / 12 fi
 is NOT a leak — precursors are uniquely fold-assigned, so a precursor appears once per real run
 and `max over other fold-files` == `max over its other-run instances`.
 
+## Results log
+
+### #1 cross-run shadow-spectrum agreement (`<KNN_COL>_shadow_hel`) — KEAP1 KO
+
+| config | rows @ q<.01 | unique | KEAP1→KO | round-2 gain |
+|---|---|---|---|---|
+| predicted baseline | 660,369 | 137,859 | 0 | — |
+| shadow + global_max | 701,304 (+6.2%) | 139,563 | 1 | global_max 2.8% |
+| + shadow-spectrum agreement | 710,222 (+7.6%) | 140,075 | 2 | gm 2.8%, **shadow_hel 1.5%** |
+
+- **Completeness +1.3% rows** over plain shadow+global_max (the win we want); feature IS used (1.5% gain).
+- Did **NOT** reduce leakage (1→2, both noise-level @1% FDR over ~119k). The LGBM used the agreement
+  feature as another *borrow* signal, not a *reject* guard, as hoped.
+- Modest because KEAP1 has only 6 runs (few donors, thin cross-run spectral structure). The real
+  test is a many-run dataset (FTR-27 / 60-file yeast KO) where the agreement signal is rich.
+- FDR-A (real-only) 722,596 vs FDR-B (shadow-inclusive) 698,093.
+
+TODO next: (a) run #1 on a many-run dataset; (b) consider making shadow_hel a *guard* not a booster
+(e.g. an explicit low-agreement penalty / interaction with global_max); (c) proceed to #2 condition-aware scope.
+
 ## Improvement plan (priority order)
 
-1. **Cross-run shadow-spectrum agreement feature** (in progress). Alongside `global_max`, add the
+1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
+   many-run test). Alongside `global_max`, add the
    **donor↔acceptor top-8 smoothed-fragment Hellinger**: for each (precursor, run), compare this
    run's shadow spectrum to the best-donor run's (the run supplying the global_max). A *true*
    transfer (same real peptide) → high spectral agreement; a *false* transfer (KEAP1 into a KO
