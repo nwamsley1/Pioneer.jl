@@ -136,6 +136,23 @@ same-condition run where the precursor is absent → twin_score≈0).
   few-run data (KEAP1 leak 6), whereas twin_score stays safe across run counts. Reasonable as a small,
   universally-safe upgrade to the shadow+global_max default; not the breakthrough we hoped.
 
+### #graft delta_irt (ablation) — REJECTED
+
+`GRAFT_DELTA_IRT=1` adds `:delta_irt` to the graft set (flattens its target/decoy marginal like the
+cross-run score). Tested on the base shadow+global_max path.
+
+| dataset | shadow+global_max | + graft delta_irt |
+|---|---|---|
+| KEAP1 | 705,821 (+6.4%), leak 1 | 683,728 (**+3.1%**), leak 0 |
+| EWZ | 1.935M (+4.9%), +931 leak | 1.917M (**+3.9%**), **+1,120 leak** |
+
+- **Pure downside — do NOT graft delta_irt.** KEAP1: halves the breadth (+3.1% vs +6.4%) to save 1
+  leak. EWZ: fewer IDs AND more leak. `delta_irt` is a legitimate per-row RT-consistency discriminator
+  (real precursors elute near their reference RT, decoys don't) — flattening its marginal destroys
+  real signal. It is NOT a leak vector like global_max, so it needs no regularization.
+- Confirms keeping delta_irt ungrafted, which also preserves the option to stratify decoy pairing by
+  prec_mz (Avenue 2) — grafting delta_irt would break the shadow's iRT self-consistency.
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
