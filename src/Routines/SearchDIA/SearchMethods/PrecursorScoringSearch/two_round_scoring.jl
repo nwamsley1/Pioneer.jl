@@ -41,7 +41,30 @@ else
     Symbol("knn$(KNN_K)_$(KNN_AGG)")
 end
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-const TWO_ROUND_FEATURES = [KNN_COL, :delta_irt]
+# Cross-run shadow-spectrum agreement: donor<->acceptor top-8 smoothed-fragment Hellinger.
+# For each (precursor, run), the donor is the neighbor run with the highest s1 (the run supplying
+# the KNN_COL value). A true transfer (same real peptide) -> low Hellinger (high agreement); a
+# false transfer (precursor absent in this run) -> the acceptor is noise -> high Hellinger. Gives
+# round-2 the signal KNN_COL lacks, so it can borrow breadth without leaking. Toggle with
+# SHADOW_HEL_FEATURE.
+const SHADOW_HEL_FEATURE = true
+const SHADOW_HEL_COL = Symbol("$(KNN_COL)_shadow_hel")
+const TWO_ROUND_FEATURES = SHADOW_HEL_FEATURE ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
+                                                [KNN_COL, :delta_irt]
+
+# Hellinger distance in [0,1] between two 8-fragment intensity vectors (each L1-normalized to a
+# probability, then sqrt). 1.0 (max distance) when either vector has no positive intensity.
+@inline function _hellinger8(a::NTuple{8,Float32}, b::NTuple{8,Float32})
+    sa = 0.0f0; sb = 0.0f0
+    @inbounds for k in 1:8; sa += max(a[k], 0.0f0); sb += max(b[k], 0.0f0); end
+    (sa <= 0.0f0 || sb <= 0.0f0) && return 1.0f0
+    acc = 0.0f0
+    @inbounds for k in 1:8
+        p = sqrt(max(a[k], 0.0f0) / sa); q = sqrt(max(b[k], 0.0f0) / sb)
+        acc += (p - q)^2
+    end
+    return sqrt(0.5f0 * acc)
+end
 
 # Type-7 quantile of the first `n` elements of `buf` via in-place insertion sort.
 # Allocation-free (caller owns `buf`). Insertion sort is fine for K ≤ 16. Passing
@@ -207,8 +230,13 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     file_s1  = Vector{Vector{Float32}}(undef, nf)
     file_irt = Vector{Vector{Float32}}(undef, nf)
     file_tgt = Vector{Vector{Bool}}(undef, nf)  # target flag per row, for PEP filter
+    file_frag = Vector{Matrix{Float32}}(undef, nf)                    # n x 8 shadow spectrum
+    frag_dicts = Vector{Dict{UInt32,NTuple{8,Float32}}}(undef, nf)    # per run: pid -> frag8
     best_s1  = Dict{UInt32,Float32}()   # precursor -> highest s1 seen (for ref_irt)
     ref_irt  = Dict{UInt32,Float32}()   # precursor -> irt_obs at its highest-s1 instance
+    _FRAG_COLS = (:frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
+                  :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
+                  :frag7_smoothed_intensity, :frag8_smoothed_intensity)
 
     # Pass A: read slim (precursor_idx, irt_obs, s1, target) for every file; track ref_irt.
     for f in 1:nf
@@ -222,6 +250,16 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         length(s1) == length(pid) ||
             error("write_two_round_feature_columns!: sidecar row mismatch at $p")
         file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
+        # Shadow spectrum: top-8 smoothed fragment intensities (guarded; zeros if columns absent).
+        fr = zeros(Float32, length(pid), 8); fd = Dict{UInt32,NTuple{8,Float32}}()
+        if SHADOW_HEL_FEATURE && all(c -> hasproperty(tbl, c), _FRAG_COLS)
+            @inbounds for (k, c) in enumerate(_FRAG_COLS)
+                col = getproperty(tbl, c)
+                for i in eachindex(pid); fr[i, k] = Float32(col[i]); end
+            end
+            @inbounds for i in eachindex(pid); fd[pid[i]] = ntuple(k -> fr[i, k], 8); end
+        end
+        file_frag[f] = fr; frag_dicts[f] = fd
         @inbounds for i in eachindex(pid)
             if s1[i] > get(best_s1, pid[i], -1.0f0)
                 best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]
@@ -247,12 +285,13 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
+        sh = SHADOW_HEL_FEATURE ? Vector{Float32}(undef, n) : Float32[]
         # Resolve up to KNN_K neighbor dicts (contiguous from front since sorted-descending;
-        # a 0 slot means no more valid neighbors).
-        ndicts = Dict{UInt32,Float32}[]
+        # a 0 slot means no more valid neighbors). Track the run index of each for the donor lookup.
+        ndicts = Dict{UInt32,Float32}[]; nruns = Int[]
         for g in topk[f]
             g == 0 && break
-            push!(ndicts, dicts[g])
+            push!(ndicts, dicts[g]); push!(nruns, g)
         end
         nvalid = length(ndicts)
         if KNN_AGG === :mean
@@ -294,11 +333,27 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         else
             error("KNN_AGG must be :mean, :median, :quantile, or :max (got $KNN_AGG)")
         end
+        # Cross-run shadow-spectrum agreement: donor = neighbor run with the highest s1 for this
+        # precursor (the run supplying KNN_COL); Hellinger between this row's shadow spectrum and
+        # the donor's. No donor -> 1.0 (max distance / no agreement).
+        if SHADOW_HEL_FEATURE
+            fr = file_frag[f]
+            @inbounds for i in 1:n
+                p = pid[i]; bv = -1.0f0; bo = 0
+                for k in 1:nvalid
+                    v = get(ndicts[k], p, -1.0f0); v > bv && (bv = v; bo = k)
+                end
+                sh[i] = bo == 0 ? 1.0f0 :
+                    _hellinger8(ntuple(k -> fr[i, k], 8),
+                                get(frag_dicts[nruns[bo]], p, ntuple(_ -> 0.0f0, 8)))
+            end
+        end
         main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
         nrow(main) == n ||
             error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
         main[!, KNN_COL]    = km
         main[!, :delta_irt] = di
+        SHADOW_HEL_FEATURE && (main[!, SHADOW_HEL_COL] = sh)
         writeArrow(file_paths[f], main)
     end
     agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
@@ -416,10 +471,11 @@ function inject_shadow_decoys!(file_paths::Vector{String})
         mbr_positions = shadow_mbr_row[valid_rows]
         shadows = main[src_positions, :]
 
-        # Overwrite mbr_score column with the ORIGINAL row's value.
-        mbr_col = KNN_COL
-        if hasproperty(main, mbr_col)
-            shadows[!, mbr_col] = main[mbr_positions, mbr_col]
+        # Overwrite the cross-run transfer feature column(s) with the ORIGINAL row's value(s),
+        # so each feature's target/decoy marginal is 1:1 (forces joint use with base features).
+        # Both KNN_COL (the score) and SHADOW_HEL_COL (the donor<->acceptor agreement) are grafted.
+        for mbr_col in (SHADOW_HEL_FEATURE ? (KNN_COL, SHADOW_HEL_COL) : (KNN_COL,))
+            hasproperty(main, mbr_col) && (shadows[!, mbr_col] = main[mbr_positions, mbr_col])
         end
 
         # Set is_shadow flag (add column to `main` too if absent — schema union).
