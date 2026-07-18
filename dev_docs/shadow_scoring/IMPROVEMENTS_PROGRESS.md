@@ -115,3 +115,27 @@ TODO also: (b) make shadow_hel a *guard* not a booster (gate global_max by agree
   swap + raw-intensity read; mutation decoys break its FDR (empirical targets re-match trivially,
   mutation decoys can't), observed-derived decoys are the only self-consistent null. Parked in
   favor of this stronger shadow-scoring line.
+
+### EWZ (yeast/human two-proteome false-transfer test) — DECISIVE
+
+GO113 = Hela-only (no yeast); yeast passing there = FALSE TRANSFER (baseline floor 5,792).
+GO114 = Hela+Yeast (real yeast). Boost = total/GO114-yeast; Safety = GO113-yeast leak.
+
+| variant | total | yeast real (GO114) | yeast LEAK (GO113) | leak Δ |
+|---|---|---|---|---|
+| baseline (MBR off) | 1,836,800 | 98,877 | 5,792 | — |
+| shadow + global_max | 1,923,346 (+4.7%) | 105,395 | 6,489 | +697 |
+| MULTI uniform graft | 1,971,421 (+7.3%) | 107,621 | 8,286 | +2,494 |
+| MULTI selective graft (GRAFT_SCOPE=global) | 2,028,424 (+10.4%) | 112,033 | 6,974 | +1,182 |
+| cluster_max (earlier) | 2,023,330 (+10.2%) | 110,516 | 6,869 | +1,077 |
+| global/irt_knn NO shadow (MBR trap) | 2,025,997 (+10.3%) | 110,598 | 10,366 | +4,574 |
+
+WINNER: **MULTI selective graft** — highest boost (+10.4%, beats cluster_max) at controlled leak
+(+1,182, less than half the unregularized trap's +4,574). Validates "regularize by leakage risk,
+not uniformly": grafting only the leakage-prone global_* (leaving condition-scoped cluster_*
+ungrafted) lets the model boost from the leak-SAFE cluster features, so it needn't over-rely on
+the grafted-but-leaky global features. Selective OUT-SAFES uniform (+1,182 vs +2,494) AND boosts
+more (+10.4% vs +7.3%). shadow+global_max confirms the shadow guard works (MBR trap leak 10,366 -> 6,489).
+
+RECOMMENDATION: MULTI_FEATURE + GRAFT_SCOPE=global is the strong default — dataset-adaptive
+(cluster on mixtures, global where safe), maximum completeness at controlled false transfer.
