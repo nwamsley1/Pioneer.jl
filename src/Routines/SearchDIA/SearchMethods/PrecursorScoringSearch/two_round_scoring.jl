@@ -68,8 +68,15 @@ two_round_features() =
                               [KNN_COL, :delta_irt]
 
 # Cross-run mbr feature columns to graft onto shadow twins (so each stays 1:1-regularized).
+# In MULTI_FEATURE mode, GRAFT_SCOPE selects which get regularized:
+#   "all"    (default) — graft all cross-run features (uniform regularization).
+#   "global" — graft only the LEAKAGE-PRONE global_* (+shadow_hel) features; leave the
+#              condition-scoped cluster_* ungrafted (they're leak-resistant by scope, so the
+#              model can lean on them fully). Regularize by leakage risk, not uniformly.
 _mbr_graft_cols() =
-    multi_feature_enabled() ? Tuple(c for c in MULTI_FEATURE_COLS) :
+    multi_feature_enabled() ?
+        (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
+                                                       Tuple(c for c in MULTI_FEATURE_COLS)) :
     shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
                               (KNN_COL,)
 
