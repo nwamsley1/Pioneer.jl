@@ -153,6 +153,34 @@ cross-run score). Tested on the base shadow+global_max path.
 - Confirms keeping delta_irt ungrafted, which also preserves the option to stratify decoy pairing by
   prec_mz (Avenue 2) — grafting delta_irt would break the shadow's iRT self-consistency.
 
+### #top3 logodds (`global_top3_logodds`) alongside global_max — BEST INCREMENTAL
+
+`TOP3_LOGSUM=1` → features `[global_max, global_top3_logodds, delta_irt]`, both grafted.
+`global_top3_logodds` = sum of positive logits of the precursor's top-3 round-1 scores across other
+runs (Pioneer global-scorer style). Rewards REPRODUCIBILITY (confident in 3 runs >> 1), which
+global_max's saturating max cannot express.
+
+| dataset | variant | IDs | vs base | leak | leak/1k-new | round-2 importance |
+|---|---|---|---|---|---|---|
+| KEAP1 | shadow+global_max | 705,821 | +6.4% | 1 | — | gm 2.8% |
+| KEAP1 | twin_score | 707,251 | +6.6% | 1 | — | — |
+| KEAP1 | **top3 logodds** | 708,087 | **+6.8%** | **1** | — | **top3 1.8% > gm 1.3%** |
+| EWZ | shadow+global_max | 1.935M | +4.9% | +931 | 10.3 | — |
+| EWZ | twin_score | 1.952M | +5.8% | +1,149 | 10.7 | — |
+| EWZ | **top3 logodds** | 1.945M | **+5.4%** | **+990** | **9.9** | top3 1.9% ≈ gm 2.1% |
+
+- **Beats plain global_max on both datasets at ~the same leak.** KEAP1 +6.8% (best single-feature
+  variant) at the leak floor (1). EWZ +5.4% at +990 leak — barely above shadow+global_max's +931,
+  and the BEST leak-efficiency of any ID-booster (9.9 leak/1k-new vs global_max 10.3, twin 10.7,
+  MULTI-sel ~7 but unsafe on few-run data).
+- **The model genuinely prefers it**: on KEAP1 top3 importance (1.8%) EXCEEDS global_max (1.3%) —
+  reproducibility (multi-run confidence) is a stronger signal than best-anywhere. On EWZ ≈ tied.
+- **More leak-efficient than twin_score** (EWZ 9.9 vs 10.7): top3 recovers breadth with tighter leak.
+  twin gets marginally more raw EWZ IDs (+5.8%) but leaks more (+1,149).
+- **Verdict: `global_top3_logodds` is the strongest incremental feature found — a safe upgrade to the
+  shadow+global_max default.** NEXT: (a) top3 ALONE (replace global_max — importance suggests it may
+  subsume it); (b) top3 + twin_score together; (c) tune the K (top-2 / top-5).
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
