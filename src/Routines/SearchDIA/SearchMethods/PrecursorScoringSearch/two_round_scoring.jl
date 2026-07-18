@@ -100,15 +100,24 @@ two_round_features() =
 #   "global" — graft only the LEAKAGE-PRONE global_* (+shadow_hel) features; leave the
 #              condition-scoped cluster_* ungrafted (they're leak-resistant by scope, so the
 #              model can lean on them fully). Regularize by leakage risk, not uniformly.
-_mbr_graft_cols() =
-    gated_hel_enabled()     ? (GATED_COL,) :
-    (multi_feature_enabled() && gate_global_enabled()) ? (:global_max_gated, :global_mean_gated) :
-    multi_feature_enabled() ?
-        (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
-                                                       Tuple(c for c in MULTI_FEATURE_COLS)) :
-    twin_score_enabled()    ? (KNN_COL, TWIN_COL) :
-    shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
-                              (KNN_COL,)
+# GRAFT_DELTA_IRT=1 (ablation): also graft delta_irt onto the shadows, so its target/decoy marginal
+# is flattened like the cross-run score (model forced to use RT-consistency jointly, not standalone).
+# Overwrites the shadow's delta_irt with the feature-parent's, breaking the shadow's own iRT/m-z
+# self-consistency — so this is incompatible with later stratifying decoy pairing by prec_mz.
+_graft_delta_irt() = get(ENV, "GRAFT_DELTA_IRT", "") == "1"
+
+function _mbr_graft_cols()
+    base =
+        gated_hel_enabled()     ? (GATED_COL,) :
+        (multi_feature_enabled() && gate_global_enabled()) ? (:global_max_gated, :global_mean_gated) :
+        multi_feature_enabled() ?
+            (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
+                                                           Tuple(c for c in MULTI_FEATURE_COLS)) :
+        twin_score_enabled()    ? (KNN_COL, TWIN_COL) :
+        shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
+                                  (KNN_COL,)
+    return _graft_delta_irt() ? (base..., :delta_irt) : base
+end
 
 # Hellinger distance in [0,1] between two 8-fragment intensity vectors (each L1-normalized to a
 # probability, then sqrt). 1.0 (max distance) when either vector has no positive intensity.
