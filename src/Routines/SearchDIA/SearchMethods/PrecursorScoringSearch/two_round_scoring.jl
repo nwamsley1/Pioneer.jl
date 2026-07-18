@@ -69,8 +69,17 @@ const GATED_COL = Symbol("$(KNN_COL)_gated")
 multi_feature_enabled() = get(ENV, "MULTI_FEATURE", "") == "1"
 const MULTI_FEATURE_COLS = [:global_max, :global_mean, :cluster_max, :cluster_mean, :shadow_hel]
 
+# GATE_GLOBAL mode (with MULTI_FEATURE=1, ENV["GATE_GLOBAL"]=1): apply the shadow_hel gate to ONLY
+# the leakage-prone GLOBAL channel — feed global_{max,mean}_gated = global_{max,mean}*(1-shadow_hel)
+# — while leaving the condition-scoped cluster_{max,mean} RAW (leak-resistant by scope). Combines the
+# gate's transfer PRECISION on the leaky channel with the cluster features' breadth. The gate folds
+# agreement in, so no separate shadow_hel term. Graft is selective (the gated global cols only).
+gate_global_enabled() = get(ENV, "GATE_GLOBAL", "") == "1"
+const MULTI_GATED_COLS = [:global_max_gated, :global_mean_gated, :cluster_max, :cluster_mean]
+
 two_round_features() =
     gated_hel_enabled()     ? [GATED_COL, :delta_irt] :
+    (multi_feature_enabled() && gate_global_enabled()) ? vcat(MULTI_GATED_COLS, [:delta_irt]) :
     multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
     shadow_hel_enabled()    ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
                               [KNN_COL, :delta_irt]
@@ -83,6 +92,7 @@ two_round_features() =
 #              model can lean on them fully). Regularize by leakage risk, not uniformly.
 _mbr_graft_cols() =
     gated_hel_enabled()     ? (GATED_COL,) :
+    (multi_feature_enabled() && gate_global_enabled()) ? (:global_max_gated, :global_mean_gated) :
     multi_feature_enabled() ?
         (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
                                                        Tuple(c for c in MULTI_FEATURE_COLS)) :
@@ -376,9 +386,14 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
             main[!, :global_max] = gmax; main[!, :global_mean] = gmean
             main[!, :cluster_max] = cmax; main[!, :cluster_mean] = cmean
             main[!, :shadow_hel] = sh;   main[!, :delta_irt] = di
+            # GATE_GLOBAL: gate ONLY the global channel by donor agreement; cluster_* stay raw.
+            if gate_global_enabled()
+                main[!, :global_max_gated]  = gmax  .* (1.0f0 .- sh)
+                main[!, :global_mean_gated] = gmean .* (1.0f0 .- sh)
+            end
             writeArrow(file_paths[f], main)
         end
-        @user_info "two-round MULTI_FEATURE: wrote global_{max,mean} + cluster_{max,mean} (top-$KNN_K cosine) + shadow_hel + delta_irt to $nf files"
+        @user_info "two-round MULTI_FEATURE: wrote global_{max,mean}$(gate_global_enabled() ? "(+_gated)" : "") + cluster_{max,mean} (top-$KNN_K cosine) + shadow_hel + delta_irt to $nf files"
         return
     end
 
