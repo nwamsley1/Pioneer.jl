@@ -159,3 +159,32 @@ more (+10.4% vs +7.3%). shadow+global_max confirms the shadow guard works (MBR t
 
 RECOMMENDATION: MULTI_FEATURE + GRAFT_SCOPE=global is the strong default — dataset-adaptive
 (cluster on mixtures, global where safe), maximum completeness at controlled false transfer.
+
+### EWZ — gated_hel guard (option 1)
+
+Re-ran the reference set fresh (fresh snapshot; totals shifted vs the doc table above, ordering
+identical). Leak = pure-YEAST (`species=="YEAST"`) precursors passing qval<0.01 in a GO113
+(Hela-only) run; `analyze_ewz.jl`. The gate is a SINGLE-feature variant (`global_max_gated`
+replaces the global_max+shadow_hel pair), so its fair head-to-head is **shadow+global_max**.
+
+| variant | total | Δ% | yeast real (GO114) | yeast LEAK (GO113) | Δleak | leak/real-gain |
+|---|---|---|---|---|---|---|
+| baseline (MBR off) | 1,844,621 | — | 95,345 | 2,355 | — | — |
+| shadow + global_max | 1,935,183 | +4.9% | 102,184 | 3,286 | +931 | 13.6% |
+| MULTI uniform graft | 1,983,736 | +7.5% | 104,354 | 5,031 | +2,676 | 29.7% |
+| MULTI selective graft | 2,041,759 | +10.7% | 108,766 | 3,729 | +1,374 | 10.2% |
+| cluster_max | 2,035,693 | +10.4% | 107,105 | 3,637 | +1,282 | 10.9% |
+| **GATED_HEL guard** | 1,898,391 | **+2.9%** | 98,587 | 2,683 | **+328** | **10.1%** |
+
+- **The gate works as designed.** vs shadow+global_max: leak **+931 → +328** (65% cut, toward the
+  2,355 floor); boost **+4.9% → +2.9%**. `global_max_gated` round-2 importance 2.5% (feature used).
+- **Best transfer PRECISION of any variant**: leak per new-true-yeast 13.6% → **10.1%** — the gate
+  preferentially removes FALSE transfers (high global_max, low agreement), exactly the PDF claim.
+  Ties selective-graft (10.2%), crushes uniform graft (29.7%).
+- **BUT as a single feature it caps breadth** (+2.9% is the lowest boost) — the subtract-only gate
+  also damps true transfers with imperfect spectral agreement (real yeast 102,184 → 98,587).
+- **Verdict: the gate is a pure safety/precision lever, not a breadth lever.** On its own it is the
+  SAFEST cross-run variant but the least complete. The high-value use is **gating the leaky global
+  channel WITHIN the multi-feature model** (gate global_max/global_mean, leave cluster_* raw) — that
+  should keep selective-graft's +10.7% breadth from the leak-safe cluster features while applying the
+  precision gate only where leakage originates. NEXT: MULTI + gated-global variant.
