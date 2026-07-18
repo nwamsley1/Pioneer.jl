@@ -81,6 +81,26 @@ toward +10.4%) while keeping global_* regularized (safe). i.e. regularize by lea
 TODO also: (b) make shadow_hel a *guard* not a booster (gate global_max by agreement: global_max×(1−hel));
 (c) condition-aware scope is now IN via cluster_* — tune KNN_K / try hard z-corr→modularity clusters.
 
+### #gated_hel guard (option 1) — KEAP1 KO
+
+`global_max_gated = global_max * (1 - shadow_hel)` as a SINGLE round-2 feature (ENV `GATED_HEL=1`);
+disagreement can only withhold a transfer, never add one (shadow_hel_guard.pdf, option 1).
+
+| config | rows @ q<.01 | uniq | KEAP1→KO leak | round-2 gain |
+|---|---|---|---|---|
+| baseline (MBR off) | 663,312 | 139,236 | 0 | — |
+| shadow + global_max | 705,821 (+6.4%) | 140,957 | 1 | global_max 2.8% |
+| shadow + shadow_hel | 714,718 (+7.7%) | 141,474 | 2 | gm 2.8%, shadow_hel 1.5% |
+| **GATED_HEL guard** | 698,774 (+5.3%) | 140,167 | 1 | **global_max_gated 2.7%** |
+
+- Feature IS used (2.7%, ≈ plain global_max's 2.8%); the single gated column replaced the pair.
+- On KEAP1 the gate is **NOT a win**: it costs breadth (+5.3% vs +6.4%) for **no safety gain** — the
+  leak was already at the floor (1). A subtract-only guard can only lose where there's no leak to
+  remove. Some true WT-run transfers with imperfect spectral agreement (A<1) got damped too.
+- Expected. KEAP1 (6 runs, leak≈floor) is the wrong test for a guard. The decisive test is **EWZ**,
+  where shadow+global_max leaks +697 and MULTI leaks +1,182–2,494 — there the gate has real leak to
+  cut toward the floor while (ideally) keeping the boost.
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
