@@ -52,6 +52,13 @@ two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 shadow_hel_enabled() = get(ENV, "SHADOW_HEL", "") == "1"
 const SHADOW_HEL_COL = Symbol("$(KNN_COL)_shadow_hel")
 
+# GATED_HEL mode (ENV["GATED_HEL"]=1): instead of feeding global_max and shadow_hel as separate
+# additive features, feed the single GATED score  global_max_gated = global_max * (1 - shadow_hel).
+# Spectral disagreement (high Hellinger) can then ONLY withhold a transfer, never add it — a guard,
+# not a booster. See shadow_hel_guard.pdf.
+gated_hel_enabled() = get(ENV, "GATED_HEL", "") == "1"
+const GATED_COL = Symbol("$(KNN_COL)_gated")
+
 # MULTI_FEATURE mode (ENV["MULTI_FEATURE"]=1): compute several cross-run summaries at once and let
 # round-2 select. Safe BECAUSE of the shadow-decoy regularization — each feature's target/decoy
 # marginal is forced to 1:1, so the LGBM can't over-trust any single one; it uses whichever add
@@ -63,6 +70,7 @@ multi_feature_enabled() = get(ENV, "MULTI_FEATURE", "") == "1"
 const MULTI_FEATURE_COLS = [:global_max, :global_mean, :cluster_max, :cluster_mean, :shadow_hel]
 
 two_round_features() =
+    gated_hel_enabled()     ? [GATED_COL, :delta_irt] :
     multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
     shadow_hel_enabled()    ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
                               [KNN_COL, :delta_irt]
@@ -74,6 +82,7 @@ two_round_features() =
 #              condition-scoped cluster_* ungrafted (they're leak-resistant by scope, so the
 #              model can lean on them fully). Regularize by leakage risk, not uniformly.
 _mbr_graft_cols() =
+    gated_hel_enabled()     ? (GATED_COL,) :
     multi_feature_enabled() ?
         (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
                                                        Tuple(c for c in MULTI_FEATURE_COLS)) :
@@ -305,7 +314,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
         # Shadow spectrum: top-8 smoothed fragment intensities (guarded; zeros if columns absent).
         fr = zeros(Float32, length(pid), 8); fd = Dict{UInt32,NTuple{8,Float32}}()
-        if (shadow_hel_enabled() || multi_feature_enabled()) && all(c -> hasproperty(tbl, c), _FRAG_COLS)
+        if (shadow_hel_enabled() || gated_hel_enabled() || multi_feature_enabled()) && all(c -> hasproperty(tbl, c), _FRAG_COLS)
             @inbounds for (k, c) in enumerate(_FRAG_COLS)
                 col = getproperty(tbl, c)
                 for i in eachindex(pid); fr[i, k] = Float32(col[i]); end
@@ -379,7 +388,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
     for f in 1:nf
         pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
         km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
-        sh = shadow_hel_enabled() ? Vector{Float32}(undef, n) : Float32[]
+        sh = (shadow_hel_enabled() || gated_hel_enabled()) ? Vector{Float32}(undef, n) : Float32[]
         # Resolve up to KNN_K neighbor dicts (contiguous from front since sorted-descending;
         # a 0 slot means no more valid neighbors). Track the run index of each for the donor lookup.
         ndicts = Dict{UInt32,Float32}[]; nruns = Int[]
@@ -430,7 +439,7 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         # Cross-run shadow-spectrum agreement: donor = neighbor run with the highest s1 for this
         # precursor (the run supplying KNN_COL); Hellinger between this row's shadow spectrum and
         # the donor's. No donor -> 1.0 (max distance / no agreement).
-        if shadow_hel_enabled()
+        if shadow_hel_enabled() || gated_hel_enabled()
             fr = file_frag[f]
             @inbounds for i in 1:n
                 p = pid[i]; bv = -1.0f0; bo = 0
@@ -448,6 +457,9 @@ function write_two_round_feature_columns!(file_paths::Vector{String})
         main[!, KNN_COL]    = km
         main[!, :delta_irt] = di
         shadow_hel_enabled() && (main[!, SHADOW_HEL_COL] = sh)
+        # GATED_HEL guard: global_max_gated = global_max * (1 - shadow_hel). Spectral disagreement
+        # (high Hellinger) can only withhold the transfer, never add it. See shadow_hel_guard.pdf.
+        gated_hel_enabled() && (main[!, GATED_COL] = km .* (1.0f0 .- sh))
         writeArrow(file_paths[f], main)
     end
     agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
