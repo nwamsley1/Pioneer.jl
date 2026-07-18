@@ -425,7 +425,7 @@ function _score_precursor_isotope_traces_no_mbr(
         # SHADOW_DECOY_MODE === :none. Adds an :is_shadow column and doubles the row
         # count (approximately) when both classes are present per file.
         inject_shadow_decoys!(file_paths)
-        features2 = vcat(copy(ADVANCED_FEATURE_SET), TWO_ROUND_FEATURES)
+        features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
         pass1 = train_and_predict_pass1_oom!(
             file_paths;
             features        = features2,
