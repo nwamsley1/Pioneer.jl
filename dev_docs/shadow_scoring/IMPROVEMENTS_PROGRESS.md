@@ -49,8 +49,37 @@ and `max over other fold-files` == `max over its other-run instances`.
   test is a many-run dataset (FTR-27 / 60-file yeast KO) where the agreement signal is rich.
 - FDR-A (real-only) 722,596 vs FDR-B (shadow-inclusive) 698,093.
 
-TODO next: (a) run #1 on a many-run dataset; (b) consider making shadow_hel a *guard* not a booster
-(e.g. an explicit low-agreement penalty / interaction with global_max); (c) proceed to #2 condition-aware scope.
+### #shadow_hel on many-run (3P) + MULTI_FEATURE
+
+3P (OlsenExploris 3-proteome, 23 files, mixture → low leakage risk):
+
+| variant | rows | vs base | unique |
+|---|---|---|---|
+| baseline | 1,335,695 | — | 79,168 |
+| shadow + global_max | 1,418,289 | +6.2% | 80,331 |
+| + shadow_hel | 1,437,599 | +7.6% | 80,712 |
+| MULTI_FEATURE (all 5) | 1,445,999 | +8.3% | 81,057 |
+| cluster_max (unregularized, earlier) | 1,474,289 | +10.4% | 81,412 |
+
+KEAP1 MULTI_FEATURE: 710,943 rows (+7.7%), leak 2 — ≈ +shadow_hel; cluster features inert (6 runs → cluster≈global).
+
+Findings:
+- shadow_hel adds a consistent ~+1.3–1.4% breadth on BOTH KEAP1 and 3P.
+- MULTI_FEATURE is SAFE (KEAP1 leak held at 2 with 5 cross-run features; no feature dominated) and
+  AUTO-SELECTS (3P gains: global_mean 2.5%, cluster_mean 1.3%, global_max 1.3%, shadow_hel 1.2%; the
+  model preferred mean/cluster on the mixture, global on KEAP1). It beat pure global_max (+6.2%→+8.3%).
+- BUT the uniform 1:1 shadow graft OVER-DAMPS: +8.3% still trails unregularized cluster_max (+10.4%).
+  The regularization that buys leak-safety caps the completeness ceiling on low-leakage data.
+- On 3P (mixture) cluster_max is the completeness leader; on KEAP1 (true absence) the shadow-regularized
+  global variants are the safe choice. Dataset-dependent.
+
+NEXT (selective regularization): graft the shadow only onto the LEAKAGE-PRONE global features
+(global_max/global_mean), NOT the condition-scoped cluster features (cluster_max/cluster_mean) —
+those are already leak-resistant by scope. Should let the model lean fully on cluster_* (recover
+toward +10.4%) while keeping global_* regularized (safe). i.e. regularize by leakage risk, not uniformly.
+
+TODO also: (b) make shadow_hel a *guard* not a booster (gate global_max by agreement: global_max×(1−hel));
+(c) condition-aware scope is now IN via cluster_* — tune KNN_K / try hard z-corr→modularity clusters.
 
 ## Improvement plan (priority order)
 
