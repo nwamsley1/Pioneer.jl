@@ -59,6 +59,65 @@ methods separate and balanced-kmeans wins big.
   impure groups safe; homogeneity is a conservative proxy, real safety = measured leak in a search.
 
 ## Open follow-ups
-- Chunked balanced assignment (get EWZ-style 1.00 purity at scale without the O(R²) memory).
 - Confirm on a real search: grouped(k=9) top3-logodds vs global top3 on EWZ (expect ≈, R<2k) and on
   a large set (APMS/YEAST 60 runs) for the scaling + leak payoff.
+
+---
+
+# v2/v3 efficiency bake-off (autonomous session, plot `grouping_final.png`)
+
+Scripts `bench_v2.py` (methods) + `bench_v3.py` (embedding paths). Tested on EWZ + APMS + synthetic
+scaling to 20,000 runs. **This corrects the earlier "R×R Gram is the efficient path" claim — it is
+NOT, for large R.**
+
+## Effectiveness (condition homogeneity, k=9)
+
+| method | EWZ (2c/40r) | APMS (20c/60r) |
+|---|---|---|
+| **kmeans** (round(R/k), split oversized) | **1.00** | **0.50** |
+| **spectral** (precomputed affinity) | **1.00** | **0.50** |
+| agglom-ward | 1.00 | 0.483 |
+| balanced-chunk (strict size-k) | 0.95 | 0.35 |
+| rec-bisect | 0.85 | 0.30 |
+| random baseline | 0.64 | 0.21 |
+
+- **kmeans and spectral tie for best** — perfect on EWZ, at the ceiling on APMS.
+- **Strict size-balancing HURTS** (balanced-chunk 0.35 vs kmeans 0.50 on APMS): forcing exactly-k
+  splits natural condition groups. Use `kmeans(round(R/k))` and only split clusters that exceed k.
+
+## The efficient embedding — SVD-on-sparse, NOT the Gram (v3)
+
+All three embedding paths give **identical clustering** (EWZ 1.00, APMS 0.50) — so choose on speed:
+
+| R | (A) TruncatedSVD on sparse | (B/C) R×R Gram + eig |
+|---|---|---|
+| 1,000 | 1.3 s | 6.5 s |
+| 5,000 | 6.3 s | 85 s |
+| 10,000 | **12.6 s** | OOM / too slow |
+| 20,000 | **24.9 s** | — |
+
+Randomized `TruncatedSVD` on the frequency-filtered sparse presence matrix is **O(nnz·d)** and scales
+linearly (25 s @ 20k runs). Building the dense R×R Gram is **O(R²·density)** and dominates — eigsh vs
+eigh makes no difference because the *build*, not the eig, is the bottleneck. The Gram is a fine
+mental model and fine for R ≤ ~2k, but SVD-on-sparse is the implementation that scales.
+
+## Clustering-step scaling (on the embedding)
+
+kmeans ~3 s @10k, balanced-chunk ~3 s @10k, rec-bisect ~50 ms @10k (trivial). **spectral and
+agglom-ward do NOT scale** (O(R²) affinity / O(R³) linkage → OOM past ~3–5k runs) — so despite tying
+kmeans on effectiveness, they're out for large experiments. **kmeans is the only method that is both
+top-effectiveness AND scalable.**
+
+## FINAL RECOMMENDED RECIPE
+
+1. Input: **presence @ q<0.001**, sparse CSR (= `file_pid` per run).
+2. **Frequency-filter columns**: drop precursors in <2 runs and in >90% of runs.
+3. **L2-normalize rows** (depth control).
+4. **Randomized TruncatedSVD, d≈16, on the sparse matrix** — O(nnz·d); 12.6 s @10k, 24.9 s @20k.
+   Do NOT build the R×R Gram.
+5. **kmeans(n_clusters = round(R/k))** on the embedding; split any cluster > k. Do NOT force exact
+   size-k (strict balance drops purity).
+6. **k = 9**. Fall back to one group = all runs when R ≤ ~2k (= today's global behavior).
+
+Total ≈ 30 s at 20,000 runs (embed + cluster), memory dominated by the sparse matrix (~2 GB nnz at
+20k). Fully tractable for thousands of runs.
