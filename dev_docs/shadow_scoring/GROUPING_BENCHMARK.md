@@ -121,3 +121,24 @@ top-effectiveness AND scalable.**
 
 Total ≈ 30 s at 20,000 runs (embed + cluster), memory dominated by the sparse matrix (~2 GB nnz at
 20k). Fully tractable for thousands of runs.
+
+## Robustness of the recipe (bench_v4.py; plots grouping_robustness.png, grouping_visual.png)
+
+Swept each hyperparameter one-at-a-time on EWZ + APMS (kmeans, homogeneity):
+- **EWZ = 1.00 across EVERYTHING** — q-threshold (1e-4…1e-2), SVD d (4…48), max_frac (0.5…1.0),
+  min_runs (2…10), k (6…15). Only max_frac=0.3 dips (0.97 — too-aggressive filtering removes signal).
+- **APMS ≈ 0.50 and FLAT** across q, d, max_frac, min_runs — none is a sensitive knob.
+- **`k` is the ONLY real knob.** On small-condition data (APMS, 3 runs/bait) homogeneity falls with k:
+  **k=6 → 0.73, k=9 → 0.50, k=12 → 0.38, k=15 → 0.32** (bigger group forces more baits together).
+
+**Implication:** the hardcoded defaults (q<1e-3, d=16, max_frac=0.9, min_runs=2) are safe — not
+sensitive. **k is the purity↔breadth dial.** Because the top-3 aggregation saturates at 3
+corroborators, smaller k costs little breadth for small conditions (a 3-run condition's precursor
+draws its top-3 from its own 3 runs regardless of k) but is purer; larger k fragments large
+conditions less but mixes small ones more. **k=9 is a defensible balanced default; drop to k=6 if
+false-transfer safety is the priority** (both ÷3).
+
+**Group visualization (grouping_visual.png):** reordered run×run cosine similarity with group bounds.
+EWZ → 7 groups that perfectly track the 2 conditions (block-diagonal aligns with the condition strip,
+homog 1.00). APMS → 11 groups; bait-replicate triplets (bright 3×3 blocks) stay together even though
+each group spans ~3 baits — the fine structure the presence-gated top-3 relies on is intact.
