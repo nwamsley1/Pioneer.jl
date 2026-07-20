@@ -244,8 +244,12 @@ function run_protein_scoring!(
     sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
     n_proteins = length(getProteins(getSpecLib(search_context)))
 
+    # GLOBAL_MODEL=1: learned protein-level model on per-run pg_score aggregates (2-fold protein CV),
+    # replacing the fixed top-√N log-odds (mirrors the precursor global model).
     global_pg_score_dict, pg_name_to_global_pg_score =
-        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+        global_model_enabled() ?
+            build_protein_global_model_dict(pg_refs, sqrt_n_runs, n_proteins, protein_to_cv_fold) :
+            build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)

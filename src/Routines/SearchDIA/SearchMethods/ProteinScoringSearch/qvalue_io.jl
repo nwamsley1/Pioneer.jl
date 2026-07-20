@@ -87,6 +87,61 @@ function build_protein_global_score_dicts(
 end
 
 """
+    build_protein_global_model_dict(pg_refs, sqrt_n_runs, n_proteins, protein_to_cv_fold)
+        -> (global_pg_score_dict, pg_name_to_global_pg_score)
+
+Learned protein-group analog of `build_precursor_global_model_dict` (GLOBAL_MODEL=1). Aggregates each
+protein's per-run `pg_score` across runs into the same 10 features (n, top-1/2/3, min, mean, std,
+frac>0.99, range, top-√N log-odds), trains a LightGBM with 2-fold PROTEIN-keyed CV (fold from
+`protein_to_cv_fold`; hash-assigned for proteins absent from the map so every protein is model-scored
+on a consistent scale — no log-odds/probability mixing). Returns the same dicts as
+`build_protein_global_score_dicts`, so it is a drop-in replacement.
+"""
+function build_protein_global_model_dict(
+    pg_refs::Vector{ProteinGroupFileReference},
+    sqrt_n_runs::Int,
+    n_proteins::Int,
+    protein_to_cv_fold,
+)
+    score_acc = Dict{Tuple{String,Bool,UInt8}, Vector{Float32}}()
+    sizehint!(score_acc, n_proteins)
+    for ref in pg_refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(tbl.protein_name); n == 0 && continue
+        @inbounds for i in 1:n
+            key = (tbl.protein_name[i], tbl.target[i], tbl.entrap_id[i])
+            haskey(score_acc, key) || (score_acc[key] = Float32[])
+            push!(score_acc[key], Float32(tbl.pg_score[i]))
+        end
+    end
+
+    keys_v = collect(keys(score_acc)); m = length(keys_v)
+    X = Matrix{Float32}(undef, m, _GLOBAL_MODEL_NFEAT)
+    y = Vector{Bool}(undef, m); foldv = Vector{Int8}(undef, m)
+    feat = Vector{Float32}(undef, _GLOBAL_MODEL_NFEAT)
+    @inbounds for i in 1:m
+        k = keys_v[i]
+        _global_model_feats_vec!(feat, score_acc[k], sqrt_n_runs)
+        for j in 1:_GLOBAL_MODEL_NFEAT; X[i, j] = feat[j]; end
+        y[i] = k[2]
+        foldv[i] = haskey(protein_to_cv_fold, k[1]) ?
+            Int8(protein_to_cv_fold[k[1]].cv_fold) : Int8(hash(k[1]) & 0x1)   # hash-assign if absent
+    end
+
+    scores = Vector{Float32}(undef, m)
+    _fit_global_model_2fold!(X, y, foldv, scores, 10)   # log-odds is feature column 10
+
+    global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}(); sizehint!(global_pg_score_dict, m)
+    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}(); sizehint!(pg_name_to_global_pg_score, m)
+    @inbounds for i in 1:m
+        k = keys_v[i]
+        global_pg_score_dict[k] = scores[i]
+        pg_name_to_global_pg_score[ProteinKey(k[1], k[2], k[3])] = scores[i]
+    end
+    return global_pg_score_dict, pg_name_to_global_pg_score
+end
+
+"""
     build_protein_global_qval_dict(global_pg_score_dict)
     → Dict{Tuple{String,Bool,UInt8}, Float32}
 

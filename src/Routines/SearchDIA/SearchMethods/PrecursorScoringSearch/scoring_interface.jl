@@ -144,6 +144,63 @@ const _GLOBAL_MODEL_TOPK = 8     # running top-K per precursor (covers top-3 + l
     c = clamp(x, 0.1f0, 1.0f0 - 1.0f-6); return log(c / (1.0f0 - c))
 end
 
+# 2-fold entity-keyed CV for the learned global models: train on one fold's rows, score the other
+# (clean OOF since each entity — precursor or protein — is in exactly one fold). Falls back to the
+# log-odds feature (column `logodds_col`) for thin/one-class folds or entities with no fold (-1).
+function _fit_global_model_2fold!(X::Matrix{Float32}, y::Vector{Bool}, foldv::Vector{Int8},
+                                  scores::Vector{Float32}, logodds_col::Int)
+    fill!(scores, 0.0f0)
+    idx0 = findall(==(Int8(0)), foldv); idx1 = findall(==(Int8(1)), foldv)
+    other = findall(f -> f != Int8(0) && f != Int8(1), foldv)   # unassigned → logodds fallback
+    @inbounds for j in other; scores[j] = X[j, logodds_col]; end
+    function _fs!(train_idx, test_idx)
+        isempty(test_idx) && return
+        if length(train_idx) < 100 || length(unique(@view y[train_idx])) < 2
+            @inbounds for j in test_idx; scores[j] = X[j, logodds_col]; end
+            return
+        end
+        cls = _fit_pass1_booster(X[train_idx, :], y[train_idx], SCORING_LGBM_HP)
+        if cls isa NamedTuple && cls.kind === :constant
+            @inbounds for j in test_idx; scores[j] = Float32(cls.value); end
+        else
+            raw = LightGBM.predict(cls, X[test_idx, :]; num_threads = Threads.nthreads())
+            pr = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            @inbounds for (t, j) in enumerate(test_idx); scores[j] = Float32(pr[t]); end
+        end
+    end
+    _fs!(idx1, idx0)   # train fold-1 → score fold-0
+    _fs!(idx0, idx1)   # train fold-0 → score fold-1
+    return scores
+end
+
+# Same 10 aggregate features as the precursor global model, computed from a per-entity score VECTOR
+# (used for proteins, which are few enough that a vector + sort is cheap). Cols must match:
+# [n, top1, top2, top3, min, mean, std, frac>.99, range, logodds].
+function _global_model_feats_vec!(out::Vector{Float32}, v::Vector{Float32}, sqrt_n_runs::Int)
+    n = length(v); K = _GLOBAL_MODEL_TOPK
+    mx = v[1]; mn = v[1]; s = 0.0f0; s2 = 0.0f0; c99 = 0
+    @inbounds for x in v
+        x > mx && (mx = x); x < mn && (mn = x)
+        s += x; s2 += x * x; x > 0.99f0 && (c99 += 1)
+    end
+    sv = sort(v; rev = true)
+    klog = min(sqrt_n_runs, K, n); lo = 0.0f0
+    @inbounds for j in 1:klog; lo += _logit_clamp(sv[j]); end
+    lo /= klog
+    nf = Float32(n)
+    out[1]  = nf
+    out[2]  = sv[1]
+    out[3]  = n >= 2 ? sv[2] : sv[1]
+    out[4]  = n >= 3 ? sv[3] : out[3]
+    out[5]  = mn
+    out[6]  = s / nf
+    out[7]  = n > 1 ? sqrt(max(0.0f0, (s2 - s * s / nf) / (nf - 1.0f0))) : 0.0f0
+    out[8]  = Float32(c99) / nf
+    out[9]  = mx - mn
+    out[10] = lo
+    return out
+end
+
 """
     build_precursor_global_model_dict(refs, sqrt_n_runs, n_precursors) → (global_prob_dict, target_dict)
 
@@ -218,24 +275,7 @@ function build_precursor_global_model_dict(
 
     # ---- 2-fold precursor-keyed CV: train one fold, score the other ----
     scores = Vector{Float32}(undef, nprec)
-    idx0 = findall(==(Int8(0)), foldv); idx1 = findall(==(Int8(1)), foldv)
-    function _fit_score!(train_idx, test_idx)
-        isempty(test_idx) && return
-        if length(train_idx) < 100 || length(unique(@view y[train_idx])) < 2
-            @inbounds for j in test_idx; scores[j] = X[j, 10]; end   # fallback: logodds feature
-            return
-        end
-        cls = _fit_pass1_booster(X[train_idx, :], y[train_idx], SCORING_LGBM_HP)
-        if cls isa NamedTuple && cls.kind === :constant
-            @inbounds for j in test_idx; scores[j] = Float32(cls.value); end
-        else
-            raw = LightGBM.predict(cls, X[test_idx, :]; num_threads = Threads.nthreads())
-            pr = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
-            @inbounds for (t, j) in enumerate(test_idx); scores[j] = Float32(pr[t]); end
-        end
-    end
-    _fit_score!(idx1, idx0)   # train fold-1 → score fold-0
-    _fit_score!(idx0, idx1)   # train fold-0 → score fold-1
+    _fit_global_model_2fold!(X, y, foldv, scores, 10)   # logodds is feature column 10
 
     global_prob_dict = Dict{UInt32, Float32}(); sizehint!(global_prob_dict, nprec)
     target_dict = Dict{UInt32, Bool}(); sizehint!(target_dict, nprec)
