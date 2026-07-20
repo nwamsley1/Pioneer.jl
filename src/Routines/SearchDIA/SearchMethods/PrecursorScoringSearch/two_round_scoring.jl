@@ -117,7 +117,16 @@ const MULTI_FEATURE_COLS = [:global_max, :global_mean, :cluster_max, :cluster_me
 gate_global_enabled() = get(ENV, "GATE_GLOBAL", "") == "1"
 const MULTI_GATED_COLS = [:global_max_gated, :global_mean_gated, :cluster_max, :cluster_mean]
 
+# GROUP_SCORING mode (ENV["GROUP_SCORING"]=1): scalable global + hard-cluster cross-run features,
+# clustered PER CV FOLD. Four grafted features: global_{max,top3_logodds} over ALL other runs +
+# cluster_{max,top3_logodds} over the run's fold-specific cluster. Built in one O(N) per-fold pass
+# via top-4 (score,run) records with leave-one-out (see _write_group_features!). Cluster size follows
+# the schedule _group_size(R): OFF for R<9 (cluster cols mirror global), else min(9, floor(R/2)).
+group_scoring_enabled() = get(ENV, "GROUP_SCORING", "") == "1"
+const GROUP_COLS = [:global_max, :global_top3_logodds, :cluster_max, :cluster_top3_logodds]
+
 two_round_features() =
+    group_scoring_enabled() ? vcat(GROUP_COLS, [:delta_irt]) :
     gated_hel_enabled()     ? [GATED_COL, :delta_irt] :
     (multi_feature_enabled() && gate_global_enabled()) ? vcat(MULTI_GATED_COLS, [:delta_irt]) :
     multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
@@ -140,6 +149,7 @@ _graft_delta_irt() = get(ENV, "GRAFT_DELTA_IRT", "") == "1"
 
 function _mbr_graft_cols()
     base =
+        group_scoring_enabled() ? Tuple(c for c in GROUP_COLS) :
         gated_hel_enabled()     ? (GATED_COL,) :
         (multi_feature_enabled() && gate_global_enabled()) ? (:global_max_gated, :global_mean_gated) :
         multi_feature_enabled() ?
@@ -349,7 +359,267 @@ function _cosine_topk(dicts::Vector{Dict{UInt32,Float32}}, K::Int)
     return out
 end
 
+# ================= GROUP_SCORING: per-fold clustering + global/cluster features =================
+const GROUP_EMBED_DIM   = 16      # SVD/eigen embedding dimension for run clustering
+const GROUP_PRESENCE_S1 = 0.9f0   # round-1 OOF score threshold for "present" (clustering input)
+
+# Group-size schedule: 0 = cluster OFF (global only); else min(9, floor(R/2)). Grows as R/2 (2
+# groups) until it caps at 9 at R=18, then group size stays 9 and the group COUNT grows (~R/9).
+@inline _group_size(R::Int) = R < 9 ? 0 : min(9, R ÷ 2)
+
+# Top-4 (score, run) record for one precursor, kept descending — enough for leave-one-out of top-3.
+struct TopK4
+    v::NTuple{4,Float32}
+    r::NTuple{4,UInt32}
+end
+const EMPTY_TOPK4 = TopK4((0f0, 0f0, 0f0, 0f0), (UInt32(0), UInt32(0), UInt32(0), UInt32(0)))
+@inline function _tk_insert(t::TopK4, s::Float32, run::UInt32)
+    v = t.v; r = t.r
+    s <= v[4] && return t
+    if     s > v[1]; return TopK4((s, v[1], v[2], v[3]), (run, r[1], r[2], r[3]))
+    elseif s > v[2]; return TopK4((v[1], s, v[2], v[3]), (r[1], run, r[2], r[3]))
+    elseif s > v[3]; return TopK4((v[1], v[2], s, v[3]), (r[1], r[2], run, r[3]))
+    else             return TopK4((v[1], v[2], v[3], s), (r[1], r[2], r[3], run))
+    end
+end
+@inline _tk_loo_max(t::TopK4, own::UInt32) = @inbounds (t.r[1] != own) ? t.v[1] : t.v[2]
+@inline function _tk_loo_top3(t::TopK4, own::UInt32)   # Σ positive logits of top-3 excluding own run
+    acc = 0f0; taken = 0
+    @inbounds for i in 1:4
+        taken == 3 && break
+        t.v[i] <= 0f0 && break
+        t.r[i] == own && continue
+        acc += _pos_logit(t.v[i]); taken += 1
+    end
+    return acc
+end
+
+# R×R cosine similarity of run presence sets, via posting-list co-count accumulation. Drops
+# singleton precursors (present in <2 runs; no pairwise signal) and ubiquitous ones (>90% of runs;
+# no discriminative signal). run_present[r] must be sorted-ascending unique pids.
+function _run_cosine_gram(run_present::Vector{Vector{UInt32}}, R::Int)
+    postings = Dict{UInt32,Vector{Int}}()
+    for r in 1:R, p in run_present[r]
+        push!(get!(() -> Int[], postings, p), r)
+    end
+    G = zeros(Float64, R, R)
+    maxfreq = 0.9 * R
+    for (_, runs) in postings
+        L = length(runs)
+        (L < 2 || L > maxfreq) && continue
+        @inbounds for a in 1:L, b in a:L
+            G[runs[a], runs[b]] += 1.0
+        end
+    end
+    d = Vector{Float64}(undef, R)
+    @inbounds for r in 1:R
+        d[r] = sqrt(G[r, r]); d[r] == 0.0 && (d[r] = 1.0)
+    end
+    C = Matrix{Float64}(undef, R, R)
+    @inbounds for a in 1:R, b in 1:R
+        g = a <= b ? G[a, b] : G[b, a]
+        C[a, b] = g / (d[a] * d[b])
+    end
+    return C
+end
+
+# Top-`dim` eigenvector embedding of the (small, dense) R×R cosine Gram.
+function _embed_gram(C::Matrix{Float64}, dim::Int)
+    R = size(C, 1); dd = min(dim, R - 1); dd < 1 && return zeros(Float64, R, 1)
+    F = eigen(Symmetric(C))                         # ascending eigenvalues
+    E = Matrix{Float64}(undef, R, dd)
+    @inbounds for j in 1:dd
+        i = R - j + 1; s = sqrt(max(F.values[i], 0.0))
+        for r in 1:R; E[r, j] = F.vectors[r, i] * s; end
+    end
+    return E
+end
+
+# Small Lloyd's k-means (R runs, low dim, few clusters) with fixed-seed restarts.
+function _kmeans_small(E::Matrix{Float64}, ncl::Int; iters::Int = 30, restarts::Int = 5)
+    R, d = size(E); ncl = clamp(ncl, 1, R)
+    ncl == 1 && return ones(Int, R)
+    rng = MersenneTwister(0x9E3779B9)
+    best_lab = ones(Int, R); best_cost = Inf
+    cent = Matrix{Float64}(undef, ncl, d); lab = Vector{Int}(undef, R); cnt = Vector{Int}(undef, ncl)
+    for _ in 1:restarts
+        init = randperm(rng, R)[1:ncl]
+        @inbounds for c in 1:ncl, j in 1:d; cent[c, j] = E[init[c], j]; end
+        cost = Inf
+        for _ in 1:iters
+            newcost = 0.0
+            @inbounds for r in 1:R
+                bd = Inf; bc = 1
+                for c in 1:ncl
+                    s = 0.0
+                    for j in 1:d; δ = E[r, j] - cent[c, j]; s += δ * δ; end
+                    s < bd && (bd = s; bc = c)
+                end
+                lab[r] = bc; newcost += bd
+            end
+            fill!(cent, 0.0); fill!(cnt, 0)
+            @inbounds for r in 1:R
+                c = lab[r]; cnt[c] += 1
+                for j in 1:d; cent[c, j] += E[r, j]; end
+            end
+            @inbounds for c in 1:ncl, j in 1:d
+                cnt[c] > 0 && (cent[c, j] /= cnt[c])
+            end
+            abs(cost - newcost) < 1e-9 && (cost = newcost; break)
+            cost = newcost
+        end
+        cost < best_cost && (best_cost = cost; copyto!(best_lab, lab))
+    end
+    return best_lab
+end
+
+# Split any cluster larger than k into two (recursively), so all groups end ≤ k.
+function _split_oversized!(lab::Vector{Int}, E::Matrix{Float64}, k::Int)
+    changed = true
+    while changed
+        changed = false
+        for c in unique(lab)
+            idx = findall(==(c), lab)
+            if length(idx) > k
+                sub = _kmeans_small(E[idx, :], 2; restarts = 2)
+                nxt = maximum(lab) + 1
+                @inbounds for t in eachindex(idx); sub[t] == 2 && (lab[idx[t]] = nxt); end
+                changed = true
+            end
+        end
+    end
+    return lab
+end
+
+# run -> cluster labels (1-based, contiguous). k<=0 -> single cluster (cluster feature == global).
+function _cluster_runs(run_present::Vector{Vector{UInt32}}, R::Int, k::Int)
+    k <= 0 && return ones(Int, R)
+    C = _run_cosine_gram(run_present, R)
+    E = _embed_gram(C, GROUP_EMBED_DIM)
+    lab = _kmeans_small(E, max(1, round(Int, R / k)))
+    _split_oversized!(lab, E, k)
+    u = unique(lab); remap = Dict(u[i] => i for i in eachindex(u))
+    return [remap[l] for l in lab]
+end
+
+"""
+    _write_group_features!(file_paths)
+
+GROUP_SCORING path. Per CV fold (from that fold's own OOF presence): cluster the runs, then in one
+O(N) pass build per-precursor top-4 (score,run) records — `grec` over all runs, `crec` per cluster
+(reset via `touched`) — and write leave-one-out `global_{max,top3_logodds}`,
+`cluster_{max,top3_logodds}`, and `delta_irt` columns into each run's Arrow. One Arrow per run; folds
+are a `cv_fold` column, so a precursor lives entirely in one fold. Cluster OFF (R<9) mirrors global.
+"""
+function _write_group_features!(file_paths::Vector{String})
+    nf = length(file_paths)                        # one Arrow per run
+    file_pid  = Vector{Vector{UInt32}}(undef, nf)
+    file_s1   = Vector{Vector{Float32}}(undef, nf)
+    file_fold = Vector{Vector{UInt8}}(undef, nf)
+    file_irt  = Vector{Vector{Float32}}(undef, nf)
+    for f in 1:nf
+        tbl  = Arrow.Table(file_paths[f])
+        side = Arrow.Table(file_paths[f] * PASS1_SIDECAR_SUFFIX)
+        pid  = collect(UInt32.(tbl.precursor_idx))
+        s1   = collect(Float32.(side.trace_prob_prepass))
+        length(s1) == length(pid) ||
+            error("_write_group_features!: sidecar row mismatch at $(file_paths[f])")
+        file_pid[f]  = pid
+        file_s1[f]   = s1
+        file_fold[f] = collect(UInt8.(tbl.cv_fold))
+        file_irt[f]  = collect(Float32.(tbl.irt_obs))
+    end
+    maxpid = 0
+    for p in file_pid; isempty(p) || (maxpid = max(maxpid, Int(maximum(p)))); end
+
+    gmax = [Vector{Float32}(undef, length(p)) for p in file_pid]
+    gt3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
+    cmax = [Vector{Float32}(undef, length(p)) for p in file_pid]
+    ct3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
+    di   = [Vector{Float32}(undef, length(p)) for p in file_pid]
+
+    k = _group_size(nf)
+    grec    = fill(EMPTY_TOPK4, maxpid + 1)        # global records (reused per fold)
+    crec    = fill(EMPTY_TOPK4, maxpid + 1)        # cluster records (reused per cluster via touched)
+    best_s1 = fill(-1.0f0, maxpid + 1)             # for ref_irt (highest-s1 instance per precursor)
+    ref_irt = zeros(Float32, maxpid + 1)
+    touched = UInt32[]
+
+    for fold in UInt8(0):UInt8(1)
+        # presence sets for clustering (confident, fold-own IDs)
+        run_present = Vector{Vector{UInt32}}(undef, nf)
+        for r in 1:nf
+            pres = UInt32[]
+            @inbounds for i in eachindex(file_pid[r])
+                (file_fold[r][i] == fold && file_s1[r][i] >= GROUP_PRESENCE_S1) &&
+                    push!(pres, file_pid[r][i])
+            end
+            run_present[r] = unique!(sort!(pres))
+        end
+        labels = _cluster_runs(run_present, nf, k)
+        ncl = maximum(labels)
+        runs_in = [Int[] for _ in 1:ncl]
+        for r in 1:nf; push!(runs_in[labels[r]], r); end
+
+        # Phase 1: global records (over all runs, this fold) + ref_irt
+        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0)
+        for r in 1:nf
+            @inbounds for i in eachindex(file_pid[r])
+                file_fold[r][i] == fold || continue
+                p = file_pid[r][i]; s = file_s1[r][i]
+                grec[p + 1] = _tk_insert(grec[p + 1], s, UInt32(r))
+                if s > best_s1[p + 1]; best_s1[p + 1] = s; ref_irt[p + 1] = file_irt[r][i]; end
+            end
+        end
+
+        # Phase 2: per cluster, build cluster records then emit LOO features for this cluster's rows
+        for c in 1:ncl
+            empty!(touched)
+            for r in runs_in[c]
+                @inbounds for i in eachindex(file_pid[r])
+                    file_fold[r][i] == fold || continue
+                    p = file_pid[r][i]
+                    crec[p + 1] === EMPTY_TOPK4 && push!(touched, p)
+                    crec[p + 1] = _tk_insert(crec[p + 1], file_s1[r][i], UInt32(r))
+                end
+            end
+            for r in runs_in[c]
+                ru = UInt32(r)
+                @inbounds for i in eachindex(file_pid[r])
+                    file_fold[r][i] == fold || continue
+                    p = file_pid[r][i]
+                    gmax[r][i] = _tk_loo_max(grec[p + 1], ru)
+                    gt3[r][i]  = _tk_loo_top3(grec[p + 1], ru)
+                    if k <= 0
+                        cmax[r][i] = gmax[r][i]; ct3[r][i] = gt3[r][i]
+                    else
+                        cmax[r][i] = _tk_loo_max(crec[p + 1], ru)
+                        ct3[r][i]  = _tk_loo_top3(crec[p + 1], ru)
+                    end
+                    di[r][i] = abs(file_irt[r][i] - ref_irt[p + 1])
+                end
+            end
+            for p in touched; crec[p + 1] = EMPTY_TOPK4; end
+        end
+    end
+
+    for f in 1:nf
+        main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
+        nrow(main) == length(file_pid[f]) ||
+            error("_write_group_features!: arrow row count changed at $(file_paths[f])")
+        main[!, :global_max]           = gmax[f]
+        main[!, :global_top3_logodds]  = gt3[f]
+        main[!, :cluster_max]          = cmax[f]
+        main[!, :cluster_top3_logodds] = ct3[f]
+        main[!, :delta_irt]            = di[f]
+        writeArrow(file_paths[f], main)
+    end
+    @user_info "group-scoring: wrote global+cluster (max, top3_logodds) + delta_irt for $nf runs (k=$k)"
+    return nothing
+end
+
 function write_two_round_feature_columns!(file_paths::Vector{String})
+    group_scoring_enabled() && return _write_group_features!(file_paths)
     nf = length(file_paths)
     file_pid = Vector{Vector{UInt32}}(undef, nf)
     file_s1  = Vector{Vector{Float32}}(undef, nf)
