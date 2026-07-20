@@ -137,75 +137,92 @@ end
 # Learned global model (ENV["GLOBAL_MODEL"]=1): replace the fixed top-√N log-odds with a
 # precursor-level LightGBM on round-1 OOF-score aggregates, 2-fold precursor-keyed CV.
 global_model_enabled() = get(ENV, "GLOBAL_MODEL", "") == "1"
-const _GLOBAL_MODEL_NFEAT = 10
+const _GLOBAL_MODEL_NFEAT = 10   # n, top1, top2, top3, min, mean, std, frac>.99, range, logodds
+const _GLOBAL_MODEL_TOPK = 8     # running top-K per precursor (covers top-3 + logodds for ≤64 runs)
 
-# Per-precursor aggregate features of the round-1 OOF scores `v` (across the runs it was seen in).
-function _global_model_feats!(out::Vector{Float32}, v::Vector{Float32}, sqrt_n_runs::Int)
-    n = length(v)
-    mx = v[1]; mn = v[1]; s = 0.0f0; s2 = 0.0f0; c99 = 0
-    @inbounds for x in v
-        x > mx && (mx = x); x < mn && (mn = x)
-        s += x; s2 += x * x; x > 0.99f0 && (c99 += 1)
-    end
-    mean_v = s / n
-    var_v  = n > 1 ? max(0.0f0, (s2 - s * s / n) / (n - 1)) : 0.0f0
-    sv = sort(v; rev = true)
-    med = isodd(n) ? sv[(n + 1) ÷ 2] : 0.5f0 * (sv[n ÷ 2] + sv[n ÷ 2 + 1])
-    out[1]  = Float32(n)
-    out[2]  = mx
-    out[3]  = mean_v
-    out[4]  = mn
-    out[5]  = sqrt(var_v)
-    out[6]  = med
-    out[7]  = logodds(v, sqrt_n_runs)      # the current fixed global score, as a feature (can't do worse)
-    out[8]  = Float32(c99) / n
-    out[9]  = mx - mn
-    out[10] = n >= 2 ? sv[2] : sv[1]
-    return out
+@inline function _logit_clamp(x::Float32)
+    c = clamp(x, 0.1f0, 1.0f0 - 1.0f-6); return log(c / (1.0f0 - c))
 end
 
 """
     build_precursor_global_model_dict(refs, sqrt_n_runs, n_precursors) → (global_prob_dict, target_dict)
 
-Learned replacement for the fixed top-√N log-odds global score. Aggregates each precursor's ROUND-1
-OOF scores (`:s1_round1`) across runs into features, then trains a precursor-level LightGBM with
-2-fold precursor-keyed CV (train one fold, score the other — clean OOF because each precursor is in
-exactly one fold). Falls back to the log-odds feature when a fold has too little/one-class data.
+Learned replacement for the fixed top-√N log-odds global score. STREAMING + memory-efficient: one
+pass over the refs into fixed-size per-precursor accumulators (indexed by precursor id, bounded by
+the library — independent of #runs/#PSMs; no per-precursor vector, no sort). Features per precursor
+from round-1 OOF scores (`:s1_round1`): n_runs, top-1/2/3, min, mean, std, frac>0.99, range, top-√N
+log-odds (the current fixed score, as a feature), and an approximate median (8-bin histogram). Trains
+a precursor-level LightGBM with 2-fold precursor-keyed CV (train one fold, score the other — clean
+OOF since each precursor is in one fold); falls back to the log-odds feature on thin/one-class folds.
 Requires the `:s1_round1` column (written by the two-round group-feature step).
 """
 function build_precursor_global_model_dict(
     refs::Vector{PSMFileReference}, sqrt_n_runs::Int, n_precursors::Int,
 )
-    s1_acc = Dict{UInt32, Vector{Float32}}(); sizehint!(s1_acc, n_precursors)
-    fold_of = Dict{UInt32, UInt8}(); sizehint!(fold_of, n_precursors)
-    target_dict = Dict{UInt32, Bool}(); sizehint!(target_dict, n_precursors)
+    P = n_precursors
+    K = _GLOBAL_MODEL_TOPK
+    cnt  = zeros(Int32, P + 1); c99 = zeros(Int32, P + 1)
+    ssum = zeros(Float32, P + 1); ssq = zeros(Float32, P + 1)
+    mn   = fill(2.0f0, P + 1)
+    topM = zeros(Float32, K, P + 1)          # per-precursor running top-K (descending)
+    fold = fill(Int8(-1), P + 1); tgt = falses(P + 1)
+
+    # ---- streaming pass ----
     for ref in refs
         cols = materialize_columns(ref, [:precursor_idx, :s1_round1, :cv_fold, :target])
         n = nrow(cols); n == 0 && continue
         pid = cols.precursor_idx; s1 = cols.s1_round1; cf = cols.cv_fold; tg = cols.target
         @inbounds for i in 1:n
-            p = pid[i]
-            if !haskey(s1_acc, p)
-                s1_acc[p] = Float32[]; fold_of[p] = UInt8(cf[i]); target_dict[p] = tg[i]
+            p = Int(pid[i]) + 1; x = Float32(s1[i])
+            fold[p] == Int8(-1) && (fold[p] = Int8(cf[i]); tgt[p] = Bool(tg[i]))
+            cnt[p] += Int32(1); ssum[p] += x; ssq[p] += x * x
+            x > 0.99f0 && (c99[p] += Int32(1))
+            x < mn[p] && (mn[p] = x)
+            if x > topM[K, p]                # top-K insert (early exit for the common low score)
+                j = K
+                while j > 1 && x > topM[j - 1, p]
+                    topM[j, p] = topM[j - 1, p]; j -= 1
+                end
+                topM[j, p] = x
             end
-            push!(s1_acc[p], Float32(s1[i]))
         end
     end
-    pids = collect(keys(s1_acc)); nprec = length(pids)
+
+    # ---- build feature matrix over observed precursors ----
+    obs = findall(>(Int32(0)), cnt)          # array indices (p = pid + 1)
+    nprec = length(obs)
     X = Matrix{Float32}(undef, nprec, _GLOBAL_MODEL_NFEAT)
-    y = Vector{Bool}(undef, nprec); fold = Vector{UInt8}(undef, nprec)
-    feat = Vector{Float32}(undef, _GLOBAL_MODEL_NFEAT)
-    @inbounds for i in 1:nprec
-        _global_model_feats!(feat, s1_acc[pids[i]], sqrt_n_runs)
-        for j in 1:_GLOBAL_MODEL_NFEAT; X[i, j] = feat[j]; end
-        y[i] = target_dict[pids[i]]; fold[i] = fold_of[pids[i]]
+    y = Vector{Bool}(undef, nprec); foldv = Vector{Int8}(undef, nprec)
+    pids = Vector{UInt32}(undef, nprec)
+    @inbounds for (i, p) in enumerate(obs)
+        pids[i] = UInt32(p - 1)
+        nf = Float32(cnt[p]); ni = Int(cnt[p])
+        mean_v = ssum[p] / nf
+        var_v  = ni > 1 ? max(0.0f0, (ssq[p] - ssum[p]^2 / nf) / (nf - 1.0f0)) : 0.0f0
+        klog = min(sqrt_n_runs, K, ni)       # top-√N log-odds (mean of top logits), capped at K
+        lo = 0.0f0
+        for j in 1:klog; lo += _logit_clamp(topM[j, p]); end
+        lo /= klog
+        X[i, 1]  = nf
+        X[i, 2]  = topM[1, p]
+        X[i, 3]  = topM[2, p]
+        X[i, 4]  = topM[3, p]
+        X[i, 5]  = mn[p]
+        X[i, 6]  = mean_v
+        X[i, 7]  = sqrt(var_v)
+        X[i, 8]  = Float32(c99[p]) / nf
+        X[i, 9]  = topM[1, p] - mn[p]
+        X[i, 10] = lo
+        y[i] = tgt[p]; foldv[i] = fold[p]
     end
+
+    # ---- 2-fold precursor-keyed CV: train one fold, score the other ----
     scores = Vector{Float32}(undef, nprec)
-    idx0 = findall(==(UInt8(0)), fold); idx1 = findall(==(UInt8(1)), fold)
+    idx0 = findall(==(Int8(0)), foldv); idx1 = findall(==(Int8(1)), foldv)
     function _fit_score!(train_idx, test_idx)
         isempty(test_idx) && return
         if length(train_idx) < 100 || length(unique(@view y[train_idx])) < 2
-            @inbounds for j in test_idx; scores[j] = X[j, 7]; end     # fallback: logodds feature
+            @inbounds for j in test_idx; scores[j] = X[j, 10]; end   # fallback: logodds feature
             return
         end
         cls = _fit_pass1_booster(X[train_idx, :], y[train_idx], SCORING_LGBM_HP)
@@ -219,8 +236,12 @@ function build_precursor_global_model_dict(
     end
     _fit_score!(idx1, idx0)   # train fold-1 → score fold-0
     _fit_score!(idx0, idx1)   # train fold-0 → score fold-1
+
     global_prob_dict = Dict{UInt32, Float32}(); sizehint!(global_prob_dict, nprec)
-    @inbounds for i in 1:nprec; global_prob_dict[pids[i]] = scores[i]; end
+    target_dict = Dict{UInt32, Bool}(); sizehint!(target_dict, nprec)
+    @inbounds for i in 1:nprec
+        global_prob_dict[pids[i]] = scores[i]; target_dict[pids[i]] = y[i]
+    end
     return global_prob_dict, target_dict
 end
 
