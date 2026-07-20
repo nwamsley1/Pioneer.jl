@@ -131,27 +131,44 @@ reasonable safeguard against corroborator-starved fragments; a large floor is no
 
 \subsection{Cluster separately per cross-validation fold}
 The grouping is \emph{part of the feature computation}, so it must respect the same CV discipline as
-the OOF scores it aggregates: build the run grouping \textbf{separately for each precursor-keyed CV
-fold}, from that fold's presence. Empirically this is stable and free:
+the OOF $s_1$ it aggregates: build the run grouping \textbf{separately for each precursor-keyed CV
+fold}, from that fold's own OOF presence. The two folds hold \emph{disjoint} precursor sets, so their
+groupings are derived from independent evidence and \textbf{need not --- and generally will not ---
+match}. That independence \emph{is the point}: a single shared grouping (derived from all precursors)
+would leak one fold's information into the other fold's scoring. Divergence between the folds is
+therefore expected and correct, not a defect.
+
+Consequently the quality check is a \textbf{per-fold, within-fold} property --- each fold's grouping,
+measured on its own, must be condition-coherent enough not to pool distinct conditions (the safety
+invariant). Both folds pass independently:
 \begin{center}\small
-\begin{tabular}{lccc}
+\begin{tabular}{lcc}
 \toprule
-dataset & per-fold homogeneity & ARI(fold0, fold1) & note \\
+dataset & per-fold homogeneity (each fold, measured alone) & (incidental) ARI(fold0, fold1) \\
 \midrule
-EWZ  & $1.00$ (both folds) & $0.684$ & sub-partition of the 20-run conditions differs, both pure \\
-APMS & $0.30$ (both folds) & $0.907$ & folds agree strongly on run structure \\
+EWZ  & $1.00$ and $1.00$ & $0.684$ \\
+APMS & $0.30$ and $0.30$ & $0.907$ \\
 \bottomrule
 \end{tabular}
 \end{center}
-Per-fold groupings are as good as the global one, and the folds \emph{agree} on the condition-level
-structure (APMS ARI $0.91$; EWZ $0.68$ only because the arbitrary within-condition split point
-differs between folds --- both remain $1.00$ homogeneous, so the disagreement is harmless). This
-confirms per-fold clustering is the proper, OOF-consistent choice at no cost in quality.
+The cross-fold ARI is \textbf{not a target and not required} --- a low value would be perfectly
+acceptable, since we are not trying to reproduce a shared structure. It is reported only as an
+incidental note on signal strength (here the condition signal happens to be strong enough that each
+fold independently lands near the same structure; EWZ's $0.68$ merely reflects that the arbitrary
+within-condition sub-split differs between folds, while both stay fully pure). Per-fold clustering is
+the proper, OOF-consistent choice, and each fold's grouping is as good \emph{on its own} as the global
+one.
+
+\textbf{Isolation refinement.} For the fold isolation to be truly clean, the presence used to build
+each fold's grouping should come from \emph{that fold's own OOF} $s_1$ (the same scores the feature
+aggregates), not from a shared experiment-wide $q$ computed with a model that saw both folds. The
+grouping, its presence input, and the aggregated scores are then all one fold's OOF product, end to
+end.
 
 \section{Recommended recipe}
 \begin{enumerate}[nosep]
-  \item \textbf{Per CV fold}, from that fold's data:
-  \item Presence at $q<10^{-3}$ (sparse CSR = \code{file\_pid}).
+  \item \textbf{Per CV fold}, using only that fold's own OOF data (no cross-fold sharing):
+  \item Presence at $q<10^{-3}$ from the fold's OOF $s_1$ (sparse CSR = \code{file\_pid}).
   \item Frequency-filter columns: drop precursors in $<2$ runs and in $>90\%$ of runs.
   \item $L_2$-normalize rows (depth control).
   \item Randomized \code{TruncatedSVD}, $d\approx16$, \textbf{on the sparse matrix} (no $R\times R$

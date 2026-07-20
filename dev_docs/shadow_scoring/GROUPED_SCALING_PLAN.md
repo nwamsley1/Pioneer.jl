@@ -73,12 +73,16 @@ Grafted onto shadow-decoys exactly like `global_max` (keeps the 1:1-marginal gua
 
 ## 5b. Refinements (user, 2026-07-20) — folded into the design
 
-- **Cluster PER CV FOLD.** The grouping is part of feature computation, so it must respect the same
-  precursor-keyed CV discipline as the OOF `s1` it aggregates: build the run grouping separately for
-  each fold, from that fold's presence. Validated (bench_v5): per-fold homogeneity = the global
-  grouping (EWZ 1.00, APMS 0.30@min6); cross-fold ARI EWZ 0.68 / APMS 0.91 — folds agree on the
-  condition-level structure (EWZ's 0.68 is only the arbitrary within-condition sub-split, both stay
-  1.00 pure). Proper and free.
+- **Cluster PER CV FOLD.** The grouping is part of feature computation, so build it separately for
+  each precursor-keyed fold from that fold's OWN OOF presence — the two folds hold disjoint precursors,
+  so their groupings are independent and **need not / will not match; that independence is the point**
+  (a shared grouping would leak one fold into the other's scoring). The real check is a **per-fold,
+  within-fold** property: each fold's grouping, on its own, must not pool conditions. Validated
+  (bench_v5): each fold's homogeneity is as good as the global one (EWZ 1.00 & 1.00, APMS 0.30 & 0.30).
+  **Cross-fold ARI is NOT a target** (EWZ 0.68 / APMS 0.91 reported only as an incidental signal-
+  strength note; a low ARI would be fine). ISOLATION REFINEMENT: presence for fold f should come from
+  fold-f's OWN OOF s1, not a shared experiment-wide q, so grouping+presence+scores are all one fold's
+  OOF product end-to-end.
 - **Minimum group size, not strict equal size.** Don't force equal groups (that hurts — splits
   conditions). Instead floor small groups: merge any group < min-size (~6) into its nearest by
   embedding centroid. HONEST TRADEOFF (bench_v5): helps re-merge FRAGMENTS of large conditions (EWZ
