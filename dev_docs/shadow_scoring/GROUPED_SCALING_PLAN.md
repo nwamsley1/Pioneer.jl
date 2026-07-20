@@ -98,6 +98,14 @@ Keep BOTH global and cluster aggregations (cluster does NOT replace global):
 - `cluster_max`, `cluster_top3_logodds` — same two aggregations over the run's cluster only
 All four GRAFTED onto shadows; `delta_irt` ungrafted.
 
+**Group-size schedule (user, 2026-07-20).** `R < 9` → cluster feature OFF, global only (one group ==
+global, don't compute). `R ≥ 9` → group size `k = min(9, floor(R/2))`: grows as R/2 (always 2 groups)
+until it caps at 9 at R=18; beyond that k stays 9 and the group COUNT grows (~round(R/9)). Examples:
+R9→k4/2grp, R12→k6/2grp, R18→k9/2grp, R27→k9/3grp, EWZ40→k9/~4grp, APMS60→k9/~7grp. NICE PROPERTY:
+auto-disables cluster exactly where it was dangerous — KEAP1 (6 runs) → cluster OFF → only global
+(the safe winner; 6 runs is where raw cluster≈global leaked 6). Cluster only turns on with enough
+run structure (EWZ/APMS).
+
 **One read pass builds both** (per CV fold). Phase 1 — accumulate, looping runs cluster-by-cluster,
 keep per-precursor top-(K+1)=top-4 `(score, run_id)` records: `global_rec[p]` (never reset, spans
 clusters = the single sweep over all runs) AND `cluster_rec[c][p]` (within-cluster, finalized at
