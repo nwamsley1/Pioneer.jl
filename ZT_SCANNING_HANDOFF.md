@@ -15,6 +15,13 @@ memory** — this document is the source of truth. Last updated end of the 2026-
   12,829 protein-group rows.**
 - **Everything is committed and byte-identity-verified.** The work below is DONE; the
   BACKLOG (§5) is analyzed but NOT implemented.
+- **2026-07-20 fresh-machine revalidation** (2-file, k=6, MBR on, lib
+  `PIONEER_LIBS_2026-06-26/Pioneer_HYE_canon_std.poin` — NOT the old `3P_May7` lib): the
+  `ZTScanDIA_5Da_5min_50ng` Condition_A REP1+REP2 give **57,030 precursor rows (REP1 27,995
+  / REP2 29,035) / 8,568 protein-group rows**; collapse 33.2M→2.95M and 39.6M→3.65M meta-PSMs
+  (12–13 s/file), 11.4 min total. This is the byte-identity reference for backlog work on the
+  5min set (see §8 for the data/config paths). Not comparable to the 79,056/12,829 above
+  (different library + files).
 
 ## 1. What "ZT scanning DIA" is (context for a fresh instance)
 
@@ -191,6 +198,12 @@ non-ZT dataset must be unchanged.
   ~5 min/file, deterministic. Then point a config's `ms_data` at that dir.
 - **For pure code work** (5a dead columns, 5b batched collapse) a non-ZT dataset is enough
   for the byte-identity check; ZT data is only needed for ZT-specific validation.
+- **2026-07-20 local workspace (machine `n.t.wamsley`):** `/Users/n.t.wamsley/SciexZT_5min/`
+  — `mzML/` (Condition_A REP1+REP2 copied from RIS
+  `.../NTW/PIONEER/PIONEER_PAPER/ZENOTOF8600_ZTSCAN/ZTScanDIA_5Da_5min_50ng/mzML/`),
+  `arrow/` (converted), `cfg_2rep_5min.json` (lib = RIS
+  `Pioneer/libraries/PIONEER_LIBS_2026-06-26/Pioneer_HYE_canon_std.poin`), `search_out/`.
+  Worktree for this branch: `/Users/n.t.wamsley/Projects/pio-sciex-zt`.
 
 ## 9. Notes for the resuming instance
 
