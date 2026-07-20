@@ -1,0 +1,304 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+\definecolor{kw}{RGB}{0,0,180}
+\definecolor{cmt}{RGB}{0,120,0}
+\definecolor{str}{RGB}{160,0,0}
+\definecolor{bg}{RGB}{247,247,247}
+
+\lstdefinelanguage{Julia}{
+  morekeywords={function,for,while,if,elseif,else,end,return,in,do,let,const,struct,
+    mutable,begin,local,global,true,false,nothing,using,import,where,view},
+  sensitive=true,
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstset{
+  language=Julia, basicstyle=\ttfamily\footnotesize, backgroundcolor=\color{bg},
+  keywordstyle=\color{kw}\bfseries, commentstyle=\color{cmt}\itshape,
+  stringstyle=\color{str}, breaklines=true, showstringspaces=false,
+  frame=single, framesep=4pt, rulecolor=\color{gray!40}, xleftmargin=6pt,
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\textbf{Sciex ZT Scanning-DIA: Batched / Streaming Meta-Scan Collapse}\\[2pt]
+\large Backlog item 5b --- design + implementation plan}
+\author{Pioneer.jl \quad branch \code{feat/sciex-zt-scanning}}
+\date{2026-07-20}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The peak-memory driver of a ZT search is the full raw per-(precursor, scan)
+post-deconvolution PSM table (33--40M rows), which is materialized in its
+entirety and \emph{then} reduced $\sim$11$\times$ by \code{collapse\_to\_metascans}.
+Because the collapse is \emph{local} (each meta-PSM needs only $\pm k$ neighbor
+scans of one precursor), it can run \emph{per contiguous-scan batch, before} the
+concatenation that builds the giant table --- concatenating $\sim$3M meta-PSMs
+instead of $\sim$35M raw rows. This document records the measured local baseline,
+gives the correctness argument (why the result stays byte-identical), and shows
+the concrete code changes with examples.
+\end{abstract}
+
+\section{Measured baseline (this machine)}
+Single file (\code{Condition\_A\_REP1}), \code{PIONEER\_ZT\_METASCAN\_K=6}, 10 threads,
+\code{gcthreads 5,1}, macOS, 64\,GB RAM. Wall $\approx$7.0 min.
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Metric & Value \\
+\midrule
+Peak memory footprint (macOS \code{time -l}, authoritative) & \textbf{22.30 GB} \\
+Pioneer internal ``peak RSS'' (counts mmap'd arrow) & 34.38 GB \\
+Main Search RSS jump & +24.51 GB \\
+\midrule
+\emph{Raw post-deconv table} (33{,}185{,}795 rows $\times$ 55 col) & \textbf{6.34 GB} \\
+\code{permute\_by\_precursor} (global sort churn) & \textbf{7.45 GB} \\
+\code{metascan\_collapse} (cumulative alloc) & 3.68 GB \\
+Meta-PSM table (2{,}950{,}447 rows $\times$ 111 col) & 1.11 GB \\
+\code{library\_search} deconv (cumulative alloc) & 31.17 GB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent\textbf{Collapse invariant} (the fast byte-identity check for 5b, independent
+of MBR so a single-file run suffices): \code{33{,}185{,}795 $\rightarrow$ 2{,}950{,}447}
+meta-PSMs. Full-search reference: 2-file result \code{57{,}030 / 8{,}568}.
+
+\medskip\noindent
+5b directly removes the two bold rows: the raw table never fully materializes (it is
+collapsed per batch to $\sim$1.1\,GB of meta-PSMs), and the 7.45\,GB global
+\code{permute\_by\_precursor} disappears (each batch sorts $\sim$1/\#threads of the data).
+
+\section{Current flow}
+In \code{LibrarySearch.jl}, per file:
+\begin{enumerate}[nosep]
+  \item \code{partition\_scans} splits scans across threads \textbf{round-robin} in
+    batches of 10 (\code{\_distribute\_scans\_to\_threads}) --- interleaved for load balance.
+  \item each thread's \code{process\_scans\_fused!} deconvolves its scans $\rightarrow$
+    a DataFrame of raw per-(precursor,scan) PSMs.
+  \item \code{result = vcat(fetched...)} (\code{LibrarySearch.jl:227}) --- \emph{materializes
+    the full 33--40M-row table}. $\leftarrow$ peak.
+  \item back in \code{process\_file!}: \code{permute\_psms\_by\_precursor\_idx!} (global sort),
+    then (ZT only) \code{collapse\_to\_metascans} $\rightarrow$ 2.95M meta-PSMs
+    (\code{MainSearch.jl:369}).
+\end{enumerate}
+
+\section{The locality that makes 5b correct}
+\code{collapse\_to\_metascans} groups the sorted table by precursor, and for each
+\emph{center} scan $c$ (where the precursor m/z lies in that scan's isolation window) it
+gathers the same precursor's weights at neighbor scans, binned by
+$d = \text{scan}-c \in [-k, k]$:
+\begin{lstlisting}
+lo = max(blk_lo, r - L); hi = min(blk_hi, r + L)
+for rr in lo:hi
+    d = Int(scn[rr]) - c
+    if -k <= d <= k
+        w[d+k+1] += wt[rr]                     # same precursor, neighbor scan
+        if _have_frags
+            for b in 1:8; Fbuf[b][d+k+1] += fcols[b][rr]; end
+        end
+    end
+end
+\end{lstlisting}
+So a meta-PSM at center $c$ depends only on rows with scan index in $[c-k,\,c+k]$ of the
+\emph{same precursor}. Two facts make batching byte-identical:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Per-scan deconvolution is independent.} The weight of precursor $p$ at
+    scan $s$ is the solution of the NNLS over the candidates \emph{of scan $s$ only};
+    it does not depend on any other scan. Hence \code{deconv(scan $s$)} yields the same
+    rows regardless of which batch produced them --- so one batch may safely \emph{read}
+    another batch's already-deconvolved rows.
+  \item \textbf{The neighbor set is a $\pm k$ scan-index window} ($k=6$; $\le 13$
+    consecutive scans), tiny relative to a batch.
+\end{enumerate}
+
+\medskip\noindent\textbf{Deconvolve each scan exactly once.} Note that consecutive centers
+share most of their neighbors (center $c$ and $c{+}1$ overlap in $2k{-}1$ of their $2k{+}1$
+scans), so batches \emph{always} overlap in the meta-scans they touch. That overlap must
+\emph{not} become duplicate deconvolution: a scan is deconvolved once, by the batch that
+\emph{owns} it, and merely \emph{read} as a neighbor by the (at most two) adjacent batches.
+An earlier draft of this plan deconvolved a $\pm k$ halo redundantly --- rejected: it doubles
+work on boundary scans and adds a second site where a result could diverge.
+
+\section{Design}
+Gate everything on \code{PIONEER\_ZT\_METASCAN\_K>0}; the conventional-DIA path is untouched.
+
+\paragraph{(a) Contiguous partitioner.} Replace round-robin with contiguous MS2
+scan-index ranges $[s_{lo}, s_{hi}]$, one per thread, balanced by cumulative peak count.
+Crucially it must \emph{not} apply the round-robin path's intra-RT-bin m/z sort
+(\code{\_sort\_scans\_by\_mz\_in\_rt\_bins!}) --- that would break scan-index contiguity.
+
+\paragraph{(b) Deconvolve once; borrow boundary rows; center ownership.} Thread $t$
+deconvolves \emph{only} its own range $[s_{lo}, s_{hi}]$ --- each scan deconvolved exactly
+once. For the collapse, centers in the first/last $k$ scans of the batch need neighbors that
+live in the adjacent batch; those rows were \emph{already} deconvolved by that batch, so
+thread $t$ \emph{borrows} them (a $k$-scan slice filtered from the neighbor's raw table) rather
+than recomputing. Emission is restricted to $c \in [s_{lo}, s_{hi}]$, so each center lands in
+exactly one owning batch $\Rightarrow$ no double-count, no gap, no double-deconvolution.
+
+\paragraph{(c) Collapse per batch, then vcat meta-PSMs.} Each batch's collapse input is
+\code{head $++$ raw$_t$ $++$ tail} (\code{head}/\code{tail} = borrowed $k$-scan boundary
+slices). The vcat then joins $\sim$3M meta rows instead of $\sim$35M raw rows. The per-batch
+raw tables coexist across a barrier (their sum $=$ today's raw table, $\sim$6.3\,GB) but the
+7.45\,GB global \code{permute\_by\_precursor} and the vcat-of-raw copy are gone. A later
+\emph{streaming} refinement (Tier 2) frees each raw$_t$ once its neighbors have collapsed,
+via a scan-ordered sliding window, so the raw table never fully coexists --- kept separate
+because it serializes the (cheap) collapse in scan order.
+
+\paragraph{(d) Re-sort to global order (the subtle one).} The current global collapse emits
+meta rows in \code{(precursor\_idx, scan\_idx)} order. A batched collapse emits in
+\code{(batch, pid, scn)} order. \textbf{LightGBM is row-order sensitive}, so the batched
+output must be re-sorted to \code{(pid, scn)} to reproduce the exact global order --- otherwise
+IDs can drift even though the collapse content is identical. Re-sorting 3M rows is cheap.
+
+\section{Code changes}
+
+\subsection{New: contiguous ZT partitioner}
+\begin{lstlisting}
+# ZT-only: contiguous MS2 scan-index ranges, balanced by cumulative peak count.
+# Non-overlapping ownership windows -> each scan deconvolved by exactly one batch.
+function partition_scans_contiguous_zt(spectra, n_threads::Int)
+    ms2 = [s for s in 1:length(spectra) if getMsOrder(spectra, s) == 2]  # ordered
+    npk = [length(getMzArray(spectra, s)) for s in ms2]
+    total = sum(npk); target = total / n_threads
+    tasks = Vector{Tuple{Int,UnitRange{Int}}}()      # (thread_id, own_range) only
+    lo = 1; acc = 0.0
+    for i in eachindex(ms2)
+        acc += npk[i]
+        if acc >= target || i == length(ms2)
+            push!(tasks, (length(tasks)+1, lo:i))    # no halo: own range only
+            lo = i+1; acc = 0.0
+        end
+    end
+    return tasks, ms2   # ms2 maps local (ms2) index -> global scan index
+end
+\end{lstlisting}
+
+\subsection{\code{collapse\_to\_metascans}: add a center-ownership window}
+One new kwarg. When set, a center row is emitted only if its scan is owned by this batch;
+neighbor gathering is unchanged (it still reads halo rows present in the batch table).
+\begin{lstlisting}
+function collapse_to_metascans(psms::DataFrame, spectra, precursors, k::Int;
+                               bitvec_rank_table = nothing,
+                               own_scans::Union{Nothing,Set{UInt32}} = nothing)  # NEW
+    ...
+    for r in blk_lo:blk_hi
+        (abs(pm - Float32(cmzs[scn[r]])) <= Float32(hws[scn[r]])/2) || continue
+        own_scans === nothing || (scn[r] in own_scans) || continue   # NEW: ownership
+        c = Int(scn[r])
+        ...                                                          # unchanged below
+    end
+    ...
+end
+\end{lstlisting}
+\code{own\_scans} is the set of global scan indices in this batch's \code{own\_range}.
+Passing \code{nothing} recovers today's global behavior exactly (used by the non-batched
+path and by tests).
+
+\subsection{\code{LibrarySearch.jl}: fuse deconv + collapse per batch (ZT path)}
+\begin{lstlisting}
+if _zt_k > 0
+    tasks_zt, ms2map = partition_scans_contiguous_zt(spectra, Threads.nthreads())
+    metas = map(nce_entries) do (nce_model, nce_tag)
+        # --- 1. Deconvolve each contiguous range ONCE (no overlap). ---
+        raws = map(tasks_zt) do (tid, own_rng)
+            Threads.@spawn process_scans_fused!(ms2map[own_rng], spectra, prec_index,
+                    ms_file_idx, search_data[tid], params, precursors, ion_list,
+                    nce_model, qtm_deconv, mem, rt_to_irt, irt_tol)
+        end |> ts -> fetch.(ts)                               # Vector of per-batch raw tables
+
+        # --- 2. Collapse each batch, BORROWING neighbor rows (no re-deconv). ---
+        parts = map(enumerate(tasks_zt)) do (t, (tid, own_rng))
+            Threads.@spawn begin
+                lo_s = UInt32(ms2map[first(own_rng)]); hi_s = UInt32(ms2map[last(own_rng)])
+                # k-scan boundary slices filtered from ALREADY-deconvolved neighbors
+                head = t > 1 ? _rows_with_scan_ge(raws[t-1], lo_s - _zt_k) : _empty_like(raws[t])
+                tail = t < length(raws) ? _rows_with_scan_le(raws[t+1], hi_s + _zt_k) : _empty_like(raws[t])
+                batch_tbl = vcat(head, raws[t], tail)         # borrowed rows, NOT recomputed
+                own = Set{UInt32}(UInt32.(ms2map[own_rng]))   # emit centers in own range only
+                collapse_to_metascans(batch_tbl, spectra,
+                        getPrecursors(getSpecLib(search_context)), _zt_k;
+                        bitvec_rank_table = bitvec_rank_table, own_scans = own)
+            end
+        end
+        m = vcat(fetch.(parts)...)                            # ~3M meta rows, not ~35M
+        # raws freed here (after all borrows + collapses complete)
+        nce_tag === nothing || isempty(m) || (m[!, :nce] .= nce_tag)
+        m
+    end
+    result = length(metas) == 1 ? metas[1] : vcat(metas...)
+    sort!(result, [:precursor_idx, :scan_idx])                # (d) restore global order
+    # NOTE: process_file! must skip permute_psms_by_precursor_idx! and the second
+    # collapse call for the ZT path when library_search already returned meta-PSMs.
+else
+    # ... existing round-robin deconv + vcat, unchanged ...
+end
+\end{lstlisting}
+
+\subsection{\code{MainSearch.jl}: collapse already done for ZT}
+\code{process\_file!} currently calls \code{permute\_psms\_by\_precursor\_idx!} then
+\code{process\_search\_results!} calls \code{collapse\_to\_metascans}. For the batched ZT
+path both are already handled inside \code{library\_search}, so guard them out (a boolean
+on the results object, e.g. \code{results.already\_collapsed[]}), leaving
+\code{add\_chromatogram\_features!} and the LGBM to run as today on the meta table.
+
+\section{Correctness / verification}
+\begin{enumerate}[nosep]
+  \item \textbf{Boundary coverage:} assert every owned center $c$ has its full $[c-k,c+k]$
+    present in the borrowed-augmented batch table (the borrowed slices guarantee it except at
+    the file's first/last $k$ scans, where the global run is also truncated by
+    \code{max(blk\_lo,\dots)}/\code{min(blk\_hi,\dots)}).
+  \item \textbf{Ownership partition:} the \code{own\_range}s tile the MS2 scans with no
+    overlap and no gap $\Rightarrow$ each center emitted exactly once.
+  \item \textbf{Content identity:} dump meta-PSMs (\code{PIONEER\_DUMP\_METASCANS}), sort
+    both baseline and batched by \code{(precursor\_idx, scan\_idx)}, assert every column
+    bit-identical. Baseline reference already saved:
+    \code{meta\_dump\_baseline/meta\_psms\_file1.arrow}.
+  \item \textbf{Count invariant:} single-file collapse stays \code{33{,}185{,}795 $\rightarrow$
+    2{,}950{,}447}.
+  \item \textbf{End-to-end:} 2-file search stays \code{57{,}030 / 8{,}568}; a non-ZT dataset
+    unchanged (partitioner is gated, so this should be trivially true).
+\end{enumerate}
+
+\section{Risks \& mitigations}
+\begin{center}
+\begin{tabular}{p{5.4cm}p{8.6cm}}
+\toprule
+Risk & Mitigation \\
+\midrule
+Boundary miss (dropped/short meta-PSM near a batch edge) & Borrow the $k$-scan slice from the
+neighbor's raw table; assert full $[c{-}k,c{+}k]$ presence per owned center; the
+content-identity dump catches any drift. \\
+Double deconvolution of boundary scans & Designed out: deconv partition is non-overlapping;
+boundary rows are \emph{borrowed} from the neighbor's raw table, never recomputed. \\
+Row-order $\rightarrow$ LGBM non-determinism & Final \code{sort!} by \code{(pid, scn)}
+to reproduce the global order exactly. \\
+Raw tables coexist at the deconv$\rightarrow$collapse barrier & Tier 1 accepts $\sim$6.3\,GB
+(still drops the 7.45\,GB permute + vcat copy); Tier 2 sliding window frees raw$_t$ early. \\
+Load imbalance from contiguous ranges & Balance ranges by cumulative \emph{peak} count,
+not scan count. \\
+Non-ZT path regression & Entire change gated on \code{PIONEER\_ZT\_METASCAN\_K>0}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Expected outcome}
+Peak driven down by removing the 6.34\,GB raw-table materialization and the 7.45\,GB global
+permute; the vcat shrinks from $\sim$35M to $\sim$3M rows. Target peak $\approx$22\,GB
+$\rightarrow$ mid-teens\,GB (to be measured; RSS is noisy, so we compare the macOS
+\code{time -l} footprint and the alloc buckets, not a single RSS reading). Timing should be
+neutral-to-better (less allocation and no 7.45\,GB sort), and the batches are naturally parallel.
+
+\end{document}
