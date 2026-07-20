@@ -229,9 +229,10 @@ function perform_protein_probit_regression(
         error("Protein probit out-of-memory processing is not supported. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
+    dump_requested = haskey(ENV, "PROTEIN_GROUP_DUMP")
     all_protein_groups = load_protein_probit_training_rows(
         pg_refs;
-        include_qc_plot_columns = write_qc_plots
+        include_qc_plot_columns = write_qc_plots || dump_requested
     )
 
     n_targets = sum(all_protein_groups.target)
@@ -253,12 +254,29 @@ function perform_protein_probit_regression(
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )
 
+    # PROTEIN_GROUP_DUMP=<dir>: after round-1, write the protein-scoring state (standard features +
+    # ROUND-1 pg_score + target + cv_fold + protein key + run/file + species) once, so round-2 /
+    # cross-run / shadow / global-model scoring methods can be iterated OFFLINE without re-searching.
+    if dump_requested && !skip_scoring
+        dump_df = copy(all_protein_groups)
+        assign_protein_group_cv_folds!(dump_df, protein_to_cv_fold)
+        if file_idx_to_name !== nothing && hasproperty(dump_df, :file_idx)
+            dump_df[!, :file_name] = String[get(file_idx_to_name, Int64(fi), "") for fi in dump_df.file_idx]
+        end
+        dump_dir = ENV["PROTEIN_GROUP_DUMP"]; mkpath(dump_dir)
+        dump_path = joinpath(dump_dir, "protein_group_dump.arrow")
+        writeArrow(dump_path, dump_df)
+        @user_info "protein-group dump written (post round-1): $dump_path ($(nrow(dump_df)) rows, $(ncol(dump_df)) cols)"
+    end
+
     # ROUND 2 (GROUP_SCORING=1): add cross-run protein features from round-1 pg_score, inject shadow
     # proteins for regularization, and re-run the same probit with the two extra features.
     if group_scoring_enabled() && !skip_scoring
         add_protein_cross_run_features!(all_protein_groups)
         write_protein_cross_run_cols!(pg_refs, all_protein_groups.global_max, all_protein_groups.global_top3_logodds)
-        df_train = inject_protein_shadows(all_protein_groups, [:global_max, :global_top3_logodds])
+        df_train = get(ENV, "PROTEIN_SHADOW", "1") != "0" ?
+            inject_protein_shadows(all_protein_groups, [:global_max, :global_top3_logodds]) :
+            all_protein_groups
         @user_info "protein two-round: round-2 with cross-run features (global_max, global_top3_logodds) + $(nrow(df_train) - nrow(all_protein_groups)) shadow proteins"
         perform_probit_analysis_multifold(
             df_train,
