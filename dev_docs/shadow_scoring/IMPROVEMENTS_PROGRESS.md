@@ -213,6 +213,11 @@ SVD on sparse presence → kmeans; group-size `k=min(9,floor(R/2))`, cluster OFF
 
 - **BIG completeness win on many-condition data (+33.4%), more UNIQUE than clustermax** — but driven
   by `global_max` (7.3%); cluster features MARGINAL (0.6%).
+- **What "present" means (verified in code, NOT the earlier wrong "1.5% prescore" claim):** the fold
+  files hold the BEST PSM per precursor per run surviving a per-file PEP filter `MAIN_PEP_FILTER_THR=0.99`
+  (MainSearch.jl:381 — drops only PEP>0.99 near-certain decoys; very permissive). The `PRESCORE_QVALUE_
+  THRESHOLD=0.015` is used only for the RT-refinement training set, NOT as a row filter. So `global_max`
+  ≈ max `s1` over the runs where the precursor got a scored best-PSM at all.
 - **KEY INSIGHT — presence-gating makes global already condition-local.** A bait-specific precursor is
   present only in its own reps, so `global_max` = max over its OTHER reps (other baits contribute 0).
   The cluster feature restricts to the run's cluster, which contains those same reps → nearly identical
