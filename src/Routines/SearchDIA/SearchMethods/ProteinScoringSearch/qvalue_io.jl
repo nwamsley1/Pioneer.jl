@@ -92,10 +92,10 @@ end
 
 Learned protein-group analog of `build_precursor_global_model_dict` (GLOBAL_MODEL=1). Aggregates each
 protein's per-run `pg_score` across runs into the same 10 features (n, top-1/2/3, min, mean, std,
-frac>0.99, range, top-√N log-odds), trains a LightGBM with 2-fold PROTEIN-keyed CV (fold from
-`protein_to_cv_fold`; hash-assigned for proteins absent from the map so every protein is model-scored
-on a consistent scale — no log-odds/probability mixing). Returns the same dicts as
-`build_protein_global_score_dicts`, so it is a drop-in replacement.
+frac>0.99, range, top-√N log-odds), trains a PROBIT model (the same model class as the standard
+protein scoring — NOT LightGBM, which overfits the small protein set) with 2-fold PROTEIN-keyed CV
+(fold from `protein_to_cv_fold`; hash-assigned for proteins absent from the map). Returns the same
+dicts as `build_protein_global_score_dicts`, so it is a drop-in replacement.
 """
 function build_protein_global_model_dict(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -128,8 +128,29 @@ function build_protein_global_model_dict(
             Int8(protein_to_cv_fold[k[1]].cv_fold) : Int8(hash(k[1]) & 0x1)   # hash-assign if absent
     end
 
-    scores = Vector{Float32}(undef, m)
-    _fit_global_model_2fold!(X, y, foldv, scores, 10)   # log-odds is feature column 10
+    # 2-fold protein-keyed CV with PROBIT (the same model class the standard protein scoring uses —
+    # NOT LightGBM, which overfits the small protein set). Train one fold, score the other (OOF).
+    X64 = Float64.(X)
+    scores = zeros(Float32, m)
+    idx0 = findall(==(Int8(0)), foldv); idx1 = findall(==(Int8(1)), foldv)
+    function _fs_probit!(train_idx, test_idx)
+        isempty(test_idx) && return
+        if length(train_idx) < 20 || length(unique(@view y[train_idx])) < 2
+            @inbounds for j in test_idx; scores[j] = X[j, 10]; end    # fallback: logodds feature
+            return
+        end
+        local β
+        try
+            β = fit_probit_model(X64[train_idx, :], y[train_idx])
+        catch
+            @inbounds for j in test_idx; scores[j] = X[j, 10]; end
+            return
+        end
+        ps = calculate_probit_scores(X64[test_idx, :], β)
+        @inbounds for (t, j) in enumerate(test_idx); scores[j] = Float32(ps[t]); end
+    end
+    _fs_probit!(idx1, idx0)   # train fold-1 → score fold-0
+    _fs_probit!(idx0, idx1)   # train fold-0 → score fold-1
 
     global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}(); sizehint!(global_pg_score_dict, m)
     pg_name_to_global_pg_score = Dict{ProteinKey, Float32}(); sizehint!(pg_name_to_global_pg_score, m)
