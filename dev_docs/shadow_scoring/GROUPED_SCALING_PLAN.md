@@ -71,6 +71,22 @@ Grafted onto shadow-decoys exactly like `global_max` (keeps the 1:1-marginal gua
   to ~s, (b) swap max → top3-logodds, (c) the streamed group-by-group build for O(N).
 - MULTI `cluster_*` uses `_cosine_topk` = per-run top-K = the expensive kind we are replacing.
 
+## 5b. Refinements (user, 2026-07-20) — folded into the design
+
+- **Cluster PER CV FOLD.** The grouping is part of feature computation, so it must respect the same
+  precursor-keyed CV discipline as the OOF `s1` it aggregates: build the run grouping separately for
+  each fold, from that fold's presence. Validated (bench_v5): per-fold homogeneity = the global
+  grouping (EWZ 1.00, APMS 0.30@min6); cross-fold ARI EWZ 0.68 / APMS 0.91 — folds agree on the
+  condition-level structure (EWZ's 0.68 is only the arbitrary within-condition sub-split, both stay
+  1.00 pure). Proper and free.
+- **Minimum group size, not strict equal size.** Don't force equal groups (that hurts — splits
+  conditions). Instead floor small groups: merge any group < min-size (~6) into its nearest by
+  embedding centroid. HONEST TRADEOFF (bench_v5): helps re-merge FRAGMENTS of large conditions (EWZ
+  min6 keeps homog 1.00) but can LOWER purity where small WHOLE conditions dominate (APMS min6 drops
+  0.50→0.30 — merging pure 3-run bait triplets mixes baits, adds no real corroborators since absent
+  members contribute 0 to top-3). Use a MODEST floor (~6), not large; it's a mild safeguard against
+  corroborator-starved fragments, not always a win. Full report: `grouping_report.pdf`.
+
 ## 6. Open decisions (need user input before implementing)
 
 1. **Group size `s`** — fixed 10? tunable const? (Bigger = marginally more breadth, more leak risk,
