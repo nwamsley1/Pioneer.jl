@@ -203,9 +203,31 @@ SVD on sparse presence → kmeans; group-size `k=min(9,floor(R/2))`, cluster OFF
   condition-locality benefit; its residual leak is systematic-reproducible (clustering can't fix).
   (2) GROUP GRAFTS the cluster features (regularizes them) → same damping that made MULTI uniform
   (+7.5%) trail MULTI selective (+10.7%, RAW cluster). Grafting caps cluster breadth.
-- **NEXT**: (a) APMS (60 runs, 20 conditions) — the real cluster showcase; (b) try RAW cluster (graft
-  only global, leave cluster ungrafted) to see if it recovers MULTI-selective breadth with scalable
-  clustering. rSVD embedding replaces R×R Gram (O(nnz·ℓ), scales to thousands of runs).
+- **APMS (60 runs, 20 baits × 3 reps) — the many-condition showcase:**
+
+| variant | rows | Δ% | unique | note |
+|---|---|---|---|---|
+| baseline | 1,722,608 | — | 100,611 | |
+| **GROUP (grafted)** | 2,298,390 | +33.4% | 124,244 | k=9; global_max 7.3%, cluster_top3 0.6% |
+| clustermax (raw cluster) | 2,358,857 | +36.9% | 121,982 | raw cluster, older branch |
+
+- **BIG completeness win on many-condition data (+33.4%), more UNIQUE than clustermax** — but driven
+  by `global_max` (7.3%); cluster features MARGINAL (0.6%).
+- **KEY INSIGHT — presence-gating makes global already condition-local.** A bait-specific precursor is
+  present only in its own reps, so `global_max` = max over its OTHER reps (other baits contribute 0).
+  The cluster feature restricts to the run's cluster, which contains those same reps → nearly identical
+  value. Hence tiny cluster importance (0.6% APMS, 1.5% EWZ). **The cluster features are largely
+  REDUNDANT with global**, because a precursor only draws from runs where it's present (= its condition).
+- **Where cluster COULD help** = a precursor FALSELY present (high score) in a wrong-condition run
+  (global reaches in, cluster wouldn't if that run is a different cluster). But our residual leaks are
+  systematic-reproducible (false precursor in MANY wrong runs → also in the cluster), so cluster
+  doesn't catch them.
+- **VERDICT: `global_top3_logodds` (+ `global_max`) is the winner; the cluster addition is marginal on
+  these datasets.** GROUP's wins are the global features (already had). Grafting cluster also damps
+  breadth vs raw (APMS GROUP +33.4% < clustermax raw +36.9%; consistent w/ EWZ uniform vs selective).
+  The scalable per-fold rSVD clustering infra is built + correct, but cluster features don't earn their
+  keep here. OPTION if chasing last few %: raw cluster (graft global only) + the k<9→cluster-off
+  schedule = clustermax-like breadth with auto-safety on small experiments.
 
 ## Improvement plan (priority order)
 
