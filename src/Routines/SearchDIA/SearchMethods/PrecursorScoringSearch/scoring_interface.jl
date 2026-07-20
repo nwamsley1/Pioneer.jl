@@ -134,6 +134,96 @@ function build_precursor_global_prob_dicts(
     return global_prob_dict, target_dict
 end
 
+# Learned global model (ENV["GLOBAL_MODEL"]=1): replace the fixed top-√N log-odds with a
+# precursor-level LightGBM on round-1 OOF-score aggregates, 2-fold precursor-keyed CV.
+global_model_enabled() = get(ENV, "GLOBAL_MODEL", "") == "1"
+const _GLOBAL_MODEL_NFEAT = 10
+
+# Per-precursor aggregate features of the round-1 OOF scores `v` (across the runs it was seen in).
+function _global_model_feats!(out::Vector{Float32}, v::Vector{Float32}, sqrt_n_runs::Int)
+    n = length(v)
+    mx = v[1]; mn = v[1]; s = 0.0f0; s2 = 0.0f0; c99 = 0
+    @inbounds for x in v
+        x > mx && (mx = x); x < mn && (mn = x)
+        s += x; s2 += x * x; x > 0.99f0 && (c99 += 1)
+    end
+    mean_v = s / n
+    var_v  = n > 1 ? max(0.0f0, (s2 - s * s / n) / (n - 1)) : 0.0f0
+    sv = sort(v; rev = true)
+    med = isodd(n) ? sv[(n + 1) ÷ 2] : 0.5f0 * (sv[n ÷ 2] + sv[n ÷ 2 + 1])
+    out[1]  = Float32(n)
+    out[2]  = mx
+    out[3]  = mean_v
+    out[4]  = mn
+    out[5]  = sqrt(var_v)
+    out[6]  = med
+    out[7]  = logodds(v, sqrt_n_runs)      # the current fixed global score, as a feature (can't do worse)
+    out[8]  = Float32(c99) / n
+    out[9]  = mx - mn
+    out[10] = n >= 2 ? sv[2] : sv[1]
+    return out
+end
+
+"""
+    build_precursor_global_model_dict(refs, sqrt_n_runs, n_precursors) → (global_prob_dict, target_dict)
+
+Learned replacement for the fixed top-√N log-odds global score. Aggregates each precursor's ROUND-1
+OOF scores (`:s1_round1`) across runs into features, then trains a precursor-level LightGBM with
+2-fold precursor-keyed CV (train one fold, score the other — clean OOF because each precursor is in
+exactly one fold). Falls back to the log-odds feature when a fold has too little/one-class data.
+Requires the `:s1_round1` column (written by the two-round group-feature step).
+"""
+function build_precursor_global_model_dict(
+    refs::Vector{PSMFileReference}, sqrt_n_runs::Int, n_precursors::Int,
+)
+    s1_acc = Dict{UInt32, Vector{Float32}}(); sizehint!(s1_acc, n_precursors)
+    fold_of = Dict{UInt32, UInt8}(); sizehint!(fold_of, n_precursors)
+    target_dict = Dict{UInt32, Bool}(); sizehint!(target_dict, n_precursors)
+    for ref in refs
+        cols = materialize_columns(ref, [:precursor_idx, :s1_round1, :cv_fold, :target])
+        n = nrow(cols); n == 0 && continue
+        pid = cols.precursor_idx; s1 = cols.s1_round1; cf = cols.cv_fold; tg = cols.target
+        @inbounds for i in 1:n
+            p = pid[i]
+            if !haskey(s1_acc, p)
+                s1_acc[p] = Float32[]; fold_of[p] = UInt8(cf[i]); target_dict[p] = tg[i]
+            end
+            push!(s1_acc[p], Float32(s1[i]))
+        end
+    end
+    pids = collect(keys(s1_acc)); nprec = length(pids)
+    X = Matrix{Float32}(undef, nprec, _GLOBAL_MODEL_NFEAT)
+    y = Vector{Bool}(undef, nprec); fold = Vector{UInt8}(undef, nprec)
+    feat = Vector{Float32}(undef, _GLOBAL_MODEL_NFEAT)
+    @inbounds for i in 1:nprec
+        _global_model_feats!(feat, s1_acc[pids[i]], sqrt_n_runs)
+        for j in 1:_GLOBAL_MODEL_NFEAT; X[i, j] = feat[j]; end
+        y[i] = target_dict[pids[i]]; fold[i] = fold_of[pids[i]]
+    end
+    scores = Vector{Float32}(undef, nprec)
+    idx0 = findall(==(UInt8(0)), fold); idx1 = findall(==(UInt8(1)), fold)
+    function _fit_score!(train_idx, test_idx)
+        isempty(test_idx) && return
+        if length(train_idx) < 100 || length(unique(@view y[train_idx])) < 2
+            @inbounds for j in test_idx; scores[j] = X[j, 7]; end     # fallback: logodds feature
+            return
+        end
+        cls = _fit_pass1_booster(X[train_idx, :], y[train_idx], SCORING_LGBM_HP)
+        if cls isa NamedTuple && cls.kind === :constant
+            @inbounds for j in test_idx; scores[j] = Float32(cls.value); end
+        else
+            raw = LightGBM.predict(cls, X[test_idx, :]; num_threads = Threads.nthreads())
+            pr = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            @inbounds for (t, j) in enumerate(test_idx); scores[j] = Float32(pr[t]); end
+        end
+    end
+    _fit_score!(idx1, idx0)   # train fold-1 → score fold-0
+    _fit_score!(idx0, idx1)   # train fold-0 → score fold-1
+    global_prob_dict = Dict{UInt32, Float32}(); sizehint!(global_prob_dict, nprec)
+    @inbounds for i in 1:nprec; global_prob_dict[pids[i]] = scores[i]; end
+    return global_prob_dict, target_dict
+end
+
 """
     build_global_qval_dict_from_scores(score_dict, target_dict, fdr_scale) → Dict{UInt32, Float32}
 

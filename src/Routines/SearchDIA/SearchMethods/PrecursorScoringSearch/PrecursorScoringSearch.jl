@@ -296,9 +296,13 @@ function summarize_results!(
         # Pre-allocation size from spectral library
         n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-        # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
+        # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read).
+        # GLOBAL_MODEL=1 uses a learned precursor-level model on round-1 OOF-score aggregates
+        # (2-fold precursor CV) instead of the fixed top-√N log-odds.
         global_prob_dict, target_dict =
-            build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
+            global_model_enabled() ?
+                build_precursor_global_model_dict(filtered_refs, sqrt_n_runs, n_precursors) :
+                build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
