@@ -234,6 +234,31 @@ SVD on sparse presence → kmeans; group-size `k=min(9,floor(R/2))`, cluster OFF
   keep here. OPTION if chasing last few %: raw cluster (graft global only) + the k<9→cluster-off
   schedule = clustermax-like breadth with auto-safety on small experiments.
 
+### #Learned global model on round-1 scores (GLOBAL_MODEL=1)
+
+Replaces the fixed top-√N log-odds global score with a precursor-level LightGBM on ROUND-1 s1
+aggregates (n, top-1/2/3, min, mean, std, frac>0.99, range, top-√N logodds), 2-fold precursor-keyed
+CV (train one fold → score the other; clean OOF since each precursor is in one fold). Streaming +
+memory-efficient (fixed-size per-precursor accumulators, no per-precursor vector/sort; flat in
+#runs/#PSMs). Preserves round-1 s1 as :s1_round1 (round-2 overwrites trace_prob_prepass). Round-1 basis
+per user (avoids double-counting the cross-run signal round-2 already uses).
+
+| EWZ (40 runs) | GROUP+counts | +GLOBAL_MODEL | Δ |
+|---|---|---|---|
+| unique precursors | 66,588 | 68,049 | **+2.2%** |
+| total rows | 1,961,775 | 1,939,794 | −1.1% |
+| yeast leak (precursor) | 3,764 | 2,809 | **−955 (−25%)** |
+| yeast leak (PG) | 535 | 497 | −38 |
+
+- **+2.2% unique precursors** (matches the offline prototype's +2.5%) — recovers NARROW precursors
+  (confident in 1-3 runs) that the fixed logodds penalized. Breadth-in-distinct-IDs win.
+- **Cuts yeast false transfer ~25%** (precursor 3764→2809, PG 535→497) — the learned target/decoy
+  model down-ranks the systematic-reproducible false-yeast the fixed logodds rewarded. Safety bonus.
+- **BUT total rows −1.1%** — recovered precursors are narrow (few instances); the global reshuffle
+  drops some broader precursors' instances. Breadth-not-depth (prototype saw same). Did NOT raise
+  total. Could compare round-1 vs round-2 basis if total matters.
+- KEAP1 (6 runs): +9 unique (noise — too few runs). Plumbing validated (s1_round1 flows, no error).
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
