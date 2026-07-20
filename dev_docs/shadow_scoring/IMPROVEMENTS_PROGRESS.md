@@ -181,6 +181,32 @@ global_max's saturating max cannot express.
   shadow+global_max default.** NEXT: (a) top3 ALONE (replace global_max — importance suggests it may
   subsume it); (b) top3 + twin_score together; (c) tune the K (top-2 / top-5).
 
+### #GROUP_SCORING (per-fold rSVD clustering + global/cluster features) — IMPLEMENTED
+
+`GROUP_SCORING=1`: 4 grafted features `global_{max,top3_logodds}` (all fold-runs) +
+`cluster_{max,top3_logodds}` (run's fold-specific cluster). Per CV fold, cluster the fold's runs
+(files are fold-split `*_fold{0,1}.arrow`, so run count = fold's file count) via randomized truncated
+SVD on sparse presence → kmeans; group-size `k=min(9,floor(R/2))`, cluster OFF (mirrors global) for R<9.
+
+| dataset | variant | total/rows | Δ% | leak | notes |
+|---|---|---|---|---|---|
+| KEAP1 (6 runs) | GROUP | 709,297 | +6.9% | 1 | k=0 → cluster mirrors global (== top3 winner); floor |
+| EWZ (40 runs) | top3 (global only) | 1,945,114 | +5.4% | +990 | leak/1k-new 9.9 |
+| EWZ | **GROUP (all grafted)** | 1,954,286 | +5.9% | +1,310 | 11.9; k=9 active; cluster_top3 1.5% (2nd feature) |
+| EWZ | MULTI selective (RAW cluster) | 2,041,759 | +10.7% | +1,374 | raw cluster = breadth leader |
+
+- **Correctness validated**: KEAP1 6 runs → k=0 cluster off (cluster cols == global, leak floor);
+  EWZ 40 runs → k=9, clustering active, all 4 features used, `cluster_top3_logodds` 2nd-most-important
+  (1.5%) → per-fold rSVD clustering produces real, non-redundant signal.
+- **EWZ = modest net**: cluster adds +0.5pp breadth over pure global top3 at proportional leak
+  (efficiency slightly worse). TWO reasons: (1) EWZ has only 2 conditions → under-showcases the
+  condition-locality benefit; its residual leak is systematic-reproducible (clustering can't fix).
+  (2) GROUP GRAFTS the cluster features (regularizes them) → same damping that made MULTI uniform
+  (+7.5%) trail MULTI selective (+10.7%, RAW cluster). Grafting caps cluster breadth.
+- **NEXT**: (a) APMS (60 runs, 20 conditions) — the real cluster showcase; (b) try RAW cluster (graft
+  only global, leave cluster ungrafted) to see if it recovers MULTI-selective breadth with scalable
+  clustering. rSVD embedding replaces R×R Gram (O(nnz·ℓ), scales to thousands of runs).
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
