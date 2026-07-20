@@ -413,12 +413,11 @@ function _score_precursor_isotope_traces_no_mbr(
     @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
     log_pass_importance(pass1, two_round_enabled() ? "Round-1" : "Pass-1")
 
-    # Optional round-2 (env TWO_ROUND=1): derive cross-run features (twin_score,
-    # delta_irt) from the round-1 OOF sidecars and re-train on
-    # [ADVANCED_FEATURE_SET ; twin_score ; delta_irt]. The round-2 pass overwrites
-    # each `.pass1_sidecar.arrow`, so trace_prob (set from trace_prob_prepass in the
-    # merge below) becomes the round-2 OOF score. Expresses under develop's native
-    # (:global_qval AND :qval) filter — the ew arm bites, so twin_score matters.
+    # Optional round-2 (env TWO_ROUND=1): derive the GROUP cross-run features + delta_irt from the
+    # round-1 OOF sidecars, inject symmetric shadow-decoys, and re-train on
+    # [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. The round-2 pass overwrites each
+    # `.pass1_sidecar.arrow`, so trace_prob (set from trace_prob_prepass in the merge below) becomes
+    # the round-2 OOF score.
     if two_round_enabled()
         write_two_round_feature_columns!(file_paths)
         # Symmetric shadow-decoy injection (see two_round_scoring.jl). No-op when
@@ -433,8 +432,8 @@ function _score_precursor_isotope_traces_no_mbr(
             lgbm_hp         = SCORING_LGBM_HP,
             semisupervised  = true,
         )
-        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. twin_score, delta_irt)"
-        log_pass_importance(pass1, "Round-2 (+twin_score,+delta_irt)")
+        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
+        log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
         # Compute BOTH FDR variants (A: real-only; B: shadow-included) as a diagnostic,
         # then remove shadow rows so downstream sees the same schema as before.
         log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)

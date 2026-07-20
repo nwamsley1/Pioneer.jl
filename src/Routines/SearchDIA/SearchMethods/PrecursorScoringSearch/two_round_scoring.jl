@@ -1,81 +1,32 @@
 # Two-round experiment-wide scoring: cross-run consistency features.
 # Design + CV protocol: see TWO_ROUND_SCORING.md.
 #
-# Enabled via ENV["TWO_ROUND"] == "1". After the round-1 Pass-1 OOM trainer has
-# written each file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass),
-# `write_two_round_feature_columns!` derives two cross-run features from s1 and
-# writes them as columns into each per-file fold Arrow, so a second
-# `train_and_predict_pass1_oom!` pass can train on [ base ; twin_score ; delta_irt ].
+# Enabled via ENV["TWO_ROUND"] == "1". After the round-1 Pass-1 OOM trainer has written each
+# file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass), `write_two_round_feature_columns!`
+# clusters the runs per CV fold and derives the GROUP cross-run features (global/cluster
+# max, top3_logodds, n_present, n_confident) + delta_irt from s1, writing them as columns into each
+# per-file fold Arrow. `inject_shadow_decoys!` then adds symmetric shadow rows (each grafted with the
+# original row's cross-run features) so a second `train_and_predict_pass1_oom!` pass trains on
+# [ ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt ] with a 1:1 target/decoy marginal on the grafts.
 #
-# Leakage-safety rests on the existing precursor_idx-keyed CV folds (Invariant A):
-# every PSM of a precursor shares one fold, so a PSM's twin/best-instance lookups
-# land in the same held-out fold and their s1 is OOF-consistent. The round-2 trainer
-# reuses the unchanged `cv_fold` column (Invariant B).
+# Leakage-safety rests on the existing precursor_idx-keyed CV folds (Invariant A): every PSM of a
+# precursor shares one fold, so a PSM's cross-run lookups land in the same held-out fold and their s1
+# is OOF-consistent; run clustering is done independently per fold. The round-2 trainer reuses the
+# unchanged `cv_fold` column (Invariant B).
 #
 # Assumes one row per precursor_idx per file (current MainSearch invariant), so
 # s1[file, precursor] is a single value — no trace->precursor aggregation needed.
 
-# Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is
-# evaluated at precompile time and baked into the cached module, so it would
-# ignore the env var on a cached load. Mirrors the GLOBAL_AGG runtime check.
-# K for the k-nearest-neighbor cross-run feature (aggregation of top-K neighbors'
-# same-precursor round-1 scores). To sweep K, change KNN_K. To switch aggregation,
-# change KNN_AGG to :mean, :median, or :quantile (with KNN_Q). Column name auto-
-# derives (e.g. :knn10_median, :knn10_q75).
-const KNN_K = 5
-const KNN_SCOPE = :all_runs   # :nearest_k | :all_runs — with :all_runs, KNN_K is ignored.
-const KNN_AGG = :max          # :mean | :median | :quantile | :max
-const KNN_Q = 0.75f0          # only used when KNN_AGG === :quantile
-# PEP filter on round-1 s1 before the cross-run feature computation. 1.0 = off.
-const PEP_FILTER_THRESHOLD = 1.0
-const PEP_FILTER_N_BINS = 100
-# Symmetric shadow-decoy injection: after mbr_score is written, for every real
-# row inject a paired shadow of the opposite class carrying the source's other
-# features but the ORIGINAL row's mbr_score. See TWO_ROUND_SCORING.md.
-const SHADOW_DECOY_MODE = :symmetric   # :none | :symmetric
-const KNN_COL = if KNN_SCOPE === :all_runs
-    Symbol("global_$(KNN_AGG)")   # :global_mean, :global_max, ...
-elseif KNN_AGG === :quantile
-    Symbol("knn$(KNN_K)_q$(Int(round(KNN_Q * 100)))")
-else
-    Symbol("knn$(KNN_K)_$(KNN_AGG)")
-end
+# Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is evaluated at
+# precompile time and baked into the cached module, so it would ignore the env var on a
+# cached load. The round-2 path (cross-run GROUP features + shadow-decoys + global model)
+# is enabled via ENV["TWO_ROUND"] == "1".
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-# Cross-run shadow-spectrum agreement: donor<->acceptor top-8 smoothed-fragment Hellinger.
-# For each (precursor, run), the donor is the neighbor run with the highest s1 (the run supplying
-# the KNN_COL value). A true transfer (same real peptide) -> low Hellinger (high agreement); a
-# false transfer (precursor absent in this run) -> the acceptor is noise -> high Hellinger. Gives
-# round-2 the signal KNN_COL lacks, so it can borrow breadth without leaking. Toggle with
-# shadow_hel_enabled().
-# Runtime toggle (default off) so base shadow+global_max and +shadow_hel can be A/B'd on the
-# same compiled build via ENV["SHADOW_HEL"]=1, without a recompile.
-shadow_hel_enabled() = get(ENV, "SHADOW_HEL", "") == "1"
-const SHADOW_HEL_COL = Symbol("$(KNN_COL)_shadow_hel")
 
-# GATED_HEL mode (ENV["GATED_HEL"]=1): instead of feeding global_max and shadow_hel as separate
-# additive features, feed the single GATED score  global_max_gated = global_max * (1 - shadow_hel).
-# Spectral disagreement (high Hellinger) can then ONLY withhold a transfer, never add it — a guard,
-# not a booster. See shadow_hel_guard.pdf.
-gated_hel_enabled() = get(ENV, "GATED_HEL", "") == "1"
-const GATED_COL = Symbol("$(KNN_COL)_gated")
-
-# TWIN_SCORE mode (ENV["TWIN_SCORE"]=1): add `twin_score` alongside global_max, BOTH grafted.
-# twin_score = round-1 s1 of the precursor in its SINGLE most-cosine-similar run (its "twin").
-# Unlike raw cluster features it is grafted (regularized), keeping the 1:1 marginal guarantee.
-# It is a leak DISCRIMINATOR by construction: a false transfer's twin is a same-condition run
-# where the precursor is absent -> twin_score~0 (decoy-like) even when global_max~1 (borrowed
-# from a different-condition run). Historically the strongest round-2 feature. See TWO_ROUND_SCORING.md.
-twin_score_enabled() = get(ENV, "TWIN_SCORE", "") == "1"
-const TWIN_COL = :twin_score
-
-# TOP3_LOGSUM mode (ENV["TOP3_LOGSUM"]=1): add `global_top3_logodds` alongside global_max, both
-# grafted. = sum of the (positive) logits of the precursor's TOP-3 round-1 scores across other runs.
-# Mirrors Pioneer's global scorer (top-sqrt(N) logodds). Unlike global_max (saturates at one strong
-# donor), it rewards REPRODUCIBILITY: confident in 3 runs >> confident in 1. Positive-only (floor
-# each logit at 0) so weak/absent runs never subtract — monotone "confidence-weighted corroboration".
-top3_logsum_enabled() = get(ENV, "TOP3_LOGSUM", "") == "1"
-const TOP3_COL = :global_top3_logodds
-
+# Symmetric shadow-decoy injection: after the round-2 cross-run features are written, for
+# every real row inject a paired shadow of the opposite class carrying the source's other
+# features but the ORIGINAL row's grafted cross-run feature(s). See TWO_ROUND_SCORING.md.
+const SHADOW_DECOY_MODE = :symmetric   # :none | :symmetric
 # Positive logit: 0 for s1<=0.5, else log(s1/(1-s1)) clamped away from the asymptote.
 @inline function _pos_logit(x::Float32)
     x <= 0.5f0 && return 0.0f0
@@ -83,177 +34,22 @@ const TOP3_COL = :global_top3_logodds
     return log(c / (1.0f0 - c))
 end
 
-# Sum of positive logits of the top-3 scores of precursor `p` across the neighbor dicts.
-@inline function _top3_logodds(ndicts::Vector{Dict{UInt32,Float32}}, p::UInt32)
-    a = 0.0f0; b = 0.0f0; c = 0.0f0   # running top-3 values, descending
-    @inbounds for d in ndicts
-        v = get(d, p, 0.0f0)
-        if v > a
-            c = b; b = a; a = v
-        elseif v > b
-            c = b; b = v
-        elseif v > c
-            c = v
-        end
-    end
-    return _pos_logit(a) + _pos_logit(b) + _pos_logit(c)
-end
-
-# MULTI_FEATURE mode (ENV["MULTI_FEATURE"]=1): compute several cross-run summaries at once and let
-# round-2 select. Safe BECAUSE of the shadow-decoy regularization — each feature's target/decoy
-# marginal is forced to 1:1, so the LGBM can't over-trust any single one; it uses whichever add
-# signal jointly with the base features. All of these are grafted onto the shadows.
-#   global_max/global_mean : max/mean s1 over ALL other runs
-#   cluster_max/cluster_mean: max/mean s1 over the top-KNN_K cosine-similar (condition) runs
-#   shadow_hel             : donor<->acceptor top-8 fragment Hellinger (donor = global_max run)
-multi_feature_enabled() = get(ENV, "MULTI_FEATURE", "") == "1"
-const MULTI_FEATURE_COLS = [:global_max, :global_mean, :cluster_max, :cluster_mean, :shadow_hel]
-
-# GATE_GLOBAL mode (with MULTI_FEATURE=1, ENV["GATE_GLOBAL"]=1): apply the shadow_hel gate to ONLY
-# the leakage-prone GLOBAL channel — feed global_{max,mean}_gated = global_{max,mean}*(1-shadow_hel)
-# — while leaving the condition-scoped cluster_{max,mean} RAW (leak-resistant by scope). Combines the
-# gate's transfer PRECISION on the leaky channel with the cluster features' breadth. The gate folds
-# agreement in, so no separate shadow_hel term. Graft is selective (the gated global cols only).
-gate_global_enabled() = get(ENV, "GATE_GLOBAL", "") == "1"
-const MULTI_GATED_COLS = [:global_max_gated, :global_mean_gated, :cluster_max, :cluster_mean]
-
-# GROUP_SCORING mode (ENV["GROUP_SCORING"]=1): scalable global + hard-cluster cross-run features,
-# clustered PER CV FOLD. Four grafted features: global_{max,top3_logodds} over ALL other runs +
-# cluster_{max,top3_logodds} over the run's fold-specific cluster. Built in one O(N) per-fold pass
-# via top-4 (score,run) records with leave-one-out (see _write_group_features!). Cluster size follows
-# the schedule _group_size(R): OFF for R<9 (cluster cols mirror global), else min(9, floor(R/2)).
-group_scoring_enabled() = get(ENV, "GROUP_SCORING", "") == "1"
+# GROUP cross-run features: scalable global + hard-cluster consistency, clustered PER CV FOLD.
+# Eight grafted features — global_{max,top3_logodds,n_present,n_confident} over ALL other runs +
+# cluster_{max,top3_logodds,n_present,n_confident} over the run's fold-specific cluster. Built in
+# one O(N) per-fold pass via top-4 (score,run) records with leave-one-out (see
+# _write_group_features!). Cluster size follows _group_size(R): OFF for R<9 (cluster cols mirror
+# global), else min(9, floor(R/2)).
 const GROUP_COLS = [:global_max, :global_top3_logodds, :cluster_max, :cluster_top3_logodds,
                     :global_n_present, :global_n_confident, :cluster_n_present, :cluster_n_confident]
 
-two_round_features() =
-    group_scoring_enabled() ? vcat(GROUP_COLS, [:delta_irt]) :
-    gated_hel_enabled()     ? [GATED_COL, :delta_irt] :
-    (multi_feature_enabled() && gate_global_enabled()) ? vcat(MULTI_GATED_COLS, [:delta_irt]) :
-    multi_feature_enabled() ? vcat(MULTI_FEATURE_COLS, [:delta_irt]) :
-    twin_score_enabled()    ? [KNN_COL, TWIN_COL, :delta_irt] :
-    top3_logsum_enabled()   ? [KNN_COL, TOP3_COL, :delta_irt] :
-    shadow_hel_enabled()    ? [KNN_COL, :delta_irt, SHADOW_HEL_COL] :
-                              [KNN_COL, :delta_irt]
+# Round-2 feature columns appended to ADVANCED_FEATURE_SET: the GROUP cross-run features + delta_irt.
+two_round_features() = vcat(GROUP_COLS, [:delta_irt])
 
-# Cross-run mbr feature columns to graft onto shadow twins (so each stays 1:1-regularized).
-# In MULTI_FEATURE mode, GRAFT_SCOPE selects which get regularized:
-#   "all"    (default) — graft all cross-run features (uniform regularization).
-#   "global" — graft only the LEAKAGE-PRONE global_* (+shadow_hel) features; leave the
-#              condition-scoped cluster_* ungrafted (they're leak-resistant by scope, so the
-#              model can lean on them fully). Regularize by leakage risk, not uniformly.
-# GRAFT_DELTA_IRT=1 (ablation): also graft delta_irt onto the shadows, so its target/decoy marginal
-# is flattened like the cross-run score (model forced to use RT-consistency jointly, not standalone).
-# Overwrites the shadow's delta_irt with the feature-parent's, breaking the shadow's own iRT/m-z
-# self-consistency — so this is incompatible with later stratifying decoy pairing by prec_mz.
-_graft_delta_irt() = get(ENV, "GRAFT_DELTA_IRT", "") == "1"
-
-function _mbr_graft_cols()
-    base =
-        group_scoring_enabled() ? Tuple(c for c in GROUP_COLS) :
-        gated_hel_enabled()     ? (GATED_COL,) :
-        (multi_feature_enabled() && gate_global_enabled()) ? (:global_max_gated, :global_mean_gated) :
-        multi_feature_enabled() ?
-            (get(ENV, "GRAFT_SCOPE", "all") == "global" ? (:global_max, :global_mean, :shadow_hel) :
-                                                           Tuple(c for c in MULTI_FEATURE_COLS)) :
-        twin_score_enabled()    ? (KNN_COL, TWIN_COL) :
-        top3_logsum_enabled()   ? (KNN_COL, TOP3_COL) :
-        shadow_hel_enabled()    ? (KNN_COL, SHADOW_HEL_COL) :
-                                  (KNN_COL,)
-    return _graft_delta_irt() ? (base..., :delta_irt) : base
-end
-
-# Hellinger distance in [0,1] between two 8-fragment intensity vectors (each L1-normalized to a
-# probability, then sqrt). 1.0 (max distance) when either vector has no positive intensity.
-@inline function _hellinger8(a::NTuple{8,Float32}, b::NTuple{8,Float32})
-    sa = 0.0f0; sb = 0.0f0
-    @inbounds for k in 1:8; sa += max(a[k], 0.0f0); sb += max(b[k], 0.0f0); end
-    (sa <= 0.0f0 || sb <= 0.0f0) && return 1.0f0
-    acc = 0.0f0
-    @inbounds for k in 1:8
-        p = sqrt(max(a[k], 0.0f0) / sa); q = sqrt(max(b[k], 0.0f0) / sb)
-        acc += (p - q)^2
-    end
-    return sqrt(0.5f0 * acc)
-end
-
-# Type-7 quantile of the first `n` elements of `buf` via in-place insertion sort.
-# Allocation-free (caller owns `buf`). Insertion sort is fine for K ≤ 16. Passing
-# q=0.5f0 gives the standard median.
-@inline function _quantile_first_n!(buf::AbstractVector{Float32}, n::Int, q::Float32)
-    @inbounds for i in 2:n
-        v = buf[i]; j = i
-        while j > 1 && buf[j-1] > v
-            buf[j] = buf[j-1]; j -= 1
-        end
-        buf[j] = v
-    end
-    n == 1 && return @inbounds buf[1]
-    h  = 1f0 + Float32(n - 1) * q          # 1-indexed fractional position
-    lo = floor(Int, h)
-    lo >= n && return @inbounds buf[n]
-    lo <  1 && return @inbounds buf[1]
-    frac = h - Float32(lo)
-    return @inbounds buf[lo] + frac * (buf[lo+1] - buf[lo])
-end
-
-# Zero out per-row s1 across all files where the global local PEP > threshold.
-# Local PEP is estimated by sorting all rows descending by s1, splitting into
-# equal-count bins, and taking bin_pep = n_decoys / n_total_in_bin per bin. A
-# row's PEP is its bin's PEP (rank-to-bin lookup). Simple, monotonically-noisy
-# in principle but fine at bin counts ≥ 50 with the row counts we see here
-# (millions of rows). Returns (n_filtered, n_kept).
-function _filter_by_local_pep!(file_s1::Vector{Vector{Float32}},
-                              file_tgt::Vector{Vector{Bool}},
-                              pep_threshold::Float64,
-                              n_bins::Int)
-    # Concat rows into a single flat view for binning.
-    nf = length(file_s1)
-    offsets = Vector{Int}(undef, nf + 1); offsets[1] = 0
-    for f in 1:nf
-        offsets[f+1] = offsets[f] + length(file_s1[f])
-    end
-    ntot = offsets[end]
-    ntot == 0 && return (0, 0)
-    scores  = Vector{Float32}(undef, ntot)
-    targets = Vector{Bool}(undef, ntot)
-    for f in 1:nf, i in eachindex(file_s1[f])
-        scores[offsets[f] + i]  = file_s1[f][i]
-        targets[offsets[f] + i] = file_tgt[f][i]
-    end
-    perm = sortperm(scores; rev=true)  # rank 1 = highest score
-    bin_size = max(1, cld(ntot, n_bins))
-    n_actual_bins = cld(ntot, bin_size)
-    bin_pep = Vector{Float64}(undef, n_actual_bins)
-    for b in 1:n_actual_bins
-        lo = 1 + (b-1) * bin_size
-        hi = min(b * bin_size, ntot)
-        n_target = 0
-        @inbounds for i in lo:hi
-            targets[perm[i]] && (n_target += 1)
-        end
-        bin_n = hi - lo + 1
-        bin_pep[b] = 1.0 - n_target / bin_n
-    end
-    # rank[i] = 1..ntot; from perm we build the inverse
-    rank = Vector{Int}(undef, ntot)
-    @inbounds for r in 1:ntot
-        rank[perm[r]] = r
-    end
-    n_filtered = 0
-    @inbounds for i in 1:ntot
-        b = min(cld(rank[i], bin_size), n_actual_bins)
-        if bin_pep[b] > pep_threshold
-            scores[i] = 0.0f0
-            n_filtered += 1
-        end
-    end
-    # Scatter filtered scores back into per-file vectors.
-    for f in 1:nf, i in eachindex(file_s1[f])
-        file_s1[f][i] = scores[offsets[f] + i]
-    end
-    return (n_filtered, ntot - n_filtered)
-end
+# Cross-run feature columns grafted onto each shadow twin so every one keeps a 1:1 target/decoy
+# marginal — forcing round-2 LGBM to use them jointly with the base features, never as a standalone
+# signal. delta_irt is NOT grafted: each shadow keeps its source row's own iRT self-consistency.
+_mbr_graft_cols() = Tuple(c for c in GROUP_COLS)
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
 # level), top-N sorted. Used to compare round-1 vs round-2 gains.
@@ -273,94 +69,7 @@ function log_pass_importance(pass, label::String; topn::Int = 30)
     return nothing
 end
 
-# Neighbor selection per file. Returns (topk, dicts) where topk[f] is a Vector{Int}
-# of neighbor file indices (0 for slots with no valid neighbor) and dicts[f] maps
-# precursor_idx -> s1 for lookups. Dispatch:
-#   KNN_SCOPE === :nearest_k: top-KNN_K by cosine similarity of s1 profiles (per-file
-#     profile = best-per-precursor s1 over the precursor vocabulary, absent = 0).
-#   KNN_SCOPE === :all_runs:  every non-self file, unranked. KNN_K is ignored.
-function _compute_twin_runs(file_pid::Vector{Vector{UInt32}},
-                            file_s1::Vector{Vector{Float32}})
-    nf = length(file_pid)
-    dicts = Vector{Dict{UInt32,Float32}}(undef, nf)
-    for f in 1:nf
-        d = Dict{UInt32,Float32}(); pid = file_pid[f]; s1 = file_s1[f]
-        @inbounds for i in eachindex(pid); d[pid[i]] = s1[i]; end
-        dicts[f] = d
-    end
-    if KNN_SCOPE === :all_runs
-        topk = [Int[g for g in 1:nf if g != f] for f in 1:nf]
-        return topk, dicts
-    end
-    # Gram matrix of profile dot-products (G[f,f] = squared L2 norm).
-    G = zeros(Float64, nf, nf)
-    for f in 1:nf, g in f:nf
-        small, big = length(dicts[f]) <= length(dicts[g]) ? (dicts[f], dicts[g]) : (dicts[g], dicts[f])
-        acc = 0.0
-        for (p, v) in small
-            acc += Float64(v) * Float64(get(big, p, 0.0f0))
-        end
-        G[f, g] = acc; G[g, f] = acc
-    end
-    topk = [zeros(Int, KNN_K) for _ in 1:nf]
-    for f in 1:nf
-        norm_f = sqrt(G[f, f])
-        norm_f <= 0 && continue
-        best_c = fill(-Inf, KNN_K)
-        best_g = topk[f]  # zeros(Int, KNN_K), filled in place
-        for g in 1:nf
-            (g == f || G[g, g] <= 0) && continue
-            c = G[f, g] / (norm_f * sqrt(G[g, g]))
-            # Insert (c, g) into the sorted-descending top-K if c beats the worst kept.
-            c <= best_c[KNN_K] && continue
-            pos = KNN_K
-            while pos > 1 && c > best_c[pos-1]
-                best_c[pos] = best_c[pos-1]; best_g[pos] = best_g[pos-1]
-                pos -= 1
-            end
-            best_c[pos] = c; best_g[pos] = g
-        end
-    end
-    return topk, dicts
-end
-
-"""
-    write_two_round_feature_columns!(file_paths)
-
-Compute `KNN_COL` (mean of same-precursor round-1 scores in the top-`KNN_K` most-similar
-other runs) and `delta_irt` from the `.pass1_sidecar.arrow` files, and write them as
-columns into the per-file fold Arrow files, in place. Must run after round-1
-`train_and_predict_pass1_oom!` and before round-2.
-
-Fallback: if fewer than K other runs exist, the mean is taken over the neighbors that
-do exist. If none exist (single-file experiment), the feature is 0.
-"""
-# Per-file top-K cosine-similar runs (condition neighbors) on the s1 profiles. Mirrors the
-# Gram-matrix path in _compute_twin_runs; used by MULTI_FEATURE for the cluster_* features.
-function _cosine_topk(dicts::Vector{Dict{UInt32,Float32}}, K::Int)
-    nf = length(dicts)
-    G = zeros(Float64, nf, nf)
-    for f in 1:nf, g in f:nf
-        small, big = length(dicts[f]) <= length(dicts[g]) ? (dicts[f], dicts[g]) : (dicts[g], dicts[f])
-        acc = 0.0
-        for (p, v) in small; acc += Float64(v) * Float64(get(big, p, 0.0f0)); end
-        G[f, g] = acc; G[g, f] = acc
-    end
-    out = [Int[] for _ in 1:nf]
-    for f in 1:nf
-        nrm = sqrt(G[f, f]); nrm <= 0 && continue
-        cand = Tuple{Int,Float64}[]
-        for g in 1:nf
-            (g == f || G[g, g] <= 0) && continue
-            push!(cand, (g, G[f, g] / (nrm * sqrt(G[g, g]))))
-        end
-        sort!(cand; by = x -> -x[2])
-        out[f] = [c[1] for c in first(cand, min(K, length(cand)))]
-    end
-    return out
-end
-
-# ================= GROUP_SCORING: per-fold clustering + global/cluster features =================
+# ================= Cross-run GROUP features: per-fold clustering + global/cluster =================
 const GROUP_EMBED_DIM   = 16      # SVD/eigen embedding dimension for run clustering
 const GROUP_PRESENCE_S1 = 0.9f0   # round-1 OOF score threshold for "present" (clustering input)
 const GROUP_CONF_S1     = 0.99f0  # round-1 OOF score threshold for the n_confident count (q<0.01 proxy)
@@ -675,218 +384,15 @@ function _write_group_features!(file_paths::Vector{String})
     return nothing
 end
 
-function write_two_round_feature_columns!(file_paths::Vector{String})
-    group_scoring_enabled() && return _write_group_features!(file_paths)
-    nf = length(file_paths)
-    file_pid = Vector{Vector{UInt32}}(undef, nf)
-    file_s1  = Vector{Vector{Float32}}(undef, nf)
-    file_irt = Vector{Vector{Float32}}(undef, nf)
-    file_tgt = Vector{Vector{Bool}}(undef, nf)  # target flag per row, for PEP filter
-    file_frag = Vector{Matrix{Float32}}(undef, nf)                    # n x 8 shadow spectrum
-    frag_dicts = Vector{Dict{UInt32,NTuple{8,Float32}}}(undef, nf)    # per run: pid -> frag8
-    best_s1  = Dict{UInt32,Float32}()   # precursor -> highest s1 seen (for ref_irt)
-    ref_irt  = Dict{UInt32,Float32}()   # precursor -> irt_obs at its highest-s1 instance
-    _FRAG_COLS = (:frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
-                  :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
-                  :frag7_smoothed_intensity, :frag8_smoothed_intensity)
+"""
+    write_two_round_feature_columns!(file_paths)
 
-    # Pass A: read slim (precursor_idx, irt_obs, s1, target) for every file; track ref_irt.
-    for f in 1:nf
-        p = file_paths[f]
-        tbl = Arrow.Table(p)
-        side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
-        pid = collect(UInt32.(tbl.precursor_idx))
-        irt = collect(Float32.(tbl.irt_obs))
-        tgt = collect(Bool.(tbl.target))
-        s1  = collect(Float32.(side.trace_prob_prepass))
-        length(s1) == length(pid) ||
-            error("write_two_round_feature_columns!: sidecar row mismatch at $p")
-        file_pid[f] = pid; file_s1[f] = s1; file_irt[f] = irt; file_tgt[f] = tgt
-        # Shadow spectrum: top-8 smoothed fragment intensities (guarded; zeros if columns absent).
-        fr = zeros(Float32, length(pid), 8); fd = Dict{UInt32,NTuple{8,Float32}}()
-        if (shadow_hel_enabled() || gated_hel_enabled() || multi_feature_enabled()) && all(c -> hasproperty(tbl, c), _FRAG_COLS)
-            @inbounds for (k, c) in enumerate(_FRAG_COLS)
-                col = getproperty(tbl, c)
-                for i in eachindex(pid); fr[i, k] = Float32(col[i]); end
-            end
-            @inbounds for i in eachindex(pid); fd[pid[i]] = ntuple(k -> fr[i, k], 8); end
-        end
-        file_frag[f] = fr; frag_dicts[f] = fd
-        @inbounds for i in eachindex(pid)
-            if s1[i] > get(best_s1, pid[i], -1.0f0)
-                best_s1[pid[i]] = s1[i]; ref_irt[pid[i]] = irt[i]
-            end
-        end
-    end
-
-    # PEP filter: zero out per-row s1 where the global-binned local PEP exceeds
-    # PEP_FILTER_THRESHOLD. This drops the row from BOTH the cosine similarity
-    # profile (absent = 0) AND the neighbor lookup mean (get() returns 0).
-    if PEP_FILTER_THRESHOLD < 1.0
-        n_filt, n_kept = _filter_by_local_pep!(file_s1, file_tgt,
-                                              PEP_FILTER_THRESHOLD, PEP_FILTER_N_BINS)
-        pct = n_filt + n_kept > 0 ? round(100 * n_filt / (n_filt + n_kept), digits=1) : 0.0
-        @user_info "two-round PEP filter: $(PEP_FILTER_THRESHOLD) threshold zeroed $(n_filt) of $(n_filt + n_kept) rows ($(pct)%); $(n_kept) rows kept"
-    end
-
-    topk, dicts = _compute_twin_runs(file_pid, file_s1)
-
-    # MULTI_FEATURE: compute several cross-run summaries at once (all shadow-regularized downstream).
-    if multi_feature_enabled()
-        clus_topk = _cosine_topk(dicts, KNN_K)   # per-file top-K cosine-similar (condition) runs
-        for f in 1:nf
-            pid = file_pid[f]; irt = file_irt[f]; n = length(pid); fr = file_frag[f]
-            gmax = Vector{Float32}(undef, n); gmean = Vector{Float32}(undef, n)
-            cmax = Vector{Float32}(undef, n); cmean = Vector{Float32}(undef, n)
-            sh   = Vector{Float32}(undef, n); di    = Vector{Float32}(undef, n)
-            all_runs = [g for g in 1:nf if g != f]; clus = clus_topk[f]
-            @inbounds for i in 1:n
-                p = pid[i]
-                mx = 0.0f0; sm = 0.0f0; cnt = 0; dmx = -1.0f0; donor = 0
-                for g in all_runs
-                    v = get(dicts[g], p, -1.0f0)
-                    v < 0.0f0 && continue
-                    v > mx && (mx = v); sm += v; cnt += 1
-                    v > dmx && (dmx = v; donor = g)
-                end
-                gmax[i] = mx; gmean[i] = cnt > 0 ? sm / cnt : 0.0f0
-                cm = 0.0f0; cs = 0.0f0; ccnt = 0
-                for g in clus
-                    v = get(dicts[g], p, -1.0f0)
-                    v < 0.0f0 && continue
-                    v > cm && (cm = v); cs += v; ccnt += 1
-                end
-                cmax[i] = cm; cmean[i] = ccnt > 0 ? cs / ccnt : 0.0f0
-                sh[i] = donor == 0 ? 1.0f0 :
-                    _hellinger8(ntuple(k -> fr[i, k], 8), get(frag_dicts[donor], p, ntuple(_ -> 0.0f0, 8)))
-                di[i] = abs(irt[i] - ref_irt[p])
-            end
-            main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
-            nrow(main) == n || error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
-            main[!, :global_max] = gmax; main[!, :global_mean] = gmean
-            main[!, :cluster_max] = cmax; main[!, :cluster_mean] = cmean
-            main[!, :shadow_hel] = sh;   main[!, :delta_irt] = di
-            # GATE_GLOBAL: gate ONLY the global channel by donor agreement; cluster_* stay raw.
-            if gate_global_enabled()
-                main[!, :global_max_gated]  = gmax  .* (1.0f0 .- sh)
-                main[!, :global_mean_gated] = gmean .* (1.0f0 .- sh)
-            end
-            writeArrow(file_paths[f], main)
-        end
-        @user_info "two-round MULTI_FEATURE: wrote global_{max,mean}$(gate_global_enabled() ? "(+_gated)" : "") + cluster_{max,mean} (top-$KNN_K cosine) + shadow_hel + delta_irt to $nf files"
-        return
-    end
-
-    # Pass B: per file, compute the two features and rewrite the Arrow with them.
-    max_neighbors = KNN_SCOPE === :all_runs ? max(nf - 1, 1) : KNN_K
-    scratch = Vector{Float32}(undef, max_neighbors)   # reused per row for the median/quantile path
-    # twin_score needs the SINGLE most-cosine-similar run per file (topk above is unranked under
-    # :all_runs), so resolve it separately via the cosine-topk helper (top-1).
-    twin_topk = twin_score_enabled() ? _cosine_topk(dicts, 1) : Vector{Int}[]
-    for f in 1:nf
-        pid = file_pid[f]; irt = file_irt[f]; n = length(pid)
-        km = Vector{Float32}(undef, n); di = Vector{Float32}(undef, n)
-        sh = (shadow_hel_enabled() || gated_hel_enabled()) ? Vector{Float32}(undef, n) : Float32[]
-        ts = twin_score_enabled() ? Vector{Float32}(undef, n) : Float32[]
-        t3 = top3_logsum_enabled() ? Vector{Float32}(undef, n) : Float32[]
-        # Resolve up to KNN_K neighbor dicts (contiguous from front since sorted-descending;
-        # a 0 slot means no more valid neighbors). Track the run index of each for the donor lookup.
-        ndicts = Dict{UInt32,Float32}[]; nruns = Int[]
-        for g in topk[f]
-            g == 0 && break
-            push!(ndicts, dicts[g]); push!(nruns, g)
-        end
-        nvalid = length(ndicts)
-        if KNN_AGG === :mean
-            inv_nvalid = nvalid > 0 ? 1.0f0 / Float32(nvalid) : 0.0f0
-            @inbounds for i in 1:n
-                s = 0.0f0
-                for d in ndicts
-                    s += get(d, pid[i], 0.0f0)
-                end
-                km[i] = s * inv_nvalid  # 0 if nvalid == 0
-                di[i] = abs(irt[i] - ref_irt[pid[i]])
-            end
-        elseif KNN_AGG === :median
-            @inbounds for i in 1:n
-                for k in 1:nvalid
-                    scratch[k] = get(ndicts[k], pid[i], 0.0f0)
-                end
-                km[i] = nvalid > 0 ? _quantile_first_n!(scratch, nvalid, 0.5f0) : 0.0f0
-                di[i] = abs(irt[i] - ref_irt[pid[i]])
-            end
-        elseif KNN_AGG === :quantile
-            @inbounds for i in 1:n
-                for k in 1:nvalid
-                    scratch[k] = get(ndicts[k], pid[i], 0.0f0)
-                end
-                km[i] = nvalid > 0 ? _quantile_first_n!(scratch, nvalid, KNN_Q) : 0.0f0
-                di[i] = abs(irt[i] - ref_irt[pid[i]])
-            end
-        elseif KNN_AGG === :max
-            @inbounds for i in 1:n
-                m = 0.0f0
-                for d in ndicts
-                    v = get(d, pid[i], 0.0f0)
-                    v > m && (m = v)
-                end
-                km[i] = m   # 0 if nvalid == 0
-                di[i] = abs(irt[i] - ref_irt[pid[i]])
-            end
-        else
-            error("KNN_AGG must be :mean, :median, :quantile, or :max (got $KNN_AGG)")
-        end
-        # Cross-run shadow-spectrum agreement: donor = neighbor run with the highest s1 for this
-        # precursor (the run supplying KNN_COL); Hellinger between this row's shadow spectrum and
-        # the donor's. No donor -> 1.0 (max distance / no agreement).
-        if shadow_hel_enabled() || gated_hel_enabled()
-            fr = file_frag[f]
-            @inbounds for i in 1:n
-                p = pid[i]; bv = -1.0f0; bo = 0
-                for k in 1:nvalid
-                    v = get(ndicts[k], p, -1.0f0); v > bv && (bv = v; bo = k)
-                end
-                sh[i] = bo == 0 ? 1.0f0 :
-                    _hellinger8(ntuple(k -> fr[i, k], 8),
-                                get(frag_dicts[nruns[bo]], p, ntuple(_ -> 0.0f0, 8)))
-            end
-        end
-        # twin_score: s1 of the precursor in the single most-similar run (0 if absent / no twin).
-        if twin_score_enabled()
-            tw = isempty(twin_topk[f]) ? 0 : twin_topk[f][1]
-            @inbounds for i in 1:n
-                ts[i] = tw == 0 ? 0.0f0 : get(dicts[tw], pid[i], 0.0f0)
-            end
-        end
-        # top-3 log-odds: sum of positive logits of the precursor's 3 best other-run scores.
-        if top3_logsum_enabled()
-            @inbounds for i in 1:n
-                t3[i] = _top3_logodds(ndicts, pid[i])
-            end
-        end
-        main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
-        nrow(main) == n ||
-            error("write_two_round_feature_columns!: arrow row count changed at $(file_paths[f])")
-        main[!, KNN_COL]    = km
-        main[!, :delta_irt] = di
-        twin_score_enabled() && (main[!, TWIN_COL] = ts)
-        top3_logsum_enabled() && (main[!, TOP3_COL] = t3)
-        shadow_hel_enabled() && (main[!, SHADOW_HEL_COL] = sh)
-        # GATED_HEL guard: global_max_gated = global_max * (1 - shadow_hel). Spectral disagreement
-        # (high Hellinger) can only withhold the transfer, never add it. See shadow_hel_guard.pdf.
-        gated_hel_enabled() && (main[!, GATED_COL] = km .* (1.0f0 .- sh))
-        writeArrow(file_paths[f], main)
-    end
-    agg_desc = KNN_AGG === :quantile ? "$(KNN_Q)-quantile" : String(KNN_AGG)
-    if KNN_SCOPE === :all_runs
-        @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) over all $(nf-1) other runs) + delta_irt to $nf files"
-    else
-        n_full    = count(nb -> all(>(0), nb), topk)
-        n_partial = count(nb -> nb[1] > 0 && !all(>(0), nb), topk)
-        @user_info "two-round: wrote $(KNN_COL) ($(agg_desc) of top-$(KNN_K)) + delta_irt to $nf files ($n_full with all $KNN_K neighbors, $n_partial with fewer, cosine s1-profile)"
-    end
-    return nothing
-end
+Round-2 cross-run features. After round-1 `train_and_predict_pass1_oom!` has written each file's
+`.pass1_sidecar.arrow` (OOF s1 = `trace_prob_prepass`), cluster the runs per CV fold and write the
+GROUP cross-run features + `delta_irt` as columns into each per-file fold Arrow, in place — so the
+round-2 pass can train on [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt].
+"""
+write_two_round_feature_columns!(file_paths::Vector{String}) = _write_group_features!(file_paths)
 
 # ---------- Symmetric shadow-decoy injection ----------
 #
@@ -994,7 +500,7 @@ function inject_shadow_decoys!(file_paths::Vector{String})
 
         # Overwrite the cross-run transfer feature column(s) with the ORIGINAL row's value(s),
         # so each feature's target/decoy marginal is 1:1 (forces joint use with base features).
-        # Both KNN_COL (the score) and SHADOW_HEL_COL (the donor<->acceptor agreement) are grafted.
+        # The grafted columns are the GROUP cross-run features (see _mbr_graft_cols / GROUP_COLS).
         for mbr_col in _mbr_graft_cols()
             hasproperty(main, mbr_col) && (shadows[!, mbr_col] = main[mbr_positions, mbr_col])
         end
