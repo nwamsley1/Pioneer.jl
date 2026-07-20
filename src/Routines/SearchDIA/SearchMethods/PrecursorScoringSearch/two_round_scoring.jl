@@ -123,7 +123,8 @@ const MULTI_GATED_COLS = [:global_max_gated, :global_mean_gated, :cluster_max, :
 # via top-4 (score,run) records with leave-one-out (see _write_group_features!). Cluster size follows
 # the schedule _group_size(R): OFF for R<9 (cluster cols mirror global), else min(9, floor(R/2)).
 group_scoring_enabled() = get(ENV, "GROUP_SCORING", "") == "1"
-const GROUP_COLS = [:global_max, :global_top3_logodds, :cluster_max, :cluster_top3_logodds]
+const GROUP_COLS = [:global_max, :global_top3_logodds, :cluster_max, :cluster_top3_logodds,
+                    :global_n_present, :global_n_confident, :cluster_n_present, :cluster_n_confident]
 
 two_round_features() =
     group_scoring_enabled() ? vcat(GROUP_COLS, [:delta_irt]) :
@@ -362,6 +363,7 @@ end
 # ================= GROUP_SCORING: per-fold clustering + global/cluster features =================
 const GROUP_EMBED_DIM   = 16      # SVD/eigen embedding dimension for run clustering
 const GROUP_PRESENCE_S1 = 0.9f0   # round-1 OOF score threshold for "present" (clustering input)
+const GROUP_CONF_S1     = 0.99f0  # round-1 OOF score threshold for the n_confident count (q<0.01 proxy)
 
 # Group-size schedule: 0 = cluster OFF (global only); else min(9, floor(R/2)). Grows as R/2 (2
 # groups) until it caps at 9 at R=18, then group size stays 9 and the group COUNT grows (~R/9).
@@ -566,10 +568,18 @@ function _write_group_features!(file_paths::Vector{String})
     gt3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
     cmax = [Vector{Float32}(undef, length(p)) for p in file_pid]
     ct3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
+    gnp  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # global n_present (LOO)
+    gnc  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # global n_confident (LOO)
+    cnp  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # cluster n_present (LOO)
+    cnc  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # cluster n_confident (LOO)
     di   = [Vector{Float32}(undef, length(p)) for p in file_pid]
 
     grec    = fill(EMPTY_TOPK4, maxpid + 1)        # global records (reused per fold)
     crec    = fill(EMPTY_TOPK4, maxpid + 1)        # cluster records (reused per cluster via touched)
+    gcnt_p  = zeros(Int32, maxpid + 1)             # global count: runs present (reused per fold)
+    gcnt_c  = zeros(Int32, maxpid + 1)             # global count: runs with s1>=GROUP_CONF_S1
+    ccnt_p  = zeros(Int32, maxpid + 1)             # cluster count: present (reset per cluster via touched)
+    ccnt_c  = zeros(Int32, maxpid + 1)             # cluster count: confident
     best_s1 = fill(-1.0f0, maxpid + 1)             # for ref_irt (highest-s1 instance per precursor)
     ref_irt = zeros(Float32, maxpid + 1)
     touched = UInt32[]
@@ -594,13 +604,15 @@ function _write_group_features!(file_paths::Vector{String})
         runs_in = [Int[] for _ in 1:ncl]
         for ri in 1:R; push!(runs_in[labels[ri]], ri); end
 
-        # Phase 1: global records over the fold's R runs + ref_irt
-        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0)
+        # Phase 1: global records + counts over the fold's R runs + ref_irt
+        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0); fill!(gcnt_p, 0); fill!(gcnt_c, 0)
         for ri in 1:R
             f = files[ri]
             @inbounds for i in eachindex(file_pid[f])
                 p = file_pid[f][i]; s = file_s1[f][i]
                 grec[p + 1] = _tk_insert(grec[p + 1], s, UInt32(ri))
+                gcnt_p[p + 1] += Int32(1)
+                s >= GROUP_CONF_S1 && (gcnt_c[p + 1] += Int32(1))
                 if s > best_s1[p + 1]; best_s1[p + 1] = s; ref_irt[p + 1] = file_irt[f][i]; end
             end
         end
@@ -611,27 +623,35 @@ function _write_group_features!(file_paths::Vector{String})
             for ri in runs_in[c]
                 f = files[ri]
                 @inbounds for i in eachindex(file_pid[f])
-                    p = file_pid[f][i]
+                    p = file_pid[f][i]; s = file_s1[f][i]
                     crec[p + 1] === EMPTY_TOPK4 && push!(touched, p)
-                    crec[p + 1] = _tk_insert(crec[p + 1], file_s1[f][i], UInt32(ri))
+                    crec[p + 1] = _tk_insert(crec[p + 1], s, UInt32(ri))
+                    ccnt_p[p + 1] += Int32(1)
+                    s >= GROUP_CONF_S1 && (ccnt_c[p + 1] += Int32(1))
                 end
             end
             for ri in runs_in[c]
                 f = files[ri]; ru = UInt32(ri)
                 @inbounds for i in eachindex(file_pid[f])
-                    p = file_pid[f][i]
+                    p = file_pid[f][i]; s = file_s1[f][i]
+                    ownc = s >= GROUP_CONF_S1 ? Int32(1) : Int32(0)
                     gmax[f][i] = _tk_loo_max(grec[p + 1], ru)
                     gt3[f][i]  = _tk_loo_top3(grec[p + 1], ru)
+                    gnp[f][i]  = Float32(gcnt_p[p + 1] - Int32(1))       # exclude own row
+                    gnc[f][i]  = Float32(gcnt_c[p + 1] - ownc)
                     if k <= 0
                         cmax[f][i] = gmax[f][i]; ct3[f][i] = gt3[f][i]
+                        cnp[f][i]  = gnp[f][i];  cnc[f][i] = gnc[f][i]
                     else
                         cmax[f][i] = _tk_loo_max(crec[p + 1], ru)
                         ct3[f][i]  = _tk_loo_top3(crec[p + 1], ru)
+                        cnp[f][i]  = Float32(ccnt_p[p + 1] - Int32(1))
+                        cnc[f][i]  = Float32(ccnt_c[p + 1] - ownc)
                     end
                     di[f][i] = abs(file_irt[f][i] - ref_irt[p + 1])
                 end
             end
-            for p in touched; crec[p + 1] = EMPTY_TOPK4; end
+            for p in touched; crec[p + 1] = EMPTY_TOPK4; ccnt_p[p + 1] = Int32(0); ccnt_c[p + 1] = Int32(0); end
         end
     end
 
@@ -643,11 +663,15 @@ function _write_group_features!(file_paths::Vector{String})
         main[!, :global_top3_logodds]  = gt3[f]
         main[!, :cluster_max]          = cmax[f]
         main[!, :cluster_top3_logodds] = ct3[f]
+        main[!, :global_n_present]     = gnp[f]
+        main[!, :global_n_confident]   = gnc[f]
+        main[!, :cluster_n_present]    = cnp[f]
+        main[!, :cluster_n_confident]  = cnc[f]
         main[!, :delta_irt]            = di[f]
         writeArrow(file_paths[f], main)
     end
     nruns = count(!=(-1), fold_of) ÷ 2
-    @user_info "group-scoring: wrote global+cluster (max, top3_logodds) + delta_irt for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
+    @user_info "group-scoring: wrote global+cluster (max, top3_logodds, n_present, n_confident) + delta_irt for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
     return nothing
 end
 
