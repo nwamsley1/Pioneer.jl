@@ -47,24 +47,23 @@
         @test table.empirical_global_score[1] ≈ logodds(Float32[0.9, 0.8], 2)
         @test table.top1_prec_prob[1] == 0.9f0
         @test table.top2_prec_prob[1] == 0.8f0
-        @test table.top3_prec_prob[1] == 0.0f0
         @test table.top2_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 2)
         @test table.top3_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 3)
         @test table.mean_prec_prob[1] ≈ 0.85f0
-        @test table.median_prec_prob[1] ≈ 0.85f0
-        @test table.std_prec_prob[1] ≈ sqrt(0.005f0)
-        @test table.min_prec_prob[1] == 0.8f0
-        @test table.top1_top2_gap[1] ≈ 0.1f0
-        @test table.top2_top3_gap[1] == 0.0f0
         @test table.n_runs_observed[1] == 2.0f0
-        @test table.observed_run_fraction[1] == 0.5f0
-        @test table.n_prob_gt_0_5[1] == 2.0f0
         @test table.n_prob_gt_0_9[1] == 0.0f0
         @test table.n_prob_gt_0_99[1] == 0.0f0
 
-        @test table.std_prec_prob[2] == 0.0f0
-        @test table.top1_top2_gap[2] == 0.0f0
-        @test table.observed_run_fraction[2] == 0.25f0
+        @test table.n_runs_observed[2] == 1.0f0
+    end
+
+    @testset "feature set selection" begin
+        @test Pioneer._select_global_precursor_score_features(299_999) ===
+              Pioneer.GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES
+        @test Pioneer._select_global_precursor_score_features(300_000) ===
+              Pioneer.GLOBAL_PRECURSOR_SCORE_FEATURES
+        @test Pioneer._select_global_precursor_score_features(300_001) ===
+              Pioneer.GLOBAL_PRECURSOR_SCORE_FEATURES
     end
 
     @testset "run-level input collection" begin
