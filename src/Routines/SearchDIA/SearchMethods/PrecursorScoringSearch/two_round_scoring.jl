@@ -394,44 +394,68 @@ end
     return acc
 end
 
-# R×R cosine similarity of run presence sets, via posting-list co-count accumulation. Drops
-# singleton precursors (present in <2 runs; no pairwise signal) and ubiquitous ones (>90% of runs;
-# no discriminative signal). run_present[r] must be sorted-ascending unique pids.
-function _run_cosine_gram(run_present::Vector{Vector{UInt32}}, R::Int)
+# Randomized truncated SVD of the L2-row-normalized presence matrix M (runs × precursors), returning
+# the top-`dim` left-singular run embedding scaled by singular values. O(nnz·ℓ) time and O(nnz + P·ℓ)
+# memory — NO R×R Gram (which is O(R²·density) to build and O(R³) to eigendecompose). Works directly
+# from the sparse presence sets (run→precursors), never materializing a dense matrix. Drops singleton
+# precursors (<2 runs; no pairwise signal) and ubiquitous ones (>90% of runs; no discriminative
+# signal). Halko et al. range-finder with power iterations; qr/svd act only on small (R×ℓ / ℓ×P) tiles.
+function _rsvd_run_embed(run_present::Vector{Vector{UInt32}}, R::Int;
+                         dim::Int = GROUP_EMBED_DIM, oversample::Int = 8, power_iters::Int = 2)
+    # postings: precursor -> runs; frequency-filter to informative precursors; compress ids.
     postings = Dict{UInt32,Vector{Int}}()
     for r in 1:R, p in run_present[r]
         push!(get!(() -> Int[], postings, p), r)
     end
-    G = zeros(Float64, R, R)
     maxfreq = 0.9 * R
+    pres = [Int[] for _ in 1:R]            # run -> compressed kept-precursor ids
+    P = 0
     for (_, runs) in postings
         L = length(runs)
         (L < 2 || L > maxfreq) && continue
-        @inbounds for a in 1:L, b in a:L
-            G[runs[a], runs[b]] += 1.0
+        P += 1
+        for r in runs; push!(pres[r], P); end
+    end
+    (P == 0 || R < 2) && return zeros(Float64, R, 1)
+    w = Vector{Float64}(undef, R)          # L2 row-normalization weight
+    @inbounds for r in 1:R; n = length(pres[r]); w[r] = n > 0 ? 1.0 / sqrt(n) : 0.0; end
+
+    ℓ = min(dim + oversample, R, P)
+    rng = MersenneTwister(0x51ED270F)
+    # Y = Mw * Ω, Ω ~ N(0,1) of size P×ℓ (materialized once).
+    Ω = randn(rng, P, ℓ)
+    Y = zeros(Float64, R, ℓ)
+    @inbounds for r in 1:R
+        wr = w[r]; wr == 0.0 && continue
+        for c in pres[r], j in 1:ℓ; Y[r, j] += Ω[c, j]; end
+        for j in 1:ℓ; Y[r, j] *= wr; end
+    end
+    Z = Matrix{Float64}(undef, P, ℓ)       # reused scratch for power iterations / B
+    for _ in 1:power_iters
+        Q = Matrix(qr!(Y).Q)               # R×ℓ orthonormal
+        fill!(Z, 0.0)                      # Z = Mwᵀ Q  (P×ℓ)
+        @inbounds for r in 1:R
+            wr = w[r]; wr == 0.0 && continue
+            for c in pres[r], j in 1:ℓ; Z[c, j] += wr * Q[r, j]; end
+        end
+        fill!(Y, 0.0)                      # Y = Mw Z  (R×ℓ)
+        @inbounds for r in 1:R
+            wr = w[r]; wr == 0.0 && continue
+            for c in pres[r], j in 1:ℓ; Y[r, j] += Z[c, j]; end
+            for j in 1:ℓ; Y[r, j] *= wr; end
         end
     end
-    d = Vector{Float64}(undef, R)
+    Q = Matrix(qr!(Y).Q)                   # R×ℓ
+    B = zeros(Float64, ℓ, P)               # B = Qᵀ Mw  (ℓ×P)
     @inbounds for r in 1:R
-        d[r] = sqrt(G[r, r]); d[r] == 0.0 && (d[r] = 1.0)
+        wr = w[r]; wr == 0.0 && continue
+        for c in pres[r], j in 1:ℓ; B[j, c] += wr * Q[r, j]; end
     end
-    C = Matrix{Float64}(undef, R, R)
-    @inbounds for a in 1:R, b in 1:R
-        g = a <= b ? G[a, b] : G[b, a]
-        C[a, b] = g / (d[a] * d[b])
-    end
-    return C
-end
-
-# Top-`dim` eigenvector embedding of the (small, dense) R×R cosine Gram.
-function _embed_gram(C::Matrix{Float64}, dim::Int)
-    R = size(C, 1); dd = min(dim, R - 1); dd < 1 && return zeros(Float64, R, 1)
-    F = eigen(Symmetric(C))                         # ascending eigenvalues
+    F = svd!(B)                            # B = U_B Σ V_Bᵀ ; U_B is ℓ×ℓ
+    U = Q * F.U                            # R×ℓ left singular vectors of Mw
+    dd = min(dim, ℓ)
     E = Matrix{Float64}(undef, R, dd)
-    @inbounds for j in 1:dd
-        i = R - j + 1; s = sqrt(max(F.values[i], 0.0))
-        for r in 1:R; E[r, j] = F.vectors[r, i] * s; end
-    end
+    @inbounds for j in 1:dd, r in 1:R; E[r, j] = U[r, j] * F.S[j]; end
     return E
 end
 
@@ -494,8 +518,7 @@ end
 # run -> cluster labels (1-based, contiguous). k<=0 -> single cluster (cluster feature == global).
 function _cluster_runs(run_present::Vector{Vector{UInt32}}, R::Int, k::Int)
     k <= 0 && return ones(Int, R)
-    C = _run_cosine_gram(run_present, R)
-    E = _embed_gram(C, GROUP_EMBED_DIM)
+    E = _rsvd_run_embed(run_present, R)     # randomized SVD on sparse presence (no R×R Gram)
     lab = _kmeans_small(E, max(1, round(Int, R / k)))
     _split_oversized!(lab, E, k)
     u = unique(lab); remap = Dict(u[i] => i for i in eachindex(u))
