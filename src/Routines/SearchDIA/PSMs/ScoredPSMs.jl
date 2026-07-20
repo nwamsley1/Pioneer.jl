@@ -70,10 +70,8 @@ end
 struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #Ion Count Statistics
     longest_y::UInt8
-    b_count::UInt8
     y_count::UInt8
     total_ions::UInt8       # M0 (monoisotopic) fragment count
-    total_ions_iso::UInt8   # Isotope (M1+) fragment count
 
     #Basic Metrics
     poisson::L
@@ -82,8 +80,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     #Spectral Similarity
     gof::L
-    max_matched_residual::L
-    max_unmatched_residual::L
     fitted_manhattan_distance::L
     weight::H
 
@@ -109,11 +105,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     shadow_frag7_int::H
     shadow_frag8_int::H
 
-    # Rank feature carried from MainUnscoredPSM. Added 2026-05-11 so the
-    # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
-    # signal as the per-file LightGBM (previously dropped by Score!).
-    best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
-
     # Per-rank fragment trace intensities (top 8); sums matched isotope peaks
     # predicted at >=25% of the fragment's most abundant isotope.
     frag1_int::H
@@ -132,10 +123,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
     # peptides have characteristic b/y intensity ratios; chimeric hits don't.
     log_by_ratio_m0::L
-
-    # E3 (Batch E, 2026-05-12): log2((b_int + y_int + 1) / (pred_int_sum_m0 + 1)).
-    # Completeness-of-match — observed vs predicted matched intensity.
-    matched_ratio::L
 
     #Non-scores/Labels
     precursor_idx::UInt32
@@ -191,17 +178,13 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
         scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(
             unscored_PSMs[i].longest_y,
-            unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
             UInt8(min(total_ions, 255)),
-            UInt8(min(total_ions_iso, 255)),
             Float16(getPoisson(expected_matches, total_ions + total_ions_iso)),
             Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
             Float16(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
             L(spectral_scores[scores_idx].gof),
-            L(spectral_scores[scores_idx].max_matched_residual),
-            L(spectral_scores[scores_idx].max_unmatched_residual),
             L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
@@ -224,8 +207,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             H(spectral_scores[scores_idx].shadow_frag7_int),
             H(spectral_scores[scores_idx].shadow_frag8_int),
 
-            unscored_PSMs[i].best_rank,
-
             unscored_PSMs[i].frag1_int,
             unscored_PSMs[i].frag2_int,
             unscored_PSMs[i].frag3_int,
@@ -241,9 +222,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
             L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
               log(Float32(unscored_PSMs[i].y_int) + 1f0)),
-
-            L(log2((Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].y_int) + 1f0) /
-                   (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(ms_file_idx),
@@ -268,18 +246,14 @@ fields (`rank1_matched`, `top3_matched`, `top5_matched`,
 """
 struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     longest_y::UInt8
-    b_count::UInt8
     y_count::UInt8
     total_ions::UInt8
-    total_ions_iso::UInt8
 
     poisson::L
     log2_intensity_explained::L
     error::L
 
     gof::L
-    max_matched_residual::L
-    max_unmatched_residual::L
     fitted_manhattan_distance::L
     weight::H
 
@@ -334,17 +308,13 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
 
         scored_psms[start_idx + i - skipped] = TuningScoredPSM{H,L}(
             unscored_PSMs[i].longest_y,
-            unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
             UInt8(min(total_ions, 255)),
-            UInt8(min(total_ions_iso, 255)),
             L(getPoisson(expected_matches, total_ions + total_ions_iso)),
             L(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
             L(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
             L(spectral_scores[scores_idx].gof),
-            L(spectral_scores[scores_idx].max_matched_residual),
-            L(spectral_scores[scores_idx].max_unmatched_residual),
             L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
