@@ -150,11 +150,11 @@ end
 Learned replacement for the fixed top-√N log-odds global score. STREAMING + memory-efficient: one
 pass over the refs into fixed-size per-precursor accumulators (indexed by precursor id, bounded by
 the library — independent of #runs/#PSMs; no per-precursor vector, no sort). Features per precursor
-from round-1 OOF scores (`:s1_round1`): n_runs, top-1/2/3, min, mean, std, frac>0.99, range, top-√N
-log-odds (the current fixed score, as a feature), and an approximate median (8-bin histogram). Trains
-a precursor-level LightGBM with 2-fold precursor-keyed CV (train one fold, score the other — clean
-OOF since each precursor is in one fold); falls back to the log-odds feature on thin/one-class folds.
-Requires the `:s1_round1` column (written by the two-round group-feature step).
+from the round-2 per-run precursor score (`:prec_prob`, same input the fixed log-odds aggregates):
+n_runs, top-1/2/3, min, mean, std, frac>0.99, range, and the top-√N log-odds itself (as a feature, so
+it can't do worse). Trains a precursor-level LightGBM with 2-fold precursor-keyed CV (train one fold,
+score the other — clean OOF since each precursor is in one fold); falls back to the log-odds feature
+on thin/one-class folds.
 """
 function build_precursor_global_model_dict(
     refs::Vector{PSMFileReference}, sqrt_n_runs::Int, n_precursors::Int,
@@ -169,9 +169,9 @@ function build_precursor_global_model_dict(
 
     # ---- streaming pass ----
     for ref in refs
-        cols = materialize_columns(ref, [:precursor_idx, :s1_round1, :cv_fold, :target])
+        cols = materialize_columns(ref, [:precursor_idx, :prec_prob, :cv_fold, :target])
         n = nrow(cols); n == 0 && continue
-        pid = cols.precursor_idx; s1 = cols.s1_round1; cf = cols.cv_fold; tg = cols.target
+        pid = cols.precursor_idx; s1 = cols.prec_prob; cf = cols.cv_fold; tg = cols.target
         @inbounds for i in 1:n
             p = Int(pid[i]) + 1; x = Float32(s1[i])
             fold[p] == Int8(-1) && (fold[p] = Int8(cf[i]); tgt[p] = Bool(tg[i]))

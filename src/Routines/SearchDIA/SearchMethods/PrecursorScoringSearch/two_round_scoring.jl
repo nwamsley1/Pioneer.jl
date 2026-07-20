@@ -668,9 +668,6 @@ function _write_group_features!(file_paths::Vector{String})
         main[!, :cluster_n_present]    = cnp[f]
         main[!, :cluster_n_confident]  = cnc[f]
         main[!, :delta_irt]            = di[f]
-        # Preserve round-1 OOF score for the learned global model (round-2 overwrites
-        # trace_prob_prepass below, so this is the only durable copy of s1).
-        main[!, :s1_round1]            = file_s1[f]
         writeArrow(file_paths[f], main)
     end
     nruns = count(!=(-1), fold_of) ÷ 2
