@@ -18,8 +18,6 @@
 abstract type SpectralScores{T<:AbstractFloat} end
 struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralScores{T}
     gof::T
-    max_matched_residual::T
-    max_unmatched_residual::T
     fitted_manhattan_distance::T
     fitted_hellinger::T
     fitted_frag1_int::I
@@ -70,7 +68,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(U), zero(U), zero(U),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
@@ -86,7 +84,7 @@ function getDistanceMetrics(w::Vector{T},
         # including its shadow (interference from these neighbors) — are identical.
         if is_center !== nothing && !(@inbounds is_center[col])
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(U), zero(U), zero(U),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
                 zero(V), zero(V), zero(V), zero(V),
@@ -97,8 +95,6 @@ function getDistanceMetrics(w::Vector{T},
 
         x_sum = zero(T)
         manhattan_distance = zero(T)
-        max_matched_residual = zero(T)
-        max_unmatched_residual = zero(T)
         sum_of_residuals = zero(T)
         sum_of_fitted_peaks_matched = zero(T)
         sum_of_fitted_peaks_unmatched = zero(T)
@@ -166,14 +162,8 @@ function getDistanceMetrics(w::Vector{T},
 
             if matched_at(H, i)
                 sum_of_fitted_peaks_matched += fitted_peak
-                if r_abs > max_matched_residual
-                    max_matched_residual = r_abs
-                end
             else
                 sum_of_fitted_peaks_unmatched += fitted_peak
-                if r_abs > max_unmatched_residual
-                    max_unmatched_residual = r_abs
-                end
             end
         end
 
@@ -181,8 +171,6 @@ function getDistanceMetrics(w::Vector{T},
         # Floor numerator with +1e-10 to keep log2 finite when residuals
         # collapse to zero on perfect/near-perfect single-fragment matches.
         gof = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks + T(1e-10)) : zero(T)
-        max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched + T(1e-10)) : zero(T)
-        max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
         fitted_manhattan_distance = x_sum > 0 ? -log2(manhattan_distance/x_sum + 1e-10) : zero(T)
 
         # Hellinger distance: H² = 1 - BC/sqrt(Σμ · Σx)
@@ -192,8 +180,6 @@ function getDistanceMetrics(w::Vector{T},
 
         spectral_scores[col] = SpectralScoresMainSearch(
             U(gof),
-            U(max_matched_residual),
-            U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             U(fitted_hellinger),
             V(fitted_frag1_int),
