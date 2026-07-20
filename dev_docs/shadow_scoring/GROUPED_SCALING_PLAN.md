@@ -91,6 +91,21 @@ Grafted onto shadow-decoys exactly like `global_max` (keeps the 1:1-marginal gua
   members contribute 0 to top-3). Use a MODEST floor (~6), not large; it's a mild safeguard against
   corroborator-starved fragments, not always a win. Full report: `grouping_report.pdf`.
 
+## 5c. FEATURE SET = global AND cluster, one-pass (user, 2026-07-20)
+
+Keep BOTH global and cluster aggregations (cluster does NOT replace global):
+- `global_max`, `global_top3_logodds` — over ALL other runs (current winners)
+- `cluster_max`, `cluster_top3_logodds` — same two aggregations over the run's cluster only
+All four GRAFTED onto shadows; `delta_irt` ungrafted.
+
+**One read pass builds both** (per CV fold). Phase 1 — accumulate, looping runs cluster-by-cluster,
+keep per-precursor top-(K+1)=top-4 `(score, run_id)` records: `global_rec[p]` (never reset, spans
+clusters = the single sweep over all runs) AND `cluster_rec[c][p]` (within-cluster, finalized at
+cluster boundary). Phase 2 — apply per row `(p, run r ∈ cluster c)`: all four features are a
+leave-one-out read (exclude r) of the two records. O(N) build + O(N) apply, no per-row O(R) scan;
+memory O(N) (top-4 records only). Retires the old MULTI per-run `_cosine_topk` cluster features
+(per-run neighbors = redundant) in favor of the shared hard-group version.
+
 ## 6. Open decisions (need user input before implementing)
 
 1. **Group size `s`** — fixed 10? tunable const? (Bigger = marginally more breadth, more leak risk,
