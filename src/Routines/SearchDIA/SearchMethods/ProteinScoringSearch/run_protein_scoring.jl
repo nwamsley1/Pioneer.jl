@@ -76,7 +76,7 @@ function load_protein_probit_training_rows(
     pg_refs::Vector{ProteinGroupFileReference};
     include_qc_plot_columns::Bool = false
 )
-    columns_to_load = Symbol[:protein_name, :target, :entrap_id, :n_peptides]
+    columns_to_load = Symbol[:protein_name, :target, :n_peptides]
     append!(columns_to_load, protein_probit_feature_names())
     if include_qc_plot_columns
         push!(columns_to_load, :species, :file_idx)
@@ -109,82 +109,6 @@ function load_protein_probit_training_rows(
     end
 
     return all_protein_groups
-end
-
-# ===== Two-round protein scoring: cross-run features + shadow proteins (GROUP_SCORING=1) =====
-
-# Per (protein, run): global_max + global_top3_logodds of round-1 pg_score over the OTHER runs of the
-# same protein (leave-one-out). In-memory — all_protein_groups holds every (protein, run) row.
-function add_protein_cross_run_features!(df::DataFrame)
-    n = nrow(df)
-    gmax = zeros(Float32, n); gt3 = zeros(Float32, n)
-    hasent = hasproperty(df, :entrap_id)
-    groups = Dict{Tuple{String,Bool,UInt8}, Vector{Int}}()
-    @inbounds for i in 1:n
-        key = (String(df.protein_name[i]), Bool(df.target[i]), hasent ? UInt8(df.entrap_id[i]) : UInt8(0))
-        push!(get!(() -> Int[], groups, key), i)
-    end
-    pg = df.pg_score
-    for (_, idxs) in groups
-        m = length(idxs)
-        @inbounds for a in 1:m
-            i = idxs[a]; mx = 0f0; t1 = 0f0; t2 = 0f0; t3 = 0f0
-            for b in 1:m
-                b == a && continue
-                s = Float32(pg[idxs[b]])
-                s > mx && (mx = s)
-                if     s > t1; t3 = t2; t2 = t1; t1 = s
-                elseif s > t2; t3 = t2; t2 = s
-                elseif s > t3; t3 = s end
-            end
-            gmax[i] = mx
-            gt3[i]  = _pos_logit(t1) + _pos_logit(t2) + _pos_logit(t3)
-        end
-    end
-    df[!, :global_max] = gmax
-    df[!, :global_top3_logodds] = gt3
-    return df
-end
-
-# Write the two cross-run columns to the on-disk pg files. all_protein_groups preserves pg_ref row
-# order (concatenated per file, skipping missing/empty), so slice the ordered vectors per file the
-# same way. Needed so round-2's disk write-back (apply_probit_scores_multifold!) can read them.
-function write_protein_cross_run_cols!(pg_refs, gmax::AbstractVector{Float32}, gt3::AbstractVector{Float32})
-    off = 0
-    for ref in pg_refs
-        p = file_path(ref); isfile(p) || continue
-        main = DataFrame(Tables.columntable(Arrow.Table(p)))
-        nr = nrow(main); nr == 0 && continue
-        main[!, :global_max] = collect(gmax[off+1:off+nr])
-        main[!, :global_top3_logodds] = collect(gt3[off+1:off+nr])
-        writeArrow(p, main)
-        off += nr
-    end
-    return nothing
-end
-
-# One opposite-class shadow row per real row (TRAINING ONLY): copy a nearest-pg_score opposite-class
-# row's features, then graft the real row's cross-run columns (1:1 marginal → the model can't use the
-# cross-run features as a standalone lever). Returns a new DataFrame (real rows then shadows).
-function inject_protein_shadows(df::DataFrame, graft_cols::Vector{Symbol})
-    n = nrow(df); tgt = collect(Bool.(df.target)); pg = collect(Float32.(df.pg_score))
-    tidx = findall(tgt); didx = findall(.!tgt)
-    (isempty(tidx) || isempty(didx)) && return df
-    tperm = sortperm(view(pg, tidx)); dperm = sortperm(view(pg, didx))
-    tsorted = pg[tidx[tperm]]; dsorted = pg[didx[dperm]]
-    src = Vector{Int}(undef, n)
-    @inbounds for r in 1:n
-        if tgt[r]
-            pos = _nearest_sorted_idx(dsorted, pg[r]); src[r] = pos == 0 ? r : didx[dperm[pos]]
-        else
-            pos = _nearest_sorted_idx(tsorted, pg[r]); src[r] = pos == 0 ? r : tidx[tperm[pos]]
-        end
-    end
-    shadows = df[src, :]                    # copy opposite-class rows (their label is the flip)
-    for c in graft_cols
-        hasproperty(shadows, c) && (shadows[!, c] = df[!, c])   # graft real row's cross-run values
-    end
-    return vcat(df, shadows)
 end
 
 """
@@ -229,10 +153,9 @@ function perform_protein_probit_regression(
         error("Protein probit out-of-memory processing is not supported. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    dump_requested = haskey(ENV, "PROTEIN_GROUP_DUMP")
     all_protein_groups = load_protein_probit_training_rows(
         pg_refs;
-        include_qc_plot_columns = write_qc_plots || dump_requested
+        include_qc_plot_columns = write_qc_plots
     )
 
     n_targets = sum(all_protein_groups.target)
@@ -253,46 +176,6 @@ function perform_protein_probit_regression(
         min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )
-
-    # PROTEIN_GROUP_DUMP=<dir>: after round-1, write the protein-scoring state (standard features +
-    # ROUND-1 pg_score + target + cv_fold + protein key + run/file + species) once, so round-2 /
-    # cross-run / shadow / global-model scoring methods can be iterated OFFLINE without re-searching.
-    if dump_requested && !skip_scoring
-        dump_df = copy(all_protein_groups)
-        assign_protein_group_cv_folds!(dump_df, protein_to_cv_fold)
-        if file_idx_to_name !== nothing && hasproperty(dump_df, :file_idx)
-            dump_df[!, :file_name] = String[get(file_idx_to_name, Int64(fi), "") for fi in dump_df.file_idx]
-        end
-        dump_dir = ENV["PROTEIN_GROUP_DUMP"]; mkpath(dump_dir)
-        dump_path = joinpath(dump_dir, "protein_group_dump.arrow")
-        writeArrow(dump_path, dump_df)
-        @user_info "protein-group dump written (post round-1): $dump_path ($(nrow(dump_df)) rows, $(ncol(dump_df)) cols)"
-    end
-
-    # ROUND 2 (GROUP_SCORING=1): add cross-run protein features from round-1 pg_score, inject shadow
-    # proteins for regularization, and re-run the same probit with the two extra features.
-    if group_scoring_enabled() && !skip_scoring
-        add_protein_cross_run_features!(all_protein_groups)
-        write_protein_cross_run_cols!(pg_refs, all_protein_groups.global_max, all_protein_groups.global_top3_logodds)
-        df_train = get(ENV, "PROTEIN_SHADOW", "1") != "0" ?
-            inject_protein_shadows(all_protein_groups, [:global_max, :global_top3_logodds]) :
-            all_protein_groups
-        @user_info "protein two-round: round-2 with cross-run features (global_max, global_top3_logodds) + $(nrow(df_train) - nrow(all_protein_groups)) shadow proteins"
-        perform_probit_analysis_multifold(
-            df_train,
-            qc_folder,
-            pg_refs,
-            precursors;
-            protein_to_cv_fold = protein_to_cv_fold,
-            file_idx_to_name = file_idx_to_name,
-            skip_scoring = skip_scoring,
-            write_qc_plots = false,
-            log_feature_importance = log_feature_importance,
-            train_q_value_threshold = train_q_value_threshold,
-            min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
-            min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
-        )
-    end
 end
 
 function run_protein_scoring!(
@@ -361,12 +244,8 @@ function run_protein_scoring!(
     sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
     n_proteins = length(getProteins(getSpecLib(search_context)))
 
-    # GLOBAL_MODEL=1: learned protein-level model on per-run pg_score aggregates (2-fold protein CV),
-    # replacing the fixed top-√N log-odds (mirrors the precursor global model).
     global_pg_score_dict, pg_name_to_global_pg_score =
-        global_model_enabled() ?
-            build_protein_global_model_dict(pg_refs, sqrt_n_runs, n_proteins, protein_to_cv_fold) :
-            build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)

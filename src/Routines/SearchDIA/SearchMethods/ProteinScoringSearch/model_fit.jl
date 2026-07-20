@@ -590,12 +590,6 @@ function perform_probit_analysis_multifold(
     end
 
     feature_names = protein_probit_feature_names()
-    # GROUP_SCORING two-round: include the cross-run features when they've been added (round 2 only).
-    if group_scoring_enabled()
-        for c in (:global_max, :global_top3_logodds)
-            hasproperty(all_protein_groups, c) && push!(feature_names, c)
-        end
-    end
     feature_filter_df = all_protein_groups
     remove_zero_variance_columns!(feature_names, feature_filter_df)
 
