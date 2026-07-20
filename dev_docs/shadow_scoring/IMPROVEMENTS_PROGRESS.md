@@ -243,12 +243,17 @@ memory-efficient (fixed-size per-precursor accumulators, no per-precursor vector
 #runs/#PSMs). Preserves round-1 s1 as :s1_round1 (round-2 overwrites trace_prob_prepass). Round-1 basis
 per user (avoids double-counting the cross-run signal round-2 already uses).
 
-| EWZ (40 runs) | GROUP+counts | +GLOBAL_MODEL | Δ |
+| EWZ (40 runs) | GROUP+counts | GLOBAL round-1 | GLOBAL round-2 (SHIP) |
 |---|---|---|---|
-| unique precursors | 66,588 | 68,049 | **+2.2%** |
-| total rows | 1,961,775 | 1,939,794 | −1.1% |
-| yeast leak (precursor) | 3,764 | 2,809 | **−955 (−25%)** |
-| yeast leak (PG) | 535 | 497 | −38 |
+| unique precursors | 66,588 | 68,049 (+2.2%) | **68,376 (+2.7%)** |
+| total rows | 1,961,775 | 1,939,794 (−1.1%) | 1,944,196 (−0.9%) |
+| yeast leak (precursor) | 3,764 | 2,809 (−25%) | 2,947 (−22%) |
+| yeast leak (PG) | 535 | 497 | 515 |
+
+**Round-2 basis (`prec_prob`) chosen** (user): best unique (+2.7% > round-1's +2.2%), slightly better
+total (−0.9% vs −1.1%), leaks a hair more than round-1 (2,947 vs 2,809) but still −22% vs GROUP+counts.
+Round-2 = the round-2 per-run precursor score, same input the fixed logodds aggregates → clean learned
+replacement. GLOBAL_MODEL now independent of GROUP_SCORING (no :s1_round1 plumbing).
 
 - **+2.2% unique precursors** (matches the offline prototype's +2.5%) — recovers NARROW precursors
   (confident in 1-3 runs) that the fixed logodds penalized. Breadth-in-distinct-IDs win.
