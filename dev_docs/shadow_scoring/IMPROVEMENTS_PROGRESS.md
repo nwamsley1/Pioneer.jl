@@ -264,6 +264,28 @@ replacement. GLOBAL_MODEL now independent of GROUP_SCORING (no :s1_round1 plumbi
   total. Could compare round-1 vs round-2 basis if total matters.
 - KEAP1 (6 runs): +9 unique (noise — too few runs). Plumbing validated (s1_round1 flows, no error).
 
+### #Learned global PROTEIN-group model (GLOBAL_MODEL=1, piece 1 of protein extension)
+
+`build_protein_global_model_dict` — protein analog of the precursor global model. Same 10 features on
+per-run `pg_score` aggregates, 2-fold PROTEIN-keyed CV. USES PROBIT (fit_probit_model /
+calculate_probit_scores — the standard protein model class), NOT LightGBM: LightGBM (SCORING_LGBM_HP,
+200 iters) overfit the ~7k protein set → KEAP1 unique PG −4.5%; probit fixed it. Replaces the fixed
+top-√N logodds `build_protein_global_score_dicts`. Global model uses NO shadow decoys (learned
+aggregator). Hash-assigns folds for proteins absent from protein_to_cv_fold (no scale mixing).
+
+| EWZ (40 runs) | fixed logodds | learned probit | Δ |
+|---|---|---|---|
+| protein-group unique | 7,571 | 7,606 | +0.5% |
+| PG yeast leak | 535 | 420 | **−21.5%** |
+
+- **Modest unique gain (+0.5%), strong leak reduction (−21.5%)** at 40 runs. KEAP1 (6 runs, √n≈2) was
+  −1.0% (small-data neutral, like precursors). The leak reduction is the standout protein outcome.
+- Precursor + protein global models run together under one GLOBAL_MODEL=1: precursor (LightGBM,
+  matches precursor standard) +2.7% unique; protein (probit, matches protein standard) +0.5% unique.
+- NEXT (piece 2): cross-run PROTEIN features (keep simple — global_max + global_top3_logodds) +
+  shadow proteins (1 duplicate shadow row per real row) + two-round protein retrain, reusing the
+  saved per-fold run→cluster map from the precursor step.
+
 ## Improvement plan (priority order)
 
 1. **Cross-run shadow-spectrum agreement feature** (DONE, KEAP1 — see results log; modest, needs
