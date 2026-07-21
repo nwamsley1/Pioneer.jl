@@ -229,6 +229,31 @@ function _diag_rss(label::AbstractString)
     return nothing
 end
 
+# Per-thread scratch-buffer size breakdown (PIONEER_DIAG_SCRATCH=1): summarysize every
+# SearchDataStructures field summed across threads, so we can see what the ~deconv memory
+# actually is (scored-PSM buffers vs design matrix vs working arrays). Off by default.
+function _diag_scratch_sizes(search_context)
+    get(ENV, "PIONEER_DIAG_SCRATCH", "0") == "0" && return nothing
+    sd = getSearchData(search_context)
+    isempty(sd) && return nothing
+    sizes = Tuple{Symbol,Float64}[]
+    for f in fieldnames(typeof(sd[1]))
+        tot = 0
+        for s in sd
+            tot += Base.summarysize(getfield(s, f))
+        end
+        push!(sizes, (f, tot / 1e9))
+    end
+    sort!(sizes; by = x -> -x[2])
+    @user_print string("[SCRATCH] per-thread buffer sizes (sum over ", length(sd), " threads):")
+    for (f, gb) in sizes
+        gb >= 0.01 && @user_print string("[SCRATCH]   ", rpad(String(f), 30), " ",
+                                          round(gb; digits=3), " GB")
+    end
+    @user_print string("[SCRATCH]   TOTAL ", round(sum(x -> x[2], sizes); digits=3), " GB")
+    return nothing
+end
+
 """
 Process a single file: load fragment index matches and deconvolve with prescore settings.
 """
@@ -247,13 +272,17 @@ function process_file!(
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     t_lib_search = time() - t_file_start
     _diag_rss("post library_search")
+    _diag_scratch_sizes(search_context)
 
     # Sciex ZT main search (5b): library_search already returned the collapsed meta table
     # with scan_competition + ms1_lookup applied per-batch and rows in (precursor_idx,
     # scan_idx) order, so skip those passes and the global precursor sort here.
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
     _zt_main = _zt_k > 0 && params isa MainSearchParameters
-    _zt_batched = _zt_main && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
+    # library_search already did scan_comp/ms1/collapse upstream for the disk-spill (chosen)
+    # or the parked in-memory batched path; skip them + the redundant permute here.
+    _zt_batched = _zt_main && (get(ENV, "PIONEER_ZT_SPILL", "0") == "1" ||
+                               get(ENV, "PIONEER_ZT_BATCHED", "0") == "1")
 
     t_scan_comp = 0.0; t_ms1 = 0.0; t_sort = 0.0
     if !_zt_batched
@@ -389,10 +418,11 @@ function process_search_results!(
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
     _zt_profile = _zt_k > 0 && get(ENV, "PIONEER_ZT_PROFILE_FEATURES", "1") != "0"
-    # Batched deconvolve-once collapse is OPT-IN (PIONEER_ZT_BATCHED=1): it changes the
-    # deconv warm-start order and is therefore NOT byte-identical to the default global
-    # collapse (~0.1% prec / ~0.9% PG on single-file 5min). Default off = global collapse.
-    _zt_batched = _zt_k > 0 && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
+    # Collapse ran upstream in library_search for the disk-spill (PIONEER_ZT_SPILL=1,
+    # byte-identical) or the parked in-memory batched path (PIONEER_ZT_BATCHED=1, not
+    # byte-identical). Either way skip the global collapse here.
+    _zt_batched = _zt_k > 0 && (get(ENV, "PIONEER_ZT_SPILL", "0") == "1" ||
+                                get(ENV, "PIONEER_ZT_BATCHED", "0") == "1")
 
     # Per-precursor chromatogram-trace features (frag_corr_*, ms1_corr_*, n_scans,
     # delta_frame_peak_center). Conventional DIA runs them here on the full trace.

@@ -426,3 +426,126 @@ function zt_batched_deconv_collapse(zt_tasks, nce_entries, spectra, prec_index,
     isempty(result) || sort!(result, [:precursor_idx, :scan_idx])   # restore global order
     return result
 end
+
+# ============================================================================
+# 5b (chosen): DISK-SPILLED collapse. Keeps develop's round-robin deconv EXACTLY
+# (byte-identical raw rows, cache-optimal), but instead of vcat-ing every thread's raw
+# PSMs into one 34M-row table, scatters each thread table to on-disk contiguous scan-range
+# bins (freeing the thread's scored-PSM scratch after), then collapses one bin at a time via
+# a 3-bin sliding window with ±k halo borrow. The full raw never coexists in memory.
+# Byte-identical: raw rows unchanged; per-thread scan_competition == global (scans are
+# thread-disjoint); collapse-per-bin-with-borrow proven == global collapse (DIAG_COMPARE);
+# final sort restores (pid,scn) order. Gated PIONEER_ZT_SPILL=1.
+# ============================================================================
+
+# Scatter one thread's raw table into per-(bin,thread) Arrow files. `binof(scan)->1..B`.
+function _zt_scatter_to_bins!(spill_dir::String, thread_id::Int, tbl::DataFrame, binof, B::Int)
+    scn = tbl[!, :scan_idx]::Vector{UInt32}
+    bins = Vector{Int}(undef, length(scn))
+    @inbounds for i in eachindex(scn); bins[i] = binof(Int(scn[i])); end
+    for b in 1:B
+        rows = findall(==(b), bins)
+        isempty(rows) && continue
+        writeArrow(joinpath(spill_dir, "bin$(b)_thr$(thread_id).arrow"), tbl[rows, :])
+    end
+    return nothing
+end
+
+"""
+    zt_disk_spill_deconv_collapse(...) -> DataFrame
+
+ZT main-search replacement for `vcat(fetched...)` + downstream global collapse that keeps peak
+memory low. Deconvolves with develop's round-robin `thread_tasks` (UNCHANGED), runs per-thread
+`scan_competition`/`ms1_lookup` (byte-identical), scatters each thread table to `n_bins`
+on-disk contiguous scan-range bins and frees that thread's scored scratch, then collapses bins
+one at a time (3-bin sliding window, ±k halo). Returns the (pid,scn)-sorted meta table.
+"""
+function zt_disk_spill_deconv_collapse(thread_tasks, nce_entries, spectra, prec_index,
+                                       ms_file_idx::Int64, search_context, params, precursors,
+                                       ion_list, qtm_deconv, mem, rt_to_irt, irt_tol, k::Int,
+                                       all_scan_idxs::Vector{Int}, n_bins::Int)
+    search_data       = getSearchData(search_context)
+    lib_precs         = getPrecursors(getSpecLib(search_context))
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+    nthreads_tasks    = length(thread_tasks)
+
+    spill_dir = joinpath(getDataOutDir(search_context), "temp_data", "zt_spill")
+    isdir(spill_dir) && rm(spill_dir; recursive=true, force=true)
+    mkpath(spill_dir)
+
+    # B contiguous scan-range bins over the sorted MS2 scans.
+    sorted_scans = sort(all_scan_idxs)
+    n = length(sorted_scans)
+    B = max(1, min(n_bins, n))
+    per = cld(n, B)
+    bin_scans = Vector{Vector{Int}}(undef, B)
+    bin_lo = Vector{Int}(undef, B); bin_hi = Vector{Int}(undef, B)
+    for b in 1:B
+        lo_i = (b-1)*per + 1; hi_i = min(b*per, n)
+        bin_scans[b] = sorted_scans[lo_i:hi_i]
+        bin_lo[b] = sorted_scans[lo_i]; bin_hi[b] = sorted_scans[hi_i]
+    end
+    binof(s::Int) = clamp(searchsortedlast(bin_lo, s), 1, B)   # bins disjoint & contiguous
+
+    metas = map(nce_entries) do (nce_model, nce_tag)
+        # --- Deconv (round-robin, UNCHANGED) then per-thread features + scatter + free scratch ---
+        tasks = map(thread_tasks) do thread_task
+            Threads.@spawn process_scans_fused!(
+                last(thread_task), spectra, prec_index, ms_file_idx,
+                search_data[first(thread_task)], params, precursors, ion_list,
+                nce_model, qtm_deconv, mem, rt_to_irt, irt_tol)
+        end
+        for (idx, t) in enumerate(tasks)
+            tid = first(thread_tasks[idx])
+            tbl = _zt_fetch(t)
+            if nrow(tbl) > 0
+                add_scan_competition_features!(tbl)                                # per-thread
+                add_ms1_lookup_features!(tbl, spectra, search_context, ms_file_idx) # per-row
+                _zt_scatter_to_bins!(spill_dir, tid, tbl, binof, B)
+            end
+            tbl = nothing
+            # Release this thread's ~0.6 GB raw scored buffer so it can be reclaimed. NOTE:
+            # resize!/empty! KEEP the Vector's capacity (no memory freed); reassigning drops
+            # the reference so GC can collect it. Regrown next file by growScoredPSMs!.
+            search_data[tid].main_search_scored_psms = MainSearchScoredPSM{Float32,Float16}[]
+        end
+        GC.gc()  # reclaim the freed per-thread scored buffers before the collapse phase
+
+        # --- Collapse bins one at a time (3-bin sliding window; borrow ±k halo from neighbors) ---
+        function read_bin(b)
+            paths = String[]
+            for ti in 1:nthreads_tasks
+                p = joinpath(spill_dir, "bin$(b)_thr$(ti).arrow")
+                isfile(p) && push!(paths, p)
+            end
+            isempty(paths) && return nothing
+            DataFrame(Tables.columntable(Arrow.Table(paths)))   # materialize (detach from mmap)
+        end
+        out = DataFrame[]
+        prev = nothing
+        cur  = read_bin(1)
+        for b in 1:B
+            nxt = b < B ? read_bin(b+1) : nothing
+            if cur !== nothing && nrow(cur) > 0
+                head = (prev !== nothing && nrow(prev) > 0) ?
+                    prev[prev[!, :scan_idx] .>= UInt32(max(0, bin_lo[b]-k)), :] : nothing
+                tail = (nxt !== nothing && nrow(nxt) > 0) ?
+                    nxt[nxt[!, :scan_idx] .<= UInt32(bin_hi[b]+k), :] : nothing
+                batch = _zt_concat_borrow(head, cur, tail)
+                own = Set{UInt32}(UInt32.(bin_scans[b]))
+                mb = collapse_to_metascans(batch, spectra, lib_precs, k;
+                        bitvec_rank_table = bitvec_rank_table, own_scans = own)
+                nrow(mb) > 0 && push!(out, mb)
+            end
+            prev = cur; cur = nxt
+        end
+        m = isempty(out) ? DataFrame() : vcat(out...)
+        nce_tag === nothing || isempty(m) || (m[!, :nce] .= nce_tag)
+        m
+    end
+
+    rm(spill_dir; recursive=true, force=true)
+    result = length(metas) == 1 ? metas[1] : vcat(filter(x -> nrow(x) > 0, metas)...)
+    isempty(result) || sort!(result, [:precursor_idx, :scan_idx])
+    return result
+end

@@ -204,6 +204,20 @@ function library_search(
     # rows from neighbors — vcat ~3M meta-PSMs instead of ~35M raw rows. The caller
     # (process_file!/process_search_results!) skips its own scan_competition/ms1/permute
     # and the global collapse for this path. Byte-identical to the global collapse. ---
+    # ZT disk-spill (chosen approach): round-robin deconv UNCHANGED, spill raw to on-disk
+    # scan-range bins, collapse one bin at a time. Byte-identical, low peak. PIONEER_ZT_SPILL=1.
+    if _zt_main && get(ENV, "PIONEER_ZT_SPILL", "0") == "1"
+        t_zt_start = time()
+        n_bins = something(tryparse(Int, get(ENV, "PIONEER_ZT_SPILL_BINS", "")), 16)
+        result = zt_disk_spill_deconv_collapse(
+            thread_tasks, nce_entries, spectra, prec_index, ms_file_idx, search_context,
+            params, precursors, ion_list, qtm_deconv, mem, rt_to_irt, irt_tol, _zt_k,
+            all_scan_idxs, n_bins)
+        @debug_l1 "  library_search (ZT disk-spill, bins=$n_bins): frag_index=$(round(t_frag, digits=2))s  " *
+                   "deconv+collapse=$(round(time()-t_zt_start, digits=2))s  meta_psms=$(nrow(result))"
+        return result
+    end
+
     if _zt_main && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
         t_zt_start = time()
         zt_tasks = partition_scans_contiguous_zt(all_scan_idxs, Threads.nthreads())
