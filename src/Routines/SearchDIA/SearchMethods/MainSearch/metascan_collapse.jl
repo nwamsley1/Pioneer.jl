@@ -42,6 +42,9 @@ const ZT_SHAPE_FEATURES = Symbol[
     # grouped here for model wiring). Complements the uncentered zt_tri_cosine; a top-3
     # feature in the 2nd-pass. 3-file: +2.9% prec / +3.0% PG over the shape-only baseline.
     :zt_tri_pcor,
+    # m/z-offset-aware triangle cosine (2026-07-21 A/B): shape match to a triangle SHIFTED to
+    # the precursor's in-bin m/z offset. Additive test of whether fixing the off-center penalty helps.
+    :zt_emp_cosine,
 ]
 
 # Experimental shape-feature candidates (env `PIONEER_ZT_SHAPE_EXP`, default off →
@@ -138,6 +141,22 @@ end
     return out
 end
 
+# Cosine of the weight profile against a triangle template SHIFTED to the precursor's m/z
+# offset `o` (bin-width units). The fixed CENTERED triangle (zt_tri_cosine) penalizes real
+# precursors whose m/z sits off bin-center — their transmission peaks at their true m/z, not
+# the bin center. Shifting the template to `o` should match real precursors better than
+# interference (whose apex is unrelated to the precursor m/z). Same base width as the triangle.
+@inline function _zt_shifted_tri_cosine(w::Vector{Float32}, o::Float32, k::Int)
+    L = 2k + 1; kf = Float32(k + 1)
+    dotwt = 0f0; nw = 0f0; nt = 0f0
+    @inbounds for t in 1:L
+        j = Float32(t - (k + 1))
+        tri = max(0f0, 1f0 - abs(j - o) / kf)
+        dotwt += w[t] * tri; nw += w[t] * w[t]; nt += tri * tri
+    end
+    return (nw > 0f0 && nt > 0f0) ? dotwt / (sqrt(nw) * sqrt(nt)) : 0f0
+end
+
 function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int;
                                bitvec_rank_table = nothing,
                                own_scans::Union{Nothing,Set{UInt32}} = nothing)
@@ -180,6 +199,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
 
     center_rows = Int[]
     profiles = Vector{Vector{Float32}}()
+    offsets = Float32[]   # per-center m/z offset (bins): (prec_mz - center_mz)/bin_width ∈ ~[-0.5,0.5]
     sh_str = Float32[]; sh_effn = Float32[]; sh_best = Float32[]
     sh_disp = Float32[]; sh_n70 = UInt8[]; sh_rank = UInt16[]
     Fbuf = [zeros(Float32, L) for _ in 1:8]
@@ -217,6 +237,9 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
                 end
             end
             push!(center_rows, r); push!(profiles, w)
+            # m/z offset of the precursor within its center bin (bin-width units); the true
+            # transmission peak sits at this offset, so the shape template should be shifted here.
+            push!(offsets, (pm - Float32(cmzs[c])) / max(Float32(hws[c]), 1f-6))
 
             # ---- within-metascan shape features (fragment profile vs weight) ----
             str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)
@@ -286,6 +309,9 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     # zt_tri_pcor (promoted): mean-centered Pearson of the weight profile vs the triangle.
     # Computed from the stored profiles so the hot per-meta-PSM loop is untouched.
     meta[!, :zt_tri_pcor] = Float32[_frag_pcor(profiles[m], tri) for m in 1:nm]
+    # zt_emp_cosine: cosine vs an m/z-offset-SHIFTED triangle — fits real (off-center-of-bin)
+    # precursors better than the fixed centered triangle. Additive A/B feature (2026-07-21).
+    meta[!, :zt_emp_cosine] = Float32[_zt_shifted_tri_cosine(profiles[m], offsets[m], k) for m in 1:nm]
     # Experimental shape candidates under test (env-gated; additive — absent by default).
     if get(ENV, "PIONEER_ZT_SHAPE_EXP", "0") != "0"
         # (next candidate columns go here; keep in sync with ZT_SHAPE_EXP_FEATURES)

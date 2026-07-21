@@ -120,6 +120,9 @@ const ADVANCED_FEATURE_SET = [
     # main-search-only). Full-9 A/B showed only zt_tri_cosine (2nd-pass gain 56k) and
     # zt_entropy (1.3k) carry signal; the other 7 descriptors were noise (<400) — pruned.
     :zt_tri_cosine, :zt_entropy,
+    # m/z-offset-aware triangle cosine (2026-07-21 A/B): additive test of whether a template
+    # shifted to the precursor's in-bin m/z offset beats the fixed centered triangle.
+    :zt_emp_cosine,
     # ZT across-cycle (elution) MS1/fragment features are NOT listed separately: for
     # ZT they are the develop chromatogram features (frag_corr_strength, ms1_corr_*,
     # n_scans, etc. above), recomputed on the collapsed one-point-per-cycle meta trace.
