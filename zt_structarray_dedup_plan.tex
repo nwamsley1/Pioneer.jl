@@ -1,0 +1,135 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}\usepackage{xcolor}\usepackage{listings}\usepackage{enumitem}\usepackage{booktabs}\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\definecolor{kw}{RGB}{0,0,180}\definecolor{cmt}{RGB}{0,120,0}\definecolor{str}{RGB}{160,0,0}\definecolor{bg}{RGB}{247,247,247}
+\lstdefinelanguage{Julia}{morekeywords={function,for,while,if,elseif,else,end,return,in,do,let,const,struct,mutable,begin,local,global,true,false,nothing,using,import,where,view,resize},sensitive=true,morecomment=[l]{\#},morestring=[b]"}
+\lstset{language=Julia,basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{bg},keywordstyle=\color{kw}\bfseries,commentstyle=\color{cmt}\itshape,stringstyle=\color{str},breaklines=true,showstringspaces=false,frame=single,framesep=4pt,rulecolor=\color{gray!40},xleftmargin=6pt,numbers=left,numberstyle=\tiny\color{gray},numbersep=6pt}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\title{\textbf{General DIA peak-memory: columnar (StructArray) scored-PSM storage}\\[2pt]\large Eliminate the scored-PSM extraction copy on every DIA run --- plan + code + validation}
+\author{Pioneer.jl \quad branch \code{feat/zt-batched-collapse}}
+\date{2026-07-21}
+\begin{document}\maketitle
+
+\begin{abstract}
+On EVERY DIA search (ZT and non-ZT alike) the post-deconvolution raw PSMs are materialized in
+$\sim$3 copies at the Main-Search peak: (1) the per-thread \code{Vector\{MainSearchScoredPSM\}}
+buffer \code{Score!} writes into (measured 6.3\,GB/10 threads on 5\,min ZT; the \emph{only}
+large deconv buffer --- \code{Hs\_fused}/id-maps/working vectors are $<0.01$\,GB each), (2) the
+\code{DataFrame(@view(scored[1:last\_val]))} each thread returns --- Tables.jl extracts the
+struct fields into fresh column vectors, a \emph{full copy}, and (3) the \code{vcat(fetched...)}
+concatenation. This plan removes copy (2), the extraction, by storing the scored buffer as a
+\code{StructArray} (fields already laid out as separate column vectors), so the returned
+\code{DataFrame} \emph{wraps} those columns instead of copying them. Byte-identical (same values,
+different memory layout); benefits every DIA run; no disk IO. The change is nearly a one-liner
+(the storage type), but carries two things to verify carefully: hot-loop \code{setindex!}
+performance and column-aliasing safety.
+\end{abstract}
+
+\section{Why this is general (not ZT-specific)}
+The path is shared: \code{process\_scans\_fused!} (\code{process\_scans\_fused.jl:176}) returns
+\code{DataFrame(@view(get\_scored\_psms(...)[1:last\_val]))} for \emph{all} search methods, and
+\code{library\_search} vcats them. Astral/Exploris (\(\sim\)48M PSMs) pay a \emph{larger}
+version of the same triple-buffering. ZT additionally has the collapse (raw$\to$meta) that the
+disk-spill exploits; this optimization is orthogonal and stacks with it.
+
+\section{The change (minimal core)}
+\code{main\_search\_scored\_psms::Vector\{MainSearchScoredPSM\{Float32,Float16\}\}}
+$\rightarrow$ \code{::StructArray\{MainSearchScoredPSM\{Float32,Float16\}\}} (same element type).
+Everything the code does to it already has a \code{StructArray} method:
+\begin{center}\begin{tabular}{lll}
+\toprule
+site & operation & StructArray? \\
+\midrule
+\code{ScoredPSMs.jl} \code{Score!} & \code{scored[i] = MainSearchScoredPSM(...)} & yes (splats struct into columns) \\
+\code{ScoredPSMs.jl} \code{growScoredPSMs!} & \code{resize!(scored, n)} & yes (resizes every column) \\
+\code{SearchMethods.jl:284} & allocate \code{(undef, 5000)} & \code{StructArray\{T\}(undef, 5000)} \\
+\code{process\_scans\_fused.jl:176} & \code{DataFrame(@view(scored[1:last\_val]))} & \textbf{now wraps columns zero-copy} \\
+\bottomrule
+\end{tabular}\end{center}
+The same return line becomes zero-copy: \code{@view(structarray[1:n])} is a \code{StructArray}
+of column \emph{views}, and \code{DataFrame} of it wraps those views (Tables.jl column access)
+instead of extracting. Also flip \code{TuningScoredPSM} storage the same way (tuning paths).
+
+\subsection{Zero-copy conversion (explicit, if the implicit wrap needs forcing)}
+\begin{lstlisting}
+# get_scored_psms(...) now returns a StructArray. Wrap the first last_val rows of each
+# component column as a view -> DataFrame holds SubArray columns, no extraction copy.
+function scored_view_df(sa::StructArray, last_val::Int)
+    cols = StructArrays.components(sa)                 # NamedTuple of column Vectors
+    DataFrame(Any[view(c, 1:last_val) for c in cols], collect(keys(cols)); copycols=false)
+end
+# process_scans_fused.jl:176 becomes:
+return scored_view_df(get_scored_psms(search_data, params), last_val)
+\end{lstlisting}
+
+\section{Correctness (byte-identity)}
+A \code{StructArray\{T\}} stores exactly the same field values as \code{Vector\{T\}} --- only the
+memory layout differs (SoA vs AoS). \code{Score!} writes identical values; the DataFrame exposes
+identical columns. So results are bit-identical. \textbf{Aliasing safety} (the one real hazard):
+the returned DataFrame's columns are now \emph{views} into the scratch buffer, so we must ensure
+nothing mutates them in place or frees the buffer while a view is live:
+\begin{itemize}[nosep]
+  \item \textbf{Non-ZT:} the per-thread DataFrame is only an input to \code{vcat(fetched...)},
+    which \emph{copies}; \code{scan\_competition}/\code{ms1}/permute run on the vcat'd copy, never
+    on the views. Safe. Next file, \code{Score!} overwrites the buffer --- but the vcat'd table
+    is an independent copy. Safe.
+  \item \textbf{ZT disk-spill:} \code{scan\_competition}/\code{ms1} only \emph{append} columns
+    (never mutate \code{:weight}/\code{:scan\_idx}); \code{writeArrow} reads and copies to disk;
+    only \emph{then} is the buffer freed (\code{tbl=nothing} first, so no live view). Safe.
+  \item \textbf{Guard:} add an assertion/test that no pass mutates an existing scored column in
+    place before vcat/scatter (they don't today).
+\end{itemize}
+
+\section{Risks to measure (this is where the care goes)}
+\begin{enumerate}[nosep]
+  \item \textbf{Hot-loop \code{setindex!} performance.} \code{Score!} does \(\sim\)33M struct
+    assignments. \code{StructArray} \code{setindex!} destructures the struct and writes each
+    component --- should be alloc-free and type-stable, but \emph{must be benchmarked}: compare
+    Main-Search deconv time before/after. If a regression appears, check \code{@code\_warntype}
+    on \code{Score!} and that the \code{StructArray} component types are concrete.
+  \item \textbf{DataFrame-view semantics.} Confirm \code{DataFrame(@view(sa[1:n]))} does not
+    silently copy (check allocation) and that \code{copycols=false} holds through \code{vcat}.
+  \item \textbf{Type stability of the field.} \code{StructArray\{MainSearchScoredPSM\{Float32,
+    Float16\}\}} has a concrete, fully-specified component \code{NamedTuple} type --- verify no
+    \code{Any} creeps into \code{getMainSearchScoredPsms} call sites.
+  \item \textbf{Downstream that indexes the buffer as structs} (e.g. \code{process\_scans.jl:191},
+    any \code{scored[i].field} access) --- \code{StructArray} supports struct-style indexing, but
+    audit every read site.
+\end{enumerate}
+
+\section{Benchmark + validation protocol}
+All runs single-file 5\,min ZT first (fast, deterministic), then a non-ZT set.
+\begin{enumerate}[nosep]
+  \item \textbf{Correctness gate:} byte-identical to current: ZT \code{2{,}950{,}447} meta /
+    \code{26{,}167} prec / \code{4{,}213} PG (spill on AND off); metascan dump content-identical
+    to \code{meta\_global}. Non-ZT (Astral/Exploris) result bit-identical.
+  \item \textbf{Hot-loop speed:} Main-Search deconv time (report's ``Main Search'' + the
+    \code{library\_search} \code{deconv} breakdown) before/after --- the primary risk metric.
+    Use the warm driver (\code{warm\_driver.jl}) so JIT is hot; compare like-for-like.
+  \item \textbf{Peak / min-memory:} \code{PIONEER\_DIAG\_RSS} sub-step markers + \code{time -l}
+    \code{phys\_footprint}; and the \code{--heap-size-hint=NG} min-memory test (does removing the
+    extraction copy let it run at a lower hint than today?).
+  \item \textbf{Allocation:} \code{PIONEER\_DIAG\_ALLOC} \code{library\_search} bucket should drop
+    by \(\sim\)one raw-table's worth (\(\sim\)6\,GB cumulative) if the extraction copy is gone.
+\end{enumerate}
+
+\section{Rollout}
+\begin{itemize}[nosep]
+  \item Land behind a flag first (\code{PIONEER\_SCORED\_STRUCTARRAY=1}) if we want an A/B during
+    validation; otherwise it is byte-identical and can replace the storage directly once the
+    hot-loop benchmark is clean.
+  \item Order: (a) flip \code{MainSearchScoredPSM} storage + conversion; validate ZT byte-identity
+    + deconv speed. (b) flip \code{TuningScoredPSM}. (c) non-ZT byte-identity. (d) measure the
+    min-memory (heap-size-hint) improvement, ZT and non-ZT.
+  \item Composes with the disk-spill: spill removes the vcat and holds one bin; StructArray
+    removes the extraction copy. Together the raw PSMs approach a single columnar copy.
+\end{itemize}
+
+\section{Open question for review}
+Removing copy (2) leaves copies (1) the SoA buffer and (3) the vcat. For non-ZT, (3) is still
+needed (global per-precursor passes span round-robin threads). Is a follow-up worth it to also
+drop (3) --- e.g. a pre-sized shared columnar buffer (two-pass count-then-fill) so threads write
+into one table with no vcat? That would leave a single columnar copy of the raw PSMs for all
+runs. Bigger change; flagged for later.
+\end{document}
