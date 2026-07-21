@@ -504,12 +504,14 @@ function zt_disk_spill_deconv_collapse(thread_tasks, nce_entries, spectra, prec_
                 _zt_scatter_to_bins!(spill_dir, tid, tbl, binof, B)
             end
             tbl = nothing
-            # Release this thread's ~0.6 GB raw scored buffer so it can be reclaimed. NOTE:
-            # resize!/empty! KEEP the Vector's capacity (no memory freed); reassigning drops
-            # the reference so GC can collect it. Regrown next file by growScoredPSMs!.
+            # Release this thread's ~0.6 GB raw scored buffer so it BECOMES reclaimable.
+            # NOTE: resize!/empty! KEEP the Vector's capacity (no memory freed); reassigning
+            # drops the reference so GC can collect it. We do NOT force GC — Julia reclaims it
+            # when there's memory pressure (promptly on a constrained machine, lazily on a big
+            # one), so the program's *minimum required* memory drops without paying a GC tax
+            # here. Regrown next file by growScoredPSMs!.
             search_data[tid].main_search_scored_psms = MainSearchScoredPSM{Float32,Float16}[]
         end
-        GC.gc()  # reclaim the freed per-thread scored buffers before the collapse phase
 
         # --- Collapse bins one at a time (3-bin sliding window; borrow ±k halo from neighbors) ---
         function read_bin(b)
