@@ -22,6 +22,8 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :top2_logodds_score,
     :top3_logodds_score,
     :mean_prec_prob,
+    :median_prec_prob,
+    :std_prec_prob,
     :n_runs_observed,
     :n_prob_gt_0_9,
     :n_prob_gt_0_99,
@@ -29,8 +31,14 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
 
 const GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES = Symbol[
     :empirical_global_score,
+    :top1_prec_prob,
+    :top2_prec_prob,
     :top2_logodds_score,
     :top3_logodds_score,
+    :mean_prec_prob,
+    :median_prec_prob,
+    :std_prec_prob,
+    :n_prob_gt_0_9,
 ]
 
 const GLOBAL_PRECURSOR_SMALL_DATASET_MAX_CANDIDATES = 300_000
@@ -141,7 +149,8 @@ function _build_global_precursor_feature_table(
 
     @inbounds for (row, precursor_idx) in enumerate(precursor_ids)
         probabilities = inputs.probabilities[precursor_idx]
-        sorted_probabilities = sort(probabilities; rev = true)
+        sort!(probabilities; rev = true)
+        sorted_probabilities = probabilities
         n_observed = length(sorted_probabilities)
         top1 = sorted_probabilities[1]
         top2 = n_observed >= 2 ? sorted_probabilities[2] : 0.0f0
@@ -155,6 +164,12 @@ function _build_global_precursor_feature_table(
         feature_columns[:top3_logodds_score][row] =
             _logodds_from_sorted(sorted_probabilities, 3)
         feature_columns[:mean_prec_prob][row] = Float32(mean(probabilities))
+        midpoint = (n_observed + 1) ÷ 2
+        feature_columns[:median_prec_prob][row] = isodd(n_observed) ?
+            sorted_probabilities[midpoint] :
+            (sorted_probabilities[midpoint] + sorted_probabilities[midpoint + 1]) / 2.0f0
+        feature_columns[:std_prec_prob][row] =
+            n_observed > 1 ? Float32(std(probabilities)) : 0.0f0
         feature_columns[:n_runs_observed][row] = Float32(n_observed)
         feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), probabilities))
         feature_columns[:n_prob_gt_0_99][row] = Float32(count(>(0.99f0), probabilities))

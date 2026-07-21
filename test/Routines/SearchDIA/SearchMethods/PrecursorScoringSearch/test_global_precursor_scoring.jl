@@ -50,14 +50,29 @@
         @test table.top2_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 2)
         @test table.top3_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 3)
         @test table.mean_prec_prob[1] ≈ 0.85f0
+        @test table.median_prec_prob[1] ≈ 0.85f0
+        @test table.std_prec_prob[1] ≈ std(Float32[0.9, 0.8])
         @test table.n_runs_observed[1] == 2.0f0
         @test table.n_prob_gt_0_9[1] == 0.0f0
         @test table.n_prob_gt_0_99[1] == 0.0f0
 
         @test table.n_runs_observed[2] == 1.0f0
+        @test table.median_prec_prob[2] == 0.7f0
+        @test table.std_prec_prob[2] == 0.0f0
     end
 
     @testset "feature set selection" begin
+        @test Pioneer.GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES == Symbol[
+            :empirical_global_score,
+            :top1_prec_prob,
+            :top2_prec_prob,
+            :top2_logodds_score,
+            :top3_logodds_score,
+            :mean_prec_prob,
+            :median_prec_prob,
+            :std_prec_prob,
+            :n_prob_gt_0_9,
+        ]
         @test Pioneer._select_global_precursor_score_features(299_999) ===
               Pioneer.GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES
         @test Pioneer._select_global_precursor_score_features(300_000) ===
