@@ -52,6 +52,17 @@ const ZT_SHAPE_FEATURES = Symbol[
 const ZT_SHAPE_EXP_FEATURES = Symbol[
 ]
 
+# Minimal ZT feature set the MODELS consume (2026-07-21), from the 3-file Condition-A
+# feature-gain analysis: only the ZT within-metascan features that carry signal. The collapse
+# still COMPUTES + stores all ZT_PROFILE/ZT_SHAPE columns (lists above); this just prunes what
+# the per-file main-search LGBM uses. Dropped as noise/dead: the 8 non-cosine profile
+# descriptors (zt_center_frac/tail_frac/apex_offset/centroid/spread/entropy/symmetry/monotonicity)
+# and the weak shape variants (frag_corr_effective_n_shape, frag_corr_best_shape,
+# frag_apex_dispersion_shape, n_correlated_fragments_bitvec_rank_shape).
+const ZT_MAINSEARCH_MODEL_FEATURES = Symbol[
+    :zt_tri_cosine, :zt_tri_pcor, :frag_corr_strength_shape, :n_correlated_fragments_shape,
+]
+
 # The across-cycle ELUTION features (frag_corr_*, ms1_corr_*, n_scans) are NOT a
 # separate feature set: for ZT they are exactly the develop chromatogram features,
 # run on the collapsed one-point-per-cycle meta trace (add_chromatogram_features!
@@ -498,6 +509,11 @@ function zt_disk_spill_deconv_collapse(thread_tasks, nce_entries, spectra, prec_
         for (idx, t) in enumerate(tasks)
             tid = first(thread_tasks[idx])
             tbl = _zt_fetch(t)
+            # process_scans_fused! now returns a StructArray-backed DataFrame with VIEW columns
+            # (copycols=false). Materialize this thread's rows to concrete Vector columns so the
+            # typed per-thread passes (scan_competition/ms1) and the scatter work, and so the
+            # scratch can be freed immediately (the copy is independent of the buffer).
+            nrow(tbl) > 0 && (tbl = DataFrame(tbl; copycols = true))
             if nrow(tbl) > 0
                 add_scan_competition_features!(tbl)                                # per-thread
                 add_ms1_lookup_features!(tbl, spectra, search_context, ms_file_idx) # per-row
