@@ -411,18 +411,36 @@ function _score_precursor_isotope_traces_no_mbr(
         semisupervised  = true,
     )
     @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
+    log_pass_importance(pass1, two_round_enabled() ? "Round-1" : "Pass-1")
 
-    if pass1.last_classifier !== nothing
-        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
-            for (fname, gain) in sorted_imp
-                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
-            end
-            @debug_l1 join(lines, "\n")
-        end
+    # Optional round-2 (env TWO_ROUND=1): derive the GROUP cross-run features + delta_irt from the
+    # round-1 OOF sidecars, inject symmetric shadow-decoys, and re-train on
+    # [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. The round-2 pass overwrites each
+    # `.pass1_sidecar.arrow`, so trace_prob (set from trace_prob_prepass in the merge below) becomes
+    # the round-2 OOF score.
+    if two_round_enabled()
+        write_two_round_feature_columns!(file_paths)
+        # Symmetric shadow-decoy injection (see two_round_scoring.jl). No-op when
+        # SHADOW_DECOY_MODE === :none. Adds an :is_shadow column and doubles the row
+        # count (approximately) when both classes are present per file.
+        inject_shadow_decoys!(file_paths)
+        features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
+        # Round-2 is the same semi-supervised iterative-relabel trainer as round-1 (SS both rounds).
+        # A single-pass round-2 (shadows-only regularizer) was tested and lost on both bulk (EWZ,
+        # -1% IDs + more leak) and sparse single-cell (250pg/3ms, -13% IDs), so SS round-2 stands.
+        pass1 = train_and_predict_pass1_oom!(
+            file_paths;
+            features        = features2,
+            compute_infold  = false,
+            lgbm_hp         = SCORING_LGBM_HP,
+            semisupervised  = true,
+        )
+        @user_info "two-round: round-2 (semi-supervised) trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
+        log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
+        # Compute BOTH FDR variants (A: real-only; B: shadow-included) as a diagnostic,
+        # then remove shadow rows so downstream sees the same schema as before.
+        log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)
+        remove_shadow_decoys!(file_paths)
     end
 
     _merge_pass1_into_main_no_mbr!(file_paths, precursors)
