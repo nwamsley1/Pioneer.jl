@@ -88,9 +88,15 @@ few-row-per-entity) protein-group scorer.
 features2 = [ ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt ]
 ```
 
-Trained by the same OOM trainer on the shadow-augmented set, **same CV folds** as round 1, scoring
-OOF. The round-2 OOF score overwrites each `.pass1_sidecar.arrow`, becoming the experiment-wide
-score fed to the global aggregation.
+Round 1 is the **semi-supervised iterative-relabel loop** (up to `SCORING_SEMISUPERVISED_MAX_ITERATIONS`;
+badly-scoring targets are mined as negatives) — the "first pass" that refines labels. Round 2 is a
+**single** LGBM pass (`semisupervised=false` → `max_iterations=1`) on the shadow-augmented set, **same
+CV folds** as round 1, scoring OOF. Single-pass is deliberate: the **shadow-decoys are the round-2
+regularizer**, and re-running SS relabeling would recompute the training mask each iteration and
+absorb/relabel shadows, breaking their 1:1 marginal — besides being slower and prone to collapse on
+sparse (single-cell) data. `ROUND2_SINGLE_PASS=0` restores an SS round-2 for A/B comparison. The
+round-2 OOF score overwrites each `.pass1_sidecar.arrow`, becoming the experiment-wide score fed to
+the global aggregation.
 
 ## 6. Global aggregation (optional learned model)
 
@@ -123,9 +129,10 @@ Two-round's benefit depends on the FDR filter ordering. On EWZ (40 files: 20 GO1
 - **Global-first** (filter `global_q ≤ 1%` first, then recompute/​filter `ew_q`) — the ew filter is
   inert (survivors already ~0.5% FDR), so the round-2 ew improvement filters nothing → roughly
   neutral.
-- **AND** (`global_q ≤ 1%` **AND** pre-global `ew_q ≤ 1%` simultaneously) — the ew filter now bites,
-  and **two-round is the ID-recovery lever that only expresses under the AND**, recovering a large
-  band of global-passing-but-ew-failing instances at a small false-transfer cost.
+- **AND** (`qval ≤ 1%` **AND** `global_qval ≤ 1%` simultaneously — the **native default** on this
+  branch, no env var) — the ew filter bites, and **two-round is the ID-recovery lever that only
+  expresses under the AND**, recovering a large band of global-passing-but-ew-failing instances at a
+  small false-transfer cost.
 
 **Takeaway:** the AND filter is the false-transfer lever; two-round is the ID-recovery lever that
 only expresses under it. Judge by **total** IDs at controlled false transfer (not unique).
@@ -133,11 +140,12 @@ only expresses under it. Judge by **total** IDs at controlled false transfer (no
 ## 9. Reproduction
 
 ```bash
-# Two-round GROUP features + shadow-decoys (+ learned global model), AND filter:
-TWO_ROUND=1 GLOBAL_MODEL=1 EWFULL_AND_THRESH=0.01 \
+# Two-round GROUP features + shadow-decoys + learned global model (AND filter is the native default):
+TWO_ROUND=1 GLOBAL_MODEL=1 \
   julia --project=. --threads 10 --gcthreads 5,1 \
   -e 'using Pioneer; SearchDIA("<config>.json")'
-# baselines: drop TWO_ROUND for round-1 only; drop GLOBAL_MODEL for fixed top-√N logodds.
+# baselines: drop TWO_ROUND for round-1 only; drop GLOBAL_MODEL for fixed top-√N logodds;
+# ROUND2_SINGLE_PASS=0 restores the semi-supervised round-2.
 ```
 
 Metrics from `<results>/precursors_long.arrow`: passing = `target & qval ≤ 0.01 & global_qval ≤
