@@ -20,6 +20,61 @@ const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
 const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
 
+function _count_targets_at_qvalue(
+    scores::AbstractVector{<:AbstractFloat},
+    targets::AbstractVector{Bool};
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    q_values = Vector{Float32}(undef, length(scores))
+    get_qvalues!(
+        scores,
+        targets,
+        q_values;
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    target_count = 0
+    @inbounds for row in eachindex(targets, q_values)
+        target_count += targets[row] && q_values[row] <= q_threshold
+    end
+    return target_count
+end
+
+function _select_global_scores(
+    model_scores::Vector{Float32},
+    empirical_scores::AbstractVector{Float32},
+    targets::AbstractVector{Bool};
+    scoring_name::AbstractString,
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    model_target_count = _count_targets_at_qvalue(
+        model_scores,
+        targets;
+        q_threshold = q_threshold,
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    empirical_target_count = _count_targets_at_qvalue(
+        empirical_scores,
+        targets;
+        q_threshold = q_threshold,
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    use_model = model_target_count > empirical_target_count
+    source = use_model ? :lightgbm : :empirical
+    selected_scores = use_model ? model_scores : empirical_scores
+
+    @debug_l1 "$scoring_name score selection at q≤$q_threshold: " *
+              "LightGBM targets=$model_target_count, " *
+              "empirical targets=$empirical_target_count; selected $source"
+    return (
+        scores = selected_scores,
+        source = source,
+        model_target_count = model_target_count,
+        empirical_target_count = empirical_target_count,
+    )
+end
+
 function _scoring_semisupervised_train_mask(
     targets::AbstractVector{Bool},
     q_values::AbstractVector{<:Real};

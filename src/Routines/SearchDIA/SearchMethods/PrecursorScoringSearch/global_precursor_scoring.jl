@@ -176,13 +176,6 @@ function _build_global_precursor_feature_table(
     return table
 end
 
-"""
-    build_global_precursor_score_dicts(refs, n_precursors, n_runs_total)
-
-Build one score-distribution feature row per precursor and return out-of-fold
-global LightGBM scores with the corresponding target labels. For a single-run
-search, return the individual precursor probabilities without training a model.
-"""
 function _build_single_run_precursor_score_dicts(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
@@ -203,10 +196,25 @@ function _build_single_run_precursor_score_dicts(
     return score_dict, target_dict
 end
 
+"""
+    build_global_precursor_score_dicts(
+        refs,
+        n_precursors,
+        n_runs_total,
+        fdr_scale_factor,
+    )
+
+Build one score-distribution feature row per precursor and return out-of-fold
+global scores with the corresponding target labels. Select the LightGBM scores
+only when they identify more targets at 1% FDR than the empirical global score.
+For a single-run search, return the individual precursor probabilities without
+training a model.
+"""
 function build_global_precursor_score_dicts(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
     n_runs_total::Int,
+    fdr_scale_factor::Float32,
 )
     n_runs_total == 1 &&
         return _build_single_run_precursor_score_dicts(refs, n_precursors)
@@ -222,14 +230,21 @@ function build_global_precursor_score_dicts(
         min_training_class_count = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
         max_train = GLOBAL_PRECURSOR_MAX_TRAIN,
     )
+    selected = _select_global_scores(
+        scored.scores,
+        table.empirical_global_score,
+        table.target;
+        scoring_name = "Global precursor",
+        fdr_scale_factor = fdr_scale_factor,
+    )
 
     score_dict = Dict{UInt32, Float32}()
     sizehint!(score_dict, nrow(table))
     @inbounds for row in axes(table, 1)
-        score_dict[table.precursor_idx[row]] = scored.scores[row]
+        score_dict[table.precursor_idx[row]] = selected.scores[row]
     end
-    @debug_l1 "Global precursor LightGBM scored $(length(score_dict)) precursors " *
+    @debug_l1 "Global precursor scoring scored $(length(score_dict)) precursors " *
               "with $(length(GLOBAL_PRECURSOR_SCORE_FEATURES)) features; " *
-              "selected semi-supervised iteration $(scored.iter)"
+              "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dict, inputs.targets
 end

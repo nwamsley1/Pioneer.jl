@@ -124,6 +124,7 @@
                 refs,
                 3,
                 1,
+                1.0f0,
             )
 
             @test scores == Dict(

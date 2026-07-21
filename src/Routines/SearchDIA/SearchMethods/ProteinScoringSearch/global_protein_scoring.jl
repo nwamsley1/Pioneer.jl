@@ -260,10 +260,11 @@ end
     )
 
 Build one score-distribution and peptide-support feature row per protein group
-and return out-of-fold global LightGBM scores. Use the existing top-run
-log-odds score when probit scoring was not applied, the observed protein groups
-belong to one CV fold, or any training split has fewer than 100 targets or 100
-decoys.
+and select the out-of-fold LightGBM scores only when they identify more targets
+at 1% FDR than the empirical top-run log-odds score. Use the empirical score
+without training when probit scoring was not applied, the observed protein
+groups belong to one CV fold, or any training split has fewer than 100 targets
+or 100 decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -303,14 +304,20 @@ function build_global_protein_score_dicts(
         min_training_class_count = GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT,
         max_train = GLOBAL_PROTEIN_MAX_TRAIN,
     )
+    selected = _select_global_scores(
+        scored.scores,
+        table.empirical_global_score,
+        table.target;
+        scoring_name = "Global protein",
+    )
 
     protein_keys = GlobalProteinKey[
         (table.protein_name[row], table.target[row], table.entrap_id[row])
         for row in axes(table, 1)
     ]
-    score_dicts = _build_protein_score_dicts(protein_keys, scored.scores)
-    @debug_l1 "Global protein LightGBM scored $(length(protein_keys)) protein groups " *
+    score_dicts = _build_protein_score_dicts(protein_keys, selected.scores)
+    @debug_l1 "Global protein scoring scored $(length(protein_keys)) protein groups " *
               "with $(length(GLOBAL_PROTEIN_SCORE_FEATURES)) features; " *
-              "selected semi-supervised iteration $(scored.iter)"
+              "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dicts
 end
