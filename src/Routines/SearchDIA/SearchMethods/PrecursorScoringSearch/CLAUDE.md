@@ -31,14 +31,28 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 2. **Probability Computation**: Calculate precursor probabilities with MBR filtering
 3. **Best Trace Selection**: Identify optimal isotope traces per precursor
 
+**FDR/q-value/PEP CONTEXTS (Rosenberger et al. 2017, Nat. Methods, Fig 2 — read this before touching q-value code).**
+Multi-run DIA controls error at three possible contexts. Pioneer uses exactly TWO of them — it does
+**not** compute run-specific q-values, so never call `:qval` "per-file" or "per-run":
+- **Experiment-wide** = `:qval` / `:pep` (precursor), `:pg_qval` / `:pg_pep` (protein). One q/PEP per
+  (analyte, RUN), estimated from a SINGLE spline/null built over **all runs combined** (a
+  `build_qvalue_spline_from_refs` over every ref). Same score → same q in every run.
+- **Global** = `:global_qval` / `:global_pep`, `:global_pg_qval` / `:global_pg_pep`. One q/PEP per
+  **unique analyte**, from the best (max-log-odds) score across runs.
+- (**Run-specific** = per-run independent null. Pioneer does NOT do this.)
+The final filter is `(:qval ≤ t) AND (:global_qval ≤ t)` = experiment-wide IDs constrained by the
+global set (Rosenberger's recommended scheme for large cohorts).
+
 **Phase 2: PSM Processing & FDR Control (Steps 4-10)**
 4. **Quantification Processing**: Apply best trace indicators and column filtering
-5. **Merge by Global Probability**: Combine PSMs sorted by global_prob for global q-values
-6. **Global Precursor Q-values**: Calculate experiment-wide FDR for unique precursors
-7. **Re-merge by Precursor Probability**: Resort and merge by prec_prob for run-specific q-values
-8. **Experiment-wide Precursor Q-values**: Calculate FDR across all precursor instances
-9. **PSM Filtering**: Apply q-value thresholds to retain high-confidence PSMs
-10. **Q-value Recalculation**: Re-compute experiment-wide q-values after filtering
+5. **Merge by Global Probability**: Combine PSMs sorted by global_prob for GLOBAL q-values
+6. **Global Precursor Q-values**: Calculate GLOBAL FDR for unique precursors (best-per-precursor)
+7. **Re-merge by Precursor Probability**: Resort/merge by prec_prob for EXPERIMENT-WIDE q-values
+8. **Experiment-wide Precursor Q-values**: Calculate experiment-wide FDR across all precursor×run instances
+9. **PSM Filtering**: Apply the (experiment-wide AND global) q-value thresholds to retain high-confidence PSMs
+10. **Q-value Recalculation** (being removed): re-derived the experiment-wide q-spline on the
+    AND-filter survivors; entrapment-validated to be optimistic (decoy-depleted survivors) — the
+    pre-filter full-distribution spline is the correct estimate. See reference_fdr_contexts memory.
 
 **Phase 3: Protein Inference & Scoring (Steps 11-23)**
 11. **Protein Peptide Counting**: Count possible peptides per protein for feature calculation
