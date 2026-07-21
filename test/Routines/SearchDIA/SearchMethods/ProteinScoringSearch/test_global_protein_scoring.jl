@@ -8,6 +8,67 @@
 # (at your option) any later version.
 
 @testset "Global protein scoring" begin
+    @testset "protein probit requires sufficient data in every fold" begin
+        table = DataFrame(
+            target = vcat(
+                fill(true, 10),
+                fill(false, 10),
+                fill(true, 9),
+                fill(false, 10),
+            ),
+            cv_fold = vcat(
+                fill(UInt8(0), 20),
+                fill(UInt8(1), 19),
+            ),
+        )
+
+        @test !Pioneer._protein_probit_training_data_sufficient(
+            table,
+            UInt8[0, 1],
+        )
+        push!(table, (target = true, cv_fold = UInt8(1)))
+        @test Pioneer._protein_probit_training_data_sufficient(
+            table,
+            UInt8[0, 1],
+        )
+    end
+
+    @testset "failed probit scoring uses initial probabilities for every fold" begin
+        mktempdir() do directory
+            path = joinpath(directory, "protein_groups.arrow")
+            Arrow.write(path, DataFrame(
+                protein_name = ["P0", "P1"],
+                target = Bool[true, false],
+                pg_score = Float32[0.5, 1.5],
+                feature = Float32[1.0, -1.0],
+            ))
+            refs = Pioneer.ProteinGroupFileReference[
+                Pioneer.ProteinGroupFileReference(path),
+            ]
+            protein_to_cv_fold = Dictionary{
+                String,
+                @NamedTuple{best_score::Float32, cv_fold::UInt8},
+            }()
+            insert!(protein_to_cv_fold, "P0", (best_score = 0.5f0, cv_fold = UInt8(0)))
+            insert!(protein_to_cv_fold, "P1", (best_score = 1.5f0, cv_fold = UInt8(1)))
+
+            Pioneer.apply_probit_scores_multifold!(
+                refs,
+                protein_to_cv_fold,
+                Dict(UInt8(0) => Float64[0.0, 10.0]),
+                Symbol[:feature];
+                use_probit_scores = false,
+            )
+
+            table = DataFrame(Arrow.Table(path); copycols = true)
+            sort!(table, :protein_name)
+            @test table.old_pg_score == Float32[0.5, 1.5]
+            @test table.pg_score ≈ Pioneer._initial_protein_probabilities(
+                Float32[0.5, 1.5],
+            )
+        end
+    end
+
     @testset "score-distribution feature table" begin
         key1 = ("P1", true, UInt8(0))
         key2 = ("P2", false, UInt8(1))
@@ -160,6 +221,7 @@
                 protein_to_cv_fold,
                 2,
                 4,
+                true,
             )
 
             expected_p1 = logodds(Float32[0.9, 0.8, 0.7, 0.6], 2)
@@ -219,6 +281,7 @@
                 protein_to_cv_fold,
                 4,
                 2,
+                true,
             )
 
             @test scores == Dict(
@@ -260,6 +323,16 @@
         @test Pioneer._global_protein_training_data_sufficient(
             training_inputs(100),
             UInt8[0, 1],
+        )
+        @test !Pioneer._global_protein_model_eligible(
+            training_inputs(100),
+            UInt8[0, 1],
+            false,
+        )
+        @test Pioneer._global_protein_model_eligible(
+            training_inputs(100),
+            UInt8[0, 1],
+            true,
         )
     end
 
