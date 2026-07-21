@@ -16,6 +16,12 @@
                 key1 => Float32[0.9, 0.8],
                 key2 => Float32[0.7],
             ),
+            Dict(
+                key1 => Set(["PEPA", "PEPB", "PEPC"]),
+                key2 => Set(["PEPX"]),
+            ),
+            Dict(key1 => 2, key2 => 1),
+            Dict(key1 => 6, key2 => 4),
             Dict(key1 => UInt8(0), key2 => UInt8(1)),
         )
         table = Pioneer._build_global_protein_feature_table(inputs, 4)
@@ -38,15 +44,21 @@
         @test table.min_pg_score[1] == 0.8f0
         @test table.top1_top2_gap[1] ≈ 0.1f0
         @test table.top2_top3_gap[1] == 0.0f0
+        @test table.n_unique_peptides_observed[1] == 3.0f0
+        @test table.max_n_peptides_observed[1] == 2.0f0
+        @test table.global_peptide_coverage[1] == 0.5f0
+        @test table.max_peptide_coverage[1] ≈ 1.0f0 / 3.0f0
         @test table.n_runs_observed[1] == 2.0f0
-        @test table.observed_run_fraction[1] == 0.5f0
         @test table.n_score_gt_0_5[1] == 2.0f0
         @test table.n_score_gt_0_9[1] == 0.0f0
         @test table.n_score_gt_0_99[1] == 0.0f0
 
         @test table.std_pg_score[2] == 0.0f0
         @test table.top1_top2_gap[2] == 0.0f0
-        @test table.observed_run_fraction[2] == 0.25f0
+        @test table.n_unique_peptides_observed[2] == 1.0f0
+        @test table.max_n_peptides_observed[2] == 1.0f0
+        @test table.global_peptide_coverage[2] == 0.25f0
+        @test table.max_peptide_coverage[2] == 0.25f0
     end
 
     @testset "run-level input collection" begin
@@ -58,12 +70,18 @@
                 target = Bool[true, false],
                 entrap_id = UInt8[0, 0],
                 pg_score = Float32[0.9, 0.4],
+                n_peptides = Int[2, 1],
+                n_possible_peptides = Int[4, 2],
+                peptide_list = ["PEPA;PEPB", "PEPX"],
             ))
             Arrow.write(run2_path, DataFrame(
                 protein_name = ["P1", "P3"],
                 target = Bool[true, false],
                 entrap_id = UInt8[0, 1],
                 pg_score = Float32[0.8, 0.3],
+                n_peptides = Int[2, 1],
+                n_possible_peptides = Int[4, 3],
+                peptide_list = ["PEPB;PEPC", "PEPY"],
             ))
             refs = Pioneer.ProteinGroupFileReference[
                 Pioneer.ProteinGroupFileReference(run1_path),
@@ -86,6 +104,20 @@
             @test inputs.scores[("P1", true, UInt8(0))] == Float32[0.9, 0.8]
             @test inputs.scores[("P2", false, UInt8(0))] == Float32[0.4]
             @test inputs.scores[("P3", false, UInt8(1))] == Float32[0.3]
+            @test inputs.observed_peptides[("P1", true, UInt8(0))] ==
+                  Set(["PEPA", "PEPB", "PEPC"])
+            @test inputs.observed_peptides[("P2", false, UInt8(0))] == Set(["PEPX"])
+            @test inputs.observed_peptides[("P3", false, UInt8(1))] == Set(["PEPY"])
+            @test inputs.max_n_peptides == Dict(
+                ("P1", true, UInt8(0)) => 2,
+                ("P2", false, UInt8(0)) => 1,
+                ("P3", false, UInt8(1)) => 1,
+            )
+            @test inputs.n_possible_peptides == Dict(
+                ("P1", true, UInt8(0)) => 4,
+                ("P2", false, UInt8(0)) => 2,
+                ("P3", false, UInt8(1)) => 3,
+            )
             @test inputs.folds == Dict(
                 ("P1", true, UInt8(0)) => UInt8(0),
                 ("P2", false, UInt8(0)) => UInt8(1),
@@ -110,6 +142,9 @@
                     target = Bool[true, false],
                     entrap_id = UInt8[0, 0],
                     pg_score = scores,
+                    n_peptides = Int[2, 1],
+                    n_possible_peptides = Int[4, 3],
+                    peptide_list = ["PEPA;PEPB", "PEPX"],
                 ))
                 push!(refs, Pioneer.ProteinGroupFileReference(path))
             end
@@ -140,8 +175,99 @@
         end
     end
 
+    @testset "small training folds use empirical global protein scores" begin
+        mktempdir() do directory
+            run_scores = (
+                Float32[0.9, 0.4, 0.8, 0.3],
+                Float32[0.8, 0.3, 0.7, 0.2],
+            )
+            protein_names = ["T0", "D0", "T1", "D1"]
+            targets = Bool[true, false, true, false]
+            refs = Pioneer.ProteinGroupFileReference[]
+            for (run_idx, scores) in enumerate(run_scores)
+                path = joinpath(directory, "run$(run_idx).arrow")
+                Arrow.write(path, DataFrame(
+                    protein_name = protein_names,
+                    target = targets,
+                    entrap_id = zeros(UInt8, 4),
+                    pg_score = scores,
+                    n_peptides = fill(2, 4),
+                    n_possible_peptides = fill(4, 4),
+                    peptide_list = fill("PEPA;PEPB", 4),
+                ))
+                push!(refs, Pioneer.ProteinGroupFileReference(path))
+            end
+
+            protein_to_cv_fold = Dictionary{
+                String,
+                @NamedTuple{best_score::Float32, cv_fold::UInt8},
+            }()
+            for (protein_name, score, fold) in zip(
+                protein_names,
+                run_scores[1],
+                UInt8[0, 0, 1, 1],
+            )
+                insert!(
+                    protein_to_cv_fold,
+                    protein_name,
+                    (best_score = score, cv_fold = fold),
+                )
+            end
+
+            scores, _ = Pioneer.build_global_protein_score_dicts(
+                refs,
+                protein_to_cv_fold,
+                4,
+                2,
+            )
+
+            @test scores == Dict(
+                ("T0", true, UInt8(0)) => logodds(Float32[0.9, 0.8], 1),
+                ("D0", false, UInt8(0)) => logodds(Float32[0.4, 0.3], 1),
+                ("T1", true, UInt8(0)) => logodds(Float32[0.8, 0.7], 1),
+                ("D1", false, UInt8(0)) => logodds(Float32[0.3, 0.2], 1),
+            )
+        end
+    end
+
+    @testset "global protein training requires one hundred of each class" begin
+        function training_inputs(n_per_class_per_fold)
+            scores = Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
+            folds = Dict{Tuple{String, Bool, UInt8}, UInt8}()
+            for fold in UInt8[0, 1]
+                for class_idx in 1:n_per_class_per_fold
+                    target_key = ("T$(fold)_$(class_idx)", true, UInt8(0))
+                    decoy_key = ("D$(fold)_$(class_idx)", false, UInt8(0))
+                    scores[target_key] = Float32[0.9]
+                    scores[decoy_key] = Float32[0.1]
+                    folds[target_key] = fold
+                    folds[decoy_key] = fold
+                end
+            end
+            return Pioneer.GlobalProteinInputs(
+                scores,
+                Dict{Tuple{String, Bool, UInt8}, Set{String}}(),
+                Dict{Tuple{String, Bool, UInt8}, Int}(),
+                Dict{Tuple{String, Bool, UInt8}, Int}(),
+                folds,
+            )
+        end
+
+        @test !Pioneer._global_protein_training_data_sufficient(
+            training_inputs(99),
+            UInt8[0, 1],
+        )
+        @test Pioneer._global_protein_training_data_sufficient(
+            training_inputs(100),
+            UInt8[0, 1],
+        )
+    end
+
     @testset "protein features support out-of-fold LightGBM scoring" begin
         scores = Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
+        observed_peptides = Dict{Tuple{String, Bool, UInt8}, Set{String}}()
+        max_n_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
+        n_possible_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
         folds = Dict{Tuple{String, Bool, UInt8}, UInt8}()
         for group_idx in 1:40
             fold = UInt8(group_idx % 2)
@@ -149,11 +275,23 @@
             decoy_key = ("decoy_$(group_idx)", false, UInt8(0))
             scores[target_key] = Float32[0.95 - 0.001 * group_idx, 0.9]
             scores[decoy_key] = Float32[0.05 + 0.001 * group_idx, 0.1]
+            observed_peptides[target_key] = Set(["PEPA", "PEPB"])
+            observed_peptides[decoy_key] = Set(["PEPX", "PEPY"])
+            max_n_peptides[target_key] = 2
+            max_n_peptides[decoy_key] = 2
+            n_possible_peptides[target_key] = 4
+            n_possible_peptides[decoy_key] = 4
             folds[target_key] = fold
             folds[decoy_key] = fold
         end
         table = Pioneer._build_global_protein_feature_table(
-            Pioneer.GlobalProteinInputs(scores, folds),
+            Pioneer.GlobalProteinInputs(
+                scores,
+                observed_peptides,
+                max_n_peptides,
+                n_possible_peptides,
+                folds,
+            ),
             2,
         )
         test_hyperparameters = (

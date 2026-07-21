@@ -28,8 +28,11 @@ const GLOBAL_PROTEIN_SCORE_FEATURES = Symbol[
     :min_pg_score,
     :top1_top2_gap,
     :top2_top3_gap,
+    :n_unique_peptides_observed,
+    :max_n_peptides_observed,
+    :global_peptide_coverage,
+    :max_peptide_coverage,
     :n_runs_observed,
-    :observed_run_fraction,
     :n_score_gt_0_5,
     :n_score_gt_0_9,
     :n_score_gt_0_99,
@@ -51,12 +54,15 @@ const GLOBAL_PROTEIN_LGBM_HP = (
     lambda_l2 = 1.0,
 )
 
-const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 10
+const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 100
 const GLOBAL_PROTEIN_MAX_TRAIN = 1_000_000
 const GlobalProteinKey = Tuple{String, Bool, UInt8}
 
 struct GlobalProteinInputs
     scores::Dict{GlobalProteinKey, Vector{Float32}}
+    observed_peptides::Dict{GlobalProteinKey, Set{String}}
+    max_n_peptides::Dict{GlobalProteinKey, Int}
+    n_possible_peptides::Dict{GlobalProteinKey, Int}
     folds::Dict{GlobalProteinKey, UInt8}
 end
 
@@ -69,8 +75,14 @@ function _collect_global_protein_inputs(
     n_proteins::Int,
 )
     scores = Dict{GlobalProteinKey, Vector{Float32}}()
+    observed_peptides = Dict{GlobalProteinKey, Set{String}}()
+    max_n_peptides = Dict{GlobalProteinKey, Int}()
+    n_possible_peptides = Dict{GlobalProteinKey, Int}()
     folds = Dict{GlobalProteinKey, UInt8}()
     sizehint!(scores, n_proteins)
+    sizehint!(observed_peptides, n_proteins)
+    sizehint!(max_n_peptides, n_proteins)
+    sizehint!(n_possible_peptides, n_proteins)
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
@@ -86,13 +98,30 @@ function _collect_global_protein_inputs(
                 Float32[]
             end
             push!(protein_scores, Float32(table.pg_score[row]))
+
+            protein_peptides = get!(observed_peptides, key) do
+                Set{String}()
+            end
+            for peptide in split(table.peptide_list[row], ';')
+                push!(protein_peptides, String(peptide))
+            end
+
+            n_peptides = Int(table.n_peptides[row])
+            max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
+            n_possible_peptides[key] = Int(table.n_possible_peptides[row])
             folds[key] = protein_to_cv_fold[protein_name].cv_fold
         end
     end
 
     isempty(scores) &&
         throw(ArgumentError("Global protein scoring requires observed protein groups"))
-    return GlobalProteinInputs(scores, folds)
+    return GlobalProteinInputs(
+        scores,
+        observed_peptides,
+        max_n_peptides,
+        n_possible_peptides,
+        folds,
+    )
 end
 
 function _build_global_protein_feature_table(
@@ -102,7 +131,6 @@ function _build_global_protein_feature_table(
     protein_keys = sort!(collect(keys(inputs.scores)))
     n_proteins = length(protein_keys)
     top_run_count = isqrt(n_runs_total)
-    run_count = Float32(n_runs_total)
     feature_columns = Dict(
         feature => Vector{Float32}(undef, n_proteins)
         for feature in GLOBAL_PROTEIN_SCORE_FEATURES
@@ -115,6 +143,9 @@ function _build_global_protein_feature_table(
         top1 = sorted_scores[1]
         top2 = n_observed >= 2 ? sorted_scores[2] : 0.0f0
         top3 = n_observed >= 3 ? sorted_scores[3] : 0.0f0
+        n_unique_peptides = length(inputs.observed_peptides[key])
+        max_n_peptides = inputs.max_n_peptides[key]
+        n_possible_peptides = inputs.n_possible_peptides[key]
 
         feature_columns[:empirical_global_score][row] =
             _logodds_from_sorted(sorted_scores, top_run_count)
@@ -134,8 +165,13 @@ function _build_global_protein_feature_table(
             n_observed >= 2 ? top1 - top2 : 0.0f0
         feature_columns[:top2_top3_gap][row] =
             n_observed >= 3 ? top2 - top3 : 0.0f0
+        feature_columns[:n_unique_peptides_observed][row] = Float32(n_unique_peptides)
+        feature_columns[:max_n_peptides_observed][row] = Float32(max_n_peptides)
+        feature_columns[:global_peptide_coverage][row] =
+            Float32(n_unique_peptides) / Float32(n_possible_peptides)
+        feature_columns[:max_peptide_coverage][row] =
+            Float32(max_n_peptides) / Float32(n_possible_peptides)
         feature_columns[:n_runs_observed][row] = Float32(n_observed)
-        feature_columns[:observed_run_fraction][row] = Float32(n_observed) / run_count
         feature_columns[:n_score_gt_0_5][row] = Float32(count(>(0.5f0), scores))
         feature_columns[:n_score_gt_0_9][row] = Float32(count(>(0.9f0), scores))
         feature_columns[:n_score_gt_0_99][row] = Float32(count(>(0.99f0), scores))
@@ -183,6 +219,27 @@ function _build_empirical_global_protein_score_dicts(
     return _build_protein_score_dicts(protein_keys, scores)
 end
 
+function _global_protein_training_data_sufficient(
+    inputs::GlobalProteinInputs,
+    cv_folds::Vector{UInt8},
+)
+    for test_fold in cv_folds
+        n_targets = 0
+        n_decoys = 0
+        for key in keys(inputs.scores)
+            inputs.folds[key] == test_fold && continue
+            if key[2]
+                n_targets += 1
+            else
+                n_decoys += 1
+            end
+        end
+        min(n_targets, n_decoys) >= GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT ||
+            return false
+    end
+    return true
+end
+
 """
     build_global_protein_score_dicts(
         pg_refs,
@@ -191,9 +248,10 @@ end
         n_runs_total,
     )
 
-Build one score-distribution feature row per protein group and return
-out-of-fold global LightGBM scores. When all observed protein groups belong to
-one CV fold, use the existing top-run log-odds score instead.
+Build one score-distribution and peptide-support feature row per protein group
+and return out-of-fold global LightGBM scores. Use the existing top-run
+log-odds score when the observed protein groups belong to one CV fold or any
+training split has fewer than 100 targets or 100 decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -210,10 +268,13 @@ function build_global_protein_score_dicts(
         n_proteins,
     )
     cv_folds = sort!(unique(collect(values(inputs.folds))))
-    length(cv_folds) == 1 && return _build_empirical_global_protein_score_dicts(
-        inputs,
-        isqrt(n_runs_total),
-    )
+    if length(cv_folds) == 1 ||
+       !_global_protein_training_data_sufficient(inputs, cv_folds)
+        return _build_empirical_global_protein_score_dicts(
+            inputs,
+            isqrt(n_runs_total),
+        )
+    end
 
     @user_info "Training global protein scoring model..."
     table = _build_global_protein_feature_table(inputs, n_runs_total)
