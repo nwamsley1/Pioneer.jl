@@ -88,15 +88,16 @@ few-row-per-entity) protein-group scorer.
 features2 = [ ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt ]
 ```
 
-Round 1 is the **semi-supervised iterative-relabel loop** (up to `SCORING_SEMISUPERVISED_MAX_ITERATIONS`;
-badly-scoring targets are mined as negatives) — the "first pass" that refines labels. Round 2 is a
-**single** LGBM pass (`semisupervised=false` → `max_iterations=1`) on the shadow-augmented set, **same
-CV folds** as round 1, scoring OOF. Single-pass is deliberate: the **shadow-decoys are the round-2
-regularizer**, and re-running SS relabeling would recompute the training mask each iteration and
-absorb/relabel shadows, breaking their 1:1 marginal — besides being slower and prone to collapse on
-sparse (single-cell) data. `ROUND2_SINGLE_PASS=0` restores an SS round-2 for A/B comparison. The
-round-2 OOF score overwrites each `.pass1_sidecar.arrow`, becoming the experiment-wide score fed to
-the global aggregation.
+Both rounds use the **semi-supervised iterative-relabel trainer** (up to
+`SCORING_SEMISUPERVISED_MAX_ITERATIONS`; badly-scoring targets are mined as negatives). Round 1 is the
+"first pass" that refines labels; round 2 re-runs the same SS trainer on the shadow-augmented set with
+the added GROUP features, **same CV folds** as round 1, scoring OOF. The round-2 OOF score overwrites
+each `.pass1_sidecar.arrow`, becoming the experiment-wide score fed to the global aggregation.
+
+> A **single-pass** round-2 (one LGBM pass, shadows as the only regularizer) was tried on the theory
+> that SS relabeling would fight the shadow injection. It **lost on both regimes** — EWZ bulk (−1.0%
+> IDs and more false transfer) and single-cell 250pg/3ms (−13% IDs, −14% unique) — so SS-both-rounds
+> stands. The shadow-decoys and SS relabeling coexist fine, and SS round-2 is the stronger scorer.
 
 ## 6. Global aggregation (optional learned model)
 
@@ -144,8 +145,7 @@ only expresses under it. Judge by **total** IDs at controlled false transfer (no
 TWO_ROUND=1 GLOBAL_MODEL=1 \
   julia --project=. --threads 10 --gcthreads 5,1 \
   -e 'using Pioneer; SearchDIA("<config>.json")'
-# baselines: drop TWO_ROUND for round-1 only; drop GLOBAL_MODEL for fixed top-√N logodds;
-# ROUND2_SINGLE_PASS=0 restores the semi-supervised round-2.
+# baselines: drop TWO_ROUND for round-1 only; drop GLOBAL_MODEL for fixed top-√N logodds.
 ```
 
 Metrics from `<results>/precursors_long.arrow`: passing = `target & qval ≤ 0.01 & global_qval ≤
