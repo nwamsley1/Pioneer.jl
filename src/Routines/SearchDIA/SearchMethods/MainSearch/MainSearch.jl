@@ -229,38 +229,48 @@ function process_file!(
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     t_lib_search = time() - t_file_start
 
-    # IMPORTANT: the next two steps depend on the deconv output being
-    # contiguous-by-:scan_idx — all PSMs sharing a scan_idx form one
-    # contiguous run. This is the natural emit order from the per-thread
-    # `for scan_idx in scan_range` loop in process_scans_fused.jl:67
-    # (threads are scan-disjoint, so no cross-thread interleaving).
-    # Verified empirically 2026-05-19 on 3-file Astral: all scans
-    # contiguous across ~48M PSMs / 758k unique scans.
+    # Sciex ZT main search (5b): library_search already returned the collapsed meta table
+    # with scan_competition + ms1_lookup applied per-batch and rows in (precursor_idx,
+    # scan_idx) order, so skip those passes and the global precursor sort here.
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    _zt_batched = _zt_k > 0 && params isa MainSearchParameters &&
+                  get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
 
-    # Per-scan competition (weight_ratio_at_scan, weight_rank_at_scan).
-    # Done BEFORE the precursor sort so it can exploit the
-    # contiguous-by-scan invariant: linear sweep for run boundaries
-    # + threaded per-run rank/ratio. ~4× faster than the previous
-    # Dict-based version (measured 2026-05-19).
-    t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
+    t_scan_comp = 0.0; t_ms1 = 0.0; t_sort = 0.0
+    if !_zt_batched
+        # IMPORTANT: the next two steps depend on the deconv output being
+        # contiguous-by-:scan_idx — all PSMs sharing a scan_idx form one
+        # contiguous run. This is the natural emit order from the per-thread
+        # `for scan_idx in scan_range` loop in process_scans_fused.jl:67
+        # (threads are scan-disjoint, so no cross-thread interleaving).
+        # Verified empirically 2026-05-19 on 3-file Astral: all scans
+        # contiguous across ~48M PSMs / 758k unique scans.
 
-    # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
-    # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
-    # BEFORE the precursor sort so that consecutive rows within a per-chunk
-    # task share scan_idx, which lets the per-task MS1-spectrum cache hit
-    # ~once per unique scan in the chunk instead of being thrashed by
-    # precursor-sorted input. The per-precursor chromatogram-feature passes
-    # (ms1_corr_*, frag_*) run later in process_search_results! after the
-    # precursor sort, since they group by :precursor_idx.
-    t_ms1 = @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+        # Per-scan competition (weight_ratio_at_scan, weight_rank_at_scan).
+        # Done BEFORE the precursor sort so it can exploit the
+        # contiguous-by-scan invariant: linear sweep for run boundaries
+        # + threaded per-run rank/ratio. ~4× faster than the previous
+        # Dict-based version (measured 2026-05-19).
+        t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
-    # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
-    # passes (chrom features, best-per-precursor) can then fast-path their
-    # group-build (no second sortperm), and the data layout is friendlier
-    # for any per-precursor parallelism. We use a hand-rolled in-place
-    # column permute rather than `sort!(df, :col)` because DataFrames.sort!
-    # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+        # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
+        # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
+        # BEFORE the precursor sort so that consecutive rows within a per-chunk
+        # task share scan_idx, which lets the per-task MS1-spectrum cache hit
+        # ~once per unique scan in the chunk instead of being thrashed by
+        # precursor-sorted input. The per-precursor chromatogram-feature passes
+        # (ms1_corr_*, frag_*) run later in process_search_results! after the
+        # precursor sort, since they group by :precursor_idx.
+        t_ms1 = @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+
+        # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
+        # passes (chrom features, best-per-precursor) can then fast-path their
+        # group-build (no second sortperm), and the data layout is friendlier
+        # for any per-precursor parallelism. We use a hand-rolled in-place
+        # column permute rather than `sort!(df, :col)` because DataFrames.sort!
+        # is ~4× slower on this shape (measured 2026-05-19).
+        t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+    end
 
     results.psms[] = psms
 
@@ -351,6 +361,10 @@ function process_search_results!(
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
     _zt_profile = _zt_k > 0 && get(ENV, "PIONEER_ZT_PROFILE_FEATURES", "1") != "0"
+    # Batched deconvolve-once collapse is OPT-IN (PIONEER_ZT_BATCHED=1): it changes the
+    # deconv warm-start order and is therefore NOT byte-identical to the default global
+    # collapse (~0.1% prec / ~0.9% PG on single-file 5min). Default off = global collapse.
+    _zt_batched = _zt_k > 0 && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
 
     # Per-precursor chromatogram-trace features (frag_corr_*, ms1_corr_*, n_scans,
     # delta_frame_peak_center). Conventional DIA runs them here on the full trace.
@@ -365,16 +379,29 @@ function process_search_results!(
         t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
             psms, spectra; bitvec_rank_table = bitvec_rank_table)
     else
-        _n_pre_collapse = nrow(psms)
-        t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
-            psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
-            bitvec_rank_table = bitvec_rank_table)
-        t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
-            psms, spectra; bitvec_rank_table = bitvec_rank_table)
+        if !_zt_batched
+            # ZT global collapse (PIONEER_ZT_BATCHED=0): original path — collapse the
+            # full raw table here, then add chromatogram features.
+            _n_pre_collapse = nrow(psms)
+            t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
+                psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_k;
+                bitvec_rank_table = bitvec_rank_table)
+            t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
+                psms, spectra; bitvec_rank_table = bitvec_rank_table)
+            @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs " *
+                       "(collapse $(round(t_collapse; digits=1))s, chromatogram $(round(t_ms1; digits=1))s); " *
+                       "profile features $(_zt_profile ? "ON" : "OFF")"
+        else
+            # 5b: the meta-scan collapse already ran inside library_search (batched,
+            # deconvolve-once per contiguous scan range). `psms` is the collapsed meta
+            # table; only the across-cycle chromatogram features remain to add here.
+            t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
+                psms, spectra; bitvec_rank_table = bitvec_rank_table)
+            @user_info "ZT meta-scan collapse (batched, k=$_zt_k): $(nrow(psms)) meta-PSMs " *
+                       "(chromatogram $(round(t_ms1; digits=1))s); " *
+                       "profile features $(_zt_profile ? "ON" : "OFF")"
+        end
         results.psms[] = psms
-        @user_info "ZT meta-scan collapse (k=$_zt_k): $_n_pre_collapse → $(nrow(psms)) meta-PSMs " *
-                   "(collapse $(round(t_collapse; digits=1))s, chromatogram $(round(t_ms1; digits=1))s); " *
-                   "profile features $(_zt_profile ? "ON" : "OFF")"
         # Diagnostic (PIONEER_DUMP_METASCANS=<dir>): dump the collapsed meta-PSM table —
         # metascan_w_* weight profile + all ZT profile/shape features + id/target — so a
         # standalone script can independently recompute the features and verify the math.

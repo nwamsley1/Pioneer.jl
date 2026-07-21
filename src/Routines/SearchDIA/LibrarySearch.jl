@@ -198,6 +198,24 @@ function library_search(
     # --- 2b. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
+    # --- 3zt. Sciex ZT main search (5b): batched deconvolve-once + per-batch collapse.
+    # Deconvolve CONTIGUOUS scan batches (each scan once), run the batch-safe pre-collapse
+    # passes (scan_competition, ms1_lookup), then collapse each batch borrowing ±k boundary
+    # rows from neighbors — vcat ~3M meta-PSMs instead of ~35M raw rows. The caller
+    # (process_file!/process_search_results!) skips its own scan_competition/ms1/permute
+    # and the global collapse for this path. Byte-identical to the global collapse. ---
+    if _zt_main && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
+        t_zt_start = time()
+        zt_tasks = partition_scans_contiguous_zt(all_scan_idxs, Threads.nthreads())
+        result = zt_batched_deconv_collapse(
+            zt_tasks, nce_entries, spectra, prec_index, ms_file_idx, search_context,
+            params, precursors, ion_list, qtm_deconv, mem, rt_to_irt, irt_tol, _zt_k)
+        @debug_l1 "  library_search (ZT batched): frag_index=$(round(t_frag, digits=2))s  " *
+                   "deconv+collapse=$(round(time()-t_zt_start, digits=2))s  " *
+                   "meta_psms=$(nrow(result))  candidates=$(length(get_precursors(prec_index)))"
+        return result
+    end
+
     # --- 3. Threaded scan processing, once per NCE model ---
     # All search methods use the fused per-precursor scan loop. The classic
     # `process_scans!` path was deleted along with the multi-pass pipeline

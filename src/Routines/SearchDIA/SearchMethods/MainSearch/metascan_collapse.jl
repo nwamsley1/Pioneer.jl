@@ -128,7 +128,8 @@ end
 end
 
 function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int;
-                               bitvec_rank_table = nothing)
+                               bitvec_rank_table = nothing,
+                               own_scans::Union{Nothing,Set{UInt32}} = nothing)
     n = nrow(psms)
     (n == 0 || k <= 0) && return psms
     # Concrete Float32 vectors (function barrier): the accessors return an
@@ -183,6 +184,10 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         pm = Float32(prec_mz[pid[j0]])
         for r in blk_lo:blk_hi
             (abs(pm - Float32(cmzs[scn[r]])) <= Float32(hws[scn[r]])/2) || continue
+            # Batched collapse: emit a meta-PSM only if this batch OWNS the center scan.
+            # Rows at scans outside own_scans are borrowed boundary neighbors — read (for
+            # the ±k weight/frag gather below) but never emitted as centers. nothing = own all.
+            own_scans === nothing || (scn[r] in own_scans) || continue
             c = Int(scn[r])
             w = zeros(Float32, L)
             if _have_frags
@@ -276,4 +281,148 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     end
     _diag && @user_print string("[ALLOC]   collapse.materialize_cols: ", round((Base.gc_bytes()-_b0)/1e9, digits=3), " GB")
     return meta
+end
+
+# ============================================================================
+# 5b: Batched / streaming meta-scan collapse (deconvolve-once + borrow).
+#
+# Instead of vcat-ing every thread's raw per-(precursor,scan) PSMs into one 35M-row
+# table and collapsing globally, deconvolve CONTIGUOUS scan batches (each scan exactly
+# once, by its owning batch), then collapse each batch — BORROWING the ±k boundary rows
+# from the adjacent batches' already-deconvolved tables (never recomputed). The vcat then
+# joins ~3M meta-PSMs instead of ~35M raw rows. Byte-identical to the global collapse:
+# per-scan deconv is independent, and the final sort by (precursor_idx, scan_idx) restores
+# the exact global row order the LightGBM saw. Gated on PIONEER_ZT_METASCAN_K>0 (ZT main).
+# ============================================================================
+
+# Contiguous ZT deconv partition: sort the valid MS2 scan indices and split into
+# `n_batches` non-overlapping contiguous chunks (one per thread). Non-overlapping ⇒ each
+# scan is deconvolved by exactly one batch. Returns Vector of (batch_id, scan_indices).
+function partition_scans_contiguous_zt(scan_idxs::AbstractVector{<:Integer}, n_batches::Int)
+    s = sort!(Int.(collect(scan_idxs)))
+    n = length(s)
+    n == 0 && return Tuple{Int,Vector{Int}}[]
+    n_batches = max(1, min(n_batches, n))
+    per = cld(n, n_batches)
+    tasks = Tuple{Int,Vector{Int}}[]
+    b = 1; lo = 1
+    while lo <= n
+        hi = min(n, lo + per - 1)
+        push!(tasks, (b, s[lo:hi]))
+        b += 1; lo = hi + 1
+    end
+    return tasks
+end
+
+# Rows of `raw` whose :scan_idx is >= thr (dir=:ge, head slice) or <= thr (dir=:le, tail
+# slice), as a fresh DataFrame with the same columns as `raw` (so it vcats with siblings).
+# These are the ±k boundary neighbors BORROWED from an adjacent, already-deconvolved batch.
+function _zt_boundary_rows(raw::DataFrame, dir::Symbol, thr::Int)
+    scn = raw[!, :scan_idx]::Vector{UInt32}
+    t = UInt32(max(0, thr))
+    keep = dir === :ge ? findall(>=(t), scn) : findall(<=(t), scn)
+    return raw[keep, :]
+end
+
+# batch_tbl = head ++ raw ++ tail (borrowed slices may be nothing at the file ends).
+# The three scan ranges are disjoint (contiguous partition), so no neighbor is double-counted.
+function _zt_concat_borrow(head, raw::DataFrame, tail)
+    (head === nothing && tail === nothing) && return raw
+    parts = DataFrame[]
+    head === nothing || push!(parts, head)
+    push!(parts, raw)
+    tail === nothing || push!(parts, tail)
+    return vcat(parts...)
+end
+
+# Unwrap a TaskFailedException so the real deconv/collapse error surfaces (mirrors
+# the pattern in library_search's fetch).
+function _zt_fetch(t)
+    try
+        return fetch(t)
+    catch e
+        while e isa TaskFailedException
+            e = e.task.exception
+        end
+        rethrow(e)
+    end
+end
+
+"""
+    zt_batched_deconv_collapse(zt_tasks, nce_entries, spectra, prec_index, ms_file_idx,
+                               search_context, params, precursors, ion_list,
+                               qtm_deconv, mem, rt_to_irt, irt_tol, k) -> DataFrame
+
+ZT main-search replacement for the `vcat(fetched...)` raw table + downstream global
+collapse. For each NCE model:
+  Phase 1 (parallel, per batch): deconvolve the batch's own scans ONCE, then run the
+    per-scan-local `add_scan_competition_features!` and per-row `add_ms1_lookup_features!`
+    (both batch-safe — a scan lives entirely in one batch).
+  Phase 2 (parallel, per batch): collapse, borrowing the ±k boundary rows from the
+    neighbors' Phase-1 tables; emit centers only for scans this batch owns.
+Then vcat the per-batch meta tables and sort by (precursor_idx, scan_idx) to reproduce the
+global order. Returns the collapsed meta-PSM DataFrame (one row per (precursor, cycle)).
+"""
+function zt_batched_deconv_collapse(zt_tasks, nce_entries, spectra, prec_index,
+                                    ms_file_idx::Int64, search_context, params,
+                                    precursors, ion_list, qtm_deconv, mem, rt_to_irt,
+                                    irt_tol, k::Int)
+    search_data       = getSearchData(search_context)
+    lib_precs         = getPrecursors(getSpecLib(search_context))
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+    nb = length(zt_tasks)
+
+    metas = map(nce_entries) do (nce_model, nce_tag)
+        # --- Phase 1: deconvolve each contiguous batch ONCE + batch-safe feature passes ---
+        raw_tasks = map(zt_tasks) do (bid, own_scan_idxs)
+            Threads.@spawn begin
+                raw = process_scans_fused!(own_scan_idxs, spectra, prec_index, ms_file_idx,
+                        search_data[bid], params, precursors, ion_list,
+                        nce_model, qtm_deconv, mem, rt_to_irt, irt_tol)
+                add_scan_competition_features!(raw)                               # per-scan-local
+                add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx) # per-row
+                raw
+            end
+        end
+        raws = map(_zt_fetch, raw_tasks)
+
+        # --- Phase 2: collapse each batch, borrowing ±k boundary rows from neighbors ---
+        meta_tasks = map(enumerate(zt_tasks)) do (t, (bid, own_scan_idxs))
+            Threads.@spawn begin
+                lo_s = first(own_scan_idxs); hi_s = last(own_scan_idxs)  # sorted within batch
+                head = t > 1  ? _zt_boundary_rows(raws[t-1], :ge, lo_s - k) : nothing
+                tail = t < nb ? _zt_boundary_rows(raws[t+1], :le, hi_s + k) : nothing
+                batch_tbl = _zt_concat_borrow(head, raws[t], tail)
+                own = Set{UInt32}(UInt32.(own_scan_idxs))
+                collapse_to_metascans(batch_tbl, spectra, lib_precs, k;
+                        bitvec_rank_table = bitvec_rank_table, own_scans = own)
+            end
+        end
+        # Keep only batches that produced meta-PSMs. A batch with rows always yields the
+        # full meta schema (even with 0 centers); the only 0-row/raw-schema case is a fully
+        # empty batch (collapse early-returns its input), which we drop so vcat sees uniform
+        # meta-schema tables. Real contiguous ranges are non-empty.
+        parts_b = filter(m -> nrow(m) > 0, map(_zt_fetch, meta_tasks))
+        m = isempty(parts_b) ? DataFrame() : vcat(parts_b...)
+
+        # Decisive isolation diagnostic (PIONEER_ZT_DIAG_COMPARE=1): run the GLOBAL collapse
+        # on the SAME concatenated batched-raw. If it matches the baseline center count, the
+        # deconv rows are identical and any discrepancy is in the batched collapse/borrow
+        # logic; if it also differs, the raw rows themselves differ (partition-dependent deconv).
+        if get(ENV, "PIONEER_ZT_DIAG_COMPARE", "0") != "0"
+            raw_all = vcat(raws...)
+            mg = collapse_to_metascans(raw_all, spectra, lib_precs, k;
+                                       bitvec_rank_table = bitvec_rank_table)
+            @user_print string("[ZT DIAG] raw_rows=", nrow(raw_all),
+                "  global_collapse_on_batched_raw=", nrow(mg),
+                "  batched_collapse=", nrow(m))
+        end
+
+        nce_tag === nothing || isempty(m) || (m[!, :nce] .= nce_tag)
+        m
+    end
+
+    result = length(metas) == 1 ? metas[1] : vcat(metas...)
+    isempty(result) || sort!(result, [:precursor_idx, :scan_idx])   # restore global order
+    return result
 end
