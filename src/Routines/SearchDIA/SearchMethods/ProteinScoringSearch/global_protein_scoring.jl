@@ -240,18 +240,30 @@ function _global_protein_training_data_sufficient(
     return true
 end
 
+function _global_protein_model_eligible(
+    inputs::GlobalProteinInputs,
+    cv_folds::Vector{UInt8},
+    protein_probit_scoring_succeeded::Bool,
+)
+    return protein_probit_scoring_succeeded &&
+           length(cv_folds) > 1 &&
+           _global_protein_training_data_sufficient(inputs, cv_folds)
+end
+
 """
     build_global_protein_score_dicts(
         pg_refs,
         protein_to_cv_fold,
         n_proteins,
         n_runs_total,
+        protein_probit_scoring_succeeded,
     )
 
 Build one score-distribution and peptide-support feature row per protein group
 and return out-of-fold global LightGBM scores. Use the existing top-run
-log-odds score when the observed protein groups belong to one CV fold or any
-training split has fewer than 100 targets or 100 decoys.
+log-odds score when probit scoring was not applied, the observed protein groups
+belong to one CV fold, or any training split has fewer than 100 targets or 100
+decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -261,6 +273,7 @@ function build_global_protein_score_dicts(
     },
     n_proteins::Int,
     n_runs_total::Int,
+    protein_probit_scoring_succeeded::Bool,
 )
     inputs = _collect_global_protein_inputs(
         pg_refs,
@@ -268,8 +281,11 @@ function build_global_protein_score_dicts(
         n_proteins,
     )
     cv_folds = sort!(unique(collect(values(inputs.folds))))
-    if length(cv_folds) == 1 ||
-       !_global_protein_training_data_sufficient(inputs, cv_folds)
+    if !_global_protein_model_eligible(
+        inputs,
+        cv_folds,
+        protein_probit_scoring_succeeded,
+    )
         return _build_empirical_global_protein_score_dicts(
             inputs,
             isqrt(n_runs_total),
