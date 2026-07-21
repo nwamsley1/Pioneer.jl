@@ -65,13 +65,6 @@
         @test Pioneer.GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES == Symbol[
             :empirical_global_score,
             :top1_prec_prob,
-            :top2_prec_prob,
-            :top2_logodds_score,
-            :top3_logodds_score,
-            :mean_prec_prob,
-            :median_prec_prob,
-            :std_prec_prob,
-            :n_prob_gt_0_9,
         ]
         @test Pioneer._select_global_precursor_score_features(299_999) ===
               Pioneer.GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES

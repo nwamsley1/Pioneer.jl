@@ -32,13 +32,6 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
 const GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES = Symbol[
     :empirical_global_score,
     :top1_prec_prob,
-    :top2_prec_prob,
-    :top2_logodds_score,
-    :top3_logodds_score,
-    :mean_prec_prob,
-    :median_prec_prob,
-    :std_prec_prob,
-    :n_prob_gt_0_9,
 ]
 
 const GLOBAL_PRECURSOR_SMALL_DATASET_MAX_CANDIDATES = 300_000
