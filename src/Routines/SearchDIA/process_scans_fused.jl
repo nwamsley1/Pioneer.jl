@@ -173,5 +173,12 @@ function process_scans_fused!(
         end
     end
 
-    return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
+    # Scored buffer is now a StructArray (SoA). Wrap a VIEW of each component column (sliced to
+    # 1:last_val) as a DataFrame column with copycols=false — zero-copy, instead of extracting
+    # the struct fields into fresh column vectors (a full raw-table copy on every DIA run). Safe:
+    # the caller consumes this table via vcat (which copies) or the ZT-spill scatter (writes to
+    # disk, then frees the buffer); no pass mutates an existing column in place before that.
+    _sa = get_scored_psms(search_data, params)
+    _cols = StructArrays.components(_sa)
+    return DataFrame([n => view(_cols[n], 1:last_val) for n in keys(_cols)]; copycols = false)
 end

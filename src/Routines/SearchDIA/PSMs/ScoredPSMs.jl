@@ -130,13 +130,13 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     cycle_idx::UInt32
     scan_idx::UInt32
 end
-function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
+function growScoredPSMs!(scored_psms::StructArray{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     # Grow in place (geometric buffer growth) without allocating a throwaway
     # `Vector(undef, block_size)` temp each call. New elements are undef, same
     # as the previous append! — they get overwritten by subsequent scores.
     resize!(scored_psms, length(scored_psms) + block_size)
 end
-function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
+function Score!(scored_psms::StructArray{MainSearchScoredPSM{H, L}},
                 unscored_PSMs::Vector{MainUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresMainSearch{S,I}},
                 weight::Vector{H},
@@ -265,11 +265,11 @@ struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     scan_idx::UInt32
 end
 
-function growScoredPSMs!(scored_psms::Vector{TuningScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
+function growScoredPSMs!(scored_psms::StructArray{TuningScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     resize!(scored_psms, length(scored_psms) + block_size)
 end
 
-function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
+function Score!(scored_psms::StructArray{TuningScoredPSM{H, L}},
                 unscored_PSMs::Vector{TuningUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresMainSearch{S,I}},
                 weight::Vector{H},
@@ -331,3 +331,13 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
     Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
     return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=0, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end
+
+# Columnar (StructArray) storage for the per-thread scored-PSM buffers (5b general dedup).
+# Stored struct-of-arrays so the DataFrame the deconv returns WRAPS these column vectors
+# (copycols=false) instead of extracting the struct fields into fresh columns — removing a
+# full raw-table copy on every DIA run. Concrete alias (no need to spell out 40 component
+# types) via typeof(StructArray(T[])); the field types in SimpleLibrarySearch use these so
+# getMainSearch/TuningScoredPsms stays type-stable. Score!/growScoredPSMs! above dispatch on
+# StructArray{...}. NOTE: resize!/setindex!/view all have StructArray methods (SoA-aware).
+const MainSearchScoredSoA = typeof(StructArray(MainSearchScoredPSM{Float32,Float16}[]))
+const TuningScoredSoA     = typeof(StructArray(TuningScoredPSM{Float32,Float16}[]))

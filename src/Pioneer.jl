@@ -36,6 +36,7 @@ using NumericalIntegration
 using Optim
 using Plots, Polynomials, ProgressBars, Printf
 using Tables
+using StructArrays
 using StatsPlots, SentinelArrays
 using Random
 import RobustModels: rlm, TauEstimator, TukeyLoss

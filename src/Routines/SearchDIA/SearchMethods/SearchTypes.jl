@@ -202,14 +202,14 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     # (per-scan rows produced by Score!) carry the full MainSearch feature set
     # including fragment-chromatogram captures.
     main_unscored_psms::Vector{MainUnscoredPSM{Float32}}
-    main_search_scored_psms::Vector{MainSearchScoredPSM{Float32, Float16}}
+    main_search_scored_psms::MainSearchScoredSoA   # StructArray (SoA) — see ScoredPSMs.jl
     main_search_spectral_scores::Vector{SpectralScoresMainSearch{Float16, Float32}}
     # Tuning buffers — slim variants used by ParameterTuning, QuadTuning, and
     # IntegrateChromatograms paths. Same structural shape minus the
     # MainSearch-only fragment-chromatogram fields (frag1..8_int,
     # matched_rank_mask, rank1/top3/top5_matched).
     tuning_unscored_psms::Vector{TuningUnscoredPSM{Float32}}
-    tuning_scored_psms::Vector{TuningScoredPSM{Float32, Float16}}
+    tuning_scored_psms::TuningScoredSoA   # StructArray (SoA) — see ScoredPSMs.jl
 
     # Working arrays
     prec_ids::Vector{UInt32}

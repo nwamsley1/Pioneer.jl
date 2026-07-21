@@ -510,7 +510,7 @@ function zt_disk_spill_deconv_collapse(thread_tasks, nce_entries, spectra, prec_
             # when there's memory pressure (promptly on a constrained machine, lazily on a big
             # one), so the program's *minimum required* memory drops without paying a GC tax
             # here. Regrown next file by growScoredPSMs!.
-            search_data[tid].main_search_scored_psms = MainSearchScoredPSM{Float32,Float16}[]
+            search_data[tid].main_search_scored_psms = StructArray(MainSearchScoredPSM{Float32,Float16}[])
         end
 
         # --- Collapse bins one at a time (3-bin sliding window; borrow ±k halo from neighbors) ---
