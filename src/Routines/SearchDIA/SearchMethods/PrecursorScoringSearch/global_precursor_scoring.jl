@@ -19,11 +19,15 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :empirical_global_score,
     :top1_prec_prob,
     :top2_prec_prob,
+    :top3_prec_prob,
     :top2_logodds_score,
     :top3_logodds_score,
     :mean_prec_prob,
     :median_prec_prob,
     :std_prec_prob,
+    :min_prec_prob,
+    :top1_top2_gap,
+    :top2_top3_gap,
     :n_runs_observed,
     :n_prob_gt_0_5,
     :n_prob_gt_0_9,
@@ -134,11 +138,13 @@ function _build_global_precursor_feature_table(
         n_observed = length(sorted_probabilities)
         top1 = sorted_probabilities[1]
         top2 = n_observed >= 2 ? sorted_probabilities[2] : 0.0f0
+        top3 = n_observed >= 3 ? sorted_probabilities[3] : 0.0f0
 
         feature_columns[:empirical_global_score][row] =
             _logodds_from_sorted(sorted_probabilities, top_run_count)
         feature_columns[:top1_prec_prob][row] = top1
         feature_columns[:top2_prec_prob][row] = top2
+        feature_columns[:top3_prec_prob][row] = top3
         feature_columns[:top2_logodds_score][row] =
             _logodds_from_sorted(sorted_probabilities, 2)
         feature_columns[:top3_logodds_score][row] =
@@ -150,6 +156,9 @@ function _build_global_precursor_feature_table(
             (sorted_probabilities[midpoint] + sorted_probabilities[midpoint + 1]) / 2.0f0
         feature_columns[:std_prec_prob][row] =
             n_observed > 1 ? Float32(std(probabilities)) : 0.0f0
+        feature_columns[:min_prec_prob][row] = sorted_probabilities[end]
+        feature_columns[:top1_top2_gap][row] = n_observed >= 2 ? top1 - top2 : 0.0f0
+        feature_columns[:top2_top3_gap][row] = n_observed >= 3 ? top2 - top3 : 0.0f0
         feature_columns[:n_runs_observed][row] = Float32(n_observed)
         feature_columns[:n_prob_gt_0_5][row] = Float32(count(>(0.5f0), probabilities))
         feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), probabilities))

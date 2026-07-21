@@ -31,7 +31,7 @@
     @testset "score-distribution feature table" begin
         inputs = Pioneer.GlobalPrecursorInputs(
             Dict(
-                UInt32(1) => Float32[0.9, 0.8],
+                UInt32(1) => Float32[0.9, 0.8, 0.6],
                 UInt32(2) => Float32[0.7],
             ),
             Dict(UInt32(1) => true, UInt32(2) => false),
@@ -44,22 +44,30 @@
         @test table.cv_fold == UInt8[0, 1]
         @test Symbol.(names(table)[4:end]) == Pioneer.GLOBAL_PRECURSOR_SCORE_FEATURES
 
-        @test table.empirical_global_score[1] ≈ logodds(Float32[0.9, 0.8], 2)
+        @test table.empirical_global_score[1] ≈ logodds(Float32[0.9, 0.8, 0.6], 2)
         @test table.top1_prec_prob[1] == 0.9f0
         @test table.top2_prec_prob[1] == 0.8f0
-        @test table.top2_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 2)
-        @test table.top3_logodds_score[1] ≈ logodds(Float32[0.9, 0.8], 3)
-        @test table.mean_prec_prob[1] ≈ 0.85f0
-        @test table.median_prec_prob[1] ≈ 0.85f0
-        @test table.std_prec_prob[1] ≈ std(Float32[0.9, 0.8])
-        @test table.n_runs_observed[1] == 2.0f0
-        @test table.n_prob_gt_0_5[1] == 2.0f0
+        @test table.top3_prec_prob[1] == 0.6f0
+        @test table.top2_logodds_score[1] ≈ logodds(Float32[0.9, 0.8, 0.6], 2)
+        @test table.top3_logodds_score[1] ≈ logodds(Float32[0.9, 0.8, 0.6], 3)
+        @test table.mean_prec_prob[1] ≈ mean(Float32[0.9, 0.8, 0.6])
+        @test table.median_prec_prob[1] == 0.8f0
+        @test table.std_prec_prob[1] ≈ std(Float32[0.9, 0.8, 0.6])
+        @test table.min_prec_prob[1] == 0.6f0
+        @test table.top1_top2_gap[1] ≈ 0.1f0
+        @test table.top2_top3_gap[1] ≈ 0.2f0
+        @test table.n_runs_observed[1] == 3.0f0
+        @test table.n_prob_gt_0_5[1] == 3.0f0
         @test table.n_prob_gt_0_9[1] == 0.0f0
         @test table.n_prob_gt_0_99[1] == 0.0f0
 
         @test table.n_runs_observed[2] == 1.0f0
+        @test table.top3_prec_prob[2] == 0.0f0
         @test table.median_prec_prob[2] == 0.7f0
         @test table.std_prec_prob[2] == 0.0f0
+        @test table.min_prec_prob[2] == 0.7f0
+        @test table.top1_top2_gap[2] == 0.0f0
+        @test table.top2_top3_gap[2] == 0.0f0
         @test table.n_prob_gt_0_5[2] == 1.0f0
     end
 
