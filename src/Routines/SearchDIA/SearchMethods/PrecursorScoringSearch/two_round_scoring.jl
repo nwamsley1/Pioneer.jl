@@ -23,6 +23,15 @@
 # is enabled via ENV["TWO_ROUND"] == "1".
 two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
 
+# Round-2 training mode. The round-1 pass is the semi-supervised iterative relabel loop (targets
+# scoring worse than decoys get mined as negatives, up to SCORING_SEMISUPERVISED_MAX_ITERATIONS);
+# that is the "first pass" and refines the labels. Round-2 is then a SINGLE LGBM pass on the base +
+# GROUP cross-run features with shadow-decoys — the shadows are the round-2 regularizer, so we do NOT
+# re-run SS relabeling (which recomputes the training mask each iteration and would absorb/relabel
+# shadows, breaking their 1:1 target/decoy marginal). Single-pass is also faster and more robust on
+# sparse data. Set ROUND2_SINGLE_PASS=0 to restore SS round-2 for A/B comparison.
+round2_single_pass_enabled() = get(ENV, "ROUND2_SINGLE_PASS", "1") == "1"
+
 # Symmetric shadow-decoy injection: after the round-2 cross-run features are written, for
 # every real row inject a paired shadow of the opposite class carrying the source's other
 # features but the ORIGINAL row's grafted cross-run feature(s). See TWO_ROUND_SCORING.md.

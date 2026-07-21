@@ -425,14 +425,17 @@ function _score_precursor_isotope_traces_no_mbr(
         # count (approximately) when both classes are present per file.
         inject_shadow_decoys!(file_paths)
         features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
+        # Round-2 is a SINGLE LGBM pass by default (shadows are the regularizer, not SS relabeling);
+        # ROUND2_SINGLE_PASS=0 restores the semi-supervised round-2 for A/B comparison.
+        r2_ss = !round2_single_pass_enabled()
         pass1 = train_and_predict_pass1_oom!(
             file_paths;
             features        = features2,
             compute_infold  = false,
             lgbm_hp         = SCORING_LGBM_HP,
-            semisupervised  = true,
+            semisupervised  = r2_ss,
         )
-        @user_info "two-round: round-2 trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
+        @user_info "two-round: round-2 ($(r2_ss ? "semi-supervised" : "single-pass")) trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
         log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
         # Compute BOTH FDR variants (A: real-only; B: shadow-included) as a diagnostic,
         # then remove shadow rows so downstream sees the same schema as before.
