@@ -25,16 +25,10 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :median_prec_prob,
     :std_prec_prob,
     :n_runs_observed,
+    :n_prob_gt_0_5,
     :n_prob_gt_0_9,
     :n_prob_gt_0_99,
 ]
-
-const GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES = Symbol[
-    :empirical_global_score,
-    :top1_prec_prob,
-]
-
-const GLOBAL_PRECURSOR_SMALL_DATASET_MAX_CANDIDATES = 300_000
 
 const GLOBAL_PRECURSOR_LGBM_HP = (
     num_iterations = 100,
@@ -60,13 +54,6 @@ struct GlobalPrecursorInputs
     probabilities::Dict{UInt32, Vector{Float32}}
     targets::Dict{UInt32, Bool}
     folds::Dict{UInt32, UInt8}
-end
-
-function _select_global_precursor_score_features(n_candidates::Int)
-    if n_candidates < GLOBAL_PRECURSOR_SMALL_DATASET_MAX_CANDIDATES
-        return GLOBAL_PRECURSOR_SMALL_SCORE_FEATURES
-    end
-    return GLOBAL_PRECURSOR_SCORE_FEATURES
 end
 
 function _logodds_from_sorted(
@@ -164,6 +151,7 @@ function _build_global_precursor_feature_table(
         feature_columns[:std_prec_prob][row] =
             n_observed > 1 ? Float32(std(probabilities)) : 0.0f0
         feature_columns[:n_runs_observed][row] = Float32(n_observed)
+        feature_columns[:n_prob_gt_0_5][row] = Float32(count(>(0.5f0), probabilities))
         feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), probabilities))
         feature_columns[:n_prob_gt_0_99][row] = Float32(count(>(0.99f0), probabilities))
     end
@@ -356,10 +344,9 @@ function build_global_precursor_score_dicts(
 
     inputs = _collect_global_precursor_inputs(refs, n_precursors)
     table = _build_global_precursor_feature_table(inputs, n_runs_total)
-    features = _select_global_precursor_score_features(length(inputs.probabilities))
     scored = _score_global_precursor_features_oof(
         table,
-        features,
+        GLOBAL_PRECURSOR_SCORE_FEATURES,
     )
 
     score_dict = Dict{UInt32, Float32}()
@@ -368,7 +355,7 @@ function build_global_precursor_score_dicts(
         score_dict[table.precursor_idx[row]] = scored.scores[row]
     end
     @debug_l1 "Global precursor LightGBM scored $(length(score_dict)) precursors " *
-              "with $(length(features)) features; " *
+              "with $(length(GLOBAL_PRECURSOR_SCORE_FEATURES)) features; " *
               "selected semi-supervised iteration $(scored.iter)"
     return score_dict, inputs.targets
 end
