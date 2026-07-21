@@ -43,8 +43,9 @@ The algorithm handles the following cases (based on Nesvizhskii & Aebersold, 200
 - `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
 
 # Returns
-- `InferenceResult`: Contains a single dictionary `peptide_to_protein` mapping unique peptides to their
-  assigned proteins. Shared peptides are excluded from the result (not usable for quantification).
+- `InferenceResult`: Contains unique peptide assignments and candidate final protein groups for
+  peptides that remain ambiguous after parsimony. Ambiguous peptides are not usable for
+  quantification.
 
 # Note
 This is an internal function. Use `infer_proteins()` instead, which automatically handles grouping
@@ -144,8 +145,9 @@ function _infer_proteins_single_group(
         push!(components, (component_peptides, component_proteins))
     end
     
-    # Initialize result dictionary
+    # Initialize result dictionaries
     peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
+    ambiguous_peptide_to_proteins = Dictionary{PeptideKey, Vector{ProteinKey}}()
     
     # Process each component independently
     for (component_peptides, component_proteins) in components
@@ -341,9 +343,6 @@ function _infer_proteins_single_group(
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
         peptide_to_necessary_protein = Dictionary{PeptideKey, ProteinKey}()
 
-        # Track peptides that can be attributed to multiple necessary proteins
-        ambiguous_peptides = Set{PeptideKey}()
-
         for peptide_key in component_peptides
             # Get the original proteins that this peptide maps to (before any merging)
             original_protein_set = peptide_to_proteins[peptide_key]
@@ -366,9 +365,11 @@ function _infer_proteins_single_group(
             if length(proteins_with_peptide) == 1
                 # This peptide is unique to one necessary protein
                 insert!(peptide_to_necessary_protein, peptide_key, first(proteins_with_peptide))
-            else
-                # This peptide is shared among multiple necessary proteins
-                push!(ambiguous_peptides, peptide_key)
+            elseif length(proteins_with_peptide) > 1
+                # Preserve the final parsimonious groups for protein scoring. Sorting makes
+                # assignment IDs and downstream score allocation deterministic.
+                candidates = sort!(collect(proteins_with_peptide))
+                insert!(ambiguous_peptide_to_proteins, peptide_key, candidates)
             end
         end
 
@@ -381,13 +382,13 @@ function _infer_proteins_single_group(
                 protein = peptide_to_necessary_protein[peptide_key]
                 insert!(peptide_to_protein, peptide_key, protein)
             end
-            # Note: Shared peptides are NOT added to peptide_to_protein
-            # This implicitly marks them as not usable for quantification
+            # Shared peptides are not added to peptide_to_protein and therefore remain
+            # ineligible for quantification. Their candidate groups are retained separately.
         end
 
     end
 
-    return InferenceResult(peptide_to_protein)
+    return InferenceResult(peptide_to_protein, ambiguous_peptide_to_proteins)
 end
 
 """
@@ -442,9 +443,8 @@ and performs protein inference separately for each group. This ensures:
 - `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
 
 # Returns
-- `InferenceResult`: Contains a dictionary `peptide_to_protein` mapping unique peptides to their
-  assigned proteins. Shared peptides are excluded from the result (not usable for quantification).
-  Results from all groups are combined into a single dictionary.
+- `InferenceResult`: Contains unique assignments plus ambiguous peptide candidates from all
+  target/decoy and entrapment populations.
 
 # Examples
 ```julia
@@ -492,6 +492,7 @@ function infer_proteins(
 
     # Step 2: Perform inference on each group
     combined_result = Dictionary{PeptideKey, ProteinKey}()
+    combined_ambiguous_result = Dictionary{PeptideKey, Vector{ProteinKey}}()
 
     for ((is_target, entrap_id), (group_proteins, group_peptides)) in pairs(groups)
         # Perform inference on this group using internal function
@@ -509,8 +510,16 @@ function infer_proteins(
                 insert!(combined_result, pep, prot)
             end
         end
+
+        for (pep, candidates) in pairs(group_result.ambiguous_peptide_to_proteins)
+            if haskey(combined_ambiguous_result, pep)
+                combined_ambiguous_result[pep] == candidates ||
+                    error("Conflicting ambiguous protein groups for peptide $(pep.sequence)")
+            else
+                insert!(combined_ambiguous_result, pep, candidates)
+            end
+        end
     end
 
-    return InferenceResult(combined_result)
+    return InferenceResult(combined_result, combined_ambiguous_result)
 end
-

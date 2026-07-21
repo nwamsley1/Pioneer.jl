@@ -298,6 +298,7 @@ end
 
 const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
 const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
+const AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT = 1.0f0
 
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
@@ -350,32 +351,40 @@ end
     return log(Float64(adjusted_none_prob))
 end
 
+function _protein_rollup_confidence_mask(
+    df::AbstractDataFrame;
+    q_value_threshold::Float32 = 0.01f0
+)
+    confidence_mask = trues(nrow(df))
+
+    if hasproperty(df, :MBR_boosted_qval)
+        confidence_mask .&= coalesce.(df.MBR_boosted_qval .<= q_value_threshold, false)
+    elseif hasproperty(df, :qval)
+        confidence_mask .&= coalesce.(df.qval .<= q_value_threshold, false)
+    end
+
+    if hasproperty(df, :MBR_boosted_global_qval)
+        confidence_mask .&= coalesce.(df.MBR_boosted_global_qval .<= q_value_threshold, false)
+    elseif hasproperty(df, :global_qval)
+        confidence_mask .&= coalesce.(df.global_qval .<= q_value_threshold, false)
+    end
+
+    return confidence_mask
+end
+
 """
     _protein_rollup_quant_mask(df; q_value_threshold=0.01f0)
 
-Return the precursor mask used for protein roll-up. Rows must be quant-eligible
-and, when available, still pass both run-specific and global precursor q-value
-thresholds.
+Return the precursor mask used for unique-peptide protein roll-up. Rows must be
+quant-eligible and, when available, still pass both run-specific and global
+precursor q-value thresholds.
 """
 function _protein_rollup_quant_mask(
     df::AbstractDataFrame;
     q_value_threshold::Float32 = 0.01f0
 )
-    quant_mask = df.use_for_protein_quant .== true
-
-    if hasproperty(df, :MBR_boosted_qval)
-        quant_mask .&= coalesce.(df.MBR_boosted_qval .<= q_value_threshold, false)
-    elseif hasproperty(df, :qval)
-        quant_mask .&= coalesce.(df.qval .<= q_value_threshold, false)
-    end
-
-    if hasproperty(df, :MBR_boosted_global_qval)
-        quant_mask .&= coalesce.(df.MBR_boosted_global_qval .<= q_value_threshold, false)
-    elseif hasproperty(df, :global_qval)
-        quant_mask .&= coalesce.(df.global_qval .<= q_value_threshold, false)
-    end
-
-    return quant_mask
+    return (df.use_for_protein_quant .== true) .&
+        _protein_rollup_confidence_mask(df; q_value_threshold = q_value_threshold)
 end
 
 @inline function _probability_from_log_none_sum(log_none_sum::Float64)::Float32
@@ -1285,6 +1294,122 @@ function group_psms_by_protein(
 end
 
 """
+    load_protein_ambiguity_candidates(mapping_path)
+
+Load the normalized ambiguity mapping written by protein inference. Candidate groups retain
+their target/decoy and entrapment population so evidence cannot cross FDR populations.
+"""
+function load_protein_ambiguity_candidates(
+    mapping_path::String
+)::Dict{UInt32, Vector{ProteinKey}}
+    candidates_by_id = Dict{UInt32, Vector{ProteinKey}}()
+    isfile(mapping_path) || return candidates_by_id
+
+    table = Arrow.Table(mapping_path)
+    @inbounds for i in eachindex(table.protein_ambiguity_id)
+        ambiguity_id = UInt32(table.protein_ambiguity_id[i])
+        candidate = ProteinKey(
+            String(table.candidate_protein_group[i]),
+            Bool(table.target[i]),
+            UInt8(table.entrap_id[i])
+        )
+        push!(get!(candidates_by_id, ambiguity_id, ProteinKey[]), candidate)
+    end
+
+    for candidates in values(candidates_by_id)
+        sort!(candidates)
+        unique!(candidates)
+    end
+    return candidates_by_id
+end
+
+"""
+    add_ambiguous_pg_score!(protein_groups, psms, candidates_by_id; q_value_threshold=0.01f0)
+
+Roll ambiguous PSMs to peptide-level log evidence and allocate each peptide once among its
+eligible final protein groups. Allocation weights use the frozen unique-only raw `pg_score`
+plus a fixed pseudocount; ambiguous evidence never feeds back into its own weights.
+"""
+function add_ambiguous_pg_score!(
+    protein_groups::DataFrame,
+    psms::DataFrame,
+    candidates_by_id::Dict{UInt32, Vector{ProteinKey}};
+    q_value_threshold::Float32 = 0.01f0
+)
+    n_groups = nrow(protein_groups)
+    ambiguous_scores = zeros(Float64, n_groups)
+    protein_groups[!, :ambiguous_pg_score] = zeros(Float32, n_groups)
+
+    if n_groups == 0 || isempty(candidates_by_id) ||
+       !hasproperty(psms, :protein_ambiguity_id)
+        return protein_groups
+    end
+
+    group_row = Dict{ProteinKey, Int}()
+    sizehint!(group_row, n_groups)
+    @inbounds for i in 1:n_groups
+        group_row[ProteinKey(
+            String(protein_groups.protein_name[i]),
+            Bool(protein_groups.target[i]),
+            UInt8(protein_groups.entrap_id[i])
+        )] = i
+    end
+
+    ambiguity_mask = psms.protein_ambiguity_id .!= zero(UInt32)
+    any(ambiguity_mask) || return protein_groups
+
+    ambiguous_psms = view(psms, ambiguity_mask, :)
+    prob_col = _protein_group_probability_column(ambiguous_psms)
+    rollup_scratch = ProteinRollupScratch()
+
+    for peptide_psms in groupby(ambiguous_psms, :protein_ambiguity_id)
+        ambiguity_id = UInt32(peptide_psms.protein_ambiguity_id[1])
+        candidates = get(candidates_by_id, ambiguity_id, ProteinKey[])
+        isempty(candidates) && continue
+        peptide_target = Bool(peptide_psms.target[1])
+        peptide_entrap_id = UInt8(peptide_psms.entrap_id[1])
+
+        eligible_rows = Int[]
+        for candidate in candidates
+            candidate.is_target == peptide_target || continue
+            candidate.entrap_id == peptide_entrap_id || continue
+            row = get(group_row, candidate, 0)
+            row == 0 || push!(eligible_rows, row)
+        end
+        isempty(eligible_rows) && continue
+
+        confidence_mask = _protein_rollup_confidence_mask(
+            peptide_psms;
+            q_value_threshold = q_value_threshold
+        )
+        rollup = _build_protein_rollup(
+            peptide_psms,
+            confidence_mask,
+            prob_col,
+            rollup_scratch
+        )
+        ambiguous_score = Float64(rollup.pg_score)
+        ambiguous_score > 0.0 || continue
+
+        total_support = 0.0
+        for row in eligible_rows
+            total_support += max(Float64(protein_groups.pg_score[row]), 0.0) +
+                Float64(AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT)
+        end
+        total_support > 0.0 || continue
+
+        for row in eligible_rows
+            support = max(Float64(protein_groups.pg_score[row]), 0.0) +
+                Float64(AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT)
+            ambiguous_scores[row] += ambiguous_score * support / total_support
+        end
+    end
+
+    protein_groups[!, :ambiguous_pg_score] = Float32.(ambiguous_scores)
+    return protein_groups
+end
+
+"""
     filter_by_min_peptides(min_peptides::Int)
 
 Filter protein groups that don't meet minimum peptide requirement.
@@ -1421,6 +1546,7 @@ function build_protein_group_tables(
     output_folder::String,
     protein_catalog::Dict;
     precursors::LibraryPrecursors,
+    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} = Dict{UInt32, Vector{ProteinKey}}(),
     min_peptides::Int = 2,
     q_value_threshold::Float32 = 0.01f0
 )
@@ -1452,11 +1578,24 @@ function build_protein_group_tables(
         )
 
         post_inference_pipeline = TransformPipeline() |>
-            filter_by_min_peptides(min_peptides) |>
+            filter_by_min_peptides(min_peptides)
+
+        for (desc, op) in post_inference_pipeline.operations
+            protein_groups_df = op(protein_groups_df)
+        end
+
+        add_ambiguous_pg_score!(
+            protein_groups_df,
+            updated_psms,
+            protein_ambiguity_candidates;
+            q_value_threshold = q_value_threshold
+        )
+
+        feature_pipeline = TransformPipeline() |>
             add_protein_features(protein_catalog) |>
             add_peak_area_observation_features(peak_area_calibration)
 
-        for (desc, op) in post_inference_pipeline.operations
+        for (desc, op) in feature_pipeline.operations
             protein_groups_df = op(protein_groups_df)
         end
 

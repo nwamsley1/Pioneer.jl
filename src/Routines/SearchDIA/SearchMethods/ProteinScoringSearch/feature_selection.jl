@@ -79,6 +79,7 @@ Return the fixed protein feature set used for probit rescoring.
 function protein_probit_feature_names()
     return Symbol[
         :pg_score,
+        :ambiguous_pg_score,
         :peptide_coverage_logit,
         :any_common_peps,
         :coverage_log_ratio,
