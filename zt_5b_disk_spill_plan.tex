@@ -1,0 +1,211 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\definecolor{kw}{RGB}{0,0,180}\definecolor{cmt}{RGB}{0,120,0}
+\definecolor{str}{RGB}{160,0,0}\definecolor{bg}{RGB}{247,247,247}
+\lstdefinelanguage{Julia}{morekeywords={function,for,while,if,elseif,else,end,return,in,do,let,const,struct,mutable,begin,local,global,true,false,nothing,using,import,where,view,open},sensitive=true,morecomment=[l]{\#},morestring=[b]"}
+\lstset{language=Julia,basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{bg},keywordstyle=\color{kw}\bfseries,commentstyle=\color{cmt}\itshape,stringstyle=\color{str},breaklines=true,showstringspaces=false,frame=single,framesep=4pt,rulecolor=\color{gray!40},xleftmargin=6pt,numbers=left,numberstyle=\tiny\color{gray},numbersep=6pt}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\title{\textbf{Sciex ZT-Scan DIA: Disk-Spilled Meta-Scan Collapse}\\[2pt]\large Lowering peak RSS while staying byte-identical --- design + code examples}
+\author{Pioneer.jl \quad branch \code{feat/zt-batched-collapse}}
+\date{2026-07-21}
+\begin{document}\maketitle
+
+\begin{abstract}
+The in-memory ``batched'' collapse (previous plan) was a dead end: contiguous scan batches
+change the deconvolution's per-precursor warm-start order, so results were \emph{not}
+byte-identical (\(-0.1\%\) prec / \(-0.9\%\) PG), and holding all per-batch raw tables plus
+borrow-copies actually \emph{raised} peak (+4.4\,GB) and runtime (+84\%). This plan takes the
+opposite approach: \textbf{leave the round-robin deconvolution and its thread/scan assignment
+exactly as on develop} (cache-optimal, and byte-identical raw rows), and instead \textbf{spill
+the raw PSMs to disk in contiguous scan-range bins}, then read and collapse one bin at a time.
+Peak in-memory PSM footprint drops from the full \(\sim\)6.3\,GB raw table to \(\sim\)one bin
+plus the accumulating \(\sim\)1.1\,GB meta table. Byte-identical, because the raw rows are
+unchanged and the per-bin collapse-with-borrow is already proven bit-identical to the global
+collapse (the \code{PIONEER\_ZT\_DIAG\_COMPARE} check: same raw \(\Rightarrow\) same 2{,}950{,}279).
+\end{abstract}
+
+\section{Why the previous (in-memory contiguous-batch) approach failed}
+\begin{itemize}[nosep]
+  \item \textbf{Not byte-identical.} \code{post\_design\_matrix!} warm-starts each precursor's
+    Huber solve from its converged weight at the previous scan (\code{initialize\_weights!}
+    \(\leftarrow\) per-thread \code{precursor\_weights}). Re-partitioning scans rewires every
+    warm-start chain \(\Rightarrow\) weights shift near the \(10^{-6}\) emission threshold
+    (33{,}185{,}795 \(\to\) 33{,}184{,}306 raw rows). The collapse logic itself was proven correct.
+  \item \textbf{Higher peak + slower.} Barrier holds all per-batch raws \emph{and}
+    \code{batch\_tbl = vcat(head,raw,tail)} copies each \(\Rightarrow\) \(\sim2\times\) raw
+    memory; contiguous chunks also load-balance worse than round-robin.
+\end{itemize}
+\textbf{Takeaway:} do not touch the deconv partition. Keep round-robin \emph{exactly}.
+
+\section{Peak-RSS profiling (what actually drives the peak)}
+\code{PIONEER\_DIAG\_RSS=1} logs current RSS (via \code{ps}) + high-water at each Main-Search
+sub-step. Single file, ZT, global path:
+\begin{center}\begin{tabular}{lrl}
+\toprule
+Sub-step & current RSS & \\
+\midrule
+pre \code{library\_search} (base + library loaded) & 9.95\,GB & \\
+post \code{library\_search} (deconv) & 31.13\,GB & \(+21.2\) \\
+post \code{scan\_comp}+\code{ms1}+permute & 32.72\,GB & \(+1.6\) \\
+\textbf{post \code{prepare\_psm\_features}} & \textbf{33.94\,GB} & \(+1.2\) \ (\textbf{peak}) \\
+post collapse + chromatogram & 30.13\,GB & \(-3.8\) \ (collapse frees) \\
+post \code{train\_lgbm} & 32.08\,GB & \\
+\bottomrule
+\end{tabular}\end{center}
+(These are \code{ps}/\code{maxrss} numbers, \(\sim\)34\,GB; the macOS \code{phys\_footprint}
+peak is 22.4\,GB --- it excludes file-backed clean pages. The raw PSM table is Julia heap =
+dirty = counted in both.)
+
+\textbf{Findings.} (1) The peak is at \emph{post-prepare}, where the 33M-row raw table is
+widest (deconv + \code{scan\_comp} + \code{ms1} + prepare cols \(\approx\) 9\,GB), and the
+collapse frees \(-3.8\)\,GB --- so removing the raw table from this window lowers peak.
+(2) The deconv jump is \(+21\)\,GB, of which the raw table is only \(\sim\)6.3\,GB; the rest is
+per-thread deconv scratch (\(\sim\)8\,GB, inherent) \emph{plus the \code{vcat(fetched...)}
+transient that copies the raw a second time (\(\sim\)6.3\,GB)}. The permute is \emph{not} a
+driver: removing its 7.45\,GB churn left peak unchanged (22.30 \(\to\) 22.15\,GB byte-identical)
+--- it is freed before the peak instant.
+
+\textbf{Consequence for this plan.} The biggest lever is \textbf{eliminating the \code{vcat}}:
+scatter per-thread tables straight to disk (never build the concatenated 33M table, never run
+prepare on it). That removes both the vcat copy and the wide raw table from the post-deconv
+peak. Realistic target: phys-footprint peak \(22.4 \to \sim16\text{--}18\)\,GB --- bounded below
+by the \(\sim\)8\,GB deconv scratch.
+
+\section{Design: keep round-robin deconv, spill raw to disk, collapse per bin}
+Five stages; only stages 3--4 are new. Everything is byte-identical.
+
+\begin{enumerate}[nosep]
+  \item \textbf{Deconvolution --- UNCHANGED.} Round-robin threaded deconv (develop's
+    \code{partition\_scans} + \code{process\_scans\_fused!}). Per-thread output is
+    \emph{scan-disjoint} and contiguous-by-scan (existing invariant).
+  \item \textbf{Per-thread \code{scan\_competition} + \code{ms1\_lookup} --- byte-identical.}
+    Because each scan's rows live entirely in one thread, per-scan \code{scan\_competition}
+    per thread equals the current global pass; \code{ms1\_lookup} is per-row. Run them on each
+    thread table before spilling, so spilled rows already carry those feature columns.
+  \item \textbf{Spill to \(B\) contiguous scan-range bins.} Scatter each thread table's rows
+    by \code{scan\_idx} into \(B\) on-disk Arrow bins, \emph{freeing each thread table as soon
+    as it is scattered} (fetch\(\to\)scatter\(\to\)free, one thread at a time) so the full raw
+    never coexists in memory.
+  \item \textbf{Collapse one bin at a time.} For bin \(b\) (a contiguous scan range), read bin
+    \(b\) plus the \(\pm k\) halo slices from the adjacent bins' files, run the proven
+    \code{collapse\_to\_metascans(\dots; own\_scans = bin\_b\_scans)}, append the small meta
+    result, and free the bin. Peak PSM memory \(=\) one bin (\(\sim\)raw\(/B\)) \(+\) halo \(+\)
+    accumulating meta.
+  \item \textbf{Assemble --- UNCHANGED downstream.} \code{vcat} the per-bin metas, \code{sort}
+    by \code{(precursor\_idx, scan\_idx)} to restore global order, then the existing
+    \code{prepare\_psm\_features!}, \code{add\_chromatogram\_features!}, and LightGBM run on the
+    \(\sim\)2.95M-row meta table exactly as today.
+\end{enumerate}
+
+\section{Byte-identity argument}
+\begin{itemize}[nosep]
+  \item Raw rows identical: deconv partition and warm-start chains are untouched.
+  \item \code{scan\_competition} per-thread \(=\) global: scans are thread-disjoint, and the
+    feature is per-scan-local (no file-global normalization). \code{ms1\_lookup}/\code{prepare}
+    are per-row.
+  \item Collapse per-bin-with-borrow \(=\) global collapse: proven by
+    \code{PIONEER\_ZT\_DIAG\_COMPARE} (identical raw \(\Rightarrow\) identical centers). Bins tile
+    the scans; each center is emitted once (\code{own\_scans}); \(\pm k\) halo covers every
+    neighbor.
+  \item Final \code{sort} by \code{(pid,scn)} reproduces the exact LightGBM row order.
+\end{itemize}
+
+\section{Expected effect}
+\begin{center}\begin{tabular}{lll}
+\toprule
+ & in-memory batched (rejected) & disk-spill (this plan) \\
+\midrule
+Byte-identical & no (\(-0.9\%\) PG) & \textbf{yes} \\
+Peak PSM memory & \(\sim2\times\) raw (worse) & \(\sim\)raw\(/B\) + 1.1\,GB meta \\
+Deconv partition & contiguous (cache-hostile) & \textbf{round-robin (unchanged)} \\
+Extra cost & --- & write+read \(\sim\)6.3\,GB to local disk (IO) \\
+\bottomrule
+\end{tabular}\end{center}
+Net: trade \(\sim\)6.3\,GB of disk write+read for removing the full raw table from the peak
+resident set. Speed impact is the IO (local SSD; overlap with compute where possible).
+
+\section{Code sketch}
+
+\subsection{Scatter a thread table into on-disk scan-range bins (free as we go)}
+\begin{lstlisting}
+# B contiguous scan-range bin edges over the file's MS2 scans (computed once).
+# bin_of[scan_idx] -> 1..B. Each bin is an append-only Arrow writer on disk.
+function spill_thread_table!(bin_writers, bin_of, tbl::DataFrame)
+    scn = tbl[!, :scan_idx]::Vector{UInt32}
+    # group row indices by bin, then append each contiguous slice once
+    order = sortperm(scn)                     # tbl is already ~scan-ordered; cheap
+    b_prev = 0; lo = 1
+    for i in 1:length(order)
+        b = bin_of[scn[order[i]]]
+        if b != b_prev && b_prev != 0
+            append_arrow!(bin_writers[b_prev], @view tbl[order[lo:i-1], :])
+            lo = i
+        end
+        b_prev = b
+    end
+    append_arrow!(bin_writers[b_prev], @view tbl[order[lo:end], :])
+end
+
+# In library_search, replace `result = vcat(fetched...)` for the ZT path with:
+for t in tasks                                # fetch -> scatter -> FREE, one at a time
+    tbl = _zt_fetch(t)
+    add_scan_competition_features!(tbl)       # per-thread (scans are thread-disjoint)
+    add_ms1_lookup_features!(tbl, spectra, search_context, ms_file_idx)
+    spill_thread_table!(bin_writers, bin_of, tbl)
+    tbl = nothing                             # raw slice freed before the next thread
+end
+close_all!(bin_writers)                       # B Arrow files on disk; full raw never resident
+\end{lstlisting}
+
+\subsection{Collapse bins one at a time, borrowing halo from neighbor files}
+\begin{lstlisting}
+metas = DataFrame[]
+for b in 1:B
+    bin   = DataFrame(Arrow.Table(bin_path(b)))                     # ~raw/B rows
+    head  = b > 1 ? read_scan_ge(bin_path(b-1), first(bin_scans[b]) - k) : nothing
+    tail  = b < B ? read_scan_le(bin_path(b+1), last(bin_scans[b])  + k) : nothing
+    batch = _zt_concat_borrow(head, bin, tail)
+    own   = Set{UInt32}(UInt32.(bin_scans[b]))
+    push!(metas, collapse_to_metascans(batch, spectra, lib_precs, k;
+              bitvec_rank_table = bitvec_rank_table, own_scans = own))
+    bin = batch = nothing                                           # bin freed each iter
+end
+result = vcat(metas...)
+sort!(result, [:precursor_idx, :scan_idx])                         # global LGBM order
+# then prepare_psm_features! + add_chromatogram_features! + LightGBM (unchanged)
+\end{lstlisting}
+
+\section{Open design choices (for review)}
+\begin{itemize}[nosep]
+  \item \textbf{\(B\) (bin count):} larger \(B\) \(\Rightarrow\) lower peak, more files/IO. Pick
+    from the profiled peak target (e.g. \(B{=}8\)--16 for \(\sim\)0.4--0.8\,GB/bin).
+  \item \textbf{Scatter concurrency:} per-thread-per-bin files (no locks, \(B\times\)nthreads
+    files, merged on read) vs shared bin writers with a lock. Former is simpler + faster.
+  \item \textbf{Where scatter runs:} inside \code{library\_search} (as sketched) vs a new stage.
+    Keeping it in \code{library\_search} means \code{process\_file!} just receives the meta table.
+  \item \textbf{IO overlap:} collapse bin \(b\) while spilling continues, if we spill in scan
+    order (a bin is complete once all threads pass its range). Optional; adds complexity.
+  \item \textbf{Temp location + cleanup:} reuse the existing \code{temp\_data} dir; delete bins
+    after collapse (respect \code{delete\_temp}).
+  \item \textbf{Dispatch:} gate on a config field (\code{acquisition.zt\_metascan\_k}), not the
+    env var, so non-ZT runs never touch any of this (deferred until the approach is chosen).
+\end{itemize}
+
+\section{Verification plan}
+\begin{enumerate}[nosep]
+  \item Byte-identity: single-file collapse stays \code{33{,}185{,}795 \(\to\) 2{,}950{,}447};
+    meta dump content-identical to \code{meta\_global}; final IDs \code{26{,}167 / 4{,}213}.
+  \item Peak: \code{PIONEER\_DIAG\_RSS} markers show the per-bin collapse peak \(<\) the current
+    raw-table peak; macOS \code{time -l} footprint drops.
+  \item Speed: warm-process timing (\code{warm\_driver.jl}) --- quantify the IO cost.
+  \item Non-ZT unchanged: gated path; verify an Astral/Exploris run is bit-identical.
+\end{enumerate}
+
+\end{document}

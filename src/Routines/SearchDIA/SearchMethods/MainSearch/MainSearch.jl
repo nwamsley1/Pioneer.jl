@@ -212,6 +212,23 @@ function _log_psm_table_footprint(psms::DataFrame, label::AbstractString, ms_fil
     return nothing
 end
 
+# Peak-memory profiling (PIONEER_DIAG_RSS=1): log high-water maxrss AND current RSS at each
+# sub-step of Main Search so the peak instant + resident coexistence can be attributed.
+# Current RSS (unlike Sys.maxrss high-water) drops when a table is freed, exposing what is
+# actually resident at the peak moment vs churn. Off by default.
+function _diag_rss(label::AbstractString)
+    get(ENV, "PIONEER_DIAG_RSS", "0") == "0" && return nothing
+    cur = try
+        parse(Int, strip(read(`ps -o rss= -p $(getpid())`, String))) / 1024^2  # KB -> GB
+    catch
+        NaN
+    end
+    @user_print string("[RSS] ", rpad(label, 32),
+                       " cur=", round(cur; digits=2), " GB  maxrss=",
+                       round(peak_rss() / 1024^3; digits=2), " GB")
+    return nothing
+end
+
 """
 Process a single file: load fragment index matches and deconvolve with prescore settings.
 """
@@ -226,15 +243,17 @@ function process_file!(
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
 
+    _diag_rss("file start (pre library_search)")
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     t_lib_search = time() - t_file_start
+    _diag_rss("post library_search")
 
     # Sciex ZT main search (5b): library_search already returned the collapsed meta table
     # with scan_competition + ms1_lookup applied per-batch and rows in (precursor_idx,
     # scan_idx) order, so skip those passes and the global precursor sort here.
     _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
-    _zt_batched = _zt_k > 0 && params isa MainSearchParameters &&
-                  get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
+    _zt_main = _zt_k > 0 && params isa MainSearchParameters
+    _zt_batched = _zt_main && get(ENV, "PIONEER_ZT_BATCHED", "0") == "1"
 
     t_scan_comp = 0.0; t_ms1 = 0.0; t_sort = 0.0
     if !_zt_batched
@@ -269,8 +288,16 @@ function process_file!(
         # for any per-precursor parallelism. We use a hand-rolled in-place
         # column permute rather than `sort!(df, :col)` because DataFrames.sort!
         # is ~4× slower on this shape (measured 2026-05-19).
-        t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+        #
+        # Skipped for the ZT path: collapse_to_metascans re-sorts its read columns by
+        # (precursor_idx, scan_idx) internally, and every ZT downstream pass (chromatogram
+        # features, best-per-precursor) runs on the post-collapse meta table — so this
+        # ~7.4 GB full-table permute is pure redundant churn here. Byte-identical.
+        if !_zt_main
+            t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+        end
     end
+    _diag_rss("post scan_comp+ms1+permute")
 
     results.psms[] = psms
 
@@ -329,6 +356,7 @@ function process_search_results!(
     # Compute prescore features
     t_prepare = @elapsed @alloc_bucket "prepare_psm_features" prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
     t_features = time()
+    _diag_rss("post prepare_psm_features")
 
     if nrow(psms) == 0
         @debug_l2 "No PSMs for file $ms_file_idx after feature computation"
@@ -418,6 +446,7 @@ function process_search_results!(
         end
     end
 
+    _diag_rss("post collapse+chromatogram")
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
@@ -432,6 +461,7 @@ function process_search_results!(
                                      collect(PRESCORE_FEATURES),
         )
     best_psms[!, :lgbm_prob] = scores
+    _diag_rss("post train_lgbm")
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
 
