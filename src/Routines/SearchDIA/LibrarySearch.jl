@@ -277,6 +277,19 @@ function library_search(
                    "deconv=$(round(t_deconv, digits=2))s  " *
                    "vcat=$(round(t_vcat, digits=2))s  " *
                    "candidates=$(length(get_precursors(prec_index)))"
+        # General min-memory win: the per-thread scored scratch (~6 GB SoA) was just copied
+        # into `result` by the vcat and is now stale. The copycols=false view DataFrames that
+        # referenced it (the per-NCE `fetched` locals) are out of scope, so reassigning the
+        # field to an empty StructArray drops the last reference — GC reclaims it under memory
+        # pressure BEFORE process_search_results!'s prepare pass (the peak instant), on every
+        # DIA run incl. non-ZT. Regrown next file by growScoredPSMs!. Main-search only: the
+        # tuning stages call library_search many times, where regrow churn would not pay off.
+        # Env gate (default on) for A/B benchmarking: PIONEER_FREE_SCORED_SCRATCH=0 disables.
+        if get(ENV, "PIONEER_FREE_SCORED_SCRATCH", "1") != "0"
+            for sd in search_data
+                sd.main_search_scored_psms = StructArray(MainSearchScoredPSM{Float32,Float16}[])
+            end
+        end
     end
 
     return result
