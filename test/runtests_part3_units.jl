@@ -80,7 +80,7 @@ include("./UnitTests/test_diann_decoys.jl")
 include("./UnitTests/test_summarize_precursor.jl")
 
 # PrecursorScoringSearch
-include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_global_precursor_scoring.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_window_features.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_file_aware_decoys.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_empirical_spectra_hellinger.jl")

@@ -284,21 +284,27 @@ function summarize_results!(
 
     # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
     # Replaces 6 separate sort-merge-load-split cycles with:
-    #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
+    #   - Experiment-wide precursor scoring
     #   - In-memory q-value computation from dicts (no I/O)
     #   - Lightweight 2-column sidecar files for spline computation
     #   - Single per-file pipeline combining all column additions + filtering
     step5_10_time = @elapsed begin
         n_files_total = length(getFilePaths(getMSData(search_context)))
-        sqrt_n_runs = max(1, floor(Int64, sqrt(n_files_total)))
         fdr_scale = getLibraryFdrScaleFactor(search_context)
 
         # Pre-allocation size from spectral library
         n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-        # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
+        # A1: Build experiment-wide precursor scores.
+        if n_files_total > 1
+            @user_info "Training global precursor scoring model..."
+        end
         global_prob_dict, target_dict =
-            build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
+            build_global_precursor_score_dicts(
+                filtered_refs,
+                n_precursors,
+                n_files_total,
+            )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
