@@ -77,7 +77,16 @@ function library_search(
     # Parameter/quad/NCE tuning must stay on the clean center-bin (1 m/z) path
     # so calibrations aren't fit on the metascan-expanded, wide-box deconvolution.
     _zt_main = _zt && (params isa MainSearchParameters)
-    qtm_frag = _zt ? SquareQuadModel(0.0f0) : qtm
+    # ZT fragment-index candidacy box. Default overhang 0 = tight 1-bin (isolation-width) box:
+    # a precursor is a candidate only where its M0 falls in a single bin. PIONEER_ZT_FRAG_OVERHANG
+    # (m/z) widens it so a precursor whose transmission is split across bins (offset near a bin
+    # boundary) — or whose M0-bin signal alone is below the index-score threshold — gets candidacy
+    # chances in the neighboring bins too. Center assignment (filter_to_center_bin!) stays tight.
+    # Default 0.5 m/z overhang (≈±1 bin) — a 3-file Condition-A sweep showed the M0-only tight
+    # box (0.0) was dropping split/marginal-M0 precursors at candidacy: 0.0→77,549, 0.5→78,432
+    # (+883 prec, +1.14%, 1% FDR), 1.0→78,362 (plateau). Center assignment stays tight.
+    _zt_frag_overhang = something(tryparse(Float32, get(ENV, "PIONEER_ZT_FRAG_OVERHANG", "")), 0.5f0)
+    qtm_frag = _zt ? SquareQuadModel(_zt_frag_overhang) : qtm
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
