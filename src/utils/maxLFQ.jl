@@ -466,6 +466,7 @@ function getProtAbundance(protein::String,
                             use_for_quant::AbstractVector{Bool},
                             abundance::AbstractVector{<:Union{Missing, Real}},
                             global_qvals::AbstractVector{<:Union{Missing, Real}},
+                            global_peps::AbstractVector{<:Union{Missing, Real}},
                             qvals::AbstractVector{<:Union{Missing, Real}},
                             peps::AbstractVector{<:Union{Missing, Real}},
                             pg_scores::AbstractVector{<:Union{Missing, Real}},
@@ -473,11 +474,12 @@ function getProtAbundance(protein::String,
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
-                            protein_out::Vector{Union{Missing, String}}, 
+                            protein_out::Vector{Union{Missing, String}},
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
-                            experiments_out::Vector{Union{Missing, UInt32}}, 
+                            experiments_out::Vector{Union{Missing, UInt32}},
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
+                            global_pep_out::Vector{Union{Missing, Float32}},
                             qval_out::Vector{Union{Missing, Float32}},
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
@@ -498,6 +500,7 @@ function getProtAbundance(protein::String,
     global_score_map = Dict{UInt32, Union{Missing, Float32}}()
     qval_map = Dict{UInt32, Union{Missing, Float32}}()
     global_qval_map = Dict{UInt32, Union{Missing, Float32}}()
+    global_pep_map = Dict{UInt32, Union{Missing, Float32}}()
     for j in eachindex(experiments)
         exp = UInt32(experiments[j])
         if !haskey(pep_map, exp)
@@ -506,6 +509,7 @@ function getProtAbundance(protein::String,
             global_score_map[exp] = global_pg_scores[j]
             qval_map[exp] = qvals[j]
             global_qval_map[exp] = global_qvals[j]
+            global_pep_map[exp] = global_peps[j]
         end
     end
 
@@ -521,18 +525,20 @@ function getProtAbundance(protein::String,
                             unique_peptides::Vector{UInt32}, 
                             log2_abundances::AbstractVector{Union{Missing, A}},
                             global_qvals::AbstractVector{<:Union{Missing, Real}},
+                            global_peps::AbstractVector{<:Union{Missing, Real}},
                             qvals::AbstractVector{<:Union{Missing, Real}},
                             peps::AbstractVector{<:Union{Missing, Real}},
                             pg_scores::AbstractVector{<:Union{Missing, Real}},
                             global_pg_scores::AbstractVector{<:Union{Missing, Real}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
-                            species_out::Vector{Union{Missing, String}}, 
-                            protein_out::Vector{Union{Missing, String}}, 
-                            peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
-                            log2_abundance_out::Vector{Union{Missing, Float32}}, 
-                            global_qval_out::Vector{Union{Missing, Float32}}, 
-                            qval_out::Vector{Union{Missing, Float32}}, 
+                            species_out::Vector{Union{Missing, String}},
+                            protein_out::Vector{Union{Missing, String}},
+                            peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
+                            log2_abundance_out::Vector{Union{Missing, Float32}},
+                            global_qval_out::Vector{Union{Missing, Float32}},
+                            global_pep_out::Vector{Union{Missing, Float32}},
+                            qval_out::Vector{Union{Missing, Float32}},
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
@@ -567,6 +573,7 @@ function getProtAbundance(protein::String,
             exp = UInt32(unique_experiments[i + 1])
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
             global_qval_out[row_idx + i] = global_qval_map[exp]
+            global_pep_out[row_idx + i] = global_pep_map[exp]
             qval_out[row_idx + i] = qval_map[exp]
             pg_score_out[row_idx + i] = score_map[exp]
             global_pg_score_out[row_idx + i] = global_score_map[exp]
@@ -614,6 +621,7 @@ function getProtAbundance(protein::String,
                    unique_peptides, 
                    log2_abundances,
                    global_qvals,
+                   global_peps,
                    qvals,
                    peps,
                    pg_scores,
@@ -621,10 +629,11 @@ function getProtAbundance(protein::String,
                    target_out,
                    entrap_id_out,
                    species_out,
-                   protein_out, 
-                   peptides_out, 
+                   protein_out,
+                   peptides_out,
                    log2_abundance_out,
                    global_qval_out,
+                   global_pep_out,
                    qval_out,
                    pep_out,
                    pg_score_out,
@@ -760,6 +769,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :log2_abundance => Vector{Union{Missing, Float32}}(missing, nrows),
             :experiments => Vector{Union{Missing, UInt32}}(missing, nrows),
             :global_qval => Vector{Union{Missing, Float32}}(missing, nrows),
+            :global_pg_pep => Vector{Union{Missing, Float32}}(missing, nrows),
             :qval => Vector{Union{Missing, Float32}}(missing, nrows),
             :pg_pep => Vector{Union{Missing, Float32}}(missing, nrows),
             :pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
@@ -794,6 +804,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 data[!,:use_for_protein_quant],
                                 data[!,quant_col],
                                 data[!,:qlobal_pg_qval],
+                                data[!,:global_pg_pep],
                                 data[!,:pg_qval],
                                 data[!,:pg_pep],
                                 data[!,:pg_score],
@@ -806,6 +817,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:experiments],
                                 out[:log2_abundance],
                                 out[:global_qval],
+                                out[:global_pg_pep],
                                 out[:qval],
                                 out[:pg_pep],
                                 out[:pg_score],
@@ -844,6 +856,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :n_modified_peptides,
             :n_peptides,
             :global_qval,
+            :global_pg_pep,
             :qval,
             :pg_pep,
             :pg_score,

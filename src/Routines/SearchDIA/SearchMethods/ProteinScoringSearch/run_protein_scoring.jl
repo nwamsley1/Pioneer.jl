@@ -248,9 +248,14 @@ function run_protein_scoring!(
         build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
+    # GLOBAL context (Rosenberger 2017): q AND PEP per unique protein group from its best score.
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
+    global_pg_pep_dict  = build_protein_global_pep_dict(global_pg_score_dict)
     search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
+    # EXPERIMENT-WIDE context: :pg_qval / :pg_pep splines from the FULL protein target/decoy
+    # distribution (all pg_refs). This is the correct estimate — it is NOT recomputed on the
+    # AND-filter survivors (which are decoy-depleted → anti-conservative; entrapment-validated).
     sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
     spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
         batch_size = 1_000_000, compute_pep = true,
@@ -262,8 +267,9 @@ function run_protein_scoring!(
     protein_combined_pipeline = TransformPipeline() |>
         add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
         add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
+        add_dict_column_composite_key(:global_pg_pep,  [:protein_name, :target, :entrap_id], global_pg_pep_dict) |>
         add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-        add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
+        add_interpolated_column(:pg_pep,  :pg_score, search_context.pg_score_to_pep[]) |>
         filter_by_multiple_thresholds([
             (:global_pg_qval, q_value_threshold),
             (:pg_qval, q_value_threshold)
@@ -271,22 +277,20 @@ function run_protein_scoring!(
 
     apply_pipeline!(pg_refs, protein_combined_pipeline)
 
-    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000,
-        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
-        temp_prefix = "pg_recalc")
-    search_context.pg_score_to_qval[] = spline_result.qval_spline
-
-    recalc_pg_pipeline = TransformPipeline() |>
+    # Finalize the passing protein groups to `passing_proteins_folder`, keeping the pre-filter
+    # experiment-wide :pg_qval (search_context.pg_score_to_qval[] is unchanged — NOT rebuilt on the
+    # AND-filter survivors, which are decoy-depleted → anti-conservative; entrapment-validated).
+    finalize_pg_pipeline = TransformPipeline() |>
         add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
 
-    pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
+    pg_refs = apply_pipeline_batch(pg_refs, finalize_pg_pipeline, passing_proteins_folder)
 
     update_psms_with_probit_scores_refs(
         paired_files,
         search_context.pg_name_to_global_pg_score[],
         search_context.pg_score_to_qval[],
-        search_context.global_pg_score_to_qval_dict[]
+        search_context.global_pg_score_to_qval_dict[],
+        global_pg_pep_dict
     )
 
     return nothing

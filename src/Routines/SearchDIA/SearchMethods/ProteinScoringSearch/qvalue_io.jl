@@ -117,6 +117,38 @@ function build_protein_global_qval_dict(
 end
 
 """
+    build_protein_global_pep_dict(global_pg_score_dict)
+
+Global-context protein PEP (Rosenberger 2017): posterior error probability per unique protein
+group from its best (max-log-odds) score across runs. Mirrors `build_protein_global_qval_dict`
+but computes PEP via `get_PEP!` instead of q-values, so the four protein-error cells are complete
+(`:pg_qval`/`:pg_pep` experiment-wide, `:global_pg_qval`/`:global_pg_pep` global).
+"""
+function build_protein_global_pep_dict(
+    global_pg_score_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
+)
+    n = length(global_pg_score_dict)
+    keys_vec = collect(keys(global_pg_score_dict))
+    scores = Float32[global_pg_score_dict[k] for k in keys_vec]
+    targets = Bool[k[2] for k in keys_vec]
+
+    perm = sortperm(collect(zip(scores, targets)); by = x -> (-x[1], -x[2]))
+    permute!(keys_vec, perm)
+    permute!(scores, perm)
+    permute!(targets, perm)
+
+    peps = Vector{Float32}(undef, n)
+    get_PEP!(scores, targets, peps; doSort = false)   # already sorted descending by score
+
+    pep_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    sizehint!(pep_dict, n)
+    for i in 1:n
+        pep_dict[keys_vec[i]] = peps[i]
+    end
+    return pep_dict
+end
+
+"""
     update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
                                        pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
                                        pg_score_to_qval::Interpolations.Extrapolation,
@@ -128,7 +160,8 @@ function update_psms_with_probit_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
     pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
-    global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
+    global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32},
+    global_pg_score_to_pep_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
     total_psms_updated = 0
     files_processed = 0
@@ -170,6 +203,7 @@ function update_psms_with_probit_scores_refs(
         pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
         global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
         pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
+        global_pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
 
         ipg_col = needed[!, :inferred_protein_group]
         uq_col  = needed[!, :use_for_protein_quant]
@@ -190,6 +224,7 @@ function update_psms_with_probit_scores_refs(
             pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
             dict_key = (key.name, key.is_target, key.entrap_id)
             global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
+            global_pg_peps[i]  = get(global_pg_score_to_pep_dict, dict_key, missing)
         end
 
         add_columns_via_sidecar!(psm_ref,
@@ -197,7 +232,8 @@ function update_psms_with_probit_scores_refs(
             :global_pg_score => global_pg_scores,
             :pg_qval         => pg_qvals,
             :qlobal_pg_qval  => global_pg_qvals,
-            :pg_pep          => pg_peps;
+            :pg_pep          => pg_peps,
+            :global_pg_pep   => global_pg_peps;
             tag = "pg_scores")
         total_psms_updated += n_psms
 

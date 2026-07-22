@@ -19,7 +19,7 @@
     PrecursorScoringSearch
 
 Per-precursor rescoring + FDR control. Trains a second LightGBM on globally-
-filtered MainSearch PSMs (20 features), recalculates q-values + PEPs, filters
+filtered MainSearch PSMs (20 features), computes experiment-wide + global q-values/PEPs, filters
 to a passing-precursor set, and builds RT indices for the chromatogram
 integrator. Protein inference + protein-group scoring are now downstream
 (`ProteinInferenceSearch`, `ProteinScoringSearch`).
@@ -38,7 +38,7 @@ Results container for scoring search.
 """
 struct PrecursorScoringSearchResults <: SearchResults
     precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}}  # precursor_idx → global q-value
-    precursor_qval_interp::Base.Ref{Any}  # Interpolation for run-specific q-values
+    precursor_qval_interp::Base.Ref{Any}  # Interpolation for experiment-wide q-values
     precursor_pep_interp::Base.Ref{Any}   # Interpolation for experiment-wide PEPs
     merged_quant_path::String             # Path to merged quantification results
 end
@@ -358,20 +358,10 @@ function summarize_results!(
     # keep these files available for diagnostic inspection. Re-enable once the
     # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
-    # Step 11: Re-calculate q-values using filtered data (sidecar-based)
-    step11_time = @elapsed begin
-        # Sidecar lifecycle for new spline (on filtered data)
-        spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
-        if spline_result === nothing
-            @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-        else
-            recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline)
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
-        end
-    end
+    # NOTE: no post-filter q-value recalculation. The experiment-wide :qval (and :pep) written in
+    # Phase B come from the spline built over the FULL target/decoy distribution (all filtered_refs),
+    # which is the correct estimate. Rebuilding the spline on the AND-filter survivors was
+    # entrapment-validated to be optimistic (decoy-depleted survivors) and is intentionally removed.
 
     # Update search context with passing PSM paths
     for (file_idx, ref) in zip(valid_file_indices, passing_refs)
