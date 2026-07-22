@@ -17,11 +17,12 @@
 # Assumes one row per precursor_idx per file (current MainSearch invariant), so
 # s1[file, precursor] is a single value — no trace->precursor aggregation needed.
 
-# Read ENV at RUNTIME (not a top-level const): a `const = get(ENV,...)` is evaluated at
-# precompile time and baked into the cached module, so it would ignore the env var on a
-# cached load. The round-2 path (cross-run GROUP features + shadow-decoys + global model)
-# is enabled via ENV["TWO_ROUND"] == "1".
-two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
+# FORCED OVERRIDE (branch feat/shadow-global-max-improvements): the round-2 cross-run
+# GROUP scoring is ALWAYS ON, regardless of the TWO_ROUND env var. It requires the MBR-off
+# scoring path, which is also forced (see PrecursorScoringSearchParameters). To restore the
+# opt-in behavior, revert to the ENV read below.
+#   two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
+two_round_enabled() = true
 
 # Symmetric shadow-decoy injection: after the round-2 cross-run features are written, for
 # every real row inject a paired shadow of the opposite class carrying the source's other
