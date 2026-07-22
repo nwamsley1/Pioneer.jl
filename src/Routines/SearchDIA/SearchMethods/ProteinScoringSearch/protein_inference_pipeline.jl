@@ -1294,36 +1294,6 @@ function group_psms_by_protein(
 end
 
 """
-    load_protein_ambiguity_candidates(mapping_path)
-
-Load the normalized ambiguity mapping written by protein inference. Candidate groups retain
-their target/decoy and entrapment population so evidence cannot cross FDR populations.
-"""
-function load_protein_ambiguity_candidates(
-    mapping_path::String
-)::Dict{UInt32, Vector{ProteinKey}}
-    candidates_by_id = Dict{UInt32, Vector{ProteinKey}}()
-    isfile(mapping_path) || return candidates_by_id
-
-    table = Arrow.Table(mapping_path)
-    @inbounds for i in eachindex(table.protein_ambiguity_id)
-        ambiguity_id = UInt32(table.protein_ambiguity_id[i])
-        candidate = ProteinKey(
-            String(table.candidate_protein_group[i]),
-            Bool(table.target[i]),
-            UInt8(table.entrap_id[i])
-        )
-        push!(get!(candidates_by_id, ambiguity_id, ProteinKey[]), candidate)
-    end
-
-    for candidates in values(candidates_by_id)
-        sort!(candidates)
-        unique!(candidates)
-    end
-    return candidates_by_id
-end
-
-"""
     add_ambiguous_pg_score!(protein_groups, psms, candidates_by_id; q_value_threshold=0.01f0)
 
 Roll ambiguous PSMs to peptide-level log evidence and allocate each peptide once among its

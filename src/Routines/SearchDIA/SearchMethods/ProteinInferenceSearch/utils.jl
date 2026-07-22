@@ -15,63 +15,14 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-const PROTEIN_AMBIGUITY_MAPPING_FILENAME = "protein_ambiguity_mapping.arrow"
-const ProteinAmbiguityMappingRow = @NamedTuple{
-    protein_ambiguity_id::UInt32,
-    sequence::String,
-    target::Bool,
-    entrap_id::UInt8,
-    candidate_protein_group::String
-}
-
-function protein_ambiguity_mapping_path(search_context::SearchContext)::String
-    return joinpath(
-        getDataOutDir(search_context),
-        "temp_data",
-        PROTEIN_AMBIGUITY_MAPPING_FILENAME
-    )
-end
-
-function _write_protein_ambiguity_mapping(
-    output_path::String,
-    rows::Vector{ProteinAmbiguityMappingRow}
-)
-    mkpath(dirname(output_path))
-    n_rows = length(rows)
-    ambiguity_ids = Vector{UInt32}(undef, n_rows)
-    sequences = Vector{String}(undef, n_rows)
-    targets = Vector{Bool}(undef, n_rows)
-    entrap_ids = Vector{UInt8}(undef, n_rows)
-    candidate_groups = Vector{String}(undef, n_rows)
-
-    @inbounds for i in eachindex(rows)
-        row = rows[i]
-        ambiguity_ids[i] = row.protein_ambiguity_id
-        sequences[i] = row.sequence
-        targets[i] = row.target
-        entrap_ids[i] = row.entrap_id
-        candidate_groups[i] = row.candidate_protein_group
-    end
-
-    mapping = DataFrame(
-        protein_ambiguity_id = ambiguity_ids,
-        sequence = sequences,
-        target = targets,
-        entrap_id = entrap_ids,
-        candidate_protein_group = candidate_groups
-    )
-    writeArrow(output_path, mapping)
-    return output_path
-end
-
 """
-    _register_protein_ambiguities!(rows, inference_result, last_id)
+    _register_protein_ambiguities!(candidates_by_id, inference_result, last_id)
 
-Append a deterministic normalized representation of ambiguous peptide assignments and return
-the peptide-to-ID lookup plus the final assigned ID.
+Register ambiguous peptide assignments in memory and return the peptide-to-ID lookup plus the
+final assigned ID.
 """
 function _register_protein_ambiguities!(
-    rows::Vector{ProteinAmbiguityMappingRow},
+    candidates_by_id::Dict{UInt32, Vector{ProteinKey}},
     inference_result::InferenceResult,
     last_id::UInt32
 )
@@ -86,15 +37,7 @@ function _register_protein_ambiguities!(
         candidates = sort!(unique(copy(
             inference_result.ambiguous_peptide_to_proteins[peptide_key]
         )))
-        for candidate in candidates
-            push!(rows, (
-                protein_ambiguity_id = last_id,
-                sequence = peptide_key.sequence,
-                target = peptide_key.is_target,
-                entrap_id = peptide_key.entrap_id,
-                candidate_protein_group = candidate.name
-            ))
-        end
+        candidates_by_id[last_id] = candidates
     end
 
     return peptide_to_id, last_id
@@ -293,13 +236,16 @@ peptide → group mapping across the experiment and pools decoys for the
 downstream protein-level PEP fit.
 
 `global_inference=false` runs inference per file (legacy behavior).
+
+Returns the in-memory mapping from compact ambiguity IDs to candidate final protein groups.
 """
 function run_protein_inference!(
     search_context::SearchContext;
     passing_refs::Vector{PSMFileReference},
     global_inference::Bool = true,
 )
-    isempty(passing_refs) && return nothing
+    protein_ambiguity_candidates = Dict{UInt32, Vector{ProteinKey}}()
+    isempty(passing_refs) && return protein_ambiguity_candidates
 
     precursors = getPrecursors(getSpecLib(search_context))
     annotation_pipeline = TransformPipeline() |>
@@ -309,7 +255,6 @@ function run_protein_inference!(
         indexed_refs = collect(enumerate(passing_refs))
         @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
 
-        ambiguity_rows = ProteinAmbiguityMappingRow[]
         last_ambiguity_id = zero(UInt32)
 
         for (_, psm_ref) in ProgressBar(indexed_refs)
@@ -319,7 +264,7 @@ function run_protein_inference!(
             prepared_df = load_dataframe(psm_ref)
             inference_result = apply_inference_to_dataframe(prepared_df, precursors)
             peptide_to_ambiguity_id, last_ambiguity_id = _register_protein_ambiguities!(
-                ambiguity_rows,
+                protein_ambiguity_candidates,
                 inference_result,
                 last_ambiguity_id
             )
@@ -331,12 +276,7 @@ function run_protein_inference!(
             apply_pipeline!(psm_ref, update_pipeline)
         end
 
-        _write_protein_ambiguity_mapping(
-            protein_ambiguity_mapping_path(search_context),
-            ambiguity_rows
-        )
-
-        return nothing
+        return protein_ambiguity_candidates
     end
 
     @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
@@ -385,9 +325,8 @@ function run_protein_inference!(
     else
         infer_proteins(proteins_vec, peptides_vec)
     end
-    ambiguity_rows = ProteinAmbiguityMappingRow[]
     peptide_to_ambiguity_id, _ = _register_protein_ambiguities!(
-        ambiguity_rows,
+        protein_ambiguity_candidates,
         inference_result,
         zero(UInt32)
     )
@@ -449,12 +388,5 @@ function run_protein_inference!(
             :protein_ambiguity_id   => ambiguity_ids;
             tag = "ProteinInference")
     end
-
-
-    _write_protein_ambiguity_mapping(
-        protein_ambiguity_mapping_path(search_context),
-        ambiguity_rows
-    )
-
-    return nothing
+    return protein_ambiguity_candidates
 end

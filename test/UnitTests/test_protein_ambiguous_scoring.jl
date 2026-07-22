@@ -1,4 +1,3 @@
-using Arrow
 using DataFrames
 using Dictionaries
 using Test
@@ -6,13 +5,10 @@ using Test
 using Pioneer: AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT,
     InferenceResult,
     PeptideKey,
-    ProteinAmbiguityMappingRow,
     ProteinKey,
     _register_protein_ambiguities!,
-    _write_protein_ambiguity_mapping,
     add_ambiguous_pg_score!,
     add_protein_ambiguity_id,
-    load_protein_ambiguity_candidates,
     protein_probit_feature_names
 
 function _ambiguous_scoring_psms(; qval::Float32 = 0.001f0)
@@ -142,7 +138,7 @@ end
         @test protein_groups.ambiguous_pg_score == zeros(Float32, 2)
     end
 
-    @testset "normalized ambiguity mapping round trip" begin
+    @testset "in-memory ambiguity registration" begin
         peptide = PeptideKey("SHARED", true, UInt8(0))
         ambiguous = Dictionary{PeptideKey, Vector{ProteinKey}}()
         insert!(ambiguous, peptide, [protein_b, protein_a])
@@ -150,16 +146,16 @@ end
             Dictionary{PeptideKey, ProteinKey}(),
             ambiguous
         )
-        rows = ProteinAmbiguityMappingRow[]
+        candidates_by_id = Dict{UInt32, Vector{ProteinKey}}()
         peptide_to_id, final_id = _register_protein_ambiguities!(
-            rows,
+            candidates_by_id,
             result,
             zero(UInt32)
         )
 
         @test final_id == UInt32(1)
         @test peptide_to_id[peptide] == UInt32(1)
-        @test getfield.(rows, :candidate_protein_group) == ["A", "B"]
+        @test candidates_by_id[UInt32(1)] == [protein_a, protein_b]
 
         annotation = DataFrame(
             sequence = ["SHARED", "UNASSIGNED"],
@@ -169,12 +165,6 @@ end
         add_protein_ambiguity_id(peptide_to_id).second(annotation)
         @test annotation.protein_ambiguity_id == UInt32[1, 0]
 
-        mktempdir() do dir
-            path = joinpath(dir, "ambiguity.arrow")
-            _write_protein_ambiguity_mapping(path, rows)
-            loaded = load_protein_ambiguity_candidates(path)
-            @test loaded[UInt32(1)] == [protein_a, protein_b]
-        end
     end
 
     @testset "probit uses only the requested ambiguity feature" begin

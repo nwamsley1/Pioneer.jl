@@ -183,6 +183,8 @@ end
 function run_protein_scoring!(
     search_context::SearchContext;
     passing_refs::Vector{PSMFileReference},
+    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} =
+        Dict{UInt32, Vector{ProteinKey}}(),
     max_in_memory_table_mb::Float64,
     q_value_threshold::Float32,
     min_peptides::Int64,
@@ -202,9 +204,6 @@ function run_protein_scoring!(
 
     precursors = getPrecursors(getSpecLib(search_context))
     protein_to_possible_peptides = count_protein_peptides(precursors)
-    protein_ambiguity_candidates = load_protein_ambiguity_candidates(
-        protein_ambiguity_mapping_path(search_context)
-    )
 
     file_idx_to_name = Dict{Int64, String}()
     for (file_idx, file_name) in enumerate(getFileIdToName(getMSData(search_context)))

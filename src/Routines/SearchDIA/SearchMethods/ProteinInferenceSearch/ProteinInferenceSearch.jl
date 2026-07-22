@@ -23,7 +23,9 @@ protein groups and protein-quant eligibility flags.
 """
 struct ProteinInferenceSearch <: SearchMethod end
 
-struct ProteinInferenceSearchResults <: SearchResults end
+mutable struct ProteinInferenceSearchResults <: SearchResults
+    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}}
+end
 
 struct ProteinInferenceSearchParameters <: SearchParameters
     global_inference::Bool
@@ -35,7 +37,7 @@ end
 get_parameters(::ProteinInferenceSearch, params::Any) = ProteinInferenceSearchParameters(params)
 
 function init_search_results(::ProteinInferenceSearchParameters, search_context::SearchContext)
-    return ProteinInferenceSearchResults()
+    return ProteinInferenceSearchResults(Dict{UInt32, Vector{ProteinKey}}())
 end
 
 function process_file!(
@@ -63,17 +65,22 @@ function reset_results!(results::ProteinInferenceSearchResults)
 end
 
 function summarize_results!(
-    ::ProteinInferenceSearchResults,
+    results::ProteinInferenceSearchResults,
     params::ProteinInferenceSearchParameters,
     search_context::SearchContext
 )
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
-    isempty(indexed_paths) && return nothing
+    if isempty(indexed_paths)
+        empty!(results.protein_ambiguity_candidates)
+        store_results!(search_context, ProteinInferenceSearch, results)
+        return nothing
+    end
 
     passing_refs = [PSMFileReference(path) for (_, path) in indexed_paths]
-    run_protein_inference!(search_context;
+    results.protein_ambiguity_candidates = run_protein_inference!(search_context;
         passing_refs = passing_refs,
         global_inference = params.global_inference)
+    store_results!(search_context, ProteinInferenceSearch, results)
 
     return nothing
 end
