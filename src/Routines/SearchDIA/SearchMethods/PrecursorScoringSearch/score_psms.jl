@@ -419,7 +419,7 @@ function _score_precursor_isotope_traces_no_mbr(
     # `.pass1_sidecar.arrow`, so trace_prob (set from trace_prob_prepass in the merge below) becomes
     # the round-2 OOF score.
     if two_round_enabled()
-        write_two_round_feature_columns!(file_paths)
+        write_two_round_feature_columns!(file_paths, length(precursors))
         # Symmetric shadow-decoy injection (see two_round_scoring.jl). No-op when
         # SHADOW_DECOY_MODE === :none. Adds an :is_shadow column and doubles the row
         # count (approximately) when both classes are present per file.

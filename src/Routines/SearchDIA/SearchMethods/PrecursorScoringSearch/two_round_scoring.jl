@@ -245,53 +245,49 @@ end
 end
 
 """
-    _write_group_features!(file_paths)
+    _write_group_features!(file_paths, max_pid)
 
 GROUP_SCORING path. Files are fold-split (one per run×fold). Per CV fold, over ONLY that fold's files
-(= the runs): cluster the runs from their own OOF presence, then in one O(N) pass build per-precursor
-top-4 (score,run) records — `grec` over all the fold's runs, `crec` per cluster (reset via `touched`)
-— and write leave-one-out `global_{max,top3_logodds}`, `cluster_{max,top3_logodds}`, and `delta_irt`.
+(= the runs): cluster the runs from their own OOF presence, then build per-precursor top-4 (score,run)
+records — `grec` over all the fold's runs, `crec` per cluster (reset via `touched`) — and write
+leave-one-out `global_{max,top3_logodds}`, `cluster_{max,top3_logodds}`, and `delta_irt`.
 Run size follows `_group_size(R)`; R<9 → cluster OFF (cluster cols mirror global).
+
+STREAMING: peak memory is O(`max_pid`) accumulators + the fold's sparse presence + one cluster's
+(≤`k` ≤ 9) files — independent of the number of runs. Files are re-read per pass (fold + emit)
+instead of the whole experiment being held in RAM, so this scales to hundreds of runs. `max_pid` is
+the library precursor count (an upper bound on `precursor_idx`); accumulators are sized once from it.
+Bit-identical to the prior all-in-memory version (same read order, same insertion/emit order).
 """
-function _write_group_features!(file_paths::Vector{String})
+function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
     nfiles = length(file_paths)
-    file_pid  = Vector{Vector{UInt32}}(undef, nfiles)
-    file_s1   = Vector{Vector{Float32}}(undef, nfiles)
-    file_irt  = Vector{Vector{Float32}}(undef, nfiles)
-    fold_of   = Vector{Int}(undef, nfiles)          # this file's CV fold (0/1), -1 if empty
+
+    # Cheap metadata pass: each file's CV fold (constant column, one value read).
+    fold_of = Vector{Int}(undef, nfiles)
     for f in 1:nfiles
+        fold_of[f] = _file_fold(Arrow.Table(file_paths[f]).cv_fold)
+    end
+
+    # Read one file's (precursor_idx, s1, irt_obs). s1 = round-1 OOF score from the Pass-1 sidecar.
+    read_file = function(f::Int)
         tbl  = Arrow.Table(file_paths[f])
         side = Arrow.Table(file_paths[f] * PASS1_SIDECAR_SUFFIX)
         pid  = collect(UInt32.(tbl.precursor_idx))
         s1   = collect(Float32.(side.trace_prob_prepass))
         length(s1) == length(pid) ||
             error("_write_group_features!: sidecar row mismatch at $(file_paths[f])")
-        file_pid[f] = pid
-        file_s1[f]  = s1
-        file_irt[f] = collect(Float32.(tbl.irt_obs))
-        fold_of[f]  = _file_fold(tbl.cv_fold)
+        irt  = collect(Float32.(tbl.irt_obs))
+        return pid, s1, irt
     end
-    maxpid = 0
-    for p in file_pid; isempty(p) || (maxpid = max(maxpid, Int(maximum(p)))); end
 
-    gmax = [Vector{Float32}(undef, length(p)) for p in file_pid]
-    gt3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
-    cmax = [Vector{Float32}(undef, length(p)) for p in file_pid]
-    ct3  = [Vector{Float32}(undef, length(p)) for p in file_pid]
-    gnp  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # global n_present (LOO)
-    gnc  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # global n_confident (LOO)
-    cnp  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # cluster n_present (LOO)
-    cnc  = [Vector{Float32}(undef, length(p)) for p in file_pid]   # cluster n_confident (LOO)
-    di   = [Vector{Float32}(undef, length(p)) for p in file_pid]
-
-    grec    = fill(EMPTY_TOPK4, maxpid + 1)        # global records (reused per fold)
-    crec    = fill(EMPTY_TOPK4, maxpid + 1)        # cluster records (reused per cluster via touched)
-    gcnt_p  = zeros(Int32, maxpid + 1)             # global count: runs present (reused per fold)
-    gcnt_c  = zeros(Int32, maxpid + 1)             # global count: runs with s1>=GROUP_CONF_S1
-    ccnt_p  = zeros(Int32, maxpid + 1)             # cluster count: present (reset per cluster via touched)
-    ccnt_c  = zeros(Int32, maxpid + 1)             # cluster count: confident
-    best_s1 = fill(-1.0f0, maxpid + 1)             # for ref_irt (highest-s1 instance per precursor)
-    ref_irt = zeros(Float32, maxpid + 1)
+    grec    = fill(EMPTY_TOPK4, max_pid + 1)        # global records (reused per fold)
+    crec    = fill(EMPTY_TOPK4, max_pid + 1)        # cluster records (reused per cluster via touched)
+    gcnt_p  = zeros(Int32, max_pid + 1)             # global count: runs present (reused per fold)
+    gcnt_c  = zeros(Int32, max_pid + 1)             # global count: runs with s1>=GROUP_CONF_S1
+    ccnt_p  = zeros(Int32, max_pid + 1)             # cluster count: present (reset per cluster via touched)
+    ccnt_c  = zeros(Int32, max_pid + 1)             # cluster count: confident
+    best_s1 = fill(-1.0f0, max_pid + 1)             # for ref_irt (highest-s1 instance per precursor)
+    ref_irt = zeros(Float32, max_pid + 1)
     touched = UInt32[]
     kseen = -1
 
@@ -300,100 +296,107 @@ function _write_group_features!(file_paths::Vector{String})
         R = length(files); R == 0 && continue
         k = _group_size(R); kseen = k
 
-        # presence per run (= per file) for clustering
+        # Pass 1 (stream one file at a time): global records + counts + ref_irt, and the fold's
+        # per-run presence for clustering.
+        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0); fill!(gcnt_p, 0); fill!(gcnt_c, 0)
         run_present = Vector{Vector{UInt32}}(undef, R)
         for ri in 1:R
-            f = files[ri]; pres = UInt32[]
-            @inbounds for i in eachindex(file_pid[f])
-                file_s1[f][i] >= GROUP_PRESENCE_S1 && push!(pres, file_pid[f][i])
+            pid, s1, irt = read_file(files[ri])
+            pres = UInt32[]
+            @inbounds for i in eachindex(pid)
+                p = pid[i]; s = s1[i]
+                grec[p + 1] = _tk_insert(grec[p + 1], s, UInt32(ri))
+                gcnt_p[p + 1] += Int32(1)
+                s >= GROUP_CONF_S1 && (gcnt_c[p + 1] += Int32(1))
+                if s > best_s1[p + 1]; best_s1[p + 1] = s; ref_irt[p + 1] = irt[i]; end
+                s >= GROUP_PRESENCE_S1 && push!(pres, p)
             end
             run_present[ri] = unique!(sort!(pres))
         end
+
         labels = _cluster_runs(run_present, R, k)   # length R; run id = index into `files`
         ncl = maximum(labels)
         runs_in = [Int[] for _ in 1:ncl]
         for ri in 1:R; push!(runs_in[labels[ri]], ri); end
+        run_present = nothing   # release sparse presence
 
-        # Phase 1: global records + counts over the fold's R runs + ref_irt
-        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0); fill!(gcnt_p, 0); fill!(gcnt_c, 0)
-        for ri in 1:R
-            f = files[ri]
-            @inbounds for i in eachindex(file_pid[f])
-                p = file_pid[f][i]; s = file_s1[f][i]
-                grec[p + 1] = _tk_insert(grec[p + 1], s, UInt32(ri))
-                gcnt_p[p + 1] += Int32(1)
-                s >= GROUP_CONF_S1 && (gcnt_c[p + 1] += Int32(1))
-                if s > best_s1[p + 1]; best_s1[p + 1] = s; ref_irt[p + 1] = file_irt[f][i]; end
-            end
-        end
-
-        # Phase 2: per cluster, build cluster records then emit LOO features for its runs' rows
+        # Pass 2: per cluster (≤k runs), hold just that cluster's files, build cluster records,
+        # then emit LOO features for its runs' rows and write each file's GROUP columns in place.
         for c in 1:ncl
+            cl_ris = runs_in[c]
+            buf = Dict{Int, Tuple{Vector{UInt32}, Vector{Float32}, Vector{Float32}}}()
             empty!(touched)
-            for ri in runs_in[c]
-                f = files[ri]
-                @inbounds for i in eachindex(file_pid[f])
-                    p = file_pid[f][i]; s = file_s1[f][i]
+            for ri in cl_ris
+                pid, s1, irt = read_file(files[ri])
+                buf[ri] = (pid, s1, irt)
+                @inbounds for i in eachindex(pid)
+                    p = pid[i]; s = s1[i]
                     crec[p + 1] === EMPTY_TOPK4 && push!(touched, p)
                     crec[p + 1] = _tk_insert(crec[p + 1], s, UInt32(ri))
                     ccnt_p[p + 1] += Int32(1)
                     s >= GROUP_CONF_S1 && (ccnt_c[p + 1] += Int32(1))
                 end
             end
-            for ri in runs_in[c]
+            for ri in cl_ris
                 f = files[ri]; ru = UInt32(ri)
-                @inbounds for i in eachindex(file_pid[f])
-                    p = file_pid[f][i]; s = file_s1[f][i]
+                pid, s1, irt = buf[ri]
+                n = length(pid)
+                gmax = Vector{Float32}(undef, n); gt3 = Vector{Float32}(undef, n)
+                cmax = Vector{Float32}(undef, n); ct3 = Vector{Float32}(undef, n)
+                gnp  = Vector{Float32}(undef, n); gnc = Vector{Float32}(undef, n)
+                cnp  = Vector{Float32}(undef, n); cnc = Vector{Float32}(undef, n)
+                di   = Vector{Float32}(undef, n)
+                @inbounds for i in 1:n
+                    p = pid[i]; s = s1[i]
                     ownc = s >= GROUP_CONF_S1 ? Int32(1) : Int32(0)
-                    gmax[f][i] = _tk_loo_max(grec[p + 1], ru)
-                    gt3[f][i]  = _tk_loo_top3(grec[p + 1], ru)
-                    gnp[f][i]  = Float32(gcnt_p[p + 1] - Int32(1))       # exclude own row
-                    gnc[f][i]  = Float32(gcnt_c[p + 1] - ownc)
+                    gmax[i] = _tk_loo_max(grec[p + 1], ru)
+                    gt3[i]  = _tk_loo_top3(grec[p + 1], ru)
+                    gnp[i]  = Float32(gcnt_p[p + 1] - Int32(1))       # exclude own row
+                    gnc[i]  = Float32(gcnt_c[p + 1] - ownc)
                     if k <= 0
-                        cmax[f][i] = gmax[f][i]; ct3[f][i] = gt3[f][i]
-                        cnp[f][i]  = gnp[f][i];  cnc[f][i] = gnc[f][i]
+                        cmax[i] = gmax[i]; ct3[i] = gt3[i]
+                        cnp[i]  = gnp[i];  cnc[i] = gnc[i]
                     else
-                        cmax[f][i] = _tk_loo_max(crec[p + 1], ru)
-                        ct3[f][i]  = _tk_loo_top3(crec[p + 1], ru)
-                        cnp[f][i]  = Float32(ccnt_p[p + 1] - Int32(1))
-                        cnc[f][i]  = Float32(ccnt_c[p + 1] - ownc)
+                        cmax[i] = _tk_loo_max(crec[p + 1], ru)
+                        ct3[i]  = _tk_loo_top3(crec[p + 1], ru)
+                        cnp[i]  = Float32(ccnt_p[p + 1] - Int32(1))
+                        cnc[i]  = Float32(ccnt_c[p + 1] - ownc)
                     end
-                    di[f][i] = abs(file_irt[f][i] - ref_irt[p + 1])
+                    di[i] = abs(irt[i] - ref_irt[p + 1])
                 end
+                main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
+                nrow(main) == n ||
+                    error("_write_group_features!: arrow row count changed at $(file_paths[f])")
+                main[!, :global_max]           = gmax
+                main[!, :global_top3_logodds]  = gt3
+                main[!, :cluster_max]          = cmax
+                main[!, :cluster_top3_logodds] = ct3
+                main[!, :global_n_present]     = gnp
+                main[!, :global_n_confident]   = gnc
+                main[!, :cluster_n_present]    = cnp
+                main[!, :cluster_n_confident]  = cnc
+                main[!, :delta_irt]            = di
+                writeArrow(file_paths[f], main)
             end
             for p in touched; crec[p + 1] = EMPTY_TOPK4; ccnt_p[p + 1] = Int32(0); ccnt_c[p + 1] = Int32(0); end
         end
     end
-
-    for f in 1:nfiles
-        main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
-        nrow(main) == length(file_pid[f]) ||
-            error("_write_group_features!: arrow row count changed at $(file_paths[f])")
-        main[!, :global_max]           = gmax[f]
-        main[!, :global_top3_logodds]  = gt3[f]
-        main[!, :cluster_max]          = cmax[f]
-        main[!, :cluster_top3_logodds] = ct3[f]
-        main[!, :global_n_present]     = gnp[f]
-        main[!, :global_n_confident]   = gnc[f]
-        main[!, :cluster_n_present]    = cnp[f]
-        main[!, :cluster_n_confident]  = cnc[f]
-        main[!, :delta_irt]            = di[f]
-        writeArrow(file_paths[f], main)
-    end
     nruns = count(!=(-1), fold_of) ÷ 2
-    @user_info "group-scoring: wrote global+cluster (max, top3_logodds, n_present, n_confident) + delta_irt for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
+    @user_info "group-scoring (streaming): wrote global+cluster (max, top3_logodds, n_present, n_confident) + delta_irt for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
     return nothing
 end
 
 """
-    write_two_round_feature_columns!(file_paths)
+    write_two_round_feature_columns!(file_paths, max_pid)
 
 Round-2 cross-run features. After round-1 `train_and_predict_pass1_oom!` has written each file's
 `.pass1_sidecar.arrow` (OOF s1 = `trace_prob_prepass`), cluster the runs per CV fold and write the
 GROUP cross-run features + `delta_irt` as columns into each per-file fold Arrow, in place — so the
-round-2 pass can train on [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt].
+round-2 pass can train on [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. `max_pid` is the library
+precursor count (sizes the streaming accumulators; see `_write_group_features!`).
 """
-write_two_round_feature_columns!(file_paths::Vector{String}) = _write_group_features!(file_paths)
+write_two_round_feature_columns!(file_paths::Vector{String}, max_pid::Int) =
+    _write_group_features!(file_paths, max_pid)
 
 # ---------- Symmetric shadow-decoy injection ----------
 #
