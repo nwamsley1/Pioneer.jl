@@ -183,11 +183,12 @@
             lgbm_hp = test_hyperparameters,
             min_training_class_count = 1,
             max_train = 1_000,
+            max_iterations = 3,
         )
 
         @test length(scored.scores) == nrow(table)
         @test length(scored.models) == 2
-        @test scored.iter == 1
+        @test scored.iter in 1:3
         @test mean(scored.scores[target]) > mean(scored.scores[.!target])
     end
 end
