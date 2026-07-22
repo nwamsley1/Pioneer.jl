@@ -176,153 +176,6 @@ function _build_global_precursor_feature_table(
     return table
 end
 
-function _log_global_precursor_feature_importances(
-    models::Vector{LightGBMModel},
-    features::Vector{Symbol},
-)
-    total_gains = Dict(feature => 0.0 for feature in features)
-    for model in models
-        for (feature, gain) in importance(model)
-            total_gains[feature] += Float64(gain)
-        end
-    end
-
-    sorted_gains = sort!(collect(total_gains); by = pair -> -last(pair))
-    lines = ["Global precursor LightGBM feature gains (summed across folds):"]
-    for (feature, gain) in sorted_gains
-        push!(lines, "    $(rpad(string(feature), 52)) $(round(Int, gain))")
-    end
-    @debug_l1 join(lines, "\n")
-    return nothing
-end
-
-function _score_global_precursor_features_oof(
-    table::DataFrame,
-    features::Vector{Symbol};
-    lgbm_hp::NamedTuple = GLOBAL_PRECURSOR_LGBM_HP,
-    min_training_class_count::Int = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
-    max_train::Int = GLOBAL_PRECURSOR_MAX_TRAIN,
-    train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
-    stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
-    min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
-    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
-)
-    observed_folds = sort!(unique(table.cv_fold))
-    observed_folds == collect(GLOBAL_PRECURSOR_CV_FOLDS) ||
-        throw(ArgumentError("Global precursor scoring requires CV folds 0 and 1"))
-
-    targets = Vector{Bool}(table.target)
-    training_mask = nothing
-    previous_target_q01 = -1
-    best_state = nothing
-
-    for iteration in 1:max_iterations
-        scores = Vector{Float32}(undef, nrow(table))
-        models = LightGBMModel[]
-        n_train_targets = 0
-        n_train_decoys = 0
-        iteration_valid = true
-
-        for test_fold in GLOBAL_PRECURSOR_CV_FOLDS
-            test_indices = findall(==(test_fold), table.cv_fold)
-            train_indices = Int[
-                row for row in axes(table, 1)
-                if table.cv_fold[row] != test_fold &&
-                   (training_mask === nothing || training_mask[row])
-            ]
-
-            if length(train_indices) > max_train
-                rng = Random.MersenneTwister(1776 + 1000 * iteration + Int(test_fold))
-                Random.shuffle!(rng, train_indices)
-                resize!(train_indices, max_train)
-            end
-
-            train_targets = targets[train_indices]
-            fold_target_count = count(train_targets)
-            fold_decoy_count = length(train_targets) - fold_target_count
-            if min(fold_target_count, fold_decoy_count) < min_training_class_count
-                if iteration == 1
-                    throw(ArgumentError(
-                        "Global precursor scoring requires at least " *
-                        "$min_training_class_count targets and decoys in each training fold",
-                    ))
-                end
-                iteration_valid = false
-                break
-            end
-
-            classifier = build_lightgbm_classifier(; lgbm_hp...)
-            model = fit_lightgbm_model(
-                classifier,
-                view(table, train_indices, features),
-                train_targets;
-                positive_label = true,
-            )
-            scores[test_indices] .= lightgbm_predict(
-                model,
-                view(table, test_indices, features);
-                output_type = Float32,
-            )
-            n_train_targets += fold_target_count
-            n_train_decoys += fold_decoy_count
-            push!(models, model)
-        end
-
-        if !iteration_valid
-            @debug_l1 "Global precursor semi-supervised stopping: iteration " *
-                       "$iteration does not retain enough targets and decoys; " *
-                       "using iteration $(best_state.iter)"
-            break
-        end
-
-        scores .= Float32.(clamp.(scores, 1.0f-6, 1.0f0 - 1.0f-4))
-        metrics = _scoring_semisupervised_metrics_and_mask(
-            scores,
-            targets;
-            train_q_threshold = train_q_threshold,
-            stop_q_threshold = stop_q_threshold,
-        )
-        current_state = (
-            scores = scores,
-            models = models,
-            target_q01 = metrics.target_q01,
-            decoy_q01 = metrics.decoy_q01,
-            iter = iteration,
-        )
-        @debug_l1 "Global precursor semi-supervised iteration $iteration: " *
-                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
-                   "q≤.01 targets=$(metrics.target_q01) decoys=$(metrics.decoy_q01)"
-
-        if iteration > 1 && !_scoring_target_gain_sufficient(
-            previous_target_q01,
-            metrics.target_q01;
-            min_fraction = min_gain,
-        )
-            best_state = _scoring_better_iteration_state(best_state, current_state)
-            @debug_l1 "Global precursor semi-supervised stopping: iteration " *
-                       "$iteration did not improve q≤.01 targets by " *
-                       "$(round(100 * min_gain, digits = 2))%; using iteration " *
-                       "$(best_state.iter)"
-            break
-        end
-
-        best_state = _scoring_better_iteration_state(best_state, current_state)
-        iteration == max_iterations && break
-        previous_target_q01 = metrics.target_q01
-        training_mask = metrics.training_mask
-    end
-
-    _log_global_precursor_feature_importances(best_state.models, features)
-    return best_state
-end
-
-"""
-    build_global_precursor_score_dicts(refs, n_precursors, n_runs_total)
-
-Build one score-distribution feature row per precursor and return out-of-fold
-global LightGBM scores with the corresponding target labels. For a single-run
-search, return the individual precursor probabilities without training a model.
-"""
 function _build_single_run_precursor_score_dicts(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
@@ -343,28 +196,55 @@ function _build_single_run_precursor_score_dicts(
     return score_dict, target_dict
 end
 
+"""
+    build_global_precursor_score_dicts(
+        refs,
+        n_precursors,
+        n_runs_total,
+        fdr_scale_factor,
+    )
+
+Build one score-distribution feature row per precursor and return out-of-fold
+global scores with the corresponding target labels. Select the LightGBM scores
+only when they identify more targets at 1% FDR than the empirical global score.
+For a single-run search, return the individual precursor probabilities without
+training a model.
+"""
 function build_global_precursor_score_dicts(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
     n_runs_total::Int,
+    fdr_scale_factor::Float32,
 )
     n_runs_total == 1 &&
         return _build_single_run_precursor_score_dicts(refs, n_precursors)
 
     inputs = _collect_global_precursor_inputs(refs, n_precursors)
     table = _build_global_precursor_feature_table(inputs, n_runs_total)
-    scored = _score_global_precursor_features_oof(
+    scored = _score_global_features_oof(
         table,
         GLOBAL_PRECURSOR_SCORE_FEATURES,
+        collect(GLOBAL_PRECURSOR_CV_FOLDS);
+        scoring_name = "Global precursor",
+        lgbm_hp = GLOBAL_PRECURSOR_LGBM_HP,
+        min_training_class_count = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
+        max_train = GLOBAL_PRECURSOR_MAX_TRAIN,
+    )
+    selected = _select_global_scores(
+        scored.scores,
+        table.empirical_global_score,
+        table.target;
+        scoring_name = "Global precursor",
+        fdr_scale_factor = fdr_scale_factor,
     )
 
     score_dict = Dict{UInt32, Float32}()
     sizehint!(score_dict, nrow(table))
     @inbounds for row in axes(table, 1)
-        score_dict[table.precursor_idx[row]] = scored.scores[row]
+        score_dict[table.precursor_idx[row]] = selected.scores[row]
     end
-    @debug_l1 "Global precursor LightGBM scored $(length(score_dict)) precursors " *
+    @debug_l1 "Global precursor scoring scored $(length(score_dict)) precursors " *
               "with $(length(GLOBAL_PRECURSOR_SCORE_FEATURES)) features; " *
-              "selected semi-supervised iteration $(scored.iter)"
+              "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dict, inputs.targets
 end

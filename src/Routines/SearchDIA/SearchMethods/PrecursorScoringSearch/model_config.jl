@@ -41,11 +41,6 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # best-per-precursor features that MainSearch cannot use for scan selection.
 # Lists are kept separate due to load-order constraint in importScripts.jl:
 # PrecursorScoringSearch loads before MainSearch.
-const SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD = 0.03f0
-const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
-const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
-const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
-
 const FLANKING_WINDOW_FEATURES = [
     :flanking_ms1_m0_candidate_fraction,
     :flanking_frag_candidate_fraction,

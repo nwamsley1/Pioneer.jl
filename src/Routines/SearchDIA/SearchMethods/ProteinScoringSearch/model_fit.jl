@@ -473,20 +473,22 @@ end
                                   models::Dict{UInt8, Vector{Float64}},
                                   feature_names::Vector{Symbol})
 
-Apply probit models to protein group files based on their CV fold.
+Apply probit models to protein group files based on their CV fold. When probit
+scoring is unavailable, convert every initial log-sum score to a probability.
 
 # Arguments
 - `pg_refs`: Vector of protein group file references to update
 - `protein_to_cv_fold`: Pre-built mapping of protein names to cv_fold
 - `models`: Dictionary mapping CV fold to fitted model coefficients
 - `feature_names`: Feature names used in the model
+- `use_probit_scores`: Whether every fold has a trained probit model
 """
 function apply_probit_scores_multifold!(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     models::Dict{UInt8, Vector{Float64}},
     feature_names::Vector{Symbol};
-    skip_scoring = false
+    use_probit_scores::Bool,
 )
     for ref in pg_refs
         transform_and_write!(ref) do df
@@ -505,8 +507,7 @@ function apply_probit_scores_multifold!(
             # Save original scores for comparison
             df[!, :old_pg_score] = copy(df.pg_score)
             
-            # Apply appropriate model to each fold (skip if skip_scoring = true)
-            if !skip_scoring
+            if use_probit_scores
                 for (fold, model) in models
                     mask = df.cv_fold .== fold
                     if sum(mask) > 0
@@ -516,11 +517,7 @@ function apply_probit_scores_multifold!(
                     end
                 end
             else
-                # When skip_scoring is true, pg_score contains log-sum scores: -sum(log1p(-p))
-                # Convert to probabilities: p = 1 - exp(-pg_score)
-                df[!, :pg_score] = 1.0f0 .- exp.(-df.pg_score)
-                # Clamp to avoid numerical issues with logodds function
-                df[!, :pg_score] = clamp.(df.pg_score, 1f-6, 1f0 - 1f-6)
+                df[!, :pg_score] = _initial_protein_probabilities(df.old_pg_score)
             end
             
             # Sort by pg_score and target in descending order
@@ -532,6 +529,36 @@ function apply_probit_scores_multifold!(
             return df
         end
     end
+end
+
+function _initial_protein_probabilities(scores::AbstractVector{<:Real})
+    return Float32.(clamp.(
+        1.0f0 .- exp.(-scores),
+        1.0f-6,
+        1.0f0 - 1.0f-6,
+    ))
+end
+
+function _protein_probit_training_data_sufficient(
+    all_protein_groups::DataFrame,
+    cv_folds::Vector{UInt8},
+)
+    targets = all_protein_groups.target
+    folds = all_protein_groups.cv_fold
+    for test_fold in cv_folds
+        n_train_targets = 0
+        n_train_decoys = 0
+        @inbounds for row in eachindex(targets, folds)
+            folds[row] == test_fold && continue
+            if targets[row]
+                n_train_targets += 1
+            else
+                n_train_decoys += 1
+            end
+        end
+        min(n_train_targets, n_train_decoys) >= 10 || return false
+    end
+    return true
 end
 
 """
@@ -556,9 +583,11 @@ Perform probit regression analysis with automatic CV fold detection from library
 # Process
 1. Detects unique CV folds from library
 2. Assigns CV folds to protein groups based on the pre-built mapping
-3. Trains separate probit model for each fold
-4. Applies models to held-out data
+3. Trains separate probit models only when every fold has sufficient data
+4. Applies every model, or converts every initial score to a probability
 5. Updates protein group files if provided
+
+Returns `true` only when probit models were trained and applied to every fold.
 """
 function perform_probit_analysis_multifold(
     all_protein_groups::DataFrame,
@@ -583,43 +612,32 @@ function perform_probit_analysis_multifold(
     # 2. Assign CV folds to protein groups based on the mapping
     assign_protein_group_cv_folds!(all_protein_groups, protein_to_cv_fold)
 
-    # 3. Check distribution
-    fold_counts = Dict{UInt8, Int}()
-    for fold in all_protein_groups.cv_fold
-        fold_counts[fold] = get(fold_counts, fold, 0) + 1
-    end
-
     feature_names = protein_probit_feature_names()
     feature_filter_df = all_protein_groups
     remove_zero_variance_columns!(feature_names, feature_filter_df)
 
-    if isempty(feature_names)
+    features_available = !isempty(feature_names)
+    if !features_available
         @user_warn "No valid features remaining for multifold probit regression after filtering"
-        return
     end
 
-    if nrow(feature_filter_df) == 0
+    rows_available = nrow(feature_filter_df) > 0
+    if !rows_available
         @user_warn "No protein groups are available for protein probit regression"
-        return
     end
 
-    # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()
+    use_probit_scores = !skip_scoring &&
+                        features_available &&
+                        rows_available &&
+                        _protein_probit_training_data_sufficient(
+                            all_protein_groups,
+                            unique_cv_folds,
+                        )
 
-    if !skip_scoring
+    if use_probit_scores
         for test_fold in unique_cv_folds
-            # Get training data (all folds except test_fold)
             train_mask = all_protein_groups.cv_fold .!= test_fold
-            
-            # Check if we have sufficient data
-            n_train_targets = sum(all_protein_groups[train_mask, :target])
-            n_train_decoys = sum(.!all_protein_groups[train_mask, :target])
-            
-            if n_train_targets < 10 || n_train_decoys < 10
-                @user_warn "Insufficient training data for fold $test_fold" targets=n_train_targets decoys=n_train_decoys
-                continue
-            end
-
             train_df = all_protein_groups[train_mask, :]
 
             X_train = Matrix{Float64}(train_df[:, feature_names])
@@ -657,16 +675,10 @@ function perform_probit_analysis_multifold(
         end
     end
     
-    # 6. Apply models to their respective test folds (skip if skip_scoring = true)
     all_protein_groups[!, :old_pg_score] = copy(all_protein_groups[!, :pg_score])  # Save for comparison
     
-    if !skip_scoring
+    if use_probit_scores
         for test_fold in unique_cv_folds
-            if !haskey(models, test_fold)
-                @user_warn "No model available for fold $test_fold, keeping original scores"
-                continue
-            end
-            
             test_mask = all_protein_groups.cv_fold .== test_fold
             n_test = sum(test_mask)
             
@@ -676,10 +688,12 @@ function perform_probit_analysis_multifold(
                 all_protein_groups[test_mask, :pg_score] = Float32.(prob_scores)
             end
         end
+    else
+        all_protein_groups[!, :pg_score] =
+            _initial_protein_probabilities(all_protein_groups.old_pg_score)
     end
     
-    # 7. Report improvement if requested (skip if skip_scoring = true)
-    if show_improvement && !skip_scoring
+    if show_improvement && use_probit_scores
         # Calculate improvement at 1% FDR
         old_qvalues = zeros(Float32, nrow(all_protein_groups))
         new_qvalues = zeros(Float32, nrow(all_protein_groups))
@@ -703,10 +717,11 @@ function perform_probit_analysis_multifold(
             protein_to_cv_fold,
             models,
             feature_names;
-            skip_scoring = skip_scoring
+            use_probit_scores = use_probit_scores,
         )
     end
     
     # Clean up temporary column
     select!(all_protein_groups, Not(:cv_fold))
+    return use_probit_scores
 end
