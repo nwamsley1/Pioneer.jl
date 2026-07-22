@@ -1,0 +1,198 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\titleformat{\section}{\large\bfseries\color{black!80}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\definecolor{codebg}{gray}{0.96}
+\definecolor{kw}{RGB}{0,0,180}
+\definecolor{cmt}{RGB}{0,120,0}
+\definecolor{str}{RGB}{160,0,0}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  stringstyle=\color{str},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  xleftmargin=6pt,
+  language=Python,
+  morekeywords={function,end,if,else,elseif,return,for,in,const,true,false,nothing,struct},
+}
+
+\title{\vspace{-1.5em}\textbf{Plan: Delete MBR, unify on the OOM two-round scoring path}}
+\author{Pioneer.jl \textemdash{} branch \texttt{feat/shadow-global-max-improvements}}
+\date{2026-07-22}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+\section{Context and goal}
+
+Two-round cross-run scoring (per-fold run clustering \textrightarrow{} GROUP features \textrightarrow{}
+shadow-decoys \textrightarrow{} round-2 LightGBM) plus Dennis's learned global model now supersede MBR
+for controlling false transfer while gaining IDs. The remaining work is to make two-round the
+\emph{single} scoring path and remove MBR.
+
+\textbf{Phase 1 (done, \texttt{5b2f60418}).} \verb|_write_group_features!| was rewritten to stream
+(bounded memory, O(vocab) + $\leq$9 files, independent of run count) after the 208-file
+\texttt{APMS\_Astral} regression job hung $\sim$10\,h on the old all-in-memory version. Verified
+\emph{bit-identical} to the prior output on EWZ.
+
+\textbf{Design decision (this doc).} The \texttt{match\_between\_runs} config flag is repurposed to mean
+\emph{``do a second round''}:
+\begin{itemize}[nosep,leftmargin=1.4em]
+  \item \texttt{match\_between\_runs = true} \textrightarrow{} round-1 \textbf{and} round-2 (GROUP
+        features + shadow-decoys).
+  \item \texttt{match\_between\_runs = false} \textrightarrow{} round-1 only (first-round scores; no
+        GROUP features, no shadow-decoys, no second training pass).
+\end{itemize}
+Both paths use the streamed OOM trainer. The old MBR machinery (counterfactual partner pools, donor
+dict, per-file MBR feature sidecars, paired-FTR controller, recovery sidecars) is deleted outright.
+
+\section{Current structure (before)}
+
+\texttt{score\_precursor\_isotope\_traces} branches on the flag into two whole pipelines:
+
+\begin{lstlisting}
+function score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
+                                        fragment_lookup, ::Int64, ::Float32=0.01f0, ::Bool=false;
+                                        match_between_runs::Bool = true)
+    if match_between_runs
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)  # DELETE
+    else
+        return _score_precursor_isotope_traces_no_mbr(second_pass_folder, file_paths, precursors)
+    end
+end
+\end{lstlisting}
+
+The MBR path (\verb|_score_precursor_isotope_traces_mbr|) runs: counterfactual pools \textrightarrow{}
+Pass-1 OOM \textrightarrow{} donor dict \textrightarrow{} per-file MBR feature sidecars \textrightarrow{}
+slim FTR DataFrame \textrightarrow{} paired-FTR filter \textrightarrow{} recovery sidecars \textrightarrow{}
+merge. The no-MBR path already uses the OOM trainer and, gated by the current forced
+\texttt{two\_round\_enabled()=true} hack, runs the two-round steps.
+
+\textbf{Forced overrides to remove} (added for regression testing):
+\begin{lstlisting}
+# PrecursorScoringSearch.jl  -- forced MBR off
+mbr = false                                   # was: Bool(global_params.match_between_runs) : true
+# two_round_scoring.jl       -- forced two-round on
+two_round_enabled() = true                    # was: get(ENV, "TWO_ROUND", "") == "1"
+\end{lstlisting}
+
+\section{Phase 2 \textemdash{} Unify on one OOM path}
+
+Collapse the branch into a single function. \texttt{match\_between\_runs} now gates \emph{only} the
+second round. \texttt{fragment\_lookup} (MBR empirical-spectrum features) becomes unused and is dropped.
+
+\begin{lstlisting}
+# score_psms.jl  (after)
+function score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
+                                        ::Int64, ::Float32=0.01f0, ::Bool=false;
+                                        match_between_runs::Bool = true)
+    # Round 1: streamed OOM LightGBM over the per-file Arrow tables -> .pass1_sidecar.arrow (OOF s1).
+    features = copy(ADVANCED_FEATURE_SET)
+    pass1 = train_and_predict_pass1_oom!(file_paths; features=features,
+                compute_infold=false, lgbm_hp=SCORING_LGBM_HP, semisupervised=true)
+    log_pass_importance(pass1, match_between_runs ? "Round-1" : "Pass-1")
+
+    if match_between_runs
+        # Round 2: cross-run GROUP features + shadow-decoys, re-trained on the same streamed OOM path.
+        write_two_round_feature_columns!(file_paths, length(precursors))   # streaming (Phase 1)
+        inject_shadow_decoys!(file_paths)
+        features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
+        pass1 = train_and_predict_pass1_oom!(file_paths; features=features2,
+                    compute_infold=false, lgbm_hp=SCORING_LGBM_HP, semisupervised=true)
+        log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
+        log_shadow_fdr_diagnostics(file_paths; q_threshold=0.01)
+        remove_shadow_decoys!(file_paths)
+    end
+
+    _merge_pass1_into_main!(file_paths, precursors)   # renamed from _merge_pass1_into_main_no_mbr!
+    return nothing
+end
+\end{lstlisting}
+
+\texttt{two\_round\_enabled()} is deleted; the \texttt{match\_between\_runs} argument is the single
+gate. Its call site (\texttt{PrecursorScoringSearch.jl}) already passes
+\texttt{params.match\_between\_runs} \textemdash{} that stays, but now sourced from config again (Phase 4).
+
+\section{Phase 3 \textemdash{} Delete MBR machinery}
+
+\textbf{Delete functions} (all only reachable from the removed MBR path):
+\texttt{\_score\_precursor\_isotope\_traces\_mbr}, \texttt{build\_counterfactual\_partner\_pools},
+\texttt{build\_mbr\_fragment\_annotation\_keys}, \texttt{build\_mbr\_donor\_dict\_streaming\_with\_pass1},
+\texttt{compute\_mbr\_features\_per\_file\_to\_sidecar\_with\_pass1!}, \texttt{load\_ftr\_slim\_dataframe},
+\texttt{apply\_mbr\_filter\_paired!}, \texttt{write\_recovery\_sidecars},
+\texttt{merge\_mbr\_sidecars\_into\_main!}.
+
+\textbf{Delete files} and their \texttt{importScripts.jl} entries:
+\begin{lstlisting}
+"mbr_pairing.jl",     # MBR Phase 1: 1:1 pair regeneration with cloning
+"mbr_streaming.jl",   # MBR Phase 2: donor dict + per-file MBR sidecars
+"mbr_ftr.jl",         # MBR Phase 4: FTR controller on MBR-boosted score
+\end{lstlisting}
+
+\textbf{Downstream compatibility (verified graceful).} Protein inference / MaxLFQ read MBR outputs
+only behind \texttt{hasproperty} guards, so their absence takes the default branch:
+\begin{lstlisting}
+# protein_inference_pipeline.jl -- already safe when the column is gone
+if !hasproperty(gdf, :mbr_recovered)
+    return (recovered_peptides = Int64(0), only_protein = false)   # default: nothing recovered
+end
+# MBR_boosted_prec_prob / MBR_boosted_qval / MBR_boosted_global_qval: all hasproperty-guarded ->
+# fall through to the plain :prec_prob / :qval / :global_qval columns.
+\end{lstlisting}
+
+The no-MBR merge currently writes \texttt{mbr\_recovered = false}. Two options: (a) keep writing the
+constant-\texttt{false} column for schema stability, or (b) stop writing it and rely on the
+\texttt{hasproperty} defaults. \textbf{Choose (a)} \textemdash{} one cheap column, avoids touching the
+MBR-boosted-column selection logic and the \texttt{mbr\_qval\_bypass} step in
+\texttt{PrecursorScoringSearch.jl}, and keeps output schema stable for regression baselines.
+
+\texttt{MainSearch} computes \emph{no} MBR features (verified), so nothing upstream needs changing.
+
+\section{Phase 4 \textemdash{} Remove forced overrides; config-drive the flag}
+
+\begin{lstlisting}
+# PrecursorScoringSearch.jl -- restore config read (default true = do second round)
+mbr = hasproperty(global_params, :match_between_runs) ?
+        Bool(global_params.match_between_runs) : true
+# two_round_scoring.jl -- delete two_round_enabled() entirely (match_between_runs is the gate)
+\end{lstlisting}
+
+Net effect: \texttt{match\_between\_runs} in the config now selects one-round vs two-round scoring,
+with no MBR machinery behind either.
+
+\section{Phase 5 \textemdash{} Validation}
+
+\begin{enumerate}[nosep,leftmargin=1.4em]
+  \item \textbf{Bit/ID-equivalence:} EWZ two-round (\texttt{match\_between\_runs=true}) unchanged vs the
+        current \texttt{5b2f60418} two-round output (deletion must not alter the two-round path).
+  \item \textbf{One-round path:} EWZ with \texttt{match\_between\_runs=false} produces round-1-only
+        scores (no GROUP columns, no shadows) and completes.
+  \item \textbf{Scale:} \texttt{APMS\_Astral} (208 files, \texttt{match\_between\_runs=true}) completes in
+        reasonable time/memory (the original hang).
+  \item \textbf{Full regression} on the branch; confirm entrapment FDR unchanged (precursor +
+        experiment-wide protein calibration from the earlier entrapment work).
+\end{enumerate}
+
+\section{Risk and rollback}
+
+Large deletion, but low-risk because: (i) two-round path is untouched by the deletion (only the MBR
+branch and dead code go); (ii) downstream MBR reads are \texttt{hasproperty}-guarded; (iii) Phase 1
+already proved the two-round path scales. Pre-change state is preserved on \texttt{origin}
+(\texttt{backup/shadow-global-max-pre-rebase}) and each phase is a separate commit, so any phase is
+individually revertible. Git history retains the deleted MBR code if it is ever needed again.
+
+\end{document}

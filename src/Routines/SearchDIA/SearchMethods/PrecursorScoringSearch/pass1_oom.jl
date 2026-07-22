@@ -22,6 +22,10 @@
 
 using Random
 
+# Suffix for the per-file Pass-1 OOF-score sidecar this trainer writes (read by score_psms.jl and
+# two_round_scoring.jl). Previously lived in the now-deleted mbr_streaming.jl.
+const PASS1_SIDECAR_SUFFIX = ".pass1_sidecar.arrow"
+
 # Per-fold sampling cap. Resolved at call time (SCORING_LGBM_MAX_TRAIN isn't
 # bound at parse time — MainSearch/scoring.jl loads AFTER this file in
 # importScripts.jl).

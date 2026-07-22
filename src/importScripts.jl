@@ -262,12 +262,9 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
-            "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
-            "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
-            "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
-            "two_round_scoring.jl",            # round-2 cross-run GROUP features + shadow-decoys (env-gated TWO_ROUND)
+            "two_round_scoring.jl",            # round-2 cross-run GROUP features + shadow-decoys (gated by match_between_runs)
             "global_precursor_scoring.jl",     # Experiment-wide precursor scoring model
             "wide_window_features.jl",          # Raw same-window MS1/MS2 support features
             "scoring_interface.jl",            # Interface functions

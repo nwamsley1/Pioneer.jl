@@ -239,7 +239,7 @@ const _P = Pioneer
                 push!(files, _write_fixture!(dir, "run$(ri)_fold0.arrow", df, Float32[s1v]))
             end
 
-            _P._write_group_features!(files)
+            _P._write_group_features!(files, 1)   # max_pid = 1 (single precursor id in this fixture)
 
             # Read back per-file single-row values.
             gm = Float32[]; gt3 = Float32[]; np = Float32[]; nc = Float32[]

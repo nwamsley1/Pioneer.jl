@@ -24,28 +24,20 @@ and the low-data probit fallback.
 
 """
     score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
-                                    fragment_lookup, max_psms_in_memory,
-                                    q_value_threshold, force_oom;
+                                    max_psms_in_memory, q_value_threshold, force_oom;
                                     match_between_runs=true)
 
-Score PSMs experiment-wide with the same LightGBM classifier the per-file
-MainSearch uses (`SHARED_LGBM_HP` in `MainSearch/scoring.jl`). Loads PSMs
-into memory, calls the shared training helper, and writes `:trace_prob` back
-to the per-file Arrow files.
+Score PSMs experiment-wide via the streamed OOM LightGBM trainer, writing `:trace_prob` back to the
+per-file Arrow files. Always does round-1; `match_between_runs=true` additionally does round-2 (GROUP
+cross-run features + shadow-decoys), `false` keeps the round-1 scores as final. The whole experiment is
+never held in RAM (reservoir-sampled training, per-file predict/merge).
 
 # Arguments
-- `second_pass_folder`: Folder containing the per-file second-pass PSM
-  Arrow files (output of MainSearch's prescore filter step).
-- `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to
-  write the scored output back to.
-- `precursors`: Library precursor metadata (used to add `:accession_numbers`).
-- `fragment_lookup`: Library fragment metadata used by MBR empirical-spectrum
-  features.
-- `max_psms_in_memory`: Memory budget; surfaced for backward compatibility,
-  currently unused (in-memory always; per-fold sub-sampling inside the
-  shared helper handles large datasets).
-- `q_value_threshold`: Surfaced for backward compatibility; currently unused.
-- `force_oom`: Surfaced for backward compatibility; ignored.
+- `second_pass_folder`: Folder containing the per-file second-pass PSM Arrow files (MainSearch output).
+- `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to write the scored output back to.
+- `precursors`: Library precursor metadata (`:accession_numbers`; GROUP accumulator sizing).
+- `max_psms_in_memory` / `q_value_threshold` / `force_oom`: surfaced for call-site compatibility; unused.
+- `match_between_runs` (keyword): do a second round (cross-run scoring) or not.
 
 # Returns
 `nothing` (scores are written to file).
@@ -54,22 +46,50 @@ function score_precursor_isotope_traces(
     second_pass_folder::String,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    fragment_lookup::LibraryFragmentLookup,
-    ::Int64,                       # max_psms_in_memory (unused)
+    ::Int64,                       # max_psms_in_memory (unused; kept for call-site compatibility)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
 )
-    # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
-    # MBR features, FTR recovery) — best_psms is never materialised as the
-    # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
+    # Round 1: streamed OOM LightGBM over the per-file Arrow tables → each file's
+    # `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass). The whole experiment is never
+    # materialised in RAM (reservoir-sampled training; per-file predict).
+    features = copy(ADVANCED_FEATURE_SET)
+    pass1 = train_and_predict_pass1_oom!(
+        file_paths;
+        features        = features,
+        compute_infold  = false,
+        lgbm_hp         = SCORING_LGBM_HP,
+        semisupervised  = true,
+    )
+    @debug_l1 "Round-1 (streamed OOM) trained on $(length(pass1.available_features)) features"
+    log_pass_importance(pass1, match_between_runs ? "Round-1" : "Pass-1")
+
+    # `match_between_runs` now means "do a second round". True → derive the GROUP cross-run features +
+    # delta_irt from the round-1 OOF sidecars, inject symmetric shadow-decoys, and re-train on
+    # [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt] via the same streamed OOM path (SS both rounds).
+    # False → keep the round-1 scores as final (no cross-run features, no shadow-decoys).
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
-    else
-        return _score_precursor_isotope_traces_no_mbr(
-            second_pass_folder, file_paths, precursors,
+        write_two_round_feature_columns!(file_paths, length(precursors))
+        inject_shadow_decoys!(file_paths)
+        features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
+        pass1 = train_and_predict_pass1_oom!(
+            file_paths;
+            features        = features2,
+            compute_infold  = false,
+            lgbm_hp         = SCORING_LGBM_HP,
+            semisupervised  = true,
         )
+        @user_info "two-round: round-2 (semi-supervised) trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
+        log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
+        # Diagnostic: real-only vs shadow-included FDR, then drop shadows so downstream sees the
+        # original schema.
+        log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)
+        remove_shadow_decoys!(file_paths)
     end
+
+    _merge_pass1_into_main!(file_paths, precursors)
+    return nothing
 end
 
 function _scoring_semisupervised_train_mask(
@@ -260,106 +280,12 @@ function _train_scoring_classifier_semisupervised(
     return best_state.scores, best_state.last_classifier, best_state.info, best_state
 end
 
-# Streaming MBR-on path. Walks the per-file Arrow tables for everything;
-# the only DataFrame ever materialised is the slim FTR table (10 cols)
-# reconstructed from sidecars right before the FTR controller runs.
-function _score_precursor_isotope_traces_mbr(
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors,
-    fragment_lookup::LibraryFragmentLookup,
-)
-    # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
-    cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
-    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
-
-    # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
-    # out, so no quantile-binned features need pre-computing.
-    features = copy(ADVANCED_FEATURE_SET)
-
-    # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
-    # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
-    pass1 = train_and_predict_pass1_oom!(
-        file_paths;
-        features        = features,
-        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
-        lgbm_hp         = SCORING_LGBM_HP,
-        semisupervised  = true,
-    )
-
-    # 4. Pass-1 feature importance (last_classifier is whichever fold's
-    # booster the OOM trainer kept — only used for the diagnostic dump).
-    if pass1.last_classifier !== nothing
-        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
-            for (fname, gain) in sorted_imp
-                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
-            end
-            @debug_l1 join(lines, "\n")
-        end
-    end
-
-    # 5. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
-    @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
-    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
-    @debug_l1 "  donor dict pids: $(length(donor_dict))"
-
-    # Parallelize the per-file MBR feature compute + sidecar write across
-    # files. donor_dict and cf_partner_pools are read-only across this loop
-    # (built before, not mutated by the per-file function), and each file
-    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
-    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
-    parallel_foreach!(length(file_paths)) do chunk
-        for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(
-                file_paths[f_idx],
-                donor_dict,
-                cf_partner_pools,
-                fragment_keys,
-            )
-        end
-    end
-
-    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    cf_partner_pools = nothing
-    fragment_keys = nothing
-    GC.gc()
-
-    # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
-    # only as wide as the FTR controller needs.
-    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
-    psms = load_ftr_slim_dataframe(file_paths)
-    @debug_l1 "  slim FTR rows: $(nrow(psms))"
-
-    # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
-    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
-
-    # 8. Paired-counterfactual FTR.
-    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
-
-    # 9. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
-    # back into each main file in one pass.
-    @debug_l1 "MBR Batch F: writing recovery sidecars..."
-    write_recovery_sidecars(psms, file_paths)
-    psms = DataFrame()
-    GC.gc()
-    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
-    merge_mbr_sidecars_into_main!(file_paths)
-
-    return nothing
-end
-
-# Legacy in-memory path used only when match_between_runs = false. Kept for
-# small / non-MBR runs where the full best_psms easily fits in memory.
-# No-MBR Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
-# file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
-# into each main file ONE FILE AT A TIME — the full experiment is never materialised.
-# Reproduces the exact output columns the legacy in-memory path wrote:
-# `:accession_numbers`, `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
-# `:mbr_recovered` (= false).
-function _merge_pass1_into_main_no_mbr!(
+# Pass-1 (or round-2) sidecar merge. After `train_and_predict_pass1_oom!` has written each file's
+# `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the scores into each main file ONE FILE AT A
+# TIME — the full experiment is never materialised. Writes `:accession_numbers`, `:decoy`,
+# `:trace_prob_prepass`, `:trace_prob` (= prepass), and `:mbr_recovered` (= false, kept for downstream
+# schema stability now that MBR recovery is removed).
+function _merge_pass1_into_main!(
     file_paths::Vector{String},
     precursors::LibraryPrecursors;
     cleanup::Bool = true,
@@ -374,11 +300,11 @@ function _merge_pass1_into_main_no_mbr!(
         pass1 = Arrow.Table(pass1_path)
         n = nrow(main)
         length(pass1.precursor_idx) == n ||
-            error("_merge_pass1_into_main_no_mbr!: row-count mismatch at $path")
+            error("_merge_pass1_into_main!: row-count mismatch at $path")
         @inbounds for i in 1:n
             (main.precursor_idx[i] == pass1.precursor_idx[i] &&
              main.scan_idx[i]      == pass1.scan_idx[i]) ||
-                error("_merge_pass1_into_main_no_mbr!: sidecar misaligned at row $i of $path")
+                error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
         end
         main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
         main[!, :decoy]              = main[!, :target] .== false
@@ -389,61 +315,6 @@ function _merge_pass1_into_main_no_mbr!(
         writeArrow(path, main)
         cleanup && safeRm(pass1_path, nothing; force=true)
     end
-    return nothing
-end
-
-# MBR-off path. Streams Pass-1 LightGBM over the per-file Arrow tables via the same
-# OOM trainer the MBR path uses, instead of materialising the whole experiment into
-# one in-memory DataFrame (the legacy path's peak-RSS cost). ID-equivalent — not
-# bit-identical — to the legacy path: the OOM trainer reservoir-samples for training,
-# so scores differ in the last bits, but the full experiment is never held in RAM.
-function _score_precursor_isotope_traces_no_mbr(
-    second_pass_folder::String,
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors,
-)
-    features = copy(ADVANCED_FEATURE_SET)
-    pass1 = train_and_predict_pass1_oom!(
-        file_paths;
-        features        = features,
-        compute_infold  = false,        # no MBR-FTR downstream consumes trace_prob_infold
-        lgbm_hp         = SCORING_LGBM_HP,
-        semisupervised  = true,
-    )
-    @debug_l1 "Pass-1 (no MBR, streamed) trained on $(length(pass1.available_features)) features"
-    log_pass_importance(pass1, two_round_enabled() ? "Round-1" : "Pass-1")
-
-    # Optional round-2 (env TWO_ROUND=1): derive the GROUP cross-run features + delta_irt from the
-    # round-1 OOF sidecars, inject symmetric shadow-decoys, and re-train on
-    # [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. The round-2 pass overwrites each
-    # `.pass1_sidecar.arrow`, so trace_prob (set from trace_prob_prepass in the merge below) becomes
-    # the round-2 OOF score.
-    if two_round_enabled()
-        write_two_round_feature_columns!(file_paths, length(precursors))
-        # Symmetric shadow-decoy injection (see two_round_scoring.jl). No-op when
-        # SHADOW_DECOY_MODE === :none. Adds an :is_shadow column and doubles the row
-        # count (approximately) when both classes are present per file.
-        inject_shadow_decoys!(file_paths)
-        features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
-        # Round-2 is the same semi-supervised iterative-relabel trainer as round-1 (SS both rounds).
-        # A single-pass round-2 (shadows-only regularizer) was tested and lost on both bulk (EWZ,
-        # -1% IDs + more leak) and sparse single-cell (250pg/3ms, -13% IDs), so SS round-2 stands.
-        pass1 = train_and_predict_pass1_oom!(
-            file_paths;
-            features        = features2,
-            compute_infold  = false,
-            lgbm_hp         = SCORING_LGBM_HP,
-            semisupervised  = true,
-        )
-        @user_info "two-round: round-2 (semi-supervised) trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
-        log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
-        # Compute BOTH FDR variants (A: real-only; B: shadow-included) as a diagnostic,
-        # then remove shadow rows so downstream sees the same schema as before.
-        log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)
-        remove_shadow_decoys!(file_paths)
-    end
-
-    _merge_pass1_into_main_no_mbr!(file_paths, precursors)
     return nothing
 end
 

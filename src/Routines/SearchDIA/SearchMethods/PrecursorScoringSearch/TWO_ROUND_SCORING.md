@@ -7,9 +7,13 @@ with the base features under a **shadow-decoy regularizer** that forces the mode
 *jointly* with the base evidence rather than as a standalone "seen-elsewhere" shortcut — which is
 what keeps cross-run breadth from turning into false transfer.
 
-Enabled with `ENV["TWO_ROUND"] == "1"`. The learned global-aggregation model is a separate opt-in
-(`ENV["GLOBAL_MODEL"] == "1"`). Code: `two_round_scoring.jl` (features + shadows) and
-`scoring_interface.jl` (global model).
+Gated by the config flag **`global.match_between_runs`** (default `true`): `true` runs the second
+round (this doc); `false` keeps the round-1 scores as final. The flag's old meaning (match-between-runs
+recovery) is gone — the MBR machinery was deleted; two-round is its replacement. The learned global
+model (Dennis's `build_global_precursor_score_dicts`, on develop) is the experiment-wide aggregator.
+Both scoring rounds run on the streamed OOM trainer, so the whole experiment is never held in RAM
+(scales to hundreds of runs). Code: `two_round_scoring.jl` (features + shadows), `score_psms.jl`
+(`score_precursor_isotope_traces`).
 
 > **History.** Earlier prototypes explored a single-run `twin_score` (cosine-nearest run),
 > `cluster_consensus`, a KNN/Gram cosine neighbor scheme, spectral-agreement gates
@@ -141,11 +145,10 @@ only expresses under it. Judge by **total** IDs at controlled false transfer (no
 ## 9. Reproduction
 
 ```bash
-# Two-round GROUP features + shadow-decoys + learned global model (AND filter is the native default):
-TWO_ROUND=1 GLOBAL_MODEL=1 \
-  julia --project=. --threads 10 --gcthreads 5,1 \
-  -e 'using Pioneer; SearchDIA("<config>.json")'
-# baselines: drop TWO_ROUND for round-1 only; drop GLOBAL_MODEL for fixed top-√N logodds.
+# Two-round (GROUP features + shadow-decoys) is on when the config sets global.match_between_runs=true
+# (the default). The AND filter (qval AND global_qval) is the native default.
+julia --project=. --threads 10 --gcthreads 5,1 -e 'using Pioneer; SearchDIA("<config>.json")'
+# one-round baseline: set global.match_between_runs=false in the config.
 ```
 
 Metrics from `<results>/precursors_long.arrow`: passing = `target & qval ≤ 0.01 & global_qval ≤

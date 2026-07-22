@@ -1,8 +1,8 @@
 # Two-round experiment-wide scoring: cross-run consistency features.
 # Design + CV protocol: see TWO_ROUND_SCORING.md.
 #
-# Enabled via ENV["TWO_ROUND"] == "1". After the round-1 Pass-1 OOM trainer has written each
-# file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass), `write_two_round_feature_columns!`
+# Runs when `match_between_runs` is true (the second round). After the round-1 Pass-1 OOM trainer has
+# written each file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass), `write_two_round_feature_columns!`
 # clusters the runs per CV fold and derives the GROUP cross-run features (global/cluster
 # max, top3_logodds, n_present, n_confident) + delta_irt from s1, writing them as columns into each
 # per-file fold Arrow. `inject_shadow_decoys!` then adds symmetric shadow rows (each grafted with the
@@ -17,12 +17,8 @@
 # Assumes one row per precursor_idx per file (current MainSearch invariant), so
 # s1[file, precursor] is a single value — no trace->precursor aggregation needed.
 
-# FORCED OVERRIDE (branch feat/shadow-global-max-improvements): the round-2 cross-run
-# GROUP scoring is ALWAYS ON, regardless of the TWO_ROUND env var. It requires the MBR-off
-# scoring path, which is also forced (see PrecursorScoringSearchParameters). To restore the
-# opt-in behavior, revert to the ENV read below.
-#   two_round_enabled() = get(ENV, "TWO_ROUND", "") == "1"
-two_round_enabled() = true
+# Whether the second (cross-run) round runs is gated by `match_between_runs` in
+# `score_precursor_isotope_traces` — there is no separate two-round toggle.
 
 # Symmetric shadow-decoy injection: after the round-2 cross-run features are written, for
 # every real row inject a paired shadow of the opposite class carrying the source's other

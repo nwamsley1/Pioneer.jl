@@ -75,13 +75,10 @@ struct PrecursorScoringSearchParameters <: SearchParameters
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
-        # FORCED OVERRIDE (branch feat/shadow-global-max-improvements): MBR is disabled
-        # regardless of config — the two-round cross-run scoring (always-on, see
-        # two_round_enabled) is its replacement. Revert this to the config read below to
-        # restore config-driven MBR.
-        #   mbr = hasproperty(global_params, :match_between_runs) ?
-        #           Bool(global_params.match_between_runs) : true
-        mbr = false
+        # `match_between_runs` now selects one-round vs two-round scoring (its old MBR meaning is gone;
+        # the MBR machinery has been deleted). Default true = do the second (cross-run) round.
+        mbr = hasproperty(global_params, :match_between_runs) ?
+                Bool(global_params.match_between_runs) : true
 
         new(
             Float64(ml_params.max_psm_memory_mb),
@@ -208,7 +205,6 @@ function summarize_results!(
             main_search_psms_folder,
             valid_fold_paths,
             getPrecursors(getSpecLib(search_context)),
-            getFragmentLookupTable(getSpecLib(search_context)),
             max_psms,
             params.q_value_threshold,
             FORCE_OOM;
