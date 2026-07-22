@@ -19,6 +19,7 @@ const SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD = 0.03f0
 const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
 const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
+const GLOBAL_SCORING_SEMISUPERVISED_MAX_ITERATIONS = 1
 
 function _count_targets_at_qvalue(
     scores::AbstractVector{<:AbstractFloat},
@@ -227,7 +228,7 @@ function _score_global_features_oof(
     train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
     stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
-    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+    max_iterations::Int = GLOBAL_SCORING_SEMISUPERVISED_MAX_ITERATIONS,
 )
     observed_folds = sort!(unique(Vector{UInt8}(table.cv_fold)))
     observed_folds == cv_folds || throw(ArgumentError(
