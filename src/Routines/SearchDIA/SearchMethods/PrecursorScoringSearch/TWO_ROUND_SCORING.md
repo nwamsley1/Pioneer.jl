@@ -66,7 +66,8 @@ instance's **iRT only, never its score**.
 
 ## 4. Shadow-decoy regularization
 
-`inject_shadow_decoys!` adds, for every real row, one **symmetric shadow** of the opposite class:
+The round-2 sampler (`_sample_both_folds` with `inject_shadows = true`) builds, for every sampled
+real row, one **symmetric shadow** of the opposite class:
 
 ```
 real target T → shadow_decoy  = nearest-iRT decoy's columns,  but GROUP features grafted from T
@@ -74,13 +75,19 @@ real decoy  D → shadow_target = nearest-iRT target's columns, but GROUP featur
 ```
 
 Pairing is by nearest `irt_obs` (a **score-independent** property) within the same fold-file; the
-shadow inherits its *source's* `precursor_idx`/`cv_fold` (so precursor-keyed folds stay valid) and
-carries an `is_shadow` flag. Grafting each GROUP feature from the real row forces its target/decoy
-marginal to **1:1**: at every grafted value there is one target-labeled and one decoy-labeled row,
-so round-2 LGBM cannot trust a GROUP feature standalone — it must use it *jointly* with the base
-features. `delta_irt` is **not** grafted (each shadow keeps its source row's own iRT
-self-consistency). `remove_shadow_decoys!` restores the original schema before downstream steps;
-`log_shadow_fdr_diagnostics` reports the shadow-included vs real-only FDR as a diagnostic.
+shadow inherits its *source's* `cv_fold` (files are fold-split, so source and original always share
+one, and precursor-keyed folds stay valid). Grafting each GROUP feature from the real row forces its
+target/decoy marginal to **1:1**: at every grafted value there is one target-labeled and one
+decoy-labeled row, so round-2 LGBM cannot trust a GROUP feature standalone — it must use it
+*jointly* with the base features. `delta_irt` is **not** grafted (each shadow keeps its source row's
+own iRT self-consistency).
+
+Shadows exist **only in the training sample** — they are never written to the per-file Arrows, so
+those keep their schema and row count throughout and no inject/remove rewrite is needed. The
+per-fold budget splits evenly between reals and their shadows, so the training set still tops out at
+`SCORING_LGBM_MAX_TRAIN`. A fold-file containing only one class cannot be paired and is excluded
+from round-2 training (logged). `log_shadow_fdr_diagnostics` reports shadow-included vs real-only
+FDR from the sample's in-memory OOF scores.
 
 This is a **tree** regularizer (the 1:1 marginal is inert for a linear model). It is why the GROUP
 features add breadth without leaking, and is the piece that does **not** transfer to the (linear,

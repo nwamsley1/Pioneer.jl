@@ -23,32 +23,28 @@ and the low-data probit fallback.
 ==========================================================#
 
 """
-    score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
-                                    max_psms_in_memory, q_value_threshold, force_oom;
-                                    match_between_runs=true)
+    score_precursor_isotope_traces(file_paths, precursors; match_between_runs=true)
 
 Score PSMs experiment-wide via the streamed OOM LightGBM trainer, writing `:trace_prob` back to the
 per-file Arrow files. Always does round-1; `match_between_runs=true` additionally does round-2 (GROUP
 cross-run features + shadow-decoys), `false` keeps the round-1 scores as final. The whole experiment is
 never held in RAM (reservoir-sampled training, per-file predict/merge).
 
+Training size is capped by `k_per_fold` (= `SCORING_LGBM_MAX_TRAIN`) in the Pass-1 OOM trainer, not by
+a caller-supplied memory budget. The semi-supervised loop uses
+`SCORING_SEMISUPERVISED_{TRAIN,STOP}_QVALUE_THRESHOLD`, not the user's final-filter q-value threshold.
+
 # Arguments
-- `second_pass_folder`: Folder containing the per-file second-pass PSM Arrow files (MainSearch output).
-- `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to write the scored output back to.
+- `file_paths`: Vector of fold-split per-file Arrow paths to write the scored output back to.
 - `precursors`: Library precursor metadata (`:accession_numbers`; GROUP accumulator sizing).
-- `max_psms_in_memory` / `q_value_threshold` / `force_oom`: surfaced for call-site compatibility; unused.
 - `match_between_runs` (keyword): do a second round (cross-run scoring) or not.
 
 # Returns
 `nothing` (scores are written to file).
 """
 function score_precursor_isotope_traces(
-    second_pass_folder::String,
     file_paths::Vector{String},
-    precursors::LibraryPrecursors,
-    ::Int64,                       # max_psms_in_memory (unused; kept for call-site compatibility)
-    ::Float32 = 0.01f0,            # q_value_threshold (unused)
-    ::Bool = false;                # force_oom (unused)
+    precursors::LibraryPrecursors;
     match_between_runs::Bool = true,
 )
     # Round 1: streamed OOM LightGBM over the per-file Arrow tables → each file's
@@ -71,21 +67,26 @@ function score_precursor_isotope_traces(
     # False → keep the round-1 scores as final (no cross-run features, no shadow-decoys).
     if match_between_runs
         write_two_round_feature_columns!(file_paths, length(precursors))
-        inject_shadow_decoys!(file_paths)
         features2 = vcat(copy(ADVANCED_FEATURE_SET), two_round_features())
+        # Shadow-decoys live only in the training sample (built inside the sampler), so the
+        # per-file Arrows keep their original schema and row count throughout — no inject /
+        # remove rewrites, and the sidecars stay aligned by construction.
         pass1 = train_and_predict_pass1_oom!(
             file_paths;
             features        = features2,
             compute_infold  = false,
             lgbm_hp         = SCORING_LGBM_HP,
             semisupervised  = true,
+            inject_shadows  = true,
+            graft_cols      = _mbr_graft_cols(),
         )
         @user_info "two-round: round-2 (semi-supervised) trained on $(length(pass1.available_features)) features (incl. GROUP cross-run + delta_irt)"
         log_pass_importance(pass1, "Round-2 (+GROUP cross-run,+delta_irt)")
-        # Diagnostic: real-only vs shadow-included FDR, then drop shadows so downstream sees the
-        # original schema.
-        log_shadow_fdr_diagnostics(file_paths; q_threshold = 0.01)
-        remove_shadow_decoys!(file_paths)
+        # Diagnostic: real-only vs shadow-included FDR over the training sample.
+        log_shadow_fdr_diagnostics(
+            pass1.sample_scores, pass1.sample_targets, pass1.sample_is_shadow;
+            q_threshold = 0.01,
+        )
     end
 
     _merge_pass1_into_main!(file_paths, precursors)
@@ -189,20 +190,6 @@ function _scoring_better_iteration_state(previous_state, current_state)
     previous_state === nothing && return current_state
     current_state === nothing && return previous_state
     return current_state.target_q01 >= previous_state.target_q01 ? current_state : previous_state
-end
-
-function _split_scoring_train_masks(
-    row_counts::AbstractVector{<:Integer},
-    training_mask::AbstractVector{Bool},
-)
-    masks = Vector{BitVector}(undef, length(row_counts))
-    offset = 0
-    for (file_idx, n_integer) in enumerate(row_counts)
-        n = Int(n_integer)
-        masks[file_idx] = BitVector(@view training_mask[(offset + 1):(offset + n)])
-        offset += n
-    end
-    return masks
 end
 
 function _train_scoring_classifier_semisupervised(

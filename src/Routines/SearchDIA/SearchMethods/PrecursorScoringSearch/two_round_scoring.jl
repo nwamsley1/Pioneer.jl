@@ -5,9 +5,10 @@
 # written each file's `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass), `write_two_round_feature_columns!`
 # clusters the runs per CV fold and derives the GROUP cross-run features (global/cluster
 # max, top3_logodds, n_present, n_confident) + delta_irt from s1, writing them as columns into each
-# per-file fold Arrow. `inject_shadow_decoys!` then adds symmetric shadow rows (each grafted with the
-# original row's cross-run features) so a second `train_and_predict_pass1_oom!` pass trains on
-# [ ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt ] with a 1:1 target/decoy marginal on the grafts.
+# per-file fold Arrow. The round-2 `train_and_predict_pass1_oom!` pass then builds symmetric shadow
+# rows INSIDE its training sample (each grafted with the original row's cross-run features) and trains
+# on [ ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt ] with a 1:1 target/decoy marginal on the grafts.
+# Shadows never touch disk, so the per-file Arrows keep their schema and row count throughout.
 #
 # Leakage-safety rests on the existing precursor_idx-keyed CV folds (Invariant A): every PSM of a
 # precursor shares one fold, so a PSM's cross-run lookups land in the same held-out fold and their s1
@@ -20,10 +21,9 @@
 # Whether the second (cross-run) round runs is gated by `match_between_runs` in
 # `score_precursor_isotope_traces` — there is no separate two-round toggle.
 
-# Symmetric shadow-decoy injection: after the round-2 cross-run features are written, for
-# every real row inject a paired shadow of the opposite class carrying the source's other
-# features but the ORIGINAL row's grafted cross-run feature(s). See TWO_ROUND_SCORING.md.
-const SHADOW_DECOY_MODE = :symmetric   # :none | :symmetric
+# Symmetric shadow-decoys: for every sampled real row the trainer builds a paired shadow of the
+# opposite class carrying the source's other features but the ORIGINAL row's grafted cross-run
+# feature(s). See TWO_ROUND_SCORING.md.
 # Positive logit: 0 for s1<=0.5, else log(s1/(1-s1)) clamped away from the asymptote.
 @inline function _pos_logit(x::Float32)
     x <= 0.5f0 && return 0.0f0
@@ -394,21 +394,19 @@ precursor count (sizes the streaming accumulators; see `_write_group_features!`)
 write_two_round_feature_columns!(file_paths::Vector{String}, max_pid::Int) =
     _write_group_features!(file_paths, max_pid)
 
-# ---------- Symmetric shadow-decoy injection ----------
+# ---------- Symmetric shadow-decoy pairing ----------
 #
-# For every real row in a fold-file, inject one shadow of the opposite class:
-#   real target T  → shadow_decoy  = nearest-iRT decoy's columns except mbr_score = T.mbr_score
-#   real decoy D   → shadow_target = nearest-iRT target's columns except mbr_score = D.mbr_score
-# `is_shadow` flags the shadow (false on originals).
+# For every sampled real row the trainer builds one shadow of the opposite class:
+#   real target T  → shadow_decoy  = nearest-iRT decoy's columns except the grafted cols = T's
+#   real decoy D   → shadow_target = nearest-iRT target's columns except the grafted cols = D's
 #
-# Row count exactly doubles when both classes are present in a file. Shadows
-# inherit their SOURCE's precursor_idx / cv_fold, so precursor-keyed CV folds
-# stay valid. LGBM trains transparently on the enlarged set.
+# The training sample doubles. Shadows inherit their SOURCE's cv_fold (files are fold-split, so
+# source and original always share one), keeping precursor-keyed CV folds valid.
 #
-# The shadows destroy the marginal-on-mbr_score signal (at every mbr_score
-# value from a target, there is 1 target-labeled and 1 decoy-labeled row).
-# Round-2 LGBM is therefore forced to use mbr_score jointly with the base
-# features rather than trusting it as a standalone signal.
+# The shadows destroy the marginal signal on each grafted feature (at every value taken from a
+# target there is 1 target-labeled and 1 decoy-labeled row). Round-2 LGBM is therefore forced to
+# use those features jointly with the base features rather than trusting them standalone.
+# `_nearest_sorted_idx` and `_mbr_graft_cols` below are the pieces the sampler consumes.
 
 # Vector of indices into `decoy_irt` (sorted asc) whose value is nearest to `q`.
 # Binary search on the sorted array; ties break to the lower index. `perm` maps
@@ -427,161 +425,19 @@ write_two_round_feature_columns!(file_paths::Vector{String}, max_pid::Int) =
     return (q - sorted_vals[lo]) <= (sorted_vals[hi] - q) ? lo : hi
 end
 
-# Sidecar suffix + column: mirrors the round-1 sidecar so we can also
-# extend/truncate the sidecar rows to stay aligned with the fold-file.
-const SHADOW_SIDECAR_SCORE_COL = :trace_prob_prepass
-
 """
-    inject_shadow_decoys!(file_paths::Vector{String}) -> Int
+    log_shadow_fdr_diagnostics(scores, is_target, is_shadow; q_threshold = 0.01)
 
-For each fold-file, symmetrically inject shadow rows (see module comment). Also
-extends `.pass1_sidecar.arrow` so its row count stays aligned; shadow sidecar
-scores are copied from the SOURCE row (they'll be overwritten when round-2
-predicts). Returns total shadows injected across all files.
+Log (A) real-only FDR count and (B) shadow-inclusive FDR count of REAL targets passing at
+the threshold. Inputs are the round-2 training sample's OOF scores and its target /
+shadow flags — shadows never reach disk, so this is computed in memory.
 """
-function inject_shadow_decoys!(file_paths::Vector{String})
-    SHADOW_DECOY_MODE === :none && return 0
-    total = 0
-    n_skipped_target_side = 0
-    n_skipped_decoy_side  = 0
-    for p in file_paths
-        main = DataFrame(Tables.columntable(Arrow.Table(p)))
-        # If the sidecar exists (round-1 already wrote it), we mirror row count.
-        side_path = p * PASS1_SIDECAR_SUFFIX
-        side_present = isfile(side_path)
-        side = side_present ? DataFrame(Tables.columntable(Arrow.Table(side_path))) : nothing
-        side_present && nrow(side) != nrow(main) &&
-            error("inject_shadow_decoys!: sidecar row count mismatch at $p ($(nrow(side)) vs $(nrow(main)))")
-
-        n = nrow(main)
-        n == 0 && continue
-        tgt = main.target::AbstractVector{Bool}
-        irt = Float32.(main.irt_obs)
-        target_idx = findall(tgt)
-        decoy_idx  = findall(.!tgt)
-
-        if isempty(target_idx) || isempty(decoy_idx)
-            # No opposite class present — can't build symmetric shadows.
-            n_skipped_target_side += length(target_idx)
-            n_skipped_decoy_side  += length(decoy_idx)
-            continue
-        end
-
-        # For each real target, source_row = nearest-iRT decoy → shadow_decoy(source=decoy).
-        # For each real decoy,  source_row = nearest-iRT target → shadow_target(source=target).
-        decoy_perm  = sortperm(view(irt, decoy_idx))
-        target_perm = sortperm(view(irt, target_idx))
-        decoy_irt_sorted  = irt[decoy_idx[decoy_perm]]
-        target_irt_sorted = irt[target_idx[target_perm]]
-
-        shadow_src_row = Vector{Int}(undef, n)   # source row index in main
-        shadow_mbr_row = Vector{Int}(undef, n)   # row whose mbr_score to graft
-        @inbounds for r in 1:n
-            if tgt[r]
-                pos = _nearest_sorted_idx(decoy_irt_sorted, irt[r])
-                pos == 0 && (n_skipped_target_side += 1; shadow_src_row[r] = 0; continue)
-                shadow_src_row[r] = decoy_idx[decoy_perm[pos]]
-                shadow_mbr_row[r] = r
-            else
-                pos = _nearest_sorted_idx(target_irt_sorted, irt[r])
-                pos == 0 && (n_skipped_decoy_side += 1; shadow_src_row[r] = 0; continue)
-                shadow_src_row[r] = target_idx[target_perm[pos]]
-                shadow_mbr_row[r] = r
-            end
-        end
-        valid_rows = findall(!=(0), shadow_src_row)
-        isempty(valid_rows) && continue
-
-        # Build the shadow subset in bulk by selecting rows [shadow_src_row[i] for i in valid_rows]
-        # from main, then overwrite mbr_score.
-        src_positions = shadow_src_row[valid_rows]
-        mbr_positions = shadow_mbr_row[valid_rows]
-        shadows = main[src_positions, :]
-
-        # Overwrite the cross-run transfer feature column(s) with the ORIGINAL row's value(s),
-        # so each feature's target/decoy marginal is 1:1 (forces joint use with base features).
-        # The grafted columns are the GROUP cross-run features (see _mbr_graft_cols / GROUP_COLS).
-        for mbr_col in _mbr_graft_cols()
-            hasproperty(main, mbr_col) && (shadows[!, mbr_col] = main[mbr_positions, mbr_col])
-        end
-
-        # Set is_shadow flag (add column to `main` too if absent — schema union).
-        if !hasproperty(main, :is_shadow)
-            main[!, :is_shadow] = falses(nrow(main))
-        end
-        shadows[!, :is_shadow] = trues(nrow(shadows))
-
-        # Concat.
-        main_out = vcat(main, shadows)
-        writeArrow(p, main_out)
-
-        # Mirror sidecar: append sidecar rows from src_positions.
-        if side_present
-            side_shadow = side[src_positions, :]
-            side_out = vcat(side, side_shadow)
-            writeArrow(side_path, side_out)
-        end
-
-        total += nrow(shadows)
-    end
-    @user_info "shadow-decoy injection: injected $total shadows across $(length(file_paths)) files (skipped $(n_skipped_target_side) target-side + $(n_skipped_decoy_side) decoy-side for missing opposite class)"
-    return total
-end
-
-"""
-    remove_shadow_decoys!(file_paths::Vector{String}) -> Int
-
-Filter out `is_shadow == true` rows from each fold-file and its sidecar. Called
-after round-2 scoring completes and after any shadow-inclusive diagnostics are
-computed. Returns total shadows removed.
-"""
-function remove_shadow_decoys!(file_paths::Vector{String})
-    total = 0
-    for p in file_paths
-        main = DataFrame(Tables.columntable(Arrow.Table(p)))
-        !hasproperty(main, :is_shadow) && continue
-        side_path = p * PASS1_SIDECAR_SUFFIX
-        side_present = isfile(side_path)
-        side = side_present ? DataFrame(Tables.columntable(Arrow.Table(side_path))) : nothing
-        side_present && nrow(side) != nrow(main) &&
-            error("remove_shadow_decoys!: sidecar row count mismatch at $p")
-
-        real_mask = .!Bool.(main.is_shadow)
-        n_removed = sum(.!real_mask)
-        n_removed == 0 && continue
-        main_kept = main[real_mask, :]
-        # Drop the flag column too so the schema matches the pre-injection layout.
-        select!(main_kept, Not(:is_shadow))
-        writeArrow(p, main_kept)
-        if side_present
-            writeArrow(side_path, side[real_mask, :])
-        end
-        total += n_removed
-    end
-    @user_info "shadow-decoy removal: removed $total shadow rows from $(length(file_paths)) files"
-    return total
-end
-
-"""
-    log_shadow_fdr_diagnostics(file_paths::Vector{String}; q_threshold::Float64 = 0.01)
-
-BEFORE removing shadows: log (A) real-only FDR count and (B) shadow-inclusive
-FDR count of REAL targets passing at the threshold. Assumes the round-2 sidecar
-(`trace_prob_prepass`) is the current OOF score.
-"""
-function log_shadow_fdr_diagnostics(file_paths::Vector{String}; q_threshold::Float64 = 0.01)
-    scores = Float32[]; is_target = Bool[]; is_shadow = Bool[]
-    for p in file_paths
-        main = Arrow.Table(p)
-        side = Arrow.Table(p * PASS1_SIDECAR_SUFFIX)
-        n = length(main.precursor_idx)
-        length(side.trace_prob_prepass) == n ||
-            error("log_shadow_fdr_diagnostics: sidecar/main row count mismatch at $p")
-        append!(scores, Float32.(side.trace_prob_prepass))
-        append!(is_target, Bool.(main.target))
-        shadow_col = hasproperty(main, :is_shadow) ? Bool.(main.is_shadow) : falses(n)
-        append!(is_shadow, shadow_col)
-    end
+function log_shadow_fdr_diagnostics(
+    scores::AbstractVector{<:Real},
+    is_target::AbstractVector{Bool},
+    is_shadow::AbstractVector{Bool};
+    q_threshold::Float64 = 0.01,
+)
     isempty(scores) && (@user_info "shadow FDR diagnostics: no rows"; return nothing)
 
     perm = sortperm(scores; rev=true)  # rank 1 = highest score
