@@ -59,7 +59,6 @@ const GLOBAL_PROTEIN_LGBM_HP = (
 
 const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 100
 const GLOBAL_PROTEIN_MAX_TRAIN = 1_000_000
-const USE_GLOBAL_PROTEIN_MODEL = false
 const GlobalProteinKey = Tuple{String, Bool, UInt8}
 
 struct GlobalProteinRunScore
@@ -338,7 +337,7 @@ function build_global_protein_score_dicts(
         n_proteins,
     )
     cv_folds = sort!(unique(collect(values(inputs.folds))))
-    if !USE_GLOBAL_PROTEIN_MODEL || !_global_protein_model_eligible(
+    if !_global_protein_model_eligible(
         inputs,
         cv_folds,
         protein_probit_scoring_succeeded,

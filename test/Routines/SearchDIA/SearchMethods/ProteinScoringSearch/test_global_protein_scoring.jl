@@ -8,8 +8,6 @@
 # (at your option) any later version.
 
 @testset "Global protein scoring" begin
-    @test !Pioneer.USE_GLOBAL_PROTEIN_MODEL
-
     @testset "protein probit requires sufficient data in every fold" begin
         table = DataFrame(
             target = vcat(
