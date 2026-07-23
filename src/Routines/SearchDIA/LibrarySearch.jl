@@ -97,6 +97,16 @@ function library_search(
     if _zt_tuning && _zt_tuning_overhang > 0f0
         qtm_frag = SquareQuadModel(_zt_tuning_overhang)
     end
+    # Sciex ZT wide-emit candidacy (MAIN search): PIONEER_ZT_CANDIDACY_TOL (Da half-width) evaluates
+    # each precursor across ~2·tol bins so it gets a bitvec emission chance in EVERY metascan bin,
+    # not just its center. A precursor that clears in ANY bin survives (map_any_hit_to_center! below,
+    # then the usual ±k fill) — recovering diluted precursors without lowering the bitvec threshold.
+    # 0 = off (current filter_to_center path). isoWidth/2 ≈ 0.51, so overhang = tol − 0.51 → half-width ≈ tol.
+    _zt_cand_tol = something(tryparse(Float32, get(ENV, "PIONEER_ZT_CANDIDACY_TOL", "")), 0.0f0)
+    _zt_wide_emit = _zt_main && _zt_cand_tol > 0.51f0
+    if _zt_wide_emit
+        qtm_frag = SquareQuadModel(_zt_cand_tol - 0.51f0)
+    end
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -177,9 +187,20 @@ function library_search(
     # meta-scan expansion. ---
     if _zt_main
         n_before_cb = length(precursors_passed)
-        precursors_passed = filter_to_center_bin!(
-            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
-        @debug_l1 "ZT center-bin filter: $n_before_cb → $(length(precursors_passed)) candidates"
+        if _zt_wide_emit
+            # Wide-emit: any precursor that cleared the bitvec in ANY bin → mapped to its center
+            # bin (expand_to_metascans! then fills its ±k, same as the tight path). search_halfbins
+            # spans the ±tol emission range so the true nearest bin is found.
+            _S_hb = _zt_bin_step(spectra, all_scan_idxs)
+            _search_hb = ceil(Int, _zt_cand_tol / max(_S_hb, 1f-3)) + 1
+            precursors_passed = map_any_hit_to_center!(
+                scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors), _search_hb)
+            @debug_l1 "ZT wide-emit (tol=$(_zt_cand_tol) Da, hb=$_search_hb): $n_before_cb emissions → $(length(precursors_passed)) center candidates"
+        else
+            precursors_passed = filter_to_center_bin!(
+                scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
+            @debug_l1 "ZT center-bin filter: $n_before_cb → $(length(precursors_passed)) candidates"
+        end
     end
 
     # --- 2a. Pre-filter: require candidates to appear in ≥ N scans ---
@@ -397,6 +418,72 @@ Sciex ZT: keep only candidates whose precursor m/z lies within the bin's own
 partition-granularity over-emission so the ±k meta-scan expansion is well-defined.
 Rebuilds `precursors_passed` / reindexes `scan_to_prec_idx`; returns the new vector.
 """
+# Sciex ZT wide-emit candidacy. The fragment index (run with a wide ±tol precursor box) emits a
+# precursor in every metascan bin whose bitmask pattern cleared the threshold. Here we map each such
+# emission to the precursor's CENTER bin (the same-cycle MS2 bin whose centerMz is nearest its m/z),
+# deduped per (cycle, precursor). Net effect: a precursor survives if it cleared in ANY of its bins,
+# vs filter_to_center_bin! which requires the center bin itself to clear. expand_to_metascans! then
+# fills each survivor's ±k as usual, so the meta-scan collapse + shape features are unchanged.
+# `search_halfbins` bounds the nearest-bin scan (covers the ±tol emission span).
+function map_any_hit_to_center!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    prec_mzs::AbstractVector{Float32},
+    search_halfbins::Int,
+)
+    nspec = length(spectra)
+    center_sets = Dict{Int, Set{UInt32}}()          # center scan_idx -> precursors filled there
+    seen = Set{Tuple{UInt32, UInt32}}()             # (cycle, precursor) dedup
+    @inbounds for si in all_scan_idxs
+        isassigned(scan_to_prec_idx, si) || continue
+        rng = scan_to_prec_idx[si]
+        ismissing(rng) && continue
+        cyc = getCycleIdx(spectra, si)
+        for r in rng
+            p = precursors_passed[r]
+            key = (UInt32(cyc), p)
+            (key in seen) && continue
+            push!(seen, key)
+            pmz = Float32(prec_mzs[p])
+            # nearest same-cycle MS2 bin to the precursor m/z, within ±search_halfbins of si
+            best = 0
+            bestd = Inf32
+            for d in -search_halfbins:search_halfbins
+                sj = si + d
+                (sj < 1 || sj > nspec) && continue
+                getMsOrder(spectra, sj) == 2 || continue
+                getCycleIdx(spectra, sj) == cyc || continue
+                cm = getCenterMz(spectra, sj)
+                ismissing(cm) && continue
+                dd = abs(Float32(cm) - pmz)
+                if dd < bestd
+                    bestd = dd
+                    best = sj
+                end
+            end
+            best == 0 && continue
+            push!(get!(center_sets, best, Set{UInt32}()), p)
+        end
+    end
+    new_precursors = UInt32[]
+    sizehint!(new_precursors, sum(length, values(center_sets); init = 0))
+    @inbounds for si in all_scan_idxs
+        s = get(center_sets, si, nothing)
+        if s === nothing || isempty(s)
+            scan_to_prec_idx[si] = missing
+        else
+            start = length(new_precursors) + 1
+            for p in s
+                push!(new_precursors, p)
+            end
+            scan_to_prec_idx[si] = start:length(new_precursors)
+        end
+    end
+    return new_precursors
+end
+
 function filter_to_center_bin!(
     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
     precursors_passed::Vector{UInt32},
