@@ -320,12 +320,41 @@ function summarize_results!(
             qval_spline,
             params.q_value_threshold,
         )
-        results.run_similarity[] = n_files_total > 1 ?
-            build_precursor_run_similarity(
-                filtered_refs,
-                run_score_floor,
-                n_files_total,
-            ) : nothing
+        if n_files_total > 1
+            @debug_l1 "Computing run similarity across $n_files_total runs " *
+                "(precursor score floor = " *
+                "$(round(run_score_floor, digits = 4)))..."
+            run_similarity_time = @elapsed begin
+                results.run_similarity[] = build_precursor_run_similarity(
+                    filtered_refs,
+                    run_score_floor,
+                    n_files_total,
+                )
+            end
+            run_similarity_atlas =
+                results.run_similarity[]::RunSimilarityAtlas
+            observations_per_run = length.(
+                values(run_similarity_atlas.observed_ids_by_run),
+            )
+            centralities = collect(values(
+                run_similarity_atlas.centrality_by_run,
+            ))
+            @debug_l1 "Run similarity computation completed in " *
+                "$(round(run_similarity_time, digits = 2)) seconds"
+            @debug_l1 "  evidence: $(sum(observations_per_run)) " *
+                "precursor-run observations across " *
+                "$(count(>(0), observations_per_run))/$n_files_total runs"
+            @debug_l1 "  atlas storage: " *
+                "$(length(run_similarity_atlas.shared_weight)) shared pairs, " *
+                "$(length(run_similarity_atlas.missing_weight)) " *
+                "complement-missing pairs"
+            @debug_l1 "  run centrality: mean=" *
+                "$(round(mean(centralities), digits = 4)), range=[" *
+                "$(round(minimum(centralities), digits = 4)), " *
+                "$(round(maximum(centralities), digits = 4))]"
+        else
+            results.run_similarity[] = nothing
+        end
         run_similarity = results.run_similarity[]
 
         # A2: Build experiment-wide precursor scores.
