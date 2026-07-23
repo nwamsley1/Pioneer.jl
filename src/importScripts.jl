@@ -205,6 +205,7 @@ function importScripts()
             "maxLFQ.jl",
             "normalizeQuant.jl",
             "proteinInference.jl",
+            "runSimilarity.jl",
             "profile.jl",
             "pdfUtils.jl"
         ]

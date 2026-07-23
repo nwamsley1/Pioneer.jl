@@ -28,16 +28,33 @@
         )
     end
 
-    @testset "score-distribution feature table" begin
+    @testset "score-distribution and run-context feature table" begin
         inputs = Pioneer.GlobalPrecursorInputs(
             Dict(
-                UInt32(1) => Float32[0.9, 0.8, 0.6],
-                UInt32(2) => Float32[0.7],
+                UInt32(1) => Pioneer.GlobalPrecursorRunScore[
+                    Pioneer.GlobalPrecursorRunScore(UInt32(1), 0.9f0),
+                    Pioneer.GlobalPrecursorRunScore(UInt32(2), 0.8f0),
+                    Pioneer.GlobalPrecursorRunScore(UInt32(3), 0.6f0),
+                ],
+                UInt32(2) => Pioneer.GlobalPrecursorRunScore[
+                    Pioneer.GlobalPrecursorRunScore(UInt32(1), 0.7f0),
+                ],
             ),
             Dict(UInt32(1) => true, UInt32(2) => false),
             Dict(UInt32(1) => UInt8(0), UInt32(2) => UInt8(1)),
         )
-        table = Pioneer._build_global_precursor_feature_table(inputs, 4)
+        run_similarity = Pioneer.build_run_similarity(Dict(
+            UInt32(1) => BitSet((100, 101)),
+            UInt32(2) => BitSet((100, 101)),
+            UInt32(3) => BitSet((102,)),
+            UInt32(4) => BitSet(),
+        ))
+        table = Pioneer._build_global_precursor_feature_table(
+            inputs,
+            4;
+            run_similarity = run_similarity,
+            run_score_floor = 0.65f0,
+        )
 
         @test table.precursor_idx == UInt32[1, 2]
         @test table.target == Bool[true, false]
@@ -60,6 +77,10 @@
         @test table.n_prob_gt_0_5[1] == 3.0f0
         @test table.n_prob_gt_0_9[1] == 0.0f0
         @test table.n_prob_gt_0_99[1] == 0.0f0
+        @test table.observed_run_centrality_mean[1] ≈ 1.0f0 / 3.0f0
+        @test table.observed_run_centrality_max[1] ≈ 1.0f0 / 3.0f0
+        @test table.missing_run_similarity_mass_approx[1] ≈ 2.0f0 / 3.0f0
+        @test !hasproperty(table, :n_runs_passing_local_q)
 
         @test table.n_runs_observed[2] == 1.0f0
         @test table.top3_prec_prob[2] == 0.0f0
@@ -69,6 +90,9 @@
         @test table.top1_top2_gap[2] == 0.0f0
         @test table.top2_top3_gap[2] == 0.0f0
         @test table.n_prob_gt_0_5[2] == 1.0f0
+        @test table.observed_run_centrality_mean[2] ≈ 1.0f0 / 3.0f0
+        @test table.observed_run_centrality_max[2] ≈ 1.0f0 / 3.0f0
+        @test table.missing_run_similarity_mass_approx[2] ≈ 1.0f0
     end
 
     @testset "run-level input collection" begin
@@ -77,12 +101,14 @@
             run2_path = joinpath(directory, "run2.arrow")
             Arrow.write(run1_path, DataFrame(
                 precursor_idx = UInt32[1, 2],
+                ms_file_idx = UInt32[1, 1],
                 prec_prob = Float32[0.9, 0.7],
                 target = Bool[true, false],
                 cv_fold = UInt8[0, 1],
             ))
             Arrow.write(run2_path, DataFrame(
                 precursor_idx = UInt32[1, 3],
+                ms_file_idx = UInt32[2, 2],
                 prec_prob = Float32[0.8, 0.6],
                 target = Bool[true, false],
                 cv_fold = UInt8[0, 1],
@@ -94,9 +120,16 @@
 
             inputs = Pioneer._collect_global_precursor_inputs(refs, 3)
 
-            @test inputs.probabilities[UInt32(1)] == Float32[0.9, 0.8]
-            @test inputs.probabilities[UInt32(2)] == Float32[0.7]
-            @test inputs.probabilities[UInt32(3)] == Float32[0.6]
+            @test inputs.run_scores[UInt32(1)] == Pioneer.GlobalPrecursorRunScore[
+                Pioneer.GlobalPrecursorRunScore(UInt32(1), 0.9f0),
+                Pioneer.GlobalPrecursorRunScore(UInt32(2), 0.8f0),
+            ]
+            @test inputs.run_scores[UInt32(2)] == Pioneer.GlobalPrecursorRunScore[
+                Pioneer.GlobalPrecursorRunScore(UInt32(1), 0.7f0),
+            ]
+            @test inputs.run_scores[UInt32(3)] == Pioneer.GlobalPrecursorRunScore[
+                Pioneer.GlobalPrecursorRunScore(UInt32(2), 0.6f0),
+            ]
             @test inputs.targets == Dict(
                 UInt32(1) => true,
                 UInt32(2) => false,
@@ -108,6 +141,59 @@
                 UInt32(3) => UInt8(1),
             )
         end
+    end
+
+    @testset "run similarity uses frozen score floor and positive weights" begin
+        mktempdir() do directory
+            run1_path = joinpath(directory, "run1.arrow")
+            run2_path = joinpath(directory, "run2.arrow")
+            Arrow.write(run1_path, DataFrame(
+                precursor_idx = UInt32[1, 2],
+                ms_file_idx = UInt32[1, 1],
+                prec_prob = Float32[0.9, 0.7],
+                weight = Float32[100.0, 0.0],
+            ))
+            Arrow.write(run2_path, DataFrame(
+                precursor_idx = UInt32[1, 3],
+                ms_file_idx = UInt32[2, 2],
+                prec_prob = Float32[0.8, 0.6],
+                weight = Float32[80.0, 20.0],
+            ))
+            refs = PSMFileReference[
+                PSMFileReference(run1_path),
+                PSMFileReference(run2_path),
+            ]
+
+            run_similarity = Pioneer.build_precursor_run_similarity(
+                refs,
+                0.65f0,
+                3,
+            )
+            @test Pioneer.run_similarity(
+                run_similarity,
+                UInt32(1),
+                UInt32(2),
+            ) == 1.0f0
+            @test Pioneer.run_similarity(
+                run_similarity,
+                UInt32(1),
+                UInt32(3),
+            ) == 0.0f0
+            @test run_similarity.total_weight_by_run[UInt32(1)] > 0.0f0
+            @test run_similarity.total_weight_by_run[UInt32(3)] == 0.0f0
+        end
+    end
+
+    @testset "q-value threshold resolves to a precursor score floor" begin
+        score_floor = Pioneer._score_floor_for_qvalue(
+            score -> 1.0f0 - Float32(score),
+            0.1f0,
+        )
+        @test score_floor ≈ 0.9f0 atol = 1.0f-6
+        @test Pioneer._score_floor_for_qvalue(_ -> 0.0f0, 0.01f0) ==
+            eps(Float32)
+        @test Pioneer._score_floor_for_qvalue(_ -> 1.0f0, 0.01f0) ==
+            1.0f0 - eps(Float32)
     end
 
     @testset "single run uses individual precursor probabilities" begin
