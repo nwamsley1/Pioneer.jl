@@ -185,6 +185,7 @@ function importScripts()
             "types.jl",               # Abstract types (PSMScoringModel, etc.)
             "config.jl",              # ScoringConfig struct
             "lightgbm_utils.jl",      # LightGBM API wrapper
+            "global_oof_scoring.jl",  # Shared semi-supervised OOF scoring
             "model_training.jl",      # PSMScoringModel train/predict dispatch
             "training_selection.jl",  # TrainingDataStrategy implementations
             "feature_selection.jl",   # FeatureSelectionStrategy implementations

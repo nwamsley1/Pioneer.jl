@@ -126,6 +126,8 @@ Perform probit regression on protein groups.
 - `qc_folder`: Folder for QC plots
 - `precursors`: Library precursors
 - `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
+
+Returns `true` only when probit models were trained and applied to every fold.
 """
 function perform_protein_probit_regression(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -162,7 +164,7 @@ function perform_protein_probit_regression(
     n_decoys = sum(.!all_protein_groups.target)
     skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
 
-    perform_probit_analysis_multifold(
+    return perform_probit_analysis_multifold(
         all_protein_groups,
         qc_folder,
         pg_refs,
@@ -181,6 +183,8 @@ end
 function run_protein_scoring!(
     search_context::SearchContext;
     passing_refs::Vector{PSMFileReference},
+    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} =
+        Dict{UInt32, Vector{ProteinKey}}(),
     max_in_memory_table_mb::Float64,
     q_value_threshold::Float32,
     min_peptides::Int64,
@@ -211,6 +215,7 @@ function run_protein_scoring!(
         passing_proteins_folder,
         protein_to_possible_peptides,
         precursors = precursors,
+        protein_ambiguity_candidates = protein_ambiguity_candidates,
         min_peptides = min_peptides,
         q_value_threshold = q_value_threshold
     )
@@ -228,7 +233,7 @@ function run_protein_scoring!(
 
     max_in_memory_rows = estimate_max_rows(max_in_memory_table_mb, file_path(first(pg_refs)))
     @debug_l1 "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"
-    perform_protein_probit_regression(
+    protein_probit_scoring_succeeded = perform_protein_probit_regression(
         pg_refs,
         max_in_memory_rows,
         qc_folder,
@@ -241,11 +246,16 @@ function run_protein_scoring!(
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )
 
-    sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
     n_proteins = length(getProteins(getSpecLib(search_context)))
 
     global_pg_score_dict, pg_name_to_global_pg_score =
-        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+        build_global_protein_score_dicts(
+            pg_refs,
+            protein_to_cv_fold,
+            n_proteins,
+            length(pg_refs),
+            protein_probit_scoring_succeeded,
+        )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)

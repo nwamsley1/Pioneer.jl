@@ -103,6 +103,17 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         # Shared peptides should not be in results (not usable for quantification)
         @test !haskey(result.peptide_to_protein, peptides[2])  # Shared, excluded
         @test !haskey(result.peptide_to_protein, peptides[3])  # Shared, excluded
+
+        # Their final parsimonious candidate groups remain available for scoring.
+        @test length(result.ambiguous_peptide_to_proteins) == 2
+        @test result.ambiguous_peptide_to_proteins[peptides[2]] == [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("B", true, UInt8(1))
+        ]
+        @test result.ambiguous_peptide_to_proteins[peptides[3]] == [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("B", true, UInt8(1))
+        ]
     end
     
     @testset "Case C: Indistinguishable Proteins" begin
@@ -127,6 +138,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A;B"
         end
+        @test isempty(result.ambiguous_peptide_to_proteins)
     end
     
     @testset "Case D: Subset Proteins" begin
@@ -151,6 +163,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A"
         end
+        @test isempty(result.ambiguous_peptide_to_proteins)
     end
     
     @testset "Case E: Subsumable Proteins" begin
@@ -808,6 +821,15 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
             @test haskey(result.peptide_to_protein, peptides[4])  # REV_PEP1
             @test !haskey(result.peptide_to_protein, peptides[5])  # REV_PEP_SHARED (excluded)
             @test haskey(result.peptide_to_protein, peptides[6])  # REV_PEP2
+
+            @test result.ambiguous_peptide_to_proteins[peptides[2]] == [
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("B", true, UInt8(0))
+            ]
+            @test result.ambiguous_peptide_to_proteins[peptides[5]] == [
+                ProteinKey("REV_A", false, UInt8(0)),
+                ProteinKey("REV_B", false, UInt8(0))
+            ]
         end
 
         @testset "Empty input after grouping" begin

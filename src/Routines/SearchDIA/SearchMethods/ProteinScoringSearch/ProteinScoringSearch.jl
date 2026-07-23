@@ -106,9 +106,17 @@ function summarize_results!(
     end
     isempty(passing_refs) && return nothing
 
+    protein_inference_results = get_results(search_context, ProteinInferenceSearch)
+    protein_ambiguity_candidates = if protein_inference_results isa ProteinInferenceSearchResults
+        protein_inference_results.protein_ambiguity_candidates
+    else
+        Dict{UInt32, Vector{ProteinKey}}()
+    end
+
     run_protein_scoring!(
         search_context;
         passing_refs = passing_refs,
+        protein_ambiguity_candidates = protein_ambiguity_candidates,
         max_in_memory_table_mb = params.max_in_memory_table_mb,
         q_value_threshold = params.q_value_threshold,
         min_peptides = params.min_peptides,
@@ -117,6 +125,7 @@ function summarize_results!(
         min_pep_neg_threshold_itr = params.min_pep_neg_threshold_itr,
         q_value_interpolation_points_per_bin = params.q_value_interpolation_points_per_bin
     )
+    empty!(protein_ambiguity_candidates)
 
     return nothing
 end
