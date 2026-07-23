@@ -24,8 +24,9 @@ Experiment-level, IDF-weighted directional run similarity. Rare observed IDs
 are stored as shared run-pair weights, while common IDs use a complement
 representation that records the fewer missing run pairs.
 
-`observed_ids_by_run` is retained for consumers such as MBR that need both
-run-pair similarity and precursor-presence queries.
+`observed_ids_by_run` retains only positive-IDF observations for consumers
+such as MBR that need both run-pair similarity and precursor-presence queries.
+IDs observed in every run have zero IDF and are not retained.
 """
 struct RunSimilarityAtlas
     shared_weight::Dict{RunPair, Float32}
@@ -85,7 +86,8 @@ Return a run's mean directional similarity to all other experiment runs.
 """
     is_observed_in_run(atlas, observed_id, run_idx)
 
-Test whether an ID used to construct the atlas was observed in a run.
+Test whether a positive-IDF ID used to construct the atlas was observed in a
+run.
 """
 @inline function is_observed_in_run(
     atlas::RunSimilarityAtlas,
@@ -149,43 +151,45 @@ end
 """
     build_run_similarity(observed_ids_by_run)
 
-Build a compact experiment-level run-similarity atlas from the IDs observed in
-each run. Each ID is weighted by inverse run frequency. The input observations
-are copied so the returned atlas can safely outlive its builder.
+Build a compact experiment-level run-similarity atlas from the unique IDs
+observed in each run. Each ID is weighted by inverse run frequency. IDs
+observed in every run have zero IDF and are excluded from retained atlas
+evidence.
 """
 function build_run_similarity(
-    observed_ids_by_run::Dict{UInt32, BitSet},
+    observed_ids_by_run::Dict{UInt32, Vector{UInt32}},
 )::RunSimilarityAtlas
-    observed_snapshot = Dict(
-        run_idx => copy(observed_ids)
-        for (run_idx, observed_ids) in observed_ids_by_run
-    )
-    sorted_run_ids = sort!(collect(keys(observed_snapshot)))
+    sorted_run_ids = sort!(collect(keys(observed_ids_by_run)))
     run_ids = BitSet(Int(run_idx) for run_idx in sorted_run_ids)
     n_runs = length(sorted_run_ids)
 
     ids_to_runs = Dict{UInt32, Vector{UInt32}}()
     for run_idx in sorted_run_ids
-        for observed_id in observed_snapshot[run_idx]
+        for observed_id in observed_ids_by_run[run_idx]
             push!(
-                get!(ids_to_runs, UInt32(observed_id), UInt32[]),
+                get!(ids_to_runs, observed_id, UInt32[]),
                 run_idx,
             )
         end
     end
 
+    informative_ids_by_run = Dict(
+        run_idx => BitSet()
+        for run_idx in sorted_run_ids
+    )
     total_weight_by_run = Dict(run_idx => 0.0 for run_idx in sorted_run_ids)
     common_weight_by_run = Dict(run_idx => 0.0 for run_idx in sorted_run_ids)
     shared_weight = Dict{RunPair, Float64}()
     missing_weight = Dict{RunPair, Float64}()
     missing_runs = UInt32[]
 
-    for observed_runs in values(ids_to_runs)
+    for (observed_id, observed_runs) in ids_to_runs
         document_frequency = length(observed_runs)
         idf = log(Float64(n_runs + 1) / Float64(document_frequency + 1))
         idf > 0.0 || continue
 
         for run_idx in observed_runs
+            push!(informative_ids_by_run[run_idx], Int(observed_id))
             total_weight_by_run[run_idx] += idf
         end
 
@@ -255,7 +259,7 @@ function build_run_similarity(
         total_weight_f32,
         common_weight_f32,
         run_ids,
-        observed_snapshot,
+        informative_ids_by_run,
         centrality_by_run,
     )
 end

@@ -264,6 +264,16 @@ function run_protein_scoring!(
         pg_qval_spline,
         q_value_threshold,
     )
+    precursor_scoring_results = get_results(
+        search_context,
+        PrecursorScoringSearch,
+    )
+    run_similarity = if precursor_scoring_results isa PrecursorScoringSearchResults
+        precursor_scoring_results.run_similarity[]
+    else
+        nothing
+    end
+    n_runs_total = length(getFilePaths(getMSData(search_context)))
 
     global_pg_score_dict, pg_name_to_global_pg_score =
         build_global_protein_score_dicts(
@@ -273,6 +283,9 @@ function run_protein_scoring!(
             length(pg_refs),
             protein_probit_scoring_succeeded,
             run_score_floor,
+            n_experiment_runs = n_runs_total,
+            run_similarity = run_similarity,
+            q_value_threshold = q_value_threshold,
         )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 

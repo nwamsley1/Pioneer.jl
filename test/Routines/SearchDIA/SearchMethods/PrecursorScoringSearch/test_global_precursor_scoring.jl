@@ -44,10 +44,10 @@
             Dict(UInt32(1) => UInt8(0), UInt32(2) => UInt8(1)),
         )
         run_similarity = Pioneer.build_run_similarity(Dict(
-            UInt32(1) => BitSet((100, 101)),
-            UInt32(2) => BitSet((100, 101)),
-            UInt32(3) => BitSet((102,)),
-            UInt32(4) => BitSet(),
+            UInt32(1) => UInt32[100, 101],
+            UInt32(2) => UInt32[100, 101],
+            UInt32(3) => UInt32[102],
+            UInt32(4) => UInt32[],
         ))
         table = Pioneer._build_global_precursor_feature_table(
             inputs,
@@ -144,7 +144,7 @@
         end
     end
 
-    @testset "run similarity uses frozen score floor and positive weights" begin
+    @testset "run similarity uses frozen score floor" begin
         mktempdir() do directory
             run1_path = joinpath(directory, "run1.arrow")
             run2_path = joinpath(directory, "run2.arrow")
@@ -152,13 +152,11 @@
                 precursor_idx = UInt32[1, 2],
                 ms_file_idx = UInt32[1, 1],
                 prec_prob = Float32[0.9, 0.7],
-                weight = Float32[100.0, 0.0],
             ))
             Arrow.write(run2_path, DataFrame(
                 precursor_idx = UInt32[1, 3],
                 ms_file_idx = UInt32[2, 2],
                 prec_prob = Float32[0.8, 0.6],
-                weight = Float32[80.0, 20.0],
             ))
             refs = PSMFileReference[
                 PSMFileReference(run1_path),
@@ -174,7 +172,7 @@
                 run_similarity,
                 UInt32(1),
                 UInt32(2),
-            ) == 1.0f0
+            ) < 1.0f0
             @test Pioneer.run_similarity(
                 run_similarity,
                 UInt32(1),

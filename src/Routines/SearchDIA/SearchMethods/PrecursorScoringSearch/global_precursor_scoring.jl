@@ -81,18 +81,15 @@ function build_precursor_run_similarity(
     n_runs_total::Int,
 )::RunSimilarityAtlas
     observed_precursors_by_run = Dict(
-        UInt32(file_idx) => BitSet()
+        UInt32(file_idx) => UInt32[]
         for file_idx in 1:max(n_runs_total, 0)
     )
-    nonempty_refs = filter(ref -> ref.row_count > 0, refs)
-    has_weight = !isempty(nonempty_refs) &&
-        all(ref -> :weight in column_names(ref), nonempty_refs)
 
-    for (ref_position, ref) in enumerate(nonempty_refs)
+    for (ref_position, ref) in enumerate(refs)
+        ref.row_count > 0 || continue
         has_ms_file_idx = :ms_file_idx in column_names(ref)
         requested = Symbol[:precursor_idx, :prec_prob]
         has_ms_file_idx && push!(requested, :ms_file_idx)
-        has_weight && push!(requested, :weight)
         columns = materialize_columns(ref, requested)
 
         @inbounds for row in axes(columns, 1)
@@ -101,17 +98,10 @@ function build_precursor_run_similarity(
             observed_precursors = get!(
                 observed_precursors_by_run,
                 file_idx,
-                BitSet(),
+                UInt32[],
             )
             Float32(columns.prec_prob[row]) >= score_floor || continue
-            if has_weight
-                weight = Float32(columns.weight[row])
-                isfinite(weight) && weight > 0.0f0 || continue
-            end
-            push!(
-                observed_precursors,
-                Int(UInt32(columns.precursor_idx[row])),
-            )
+            push!(observed_precursors, UInt32(columns.precursor_idx[row]))
         end
     end
 
@@ -275,8 +265,10 @@ end
     build_global_precursor_score_dicts(refs, n_precursors, n_runs_total; kwargs...)
 
 Build one score-distribution and run-context feature row per precursor and
-return out-of-fold global LightGBM scores with the corresponding target labels.
-For a single-run search, return the individual precursor probabilities without
+select out-of-fold global LightGBM scores only when more targets pass the
+configured global q-value threshold than with the empirical top-run log-odds
+scores. Experiment-wide q-values are not used for this selection. For a
+single-run search, return the individual precursor probabilities without
 training a model.
 """
 function _build_single_run_precursor_score_dicts(
@@ -306,6 +298,8 @@ function build_global_precursor_score_dicts(
     ;
     run_similarity::Union{Nothing, RunSimilarityAtlas} = nothing,
     run_score_floor::Float32 = 0.0f0,
+    q_value_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    fdr_scale_factor::Float32 = 1.0f0,
 )
     n_runs_total == 1 &&
         return _build_single_run_precursor_score_dicts(refs, n_precursors)
@@ -326,14 +320,22 @@ function build_global_precursor_score_dicts(
         min_training_class_count = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
         max_train = GLOBAL_PRECURSOR_MAX_TRAIN,
     )
+    selected = _select_global_scores(
+        scored.scores,
+        table.empirical_global_score,
+        table.target;
+        scoring_name = "Global precursor",
+        q_threshold = q_value_threshold,
+        fdr_scale_factor = fdr_scale_factor,
+    )
 
     score_dict = Dict{UInt32, Float32}()
     sizehint!(score_dict, nrow(table))
     @inbounds for row in axes(table, 1)
-        score_dict[table.precursor_idx[row]] = scored.scores[row]
+        score_dict[table.precursor_idx[row]] = selected.scores[row]
     end
-    @debug_l1 "Global precursor LightGBM scored $(length(score_dict)) precursors " *
+    @debug_l1 "Global precursor scoring scored $(length(score_dict)) precursors " *
               "with $(length(GLOBAL_PRECURSOR_SCORE_FEATURES)) features; " *
-              "selected semi-supervised iteration $(scored.iter)"
+              "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dict, inputs.targets
 end

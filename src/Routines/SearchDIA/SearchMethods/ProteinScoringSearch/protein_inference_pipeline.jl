@@ -1573,7 +1573,10 @@ function build_protein_group_tables(
         pg_path = joinpath(output_folder, pg_filename)
 
         if nrow(protein_groups_df) > 0
-            protein_groups_df[!, :file_idx] = fill(Int64(idx), nrow(protein_groups_df))
+            run_idx = hasproperty(updated_psms, :ms_file_idx) ?
+                Int64(updated_psms.ms_file_idx[1]) : Int64(idx)
+            protein_groups_df[!, :file_idx] =
+                fill(run_idx, nrow(protein_groups_df))
             writeArrow(pg_path, protein_groups_df)
             pg_ref = ProteinGroupFileReference(pg_path)
             push!(pg_refs, pg_ref)

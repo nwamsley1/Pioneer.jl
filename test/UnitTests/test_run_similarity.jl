@@ -10,10 +10,10 @@
 @testset "Run similarity atlas" begin
     @testset "IDF-weighted directional containment" begin
         observed_ids_by_run = Dict(
-            UInt32(1) => BitSet((1, 2, 3)),
-            UInt32(2) => BitSet((1, 2)),
-            UInt32(3) => BitSet((1,)),
-            UInt32(4) => BitSet((4,)),
+            UInt32(1) => UInt32[1, 2, 3],
+            UInt32(2) => UInt32[1, 2],
+            UInt32(3) => UInt32[1],
+            UInt32(4) => UInt32[4],
         )
         atlas = Pioneer.build_run_similarity(observed_ids_by_run)
         idf1 = log(5.0 / 4.0)
@@ -45,11 +45,11 @@
 
     @testset "complement storage and centrality" begin
         atlas = Pioneer.build_run_similarity(Dict(
-            UInt32(1) => BitSet((10,)),
-            UInt32(2) => BitSet((10,)),
-            UInt32(3) => BitSet((10,)),
-            UInt32(4) => BitSet((10,)),
-            UInt32(5) => BitSet(),
+            UInt32(1) => UInt32[10, 20],
+            UInt32(2) => UInt32[10, 20],
+            UInt32(3) => UInt32[10, 20],
+            UInt32(4) => UInt32[10, 20],
+            UInt32(5) => UInt32[20],
         ))
 
         @test isempty(atlas.shared_weight)
@@ -66,10 +66,14 @@
         ) == 0.0f0
         @test Pioneer.run_centrality(atlas, UInt32(1)) ≈ 0.75f0
         @test Pioneer.run_centrality(atlas, UInt32(5)) == 0.0f0
+        @test !Pioneer.is_observed_in_run(atlas, 20, UInt32(1))
+        @test !Pioneer.is_observed_in_run(atlas, 20, UInt32(5))
     end
 
     @testset "empty and single-run atlases" begin
-        empty_atlas = Pioneer.build_run_similarity(Dict{UInt32, BitSet}())
+        empty_atlas = Pioneer.build_run_similarity(
+            Dict{UInt32, Vector{UInt32}}(),
+        )
         @test isempty(empty_atlas.run_ids)
         @test Pioneer.run_similarity(
             empty_atlas,
@@ -78,7 +82,7 @@
         ) == 0.0f0
 
         single_atlas = Pioneer.build_run_similarity(Dict(
-            UInt32(7) => BitSet((1, 2)),
+            UInt32(7) => UInt32[1, 2],
         ))
         @test Pioneer.run_centrality(single_atlas, UInt32(7)) == 0.0f0
         @test Pioneer.run_similarity(
