@@ -57,14 +57,51 @@ function _count_psm_rows_by_fold(file_paths::Vector{String})
     return n0, n1
 end
 
-# Determine which features in `requested` are actually present in the per-file
-# Arrow tables. We trust the first non-empty file's schema (all per-file
-# arrows produced by MainSearch share the same columns).
+# Round-2 GROUP cross-run features (GROUP_COLS + delta_irt) live in a row-aligned sidecar
+# rather than being appended to the ~80-column main fold file, which would require reading
+# and rewriting the whole file just to add 9 columns. `_feature_columns` is the single point
+# that reads a feature from wherever it lives; all three round-2 read sites go through it.
+const GROUP_SIDECAR_SUFFIX = ".group.sidecar.arrow"
+
+# Gather one file's requested feature columns, reading GROUP cols from the `.group.sidecar`
+# when present and everything else from the main file. Order matches `features`.
+#
+# A feature absent from BOTH main and sidecar is a hard error, NOT a silent skip: the round-2
+# feature list is fixed at 80, and quietly dropping the GROUP cols (e.g. if this file's sidecar
+# is missing) would train on 71 with no other symptom. The lone exception is a genuinely empty
+# file — its columns are never indexed (the sample/predict plans are empty), so a placeholder
+# empty vector is returned for any GROUP col whose sidecar was (correctly) never written.
+function _feature_columns(fpath::String, features::Vector{Symbol})
+    tbl = Arrow.Table(fpath)
+    n = length(tbl.precursor_idx)
+    side_path = fpath * GROUP_SIDECAR_SUFFIX
+    side = isfile(side_path) ? Arrow.Table(side_path) : nothing
+    cols = Vector{AbstractVector}(undef, length(features))
+    @inbounds for (j, f) in enumerate(features)
+        if hasproperty(tbl, f)
+            cols[j] = getproperty(tbl, f)
+        elseif side !== nothing && hasproperty(side, f)
+            cols[j] = getproperty(side, f)
+        elseif n == 0
+            cols[j] = Float32[]   # empty file: never indexed, type/contents irrelevant
+        else
+            error("_feature_columns: feature $f absent from main and group sidecar of $fpath")
+        end
+    end
+    return cols
+end
+
+# Determine which features in `requested` are actually present, checking the first non-empty
+# file's main schema AND its GROUP sidecar (round-2 features live there — see _feature_columns).
 function _resolve_available_features(file_paths::Vector{String}, requested::Vector{Symbol})
     for fpath in file_paths
         tbl = Arrow.Table(fpath)
         length(tbl.precursor_idx) == 0 && continue
-        return filter(f -> hasproperty(tbl, f), requested)
+        side_path = fpath * GROUP_SIDECAR_SUFFIX
+        side = isfile(side_path) ? Arrow.Table(side_path) : nothing
+        return filter(requested) do f
+            hasproperty(tbl, f) || (side !== nothing && hasproperty(side, f))
+        end
     end
     return Symbol[]
 end
@@ -172,7 +209,7 @@ function _sample_both_folds(
         shadow_src1[file_idx] = Tuple{Int32, Int32}[]
         shadow_graft0[file_idx] = Tuple{Int32, Int32}[]
         shadow_graft1[file_idx] = Tuple{Int32, Int32}[]
-        all_feat_cols[file_idx] = AbstractVector[getproperty(tbl, f) for f in features]
+        all_feat_cols[file_idx] = _feature_columns(fpath, features)
         n == 0 && continue
         inject_shadows && !pairable[file_idx] && continue
         fold_c = tbl.cv_fold
@@ -438,15 +475,13 @@ _fill_fold_column!(::Matrix{Float32}, ::Int, col::AbstractVector, ::AbstractVect
     throw(ArgumentError("Unsupported feature type $(eltype(col)) for LightGBM"))
 
 function _pass1_fold_feature_matrices(
-    tbl,
-    features::Vector{Symbol},
+    feat_cols::Vector{<:AbstractVector},
     idx0::AbstractVector{<:Integer},
     idx1::AbstractVector{<:Integer},
 )
-    nfeat = length(features)
+    nfeat = length(feat_cols)
     X0 = Matrix{Float32}(undef, length(idx0), nfeat)
     X1 = Matrix{Float32}(undef, length(idx1), nfeat)
-    feat_cols = AbstractVector[getproperty(tbl, features[j]) for j in 1:nfeat]
     Threads.@threads for j in 1:nfeat
         col = feat_cols[j]
         _fill_fold_column!(X0, j, col, idx0)
@@ -489,7 +524,8 @@ function _predict_pass1_to_sidecar(
     fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
     idx0 = fold_rows.fold0
     idx1 = fold_rows.fold1
-    X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
+    feat_cols = _feature_columns(fpath, features)
+    X0, X1 = _pass1_fold_feature_matrices(feat_cols, idx0, idx1)
 
     # Design A: Pass-3 runs SEQUENTIALLY on the main thread (see _predict_pass1_files
     # below), so `_predict_matrix` can safely use all cores. libomp is only ever

@@ -360,19 +360,20 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
                     end
                     di[i] = abs(irt[i] - ref_irt[p + 1])
                 end
-                main = DataFrame(Tables.columntable(Arrow.Table(file_paths[f])))
-                nrow(main) == n ||
+                # Write the 9 GROUP columns to a row-aligned sidecar instead of reading and
+                # rewriting the whole ~80-column fold file. The round-2 read sites resolve
+                # them via `_feature_columns` (pass1_oom.jl), and Step 1b's PSMFileReference
+                # auto-discovers `.group.sidecar.arrow` so they still reach the merged output.
+                ref = PSMFileReference(file_paths[f])
+                ref.row_count == n ||
                     error("_write_group_features!: arrow row count changed at $(file_paths[f])")
-                main[!, :global_max]           = gmax
-                main[!, :global_top3_logodds]  = gt3
-                main[!, :cluster_max]          = cmax
-                main[!, :cluster_top3_logodds] = ct3
-                main[!, :global_n_present]     = gnp
-                main[!, :global_n_confident]   = gnc
-                main[!, :cluster_n_present]    = cnp
-                main[!, :cluster_n_confident]  = cnc
-                main[!, :delta_irt]            = di
-                writeArrow(file_paths[f], main)
+                add_columns_via_sidecar!(ref,
+                    :global_max           => gmax, :global_top3_logodds  => gt3,
+                    :cluster_max          => cmax, :cluster_top3_logodds => ct3,
+                    :global_n_present     => gnp,  :global_n_confident   => gnc,
+                    :cluster_n_present    => cnp,  :cluster_n_confident  => cnc,
+                    :delta_irt            => di;
+                    tag = "group")
             end
             for p in touched; crec[p + 1] = EMPTY_TOPK4; ccnt_p[p + 1] = Int32(0); ccnt_c[p + 1] = Int32(0); end
         end
