@@ -23,7 +23,6 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :top2_logodds_score,
     :top3_logodds_score,
     :mean_prec_prob,
-    :median_prec_prob,
     :std_prec_prob,
     :min_prec_prob,
     :top1_top2_gap,
@@ -33,6 +32,80 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :n_prob_gt_0_9,
     :n_prob_gt_0_99,
 ]
+
+# Per-precursor cross-run features are accumulated ONLINE in a single streaming pass into a
+# dense `Vector{GlobalAcc}` indexed by precursor_idx — no `Dict{pid → Vector}` and no per-precursor
+# heap vectors. `median_prec_prob` was dropped precisely because it is the only feature that needs
+# the full per-precursor distribution; every remaining feature is a bounded online reduction
+# (top-K tuple, Welford mean/variance, min, threshold counts). The top-K logodds uses the top
+# `min(isqrt(n_runs), GLOBAL_TOPK_CAP)` scores, so the accumulator keeps exactly the top
+# GLOBAL_TOPK_CAP. For cohorts with isqrt(n_runs) > GLOBAL_TOPK_CAP (>100 runs) this caps the
+# logodds window; ≤100-run cohorts are unaffected.
+const GLOBAL_TOPK_CAP = 10
+
+struct GlobalAcc
+    top::NTuple{GLOBAL_TOPK_CAP, Float32}   # top-K prec_prob, descending; trailing 0f0 for empty slots
+    mean::Float32                            # Welford running mean
+    m2::Float32                              # Welford running sum of squared deviations
+    minv::Float32
+    count::Int32
+    n_gt50::Int32
+    n_gt90::Int32
+    n_gt99::Int32
+end
+
+const EMPTY_GLOBAL_ACC = GlobalAcc(
+    ntuple(_ -> 0.0f0, GLOBAL_TOPK_CAP), 0.0f0, 0.0f0, Inf32,
+    Int32(0), Int32(0), Int32(0), Int32(0),
+)
+
+# Insert `x` into a descending NTuple keeping the top-N, dropping the smallest.
+# `@generated` so each branch returns a tuple built from COMPILE-TIME-literal positions —
+# a runtime insertion index would make the tuple construction dynamic and heap-allocate per
+# call (measured: ~112 B/call). This version is 0 bytes/call. Same idea as `TopK4`, generalized.
+@generated function _topk_insert(t::NTuple{N, Float32}, x::Float32) where {N}
+    branches = Expr[]
+    for p in 1:N
+        elems = Any[i < p ? :(t[$i]) : (i == p ? :x : :(t[$(i - 1)])) for i in 1:N]
+        push!(branches, :(x > t[$p] && return ($(elems...),)))
+    end
+    quote
+        @inbounds begin
+            $(branches...)
+            return t
+        end
+    end
+end
+
+@inline function _update_global_acc(a::GlobalAcc, p::Float32)
+    count = a.count + Int32(1)
+    delta = p - a.mean
+    mean = a.mean + delta / count
+    m2 = a.m2 + delta * (p - mean)
+    return GlobalAcc(
+        _topk_insert(a.top, p),
+        mean, m2,
+        min(a.minv, p),
+        count,
+        a.n_gt50 + (p > 0.5f0  ? Int32(1) : Int32(0)),
+        a.n_gt90 + (p > 0.9f0  ? Int32(1) : Int32(0)),
+        a.n_gt99 + (p > 0.99f0 ? Int32(1) : Int32(0)),
+    )
+end
+
+# Average log-odds of the top `top_n` (capped by the observed count and the stored K), then sigmoid.
+# Bit-identical to `_logodds_from_sorted` over the same top elements.
+@inline function _logodds_from_topk(top::NTuple{K, Float32}, n_observed::Int, top_n::Int) where {K}
+    m = min(n_observed, top_n, K)
+    floor_val = 0.1f0
+    ceil_val = 1.0f0 - 1.0f-6
+    s = 0.0f0
+    @inbounds for i in 1:m
+        c = clamp(top[i], floor_val, ceil_val)
+        s += log(c / (1.0f0 - c))
+    end
+    return 1.0f0 / (1.0f0 + exp(-s / m))
+end
 
 const GLOBAL_PRECURSOR_LGBM_HP = (
     num_iterations = 100,
@@ -55,9 +128,10 @@ const GLOBAL_PRECURSOR_MAX_TRAIN = 1_000_000
 const GLOBAL_PRECURSOR_CV_FOLDS = (UInt8(0), UInt8(1))
 
 struct GlobalPrecursorInputs
-    probabilities::Dict{UInt32, Vector{Float32}}
-    targets::Dict{UInt32, Bool}
-    folds::Dict{UInt32, UInt8}
+    acc::Vector{GlobalAcc}      # indexed by precursor_idx + 1
+    targets::Vector{Bool}       # indexed by precursor_idx + 1
+    folds::Vector{UInt8}        # indexed by precursor_idx + 1
+    n_precursors::Int
 end
 
 function _logodds_from_sorted(
@@ -87,93 +161,144 @@ function logodds(
     return _logodds_from_sorted(sort(probabilities; rev = true), top_n)
 end
 
+# Single streaming pass: fold each row into the dense per-precursor accumulator. `prec_prob`
+# is a main column of the merged file (written in Step 1b), so one Arrow.Table open reads all
+# four columns — no sidecar join, no column materialization. Isolated as a function barrier so
+# the concrete Arrow column types specialize and element access does not box.
+function _accumulate_global_inputs!(
+    acc::Vector{GlobalAcc},
+    targets::Vector{Bool},
+    folds::Vector{UInt8},
+    pid_col::AbstractVector,
+    prob_col::AbstractVector,
+    target_col::AbstractVector,
+    fold_col::AbstractVector,
+)
+    @inbounds for i in eachindex(pid_col)
+        pid1 = Int(pid_col[i]) + 1
+        acc[pid1] = _update_global_acc(acc[pid1], Float32(prob_col[i]))
+        targets[pid1] = Bool(target_col[i])
+        folds[pid1] = UInt8(fold_col[i])
+    end
+    return nothing
+end
+
 function _collect_global_precursor_inputs(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
 )
-    probabilities = Dict{UInt32, Vector{Float32}}()
-    targets = Dict{UInt32, Bool}()
-    folds = Dict{UInt32, UInt8}()
-    sizehint!(probabilities, n_precursors)
-    sizehint!(targets, n_precursors)
-    sizehint!(folds, n_precursors)
+    acc = fill(EMPTY_GLOBAL_ACC, n_precursors + 1)
+    targets = zeros(Bool, n_precursors + 1)
+    folds = zeros(UInt8, n_precursors + 1)
 
     for ref in refs
-        columns = materialize_columns(
-            ref,
-            [:precursor_idx, :prec_prob, :target, :cv_fold],
+        tbl = Arrow.Table(file_path(ref))
+        hasproperty(tbl, :prec_prob) ||
+            error("_collect_global_precursor_inputs: :prec_prob missing from $(file_path(ref)); " *
+                  "it should be a main column after Step 1b")
+        _accumulate_global_inputs!(
+            acc, targets, folds,
+            tbl.precursor_idx, tbl.prec_prob, tbl.target, tbl.cv_fold,
         )
-        @inbounds for row in axes(columns, 1)
-            precursor_idx = UInt32(columns.precursor_idx[row])
-            precursor_probabilities = get!(probabilities, precursor_idx) do
-                Float32[]
-            end
-            push!(precursor_probabilities, Float32(columns.prec_prob[row]))
-            targets[precursor_idx] = Bool(columns.target[row])
-            folds[precursor_idx] = UInt8(columns.cv_fold[row])
-        end
     end
 
-    isempty(probabilities) &&
+    any(a -> a.count > 0, acc) ||
         throw(ArgumentError("Global precursor scoring requires observed precursors"))
-    return GlobalPrecursorInputs(probabilities, targets, folds)
+    return GlobalPrecursorInputs(acc, targets, folds, n_precursors)
 end
 
 function _build_global_precursor_feature_table(
     inputs::GlobalPrecursorInputs,
     n_runs_total::Int,
 )
-    precursor_ids = sort!(collect(keys(inputs.probabilities)))
-    n_precursors = length(precursor_ids)
-    top_run_count = isqrt(n_runs_total)
-    feature_columns = Dict(
-        feature => Vector{Float32}(undef, n_precursors)
-        for feature in GLOBAL_PRECURSOR_SCORE_FEATURES
-    )
-
-    @inbounds for (row, precursor_idx) in enumerate(precursor_ids)
-        probabilities = inputs.probabilities[precursor_idx]
-        sort!(probabilities; rev = true)
-        sorted_probabilities = probabilities
-        n_observed = length(sorted_probabilities)
-        top1 = sorted_probabilities[1]
-        top2 = n_observed >= 2 ? sorted_probabilities[2] : 0.0f0
-        top3 = n_observed >= 3 ? sorted_probabilities[3] : 0.0f0
-
-        feature_columns[:empirical_global_score][row] =
-            _logodds_from_sorted(sorted_probabilities, top_run_count)
-        feature_columns[:top1_prec_prob][row] = top1
-        feature_columns[:top2_prec_prob][row] = top2
-        feature_columns[:top3_prec_prob][row] = top3
-        feature_columns[:top2_logodds_score][row] =
-            _logodds_from_sorted(sorted_probabilities, 2)
-        feature_columns[:top3_logodds_score][row] =
-            _logodds_from_sorted(sorted_probabilities, 3)
-        feature_columns[:mean_prec_prob][row] = Float32(mean(probabilities))
-        midpoint = (n_observed + 1) ÷ 2
-        feature_columns[:median_prec_prob][row] = isodd(n_observed) ?
-            sorted_probabilities[midpoint] :
-            (sorted_probabilities[midpoint] + sorted_probabilities[midpoint + 1]) / 2.0f0
-        feature_columns[:std_prec_prob][row] =
-            n_observed > 1 ? Float32(std(probabilities)) : 0.0f0
-        feature_columns[:min_prec_prob][row] = sorted_probabilities[end]
-        feature_columns[:top1_top2_gap][row] = n_observed >= 2 ? top1 - top2 : 0.0f0
-        feature_columns[:top2_top3_gap][row] = n_observed >= 3 ? top2 - top3 : 0.0f0
-        feature_columns[:n_runs_observed][row] = Float32(n_observed)
-        feature_columns[:n_prob_gt_0_5][row] = Float32(count(>(0.5f0), probabilities))
-        feature_columns[:n_prob_gt_0_9][row] = Float32(count(>(0.9f0), probabilities))
-        feature_columns[:n_prob_gt_0_99][row] = Float32(count(>(0.99f0), probabilities))
+    acc = inputs.acc
+    # Observed precursors, ascending precursor_idx (iterating pid order gives them pre-sorted,
+    # matching the old `sort!(collect(keys(...)))`). Count first, then fill — no push!.
+    n_obs = 0
+    @inbounds for pid1 in 2:(inputs.n_precursors + 1)
+        acc[pid1].count > 0 && (n_obs += 1)
     end
+    precursor_ids = Vector{UInt32}(undef, n_obs)
+    row_targets = Vector{Bool}(undef, n_obs)
+    row_folds = Vector{UInt8}(undef, n_obs)
+    k = 0
+    @inbounds for pid1 in 2:(inputs.n_precursors + 1)
+        acc[pid1].count > 0 || continue
+        k += 1
+        precursor_ids[k] = UInt32(pid1 - 1)
+        row_targets[k] = inputs.targets[pid1]
+        row_folds[k] = inputs.folds[pid1]
+    end
+
+    top_run_count = min(isqrt(n_runs_total), GLOBAL_TOPK_CAP)
+    feature_columns = _compute_global_feature_columns(acc, precursor_ids, top_run_count)
 
     table = DataFrame(
         precursor_idx = precursor_ids,
-        target = Bool[inputs.targets[precursor_idx] for precursor_idx in precursor_ids],
-        cv_fold = UInt8[inputs.folds[precursor_idx] for precursor_idx in precursor_ids],
+        target = row_targets,
+        cv_fold = row_folds,
     )
     for feature in GLOBAL_PRECURSOR_SCORE_FEATURES
         table[!, feature] = feature_columns[feature]
     end
     return table
+end
+
+# Function barrier: everything enters as a typed argument, so nothing is captured from an
+# outer scope. Building the feature vectors inline in the caller boxed `n_obs` (loop-assigned
+# AND captured by the column-allocating comprehension), which deoptimized the whole per-precursor
+# loop into ~1.3 KB/precursor of boxing. Here `n_obs` is a fresh single-assigned local.
+function _compute_global_feature_columns(
+    acc::Vector{GlobalAcc},
+    precursor_ids::Vector{UInt32},
+    top_run_count::Int,
+)
+    n_obs = length(precursor_ids)
+    feature_columns = Dict(
+        feature => Vector{Float32}(undef, n_obs)
+        for feature in GLOBAL_PRECURSOR_SCORE_FEATURES
+    )
+    empirical  = feature_columns[:empirical_global_score]
+    c_top1     = feature_columns[:top1_prec_prob]
+    c_top2     = feature_columns[:top2_prec_prob]
+    c_top3     = feature_columns[:top3_prec_prob]
+    c_lo2      = feature_columns[:top2_logodds_score]
+    c_lo3      = feature_columns[:top3_logodds_score]
+    c_mean     = feature_columns[:mean_prec_prob]
+    c_std      = feature_columns[:std_prec_prob]
+    c_min      = feature_columns[:min_prec_prob]
+    c_gap12    = feature_columns[:top1_top2_gap]
+    c_gap23    = feature_columns[:top2_top3_gap]
+    c_nobs     = feature_columns[:n_runs_observed]
+    c_gt50     = feature_columns[:n_prob_gt_0_5]
+    c_gt90     = feature_columns[:n_prob_gt_0_9]
+    c_gt99     = feature_columns[:n_prob_gt_0_99]
+
+    @inbounds for row in 1:n_obs
+        a = acc[Int(precursor_ids[row]) + 1]
+        top = a.top
+        n_observed = Int(a.count)
+        top1 = top[1]
+        top2 = n_observed >= 2 ? top[2] : 0.0f0
+        top3 = n_observed >= 3 ? top[3] : 0.0f0
+
+        empirical[row] = _logodds_from_topk(top, n_observed, top_run_count)
+        c_top1[row] = top1
+        c_top2[row] = top2
+        c_top3[row] = top3
+        c_lo2[row] = _logodds_from_topk(top, n_observed, 2)
+        c_lo3[row] = _logodds_from_topk(top, n_observed, 3)
+        c_mean[row] = a.mean
+        c_std[row] = n_observed > 1 ? sqrt(a.m2 / (n_observed - 1)) : 0.0f0
+        c_min[row] = a.minv
+        c_gap12[row] = n_observed >= 2 ? top1 - top2 : 0.0f0
+        c_gap23[row] = n_observed >= 3 ? top2 - top3 : 0.0f0
+        c_nobs[row] = Float32(n_observed)
+        c_gt50[row] = Float32(a.n_gt50)
+        c_gt90[row] = Float32(a.n_gt90)
+        c_gt99[row] = Float32(a.n_gt99)
+    end
+    return feature_columns
 end
 
 function _log_global_precursor_feature_importances(
@@ -359,12 +484,16 @@ function build_global_precursor_score_dicts(
     )
 
     score_dict = Dict{UInt32, Float32}()
+    target_dict = Dict{UInt32, Bool}()
     sizehint!(score_dict, nrow(table))
+    sizehint!(target_dict, nrow(table))
     @inbounds for row in axes(table, 1)
-        score_dict[table.precursor_idx[row]] = scored.scores[row]
+        pid = table.precursor_idx[row]
+        score_dict[pid] = scored.scores[row]
+        target_dict[pid] = table.target[row]
     end
     @debug_l1 "Global precursor LightGBM scored $(length(score_dict)) precursors " *
               "with $(length(GLOBAL_PRECURSOR_SCORE_FEATURES)) features; " *
               "selected semi-supervised iteration $(scored.iter)"
-    return score_dict, inputs.targets
+    return score_dict, target_dict
 end
