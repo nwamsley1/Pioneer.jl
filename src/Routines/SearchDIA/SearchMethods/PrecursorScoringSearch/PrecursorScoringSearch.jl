@@ -202,19 +202,33 @@ function summarize_results!(
         fold1_path = "$(base_path)_fold1.arrow"
         merged_path = "$(base_path).arrow"
 
-        # Collect data from both folds via PSMFileReference so the
-        # auto-discovered mbr_outputs sidecars (written by
-        # merge_mbr_sidecars_into_main!) are joined in. MainSearch
-        # initialized :trace_prob to zero in the fold files; the sidecar
-        # provides the real Pass-1 OOF score in :trace_prob_prepass, so we
-        # set :trace_prob = :trace_prob_prepass here (matching the legacy
-        # merge_mbr_sidecars_into_main! semantics).
+        # Collect data from both folds via PSMFileReference, which auto-discovers the
+        # row-aligned `.pass1.sidecar.arrow` written by the final Pass-3 predict and joins
+        # `:trace_prob_prepass` in. MainSearch initialized `:trace_prob` to zero in the fold
+        # files; the sidecar carries the real OOF score, so `:trace_prob` is set from it here.
+        # This is the only place the sidecar is folded in — the fold files themselves are
+        # never rewritten to absorb it, and they are deleted a few lines below.
         fold_dfs = DataFrame[]
         fold_refs = PSMFileReference[]
         function _load_fold(path)
             ref = PSMFileReference(path)
             push!(fold_refs, ref)
             df = load_with_sidecars(ref)
+            # Sidecar discovery only matches on row COUNT, so verify the row ORDER too before
+            # trusting the join — a same-length but misaligned sidecar would silently attach
+            # the wrong score to every row.
+            side_path = path * PASS1_SIDECAR_SUFFIX
+            if isfile(side_path)
+                side = Arrow.Table(side_path)
+                n = nrow(df)
+                length(side.precursor_idx) == n ||
+                    error("Pass-1 sidecar row-count mismatch at $path")
+                @inbounds for i in 1:n
+                    (df.precursor_idx[i] == side.precursor_idx[i] &&
+                     df.scan_idx[i]      == side.scan_idx[i]) ||
+                        error("Pass-1 sidecar misaligned at row $i of $path")
+                end
+            end
             if hasproperty(df, :trace_prob_prepass)
                 df[!, :trace_prob] = df[!, :trace_prob_prepass]
             end
@@ -226,6 +240,14 @@ function summarize_results!(
         if !isempty(fold_dfs)
             # Merge and write combined file
             combined_df = vcat(fold_dfs...)
+            # Derived columns previously written per fold file by `_merge_pass1_into_main!`
+            # (which rewrote every fold file only for these). Applied once here, on data that
+            # is being written anyway. `:mbr_recovered` is a schema stub — MBR is removed.
+            acc = getAccessionNumbers(getPrecursors(getSpecLib(search_context)))
+            combined_df[!, :accession_numbers] =
+                [acc[pid] for pid in combined_df[!, :precursor_idx]]
+            combined_df[!, :decoy]         = combined_df[!, :target] .== false
+            combined_df[!, :mbr_recovered] = falses(nrow(combined_df))
             writeArrow(merged_path, combined_df)
             push!(merged_psm_paths, merged_path)
 

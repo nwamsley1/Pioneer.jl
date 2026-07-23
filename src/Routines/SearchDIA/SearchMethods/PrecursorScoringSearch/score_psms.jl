@@ -89,7 +89,6 @@ function score_precursor_isotope_traces(
         )
     end
 
-    _merge_pass1_into_main!(file_paths, precursors)
     return nothing
 end
 
@@ -265,44 +264,6 @@ function _train_scoring_classifier_semisupervised(
     end
 
     return best_state.scores, best_state.last_classifier, best_state.info, best_state
-end
-
-# Pass-1 (or round-2) sidecar merge. After `train_and_predict_pass1_oom!` has written each file's
-# `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the scores into each main file ONE FILE AT A
-# TIME — the full experiment is never materialised. Writes `:accession_numbers`, `:decoy`,
-# `:trace_prob_prepass`, `:trace_prob` (= prepass), and `:mbr_recovered` (= false, kept for downstream
-# schema stability now that MBR recovery is removed).
-function _merge_pass1_into_main!(
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors;
-    cleanup::Bool = true,
-)
-    acc = getAccessionNumbers(precursors)
-    for path in file_paths
-        pass1_path = path * PASS1_SIDECAR_SUFFIX
-        isfile(pass1_path) || continue
-        # Materialise one file (Tables.columntable detaches from the mmap so the same
-        # path can be safely rewritten below).
-        main  = DataFrame(Tables.columntable(Arrow.Table(path)))
-        pass1 = Arrow.Table(pass1_path)
-        n = nrow(main)
-        length(pass1.precursor_idx) == n ||
-            error("_merge_pass1_into_main!: row-count mismatch at $path")
-        @inbounds for i in 1:n
-            (main.precursor_idx[i] == pass1.precursor_idx[i] &&
-             main.scan_idx[i]      == pass1.scan_idx[i]) ||
-                error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
-        end
-        main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
-        main[!, :decoy]              = main[!, :target] .== false
-        main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
-        main[!, :trace_prob]         = main[!, :trace_prob_prepass]
-        main[!, :mbr_recovered]      = falses(n)
-        pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
-        writeArrow(path, main)
-        cleanup && safeRm(pass1_path, nothing; force=true)
-    end
-    return nothing
 end
 
 """

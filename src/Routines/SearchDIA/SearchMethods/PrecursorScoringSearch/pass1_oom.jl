@@ -24,7 +24,16 @@ using Random
 
 # Suffix for the per-file Pass-1 OOF-score sidecar this trainer writes (read by score_psms.jl and
 # two_round_scoring.jl). Previously lived in the now-deleted mbr_streaming.jl.
-const PASS1_SIDECAR_SUFFIX = ".pass1_sidecar.arrow"
+# NOTE the `.sidecar.arrow` tail: it is what makes the file eligible for
+# `_discover_sidecars_from_disk!` (FileReferences.jl), so PSMFileReference joins
+# `trace_prob_prepass` automatically instead of the main file being rewritten to absorb it.
+# `precursor_idx`/`scan_idx` collide with the main schema and are filtered out of the
+# registration; they stay in the file for the alignment check in PrecursorScoringSearch.jl.
+# Consequence to keep in mind: the round-1 sidecar is discoverable for the whole of round 2
+# (it is overwritten in place by the round-2 predict), so a PSMFileReference built on a fold
+# file mid-round-2 would see ROUND-1 scores. Nothing does that today — the scoring path uses
+# Arrow.Table directly — but check before adding one.
+const PASS1_SIDECAR_SUFFIX = ".pass1.sidecar.arrow"
 
 # Per-fold sampling cap. Resolved at call time (SCORING_LGBM_MAX_TRAIN isn't
 # bound at parse time — MainSearch/scoring.jl loads AFTER this file in
@@ -455,7 +464,7 @@ end
 # and symmetrically for fold1.
 #
 # Sidecar layout matches what mbr_streaming.jl's downstream readers expect:
-#   (:precursor_idx, :scan_idx, :trace_prob_prepass, :trace_prob_infold)
+#   (:precursor_idx, :scan_idx, :trace_prob_prepass[, :trace_prob_infold])
 #
 # Scores are clamped to [1e-6, 1 - 1e-4] (matches the in-memory pipeline's
 # clamp at score_psms.jl).
@@ -472,7 +481,6 @@ function _predict_pass1_to_sidecar(
             precursor_idx       = UInt32[],
             scan_idx            = UInt32[],
             trace_prob_prepass  = Float32[],
-            trace_prob_infold   = Float32[],
         )
         writeArrow(fpath * PASS1_SIDECAR_SUFFIX, empty_df)
         return nothing
@@ -491,22 +499,20 @@ function _predict_pass1_to_sidecar(
     @inbounds oof[idx0] .= _predict_matrix(cls_trained_on.fold1, X0)
     @inbounds oof[idx1] .= _predict_matrix(cls_trained_on.fold0, X1)
 
-    # In-fold: same-fold booster on each subset.
-    infold = if compute_infold
-        v = Vector{Float32}(undef, n)
-        @inbounds v[idx0] .= _predict_matrix(cls_trained_on.fold0, X0)
-        @inbounds v[idx1] .= _predict_matrix(cls_trained_on.fold1, X1)
-        v
-    else
-        fill(NaN32, n)
-    end
-
     side_df = DataFrame(
         precursor_idx       = collect(UInt32.(tbl.precursor_idx)),
         scan_idx            = collect(UInt32.(tbl.scan_idx)),
         trace_prob_prepass  = oof,
-        trace_prob_infold   = infold,
     )
+    # In-fold: same-fold booster on each subset. Emitted ONLY when actually computed —
+    # the sidecar is auto-discovered now, so an all-NaN placeholder would be joined into
+    # every downstream file. No consumer reads this column today.
+    if compute_infold
+        v = Vector{Float32}(undef, n)
+        @inbounds v[idx0] .= _predict_matrix(cls_trained_on.fold0, X0)
+        @inbounds v[idx1] .= _predict_matrix(cls_trained_on.fold1, X1)
+        side_df[!, :trace_prob_infold] = v
+    end
     writeArrow(fpath * PASS1_SIDECAR_SUFFIX, side_df)
     return nothing
 end
