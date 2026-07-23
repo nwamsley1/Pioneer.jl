@@ -183,18 +183,18 @@ function summarize_results!(
         return nothing
     end
 
-    step1_time = @elapsed begin
+    @score_phase "step1 score+2round" begin
         score_precursor_isotope_traces(
             valid_fold_paths,
             getPrecursors(getSpecLib(search_context));
             match_between_runs = params.match_between_runs,
         )
     end
-    #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
     # Step 1b: Merge fold files back into single files per MS run
     # After ML scoring, we merge fold0 and fold1 files back together
     # This simplifies downstream processing which expects one file per MS run
+    @score_phase "step1b fold-merge" begin
     merged_psm_paths = String[]
     fold_paths_to_delete = String[]
     for (idx, base_path) in valid_file_data
@@ -248,6 +248,11 @@ function summarize_results!(
                 [acc[pid] for pid in combined_df[!, :precursor_idx]]
             combined_df[!, :decoy]         = combined_df[!, :target] .== false
             combined_df[!, :mbr_recovered] = falses(nrow(combined_df))
+            # Trace→precursor probability aggregation, formerly a separate step-2 pass
+            # (`aggregate_per_file!`) that re-read every merged file to add one column.
+            # combined_df is one run (fold0+fold1, single ms_file_idx), so grouping here is
+            # identical; `:prec_prob` goes out as a main column at no extra write cost.
+            _aggregate_trace_to_precursor_probs!(combined_df)
             writeArrow(merged_path, combined_df)
             push!(merged_psm_paths, merged_path)
 
@@ -270,15 +275,13 @@ function summarize_results!(
     for fpath in fold_paths_to_delete
         safeRm(fpath, nothing)
     end
+    end  # @score_phase "step1b fold-merge"
 
-    # Create references for second pass PSMs (now using merged files)
+    # Create references for second pass PSMs (now using merged files). `:prec_prob` was
+    # computed and written into the merged file during Step 1b above, so it is a main
+    # column here — no separate aggregation pass.
     second_pass_paths = merged_psm_paths
     second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
-
-    # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
-    step2_time = @elapsed begin
-        aggregate_per_file!(second_pass_refs)
-    end
 
     # MainSearch already selects one row per precursor per file,
     # so no best-trace selection is needed. Pass refs through directly.
@@ -290,7 +293,7 @@ function summarize_results!(
     #   - In-memory q-value computation from dicts (no I/O)
     #   - Lightweight 2-column sidecar files for spline computation
     #   - Single per-file pipeline combining all column additions + filtering
-    step5_10_time = @elapsed begin
+    begin
         n_files_total = length(getFilePaths(getMSData(search_context)))
         fdr_scale = getLibraryFdrScaleFactor(search_context)
 
@@ -302,19 +305,22 @@ function summarize_results!(
             @user_info "Training global precursor scoring model..."
         end
         global_prob_dict, target_dict =
-            build_global_precursor_score_dicts(
+            @score_phase "  A1 global-score-model" build_global_precursor_score_dicts(
                 filtered_refs,
                 n_precursors,
                 n_files_total,
             )
 
         # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
+        @score_phase "  A2 global-qval+pep-dicts" begin
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
+        end
 
         # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
-        spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
+        spline_result = @score_phase "  A3 qval-spline+pep" build_qvalue_spline_from_refs(
+            filtered_refs, :prec_prob, results.merged_quant_path;
             compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
             fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
         qval_spline = spline_result.qval_spline
@@ -351,7 +357,8 @@ function summarize_results!(
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds(qval_conditions)
 
-        passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
+        passing_refs = @score_phase "  B pipeline-batch+filter" apply_pipeline_batch(
+            filtered_refs, combined_pipeline, passing_psms_folder)
     end
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
@@ -372,7 +379,9 @@ function summarize_results!(
 
     # Build RT indices for IntegrateChromatogramsSearch (all library precursors per file)
     # The per-file count is logged inside build_rt_indices! at @debug_l1.
-    build_rt_indices!(search_context, valid_file_indices, passing_refs)
+    @score_phase "step_rt build-rt-indices" begin
+        build_rt_indices!(search_context, valid_file_indices, passing_refs)
+    end
 
     # Protein inference + protein-group scoring are handled downstream by
     # ProteinInferenceSearch and ProteinScoringSearch. Per-stage timings are

@@ -40,24 +40,11 @@ function _aggregate_trace_to_precursor_probs!(df::DataFrame)
     return df
 end
 
-"""
-    aggregate_per_file!(refs)
-
-Per-file precursor probability aggregation (no MBR filtering).
-"""
-function aggregate_per_file!(refs::Vector{PSMFileReference})
-    for ref in refs
-        df = load_with_sidecars(ref)
-        _aggregate_trace_to_precursor_probs!(df)
-        # Write only :prec_prob as a row-aligned sidecar instead of rewriting
-        # the entire main file. Downstream readers locate :prec_prob via the
-        # PSMFileReference's sidecar registry.
-        side_path = file_path(ref) * ".prec_prob.sidecar.arrow"
-        writeArrow(side_path, DataFrame(prec_prob = df.prec_prob))
-        register_sidecar!(ref, side_path, [:prec_prob])
-    end
-    return nothing
-end
+# `_aggregate_trace_to_precursor_probs!` is now called directly in Step 1b
+# (PrecursorScoringSearch.jl) on the merged DataFrame before it is written, so
+# `:prec_prob` ships as a main column and no separate per-file aggregation pass is needed.
+# The former `aggregate_per_file!` (which re-read every merged file to add one sidecar
+# column) has been removed.
 
 #==========================================================
 Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
