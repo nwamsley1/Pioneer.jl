@@ -107,6 +107,14 @@ function library_search(
     if _zt_wide_emit
         qtm_frag = SquareQuadModel(_zt_cand_tol - 0.51f0)
     end
+    # Sciex ZT candidacy merge (no-reset counter accumulation): PIONEER_ZT_MERGE_K (bins).
+    # For each center MS2 scan, the fragment-index scores its ±K same-cycle neighbors'
+    # peaks into the SAME bitvec counter before emitting — bit-identical to merging the
+    # ±K bins' peaks (idempotent OR) but with no buffer/sort and no precursor-window
+    # widening. Recovers swept-quad-diluted precursors at the default bitvec threshold.
+    # MAIN search only; keeps the tight center-bin path (filter_to_center_bin! + ±k
+    # expand + baseline deconv). Independent of PIONEER_ZT_CANDIDACY_TOL (wide-emit).
+    _zt_merge_k = _zt_main ? something(tryparse(Int, get(ENV, "PIONEER_ZT_MERGE_K", "")), 0) : 0
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -161,7 +169,8 @@ function library_search(
             getMz(precursors);
             score_filter = score_filter, max_peaks = max_peaks,
             scratch = getFragIndexScratch(search_context),
-            iso_bounds_override = _zt_main ? (UInt8(0), UInt8(0)) : nothing)
+            iso_bounds_override = _zt_main ? (UInt8(0), UInt8(0)) : nothing,
+            zt_merge_k = _zt_merge_k)
         out_dir = getDataOutDir(search_context)
         prof_path = joinpath(out_dir, "frag_index_profile_$(ms_file_idx).pb.gz")
         pprof(out=prof_path, web=false)
@@ -173,7 +182,8 @@ function library_search(
             getMz(precursors);
             score_filter = score_filter, max_peaks = max_peaks,
             scratch = getFragIndexScratch(search_context),
-            iso_bounds_override = _zt_main ? (UInt8(0), UInt8(0)) : nothing)
+            iso_bounds_override = _zt_main ? (UInt8(0), UInt8(0)) : nothing,
+            zt_merge_k = _zt_merge_k)
     end
     t_frag = time() - t_frag_start
 

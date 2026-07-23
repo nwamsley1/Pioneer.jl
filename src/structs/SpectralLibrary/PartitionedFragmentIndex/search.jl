@@ -398,6 +398,7 @@ function searchFragmentIndexPartitionMajorHinted(
         max_peaks::Int = 0,
         scratch::Union{Nothing, FragIndexScratch} = nothing,
         iso_bounds_override::Union{Nothing, Tuple{UInt8, UInt8}} = nothing,
+        zt_merge_k::Int = 0,
         ) where {M<:AbstractMassErrorModel, Q<:QuadTransmissionModel,
                  P<:FragmentIndexSearchParameters}
 
@@ -467,7 +468,7 @@ function searchFragmentIndexPartitionMajorHinted(
                 scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
                 scan_irts, precursor_mzs,
                 mem, linear_threshold, n_threads,
-                thread_int_bufs[tid], max_peaks)
+                thread_int_bufs[tid], max_peaks, zt_merge_k)
             thread_times[tid] = time() - t_thread
         end
     end
@@ -539,10 +540,12 @@ function _run_thread(tid::Int, emit::E,
         precursor_mzs::AbstractVector{Float32},
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
-        int_buf::Vector{Float32}, max_peaks::Int
+        int_buf::Vector{Float32}, max_peaks::Int,
+        zt_merge_k::Int = 0
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
 
     wp = 0
+    nspec = length(spectra)
 
     for k in 1:pfi_ref.n_partitions
         relevant = partition_to_scans[k]
@@ -571,13 +574,40 @@ function _run_thread(tid::Int, emit::E,
                 end
             end
 
-            _score_partition_hinted!(lc, partition,
-                scan_irt_lo[si], scan_irt_hi[si],
-                getMzArray(spectra, scan_idx),
-                getIntensityArray(spectra, scan_idx),
-                mem;
-                linear_threshold=linear_threshold,
-                intensity_threshold=intensity_threshold)
+            if zt_merge_k > 0
+                # Sciex ZT scanning-DIA candidacy merge (no-reset): the swept ~5 Da
+                # quad dilutes a precursor's fragments across ±k adjacent Q1 bins, so
+                # the center bin alone yields a low-count_ones, non-discriminating
+                # bitvec pattern. Score the ±k same-cycle MS2 neighbors' peaks into the
+                # SAME counter (no reset between) using the CENTER scan's iRT/prec
+                # window: because scoring is an idempotent bitmask OR, the accumulated
+                # pattern is bit-identical to merging the neighbors' peaks and scoring
+                # once — recovering the diluted precursor without a merge buffer, a
+                # sort, or widening the precursor-selection window. Same-cycle guard
+                # (identical to expand_to_metascans!) never crosses a cycle/MS1 boundary.
+                ci = getCycleIdx(spectra, scan_idx)
+                @inbounds for j in -zt_merge_k:zt_merge_k
+                    sj = scan_idx + j
+                    (sj < 1 || sj > nspec) && continue
+                    (getMsOrder(spectra, sj) == 2) || continue
+                    (getCycleIdx(spectra, sj) == ci) || continue
+                    _score_partition_hinted!(lc, partition,
+                        scan_irt_lo[si], scan_irt_hi[si],
+                        getMzArray(spectra, sj),
+                        getIntensityArray(spectra, sj),
+                        mem;
+                        linear_threshold=linear_threshold,
+                        intensity_threshold=intensity_threshold)
+                end
+            else
+                _score_partition_hinted!(lc, partition,
+                    scan_irt_lo[si], scan_irt_hi[si],
+                    getMzArray(spectra, scan_idx),
+                    getIntensityArray(spectra, scan_idx),
+                    mem;
+                    linear_threshold=linear_threshold,
+                    intensity_threshold=intensity_threshold)
+            end
 
             wp = emit_candidates!(emit, lc, l2g, si, scan_irts[si],
                 scan_prec_min[si], scan_prec_max[si],
