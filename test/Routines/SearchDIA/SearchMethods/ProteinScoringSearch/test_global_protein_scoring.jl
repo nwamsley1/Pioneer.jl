@@ -85,7 +85,11 @@
             Dict(key1 => 6, key2 => 4),
             Dict(key1 => UInt8(0), key2 => UInt8(1)),
         )
-        table = Pioneer._build_global_protein_feature_table(inputs, 4)
+        table = Pioneer._build_global_protein_feature_table(
+            inputs,
+            4,
+            0.85f0,
+        )
 
         @test table.protein_name == ["P1", "P2"]
         @test table.target == Bool[true, false]
@@ -109,7 +113,8 @@
         @test table.max_n_peptides_observed[1] == 2.0f0
         @test table.global_peptide_coverage[1] == 0.5f0
         @test table.max_peptide_coverage[1] ≈ 1.0f0 / 3.0f0
-        @test table.n_runs_observed[1] == 2.0f0
+        @test table.n_passing_runs[1] == 1.0f0
+        @test !hasproperty(table, :n_runs_observed)
         @test table.n_score_gt_0_5[1] == 2.0f0
         @test table.n_score_gt_0_9[1] == 0.0f0
         @test table.n_score_gt_0_99[1] == 0.0f0
@@ -120,6 +125,7 @@
         @test table.max_n_peptides_observed[2] == 1.0f0
         @test table.global_peptide_coverage[2] == 0.25f0
         @test table.max_peptide_coverage[2] == 0.25f0
+        @test table.n_passing_runs[2] == 0.0f0
     end
 
     @testset "run-level input collection" begin
@@ -222,6 +228,7 @@
                 2,
                 4,
                 true,
+                0.5f0,
             )
 
             expected_p1 = logodds(Float32[0.9, 0.8, 0.7, 0.6], 2)
@@ -282,6 +289,7 @@
                 4,
                 2,
                 true,
+                0.5f0,
             )
 
             @test scores == Dict(
@@ -366,6 +374,7 @@
                 folds,
             ),
             2,
+            0.5f0,
         )
         test_hyperparameters = (
             num_iterations = 20,

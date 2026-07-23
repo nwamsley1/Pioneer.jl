@@ -28,7 +28,7 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :min_prec_prob,
     :top1_top2_gap,
     :top2_top3_gap,
-    :n_runs_observed,
+    :n_passing_runs,
     :n_prob_gt_0_5,
     :n_prob_gt_0_9,
     :n_prob_gt_0_99,
@@ -145,32 +145,6 @@ function logodds(
     return _logodds_from_sorted(sort(probabilities; rev = true), top_n)
 end
 
-"""
-    _score_floor_for_qvalue(qval_spline, q_value_threshold)
-
-Find the lowest precursor probability whose interpolated q-value passes the
-requested threshold.
-"""
-function _score_floor_for_qvalue(
-    qval_spline,
-    q_value_threshold::Float32,
-)::Float32
-    low = eps(Float32)
-    high = 1.0f0 - eps(Float32)
-    Float32(qval_spline(low)) <= q_value_threshold && return low
-    Float32(qval_spline(high)) > q_value_threshold && return high
-
-    for _ in 1:32
-        midpoint = (low + high) / 2.0f0
-        if Float32(qval_spline(midpoint)) <= q_value_threshold
-            high = midpoint
-        else
-            low = midpoint
-        end
-    end
-    return high
-end
-
 function _collect_global_precursor_inputs(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
@@ -257,7 +231,6 @@ function _build_global_precursor_feature_table(
         feature_columns[:min_prec_prob][row] = sorted_probabilities[end]
         feature_columns[:top1_top2_gap][row] = n_observed >= 2 ? top1 - top2 : 0.0f0
         feature_columns[:top2_top3_gap][row] = n_observed >= 3 ? top2 - top3 : 0.0f0
-        feature_columns[:n_runs_observed][row] = Float32(n_observed)
         feature_columns[:n_prob_gt_0_5][row] =
             Float32(count(>(0.5f0), sorted_probabilities))
         feature_columns[:n_prob_gt_0_9][row] =
@@ -280,6 +253,7 @@ function _build_global_precursor_feature_table(
         centrality_mean = n_passing_runs > 0 ?
             centrality_sum / Float32(n_passing_runs) : 0.0f0
         n_missing_runs = max(n_runs_total - n_passing_runs, 0)
+        feature_columns[:n_passing_runs][row] = Float32(n_passing_runs)
         feature_columns[:observed_run_centrality_mean][row] = centrality_mean
         feature_columns[:observed_run_centrality_max][row] = centrality_max
         feature_columns[:missing_run_similarity_mass_approx][row] =

@@ -73,7 +73,8 @@
         @test table.min_prec_prob[1] == 0.6f0
         @test table.top1_top2_gap[1] ≈ 0.1f0
         @test table.top2_top3_gap[1] ≈ 0.2f0
-        @test table.n_runs_observed[1] == 3.0f0
+        @test table.n_passing_runs[1] == 2.0f0
+        @test !hasproperty(table, :n_runs_observed)
         @test table.n_prob_gt_0_5[1] == 3.0f0
         @test table.n_prob_gt_0_9[1] == 0.0f0
         @test table.n_prob_gt_0_99[1] == 0.0f0
@@ -82,7 +83,7 @@
         @test table.missing_run_similarity_mass_approx[1] ≈ 2.0f0 / 3.0f0
         @test !hasproperty(table, :n_runs_passing_local_q)
 
-        @test table.n_runs_observed[2] == 1.0f0
+        @test table.n_passing_runs[2] == 1.0f0
         @test table.top3_prec_prob[2] == 0.0f0
         @test table.median_prec_prob[2] == 0.7f0
         @test table.std_prec_prob[2] == 0.0f0

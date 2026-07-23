@@ -32,7 +32,7 @@ const GLOBAL_PROTEIN_SCORE_FEATURES = Symbol[
     :max_n_peptides_observed,
     :global_peptide_coverage,
     :max_peptide_coverage,
-    :n_runs_observed,
+    :n_passing_runs,
     :n_score_gt_0_5,
     :n_score_gt_0_9,
     :n_score_gt_0_99,
@@ -127,6 +127,7 @@ end
 function _build_global_protein_feature_table(
     inputs::GlobalProteinInputs,
     n_runs_total::Int,
+    run_score_floor::Float32,
 )
     protein_keys = sort!(collect(keys(inputs.scores)))
     n_proteins = length(protein_keys)
@@ -171,7 +172,8 @@ function _build_global_protein_feature_table(
             Float32(n_unique_peptides) / Float32(n_possible_peptides)
         feature_columns[:max_peptide_coverage][row] =
             Float32(max_n_peptides) / Float32(n_possible_peptides)
-        feature_columns[:n_runs_observed][row] = Float32(n_observed)
+        feature_columns[:n_passing_runs][row] =
+            Float32(count(>=(run_score_floor), scores))
         feature_columns[:n_score_gt_0_5][row] = Float32(count(>(0.5f0), scores))
         feature_columns[:n_score_gt_0_9][row] = Float32(count(>(0.9f0), scores))
         feature_columns[:n_score_gt_0_99][row] = Float32(count(>(0.99f0), scores))
@@ -257,6 +259,7 @@ end
         n_proteins,
         n_runs_total,
         protein_probit_scoring_succeeded,
+        run_score_floor,
     )
 
 Build one score-distribution and peptide-support feature row per protein group
@@ -274,6 +277,7 @@ function build_global_protein_score_dicts(
     n_proteins::Int,
     n_runs_total::Int,
     protein_probit_scoring_succeeded::Bool,
+    run_score_floor::Float32,
 )
     inputs = _collect_global_protein_inputs(
         pg_refs,
@@ -293,7 +297,11 @@ function build_global_protein_score_dicts(
     end
 
     @user_info "Training global protein scoring model..."
-    table = _build_global_protein_feature_table(inputs, n_runs_total)
+    table = _build_global_protein_feature_table(
+        inputs,
+        n_runs_total,
+        run_score_floor,
+    )
     scored = _score_global_features_oof(
         table,
         GLOBAL_PROTEIN_SCORE_FEATURES,

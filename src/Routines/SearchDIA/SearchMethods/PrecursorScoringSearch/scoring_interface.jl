@@ -152,6 +152,32 @@ function write_score_sidecars(
 end
 
 """
+    _score_floor_for_qvalue(qval_spline, q_value_threshold)
+
+Find the lowest run-level score whose pooled experiment-wide q-value passes
+the requested threshold.
+"""
+function _score_floor_for_qvalue(
+    qval_spline,
+    q_value_threshold::Float32,
+)::Float32
+    low = eps(Float32)
+    high = 1.0f0 - eps(Float32)
+    Float32(qval_spline(low)) <= q_value_threshold && return low
+    Float32(qval_spline(high)) > q_value_threshold && return high
+
+    for _ in 1:32
+        midpoint = (low + high) / 2.0f0
+        if Float32(qval_spline(midpoint)) <= q_value_threshold
+            high = midpoint
+        else
+            low = midpoint
+        end
+    end
+    return high
+end
+
+"""
     build_qvalue_spline_from_refs(refs, score_col, merged_path; ...) → Union{Nothing, NamedTuple}
 
 Encapsulates the full sidecar lifecycle: write → sort → merge → cleanup → spline computation.

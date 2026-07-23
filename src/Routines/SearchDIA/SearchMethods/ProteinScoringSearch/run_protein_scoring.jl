@@ -247,6 +247,23 @@ function run_protein_scoring!(
     )
 
     n_proteins = length(getProteins(getSpecLib(search_context)))
+    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+    spline_result = build_qvalue_spline_from_refs(
+        pg_refs,
+        :pg_score,
+        sorted_pg_scores_path;
+        batch_size = 1_000_000,
+        compute_pep = true,
+        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
+        temp_prefix = "preglobal_pg_sidecar",
+    )
+    spline_result === nothing &&
+        error("Cannot build global protein model without run-level scores")
+    pg_qval_spline = spline_result.qval_spline
+    run_score_floor = _score_floor_for_qvalue(
+        pg_qval_spline,
+        q_value_threshold,
+    )
 
     global_pg_score_dict, pg_name_to_global_pg_score =
         build_global_protein_score_dicts(
@@ -255,18 +272,14 @@ function run_protein_scoring!(
             n_proteins,
             length(pg_refs),
             protein_probit_scoring_succeeded,
+            run_score_floor,
         )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
     search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
-    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000, compute_pep = true,
-        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
-        temp_prefix = "pg_sidecar")
-    search_context.pg_score_to_qval[] = spline_result.qval_spline
+    search_context.pg_score_to_qval[] = pg_qval_spline
     search_context.pg_score_to_pep[] = spline_result.pep_interp
 
     protein_combined_pipeline = TransformPipeline() |>
