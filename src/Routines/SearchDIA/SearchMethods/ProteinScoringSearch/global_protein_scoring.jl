@@ -309,12 +309,12 @@ end
     )
 
 Build one score-distribution, peptide-support, and run-context feature row per
-protein group and select out-of-fold global LightGBM scores only when more
-targets pass the configured global q-value threshold than with the empirical
-top-run log-odds scores. Experiment-wide q-values are not used for this
-selection. Use the empirical score without training when probit scoring was
-not applied, the observed protein groups belong to one CV fold, or any training
-split has fewer than 100 targets or 100 decoys.
+protein group and select out-of-fold global LightGBM scores only when they
+retain more total protein-run target IDs after applying both the configured
+global and experiment-wide q-value thresholds than the empirical top-run
+log-odds scores. Use the empirical score without training when probit scoring
+was not applied, the observed protein groups belong to one CV fold, or any
+training split has fewer than 100 targets or 100 decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -370,6 +370,7 @@ function build_global_protein_score_dicts(
         table.empirical_global_score,
         table.target;
         scoring_name = "Global protein",
+        experiment_wide_id_counts = Int.(table.n_passing_runs),
         q_threshold = q_value_threshold,
     )
 

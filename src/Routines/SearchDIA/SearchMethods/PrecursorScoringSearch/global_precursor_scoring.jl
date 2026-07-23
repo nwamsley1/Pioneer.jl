@@ -265,10 +265,10 @@ end
     build_global_precursor_score_dicts(refs, n_precursors, n_runs_total; kwargs...)
 
 Build one score-distribution and run-context feature row per precursor and
-select out-of-fold global LightGBM scores only when more targets pass the
-configured global q-value threshold than with the empirical top-run log-odds
-scores. Experiment-wide q-values are not used for this selection. For a
-single-run search, return the individual precursor probabilities without
+select out-of-fold global LightGBM scores only when they retain more total
+precursor-run target IDs after applying both the configured global and
+experiment-wide q-value thresholds than the empirical top-run log-odds scores.
+For a single-run search, return the individual precursor probabilities without
 training a model.
 """
 function _build_single_run_precursor_score_dicts(
@@ -325,6 +325,7 @@ function build_global_precursor_score_dicts(
         table.empirical_global_score,
         table.target;
         scoring_name = "Global precursor",
+        experiment_wide_id_counts = Int.(table.n_passing_runs),
         q_threshold = q_value_threshold,
         fdr_scale_factor = fdr_scale_factor,
     )
