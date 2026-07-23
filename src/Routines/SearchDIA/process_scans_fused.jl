@@ -69,7 +69,14 @@ function process_scans_fused!(
     prec_irts    = getIrt(precursors)
     prec_is_decoy = getIsDecoy(precursors)
 
-    prec_estimation     = getPrecEstimation(params)
+    # Sciex ZT main search with the empirical quad model: use the transmission-ratio-only
+    # estimation so the transmission warps fragment isotope RATIOS but not the design-column
+    # magnitude (keeps the meta-scan weight triangle intact for the ZT shape features). Only
+    # when PIONEER_ZT_EMPIRICAL_QUAD is on; otherwise the square-box path keeps PartialPrecCapture.
+    _zt_main_fused = (params isa MainSearchParameters) &&
+        something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0) > 0 &&
+        get(ENV, "PIONEER_ZT_EMPIRICAL_QUAD", "0") != "0"
+    prec_estimation     = _zt_main_fused ? PartialPrecCaptureNorm() : getPrecEstimation(params)
     n_frag_isotopes     = getNFragIsotopes(params)
     max_frag_rank       = getMaxFragRank(params)
     isotope_err_bounds  = getIsotopeErrBounds(params)

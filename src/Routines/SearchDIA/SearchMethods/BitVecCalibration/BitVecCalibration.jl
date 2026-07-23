@@ -259,6 +259,12 @@ const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
 const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
 
+# Env override (experiments): the minimum library-corrected target-over-decoy excess a
+# fragment-index bitmask pattern must show to PASS (be emitted as a candidate). Lowering it
+# lets weaker/lower-bit patterns through -> more candidates (helps recall of low-abundance
+# precursors, e.g. ZT where signal is diluted across bins) at some FDR cost. Default 0.03.
+_bitvec_min_excess() = Float64(something(tryparse(Float64, get(ENV, "PIONEER_BITVEC_MIN_EXCESS", "")), BITVEC_MIN_EXCESS_RATE))
+
 function _bitvec_excess_rank_table(
     target_counts::AbstractVector{<:Integer},
     decoy_counts::AbstractVector{<:Integer},
@@ -301,7 +307,15 @@ function process_file!(
     precursors = getPrecursors(spec_lib)
     is_decoy = getIsDecoy(precursors)
     partitioned_index = get_fragment_index(spec_lib, params)
-    qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Calibrate on the SAME precursor window the candidacy fragment-index search uses.
+    # For Sciex ZT scanning DIA the candidacy box is a wide square (SquareQuadModel with the
+    # frag overhang, ±~1 Da), NOT the QuadTuning-tuned quad model — mirror it here so the
+    # bitvec excess rates describe the population the threshold actually gates. Non-ZT keeps
+    # the tuned model (unchanged), matching candidacy's `qtm_frag = qtm` there.
+    _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+    _zt_frag_overhang = something(tryparse(Float32, get(ENV, "PIONEER_ZT_FRAG_OVERHANG", "")), 0.5f0)
+    qtm = _zt_k > 0 ? SquareQuadModel(_zt_frag_overhang) :
+                      getQuadTransmissionModel(search_context, ms_file_idx)
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)
@@ -309,6 +323,19 @@ function process_file!(
     prec_irts = getIrt(precursors)
 
     scan_priority = get_ms2_scan_priority_order(spectra)
+    # Experiment: restrict the calibration sample to an RT window (min,max minutes) via
+    # PIONEER_BITVEC_RT_RANGE="4,8". Uniform-in-time sampling otherwise spends most counts on
+    # dead gradient (void/wash), diluting the target/decoy excess with noise patterns.
+    let _rtr = get(ENV, "PIONEER_BITVEC_RT_RANGE", "")
+        if !isempty(_rtr)
+            parts = split(_rtr, ",")
+            if length(parts) == 2
+                rlo = something(tryparse(Float32, strip(parts[1])), -Inf32)
+                rhi = something(tryparse(Float32, strip(parts[2])),  Inf32)
+                filter!(si -> rlo <= Float32(getRetentionTime(spectra, si)) <= rhi, scan_priority)
+            end
+        end
+    end
     total_ms2 = length(scan_priority)
     # Sample scans RANDOMLY (representative across the run) instead of top-TIC. Top-TIC
     # sampling under-represents low-TIC (e.g. early-gradient) scans, which mis-calibrates
@@ -362,7 +389,7 @@ function process_file!(
 
     # Compute per-file filter
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
-    min_excess_rate = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_excess_rate = _bitvec_min_excess()
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
@@ -441,7 +468,7 @@ function summarize_results!(
     end
 
     z = Float64(BITVEC_DIAGNOSTIC_Z)
-    min_r = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_r = _bitvec_min_excess()
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
     result = _adaptive_merge(tc, dc, z, min_r, fdr_scale)
     partition = result.partition

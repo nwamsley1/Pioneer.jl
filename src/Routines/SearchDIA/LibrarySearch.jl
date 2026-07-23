@@ -87,6 +87,16 @@ function library_search(
     # (+883 prec, +1.14%, 1% FDR), 1.0→78,362 (plateau). Center assignment stays tight.
     _zt_frag_overhang = something(tryparse(Float32, get(ENV, "PIONEER_ZT_FRAG_OVERHANG", "")), 0.5f0)
     qtm_frag = _zt ? SquareQuadModel(_zt_frag_overhang) : qtm
+    # Experiment: ZT ParameterTuning is PSM-starved because each ~1 Da reconstructed bin carries
+    # fragments from the FULL ~5 Da swept-quad isolation, but the tight candidacy box only matches
+    # precursors whose M0 sits in that bin. PIONEER_ZT_TUNING_OVERHANG (m/z) widens the tuning
+    # candidacy box to the physical quad width (overhang≈2 → ±2.5 Da = 5 Da window) so tuning finds
+    # enough PSMs for a well-constrained mass/RT/NCE calibration. ParameterTuning only; 0 = off.
+    _zt_tuning = _zt && (params isa ParameterTuningSearchParameters)
+    _zt_tuning_overhang = something(tryparse(Float32, get(ENV, "PIONEER_ZT_TUNING_OVERHANG", "")), 0.0f0)
+    if _zt_tuning && _zt_tuning_overhang > 0f0
+        qtm_frag = SquareQuadModel(_zt_tuning_overhang)
+    end
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -190,18 +200,22 @@ function library_search(
     # Tuning stages (ZT but not main search) deconvolve the clean center bins with
     # a 1 m/z square box; only the main search expands + widens the box.
     qtm_deconv = _zt ? SquareQuadModel(0.0f0) : qtm
+    if _zt_tuning && _zt_tuning_overhang > 0f0
+        qtm_deconv = SquareQuadModel(_zt_tuning_overhang)   # keep tuning deconv consistent with the wide candidacy box
+    end
     if _zt_main
         n_before_ms = length(precursors_passed)
         precursors_passed = expand_to_metascans!(
             scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, _zt_k)
-        # Wide square deconv box: overhang = k·S so the box spans the whole
-        # (2k+1)-bin meta-scan (S = median Q1 bin step).
+        # Deconv transmission: prefer the QuadTuning-fitted empirical LUT (the real
+        # swept-quad shape); fall back to the wide square box (overhang = k·S spanning
+        # the whole (2k+1)-bin meta-scan) if QuadTuning didn't produce one.
         S_est = _zt_bin_step(spectra, all_scan_idxs)
-        qtm_deconv = SquareQuadModel(Float32(_zt_k) * S_est)
+        qtm_deconv = qtm isa EmpiricalQuadModel ? qtm : SquareQuadModel(Float32(_zt_k) * S_est)
         @debug_l1 "ZT meta-scan expansion (k=$_zt_k): $n_before_ms → " *
                   "$(length(precursors_passed)) candidates " *
                   "($(round(length(precursors_passed)/max(1,n_before_ms), digits=2))×); " *
-                  "S=$(round(S_est,digits=3)), deconv box≈$(round(S_est*(2*_zt_k+1),digits=1)) m/z"
+                  "S=$(round(S_est,digits=3)); deconv=$(qtm_deconv isa EmpiricalQuadModel ? "EmpiricalQuadModel(LUT)" : "SquareQuadModel($(round(S_est*(2*_zt_k+1),digits=1)) m/z)")"
     end
 
     # --- 2b. Build precursor index ---

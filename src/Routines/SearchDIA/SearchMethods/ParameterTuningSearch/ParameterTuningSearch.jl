@@ -181,7 +181,13 @@ function initialize_models!(search_context, ms_file_idx, params)
 
     # Quad transmission: trust the stated isolation width with a hard
     # square cutoff during tuning, before any file-specific Razo fit.
-    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
+    # Sciex ZT experiment: PIONEER_ZT_TUNING_OVERHANG widens the tuning quad box to the physical
+    # swept-quad width (~5 Da) so the NCE sweep (which reads this stored model) stays consistent
+    # with the widened candidacy/deconv boxes in library_search.
+    _tun_oh = something(tryparse(Float32, get(ENV, "PIONEER_ZT_TUNING_OVERHANG", "")), 0.0f0)
+    _zt_tun = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0) > 0 && _tun_oh > 0f0
+    setQuadTransmissionModel!(search_context, ms_file_idx,
+        _zt_tun ? SquareQuadModel(_tun_oh) : SquareQuadModel(0.0f0))
 end
 
 
@@ -362,6 +368,15 @@ function fit_nce_from_psms!(
     nce_grid::AbstractVector{Float32} = LinRange{Float32}(21.0f0, 40.0f0, 20)
 )
     nrow(psms) < 50 && return nothing
+
+    # Diagnostic override: PIONEER_FIXED_NCE pins the sweep to a single NCE (forces a
+    # constant PiecewiseNceModel(val) everywhere instead of the tuned per-charge model).
+    let _fnce = get(ENV, "PIONEER_FIXED_NCE", "")
+        if !isempty(_fnce)
+            _v = tryparse(Float32, _fnce)
+            _v === nothing || (nce_grid = Float32[_v])
+        end
+    end
 
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)
@@ -596,7 +611,11 @@ function process_file!(
             iteration_state.failed_with_exception = true
             throw(ErrorException("No usable MS2 scans"))
         end
-        min_psms_needed = getMinPsms(params)
+        # Experiment: PIONEER_TUNING_MIN_PSMS raises the collection target so a low-yield
+        # acquisition (e.g. ZT swept-quad, ~20× fewer confident PSMs/scan) collects more
+        # confident PSMs → a better-constrained mass/RT model. Default = TUNING_MIN_SAMPLES.
+        min_psms_needed = something(tryparse(Int, get(ENV, "PIONEER_TUNING_MIN_PSMS", "")),
+                                    getMinPsms(params))
 
         # Two-phase loop: Phase 1 (wide scout) discovers bias → Phase 2 (collection) refines
         phases = (

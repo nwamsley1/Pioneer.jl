@@ -271,16 +271,41 @@ function process_file!(
         total_psms = DataFrame()
         use_fallback = true
 
-        if !converged
-            @user_warn "QuadTuning [$file_name]: only $n_collected PSMs collected (target=$target_psms_int, fallback_min=$min_psms_int); using SquareQuadModel fallback"
-        else
-            total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
-            if nrow(total_psms) >= 50
-                fitted_params, initial_params = fit_quad_model(total_psms, window_width)
-                fitted_model = RazoQuadModel(fitted_params)
-                razo_initial_model = RazoQuadModel(initial_params)
-                active_model = fitted_model
+        # Sciex ZT scanning DIA (PIONEER_ZT_METASCAN_K>0): estimate the wide effective
+        # quad transmission empirically from the overlapping-scan fragment envelope
+        # (EmpiricalQuadModel LUT). The Razo/isotope-ratio path only samples ±~1 Da and
+        # cannot see the ~13 Da ZT window.
+        # Empirical transmission is opt-in (default off): the square-box deconv currently
+        # scores better on IDs (the transmission-ratio correction did not help), so the
+        # default ZT path keeps the wide square box. Set PIONEER_ZT_EMPIRICAL_QUAD=1 to test.
+        _zt_k = something(tryparse(Int, get(ENV, "PIONEER_ZT_METASCAN_K", "")), 0)
+        _zt_emp = get(ENV, "PIONEER_ZT_EMPIRICAL_QUAD", "0") != "0"
+        zt_model::Union{Nothing, EmpiricalQuadModel} = nothing
+        zt_samples = Vector{Vector{Float32}}()
+        if _zt_k > 0 && _zt_emp && converged && n_collected >= 50
+            zt_model, zt_samples = estimate_zt_quad_transmission(
+                initial_psms, spectra, search_context, ms_file_idx)
+            if zt_model !== nothing
+                active_model = zt_model
                 use_fallback = false
+                @user_info "QuadTuning [$file_name]: ZT empirical transmission fit ($(length(zt_model.values)) knots)"
+            else
+                @user_warn "QuadTuning [$file_name]: ZT transmission estimate returned no signal; using SquareQuadModel fallback"
+            end
+        end
+
+        if zt_model === nothing
+            if !converged
+                @user_warn "QuadTuning [$file_name]: only $n_collected PSMs collected (target=$target_psms_int, fallback_min=$min_psms_int); using SquareQuadModel fallback"
+            else
+                total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
+                if nrow(total_psms) >= 50
+                    fitted_params, initial_params = fit_quad_model(total_psms, window_width)
+                    fitted_model = RazoQuadModel(fitted_params)
+                    razo_initial_model = RazoQuadModel(initial_params)
+                    active_model = fitted_model
+                    use_fallback = false
+                end
             end
         end
 
@@ -292,18 +317,22 @@ function process_file!(
         fname = getFileIdToName(getMSData(search_context), ms_file_idx)
         razo_lm_for_plot = use_fallback ? nothing :
             (@isdefined(fitted_model) ? fitted_model : nothing)
-        if !isempty(total_psms)
-            push!(file_plots, plot_charge_distributions(total_psms, results, fname;
-                                                         quad_model=razo_lm_for_plot,
-                                                         window_width=window_width))
-        end
-        push!(file_plots, plot_quad_model(active_model, window_width, results, fname;
-                                           initial_model=razo_initial_model))
-        if !isempty(total_psms)
-            push!(file_plots, plot_sliding_median_smoother(total_psms, fname;
-                                                           window_width=window_width,
-                                                           quad_model=razo_lm_for_plot,
-                                                           initial_model=razo_initial_model))
+        if zt_model !== nothing
+            push!(file_plots, plot_zt_quad_transmission(zt_model, zt_samples, fname))
+        else
+            if !isempty(total_psms)
+                push!(file_plots, plot_charge_distributions(total_psms, results, fname;
+                                                             quad_model=razo_lm_for_plot,
+                                                             window_width=window_width))
+            end
+            push!(file_plots, plot_quad_model(active_model, window_width, results, fname;
+                                               initial_model=razo_initial_model))
+            if !isempty(total_psms)
+                push!(file_plots, plot_sliding_median_smoother(total_psms, fname;
+                                                               window_width=window_width,
+                                                               quad_model=razo_lm_for_plot,
+                                                               initial_model=razo_initial_model))
+            end
         end
 
         # Accumulate plot objects for the combined quad-transmission PDF
@@ -316,7 +345,9 @@ function process_file!(
         push!(results.per_file_models, (parsed_fname, active_model, Float64(window_width)))
 
         t_wall = time() - t_file_start
-        if !use_fallback
+        if zt_model !== nothing
+            @debug_l1 "  QuadTuning [$file_name]: $n_collected PSMs, wall=$(round(t_wall,digits=2))s; ZT empirical transmission ($(length(zt_model.values)) knots)"
+        elseif !use_fallback
             p = fitted_model.params
             @debug_l1 "  QuadTuning [$file_name]: $n_collected PSMs, $(nrow(total_psms)) deconv pts, wall=$(round(t_wall,digits=2))s; Razo LM: al=$(round(p.al,digits=2)) ar=$(round(p.ar,digits=2)) bl=$(round(p.bl,digits=1)) br=$(round(p.br,digits=1))"
         end

@@ -93,7 +93,8 @@ function importScripts()
             "noQuadModel.jl",
             "RazoQuadModel.jl",
             "binIsotopeRatioData.jl",
-            "SquareQuadModel.jl"
+            "SquareQuadModel.jl",
+            "empiricalQuadModel.jl"
         ]
     )
 

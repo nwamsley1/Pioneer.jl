@@ -28,3 +28,15 @@ Use when the full precursor isotope envelope is captured. Simplified
 direct spline-evaluation, assumes complete capture.
 """
 struct FullPrecCapture <: PrecEstimation end
+
+"""
+    PartialPrecCaptureNorm <: PrecEstimation
+
+Sciex ZT scanning-DIA variant of `PartialPrecCapture`: the quad transmission still
+warps the fragment isotope *ratios* (via `getFragAbundance!`), but the fragment's
+total predicted intensity is renormalized to be transmission-INDEPENDENT. This keeps
+the empirical transmission out of the design-column magnitude, so the fitted per-bin
+weight tracks the actual ion current (the meta-scan triangle the ZT shape features
+key on) instead of being flattened by the transmission.
+"""
+struct PartialPrecCaptureNorm <: PrecEstimation end

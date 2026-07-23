@@ -45,6 +45,47 @@ function getFragIsotopes!(
 end
 
 function getFragIsotopes!(
+        ::PartialPrecCaptureNorm,
+        frag_isotopes::Vector{Float32},
+        precursor_transmission::Vector{Float32},
+        prec_isotope_set::Tuple{Int64, Int64},
+        frag_iso_idx_range::UnitRange{Int64},
+        iso_splines::IsotopeSplineModel,
+        prec_mz::Float32,
+        prec_charge::UInt8,
+        prec_sulfur_count::UInt8,
+        frag::F,
+        spline_data::G) where {F<:AltimeterFragment, G<:IntensityDataType}
+
+    fill!(frag_isotopes, zero(eltype(frag_isotopes)))
+    total_fragment_intensity = getIntensity(frag, spline_data)
+
+    getFragAbundance!(
+        frag_isotopes,
+        precursor_transmission,
+        iso_splines,
+        prec_mz,
+        prec_charge,
+        prec_sulfur_count,
+        frag)
+
+    # Ratios from the transmission-weighted convolution; magnitude renormalized to
+    # total_fragment_intensity so the design-column size (and thus the fitted weight)
+    # is transmission-INDEPENDENT — the ZT meta-scan weight triangle is preserved.
+    iso_sum = zero(eltype(frag_isotopes))
+    @inbounds for i in eachindex(frag_isotopes)
+        iso_sum += frag_isotopes[i]
+    end
+    if iso_sum > zero(iso_sum)
+        scale = total_fragment_intensity / iso_sum
+        @inbounds for i in reverse(range(1, length(frag_isotopes)))
+            frag_isotopes[i] = scale * frag_isotopes[i]
+        end
+    end
+    return nothing
+end
+
+function getFragIsotopes!(
         ::FullPrecCapture,
         frag_isotopes::Vector{Float32},
         precursor_transmission::Vector{Float32},
