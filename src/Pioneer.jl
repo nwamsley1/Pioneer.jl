@@ -512,6 +512,22 @@ macro debug_l1(msg)
     end
 end
 
+# Phase-level profiling probe. Wraps a block, logs wall time / allocated bytes / GC time
+# at @user_info (always visible) with a greppable `[score-phase]` prefix. Assignments inside
+# the wrapped block leak to the enclosing scope (esc), so it can replace an
+# `= @elapsed begin … end` in place. Runs once per phase — not for hot per-row use.
+macro score_phase(label, expr)
+    return quote
+        local _s = @timed $(esc(expr))
+        Pioneer.user_info(string(
+            "[score-phase] ", rpad($(esc(label)), 34),
+            lpad(round(_s.time; digits = 2), 8), "s",
+            "  alloc=", lpad(round(_s.bytes / 1e9; digits = 3), 9), "GB",
+            "  gc=", lpad(round(_s.gctime; digits = 2), 6), "s"))
+        _s.value
+    end
+end
+
 macro debug_l2(msg)
     return quote
         Pioneer.debug_l2(
