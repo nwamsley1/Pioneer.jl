@@ -154,7 +154,6 @@ function _sample_both_folds(
     all_feat_cols = Vector{Vector{AbstractVector}}(undef, n_files)
     seen0 = 0
     seen1 = 0
-    n_shadows = 0
     for (file_idx, fpath) in enumerate(file_paths)
         tbl = Arrow.Table(fpath)
         n = length(tbl.cv_fold)
@@ -191,7 +190,6 @@ function _sample_both_folds(
                     push!(shadow_graft0[file_idx], (Int32(i), sp))
                     y0[sp] = Bool(target_c[s])
                     is_shadow0[sp] = true
-                    n_shadows += 1
                 end
             elseif f == UInt8(1)
                 seen1 += 1
@@ -211,7 +209,6 @@ function _sample_both_folds(
                     push!(shadow_graft1[file_idx], (Int32(i), sp))
                     y1[sp] = Bool(target_c[s])
                     is_shadow1[sp] = true
-                    n_shadows += 1
                 end
             end
         end
@@ -244,8 +241,11 @@ function _sample_both_folds(
         end
     end
 
-    inject_shadows && @user_info "shadow-decoy injection (in-memory): $n_shadows shadows " *
-        "paired into the training sample ($(count(!, pairable)) file(s) skipped for missing opposite class)"
+    # Count the shadows actually occupying slots, not the number of pushes: under reservoir
+    # rejection a slot is rewritten each time its real row is evicted and replaced.
+    inject_shadows && @user_info "shadow-decoy injection (in-memory): " *
+        "$(count(is_shadow0) + count(is_shadow1)) shadows paired into the training sample " *
+        "($(count(!, pairable)) file(s) skipped for missing opposite class)"
     return X0, y0, is_shadow0, X1, y1, is_shadow1
 end
 
