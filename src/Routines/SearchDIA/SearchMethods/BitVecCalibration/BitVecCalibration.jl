@@ -316,6 +316,11 @@ function process_file!(
     _zt_frag_overhang = something(tryparse(Float32, get(ENV, "PIONEER_ZT_FRAG_OVERHANG", "")), 0.5f0)
     qtm = _zt_k > 0 ? SquareQuadModel(_zt_frag_overhang) :
                       getQuadTransmissionModel(search_context, ms_file_idx)
+    # Sciex ZT candidacy-merge (PIONEER_ZT_MERGE_K): if the MAIN search accumulates each
+    # scan's ±K same-cycle neighbors into the bitvec counter, calibrate the LUT on the SAME
+    # merged patterns — otherwise the excess rates describe single-scan patterns while the
+    # threshold gates merged (higher-count_ones) ones. Must match the main-search K.
+    _zt_merge_k = _zt_k > 0 ? something(tryparse(Int, get(ENV, "PIONEER_ZT_MERGE_K", "")), 0) : 0
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)
@@ -359,7 +364,8 @@ function process_file!(
             scan_to_prec_idx, partitioned_index, spectra, batch_scans,
             Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol, prec_mzs;
             pattern_accumulator=acc, precursor_irts=prec_irts,
-            scratch=getFragIndexScratch(search_context))
+            scratch=getFragIndexScratch(search_context),
+            zt_merge_k=_zt_merge_k)
 
         batch_tc, batch_dc = merge_accumulator(acc)
         file_tc .+= batch_tc
