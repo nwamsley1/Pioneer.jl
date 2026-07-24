@@ -50,13 +50,21 @@ function score_precursor_isotope_traces(
     # Round 1: streamed OOM LightGBM over the per-file Arrow tables → each file's
     # `.pass1_sidecar.arrow` (OOF s1 = trace_prob_prepass). The whole experiment is never
     # materialised in RAM (reservoir-sampled training; per-file predict).
+    #
+    # SINGLE iteration (semisupervised=false): round 1 exists only to produce the s1 OOF scores
+    # that feed the round-2 GROUP cross-run features, and those are coarse (max, top3_logodds,
+    # presence counts). Multi-iteration self-training here over-refines on weak/low-input data and
+    # yields slightly overfit s1, making the GROUP features noisier. Round 2 (below) keeps the full
+    # semi-supervised loop and does the real refinement. Measured (raw IDs, HumanVacV std lib):
+    # single-iter round 1 is +0.5%/+1.1% precursors on the lowest-input SCP sets (250pg/500pg),
+    # ~neutral on KEAP1, −1.7% on 1000pg; and cuts Precursor Scoring ~20–30%. Round-2 unchanged.
     features = copy(ADVANCED_FEATURE_SET)
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,
         compute_infold  = false,
         lgbm_hp         = SCORING_LGBM_HP,
-        semisupervised  = true,
+        semisupervised  = false,
     )
     @debug_l1 "Round-1 (streamed OOM) trained on $(length(pass1.available_features)) features"
     log_pass_importance(pass1, match_between_runs ? "Round-1" : "Pass-1")
