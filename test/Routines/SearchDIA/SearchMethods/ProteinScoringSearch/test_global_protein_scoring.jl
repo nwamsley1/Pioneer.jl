@@ -157,7 +157,7 @@
                 file_idx = UInt32[2, 2],
                 pg_score = Float32[0.9, 0.4],
                 n_peptides = Int[2, 1],
-                n_possible_peptides = Int[4, 2],
+                n_possible_unique_peptides = Int[4, 2],
                 peptide_list = ["PEPA;PEPB", "PEPX"],
             ))
             Arrow.write(run2_path, DataFrame(
@@ -167,7 +167,7 @@
                 file_idx = UInt32[4, 4],
                 pg_score = Float32[0.8, 0.3],
                 n_peptides = Int[2, 1],
-                n_possible_peptides = Int[4, 3],
+                n_possible_unique_peptides = Int[4, 3],
                 peptide_list = ["PEPB;PEPC", "PEPY"],
             ))
             refs = Pioneer.ProteinGroupFileReference[
@@ -210,7 +210,7 @@
                 ("P2", false, UInt8(0)) => 1,
                 ("P3", false, UInt8(1)) => 1,
             )
-            @test inputs.n_possible_peptides == Dict(
+            @test inputs.n_possible_unique_peptides == Dict(
                 ("P1", true, UInt8(0)) => 4,
                 ("P2", false, UInt8(0)) => 2,
                 ("P3", false, UInt8(1)) => 3,
@@ -241,7 +241,7 @@
                     file_idx = fill(UInt32(run_idx), 2),
                     pg_score = scores,
                     n_peptides = Int[2, 1],
-                    n_possible_peptides = Int[4, 3],
+                    n_possible_unique_peptides = Int[4, 3],
                     peptide_list = ["PEPA;PEPB", "PEPX"],
                 ))
                 push!(refs, Pioneer.ProteinGroupFileReference(path))
@@ -293,7 +293,7 @@
                     file_idx = fill(UInt32(run_idx), 4),
                     pg_score = scores,
                     n_peptides = fill(2, 4),
-                    n_possible_peptides = fill(4, 4),
+                    n_possible_unique_peptides = fill(4, 4),
                     peptide_list = fill("PEPA;PEPB", 4),
                 ))
                 push!(refs, Pioneer.ProteinGroupFileReference(path))
@@ -390,7 +390,7 @@
         }()
         observed_peptides = Dict{Tuple{String, Bool, UInt8}, Set{String}}()
         max_n_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
-        n_possible_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
+        n_possible_unique_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
         folds = Dict{Tuple{String, Bool, UInt8}, UInt8}()
         for group_idx in 1:40
             fold = UInt8(group_idx % 2)
@@ -414,8 +414,8 @@
             observed_peptides[decoy_key] = Set(["PEPX", "PEPY"])
             max_n_peptides[target_key] = 2
             max_n_peptides[decoy_key] = 2
-            n_possible_peptides[target_key] = 4
-            n_possible_peptides[decoy_key] = 4
+            n_possible_unique_peptides[target_key] = 4
+            n_possible_unique_peptides[decoy_key] = 4
             folds[target_key] = fold
             folds[decoy_key] = fold
         end
@@ -424,7 +424,7 @@
                 run_scores,
                 observed_peptides,
                 max_n_peptides,
-                n_possible_peptides,
+                n_possible_unique_peptides,
                 folds,
             ),
             2,

@@ -233,7 +233,7 @@ function add_peak_area_observation_features(calibration::NamedTuple)
 
         for i in 1:n_rows
             top_peak_area = Float64(df.top_pep_peak_area[i])
-            N_total = max(Int(df.n_possible_peptides[i]), 0)
+            N_total = max(Int(df.n_possible_unique_peptides[i]), 0)
             k_obs = max(Int(df.n_peptides[i]), 0)
 
             if top_peak_area <= 0.0
@@ -1400,103 +1400,92 @@ function filter_by_min_peptides(min_peptides::Int)
 end
 
 """
-    add_protein_features(protein_catalog::Dict)
+    add_protein_features(protein_peptide_opportunities)
 
-Add protein-level features like peptide coverage.
+Add unique and shared peptide coverage features using their corresponding
+experiment-wide theoretical opportunity denominators.
 """
-function add_protein_features(protein_catalog::Dict)
+function add_protein_features(
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    }
+)
     desc = "add_protein_features"
-    grouped_catalog_cache = Dict{
-        @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-        Set{String}
-    }()
-    
+
     op = function(df)
         n_rows = nrow(df)
-        n_possible = Vector{Int64}(undef, n_rows)
+        n_possible_unique = Vector{Int64}(undef, n_rows)
+        n_possible_shared = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
         peptide_coverage_logit = Vector{Float32}(undef, n_rows)
-        ambiguous_peptide_coverage = Vector{Float32}(undef, n_rows)
+        shared_peptide_coverage = Vector{Float32}(undef, n_rows)
         has_ambiguous_peptide_count = hasproperty(df, :_ambiguous_peptide_count)
-        
+
         for i in 1:n_rows
-            key = (
-                protein_name = df.protein_name[i],
-                target = df.target[i],
-                entrap_id = df.entrap_id[i]
+            key = ProteinKey(
+                String(df.protein_name[i]),
+                Bool(df.target[i]),
+                UInt8(df.entrap_id[i])
             )
+            opportunities = get(protein_peptide_opportunities, key, nothing)
+            opportunities === nothing && error(
+                "Missing theoretical peptide opportunities for final protein group " *
+                "$(repr(key.name)), target=$(key.is_target), entrap_id=$(key.entrap_id)"
+            )
+            n_possible_unique[i] = opportunities.n_unique_peptides
+            n_possible_shared[i] = opportunities.n_shared_peptides
 
-            possible_peptides = if haskey(protein_catalog, key)
-                protein_catalog[key]
-            elseif haskey(grouped_catalog_cache, key)
-                grouped_catalog_cache[key]
-            elseif occursin(';', key.protein_name)
-                merged_peptides = Set{String}()
-                for member in split(key.protein_name, ';')
-                    member_key = (
-                        protein_name = strip(member),
-                        target = key.target,
-                        entrap_id = key.entrap_id
-                    )
-                    if haskey(protein_catalog, member_key)
-                        union!(merged_peptides, protein_catalog[member_key])
-                    end
-                end
-                grouped_catalog_cache[key] = merged_peptides
-                merged_peptides
-            else
-                Set{String}()
-            end
-
-            n_possible[i] = length(possible_peptides)
-
-            observed_n = Int(df.n_peptides[i])
-            ambiguous_observed_n = has_ambiguous_peptide_count ?
+            observed_unique = Int(df.n_peptides[i])
+            observed_shared = has_ambiguous_peptide_count ?
                 Int(df._ambiguous_peptide_count[i]) : 0
-            if observed_n > n_possible[i]
+            if observed_unique > n_possible_unique[i]
                 error(
-                    "Protein feature count inconsistency: " *
-                    "protein_name=$(repr(key.protein_name)) " *
-                    "target=$(key.target) " *
+                    "Unique protein feature count inconsistency: " *
+                    "protein_name=$(repr(key.name)) " *
+                    "target=$(key.is_target) " *
                     "entrap_id=$(key.entrap_id) " *
-                    "n_peptides=$(observed_n) " *
-                    "n_possible_peptides=$(n_possible[i])"
+                    "n_peptides=$(observed_unique) " *
+                    "n_possible_unique_peptides=$(n_possible_unique[i])"
                 )
             end
-            if ambiguous_observed_n > n_possible[i]
+            if observed_shared > n_possible_shared[i]
                 error(
-                    "Ambiguous protein feature count inconsistency: " *
-                    "protein_name=$(repr(key.protein_name)) " *
-                    "target=$(key.target) " *
+                    "Shared protein feature count inconsistency: " *
+                    "protein_name=$(repr(key.name)) " *
+                    "target=$(key.is_target) " *
                     "entrap_id=$(key.entrap_id) " *
-                    "n_ambiguous_peptides=$(ambiguous_observed_n) " *
-                    "n_possible_peptides=$(n_possible[i])"
+                    "n_shared_peptides=$(observed_shared) " *
+                    "n_possible_shared_peptides=$(n_possible_shared[i])"
                 )
             end
 
-            if n_possible[i] > 0
-                peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
-                peptide_coverage_logit[i] = smoothed_coverage_logit(df.n_peptides[i], n_possible[i])
-                ambiguous_peptide_coverage[i] =
-                    Float32(ambiguous_observed_n) / Float32(n_possible[i])
+            if n_possible_unique[i] > 0
+                peptide_coverage[i] =
+                    Float32(observed_unique) / Float32(n_possible_unique[i])
+                peptide_coverage_logit[i] =
+                    smoothed_coverage_logit(observed_unique, n_possible_unique[i])
             else
                 peptide_coverage[i] = 0.0f0
                 peptide_coverage_logit[i] = 0.0f0
-                ambiguous_peptide_coverage[i] = 0.0f0
             end
+            shared_peptide_coverage[i] = n_possible_shared[i] > 0 ?
+                Float32(observed_shared) / Float32(n_possible_shared[i]) :
+                0.0f0
         end
-        
-        df.n_possible_peptides = n_possible
+
+        df.n_possible_unique_peptides = n_possible_unique
+        df.n_possible_shared_peptides = n_possible_shared
         df.peptide_coverage = peptide_coverage
         df.peptide_coverage_logit = peptide_coverage_logit
-        df.ambiguous_peptide_coverage = ambiguous_peptide_coverage
+        df.shared_peptide_coverage = shared_peptide_coverage
         if has_ambiguous_peptide_count
             select!(df, Not(:_ambiguous_peptide_count))
         end
-        
+
         return df
     end
-    
+
     return desc => op
 end
 
@@ -1519,7 +1508,13 @@ High-Level Interface
 ==========================================================#
 
 """
-    build_protein_group_tables(psm_refs, output_folder, protein_catalog; precursors, kwargs...)
+    build_protein_group_tables(
+        psm_refs,
+        output_folder,
+        protein_peptide_opportunities;
+        precursors,
+        kwargs...
+    )
 
 Build per-run protein-group tables and protein scoring features from PSM tables
 that have already been annotated with protein inference results.
@@ -1527,7 +1522,8 @@ that have already been annotated with protein inference results.
 # Arguments
 - `psm_refs`: Vector of PSM file references
 - `output_folder`: Directory for protein group output
-- `protein_catalog`: Pre-computed protein-to-peptide mappings
+- `protein_peptide_opportunities`: Experiment-wide theoretical unique/shared
+  peptide counts for retained final protein groups
 - `precursors`: Library precursors used for protein CV fold assignment
 - `min_peptides`: Minimum peptides per protein group (default: 2)
 
@@ -1539,7 +1535,10 @@ that have already been annotated with protein inference results.
 function build_protein_group_tables(
     psm_refs::Vector{PSMFileReference},
     output_folder::String,
-    protein_catalog::Dict;
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    };
     precursors::LibraryPrecursors,
     protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} = Dict{UInt32, Vector{ProteinKey}}(),
     min_peptides::Int = 2,
@@ -1587,7 +1586,7 @@ function build_protein_group_tables(
         )
 
         feature_pipeline = TransformPipeline() |>
-            add_protein_features(protein_catalog) |>
+            add_protein_features(protein_peptide_opportunities) |>
             add_peak_area_observation_features(peak_area_calibration)
 
         for (desc, op) in feature_pipeline.operations

@@ -6,10 +6,12 @@ using Pioneer: AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT,
     InferenceResult,
     PeptideKey,
     ProteinKey,
+    ProteinPeptideOpportunityCounts,
     _register_protein_ambiguities!,
     add_ambiguous_pg_score!,
     add_protein_features,
     add_protein_ambiguity_id,
+    count_protein_peptide_opportunities,
     protein_probit_feature_names
 
 function _ambiguous_scoring_psms(; qval::Float32 = 0.001f0)
@@ -90,18 +92,89 @@ end
         psms.prec_prob = Float32[0.2, 0.8]
 
         add_ambiguous_pg_score!(protein_groups, psms, candidates)
-        protein_catalog = Dict(
-            (protein_name = "A", target = true, entrap_id = UInt8(0)) =>
-                Set(["A_ONLY", "SHARED"]),
-            (protein_name = "B", target = true, entrap_id = UInt8(0)) =>
-                Set(["B_ONLY_1", "B_ONLY_2", "B_ONLY_3", "SHARED"])
+        protein_peptide_opportunities = Dict(
+            protein_a => ProteinPeptideOpportunityCounts(2, 2),
+            protein_b => ProteinPeptideOpportunityCounts(4, 1)
         )
-        add_protein_features(protein_catalog).second(protein_groups)
+        add_protein_features(protein_peptide_opportunities).second(protein_groups)
 
         expected_score = Float32(-log((1.0f0 - 0.8f0) + 0.001f0))
         @test sum(protein_groups.ambiguous_pg_score) ≈ expected_score rtol = 1f-6
-        @test protein_groups.ambiguous_peptide_coverage == Float32[0.5, 0.25]
+        @test protein_groups.n_possible_unique_peptides == Int64[2, 4]
+        @test protein_groups.n_possible_shared_peptides == Int64[2, 1]
+        @test protein_groups.peptide_coverage == Float32[0.5, 0.25]
+        @test protein_groups.shared_peptide_coverage == Float32[0.5, 1.0]
         @test !hasproperty(protein_groups, :_ambiguous_peptide_count)
+    end
+
+    @testset "theoretical opportunities are classified against final groups" begin
+        group_ab = ProteinKey("A;B", true, UInt8(0))
+        group_c = ProteinKey("C", true, UInt8(0))
+        decoy_d = ProteinKey("D", false, UInt8(0))
+        entrap_e = ProteinKey("E", true, UInt8(1))
+        final_groups = Set([group_ab, group_c, decoy_d, entrap_e])
+
+        opportunities = count_protein_peptide_opportunities(
+            [
+                "A",
+                "A;B",
+                "C",
+                "C",
+                "B;C",
+                "A",
+                "C",
+                "X",
+                "D",
+                "E",
+            ],
+            [
+                "A_ONLY",
+                "INTRA_GROUP",
+                "C_ONLY",
+                "C_ONLY",
+                "BETWEEN_GROUPS",
+                "SPLIT_SHARED",
+                "SPLIT_SHARED",
+                "IGNORED",
+                "DECOY_ONLY",
+                "ENTRAP_ONLY",
+            ],
+            Bool[
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+            ],
+            UInt8[0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            final_groups
+        )
+
+        @test opportunities[group_ab] == ProteinPeptideOpportunityCounts(2, 2)
+        @test opportunities[group_c] == ProteinPeptideOpportunityCounts(1, 2)
+        @test opportunities[decoy_d] == ProteinPeptideOpportunityCounts(1, 0)
+        @test opportunities[entrap_e] == ProteinPeptideOpportunityCounts(1, 0)
+    end
+
+    @testset "zero shared opportunity denominator gives zero coverage" begin
+        protein_groups = DataFrame(
+            protein_name = ["A"],
+            target = Bool[true],
+            entrap_id = UInt8[0],
+            n_peptides = Int64[1],
+            _ambiguous_peptide_count = Int64[0]
+        )
+        add_protein_features(Dict(
+            protein_a => ProteinPeptideOpportunityCounts(1, 0)
+        )).second(protein_groups)
+
+        @test protein_groups.peptide_coverage == Float32[1.0]
+        @test protein_groups.shared_peptide_coverage == Float32[0.0]
     end
 
     @testset "allocation cannot cross target/decoy populations" begin
@@ -183,7 +256,8 @@ end
     @testset "probit uses only the requested ambiguity features" begin
         features = protein_probit_feature_names()
         @test :ambiguous_pg_score in features
-        @test :ambiguous_peptide_coverage in features
+        @test :shared_peptide_coverage in features
+        @test !(:ambiguous_peptide_coverage in features)
         @test !(:augmented_pg_score in features)
         @test !(:effective_ambiguous_peptides in features)
         @test !(:ambiguous_score_fraction in features)

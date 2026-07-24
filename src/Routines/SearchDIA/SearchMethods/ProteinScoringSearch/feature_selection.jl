@@ -80,7 +80,7 @@ function protein_probit_feature_names()
     return Symbol[
         :pg_score,
         :ambiguous_pg_score,
-        :ambiguous_peptide_coverage,
+        :shared_peptide_coverage,
         :peptide_coverage_logit,
         :any_common_peps,
         :coverage_log_ratio,

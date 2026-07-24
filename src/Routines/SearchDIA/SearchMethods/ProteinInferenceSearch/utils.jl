@@ -43,6 +43,125 @@ function _register_protein_ambiguities!(
     return peptide_to_id, last_id
 end
 
+function _collect_final_protein_groups!(
+    final_groups::Set{ProteinKey},
+    inference_result::InferenceResult
+)
+    for protein in values(inference_result.peptide_to_protein)
+        push!(final_groups, protein)
+    end
+    for candidates in values(inference_result.ambiguous_peptide_to_proteins)
+        union!(final_groups, candidates)
+    end
+    return final_groups
+end
+
+"""
+    count_protein_peptide_opportunities(
+        accession_numbers,
+        sequences,
+        is_decoys,
+        entrap_ids,
+        final_groups
+    )
+
+Classify distinct library peptide sequences as unique or shared relative to the
+retained final protein groups. Sharing among accessions within one final group
+is unique-to-group; only mappings to multiple final groups are shared.
+"""
+function count_protein_peptide_opportunities(
+    accession_numbers::AbstractVector{<:AbstractString},
+    sequences::AbstractVector{<:AbstractString},
+    is_decoys::AbstractVector{Bool},
+    entrap_ids::AbstractVector{UInt8},
+    final_groups::Set{ProteinKey}
+)
+    n_rows = length(accession_numbers)
+    length(sequences) == n_rows ||
+        throw(ArgumentError("sequences must match accession_numbers length"))
+    length(is_decoys) == n_rows ||
+        throw(ArgumentError("is_decoys must match accession_numbers length"))
+    length(entrap_ids) == n_rows ||
+        throw(ArgumentError("entrap_ids must match accession_numbers length"))
+
+    accession_to_groups =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
+    for group in final_groups
+        for accession in split(group.name, ';')
+            key = (strip(accession), group.is_target, group.entrap_id)
+            push!(get!(accession_to_groups, key, ProteinKey[]), group)
+        end
+    end
+    for groups in values(accession_to_groups)
+        sort!(unique!(groups))
+    end
+
+    group_cache =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
+    peptide_to_groups =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
+
+    @inbounds for i in eachindex(accession_numbers, sequences, is_decoys, entrap_ids)
+        target = !is_decoys[i]
+        entrap_id = entrap_ids[i]
+        accessions = String(accession_numbers[i])
+        groups = get!(group_cache, (accessions, target, entrap_id)) do
+            mapped_groups = ProteinKey[]
+            for accession in split(accessions, ';')
+                append!(
+                    mapped_groups,
+                    get(
+                        accession_to_groups,
+                        (strip(accession), target, entrap_id),
+                        ProteinKey[]
+                    )
+                )
+            end
+            sort!(unique!(mapped_groups))
+        end
+
+        isempty(groups) && continue
+        peptide_key = (String(sequences[i]), target, entrap_id)
+        if !haskey(peptide_to_groups, peptide_key)
+            peptide_to_groups[peptide_key] = groups
+        elseif peptide_to_groups[peptide_key] != groups
+            peptide_to_groups[peptide_key] =
+                sort!(unique!(vcat(peptide_to_groups[peptide_key], groups)))
+        end
+    end
+
+    unique_counts = Dict(group => 0 for group in final_groups)
+    shared_counts = Dict(group => 0 for group in final_groups)
+    for groups in values(peptide_to_groups)
+        counts = length(groups) == 1 ? unique_counts : shared_counts
+        for group in groups
+            counts[group] += 1
+        end
+    end
+
+    opportunities = Dict(
+        group => ProteinPeptideOpportunityCounts(
+            unique_counts[group],
+            shared_counts[group]
+        )
+        for group in final_groups
+    )
+    return opportunities
+end
+
+function count_protein_peptide_opportunities(
+    precursors::LibraryPrecursors,
+    final_groups::Set{ProteinKey}
+)
+    return count_protein_peptide_opportunities(
+        getAccessionNumbers(precursors),
+        getSequence(precursors),
+        getIsDecoy(precursors),
+        getEntrapmentGroupId(precursors),
+        final_groups
+    )
+end
+
 """
     add_peptide_metadata(precursors::LibraryPrecursors)
 
@@ -237,7 +356,8 @@ downstream protein-level PEP fit.
 
 `global_inference=false` runs inference per file (legacy behavior).
 
-Returns the in-memory mapping from compact ambiguity IDs to candidate final protein groups.
+Returns the in-memory ambiguity mapping and theoretical unique/shared peptide
+opportunity counts for the retained final protein groups.
 """
 function run_protein_inference!(
     search_context::SearchContext;
@@ -245,7 +365,14 @@ function run_protein_inference!(
     global_inference::Bool = true,
 )
     protein_ambiguity_candidates = Dict{UInt32, Vector{ProteinKey}}()
-    isempty(passing_refs) && return protein_ambiguity_candidates
+    final_protein_groups = Set{ProteinKey}()
+    if isempty(passing_refs)
+        return (
+            protein_ambiguity_candidates = protein_ambiguity_candidates,
+            protein_peptide_opportunities =
+                Dict{ProteinKey, ProteinPeptideOpportunityCounts}()
+        )
+    end
 
     precursors = getPrecursors(getSpecLib(search_context))
     annotation_pipeline = TransformPipeline() |>
@@ -263,6 +390,7 @@ function run_protein_inference!(
             apply_pipeline!(psm_ref, annotation_pipeline)
             prepared_df = load_dataframe(psm_ref)
             inference_result = apply_inference_to_dataframe(prepared_df, precursors)
+            _collect_final_protein_groups!(final_protein_groups, inference_result)
             peptide_to_ambiguity_id, last_ambiguity_id = _register_protein_ambiguities!(
                 protein_ambiguity_candidates,
                 inference_result,
@@ -276,7 +404,13 @@ function run_protein_inference!(
             apply_pipeline!(psm_ref, update_pipeline)
         end
 
-        return protein_ambiguity_candidates
+        return (
+            protein_ambiguity_candidates = protein_ambiguity_candidates,
+            protein_peptide_opportunities = count_protein_peptide_opportunities(
+                precursors,
+                final_protein_groups
+            )
+        )
     end
 
     @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
@@ -325,6 +459,7 @@ function run_protein_inference!(
     else
         infer_proteins(proteins_vec, peptides_vec)
     end
+    _collect_final_protein_groups!(final_protein_groups, inference_result)
     peptide_to_ambiguity_id, _ = _register_protein_ambiguities!(
         protein_ambiguity_candidates,
         inference_result,
@@ -388,5 +523,11 @@ function run_protein_inference!(
             :protein_ambiguity_id   => ambiguity_ids;
             tag = "ProteinInference")
     end
-    return protein_ambiguity_candidates
+    return (
+        protein_ambiguity_candidates = protein_ambiguity_candidates,
+        protein_peptide_opportunities = count_protein_peptide_opportunities(
+            precursors,
+            final_protein_groups
+        )
+    )
 end

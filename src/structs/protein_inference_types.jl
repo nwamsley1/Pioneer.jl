@@ -134,6 +134,20 @@ InferenceResult(peptide_to_protein::Dictionary{PeptideKey, ProteinKey}) = Infere
 )
 
 """
+    ProteinPeptideOpportunityCounts
+
+Theoretical peptide opportunities for one retained final protein group.
+
+`n_unique_peptides` counts library peptide sequences that map to this group and
+no other retained final group. `n_shared_peptides` counts library peptide
+sequences that map to this group and at least one other retained final group.
+"""
+struct ProteinPeptideOpportunityCounts
+    n_unique_peptides::Int
+    n_shared_peptides::Int
+end
+
+"""
     ProteinGroupBuilder
 
 Mutable builder for constructing protein groups incrementally.

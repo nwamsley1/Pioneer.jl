@@ -70,7 +70,7 @@ struct GlobalProteinInputs
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
     observed_peptides::Dict{GlobalProteinKey, Set{String}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
-    n_possible_peptides::Dict{GlobalProteinKey, Int}
+    n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
     folds::Dict{GlobalProteinKey, UInt8}
 end
 
@@ -85,12 +85,12 @@ function _collect_global_protein_inputs(
     run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
     observed_peptides = Dict{GlobalProteinKey, Set{String}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
-    n_possible_peptides = Dict{GlobalProteinKey, Int}()
+    n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
     folds = Dict{GlobalProteinKey, UInt8}()
     sizehint!(run_scores, n_proteins)
     sizehint!(observed_peptides, n_proteins)
     sizehint!(max_n_peptides, n_proteins)
-    sizehint!(n_possible_peptides, n_proteins)
+    sizehint!(n_possible_unique_peptides, n_proteins)
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
@@ -122,7 +122,8 @@ function _collect_global_protein_inputs(
 
             n_peptides = Int(table.n_peptides[row])
             max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
-            n_possible_peptides[key] = Int(table.n_possible_peptides[row])
+            n_possible_unique_peptides[key] =
+                Int(table.n_possible_unique_peptides[row])
             folds[key] = protein_to_cv_fold[protein_name].cv_fold
         end
     end
@@ -133,7 +134,7 @@ function _collect_global_protein_inputs(
         run_scores,
         observed_peptides,
         max_n_peptides,
-        n_possible_peptides,
+        n_possible_unique_peptides,
         folds,
     )
 end
@@ -167,7 +168,8 @@ function _build_global_protein_feature_table(
         top3 = n_observed >= 3 ? sorted_scores[3] : 0.0f0
         n_unique_peptides = length(inputs.observed_peptides[key])
         max_n_peptides = inputs.max_n_peptides[key]
-        n_possible_peptides = inputs.n_possible_peptides[key]
+        n_possible_unique_peptides =
+            inputs.n_possible_unique_peptides[key]
 
         feature_columns[:empirical_global_score][row] =
             _logodds_from_sorted(sorted_scores, top_run_count)
@@ -190,9 +192,9 @@ function _build_global_protein_feature_table(
         feature_columns[:n_unique_peptides_observed][row] = Float32(n_unique_peptides)
         feature_columns[:max_n_peptides_observed][row] = Float32(max_n_peptides)
         feature_columns[:global_peptide_coverage][row] =
-            Float32(n_unique_peptides) / Float32(n_possible_peptides)
+            Float32(n_unique_peptides) / Float32(n_possible_unique_peptides)
         feature_columns[:max_peptide_coverage][row] =
-            Float32(max_n_peptides) / Float32(n_possible_peptides)
+            Float32(max_n_peptides) / Float32(n_possible_unique_peptides)
         feature_columns[:n_score_gt_0_5][row] = Float32(count(>(0.5f0), scores))
         feature_columns[:n_score_gt_0_9][row] = Float32(count(>(0.9f0), scores))
         feature_columns[:n_score_gt_0_99][row] = Float32(count(>(0.99f0), scores))

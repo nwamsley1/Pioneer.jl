@@ -112,11 +112,17 @@ function summarize_results!(
     else
         Dict{UInt32, Vector{ProteinKey}}()
     end
+    protein_peptide_opportunities = if protein_inference_results isa ProteinInferenceSearchResults
+        protein_inference_results.protein_peptide_opportunities
+    else
+        Dict{ProteinKey, ProteinPeptideOpportunityCounts}()
+    end
 
     run_protein_scoring!(
         search_context;
         passing_refs = passing_refs,
         protein_ambiguity_candidates = protein_ambiguity_candidates,
+        protein_peptide_opportunities = protein_peptide_opportunities,
         max_in_memory_table_mb = params.max_in_memory_table_mb,
         q_value_threshold = params.q_value_threshold,
         min_peptides = params.min_peptides,
@@ -126,6 +132,7 @@ function summarize_results!(
         q_value_interpolation_points_per_bin = params.q_value_interpolation_points_per_bin
     )
     empty!(protein_ambiguity_candidates)
+    empty!(protein_peptide_opportunities)
 
     return nothing
 end

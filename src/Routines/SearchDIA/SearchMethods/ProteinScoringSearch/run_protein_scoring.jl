@@ -16,56 +16,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    count_protein_peptides(precursors::LibraryPrecursors)
-
-Count all possible peptides for each protein in the library.
-
-# Arguments
-- `precursors`: Library precursors
-
-# Returns
-- Dictionary mapping protein keys to sets of peptide sequences
-"""
-function count_protein_peptides(precursors::LibraryPrecursors)
-    protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
-
-    all_accession_numbers = getAccessionNumbers(precursors)
-    all_sequences = getSequence(precursors)
-    all_decoys = getIsDecoy(precursors)
-    all_entrap_ids = getEntrapmentGroupId(precursors)
-    n_precursors = length(all_accession_numbers)
-
-    # Each precursor's sequence must be added to its protein(s)' peptide set, so rows
-    # can't be skipped wholesale — but the (accession_string, target, entrap_id) tuple
-    # repeats across the ~6.8M precursors (only ~tens of thousands are distinct). Cache
-    # the destination Set vector per distinct tuple: a cache hit skips the split, the
-    # per-token String() interning, and the NamedTuple-key dict lookups, leaving only
-    # the unavoidable push! of the sequence. Bit-identical (same sets, same members).
-    set_cache = Dict{Tuple{String, Bool, UInt8}, Vector{Set{String}}}()
-    for i in 1:n_precursors
-        is_decoy = all_decoys[i]
-        entrap_id = all_entrap_ids[i]
-        target = !is_decoy
-
-        target_sets = get!(set_cache, (all_accession_numbers[i], target, entrap_id)) do
-            sets = Vector{Set{String}}()
-            for protein_name in split(all_accession_numbers[i], ';')
-                key = (protein_name = String(protein_name), target = target, entrap_id = entrap_id)
-                push!(sets, get!(() -> Set{String}(), protein_to_possible_peptides, key))
-            end
-            sets
-        end
-
-        seq = all_sequences[i]
-        for s in target_sets
-            push!(s, seq)
-        end
-    end
-
-    return protein_to_possible_peptides
-end
-
-"""
     load_protein_probit_training_rows(pg_refs; include_qc_plot_columns = false)
 
 Load only the columns needed for protein probit fitting from protein-group files.
@@ -185,6 +135,10 @@ function run_protein_scoring!(
     passing_refs::Vector{PSMFileReference},
     protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} =
         Dict{UInt32, Vector{ProteinKey}}(),
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    } = Dict{ProteinKey, ProteinPeptideOpportunityCounts}(),
     max_in_memory_table_mb::Float64,
     q_value_threshold::Float32,
     min_peptides::Int64,
@@ -203,7 +157,8 @@ function run_protein_scoring!(
     !isdir(qc_folder) && mkpath(qc_folder)
 
     precursors = getPrecursors(getSpecLib(search_context))
-    protein_to_possible_peptides = count_protein_peptides(precursors)
+    isempty(protein_peptide_opportunities) &&
+        error("Protein scoring requires theoretical unique/shared peptide opportunities")
 
     file_idx_to_name = Dict{Int64, String}()
     for (file_idx, file_name) in enumerate(getFileIdToName(getMSData(search_context)))
@@ -213,7 +168,7 @@ function run_protein_scoring!(
     pg_refs, psm_to_pg_mapping, protein_to_cv_fold = build_protein_group_tables(
         passing_refs,
         passing_proteins_folder,
-        protein_to_possible_peptides,
+        protein_peptide_opportunities,
         precursors = precursors,
         protein_ambiguity_candidates = protein_ambiguity_candidates,
         min_peptides = min_peptides,
