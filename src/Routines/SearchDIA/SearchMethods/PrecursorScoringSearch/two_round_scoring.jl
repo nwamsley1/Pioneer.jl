@@ -388,8 +388,9 @@ end
 
 Round-2 cross-run features. After round-1 `train_and_predict_pass1_oom!` has written each file's
 `.pass1_sidecar.arrow` (OOF s1 = `trace_prob_prepass`), cluster the runs per CV fold and write the
-GROUP cross-run features + `delta_irt` as columns into each per-file fold Arrow, in place — so the
-round-2 pass can train on [ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. `max_pid` is the library
+GROUP cross-run features + `delta_irt` to each fold file's row-aligned
+`.group.sidecar.arrow` (NOT back into the fold Arrow itself) — so the round-2 pass can train on
+[ADVANCED_FEATURE_SET ; GROUP_COLS ; delta_irt]. `max_pid` is the library
 precursor count (sizes the streaming accumulators; see `_write_group_features!`).
 """
 write_two_round_feature_columns!(file_paths::Vector{String}, max_pid::Int) =

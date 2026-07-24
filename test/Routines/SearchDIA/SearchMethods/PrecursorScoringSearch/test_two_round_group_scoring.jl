@@ -3,9 +3,9 @@
 #
 # All functions under test are module-internal (not exported) and are referenced
 # as `Pioneer._name`. Fixtures are tiny synthetic fold Arrow files + matching
-# `.pass1_sidecar.arrow` sidecars, exercising the real inject/remove/group-feature
-# code paths. Randomness in the clustering path uses fixed internal seeds, so the
-# tests assert on partition structure and remain deterministic.
+# `.pass1_sidecar.arrow` sidecars, exercising the real group-feature code path.
+# Randomness in the clustering path uses fixed internal seeds, so the tests
+# assert on partition structure and remain deterministic.
 
 using Test
 using Pioneer
@@ -140,84 +140,52 @@ const _P = Pioneer
     # ---------------------------------------------------------------
     # Helpers for the Arrow-file fixtures (#6 and #7)
     # ---------------------------------------------------------------
-    # Minimal fold-file with the columns inject_shadow_decoys! reads/grafts.
+    # Minimal fold-file plus the Pass-1 sidecar holding its round-1 OOF scores
+    # (`trace_prob_prepass`) — what _write_group_features! reads as s1.
     function _write_fixture!(dir, name, df::DataFrame, s1::Vector{Float32})
         path = joinpath(dir, name)
         _P.writeArrow(path, df)
-        side = DataFrame(; (_P.SHADOW_SIDECAR_SCORE_COL => s1,)...)
+        side = DataFrame(trace_prob_prepass = s1)
         _P.writeArrow(path * _P.PASS1_SIDECAR_SUFFIX, side)
         return path
     end
 
     # ---------------------------------------------------------------
-    # 6. inject_shadow_decoys! / remove_shadow_decoys! round-trip
+    # 6. _shadow_partners — nearest-iRT opposite-class pairing
     # ---------------------------------------------------------------
-    @testset "shadow decoy inject/remove round-trip" begin
-        mktempdir() do dir
-            # 4 rows: 2 targets (irt 10,20), 2 decoys (irt 10.5,20.5).
-            # global_max is unique per row so we can verify the graft is the
-            # ORIGINAL row's value (multiset preserved across shadows).
-            n = 4
-            df = DataFrame(
-                precursor_idx = UInt32[1, 2, 3, 4],
-                target        = Bool[true, true, false, false],
-                irt_obs       = Float32[10.0, 20.0, 10.5, 20.5],
-                cv_fold       = UInt8[0, 0, 0, 0],
-            )
-            for c in _P.GROUP_COLS
-                df[!, c] = Float32.(1:n)   # distinct, identical per column
-            end
-            df[!, :global_max] = Float32[1.0, 2.0, 3.0, 4.0]
-            s1 = Float32[0.8, 0.7, 0.6, 0.5]
-            path = _write_fixture!(dir, "run1_fold0.arrow", df, s1)
+    # Shadow decoys are no longer round-tripped through the fold files: as of
+    # 2093a9477 they are built in memory inside the training sample
+    # (`_sample_both_folds(...; inject_shadows=true)`), so
+    # inject_shadow_decoys! / remove_shadow_decoys! and their `is_shadow`
+    # column no longer exist. What survives — and what the old round-trip test
+    # was really pinning down — is the pairing rule that decides which
+    # opposite-class row each shadow is drawn from.
+    @testset "_shadow_partners" begin
+        # 2 targets (irt 10, 20), 2 decoys (irt 10.5, 20.5): each row's nearest
+        # opposite-class neighbour is the one it shares an iRT with.
+        targets = Bool[true, true, false, false]
+        irt     = Float32[10.0, 20.0, 10.5, 20.5]
+        partner = _P._shadow_partners(targets, irt)
+        @test partner == Int32[3, 4, 1, 2]
+        # Every partner is genuinely the opposite class.
+        @test all(targets[i] != targets[partner[i]] for i in eachindex(partner))
 
-            orig_gmax = copy(df.global_max)
+        # Exact midpoint ties break to the LOWER index, inherited from
+        # _nearest_sorted_idx (see testset 5): target irt 10 sits halfway
+        # between decoys at 5 and 15 -> picks the one at 5 (row 2).
+        @test _P._shadow_partners(Bool[true, false, false],
+                                  Float32[10.0, 5.0, 15.0]) == Int32[2, 1, 1]
 
-            injected = _P.inject_shadow_decoys!([path])
-            @test injected == 4
+        # Single-class input has no possible partner -> all zeros. The caller
+        # skips such files rather than injecting (`pairable`).
+        @test _P._shadow_partners(Bool[true, true], Float32[1.0, 2.0]) == Int32[0, 0]
+        @test _P._shadow_partners(Bool[false, false], Float32[1.0, 2.0]) == Int32[0, 0]
 
-            out = DataFrame(Arrow.Table(path))
-            # Row count doubles (both classes present -> a shadow per real row).
-            @test nrow(out) == 8
-            @test hasproperty(out, :is_shadow)
-            real_rows   = out[.!out.is_shadow, :]
-            shadow_rows = out[out.is_shadow, :]
-            @test nrow(real_rows) == 4
-            @test nrow(shadow_rows) == 4
-            # Originals keep is_shadow == false.
-            @test all(.!Bool.(real_rows.is_shadow))
-
-            # 1:1 target/decoy marginal after injection (2T+2D real, opposite
-            # shadows add 2D+2T).
-            @test count(out.target) == 4
-            @test count(.!out.target) == 4
-            # Shadows carry the OPPOSITE class: 2 targets + 2 decoys among shadows.
-            @test count(shadow_rows.target) == 2
-            @test count(.!shadow_rows.target) == 2
-
-            # The grafted GROUP feature (global_max) on shadows equals the set of
-            # ORIGINAL rows' values (each real row grafts exactly one shadow).
-            @test sort(shadow_rows.global_max) == sort(orig_gmax)
-
-            # Targeted check: real target row (irt 10) -> nearest decoy is
-            # precursor 3 (irt 10.5); its shadow is a decoy grafted with row1's
-            # global_max (1.0).
-            @test any(r -> !r.target && r.global_max == 1.0f0, eachrow(shadow_rows))
-
-            # Sidecar stays aligned (row count matches the main file).
-            side_after = DataFrame(Arrow.Table(path * _P.PASS1_SIDECAR_SUFFIX))
-            @test nrow(side_after) == nrow(out)
-
-            # remove restores the original layout.
-            removed = _P.remove_shadow_decoys!([path])
-            @test removed == 4
-            restored = DataFrame(Arrow.Table(path))
-            @test nrow(restored) == 4
-            @test !hasproperty(restored, :is_shadow)   # flag column dropped
-            @test sort(restored.precursor_idx) == UInt32[1, 2, 3, 4]
-            side_restored = DataFrame(Arrow.Table(path * _P.PASS1_SIDECAR_SUFFIX))
-            @test nrow(side_restored) == 4
-        end
+        # Many-to-one is allowed: one decoy can be the nearest for several
+        # targets. The lone decoy at 2.5 serves all three targets; it in turn
+        # ties between targets 2 and 3 and takes the lower index.
+        @test _P._shadow_partners(Bool[true, true, true, false],
+                                  Float32[1.0, 2.0, 3.0, 2.5]) == Int32[4, 4, 4, 2]
     end
 
     # ---------------------------------------------------------------
@@ -248,15 +216,21 @@ const _P = Pioneer
             for p in files
                 t = DataFrame(Arrow.Table(p))
                 @test nrow(t) == 1
+                # The 9 GROUP columns go to a row-aligned `.group.sidecar.arrow`
+                # rather than being written back into the ~80-column fold file.
+                # Round-2 read sites resolve them via `_feature_columns`, and
+                # Step 1b's PSMFileReference auto-discovers the sidecar.
+                g = DataFrame(Arrow.Table(p * _P.GROUP_SIDECAR_SUFFIX))
+                @test nrow(g) == nrow(t)
                 for c in _P.GROUP_COLS
-                    @test hasproperty(t, c)
+                    @test hasproperty(g, c)
                 end
-                @test hasproperty(t, :delta_irt)
-                push!(gm, t.global_max[1]);            push!(gt3, t.global_top3_logodds[1])
-                push!(np, t.global_n_present[1]);      push!(nc, t.global_n_confident[1])
-                push!(cm, t.cluster_max[1]);           push!(ct3, t.cluster_top3_logodds[1])
-                push!(cnp, t.cluster_n_present[1]);    push!(cnc, t.cluster_n_confident[1])
-                push!(di, t.delta_irt[1])
+                @test hasproperty(g, :delta_irt)
+                push!(gm, g.global_max[1]);            push!(gt3, g.global_top3_logodds[1])
+                push!(np, g.global_n_present[1]);      push!(nc, g.global_n_confident[1])
+                push!(cm, g.cluster_max[1]);           push!(ct3, g.cluster_top3_logodds[1])
+                push!(cnp, g.cluster_n_present[1]);    push!(cnc, g.cluster_n_confident[1])
+                push!(di, g.delta_irt[1])
             end
             @test all(isfinite, gm) && all(isfinite, gt3) && all(isfinite, di)
 
