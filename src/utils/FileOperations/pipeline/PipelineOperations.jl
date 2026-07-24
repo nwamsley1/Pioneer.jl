@@ -139,19 +139,23 @@ pipeline = TransformPipeline() |>
     add_interpolated_column(:global_qval, :global_prob, global_qval_interp)
 ```
 """
-function add_interpolated_column(new_col::Symbol, source_col::Symbol, 
+# Function barrier: `df[!, col]` is type-unstable (returns an abstract column type), so indexing it
+# inside a per-row loop boxes every element (~100 B/row measured). Passing the column to a method
+# specializes on its concrete runtime type, making the loop allocation-free. `1:length` (not
+# `eachindex`) so the result Vector and an Arrow-backed source stay index-aligned (see A1).
+@inline function _fill_interpolated!(result::Vector{Float32}, source::AbstractVector, interp)
+    @inbounds for i in 1:length(source)
+        result[i] = Float32(interp(source[i]))
+    end
+end
+
+function add_interpolated_column(new_col::Symbol, source_col::Symbol,
                                interpolator::Interpolations.Extrapolation)
     desc = "add_interpolated_column($new_col from $source_col)"
     op = function(df)
-        # Extract source column with type assertion for performance
-        source_data = df[!, source_col]::AbstractVector{Float32}
-        
-        # Apply interpolator with pre-allocated result vector
+        source_data = df[!, source_col]
         result = Vector{Float32}(undef, length(source_data))
-        for i in eachindex(source_data)
-            result[i] = Float32(interpolator(source_data[i]))
-        end
-        
+        _fill_interpolated!(result, source_data, interpolator)
         df[!, new_col] = result
         return df
     end
@@ -175,20 +179,20 @@ pipeline = TransformPipeline() |>
     add_dict_column(:global_qval, :precursor_idx, precursor_qval_dict)
 ```
 """
+# Function barrier (see add_interpolated_column): the type-unstable `df[!, key_col]` indexed in the
+# loop boxed ~100 B/row. Union{V,Missing} is kept so keys absent from the dict still map to `missing`.
+@inline function _fill_dict_column!(result::Vector, keys::AbstractVector, dict)
+    @inbounds for i in 1:length(keys)
+        result[i] = get(dict, keys[i], missing)
+    end
+end
+
 function add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V}) where {K,V}
     desc = "add_dict_column($new_col from $key_col)"
     op = function(df)
-        # Extract key column
         key_data = df[!, key_col]
-
-        # Pre-allocate result vector
         result = Vector{Union{V, Missing}}(undef, length(key_data))
-
-        # Look up each key in dictionary
-        for i in eachindex(key_data)
-            result[i] = get(lookup_dict, key_data[i], missing)
-        end
-
+        _fill_dict_column!(result, key_data, lookup_dict)
         df[!, new_col] = result
         return df
     end
