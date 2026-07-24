@@ -98,9 +98,17 @@ end
 
 """
 Results container for main search.
+
+`lgbm_buffers` holds the reusable backing stores for the per-file LightGBM
+feature matrices. The file loop in `execute_search` is sequential, so one buffer
+set serves every file — the matrices are population-scaled (hundreds of MB per
+file), so allocating them per file is churn that grows with file count. Living
+here scopes them to MainSearch: they are released with the results container
+instead of being retained through the later search phases.
 """
 struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
+    lgbm_buffers::LGBMMatrixBuffers
 end
 
 #==========================================================
@@ -130,7 +138,8 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
     end
 
     return MainSearchResults(
-        DataFrame()
+        DataFrame(),
+        LGBMMatrixBuffers()
     )
 end
 
@@ -341,6 +350,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
+            buffers = results.lgbm_buffers,
         )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
@@ -362,6 +372,7 @@ function process_search_results!(
             lgbm_predictor;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
+            buffers = results.lgbm_buffers,
         )
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
