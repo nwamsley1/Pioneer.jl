@@ -23,19 +23,21 @@ live in MainSearch/scoring.jl (`SHARED_LGBM_HP`,
 classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
-# ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
-# (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
+# ADVANCED_FEATURE_SET drives the round-1 LGBM
+# (in score_psms.jl::score_precursor_isotope_traces).
 #
-# Important: the MBR features (MBR_max_pair_prob_true, etc.) are NOT in
-# this list. They are computed AFTER Pass-1 LGBM trains (see steps 5-6
-# in _score_precursor_isotope_traces_mbr), so they wouldn't exist on the
-# DataFrame at Pass-1 training time anyway. MBR features are consumed
-# only by the FTR controller (mbr_ftr.jl::FTR_FEATURES_F_TRUE), which is
-# a separate LGBM trained later in the pipeline.
+# Important: the cross-run features are NOT in this list. They are derived
+# from round 1's OOF scores (`write_two_round_feature_columns!`), so they
+# don't exist on the DataFrame at round-1 training time anyway. Round 2
+# trains on `vcat(ADVANCED_FEATURE_SET, two_round_features())` — this list
+# plus the GROUP cross-run columns and delta_irt — when
+# match_between_runs=true.
 #
-# Pre-2026-05-19 this list redundantly included the 6 MBR features —
+# Pre-2026-05-19 this list redundantly included 6 MBR features —
 # they were always silently filtered out by the hasproperty guard in
-# pass1_oom.jl. Removed to make the design intent explicit.
+# pass1_oom.jl. Removed to make the design intent explicit. The MBR/FTR
+# path itself was deleted in dafb83bd4 (match_between_runs=true now
+# selects the two-round path).
 #
 # ADVANCED_FEATURE_SET mostly tracks PRESCORE_FEATURES, but it can use
 # best-per-precursor features that MainSearch cannot use for scan selection.
