@@ -195,9 +195,10 @@ function library_search(
     # window (partition granularity); keep only |prec_mz - centerMz| ≤ isoWidth/2 so
     # each (precursor, scan) is a clean single-center-bin assignment before the ±k
     # meta-scan expansion. ---
+    t_center = 0.0
     if _zt_main
         n_before_cb = length(precursors_passed)
-        if _zt_wide_emit
+        t_center = @elapsed if _zt_wide_emit
             # Wide-emit: any precursor that cleared the bitvec in ANY bin → mapped to its center
             # bin (expand_to_metascans! then fills its ±k, same as the tight path). search_halfbins
             # spans the ±tol emission range so the true nearest bin is found.
@@ -234,10 +235,13 @@ function library_search(
     if _zt_tuning && _zt_tuning_overhang > 0f0
         qtm_deconv = SquareQuadModel(_zt_tuning_overhang)   # keep tuning deconv consistent with the wide candidacy box
     end
+    t_expand = 0.0
     if _zt_main
         n_before_ms = length(precursors_passed)
-        precursors_passed = expand_to_metascans!(
-            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, _zt_k)
+        t_expand = @elapsed begin
+            precursors_passed = expand_to_metascans!(
+                scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, _zt_k)
+        end
         # Deconv transmission: prefer the QuadTuning-fitted empirical LUT (the real
         # swept-quad shape); fall back to the wide square box (overhang = k·S spanning
         # the whole (2k+1)-bin meta-scan) if QuadTuning didn't produce one.
@@ -247,6 +251,9 @@ function library_search(
                   "$(length(precursors_passed)) candidates " *
                   "($(round(length(precursors_passed)/max(1,n_before_ms), digits=2))×); " *
                   "S=$(round(S_est,digits=3)); deconv=$(qtm_deconv isa EmpiricalQuadModel ? "EmpiricalQuadModel(LUT)" : "SquareQuadModel($(round(S_est*(2*_zt_k+1),digits=1)) m/z)")"
+    end
+    if _zt_main
+        @debug_l1 "ZT candidacy step timing: center_map=$(round(t_center,digits=2))s  expand=$(round(t_expand,digits=2))s"
     end
 
     # --- 2b. Build precursor index ---
@@ -289,8 +296,17 @@ function library_search(
     # `process_scans!` path was deleted along with the multi-pass pipeline
     # (selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse!).
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
+    # Env-gated deconvolution profiler (PIONEER_PROFILE_DECONV=1): sample the threaded
+    # deconv with Julia's Profile and dump a flat text profile (self-time by function)
+    # to the output dir, so the run_fused! design-matrix build can be separated from the
+    # solvePoissonMM_fast! solve. Main search only; adds sampling overhead when on.
+    _zt_prof_deconv = (params isa MainSearchParameters) && get(ENV, "PIONEER_PROFILE_DECONV", "0") != "0"
+    if _zt_prof_deconv
+        Profile.clear()
+        Profile.init(n = 200_000_000, delay = 0.001)
+    end
     t_deconv_start = time()
-    all_results = map(nce_entries) do (nce_model, nce_tag)
+    _deconv_body = () -> map(nce_entries) do (nce_model, nce_tag)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
@@ -315,6 +331,16 @@ function library_search(
             result[!, :nce] .= nce_tag
         end
         return result
+    end
+    all_results = _zt_prof_deconv ? (Profile.@profile _deconv_body()) : _deconv_body()
+    if _zt_prof_deconv
+        out_dir = getDataOutDir(search_context)
+        prof_path = joinpath(out_dir, "deconv_profile_$(ms_file_idx).txt")
+        open(prof_path, "w") do io
+            Profile.print(IOContext(io, :displaysize => (100000, 320));
+                          format = :flat, sortedby = :count, mincount = 30)
+        end
+        @user_info "Deconv flat profile saved to $prof_path\n"
     end
     t_deconv = time() - t_deconv_start
 
