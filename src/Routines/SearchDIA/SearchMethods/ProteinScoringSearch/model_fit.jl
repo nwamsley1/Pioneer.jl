@@ -80,21 +80,22 @@ function make_protein_feature_importance_logger(
 end
 
 """
-    build_protein_semisupervised_training_set(scores, targets, prefix_shape, n_peptides; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = -0.20f0, mined_negative_pep_threshold = 0.90f0, keep_non_mined_targets_as_positive = true)
+    build_protein_semisupervised_training_set(scores, targets, prefix_shape, n_peptides, ambiguous_scores; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = -0.20f0, mined_negative_pep_threshold = 0.90f0, keep_non_mined_targets_as_positive = true)
 
 Build labels for semi-supervised protein probit training from a score vector.
-Targets with `PEP >= mined_negative_pep_threshold` are mined as negatives.
-Singleton targets with `prefix_shape <= mined_negative_prefix_shape_threshold`
-are mined as negatives regardless of q-value. If
-`keep_non_mined_targets_as_positive=true`, remaining targets stay positive for
-training; otherwise only q-value-passing targets stay positive and the rest are
-dropped.
+Targets with zero ambiguous support are mined as negatives when either
+`PEP >= mined_negative_pep_threshold` or a singleton has
+`prefix_shape <= mined_negative_prefix_shape_threshold`. Ambiguity-supported
+targets are never mined as negatives. If `keep_non_mined_targets_as_positive=true`,
+remaining targets stay positive for training; otherwise only q-value-passing
+targets stay positive and the rest are dropped.
 """
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
     targets::AbstractVector{Bool},
     prefix_shape::AbstractVector{<:Real},
-    n_peptides::AbstractVector{<:Integer};
+    n_peptides::AbstractVector{<:Integer},
+    ambiguous_scores::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
     mined_negative_prefix_shape_threshold::Float32 = -0.20f0,
@@ -105,6 +106,8 @@ function build_protein_semisupervised_training_set(
     length(targets) == n || throw(ArgumentError("targets must have the same length as scores"))
     length(prefix_shape) == n || throw(ArgumentError("prefix_shape must have the same length as scores"))
     length(n_peptides) == n || throw(ArgumentError("n_peptides must have the same length as scores"))
+    length(ambiguous_scores) == n ||
+        throw(ArgumentError("ambiguous_scores must have the same length as scores"))
     qvals = Vector{Float32}(undef, n)
     peps = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
@@ -116,7 +119,15 @@ function build_protein_semisupervised_training_set(
     positive_mask = BitVector(undef, n)
     keep_mask = BitVector(undef, n)
 
-    @inbounds for i in eachindex(scores, targets, prefix_shape, n_peptides, qvals, peps)
+    @inbounds for i in eachindex(
+        scores,
+        targets,
+        prefix_shape,
+        n_peptides,
+        ambiguous_scores,
+        qvals,
+        peps,
+    )
         low_shape_singleton_target = targets[i] &&
                                      (n_peptides[i] == 1) &&
                                      (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
@@ -124,6 +135,7 @@ function build_protein_semisupervised_training_set(
                                                (qvals[i] <= q_value_threshold) &&
                                                (peps[i] <= max_positive_pep_threshold)
         mined_negative_mask[i] = targets[i] &&
+                                 (Float32(ambiguous_scores[i]) == 0.0f0) &&
                                  ((peps[i] >= mined_negative_pep_threshold) ||
                                   low_shape_singleton_target)
         confident_positive_mask[i] = candidate_confident_positive_mask[i] &&
@@ -219,7 +231,7 @@ function fit_probit_model(X::Matrix{Float64}, y::AbstractVector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, initial_scores, prefix_shape, n_peptides; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = -0.20f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
+    fit_probit_model_semisupervised(X, y, initial_scores, prefix_shape, n_peptides, ambiguous_scores; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = -0.20f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
 
 Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
 then fitting and refining with the full feature set. Later outer iterations stop
@@ -230,7 +242,8 @@ function fit_probit_model_semisupervised(
     y::AbstractVector{Bool},
     initial_scores::AbstractVector{<:Real},
     prefix_shape::AbstractVector{<:Real},
-    n_peptides::AbstractVector{<:Integer};
+    n_peptides::AbstractVector{<:Integer},
+    ambiguous_scores::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold::Float32 = -0.20f0,
     min_pep_neg_threshold::Float32 = 0.90f0,
@@ -244,6 +257,8 @@ function fit_probit_model_semisupervised(
     length(initial_scores) == length(y) || throw(ArgumentError("initial_scores must have the same length as y"))
     length(prefix_shape) == length(y) || throw(ArgumentError("prefix_shape must have the same length as y"))
     length(n_peptides) == length(y) || throw(ArgumentError("n_peptides must have the same length as y"))
+    length(ambiguous_scores) == length(y) ||
+        throw(ArgumentError("ambiguous_scores must have the same length as y"))
 
     row_change_threshold = max(5, ceil(Int, 0.001 * length(y)))
     near_convergence_check_start_iteration = 4
@@ -258,7 +273,8 @@ function fit_probit_model_semisupervised(
         initial_scores,
         y,
         prefix_shape,
-        n_peptides;
+        n_peptides,
+        ambiguous_scores;
         q_value_threshold = q_value_threshold,
         max_positive_pep_threshold = max_positive_pep_threshold,
         mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
@@ -312,7 +328,8 @@ function fit_probit_model_semisupervised(
             iteration_scores,
             y,
             prefix_shape,
-            n_peptides;
+            n_peptides,
+            ambiguous_scores;
             q_value_threshold = q_value_threshold,
             max_positive_pep_threshold = max_positive_pep_threshold,
             mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
@@ -663,7 +680,8 @@ function perform_probit_analysis_multifold(
                 y_train,
                 initial_scores_train,
                 train_df.precursor_consensus_prefix_shape,
-                train_df.n_peptides;
+                train_df.n_peptides,
+                train_df.ambiguous_pg_score;
                 q_value_threshold = train_q_value_threshold,
                 min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
                 min_pep_neg_threshold = min_pep_neg_threshold_itr,

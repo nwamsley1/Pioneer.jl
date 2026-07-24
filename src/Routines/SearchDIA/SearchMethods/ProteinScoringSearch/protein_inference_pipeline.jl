@@ -1298,7 +1298,9 @@ end
 
 Roll ambiguous PSMs to peptide-level log evidence and allocate each peptide once among its
 eligible final protein groups. Allocation weights use the frozen unique-only raw `pg_score`
-plus a fixed pseudocount; ambiguous evidence never feeds back into its own weights.
+plus a fixed pseudocount; ambiguous evidence never feeds back into its own weights. Also
+count each confidence-passing ambiguous peptide once for every eligible group so its
+unweighted peptide coverage can be derived after the theoretical peptide catalog is joined.
 """
 function add_ambiguous_pg_score!(
     protein_groups::DataFrame,
@@ -1309,6 +1311,7 @@ function add_ambiguous_pg_score!(
     n_groups = nrow(protein_groups)
     ambiguous_scores = zeros(Float64, n_groups)
     protein_groups[!, :ambiguous_pg_score] = zeros(Float32, n_groups)
+    protein_groups[!, :_ambiguous_peptide_count] = zeros(Int64, n_groups)
 
     if n_groups == 0 || isempty(candidates_by_id) ||
        !hasproperty(psms, :protein_ambiguity_id)
@@ -1369,6 +1372,7 @@ function add_ambiguous_pg_score!(
         total_support > 0.0 || continue
 
         for row in eligible_rows
+            protein_groups._ambiguous_peptide_count[row] += 1
             support = max(Float64(protein_groups.pg_score[row]), 0.0) +
                 Float64(AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT)
             ambiguous_scores[row] += ambiguous_score * support / total_support
@@ -1412,6 +1416,8 @@ function add_protein_features(protein_catalog::Dict)
         n_possible = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
         peptide_coverage_logit = Vector{Float32}(undef, n_rows)
+        ambiguous_peptide_coverage = Vector{Float32}(undef, n_rows)
+        has_ambiguous_peptide_count = hasproperty(df, :_ambiguous_peptide_count)
         
         for i in 1:n_rows
             key = (
@@ -1445,6 +1451,8 @@ function add_protein_features(protein_catalog::Dict)
             n_possible[i] = length(possible_peptides)
 
             observed_n = Int(df.n_peptides[i])
+            ambiguous_observed_n = has_ambiguous_peptide_count ?
+                Int(df._ambiguous_peptide_count[i]) : 0
             if observed_n > n_possible[i]
                 error(
                     "Protein feature count inconsistency: " *
@@ -1455,19 +1463,36 @@ function add_protein_features(protein_catalog::Dict)
                     "n_possible_peptides=$(n_possible[i])"
                 )
             end
+            if ambiguous_observed_n > n_possible[i]
+                error(
+                    "Ambiguous protein feature count inconsistency: " *
+                    "protein_name=$(repr(key.protein_name)) " *
+                    "target=$(key.target) " *
+                    "entrap_id=$(key.entrap_id) " *
+                    "n_ambiguous_peptides=$(ambiguous_observed_n) " *
+                    "n_possible_peptides=$(n_possible[i])"
+                )
+            end
 
             if n_possible[i] > 0
                 peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
                 peptide_coverage_logit[i] = smoothed_coverage_logit(df.n_peptides[i], n_possible[i])
+                ambiguous_peptide_coverage[i] =
+                    Float32(ambiguous_observed_n) / Float32(n_possible[i])
             else
                 peptide_coverage[i] = 0.0f0
                 peptide_coverage_logit[i] = 0.0f0
+                ambiguous_peptide_coverage[i] = 0.0f0
             end
         end
         
         df.n_possible_peptides = n_possible
         df.peptide_coverage = peptide_coverage
         df.peptide_coverage_logit = peptide_coverage_logit
+        df.ambiguous_peptide_coverage = ambiguous_peptide_coverage
+        if has_ambiguous_peptide_count
+            select!(df, Not(:_ambiguous_peptide_count))
+        end
         
         return df
     end

@@ -16,6 +16,7 @@ using Random
 using LinearAlgebra
 using Distributions: Normal, cdf
 
+using Pioneer: build_protein_semisupervised_training_set
 using Pioneer: fit_probit_model, calculate_probit_scores
 
 @testset "ProteinScoring/model_fit pure-numerics" begin
@@ -105,6 +106,37 @@ using Pioneer: fit_probit_model, calculate_probit_scores
         # Same features × large negative β → probs near 0
         β_neg = [0.0, -10.0]
         @test all(calculate_probit_scores(X, β_neg) .< 0.01)
+    end
+
+    @testset "ambiguous support protects both negative-mining paths" begin
+        scores = Float32[0.9, 0.8, 0.2, 0.1, 0.05]
+        targets = Bool[true, false, true, true, false]
+        ambiguous_scores = Float32[0.0, 0.0, 2.0, 0.0, 0.0]
+        neutral_shape = zeros(Float32, 5)
+        nonsingletons = fill(Int64(2), 5)
+
+        all_scores_weak = build_protein_semisupervised_training_set(
+            scores,
+            targets,
+            neutral_shape,
+            nonsingletons,
+            ambiguous_scores;
+            mined_negative_pep_threshold = 0.0f0,
+        )
+        @test all_scores_weak.mined_negative_mask ==
+            Bool[true, false, false, true, false]
+        @test all_scores_weak.positive_mask[3]
+
+        low_shape_singletons = build_protein_semisupervised_training_set(
+            scores,
+            targets,
+            Float32[-0.3, 0.0, -0.3, 0.0, 0.0],
+            ones(Int64, 5),
+            ambiguous_scores;
+            mined_negative_pep_threshold = 1.1f0,
+        )
+        @test low_shape_singletons.mined_negative_mask ==
+            Bool[true, false, false, false, false]
     end
 
 end

@@ -8,6 +8,7 @@ using Pioneer: AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT,
     ProteinKey,
     _register_protein_ambiguities!,
     add_ambiguous_pg_score!,
+    add_protein_features,
     add_protein_ambiguity_id,
     protein_probit_feature_names
 
@@ -82,15 +83,25 @@ end
             protein_name = ["A", "B"],
             target = Bool[true, true],
             entrap_id = UInt8[0, 0],
-            pg_score = Float32[2.0, 8.0]
+            pg_score = Float32[2.0, 8.0],
+            n_peptides = Int64[1, 1]
         )
         psms = vcat(_ambiguous_scoring_psms(), _ambiguous_scoring_psms())
         psms.prec_prob = Float32[0.2, 0.8]
 
         add_ambiguous_pg_score!(protein_groups, psms, candidates)
+        protein_catalog = Dict(
+            (protein_name = "A", target = true, entrap_id = UInt8(0)) =>
+                Set(["A_ONLY", "SHARED"]),
+            (protein_name = "B", target = true, entrap_id = UInt8(0)) =>
+                Set(["B_ONLY_1", "B_ONLY_2", "B_ONLY_3", "SHARED"])
+        )
+        add_protein_features(protein_catalog).second(protein_groups)
 
         expected_score = Float32(-log((1.0f0 - 0.8f0) + 0.001f0))
         @test sum(protein_groups.ambiguous_pg_score) ≈ expected_score rtol = 1f-6
+        @test protein_groups.ambiguous_peptide_coverage == Float32[0.5, 0.25]
+        @test !hasproperty(protein_groups, :_ambiguous_peptide_count)
     end
 
     @testset "allocation cannot cross target/decoy populations" begin
@@ -129,6 +140,7 @@ end
             candidates
         )
         @test protein_groups.ambiguous_pg_score == zeros(Float32, 2)
+        @test protein_groups._ambiguous_peptide_count == zeros(Int64, 2)
 
         psms_without_ambiguity = select(
             _ambiguous_scoring_psms(),
@@ -136,6 +148,7 @@ end
         )
         add_ambiguous_pg_score!(protein_groups, psms_without_ambiguity, candidates)
         @test protein_groups.ambiguous_pg_score == zeros(Float32, 2)
+        @test protein_groups._ambiguous_peptide_count == zeros(Int64, 2)
     end
 
     @testset "in-memory ambiguity registration" begin
@@ -167,9 +180,10 @@ end
 
     end
 
-    @testset "probit uses only the requested ambiguity feature" begin
+    @testset "probit uses only the requested ambiguity features" begin
         features = protein_probit_feature_names()
         @test :ambiguous_pg_score in features
+        @test :ambiguous_peptide_coverage in features
         @test !(:augmented_pg_score in features)
         @test !(:effective_ambiguous_peptides in features)
         @test !(:ambiguous_score_fraction in features)
