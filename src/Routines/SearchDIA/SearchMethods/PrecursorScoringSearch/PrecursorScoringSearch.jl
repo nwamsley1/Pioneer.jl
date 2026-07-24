@@ -281,11 +281,11 @@ function summarize_results!(
     for fpath in fold_paths_to_delete
         safeRm(fpath, nothing)
     end
-    @user_info string("[score-phase]     step1b.load  ", lpad(round(t_load; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     step1b.load  ", lpad(round(t_load; digits=2), 8), "s",
         "  alloc=", lpad(round(b_load / 1e9; digits=3), 9), "GB")
-    @user_info string("[score-phase]     step1b.xform ", lpad(round(t_xform; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     step1b.xform ", lpad(round(t_xform; digits=2), 8), "s",
         "  alloc=", lpad(round(b_xform / 1e9; digits=3), 9), "GB")
-    @user_info string("[score-phase]     step1b.write ", lpad(round(t_write; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     step1b.write ", lpad(round(t_write; digits=2), 8), "s",
         "  alloc=", lpad(round(b_write / 1e9; digits=3), 9), "GB")
     end  # @score_phase "step1b fold-merge"
 

@@ -513,17 +513,24 @@ macro debug_l1(msg)
 end
 
 # Phase-level profiling probe. Wraps a block, logs wall time / allocated bytes / GC time
-# at @user_info (always visible) with a greppable `[score-phase]` prefix. Assignments inside
-# the wrapped block leak to the enclosing scope (esc), so it can replace an
-# `= @elapsed begin … end` in place. Runs once per phase — not for hot per-row use.
+# at @debug_l1 (visible at logging.debug_console_level >= 1) with a greppable
+# `[score-phase]` prefix. Assignments inside the wrapped block leak to the enclosing
+# scope (esc), so it can replace an `= @elapsed begin … end` in place. Runs once per
+# phase — not for hot per-row use. The `@timed` measurement itself is unconditional
+# (it's a clock + GC-counter read) so the wrapped value passes through either way.
 macro score_phase(label, expr)
     return quote
         local _s = @timed $(esc(expr))
-        Pioneer.user_info(string(
-            "[score-phase] ", rpad($(esc(label)), 34),
-            lpad(round(_s.time; digits = 2), 8), "s",
-            "  alloc=", lpad(round(_s.bytes / 1e9; digits = 3), 9), "GB",
-            "  gc=", lpad(round(_s.gctime; digits = 2), 6), "s"))
+        Pioneer.debug_l1(
+            string(
+                "[score-phase] ", rpad($(esc(label)), 34),
+                lpad(round(_s.time; digits = 2), 8), "s",
+                "  alloc=", lpad(round(_s.bytes / 1e9; digits = 3), 9), "GB",
+                "  gc=", lpad(round(_s.gctime; digits = 2), 6), "s"),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__)),
+        )
         _s.value
     end
 end

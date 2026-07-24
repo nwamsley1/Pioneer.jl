@@ -204,11 +204,11 @@ function apply_pipeline_batch(refs::Vector{<:FileReference},
         end
     end
 
-    @user_info string("[score-phase]     B.load  ", lpad(round(_probe.load[]; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     B.load  ", lpad(round(_probe.load[]; digits=2), 8), "s",
         "  alloc=", lpad(round(_probe.load_b[] / 1e9; digits=3), 9), "GB")
-    @user_info string("[score-phase]     B.xform ", lpad(round(_probe.xform[]; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     B.xform ", lpad(round(_probe.xform[]; digits=2), 8), "s",
         "  alloc=", lpad(round(_probe.xform_b[] / 1e9; digits=3), 9), "GB")
-    @user_info string("[score-phase]     B.write ", lpad(round(_probe.write[]; digits=2), 8), "s",
+    @debug_l1 string("[score-phase]     B.write ", lpad(round(_probe.write[]; digits=2), 8), "s",
         "  alloc=", lpad(round(_probe.write_b[] / 1e9; digits=3), 9), "GB")
     return new_refs
 end
