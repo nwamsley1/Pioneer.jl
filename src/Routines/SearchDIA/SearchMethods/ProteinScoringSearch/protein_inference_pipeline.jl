@@ -1403,7 +1403,9 @@ end
     add_protein_features(protein_peptide_opportunities)
 
 Add unique and shared peptide coverage features using their corresponding
-experiment-wide theoretical opportunity denominators.
+experiment-wide theoretical opportunity denominators. The shared features
+include a smoothed logit and its smoothed detection-rate ratio to unique
+peptide coverage.
 """
 function add_protein_features(
     protein_peptide_opportunities::Dict{
@@ -1419,7 +1421,8 @@ function add_protein_features(
         n_possible_shared = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
         peptide_coverage_logit = Vector{Float32}(undef, n_rows)
-        shared_peptide_coverage = Vector{Float32}(undef, n_rows)
+        shared_peptide_coverage_logit = Vector{Float32}(undef, n_rows)
+        shared_coverage_log_ratios = Vector{Float32}(undef, n_rows)
         has_ambiguous_peptide_count = hasproperty(df, :_ambiguous_peptide_count)
 
         for i in 1:n_rows
@@ -1469,16 +1472,22 @@ function add_protein_features(
                 peptide_coverage[i] = 0.0f0
                 peptide_coverage_logit[i] = 0.0f0
             end
-            shared_peptide_coverage[i] = n_possible_shared[i] > 0 ?
-                Float32(observed_shared) / Float32(n_possible_shared[i]) :
-                0.0f0
+            shared_peptide_coverage_logit[i] =
+                smoothed_coverage_logit(observed_shared, n_possible_shared[i])
+            shared_coverage_log_ratios[i] = shared_coverage_log_ratio(
+                observed_shared,
+                n_possible_shared[i],
+                observed_unique,
+                n_possible_unique[i]
+            )
         end
 
         df.n_possible_unique_peptides = n_possible_unique
         df.n_possible_shared_peptides = n_possible_shared
         df.peptide_coverage = peptide_coverage
         df.peptide_coverage_logit = peptide_coverage_logit
-        df.shared_peptide_coverage = shared_peptide_coverage
+        df.shared_peptide_coverage_logit = shared_peptide_coverage_logit
+        df.shared_coverage_log_ratio = shared_coverage_log_ratios
         if has_ambiguous_peptide_count
             select!(df, Not(:_ambiguous_peptide_count))
         end

@@ -35,7 +35,7 @@ function log_probit_feature_importance(
     end
 
     intercept = Float64(β_fitted[1])
-    @user_info "Protein probit model coefficients context=$(context) intercept=$(round(intercept, digits=6)) n_features=$(n_features) importance_metric=abs(coefficient*feature_std)"
+    @debug_l1 "Protein probit model coefficients context=$(context) intercept=$(round(intercept, digits=6)) n_features=$(n_features) importance_metric=abs(coefficient*feature_std)"
 
     feature_summaries = NamedTuple[]
     for j in 1:n_features
@@ -58,7 +58,7 @@ function log_probit_feature_importance(
     sort!(feature_summaries, by = x -> x.abs_one_sigma_effect, rev = true)
 
     for (rank, summary) in enumerate(feature_summaries)
-        @user_info "Protein probit feature importance context=$(context) rank=$(rank) feature=$(summary.feature) coefficient=$(round(summary.coefficient, digits=6)) feature_std=$(round(summary.feature_std, digits=6)) one_sigma_effect=$(round(summary.one_sigma_effect, digits=6)) abs_one_sigma_effect=$(round(summary.abs_one_sigma_effect, digits=6))"
+        @debug_l1 "Protein probit feature importance context=$(context) rank=$(rank) feature=$(summary.feature) coefficient=$(round(summary.coefficient, digits=6)) feature_std=$(round(summary.feature_std, digits=6)) one_sigma_effect=$(round(summary.one_sigma_effect, digits=6)) abs_one_sigma_effect=$(round(summary.abs_one_sigma_effect, digits=6))"
     end
 
     return
@@ -616,7 +616,6 @@ function perform_probit_analysis_multifold(
     show_improvement = true,
     skip_scoring = false,
     write_qc_plots::Bool = true,
-    log_feature_importance::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
@@ -670,9 +669,15 @@ function perform_probit_analysis_multifold(
                     file_idx_to_name = file_idx_to_name
                 ) :
                 nothing
-            feature_importance_logger = log_feature_importance ?
-                make_protein_feature_importance_logger(feature_names; context = context) :
-                nothing
+            feature_importance_logger =
+                if DEBUG_CONSOLE_LEVEL[] >= 1
+                    make_protein_feature_importance_logger(
+                        feature_names;
+                        context = context
+                    )
+                else
+                    nothing
+                end
             
             # Fit model
             β_fitted = fit_probit_model_semisupervised(

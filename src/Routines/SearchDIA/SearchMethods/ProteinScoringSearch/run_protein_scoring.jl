@@ -87,7 +87,6 @@ function perform_protein_probit_regression(
     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     write_qc_plots::Bool = true,
-    log_feature_importance::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
@@ -123,7 +122,6 @@ function perform_protein_probit_regression(
         file_idx_to_name = file_idx_to_name,
         skip_scoring = skip_scoring,
         write_qc_plots = write_qc_plots,
-        log_feature_importance = log_feature_importance,
         train_q_value_threshold = train_q_value_threshold,
         min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
@@ -143,7 +141,6 @@ function run_protein_scoring!(
     q_value_threshold::Float32,
     min_peptides::Int64,
     write_qc_plots::Bool,
-    log_feature_importance::Bool,
     min_pep_neg_threshold_itr::Float32,
     q_value_interpolation_points_per_bin::Int64
 )
@@ -196,7 +193,6 @@ function run_protein_scoring!(
         protein_to_cv_fold = protein_to_cv_fold,
         file_idx_to_name = file_idx_to_name,
         write_qc_plots = write_qc_plots,
-        log_feature_importance = log_feature_importance,
         train_q_value_threshold = q_value_threshold,
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )

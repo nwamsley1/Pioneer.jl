@@ -110,7 +110,6 @@ function checkParams(json_path::String)
     check_param(protein_scoring, "min_peptides", Integer)
     check_param(protein_scoring, "global_protein_inference", Bool)
     check_param(protein_scoring, "write_qc_plots", Bool)
-    check_param(protein_scoring, "log_feature_importance", Bool)
 
     # Validate MaxLFQ parameters
     output = params["maxLFQ"]

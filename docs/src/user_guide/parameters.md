@@ -53,7 +53,6 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `proteinScoring.min_peptides` | Int | `1` | Minimum unique peptides required for a protein group to be reported. |
 | `proteinScoring.global_protein_inference` | Bool | `true` | Run protein inference once across the union of passing PSMs from every file. Set `false` for the legacy per-file path. |
 | `proteinScoring.write_qc_plots` | Bool | `false` | Emit protein-scoring QC plots. |
-| `proteinScoring.log_feature_importance` | Bool | `false` | Log LightGBM feature-importance scores from the protein-scoring model. |
 
 ### MaxLFQ
 
@@ -74,7 +73,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `logging.debug_console_level` | Int | `0` | Console verbosity. `0` shows user-facing messages only; higher values progressively expose internal `@debug_lN` messages. |
+| `logging.debug_console_level` | Int | `0` | Console verbosity. `0` shows user-facing messages only; higher values progressively expose internal `@debug_lN` messages. Level 1 includes protein probit coefficients and standardized feature importances. |
 | `logging.max_message_bytes` | Int | `4096` | Maximum bytes per log line before truncation. Truncation preserves valid UTF-8 and appends `… [truncated N bytes]`. The `PIONEER_MAX_LOG_MSG_BYTES` env var overrides at runtime, clamped to `[1024, 1048576]`. |
 
 ### Paths

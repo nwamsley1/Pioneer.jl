@@ -103,7 +103,10 @@ end
         @test protein_groups.n_possible_unique_peptides == Int64[2, 4]
         @test protein_groups.n_possible_shared_peptides == Int64[2, 1]
         @test protein_groups.peptide_coverage == Float32[0.5, 0.25]
-        @test protein_groups.shared_peptide_coverage == Float32[0.5, 1.0]
+        @test protein_groups.shared_peptide_coverage_logit[1] ≈ 0.0f0
+        @test protein_groups.shared_peptide_coverage_logit[2] ≈ log(3.0f0)
+        @test protein_groups.shared_coverage_log_ratio[1] ≈ 0.0f0
+        @test protein_groups.shared_coverage_log_ratio[2] ≈ log(2.5f0)
         @test !hasproperty(protein_groups, :_ambiguous_peptide_count)
     end
 
@@ -161,20 +164,24 @@ end
         @test opportunities[entrap_e] == ProteinPeptideOpportunityCounts(1, 0)
     end
 
-    @testset "zero shared opportunity denominator gives zero coverage" begin
+    @testset "shared coverage logit distinguishes absent opportunities" begin
         protein_groups = DataFrame(
-            protein_name = ["A"],
-            target = Bool[true],
-            entrap_id = UInt8[0],
-            n_peptides = Int64[1],
-            _ambiguous_peptide_count = Int64[0]
+            protein_name = ["A", "B"],
+            target = Bool[true, true],
+            entrap_id = UInt8[0, 0],
+            n_peptides = Int64[1, 1],
+            _ambiguous_peptide_count = Int64[0, 0]
         )
         add_protein_features(Dict(
-            protein_a => ProteinPeptideOpportunityCounts(1, 0)
+            protein_a => ProteinPeptideOpportunityCounts(1, 0),
+            protein_b => ProteinPeptideOpportunityCounts(1, 2)
         )).second(protein_groups)
 
-        @test protein_groups.peptide_coverage == Float32[1.0]
-        @test protein_groups.shared_peptide_coverage == Float32[0.0]
+        @test protein_groups.peptide_coverage == Float32[1.0, 1.0]
+        @test protein_groups.shared_peptide_coverage_logit[1] == 0.0f0
+        @test protein_groups.shared_peptide_coverage_logit[2] ≈ log(0.2f0)
+        @test protein_groups.shared_coverage_log_ratio[1] == 0.0f0
+        @test protein_groups.shared_coverage_log_ratio[2] ≈ log(2.0f0 / 9.0f0)
     end
 
     @testset "allocation cannot cross target/decoy populations" begin
@@ -256,7 +263,9 @@ end
     @testset "probit uses only the requested ambiguity features" begin
         features = protein_probit_feature_names()
         @test :ambiguous_pg_score in features
-        @test :shared_peptide_coverage in features
+        @test :shared_peptide_coverage_logit in features
+        @test :shared_coverage_log_ratio in features
+        @test !(:shared_peptide_coverage in features)
         @test !(:ambiguous_peptide_coverage in features)
         @test !(:augmented_pg_score in features)
         @test !(:effective_ambiguous_peptides in features)

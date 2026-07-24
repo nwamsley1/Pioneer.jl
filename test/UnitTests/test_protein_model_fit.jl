@@ -18,6 +18,8 @@ using Distributions: Normal, cdf
 
 using Pioneer: build_protein_semisupervised_training_set
 using Pioneer: fit_probit_model, calculate_probit_scores
+using Pioneer: log_probit_feature_importance
+import Pioneer: DEBUG_CONSOLE_LEVEL
 
 @testset "ProteinScoring/model_fit pure-numerics" begin
 
@@ -106,6 +108,56 @@ using Pioneer: fit_probit_model, calculate_probit_scores
         # Same features × large negative β → probs near 0
         β_neg = [0.0, -10.0]
         @test all(calculate_probit_scores(X, β_neg) .< 0.01)
+    end
+
+    @testset "protein probit feature importance uses level-1 debug logging" begin
+        X = Float64[
+            0.0  0.0;
+            1.0  2.0;
+            2.0  4.0;
+        ]
+        β = Float64[0.25, 0.5, -1.0]
+        feature_names = Symbol[:feature_a, :feature_b]
+        old_debug_level = DEBUG_CONSOLE_LEVEL[]
+
+        try
+            function capture_feature_importance_log(debug_level)
+                DEBUG_CONSOLE_LEVEL[] = debug_level
+                return mktemp() do _, io
+                    redirect_stdout(io) do
+                        log_probit_feature_importance(
+                            feature_names,
+                            β,
+                            X;
+                            context = "unit_test"
+                        )
+                    end
+                    flush(io)
+                    seekstart(io)
+                    return read(io, String)
+                end
+            end
+
+            @test isempty(capture_feature_importance_log(0))
+
+            output = capture_feature_importance_log(1)
+            @test occursin(
+                "Protein probit model coefficients context=unit_test",
+                output
+            )
+            @test occursin(
+                "Protein probit feature importance context=unit_test rank=1 " *
+                "feature=feature_b coefficient=-1.0",
+                output
+            )
+            @test occursin(
+                "Protein probit feature importance context=unit_test rank=2 " *
+                "feature=feature_a coefficient=0.5",
+                output
+            )
+        finally
+            DEBUG_CONSOLE_LEVEL[] = old_debug_level
+        end
     end
 
     @testset "ambiguous support protects both negative-mining paths" begin
