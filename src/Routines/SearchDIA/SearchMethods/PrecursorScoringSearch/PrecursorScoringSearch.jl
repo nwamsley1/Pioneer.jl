@@ -244,25 +244,21 @@ function summarize_results!(
         end
 
         if !isempty(fold_dfs)
-            # Merge and write combined file
+            # Add the derived columns to EACH fold in place, then write both as Arrow record
+            # batches — no `vcat` copy of the combined ~123-col frame (T2). fold0/fold1 hold
+            # DISJOINT precursors (CV split is precursor-keyed), so per-fold prec_prob aggregation
+            # is identical to combining first. `:mbr_recovered` is a schema stub (MBR removed).
+            # `:accession_numbers` is NOT written — ProteinInferenceSearch and IntegrateChromatograms
+            # re-derive it from precursor_idx at read time, so it was dead weight here.
             rx = @timed begin
-            combined_df = vcat(fold_dfs...)
-            # Derived columns previously written per fold file by `_merge_pass1_into_main!`
-            # (which rewrote every fold file only for these). Applied once here, on data that
-            # is being written anyway. `:mbr_recovered` is a schema stub — MBR is removed.
-            acc = getAccessionNumbers(getPrecursors(getSpecLib(search_context)))
-            combined_df[!, :accession_numbers] =
-                [acc[pid] for pid in combined_df[!, :precursor_idx]]
-            combined_df[!, :decoy]         = combined_df[!, :target] .== false
-            combined_df[!, :mbr_recovered] = falses(nrow(combined_df))
-            # Trace→precursor probability aggregation, formerly a separate step-2 pass
-            # (`aggregate_per_file!`) that re-read every merged file to add one column.
-            # combined_df is one run (fold0+fold1, single ms_file_idx), so grouping here is
-            # identical; `:prec_prob` goes out as a main column at no extra write cost.
-            _aggregate_trace_to_precursor_probs!(combined_df)
-            end  # @timed rx (transform: vcat + derived cols + prec_prob)
+            for df in fold_dfs
+                df[!, :decoy]         = df[!, :target] .== false
+                df[!, :mbr_recovered] = falses(nrow(df))
+                _aggregate_trace_to_precursor_probs!(df)
+            end
+            end  # @timed rx (transform: per-fold derived cols + prec_prob, no vcat)
             t_xform += rx.time; b_xform += rx.bytes
-            rw = @timed writeArrow(merged_path, combined_df)
+            rw = @timed writeArrow(merged_path, fold_dfs)
             t_write += rw.time; b_write += rw.bytes
             push!(merged_psm_paths, merged_path)
 

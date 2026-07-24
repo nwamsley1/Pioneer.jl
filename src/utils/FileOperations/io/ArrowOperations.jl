@@ -341,22 +341,27 @@ end
 Load entire file, apply transformation, and write to a new location.
 Does not modify the original file.
 """
-function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
+function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String;
+                             probe::Union{Nothing, NamedTuple} = nothing)
     validate_exists(ref)
 
     # Ensure output directory exists
     output_dir = dirname(output_path)
     !isdir(output_dir) && mkpath(output_dir)
 
-    # Load main file + any registered sidecars (PSMFileReference specialization)
-    df = load_with_sidecars(ref)
-    
-    # Apply transformation
-    transformed_df = transform_fn(df)
-    
-    # Write to output path using writeArrow for Windows compatibility
-    writeArrow(output_path, transformed_df)
-    
+    # Load main file + any registered sidecars (PSMFileReference specialization).
+    # `probe` (optional) accumulates load/transform/write time+bytes for diagnostics.
+    rl = @timed load_with_sidecars(ref)
+    df = rl.value
+    rt = @timed transform_fn(df)
+    transformed_df = rt.value
+    rw = @timed writeArrow(output_path, transformed_df)
+    if probe !== nothing
+        probe.load[] += rl.time;  probe.load_b[] += rl.bytes
+        probe.xform[] += rt.time; probe.xform_b[] += rt.bytes
+        probe.write[] += rw.time; probe.write_b[] += rw.bytes
+    end
+
     # Create reference for output of same type as input
     return create_reference(output_path, typeof(ref))
 end

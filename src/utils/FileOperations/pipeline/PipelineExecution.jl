@@ -123,14 +123,15 @@ Example:
 transform_and_write!(input_ref, "output.arrow", my_pipeline)
 ```
 """
-function transform_and_write!(ref::FileReference, output_path::String, pipeline::TransformPipeline)
+function transform_and_write!(ref::FileReference, output_path::String, pipeline::TransformPipeline;
+                             probe::Union{Nothing, NamedTuple} = nothing)
     # Validate input
     validate_exists(ref)
-    
+
     # Ensure output directory exists
     output_dir = dirname(output_path)
     !isdir(output_dir) && mkpath(output_dir)
-    
+
     # Create transform function that applies all operations
     transform_fn = function(df)
         for (desc, op) in pipeline.operations
@@ -138,10 +139,10 @@ function transform_and_write!(ref::FileReference, output_path::String, pipeline:
         end
         return df
     end
-    
+
     # Use existing transform_and_write! with output path
-    transform_and_write!(transform_fn, ref, output_path)
-    
+    transform_and_write!(transform_fn, ref, output_path; probe = probe)
+
     return nothing
 end
 
@@ -169,17 +170,21 @@ function apply_pipeline_batch(refs::Vector{<:FileReference},
     !isdir(output_folder) && mkpath(output_folder)
     
     new_refs = similar(refs, 0)  # Empty vector of same type
-    
+
+    # Diagnostic sub-timers (accumulated across the per-file loop; logged after).
+    _probe = (load = Ref(0.0), load_b = Ref(0), xform = Ref(0.0), xform_b = Ref(0),
+              write = Ref(0.0), write_b = Ref(0))
+
     for ref in refs
         if exists(ref)
             # Determine output path
-            output_name = preserve_basename ? basename(file_path(ref)) : 
+            output_name = preserve_basename ? basename(file_path(ref)) :
                          "processed_$(length(new_refs) + 1).arrow"
             output_path = joinpath(output_folder, output_name)
-            
+
             # Apply pipeline and write to new location in one pass
             # This avoids modifying the original file
-            transform_and_write!(ref, output_path, pipeline)
+            transform_and_write!(ref, output_path, pipeline; probe = _probe)
             
             # Create new reference
             new_ref = if ref isa PSMFileReference
@@ -198,7 +203,13 @@ function apply_pipeline_batch(refs::Vector{<:FileReference},
             push!(new_refs, new_ref)
         end
     end
-    
+
+    @user_info string("[score-phase]     B.load  ", lpad(round(_probe.load[]; digits=2), 8), "s",
+        "  alloc=", lpad(round(_probe.load_b[] / 1e9; digits=3), 9), "GB")
+    @user_info string("[score-phase]     B.xform ", lpad(round(_probe.xform[]; digits=2), 8), "s",
+        "  alloc=", lpad(round(_probe.xform_b[] / 1e9; digits=3), 9), "GB")
+    @user_info string("[score-phase]     B.write ", lpad(round(_probe.write[]; digits=2), 8), "s",
+        "  alloc=", lpad(round(_probe.write_b[] / 1e9; digits=3), 9), "GB")
     return new_refs
 end
 

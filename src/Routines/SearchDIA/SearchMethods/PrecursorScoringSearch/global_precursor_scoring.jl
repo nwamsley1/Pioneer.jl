@@ -174,7 +174,12 @@ function _accumulate_global_inputs!(
     target_col::AbstractVector,
     fold_col::AbstractVector,
 )
-    @inbounds for i in eachindex(pid_col)
+    # Plain integer indices — NOT `eachindex(pid_col)`. For a multi-batch Arrow file the columns
+    # are `ChainedVector`s and `eachindex` returns a column-specific `IndexIterator`; using pid's
+    # iterator to index the OTHER columns mis-reads across chunk boundaries (a merged file written
+    # as fold0+fold1 record batches hit exactly this). Integer indexing is correct for every Arrow
+    # column type since all four share the file's row count.
+    @inbounds for i in 1:length(pid_col)
         pid1 = Int(pid_col[i]) + 1
         acc[pid1] = _update_global_acc(acc[pid1], Float32(prob_col[i]))
         targets[pid1] = Bool(target_col[i])

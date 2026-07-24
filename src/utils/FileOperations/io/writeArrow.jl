@@ -159,3 +159,28 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
     end
     return nothing
 end
+
+# Write multiple DataFrames as separate Arrow RECORD BATCHES in one file, instead of materializing
+# a combined DataFrame via `vcat`. Read-back is transparent — `Arrow.Table` concatenates batches, so
+# `DataFrame(Arrow.Table(path))` yields all rows in [batch1; batch2; …] order (verified equal to the
+# vcat order). Same temp-file-then-move safety as the single-DataFrame method.
+function writeArrow(fpath::String, dfs::AbstractVector{<:AbstractDataFrame})
+    isempty(dfs) && throw(ArgumentError("writeArrow: empty DataFrame vector for $fpath"))
+    length(dfs) == 1 && return writeArrow(fpath, dfs[1])
+    for df in dfs
+        _audit_log_write(fpath, df)
+    end
+    fpath = normpath(fpath)
+    tpath = tempname() * ".arrow"
+    Arrow.write(tpath, Tables.partitioner(dfs))
+    if Sys.iswindows() && isfile(fpath)
+        try
+            rm(fpath, force=true)
+        catch
+            lock(GC_LOCK) do; GC.gc(); end
+            rm(fpath, force=true)
+        end
+    end
+    mv(tpath, fpath, force=true)
+    return nothing
+end
