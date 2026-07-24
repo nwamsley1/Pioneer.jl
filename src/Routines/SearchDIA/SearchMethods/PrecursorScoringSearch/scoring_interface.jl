@@ -153,13 +153,16 @@ function build_qvalue_spline_from_refs(
     fdr_scale_factor::Float32 = 1.0f0,
     temp_prefix::String = "sidecar"
 )
-    sidecar_refs = write_score_sidecars(refs, [score_col, :target]; temp_prefix=temp_prefix)
+    sidecar_refs = @score_phase "    A3.1 write-score-sidecars" write_score_sidecars(
+        refs, [score_col, :target]; temp_prefix=temp_prefix)
     isempty(sidecar_refs) && return nothing
 
     try
-        sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
-        stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
-                           batch_size=batch_size, reverse=[true, true])
+        @score_phase "    A3.2 sort-sidecars" sort_file_by_keys!(
+            sidecar_refs, score_col, :target; reverse=[true, true])
+        @score_phase "    A3.3 stream-merge" stream_sorted_merge(
+            sidecar_refs, merged_path, score_col, :target;
+            batch_size=batch_size, reverse=[true, true])
     finally
         GC.gc(false)
         for ref in sidecar_refs
@@ -167,13 +170,20 @@ function build_qvalue_spline_from_refs(
         end
     end
 
-    qval_spline = get_qvalue_spline(merged_path, score_col, false;
-        min_pep_points_per_bin=min_pep_points_per_bin,
-        fdr_scale_factor=fdr_scale_factor)
+    # Read the merged (score-descending) file ONCE and feed both the q-spline and the PEP interp,
+    # instead of each re-opening it (T1: A3 double-read). `use_unique=false` here, so no per-column
+    # dedup is needed — the two columns below are all both builders consume.
+    scores, targets = @score_phase "    A3.4 read-merged-once" begin
+        merged_df = DataFrame(Arrow.Table(merged_path))
+        (Vector{Float32}(merged_df[!, score_col]), Vector{Bool}(merged_df[!, :target]))
+    end
+    qval_spline = @score_phase "    A3.5 qvalue-spline" _qvalue_spline_from_vectors(
+        targets, scores;
+        min_pep_points_per_bin=min_pep_points_per_bin, fdr_scale_factor=fdr_scale_factor)
 
     pep_interp = if compute_pep
-        get_pep_interpolation(merged_path, score_col;
-            fdr_scale_factor=fdr_scale_factor)
+        @score_phase "    A3.6 pep-interp" _pep_interp_from_vectors(
+            scores, targets; fdr_scale_factor=fdr_scale_factor)
     else
         nothing
     end

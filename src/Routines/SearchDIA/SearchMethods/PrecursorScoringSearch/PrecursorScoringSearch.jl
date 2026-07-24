@@ -197,6 +197,8 @@ function summarize_results!(
     @score_phase "step1b fold-merge" begin
     merged_psm_paths = String[]
     fold_paths_to_delete = String[]
+    # Granular sub-timers (accumulated across the per-run loop; logged after).
+    t_load = 0.0; b_load = 0; t_xform = 0.0; b_xform = 0; t_write = 0.0; b_write = 0
     for (idx, base_path) in valid_file_data
         fold0_path = "$(base_path)_fold0.arrow"
         fold1_path = "$(base_path)_fold1.arrow"
@@ -234,11 +236,16 @@ function summarize_results!(
             end
             return df
         end
-        isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
-        isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
+        if isfile(fold0_path)
+            r = @timed _load_fold(fold0_path); t_load += r.time; b_load += r.bytes; push!(fold_dfs, r.value)
+        end
+        if isfile(fold1_path)
+            r = @timed _load_fold(fold1_path); t_load += r.time; b_load += r.bytes; push!(fold_dfs, r.value)
+        end
 
         if !isempty(fold_dfs)
             # Merge and write combined file
+            rx = @timed begin
             combined_df = vcat(fold_dfs...)
             # Derived columns previously written per fold file by `_merge_pass1_into_main!`
             # (which rewrote every fold file only for these). Applied once here, on data that
@@ -253,7 +260,10 @@ function summarize_results!(
             # combined_df is one run (fold0+fold1, single ms_file_idx), so grouping here is
             # identical; `:prec_prob` goes out as a main column at no extra write cost.
             _aggregate_trace_to_precursor_probs!(combined_df)
-            writeArrow(merged_path, combined_df)
+            end  # @timed rx (transform: vcat + derived cols + prec_prob)
+            t_xform += rx.time; b_xform += rx.bytes
+            rw = @timed writeArrow(merged_path, combined_df)
+            t_write += rw.time; b_write += rw.bytes
             push!(merged_psm_paths, merged_path)
 
             # Update search context with merged path
@@ -275,6 +285,12 @@ function summarize_results!(
     for fpath in fold_paths_to_delete
         safeRm(fpath, nothing)
     end
+    @user_info string("[score-phase]     step1b.load  ", lpad(round(t_load; digits=2), 8), "s",
+        "  alloc=", lpad(round(b_load / 1e9; digits=3), 9), "GB")
+    @user_info string("[score-phase]     step1b.xform ", lpad(round(t_xform; digits=2), 8), "s",
+        "  alloc=", lpad(round(b_xform / 1e9; digits=3), 9), "GB")
+    @user_info string("[score-phase]     step1b.write ", lpad(round(t_write; digits=2), 8), "s",
+        "  alloc=", lpad(round(b_write / 1e9; digits=3), 9), "GB")
     end  # @score_phase "step1b fold-merge"
 
     # Create references for second pass PSMs (now using merged files). `:prec_prob` was

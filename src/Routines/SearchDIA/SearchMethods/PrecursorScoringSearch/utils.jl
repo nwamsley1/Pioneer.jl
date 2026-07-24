@@ -38,7 +38,16 @@ function get_pep_interpolation(
     df = DataFrame(Arrow.Table(merged_psms_path))
     scores  = Vector{Float32}(df[!, score_col])
     targets = Vector{Bool}(df[!, :target])
+    return _pep_interp_from_vectors(scores, targets; fdr_scale_factor = fdr_scale_factor)
+end
 
+# PEP interpolation from pre-extracted columns. Split out (like _qvalue_spline_from_vectors) so the
+# merged file is read once for both the q-spline and the PEP interp (T1).
+function _pep_interp_from_vectors(
+    scores::Vector{Float32},
+    targets::Vector{Bool};
+    fdr_scale_factor::Float32 = 1.0f0,
+)
     pep_vals = Vector{Float32}(undef, length(scores))
     get_PEP!(scores, targets, pep_vals; doSort=true,
              fdr_scale_factor=fdr_scale_factor)
@@ -110,22 +119,41 @@ function get_qvalue_spline(
         psms_scores = unique(psms_scores)
     end
 
-    Q = size(psms_scores, 1)
+    # Hoist the columns into concrete typed vectors ONCE, then delegate to the vector core.
+    # Accessing `psms_scores[!, sym][i]` inside the per-row loops (Q can be millions) re-resolves
+    # the column by symbol every iteration and returns an abstract `AbstractVector`, boxing each
+    # element read.
+    target_col_vec = Vector{Bool}(psms_scores[!, :target])
+    score_col_vec = Vector{Float32}(psms_scores[!, score_col])
+    return _qvalue_spline_from_vectors(target_col_vec, score_col_vec;
+        min_pep_points_per_bin = min_pep_points_per_bin, fdr_scale_factor = fdr_scale_factor)
+end
+
+# Q-value spline from pre-extracted columns, in score-descending order (the merged file's sort).
+# Split out of get_qvalue_spline so build_qvalue_spline_from_refs can read the merged file ONCE and
+# feed both this and the PEP interpolation, instead of each re-reading it (A3 double-read, T1).
+function _qvalue_spline_from_vectors(
+    target_col_vec::Vector{Bool},
+    score_col_vec::Vector{Float32};
+    min_pep_points_per_bin::Int = 1000,
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    Q = length(target_col_vec)
     M = ceil(Int, (Q - 1) / min_pep_points_per_bin) + 1
     bin_qval, bin_mean_prob = Vector{Float32}(undef, M), Vector{Float32}(undef, M)
     bin_size = 0
     bin_idx = 0
     mean_prob, targets, decoys = 0.0f0, 0, 0
     for i in range(1, Q)
-        targets += psms_scores[!, :target][i]
-        decoys += (1 - psms_scores[!, :target][i])
+        targets += target_col_vec[i]
+        decoys += (1 - target_col_vec[i])
     end
     min_q_val = typemax(Float32)
     for i in reverse(range(1, Q))
         bin_size += 1
-        targets -= psms_scores[!, :target][i]
-        decoys -= (1 - psms_scores[!, :target][i])
-        mean_prob += psms_scores[!, score_col][i]
+        targets -= target_col_vec[i]
+        decoys -= (1 - target_col_vec[i])
+        mean_prob += score_col_vec[i]
         if bin_idx == 0 || bin_size == min_pep_points_per_bin
             bin_idx += 1
             # Apply FDR scale factor to correct for library target/decoy ratio
