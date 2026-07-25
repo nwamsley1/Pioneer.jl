@@ -16,18 +16,18 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    _write_protein_probit_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit", y_col = :precursor_consensus_prefix_shape, y_label = "precursor_consensus_prefix_shape", file_suffix = "prefix_shape")
+    _write_protein_model_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_lightgbm", y_col = :precursor_consensus_prefix_shape, y_label = "precursor_consensus_prefix_shape", file_suffix = "prefix_shape")
 
 Write a fold-level `log(pg_score)` scatter against a protein feature
 using the semi-supervised training labels from the last fitted iteration.
 """
-function _write_protein_probit_fold_label_scatter(
+function _write_protein_model_fold_label_scatter(
     df::AbstractDataFrame,
     fold,
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit",
+    context::AbstractString = "protein_lightgbm",
     y_col::Symbol = :precursor_consensus_prefix_shape,
     y_label::AbstractString = "precursor_consensus_prefix_shape",
     file_suffix::AbstractString = "prefix_shape",
@@ -36,7 +36,7 @@ function _write_protein_probit_fold_label_scatter(
     required_cols = (:pg_score, y_col, :target)
     missing_cols = [col for col in required_cols if !hasproperty(df, col)]
     if !isempty(missing_cols)
-        @user_warn "Skipping protein probit fold label plots due to missing columns" context = context fold = fold missing_columns = missing_cols
+        @user_warn "Skipping protein model fold label plots due to missing columns" context = context fold = fold missing_columns = missing_cols
         return nothing
     end
 
@@ -84,7 +84,7 @@ function _write_protein_probit_fold_label_scatter(
     plot_dpi = 200
 
     p_scatter = Plots.plot(
-        title = "Protein Probit Fold $(fold) $(stage): log(pg_score) vs $(file_suffix)",
+        title = "Protein Model Fold $(fold) $(stage): log(pg_score) vs $(file_suffix)",
         xlabel = "log(pg_score)",
         ylabel = y_label,
         legend = :bottomright,
@@ -219,28 +219,28 @@ function _write_protein_probit_fold_label_scatter(
         )
     end
 
-    scatter_path = joinpath(qc_folder, "protein_probit_fold_$(fold)_$(stage)_pg_score_vs_$(file_suffix).png")
+    scatter_path = joinpath(qc_folder, "protein_model_fold_$(fold)_$(stage)_pg_score_vs_$(file_suffix).png")
     savefig(p_scatter, scatter_path)
-    @user_info "Wrote protein probit fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
+    @user_info "Wrote protein model fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
     return scatter_path
 end
 
 """
-    write_protein_probit_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+    write_protein_model_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_lightgbm")
 
 Write the fold-level `log(pg_score)` vs `precursor_consensus_prefix_shape` scatter
 using the semi-supervised training labels from the last fitted iteration.
 """
-function write_protein_probit_fold_label_scatter(
+function write_protein_model_fold_label_scatter(
     df::AbstractDataFrame,
     fold,
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit",
+    context::AbstractString = "protein_lightgbm",
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
-    return _write_protein_probit_fold_label_scatter(
+    return _write_protein_model_fold_label_scatter(
         df,
         fold,
         qc_folder,
@@ -255,21 +255,21 @@ function write_protein_probit_fold_label_scatter(
 end
 
 """
-    write_protein_probit_fold_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+    write_protein_model_fold_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_lightgbm")
 
 Write the fold-level `log(pg_score)` vs `coverage_log_ratio` scatter
 using the semi-supervised training labels from the last fitted iteration.
 """
-function write_protein_probit_fold_coverage_scatter(
+function write_protein_model_fold_coverage_scatter(
     df::AbstractDataFrame,
     fold,
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit",
+    context::AbstractString = "protein_lightgbm",
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
-    return _write_protein_probit_fold_label_scatter(
+    return _write_protein_model_fold_label_scatter(
         df,
         fold,
         qc_folder,
@@ -284,21 +284,21 @@ function write_protein_probit_fold_coverage_scatter(
 end
 
 """
-    write_protein_probit_fold_peptide_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+    write_protein_model_fold_peptide_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_lightgbm")
 
 Write the fold-level `log(pg_score)` vs `peptide_coverage_logit` scatter
 using the semi-supervised training labels from the last fitted iteration.
 """
-function write_protein_probit_fold_peptide_coverage_scatter(
+function write_protein_model_fold_peptide_coverage_scatter(
     df::AbstractDataFrame,
     fold,
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit",
+    context::AbstractString = "protein_lightgbm",
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
-    return _write_protein_probit_fold_label_scatter(
+    return _write_protein_model_fold_label_scatter(
         df,
         fold,
         qc_folder,
@@ -320,7 +320,7 @@ function make_protein_iteration_plot_callback(
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
     return function(iteration, plot_state)
-        write_protein_probit_fold_label_scatter(
+        write_protein_model_fold_label_scatter(
             train_df,
             fold,
             qc_folder,
@@ -329,7 +329,7 @@ function make_protein_iteration_plot_callback(
             context = context,
             file_idx_to_name = file_idx_to_name
         )
-        write_protein_probit_fold_coverage_scatter(
+        write_protein_model_fold_coverage_scatter(
             train_df,
             fold,
             qc_folder,
@@ -338,7 +338,7 @@ function make_protein_iteration_plot_callback(
             context = context,
             file_idx_to_name = file_idx_to_name
         )
-        write_protein_probit_fold_peptide_coverage_scatter(
+        write_protein_model_fold_peptide_coverage_scatter(
             train_df,
             fold,
             qc_folder,

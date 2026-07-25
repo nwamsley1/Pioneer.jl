@@ -1,7 +1,7 @@
 using DataFrames
 using Test
 
-using Pioneer: group_psms_by_protein, protein_probit_feature_names
+using Pioneer: group_psms_by_protein, run_level_protein_feature_names
 
 function _empty_precursor_consensus_for_mbr_feature_tests()
     return (
@@ -14,7 +14,7 @@ function _empty_precursor_consensus_for_mbr_feature_tests()
 end
 
 @testset "ProteinScoring MBR feature rollup" begin
-    @testset "MBR recovered support becomes protein probit features" begin
+    @testset "MBR recovered support becomes run-level protein features" begin
         psms = DataFrame(
             inferred_protein_group = ["P_MBR", "P_MBR"],
             species = ["YEAST", "YEAST"],
@@ -42,6 +42,8 @@ end
         @test nrow(protein_groups) == 1
         @test protein_groups.mbr_recovered_peptides[1] == 2
         @test protein_groups.n_non_mbr_peptides[1] == 0
+        @test !protein_groups.single_non_mbr_peptide[1]
+        @test protein_groups.single_non_mbr_prefix_shape[1] == 0.0f0
         @test protein_groups.mbr_only_protein[1]
     end
 
@@ -73,6 +75,9 @@ end
         @test nrow(protein_groups) == 1
         @test protein_groups.mbr_recovered_peptides[1] == 1
         @test protein_groups.n_non_mbr_peptides[1] == 1
+        @test protein_groups.single_non_mbr_peptide[1]
+        @test protein_groups.single_non_mbr_prefix_shape[1] ==
+            protein_groups.precursor_consensus_prefix_shape[1]
         @test !protein_groups.mbr_only_protein[1]
         @test protein_groups.pg_score[1] > 0.0f0
 
@@ -83,6 +88,8 @@ end
             q_value_threshold = 0.01f0,
         )
         @test non_mbr_groups.n_non_mbr_peptides[1] == 2
+        @test !non_mbr_groups.single_non_mbr_peptide[1]
+        @test non_mbr_groups.single_non_mbr_prefix_shape[1] == 0.0f0
         @test non_mbr_groups.mbr_recovered_peptides[1] == 0
     end
 
@@ -115,11 +122,16 @@ end
         @test protein_groups.n_peptides[1] == 2
         @test protein_groups.mbr_recovered_peptides[1] == 2
         @test protein_groups.n_non_mbr_peptides[1] == 1
+        @test protein_groups.single_non_mbr_peptide[1]
+        @test protein_groups.single_non_mbr_prefix_shape[1] ==
+            protein_groups.precursor_consensus_prefix_shape[1]
         @test !protein_groups.mbr_only_protein[1]
     end
 
-    @testset "Protein probit feature list includes only the lightweight MBR summaries" begin
-        features = protein_probit_feature_names()
+    @testset "Run-level model includes the lightweight MBR features" begin
+        features = run_level_protein_feature_names()
+        @test :single_non_mbr_peptide in features
+        @test :single_non_mbr_prefix_shape in features
         @test :mbr_recovered_peptides in features
         @test :mbr_only_protein in features
         @test !in(:mbr_recovered_precursors, features)

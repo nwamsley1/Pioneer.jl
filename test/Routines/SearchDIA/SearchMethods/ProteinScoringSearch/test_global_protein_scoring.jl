@@ -8,7 +8,7 @@
 # (at your option) any later version.
 
 @testset "Global protein scoring" begin
-    @testset "protein probit requires sufficient data in every fold" begin
+    @testset "run-level protein model requires sufficient data in every fold" begin
         table = DataFrame(
             target = vcat(
                 fill(true, 10),
@@ -22,18 +22,18 @@
             ),
         )
 
-        @test !Pioneer._protein_probit_training_data_sufficient(
+        @test !Pioneer._protein_model_training_data_sufficient(
             table,
             UInt8[0, 1],
         )
         push!(table, (target = true, cv_fold = UInt8(1)))
-        @test Pioneer._protein_probit_training_data_sufficient(
+        @test Pioneer._protein_model_training_data_sufficient(
             table,
             UInt8[0, 1],
         )
     end
 
-    @testset "failed probit scoring uses initial probabilities for every fold" begin
+    @testset "unavailable model scoring uses initial probabilities for every fold" begin
         mktempdir() do directory
             path = joinpath(directory, "protein_groups.arrow")
             Arrow.write(path, DataFrame(
@@ -52,12 +52,12 @@
             insert!(protein_to_cv_fold, "P0", (best_score = 0.5f0, cv_fold = UInt8(0)))
             insert!(protein_to_cv_fold, "P1", (best_score = 1.5f0, cv_fold = UInt8(1)))
 
-            Pioneer.apply_probit_scores_multifold!(
+            Pioneer.apply_protein_scores_multifold!(
                 refs,
                 protein_to_cv_fold,
                 Dict{UInt8, Pioneer.LightGBMModel}(),
                 Symbol[:feature];
-                use_probit_scores = false,
+                use_model_scores = false,
             )
 
             table = DataFrame(Arrow.Table(path); copycols = true)

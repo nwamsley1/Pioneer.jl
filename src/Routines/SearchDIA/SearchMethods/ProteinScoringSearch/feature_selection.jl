@@ -18,9 +18,9 @@
 """
     remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
 
-Remove columns with zero variance from `feature_names` to prevent singular matrices
-in probit regression. This includes constant columns, columns with all missing values,
-and columns containing Inf/NaN values.
+Remove columns with zero variance from `feature_names` to prevent numerical
+issues during model fitting. This includes constant columns, columns with all
+missing values, and columns containing Inf/NaN values.
 
 # Arguments
 - `feature_names`: Vector of feature symbols to filter
@@ -72,11 +72,11 @@ function remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::Abstra
 end
 
 """
-    protein_probit_feature_names()
+    run_level_protein_feature_names()
 
-Return the fixed protein feature set used for probit rescoring.
+Return the fixed feature set used for run-level protein rescoring.
 """
-function protein_probit_feature_names()
+function run_level_protein_feature_names()
     return Symbol[
         :pg_score,
         :ambiguous_pg_score,
@@ -87,6 +87,8 @@ function protein_probit_feature_names()
         :coverage_log_ratio,
         :precursor_consensus_prefix_shape,
         :shared_precursor_consensus_prefix_shape,
+        :single_non_mbr_peptide,
+        :single_non_mbr_prefix_shape,
         :mbr_recovered_peptides,
         :mbr_only_protein
     ]

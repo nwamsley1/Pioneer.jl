@@ -1436,6 +1436,8 @@ function group_psms_by_protein(
             entrap_id = UInt8[],
             n_peptides = Int64[],
             n_non_mbr_peptides = Int64[],
+            single_non_mbr_peptide = Bool[],
+            single_non_mbr_prefix_shape = Float32[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -1455,6 +1457,8 @@ function group_psms_by_protein(
             entrap_id = UInt8[],
             n_peptides = Int64[],
             n_non_mbr_peptides = Int64[],
+            single_non_mbr_peptide = Bool[],
+            single_non_mbr_prefix_shape = Float32[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -1514,6 +1518,11 @@ function group_psms_by_protein(
             species = species,
             n_peptides = n_peptides,
             n_non_mbr_peptides = mbr_summary.non_mbr_peptides,
+            single_non_mbr_peptide = mbr_summary.non_mbr_peptides == 1,
+            single_non_mbr_prefix_shape =
+                mbr_summary.non_mbr_peptides == 1 ?
+                precursor_consensus_prefix_shape :
+                0.0f0,
             peptide_list = join(rollup.peptide_list, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,

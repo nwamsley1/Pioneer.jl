@@ -16,24 +16,22 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    load_protein_probit_training_rows(pg_refs; include_qc_plot_columns = false)
+    load_run_level_protein_training_rows(pg_refs; include_qc_plot_columns = false)
 
-Load only the columns needed for protein probit fitting from protein-group files.
-This avoids materializing string-heavy output columns like `peptide_list` that
-are not used by the model.
+Load only the columns needed for run-level protein-model fitting from
+protein-group files. This avoids materializing string-heavy output columns like
+`peptide_list` that are not used by the model.
 """
-function load_protein_probit_training_rows(
+function load_run_level_protein_training_rows(
     pg_refs::Vector{ProteinGroupFileReference};
     include_qc_plot_columns::Bool = false
 )
     columns_to_load = Symbol[
         :protein_name,
         :target,
-        :n_peptides,
         :n_non_mbr_peptides,
-        :_ambiguous_peptide_count,
     ]
-    append!(columns_to_load, protein_probit_feature_names())
+    append!(columns_to_load, run_level_protein_feature_names())
     if include_qc_plot_columns
         push!(columns_to_load, :species, :file_idx)
     end
@@ -68,13 +66,13 @@ function load_protein_probit_training_rows(
 end
 
 """
-    perform_protein_probit_regression(pg_refs::Vector{ProteinGroupFileReference},
-                                    max_in_memory_rows::Int64,
-                                    qc_folder::String,
-                                    precursors::LibraryPrecursors;
-                                    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+    perform_run_level_protein_scoring(pg_refs::Vector{ProteinGroupFileReference},
+                                      max_in_memory_rows::Int64,
+                                      qc_folder::String,
+                                      precursors::LibraryPrecursors;
+                                      protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
-Perform probit regression on protein groups.
+Fit and apply the run-level protein model.
 
 # Arguments
 - `pg_refs`: Vector of protein group file references
@@ -83,9 +81,9 @@ Perform probit regression on protein groups.
 - `precursors`: Library precursors
 - `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
 
-Returns `true` only when probit models were trained and applied to every fold.
+Returns `true` only when models were trained and applied to every fold.
 """
-function perform_protein_probit_regression(
+function perform_run_level_protein_scoring(
     pg_refs::Vector{ProteinGroupFileReference},
     max_in_memory_rows::Int64,
     qc_folder::String,
@@ -107,10 +105,10 @@ function perform_protein_probit_regression(
     max_protein_groups_in_memory_limit = max(max_in_memory_rows, 100_000)
 
     if total_protein_groups > max_protein_groups_in_memory_limit
-        error("Protein probit out-of-memory processing is not supported. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
+        error("Run-level protein scoring does not support out-of-memory fitting. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    all_protein_groups = load_protein_probit_training_rows(
+    all_protein_groups = load_run_level_protein_training_rows(
         pg_refs;
         include_qc_plot_columns = write_qc_plots
     )
@@ -119,7 +117,7 @@ function perform_protein_probit_regression(
     n_decoys = sum(.!all_protein_groups.target)
     skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
 
-    return perform_probit_analysis_multifold(
+    return perform_protein_scoring_multifold(
         all_protein_groups,
         qc_folder,
         pg_refs,
@@ -191,7 +189,7 @@ function run_protein_scoring!(
 
     max_in_memory_rows = estimate_max_rows(max_in_memory_table_mb, file_path(first(pg_refs)))
     @debug_l1 "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"
-    protein_probit_scoring_succeeded = perform_protein_probit_regression(
+    protein_model_scoring_succeeded = perform_run_level_protein_scoring(
         pg_refs,
         max_in_memory_rows,
         qc_folder,
@@ -238,7 +236,7 @@ function run_protein_scoring!(
             protein_to_cv_fold,
             n_proteins,
             length(pg_refs),
-            protein_probit_scoring_succeeded,
+            protein_model_scoring_succeeded,
             run_score_floor,
             n_experiment_runs = n_runs_total,
             run_similarity = run_similarity,
@@ -275,7 +273,7 @@ function run_protein_scoring!(
 
     pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
 
-    update_psms_with_probit_scores_refs(
+    update_psms_with_protein_scores_refs(
         paired_files,
         search_context.pg_name_to_global_pg_score[],
         search_context.pg_score_to_qval[],

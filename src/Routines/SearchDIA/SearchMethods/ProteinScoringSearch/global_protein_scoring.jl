@@ -293,9 +293,9 @@ end
 function _global_protein_model_eligible(
     inputs::GlobalProteinInputs,
     cv_folds::Vector{UInt8},
-    protein_probit_scoring_succeeded::Bool,
+    run_level_scoring_succeeded::Bool,
 )
-    return protein_probit_scoring_succeeded &&
+    return run_level_scoring_succeeded &&
            length(cv_folds) > 1 &&
            _global_protein_training_data_sufficient(inputs, cv_folds)
 end
@@ -306,7 +306,7 @@ end
         protein_to_cv_fold,
         n_proteins,
         n_runs_total,
-        protein_probit_scoring_succeeded,
+        run_level_scoring_succeeded,
         run_score_floor,
     )
 
@@ -314,9 +314,9 @@ Build one score-distribution, peptide-support, and run-context feature row per
 protein group and select out-of-fold global LightGBM scores only when they
 retain more total protein-run target IDs after applying both the configured
 global and experiment-wide q-value thresholds than the empirical top-run
-log-odds scores. Use the empirical score without training when probit scoring
-was not applied, the observed protein groups belong to one CV fold, or any
-training split has fewer than 100 targets or 100 decoys.
+log-odds scores. Use the empirical score without training when run-level model
+scoring was not applied, the observed protein groups belong to one CV fold, or
+any training split has fewer than 100 targets or 100 decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -326,7 +326,7 @@ function build_global_protein_score_dicts(
     },
     n_proteins::Int,
     n_runs_total::Int,
-    protein_probit_scoring_succeeded::Bool,
+    run_level_scoring_succeeded::Bool,
     run_score_floor::Float32,
     ;
     n_experiment_runs::Int = n_runs_total,
@@ -342,7 +342,7 @@ function build_global_protein_score_dicts(
     if !_global_protein_model_eligible(
         inputs,
         cv_folds,
-        protein_probit_scoring_succeeded,
+        run_level_scoring_succeeded,
     )
         return _build_empirical_global_protein_score_dicts(
             inputs,

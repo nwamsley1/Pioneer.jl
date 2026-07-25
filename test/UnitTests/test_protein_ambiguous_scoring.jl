@@ -15,7 +15,7 @@ using Pioneer: AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT,
     add_protein_features,
     add_protein_ambiguity_id,
     count_protein_peptide_opportunities,
-    protein_probit_feature_names
+    run_level_protein_feature_names
 
 function _ambiguous_scoring_psms(; qval::Float32 = 0.001f0)
     return DataFrame(
@@ -392,8 +392,8 @@ end
 
     end
 
-    @testset "probit uses only the requested ambiguity features" begin
-        features = protein_probit_feature_names()
+    @testset "run-level model uses only the requested ambiguity features" begin
+        features = run_level_protein_feature_names()
         @test :ambiguous_pg_score in features
         @test :shared_peptide_coverage_logit in features
         @test :shared_coverage_log_ratio in features
