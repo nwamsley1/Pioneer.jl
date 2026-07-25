@@ -412,26 +412,27 @@ end
 end
 
 function _protein_mbr_summary(gdf::AbstractDataFrame, quant_mask::AbstractVector{Bool})
-    if !hasproperty(gdf, :mbr_recovered)
-        return (recovered_peptides = Int64(0), only_protein = false)
-    end
-
+    has_mbr_recovered = hasproperty(gdf, :mbr_recovered)
     recovered_precursors = 0
     retained_precursors = 0
     recovered_peptides = Set{String}()
+    non_mbr_peptides = Set{String}()
 
     @inbounds for i in eachindex(quant_mask)
         quant_mask[i] || continue
         retained_precursors += 1
 
-        if Bool(gdf.mbr_recovered[i])
+        if has_mbr_recovered && Bool(gdf.mbr_recovered[i])
             recovered_precursors += 1
             push!(recovered_peptides, String(gdf.sequence[i]))
+        else
+            push!(non_mbr_peptides, String(gdf.sequence[i]))
         end
     end
 
     return (
         recovered_peptides = Int64(length(recovered_peptides)),
+        non_mbr_peptides = Int64(length(non_mbr_peptides)),
         only_protein = retained_precursors > 0 && recovered_precursors == retained_precursors
     )
 end
@@ -742,6 +743,158 @@ function _insert_top_consensus_vote!(
 end
 
 """
+    _finalize_precursor_consensus(protein_run_votes, protein_observed_run_count)
+
+Finalize retained per-run precursor profiles into the cached structures used
+for leave-one-run-out consensus scoring.
+"""
+function _finalize_precursor_consensus(
+    protein_run_votes::Dict{
+        Tuple{String, Bool, UInt8},
+        Vector{ConsensusRunVote}
+    },
+    protein_observed_run_count::Dict{Tuple{String, Bool, UInt8}, Int32}
+)
+    consensus_weight_sums =
+        Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
+    protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
+    selected_run_votes =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
+    consensus_target_run_count =
+        Dict{Tuple{String, Bool, UInt8}, Int32}()
+    cached_consensus_weight_sums =
+        Dict{Tuple{String, Bool, UInt8}, Dict{UInt32, Float64}}()
+    cached_protein_total_vote =
+        Dict{Tuple{String, Bool, UInt8}, Float64}()
+
+    for (protein_key, run_votes) in protein_run_votes
+        observed_runs = Int(get(
+            protein_observed_run_count,
+            protein_key,
+            Int32(length(run_votes))
+        ))
+        target_runs = _consensus_runs_to_keep(observed_runs)
+        candidate_runs = _consensus_candidate_runs_to_keep(observed_runs)
+        selected_votes = run_votes[1:min(candidate_runs, length(run_votes))]
+        selected_run_votes[protein_key] = selected_votes
+        consensus_target_run_count[protein_key] = Int32(target_runs)
+
+        cached_weight_sums = Dict{UInt32, Float64}()
+        cached_total_vote = 0.0
+        for run_vote in selected_votes
+            run_weight = Float64(run_vote.pg_score)
+            cached_total_vote += run_weight
+            for precursor in run_vote.normalized_precursors
+                cached_weight_sums[precursor.first] =
+                    get(cached_weight_sums, precursor.first, 0.0) +
+                    run_weight * Float64(precursor.second)
+            end
+        end
+        cached_consensus_weight_sums[protein_key] = cached_weight_sums
+        cached_protein_total_vote[protein_key] = cached_total_vote
+
+        default_votes =
+            selected_votes[1:min(target_runs, length(selected_votes))]
+        for run_vote in default_votes
+            run_weight = Float64(run_vote.pg_score)
+            protein_total_vote[protein_key] =
+                get(protein_total_vote, protein_key, 0.0) + run_weight
+
+            for precursor in run_vote.normalized_precursors
+                key = (
+                    protein_key[1],
+                    protein_key[2],
+                    protein_key[3],
+                    precursor.first
+                )
+                consensus_weight_sums[key] =
+                    get(consensus_weight_sums, key, 0.0) +
+                    run_weight * Float64(precursor.second)
+            end
+        end
+    end
+
+    relative_weight =
+        Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
+    protein_precursor_values =
+        Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
+    for (
+        (protein_name, target, entrap_id, precursor_idx),
+        score_sum
+    ) in consensus_weight_sums
+        protein_key = (protein_name, target, entrap_id)
+        total_vote = get(protein_total_vote, protein_key, 0.0)
+        total_vote > 0.0 || continue
+        precursor_relative_weight =
+            Float32(clamp(score_sum / total_vote, 0.0, 1.0))
+        relative_weight[
+            (protein_name, target, entrap_id, precursor_idx)
+        ] = precursor_relative_weight
+        push!(
+            get!(protein_precursor_values, protein_key, Float32[]),
+            precursor_relative_weight
+        )
+    end
+
+    profiled_precursor_count =
+        Dict{Tuple{String, Bool, UInt8}, Int32}()
+    shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}()
+    for (protein_key, relative_weights) in protein_precursor_values
+        profiled_precursor_count[protein_key] =
+            Int32(length(relative_weights))
+    end
+    for (protein_key, run_votes) in selected_run_votes
+        total_pg_score =
+            sum(Float64(run_vote.pg_score) for run_vote in run_votes)
+        shape_strength[protein_key] = Float32(log1p(total_pg_score))
+    end
+    shape_strength_values = collect(values(shape_strength))
+    shape_confidence_scale = isempty(shape_strength_values) ? 1.0f0 :
+        Float32(max(
+            Statistics.median(shape_strength_values),
+            eps(Float32)
+        ))
+
+    return (
+        relative_weight = relative_weight,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence_scale = shape_confidence_scale,
+        selected_run_votes = selected_run_votes,
+        consensus_target_run_count = consensus_target_run_count,
+        cached_consensus_weight_sums = cached_consensus_weight_sums,
+        cached_protein_total_vote = cached_protein_total_vote
+    )
+end
+
+function _normalized_precursor_profile(
+    peak_area_by_precursor::Dict{UInt32, Float32}
+)::Vector{Pair{UInt32, Float32}}
+    isempty(peak_area_by_precursor) &&
+        return Pair{UInt32, Float32}[]
+
+    run_max_peak_area = maximum(values(peak_area_by_precursor))
+    if !isfinite(run_max_peak_area) || run_max_peak_area <= 0.0f0
+        return Pair{UInt32, Float32}[]
+    end
+
+    normalized_precursors = Pair{UInt32, Float32}[]
+    sizehint!(normalized_precursors, length(peak_area_by_precursor))
+    for precursor_idx in sort!(collect(keys(peak_area_by_precursor)))
+        peak_area = peak_area_by_precursor[precursor_idx]
+        push!(
+            normalized_precursors,
+            precursor_idx => Float32(clamp(
+                peak_area / run_max_peak_area,
+                0.0f0,
+                1.0f0
+            ))
+        )
+    end
+    return normalized_precursors
+end
+
+"""
     build_precursor_consensus(psm_refs::Vector{PSMFileReference})
 
 Build a dataset-level precursor relative-weight consensus within each inferred
@@ -751,14 +904,25 @@ Each run's vote is weighted by the run's current protein `pg_score`. While
 streaming the runs, only the top
 `min(n_runs - 1, max(5, ceil(log2(n_runs)))) + 1` runs by `pg_score` are
 retained as a cached candidate pool so leave-one-run-out consensus can be
-computed by subtraction at scoring time.
+computed by subtraction at scoring time. When ambiguity candidates are
+provided, build a parallel shared-precursor consensus for each candidate that
+has unique support in the same run; those votes are also weighted only by the
+unique `pg_score`.
 """
 function build_precursor_consensus(
     psm_refs::Vector{PSMFileReference};
-    q_value_threshold::Float32 = 0.01f0
+    q_value_threshold::Float32 = 0.01f0,
+    protein_ambiguity_candidates::Dict{
+        UInt32,
+        Vector{ProteinKey}
+    } = Dict{UInt32, Vector{ProteinKey}}()
 )
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
     protein_observed_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    shared_protein_run_votes =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
+    shared_protein_observed_run_count =
+        Dict{Tuple{String, Bool, UInt8}, Int32}()
     max_candidate_runs = _consensus_candidate_runs_to_keep(length(psm_refs))
     rollup_scratch = ProteinRollupScratch()   # reused across all groups (sequential loop)
 
@@ -769,6 +933,8 @@ function build_precursor_consensus(
 
         df = load_dataframe(psm_ref)
         prob_col = _protein_group_probability_column(df)
+        run_unique_pg_score =
+            Dict{Tuple{String, Bool, UInt8}, Float32}()
 
         for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
             quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
@@ -786,21 +952,15 @@ function build_precursor_consensus(
             protein_name = String(protein_name_val)
             target = Bool(gdf.target[1])
             entrap_id = UInt8(gdf.entrap_id[1])
-
-            run_max_peak_area = maximum(precursor_row.best_peak_area for precursor_row in rollup.precursor_rows)
-            if !isfinite(run_max_peak_area) || run_max_peak_area <= 0.0f0
-                continue
-            end
-
-            normalized_precursors = Pair{UInt32, Float32}[]
-            sizehint!(normalized_precursors, length(rollup.precursor_rows))
-            for precursor_row in rollup.precursor_rows
-                push!(
-                    normalized_precursors,
-                    precursor_row.precursor_idx => Float32(clamp(precursor_row.best_peak_area / run_max_peak_area, 0.0f0, 1.0f0))
-                )
-            end
             protein_key = (protein_name, target, entrap_id)
+            run_unique_pg_score[protein_key] = rollup.pg_score
+            peak_area_by_precursor = Dict{UInt32, Float32}(
+                row.precursor_idx => row.best_peak_area
+                for row in rollup.precursor_rows
+            )
+            normalized_precursors =
+                _normalized_precursor_profile(peak_area_by_precursor)
+            isempty(normalized_precursors) && continue
             protein_observed_run_count[protein_key] = get(protein_observed_run_count, protein_key, Int32(0)) + Int32(1)
             _insert_top_consensus_vote!(
                 get!(
@@ -816,79 +976,117 @@ function build_precursor_consensus(
                 max_candidate_runs
             )
         end
-    end
 
-    consensus_weight_sums = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
-    protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
-    selected_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
-    consensus_target_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
-    cached_consensus_weight_sums = Dict{Tuple{String, Bool, UInt8}, Dict{UInt32, Float64}}()
-    cached_protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
-    for (protein_key, run_votes) in protein_run_votes
-        observed_runs = Int(get(protein_observed_run_count, protein_key, Int32(length(run_votes))))
-        target_runs = _consensus_runs_to_keep(observed_runs)
-        candidate_runs = _consensus_candidate_runs_to_keep(observed_runs)
-        selected_votes = run_votes[1:min(candidate_runs, length(run_votes))]
-        selected_run_votes[protein_key] = selected_votes
-        consensus_target_run_count[protein_key] = Int32(target_runs)
+        if !isempty(protein_ambiguity_candidates) &&
+           hasproperty(df, :protein_ambiguity_id)
+            shared_peak_area_by_protein = Dict{
+                Tuple{String, Bool, UInt8},
+                Dict{UInt32, Float32}
+            }()
+            ambiguity_mask =
+                df.protein_ambiguity_id .!= zero(UInt32)
+            if any(ambiguity_mask)
+                ambiguous_psms = view(df, ambiguity_mask, :)
+                for peptide_psms in groupby(
+                    ambiguous_psms,
+                    :protein_ambiguity_id
+                )
+                    ambiguity_id =
+                        UInt32(peptide_psms.protein_ambiguity_id[1])
+                    candidates = get(
+                        protein_ambiguity_candidates,
+                        ambiguity_id,
+                        ProteinKey[]
+                    )
+                    isempty(candidates) && continue
 
-        cached_weight_sums = Dict{UInt32, Float64}()
-        cached_total_vote = 0.0
-        for run_vote in selected_votes
-            run_weight = Float64(run_vote.pg_score)
-            cached_total_vote += run_weight
-            for precursor in run_vote.normalized_precursors
-                cached_weight_sums[precursor.first] = get(cached_weight_sums, precursor.first, 0.0) + (run_weight * Float64(precursor.second))
+                    confidence_mask = _protein_rollup_confidence_mask(
+                        peptide_psms;
+                        q_value_threshold = q_value_threshold
+                    )
+                    rollup = _build_protein_rollup(
+                        peptide_psms,
+                        confidence_mask,
+                        prob_col,
+                        rollup_scratch
+                    )
+                    isempty(rollup.precursor_rows) && continue
+
+                    peptide_target = Bool(peptide_psms.target[1])
+                    peptide_entrap_id =
+                        UInt8(peptide_psms.entrap_id[1])
+                    for candidate in candidates
+                        candidate.is_target == peptide_target || continue
+                        candidate.entrap_id == peptide_entrap_id || continue
+                        protein_key = (
+                            candidate.name,
+                            candidate.is_target,
+                            candidate.entrap_id
+                        )
+                        haskey(run_unique_pg_score, protein_key) || continue
+                        peak_area_by_precursor = get!(
+                            shared_peak_area_by_protein,
+                            protein_key,
+                            Dict{UInt32, Float32}()
+                        )
+                        for row in rollup.precursor_rows
+                            peak_area = row.best_peak_area
+                            precursor_idx = row.precursor_idx
+                            peak_area_by_precursor[precursor_idx] = max(
+                                get(
+                                    peak_area_by_precursor,
+                                    precursor_idx,
+                                    0.0f0
+                                ),
+                                peak_area
+                            )
+                        end
+                    end
+                end
+            end
+
+            for (
+                protein_key,
+                peak_area_by_precursor
+            ) in shared_peak_area_by_protein
+                normalized_precursors =
+                    _normalized_precursor_profile(peak_area_by_precursor)
+                isempty(normalized_precursors) && continue
+                shared_protein_observed_run_count[protein_key] =
+                    get(
+                        shared_protein_observed_run_count,
+                        protein_key,
+                        Int32(0)
+                    ) + Int32(1)
+                _insert_top_consensus_vote!(
+                    get!(
+                        () -> sizehint!(
+                            ConsensusRunVote[],
+                            max_candidate_runs
+                        ),
+                        shared_protein_run_votes,
+                        protein_key
+                    ),
+                    (
+                        pg_score = run_unique_pg_score[protein_key],
+                        run_order = Int64(run_order),
+                        normalized_precursors = normalized_precursors
+                    ),
+                    max_candidate_runs
+                )
             end
         end
-        cached_consensus_weight_sums[protein_key] = cached_weight_sums
-        cached_protein_total_vote[protein_key] = cached_total_vote
-
-        default_votes = selected_votes[1:min(target_runs, length(selected_votes))]
-        for run_vote in default_votes
-            run_weight = Float64(run_vote.pg_score)
-            protein_total_vote[protein_key] = get(protein_total_vote, protein_key, 0.0) + run_weight
-
-            for precursor in run_vote.normalized_precursors
-                key = (protein_key[1], protein_key[2], protein_key[3], precursor.first)
-                consensus_weight_sums[key] = get(consensus_weight_sums, key, 0.0) + (run_weight * Float64(precursor.second))
-            end
-        end
     end
 
-    relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
-    protein_precursor_values = Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
-    for ((protein_name, target, entrap_id, precursor_idx), score_sum) in consensus_weight_sums
-        protein_key = (protein_name, target, entrap_id)
-        total_vote = get(protein_total_vote, protein_key, 0.0)
-        total_vote > 0.0 || continue
-        precursor_relative_weight = Float32(clamp(score_sum / total_vote, 0.0, 1.0))
-        relative_weight[(protein_name, target, entrap_id, precursor_idx)] = precursor_relative_weight
-        push!(get!(protein_precursor_values, protein_key, Float32[]), precursor_relative_weight)
-    end
-
-    profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
-    shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}()
-    for (protein_key, relative_weights) in protein_precursor_values
-        profiled_precursor_count[protein_key] = Int32(length(relative_weights))
-    end
-    for (protein_key, run_votes) in selected_run_votes
-        total_pg_score = sum(Float64(run_vote.pg_score) for run_vote in run_votes)
-        shape_strength[protein_key] = Float32(log1p(total_pg_score))
-    end
-    shape_strength_values = collect(values(shape_strength))
-    shape_confidence_scale = isempty(shape_strength_values) ? 1.0f0 :
-        Float32(max(Statistics.median(shape_strength_values), eps(Float32)))
-    return (
-        relative_weight = relative_weight,
-        profiled_precursor_count = profiled_precursor_count,
-        shape_strength = shape_strength,
-        shape_confidence_scale = shape_confidence_scale,
-        selected_run_votes = selected_run_votes,
-        consensus_target_run_count = consensus_target_run_count,
-        cached_consensus_weight_sums = cached_consensus_weight_sums,
-        cached_protein_total_vote = cached_protein_total_vote
+    unique_consensus = _finalize_precursor_consensus(
+        protein_run_votes,
+        protein_observed_run_count
     )
+    shared_consensus = _finalize_precursor_consensus(
+        shared_protein_run_votes,
+        shared_protein_observed_run_count
+    )
+    return merge(unique_consensus, (shared = shared_consensus,))
 end
 
 """
@@ -953,6 +1151,23 @@ function _shape_consensus_inputs(
     return (
         protein_key = protein_key,
         best_peak_area_by_precursor = best_peak_area_by_precursor
+    )
+end
+
+function _shape_consensus_inputs(
+    best_peak_area_by_precursor::AbstractDict{UInt32, <:Real},
+    protein_key::Tuple{String, Bool, UInt8},
+    precursor_consensus::NamedTuple
+)
+    return (
+        protein_key = protein_key,
+        best_peak_area_by_precursor = Dict{UInt32, Float32}(
+            precursor_idx => Float32(peak_area)
+            for (
+                precursor_idx,
+                peak_area
+            ) in best_peak_area_by_precursor
+        )
     )
 end
 
@@ -1036,12 +1251,17 @@ function _active_consensus_profile(
 end
 
 function _precursor_consensus_prefix_features(
-    precursor_rows::AbstractVector,
+    precursor_profile,
     protein_key::Tuple{String, Bool, UInt8},
     precursor_consensus::NamedTuple;
-    current_run_order::Union{Nothing, Int64} = nothing
+    current_run_order::Union{Nothing, Int64} = nothing,
+    min_profiled_precursors::Int = 1
 )
-    shape_inputs = _shape_consensus_inputs(precursor_rows, protein_key, precursor_consensus)
+    shape_inputs = _shape_consensus_inputs(
+        precursor_profile,
+        protein_key,
+        precursor_consensus
+    )
     shape_protein_key = shape_inputs.protein_key
     best_peak_area_by_precursor = shape_inputs.best_peak_area_by_precursor
 
@@ -1055,6 +1275,20 @@ function _precursor_consensus_prefix_features(
     shape_confidence_scale = hasproperty(precursor_consensus, :shape_confidence_scale) ?
         precursor_consensus.shape_confidence_scale : 1.0f0
     shape_confidence = _shape_confidence(shape_strength, shape_confidence_scale)
+
+    if profiled_precursor_count < min_profiled_precursors
+        return (
+            prefix_shape_raw = 0.0f0,
+            prefix_shape = 0.0f0,
+            threshold = 0.0f0,
+            matched_precursors = 0,
+            prefix_consensus_sum = 0.0f0,
+            run_prefix_sum = 0.0f0,
+            profiled_precursor_count = profiled_precursor_count,
+            shape_strength = shape_strength,
+            shape_confidence = shape_confidence
+        )
+    end
 
     if isempty(best_peak_area_by_precursor)
         return (
@@ -1201,6 +1435,7 @@ function group_psms_by_protein(
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
+            n_non_mbr_peptides = Int64[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -1219,6 +1454,7 @@ function group_psms_by_protein(
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
+            n_non_mbr_peptides = Int64[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -1277,6 +1513,7 @@ function group_psms_by_protein(
         DataFrame(
             species = species,
             n_peptides = n_peptides,
+            n_non_mbr_peptides = mbr_summary.non_mbr_peptides,
             peptide_list = join(rollup.peptide_list, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,
@@ -1301,12 +1538,18 @@ eligible final protein groups. Allocation weights use the frozen unique-only raw
 plus a fixed pseudocount; ambiguous evidence never feeds back into its own weights. Also
 count each confidence-passing ambiguous peptide once for every eligible group so its
 unweighted peptide coverage can be derived after the theoretical peptide catalog is joined.
+When requested, retain each eligible group's best shared-precursor peak areas in memory for
+candidate-specific consensus-shape scoring.
 """
 function add_ambiguous_pg_score!(
     protein_groups::DataFrame,
     psms::DataFrame,
     candidates_by_id::Dict{UInt32, Vector{ProteinKey}};
-    q_value_threshold::Float32 = 0.01f0
+    q_value_threshold::Float32 = 0.01f0,
+    shared_precursor_peak_areas::Union{
+        Nothing,
+        Dict{ProteinKey, Dict{UInt32, Float32}}
+    } = nothing
 )
     n_groups = nrow(protein_groups)
     ambiguous_scores = zeros(Float64, n_groups)
@@ -1376,10 +1619,89 @@ function add_ambiguous_pg_score!(
             support = max(Float64(protein_groups.pg_score[row]), 0.0) +
                 Float64(AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT)
             ambiguous_scores[row] += ambiguous_score * support / total_support
+            if shared_precursor_peak_areas !== nothing
+                protein_key = ProteinKey(
+                    String(protein_groups.protein_name[row]),
+                    Bool(protein_groups.target[row]),
+                    UInt8(protein_groups.entrap_id[row])
+                )
+                peak_area_by_precursor = get!(
+                    shared_precursor_peak_areas,
+                    protein_key,
+                    Dict{UInt32, Float32}()
+                )
+                for precursor_row in rollup.precursor_rows
+                    peak_area = precursor_row.best_peak_area
+                    precursor_idx = precursor_row.precursor_idx
+                    peak_area_by_precursor[precursor_idx] = max(
+                        get(
+                            peak_area_by_precursor,
+                            precursor_idx,
+                            0.0f0
+                        ),
+                        peak_area
+                    )
+                end
+            end
         end
     end
 
     protein_groups[!, :ambiguous_pg_score] = Float32.(ambiguous_scores)
+    return protein_groups
+end
+
+"""
+    add_shared_precursor_consensus_shape!(
+        protein_groups,
+        shared_precursor_peak_areas,
+        shared_precursor_consensus;
+        current_run_order
+    )
+
+Add the leave-one-run-out shared-precursor profile similarity for each eligible
+protein group. Profiles with fewer than two consensus precursor identities are
+left neutral because a singleton has no relative shape.
+"""
+function add_shared_precursor_consensus_shape!(
+    protein_groups::DataFrame,
+    shared_precursor_peak_areas::Dict{
+        ProteinKey,
+        Dict{UInt32, Float32}
+    },
+    shared_precursor_consensus::NamedTuple;
+    current_run_order::Union{Nothing, Int64} = nothing
+)
+    shared_prefix_shape = zeros(Float32, nrow(protein_groups))
+
+    @inbounds for row in axes(protein_groups, 1)
+        protein_key = ProteinKey(
+            String(protein_groups.protein_name[row]),
+            Bool(protein_groups.target[row]),
+            UInt8(protein_groups.entrap_id[row])
+        )
+        peak_area_by_precursor = get(
+            shared_precursor_peak_areas,
+            protein_key,
+            nothing
+        )
+        peak_area_by_precursor === nothing && continue
+
+        prefix_features = _precursor_consensus_prefix_features(
+            peak_area_by_precursor,
+            (
+                protein_key.name,
+                protein_key.is_target,
+                protein_key.entrap_id
+            ),
+            shared_precursor_consensus;
+            current_run_order = current_run_order,
+            min_profiled_precursors = 2
+        )
+        shared_prefix_shape[row] = prefix_features.prefix_shape
+    end
+
+    protein_groups[!, :shared_precursor_consensus_prefix_shape] =
+        shared_prefix_shape
     return protein_groups
 end
 
@@ -1488,9 +1810,6 @@ function add_protein_features(
         df.peptide_coverage_logit = peptide_coverage_logit
         df.shared_peptide_coverage_logit = shared_peptide_coverage_logit
         df.shared_coverage_log_ratio = shared_coverage_log_ratios
-        if has_ambiguous_peptide_count
-            select!(df, Not(:_ambiguous_peptide_count))
-        end
 
         return df
     end
@@ -1560,7 +1879,11 @@ function build_protein_group_tables(
     protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
     indexed_refs = collect(enumerate(psm_refs))
 
-    precursor_consensus = build_precursor_consensus(psm_refs; q_value_threshold = q_value_threshold)
+    precursor_consensus = build_precursor_consensus(
+        psm_refs;
+        q_value_threshold = q_value_threshold,
+        protein_ambiguity_candidates = protein_ambiguity_candidates
+    )
 
     @user_info "Building per-run protein group tables and protein scoring features"
 
@@ -1587,11 +1910,21 @@ function build_protein_group_tables(
             protein_groups_df = op(protein_groups_df)
         end
 
+        shared_precursor_peak_areas =
+            Dict{ProteinKey, Dict{UInt32, Float32}}()
         add_ambiguous_pg_score!(
             protein_groups_df,
             updated_psms,
             protein_ambiguity_candidates;
-            q_value_threshold = q_value_threshold
+            q_value_threshold = q_value_threshold,
+            shared_precursor_peak_areas =
+                shared_precursor_peak_areas
+        )
+        add_shared_precursor_consensus_shape!(
+            protein_groups_df,
+            shared_precursor_peak_areas,
+            precursor_consensus.shared;
+            current_run_order = Int64(idx)
         )
 
         feature_pipeline = TransformPipeline() |>

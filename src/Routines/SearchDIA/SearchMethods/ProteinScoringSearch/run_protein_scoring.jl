@@ -26,7 +26,13 @@ function load_protein_probit_training_rows(
     pg_refs::Vector{ProteinGroupFileReference};
     include_qc_plot_columns::Bool = false
 )
-    columns_to_load = Symbol[:protein_name, :target, :n_peptides]
+    columns_to_load = Symbol[
+        :protein_name,
+        :target,
+        :n_peptides,
+        :n_non_mbr_peptides,
+        :_ambiguous_peptide_count,
+    ]
     append!(columns_to_load, protein_probit_feature_names())
     if include_qc_plot_columns
         push!(columns_to_load, :species, :file_idx)

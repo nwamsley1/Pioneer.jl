@@ -41,6 +41,7 @@ end
 
         @test nrow(protein_groups) == 1
         @test protein_groups.mbr_recovered_peptides[1] == 2
+        @test protein_groups.n_non_mbr_peptides[1] == 0
         @test protein_groups.mbr_only_protein[1]
     end
 
@@ -71,8 +72,50 @@ end
 
         @test nrow(protein_groups) == 1
         @test protein_groups.mbr_recovered_peptides[1] == 1
+        @test protein_groups.n_non_mbr_peptides[1] == 1
         @test !protein_groups.mbr_only_protein[1]
         @test protein_groups.pg_score[1] > 0.0f0
+
+        non_mbr_groups = group_psms_by_protein(
+            select(psms, Not(:mbr_recovered));
+            precursor_consensus =
+                _empty_precursor_consensus_for_mbr_feature_tests(),
+            q_value_threshold = 0.01f0,
+        )
+        @test non_mbr_groups.n_non_mbr_peptides[1] == 2
+        @test non_mbr_groups.mbr_recovered_peptides[1] == 0
+    end
+
+    @testset "Non-MBR peptide count deduplicates sequences independently" begin
+        psms = DataFrame(
+            inferred_protein_group = fill("P_OVERLAP", 3),
+            species = fill("YEAST", 3),
+            target = trues(3),
+            entrap_id = zeros(UInt8, 3),
+            use_for_protein_quant = trues(3),
+            qval = fill(0.001f0, 3),
+            global_qval = fill(0.001f0, 3),
+            precursor_idx = UInt32[30, 31, 32],
+            prec_prob = Float32[0.20, 0.30, 0.40],
+            peak_area = Float32[500.0, 750.0, 1000.0],
+            base_pep_id = UInt32[301, 301, 302],
+            sequence = ["PEPTIDEE", "PEPTIDEE", "PEPTIDEF"],
+            missed_cleavage = zeros(Int64, 3),
+            Mox = zeros(Int64, 3),
+            mbr_recovered = Bool[true, false, true],
+        )
+
+        protein_groups = group_psms_by_protein(
+            psms;
+            precursor_consensus =
+                _empty_precursor_consensus_for_mbr_feature_tests(),
+            q_value_threshold = 0.01f0,
+        )
+
+        @test protein_groups.n_peptides[1] == 2
+        @test protein_groups.mbr_recovered_peptides[1] == 2
+        @test protein_groups.n_non_mbr_peptides[1] == 1
+        @test !protein_groups.mbr_only_protein[1]
     end
 
     @testset "Protein probit feature list includes only the lightweight MBR summaries" begin

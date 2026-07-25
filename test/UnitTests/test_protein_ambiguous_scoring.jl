@@ -3,10 +3,13 @@ using Dictionaries
 using Test
 
 using Pioneer: AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT,
+    ConsensusRunVote,
     InferenceResult,
     PeptideKey,
     ProteinKey,
     ProteinPeptideOpportunityCounts,
+    _finalize_precursor_consensus,
+    _precursor_consensus_prefix_features,
     _register_protein_ambiguities!,
     add_ambiguous_pg_score!,
     add_protein_features,
@@ -90,8 +93,17 @@ end
         )
         psms = vcat(_ambiguous_scoring_psms(), _ambiguous_scoring_psms())
         psms.prec_prob = Float32[0.2, 0.8]
+        psms.peak_area = Float32[500.0, 1000.0]
 
-        add_ambiguous_pg_score!(protein_groups, psms, candidates)
+        shared_precursor_peak_areas =
+            Dict{ProteinKey, Dict{UInt32, Float32}}()
+        add_ambiguous_pg_score!(
+            protein_groups,
+            psms,
+            candidates;
+            shared_precursor_peak_areas =
+                shared_precursor_peak_areas
+        )
         protein_peptide_opportunities = Dict(
             protein_a => ProteinPeptideOpportunityCounts(2, 2),
             protein_b => ProteinPeptideOpportunityCounts(4, 1)
@@ -107,7 +119,11 @@ end
         @test protein_groups.shared_peptide_coverage_logit[2] ≈ log(3.0f0)
         @test protein_groups.shared_coverage_log_ratio[1] ≈ 0.0f0
         @test protein_groups.shared_coverage_log_ratio[2] ≈ log(2.5f0)
-        @test !hasproperty(protein_groups, :_ambiguous_peptide_count)
+        @test shared_precursor_peak_areas[protein_a] ==
+            Dict(UInt32(101) => 1000.0f0)
+        @test shared_precursor_peak_areas[protein_b] ==
+            Dict(UInt32(101) => 1000.0f0)
+        @test protein_groups._ambiguous_peptide_count == Int64[1, 1]
     end
 
     @testset "theoretical opportunities are classified against final groups" begin
@@ -195,15 +211,131 @@ end
             entrap_id = UInt8[0, 0],
             pg_score = Float32[2.0, 8.0]
         )
+        shared_precursor_peak_areas =
+            Dict{ProteinKey, Dict{UInt32, Float32}}()
 
         add_ambiguous_pg_score!(
             protein_groups,
             _ambiguous_scoring_psms(),
-            mixed_candidates
+            mixed_candidates;
+            shared_precursor_peak_areas =
+                shared_precursor_peak_areas
         )
 
         @test protein_groups.ambiguous_pg_score[1] > 0.0f0
         @test protein_groups.ambiguous_pg_score[2] == 0.0f0
+        @test haskey(shared_precursor_peak_areas, protein_a)
+        @test !haskey(shared_precursor_peak_areas, decoy_b)
+    end
+
+    @testset "shared precursor consensus is leave-one-run-out and shape-sensitive" begin
+        protein_key = ("A", true, UInt8(0))
+        run_votes = Dict{
+            Tuple{String, Bool, UInt8},
+            Vector{ConsensusRunVote}
+        }(
+            protein_key => ConsensusRunVote[
+                (
+                    pg_score = 4.0f0,
+                    run_order = Int64(1),
+                    normalized_precursors =
+                        Pair{UInt32, Float32}[
+                            UInt32(101) => 1.0f0,
+                            UInt32(102) => 0.25f0
+                        ]
+                ),
+                (
+                    pg_score = 3.0f0,
+                    run_order = Int64(2),
+                    normalized_precursors =
+                        Pair{UInt32, Float32}[
+                            UInt32(101) => 1.0f0,
+                            UInt32(102) => 0.25f0
+                        ]
+                ),
+                (
+                    pg_score = 10.0f0,
+                    run_order = Int64(3),
+                    normalized_precursors =
+                        Pair{UInt32, Float32}[
+                            UInt32(101) => 0.25f0,
+                            UInt32(102) => 1.0f0
+                        ]
+                )
+            ]
+        )
+        sort!(
+            run_votes[protein_key];
+            by = vote -> (-vote.pg_score, vote.run_order)
+        )
+        consensus = _finalize_precursor_consensus(
+            run_votes,
+            Dict(protein_key => Int32(3))
+        )
+
+        matching_profile = Dict(
+            UInt32(101) => 1000.0f0,
+            UInt32(102) => 250.0f0
+        )
+        reversed_profile = Dict(
+            UInt32(101) => 250.0f0,
+            UInt32(102) => 1000.0f0
+        )
+        matching = _precursor_consensus_prefix_features(
+            matching_profile,
+            protein_key,
+            consensus;
+            current_run_order = Int64(3),
+            min_profiled_precursors = 2
+        )
+        reversed = _precursor_consensus_prefix_features(
+            reversed_profile,
+            protein_key,
+            consensus;
+            current_run_order = Int64(3),
+            min_profiled_precursors = 2
+        )
+        contaminated = _precursor_consensus_prefix_features(
+            matching_profile,
+            protein_key,
+            consensus;
+            min_profiled_precursors = 2
+        )
+
+        @test matching.prefix_shape > reversed.prefix_shape
+        @test matching.prefix_shape > contaminated.prefix_shape
+        @test matching.profiled_precursor_count == 2
+
+        singleton_votes = Dict{
+            Tuple{String, Bool, UInt8},
+            Vector{ConsensusRunVote}
+        }(
+            protein_key => ConsensusRunVote[
+                (
+                    pg_score = 2.0f0,
+                    run_order = Int64(1),
+                    normalized_precursors =
+                        Pair{UInt32, Float32}[UInt32(101) => 1.0f0]
+                ),
+                (
+                    pg_score = 1.0f0,
+                    run_order = Int64(2),
+                    normalized_precursors =
+                        Pair{UInt32, Float32}[UInt32(101) => 1.0f0]
+                )
+            ]
+        )
+        singleton_consensus = _finalize_precursor_consensus(
+            singleton_votes,
+            Dict(protein_key => Int32(2))
+        )
+        singleton = _precursor_consensus_prefix_features(
+            Dict(UInt32(101) => 1000.0f0),
+            protein_key,
+            singleton_consensus;
+            min_profiled_precursors = 2
+        )
+        @test singleton.prefix_shape == 0.0f0
     end
 
     @testset "confidence thresholds and absent ambiguity preserve zero contribution" begin
@@ -265,6 +397,7 @@ end
         @test :ambiguous_pg_score in features
         @test :shared_peptide_coverage_logit in features
         @test :shared_coverage_log_ratio in features
+        @test :shared_precursor_consensus_prefix_shape in features
         @test !(:shared_peptide_coverage in features)
         @test !(:ambiguous_peptide_coverage in features)
         @test !(:augmented_pg_score in features)

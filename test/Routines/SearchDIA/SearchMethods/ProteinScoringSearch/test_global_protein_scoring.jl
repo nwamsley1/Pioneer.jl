@@ -55,7 +55,7 @@
             Pioneer.apply_probit_scores_multifold!(
                 refs,
                 protein_to_cv_fold,
-                Dict(UInt8(0) => Float64[0.0, 10.0]),
+                Dict{UInt8, Pioneer.LightGBMModel}(),
                 Symbol[:feature];
                 use_probit_scores = false,
             )
