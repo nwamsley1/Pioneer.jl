@@ -37,6 +37,22 @@ const GLOBAL_PRECURSOR_SCORE_FEATURES = Symbol[
     :missing_run_similarity_mass_approx,
 ]
 
+const GLOBAL_PRECURSOR_MONOTONE_INCREASING_FEATURES = (
+    :empirical_global_score,
+    :top1_prec_prob,
+    :top2_prec_prob,
+    :top3_prec_prob,
+    :top2_logodds_score,
+    :top3_logodds_score,
+    :mean_prec_prob,
+    :median_prec_prob,
+    :min_prec_prob,
+    :n_passing_runs,
+    :n_prob_gt_0_5,
+    :n_prob_gt_0_9,
+    :n_prob_gt_0_99,
+)
+
 const GLOBAL_PRECURSOR_LGBM_HP = (
     num_iterations = 100,
     learning_rate = 0.05,
@@ -51,6 +67,7 @@ const GLOBAL_PRECURSOR_LGBM_HP = (
     max_bin = 255,
     lambda_l1 = 1.0,
     lambda_l2 = 1.0,
+    monotone_constraints_method = "intermediate",
 )
 
 const GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT = 100
@@ -319,6 +336,8 @@ function build_global_precursor_score_dicts(
         lgbm_hp = GLOBAL_PRECURSOR_LGBM_HP,
         min_training_class_count = GLOBAL_PRECURSOR_MIN_TRAINING_CLASS_COUNT,
         max_train = GLOBAL_PRECURSOR_MAX_TRAIN,
+        monotone_increasing_features =
+            GLOBAL_PRECURSOR_MONOTONE_INCREASING_FEATURES,
     )
     selected = _select_global_scores(
         scored.scores,

@@ -8,6 +8,23 @@
 # (at your option) any later version.
 
 @testset "Global protein scoring" begin
+    @testset "monotonic constraints follow feature names" begin
+        feature_names = Symbol[
+            :std_pg_score,
+            :global_peptide_coverage,
+            :empirical_global_score,
+            :missing_run_similarity_mass_approx,
+        ]
+        constraints = Pioneer._global_lightgbm_monotone_constraints(
+            feature_names,
+            Pioneer.GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES,
+        )
+
+        @test constraints == Int[0, 1, 1, 0]
+        @test Pioneer.GLOBAL_PROTEIN_LGBM_HP.monotone_constraints_method ==
+              "intermediate"
+    end
+
     @testset "run-level protein model requires sufficient data in every fold" begin
         table = DataFrame(
             target = vcat(

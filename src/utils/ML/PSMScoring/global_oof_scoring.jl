@@ -20,6 +20,34 @@ const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
 const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
 
+"""
+    _global_lightgbm_monotone_constraints(
+        feature_names,
+        increasing_features,
+        decreasing_features=(),
+    )
+
+Build a LightGBM monotonic-constraint vector in the exact order of the global
+model features. Increasing features receive `1`, decreasing features receive
+`-1`, and all other features receive `0`.
+"""
+function _global_lightgbm_monotone_constraints(
+    feature_names::AbstractVector{Symbol},
+    increasing_features,
+    decreasing_features = (),
+)
+    return Int[
+        if feature in increasing_features
+            1
+        elseif feature in decreasing_features
+            -1
+        else
+            0
+        end
+        for feature in feature_names
+    ]
+end
+
 function _count_passing_target_ids(
     scores::AbstractVector{<:AbstractFloat},
     targets::AbstractVector{Bool};
@@ -242,6 +270,8 @@ function _score_global_features_oof(
     stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
     max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+    monotone_increasing_features = (),
+    monotone_decreasing_features = (),
 )
     observed_folds = sort!(unique(Vector{UInt8}(table.cv_fold)))
     observed_folds == cv_folds || throw(ArgumentError(
@@ -252,6 +282,11 @@ function _score_global_features_oof(
     ))
 
     targets = Vector{Bool}(table.target)
+    monotone_constraints = _global_lightgbm_monotone_constraints(
+        features,
+        monotone_increasing_features,
+        monotone_decreasing_features,
+    )
     training_mask = nothing
     previous_target_q01 = -1
     best_state = nothing
@@ -291,7 +326,11 @@ function _score_global_features_oof(
                 break
             end
 
-            classifier = build_lightgbm_classifier(; lgbm_hp...)
+            classifier = build_lightgbm_classifier(
+                ;
+                lgbm_hp...,
+                monotone_constraints = monotone_constraints,
+            )
             model = fit_lightgbm_model(
                 classifier,
                 view(table, train_indices, features),

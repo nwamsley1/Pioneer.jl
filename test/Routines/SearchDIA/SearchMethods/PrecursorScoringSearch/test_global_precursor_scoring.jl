@@ -16,6 +16,23 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 @testset "Global precursor scoring" begin
+    @testset "monotonic constraints follow feature names" begin
+        feature_names = Symbol[
+            :std_prec_prob,
+            :n_passing_runs,
+            :empirical_global_score,
+            :top1_top2_gap,
+        ]
+        constraints = Pioneer._global_lightgbm_monotone_constraints(
+            feature_names,
+            Pioneer.GLOBAL_PRECURSOR_MONOTONE_INCREASING_FEATURES,
+        )
+
+        @test constraints == Int[0, 1, 1, 0]
+        @test Pioneer.GLOBAL_PRECURSOR_LGBM_HP.monotone_constraints_method ==
+              "intermediate"
+    end
+
     @testset "log-odds score summary" begin
         @test logodds([0.8], 1) == 0.8
         @test 0.0 < logodds([0.0, 0.0], 2) < 1.0
@@ -268,11 +285,16 @@
             min_training_class_count = 1,
             max_train = 1_000,
             max_iterations = 3,
+            monotone_increasing_features = (:direct_evidence,),
         )
 
         @test length(scored.scores) == nrow(table)
         @test length(scored.models) == 2
         @test scored.iter in 1:3
+        @test all(
+            model.booster.monotone_constraints == Int[1]
+            for model in scored.models
+        )
         @test mean(scored.scores[target]) > mean(scored.scores[.!target])
     end
 end
