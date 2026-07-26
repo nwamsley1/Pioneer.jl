@@ -142,6 +142,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # Analysis strategies
     isotope_tracetype::I
     prec_estimation::P
+    match_between_runs::Bool
+    q_value_threshold::Float32
+    pep_bin_size::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -161,6 +164,12 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # n_isotopes lives at search.n_isotopes; falls back to the legacy
         # nested location for old configs (see _resolve_n_isotopes).
         n_isotopes_val = _resolve_n_isotopes(search_params)
+        global_params = params.global_settings
+        machine_learning_params = params.optimization.machine_learning
+        match_between_runs =
+            hasproperty(global_params, :match_between_runs) ?
+            Bool(global_params.match_between_runs) :
+            true
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(1), UInt8(0)),  # isotope err_bounds
@@ -179,6 +188,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             isotope_trace_type,
             prec_estimation,
+            match_between_runs,
+            _resolve_q_value_threshold(global_params),
+            Int64(machine_learning_params.pep_bin_size),
         )
     end
 end
@@ -200,6 +212,40 @@ function init_search_results(::IntegrateChromatogramSearchParameters, search_con
     return IntegrateChromatogramSearchResults(
         Ref(DataFrame())
     )
+end
+
+function _filter_mbr_sidecars_by_rows!(
+    main_path::String,
+    selected_rows::Vector{Int},
+)
+    for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX)
+        sidecar_path = main_path * suffix
+        isfile(sidecar_path) || continue
+        sidecar = DataFrame(Tables.columntable(Arrow.Table(sidecar_path)))
+        writeArrow(sidecar_path, sidecar[selected_rows, :])
+    end
+    return nothing
+end
+
+function _select_postintegration_mbr_rows(
+    psms::DataFrame,
+    q_value_threshold::Float32,
+)
+    return Int[
+        row for row in axes(psms, 1)
+        if _mbr_initial_pass(
+               psms[row, :qval],
+               psms[row, :global_qval],
+               q_value_threshold,
+           ) ||
+           (
+               isfinite(Float32(psms[row, :peak_area])) &&
+               Float32(psms[row, :peak_area]) > 0.0f0 &&
+               isfinite(Float32(
+                   psms[row, MBR_INTEGRATED_APEX_IRT_COLUMN],
+               ))
+           )
+    ]
 end
 
 """
@@ -237,22 +283,40 @@ function process_file!(
     # output happens later in MaxLFQSearch when output.write_decoys=false.
     passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
 
+    # Initialize the integration schema before the empty-file check so an
+    # empty staged MBR file remains consumable by the post-integration pass.
+    passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
+    passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_start_scan] =
+        zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_stop_scan] =
+        zeros(UInt32, nrow(passing_psms))
+
     # If there are no PSMs to integrate (e.g. sparse / empty file), skip
     # chromatogram extraction entirely. Downstream steps treat an empty
     # results table as a no-op file.
     if nrow(passing_psms) == 0
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            add_mbr_integrated_spectra_to_psms!(
+                passing_psms,
+                DataFrame(),
+                identity,
+            )
+        end
         results.psms[] = passing_psms
         return results
     end
 
     if !seperateTraces(params.isotope_tracetype)
-        passing_psms = select_combined_trace_seed_psms_by_score(passing_psms)
+        selected_rows = select_combined_trace_seed_rows_by_score(passing_psms)
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+        end
+        passing_psms = passing_psms[selected_rows, :]
     end
-
-    # Initialize columns written by chromatogram integration.
-    passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
-    passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
-    passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
 
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
@@ -312,9 +376,32 @@ function process_file!(
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
+            passing_psms[!, :integration_start_scan],
+            passing_psms[!, :integration_stop_scan],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            add_mbr_integrated_spectra_to_psms!(
+                passing_psms,
+                chromatograms,
+                getRtIrtModel(search_context, ms_file_idx),
+                bitvec_rank_table =
+                    getBitVecExcessRanks(search_context, ms_file_idx),
+            )
+            selected_rows = _select_postintegration_mbr_rows(
+                passing_psms,
+                params.q_value_threshold,
+            )
+            if length(selected_rows) != nrow(passing_psms)
+                _filter_mbr_sidecars_by_rows!(
+                    passing_psms_path,
+                    selected_rows,
+                )
+                passing_psms = passing_psms[selected_rows, :]
+            end
+        end
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(
                 chromatograms,
@@ -326,6 +413,21 @@ function process_file!(
                 getFileIdToName(getMSData(search_context), ms_file_idx),
             )
         end
+    elseif params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+        add_mbr_integrated_spectra_to_psms!(
+            passing_psms,
+            chromatograms,
+            getRtIrtModel(search_context, ms_file_idx),
+            bitvec_rank_table =
+                getBitVecExcessRanks(search_context, ms_file_idx),
+        )
+        selected_rows = _select_postintegration_mbr_rows(
+            passing_psms,
+            params.q_value_threshold,
+        )
+        _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+        passing_psms = passing_psms[selected_rows, :]
     end
     # MS1 integration disabled — see extract_chromatograms call above.
     # Clear chromatograms to free memory
@@ -346,14 +448,25 @@ function process_search_results!(
 ) where {P<:IntegrateChromatogramSearchParameters}
 
     passing_psms = results.psms[]
+    output_path = getPassingPsms(getMSData(search_context))[ms_file_idx]
 
     # Skip processing if no PSMs (e.g. file had no rt_index or passing PSMs)
     if nrow(passing_psms) == 0 || ncol(passing_psms) == 0
         @debug_l2 "No PSMs to process for file $ms_file_idx in IntegrateChromatogramSearch results"
+        if params.match_between_runs &&
+           !isempty(output_path) &&
+           isfile(output_path * PASS1_SIDECAR_SUFFIX)
+            writeArrow(output_path, passing_psms)
+        end
         return nothing
     end
 
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    if params.match_between_runs &&
+       isfile(output_path * PASS1_SIDECAR_SUFFIX)
+        writeArrow(output_path, passing_psms)
+        return nothing
+    end
     # Process final PSMs
     process_final_psms!(
         passing_psms,
@@ -362,7 +475,7 @@ function process_search_results!(
         ms_file_idx
     )
     # Save results
-    writeArrow(getPassingPsms(getMSData(search_context))[ms_file_idx], passing_psms)
+    writeArrow(output_path, passing_psms)
     return nothing
 end
 
@@ -374,8 +487,73 @@ end
 
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    ::P,
-    ::SearchContext
+    params::P,
+    search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
+    passing_paths = String[
+        path for path in getPassingPsms(getMSData(search_context))
+        if !isempty(path) && isfile(path)
+    ]
+    if params.match_between_runs &&
+       any(
+           path -> isfile(path * PASS1_SIDECAR_SUFFIX),
+           passing_paths,
+       )
+        precursor_results = get_results(
+            search_context,
+            PrecursorScoringSearch,
+        )
+        precursor_results isa PrecursorScoringSearchResults ||
+            error("Post-integration MBR requires precursor-scoring results")
+        summary = finalize_postintegration_mbr!(
+            passing_paths,
+            getPrecursors(getSpecLib(search_context));
+            run_similarity_atlas = precursor_results.run_similarity[],
+            q_value_threshold = params.q_value_threshold,
+            donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+            merged_path = joinpath(
+                getDataOutDir(search_context),
+                "merged_quant.arrow",
+            ),
+            pre_mbr_qval_spline =
+                precursor_results.precursor_qval_interp[],
+            bitvec_rank_tables_by_file = Dict(
+                UInt32(file_idx) => ranks
+                for (file_idx, ranks) in search_context.bitvec_excess_rank
+            ),
+        )
+        @debug_l1 "Post-integration MBR completed: " *
+                  "candidates=$(summary.n_candidates), " *
+                  "recovered=$(summary.n_recovered)"
+        @debug_l1 "Post-integration MBR combined error: " *
+                  "baseline=$(summary.base_decoys)/$(summary.base_targets), " *
+                  "MBR decoys=$(summary.mbr_decoys), " *
+                  "false transfers=$(summary.mbr_false_transfers), " *
+                  "total=$(summary.total_errors)/$(summary.total_targets) " *
+                  "($(round(100 * summary.combined_error_rate, digits=4))%)"
+
+        for (ms_file_idx, path) in enumerate(
+            getPassingPsms(getMSData(search_context)),
+        )
+            (isempty(path) || !isfile(path)) && continue
+            psms = DataFrame(Tables.columntable(Arrow.Table(path)))
+            if nrow(psms) == 0 || ncol(psms) == 0
+                writeArrow(path, psms)
+                continue
+            end
+            process_final_psms!(
+                psms,
+                search_context,
+                getFileIdToName(
+                    getMSData(search_context),
+                    ms_file_idx,
+                ),
+                ms_file_idx,
+            )
+            writeArrow(path, psms)
+        end
+    end
     return nothing
 end

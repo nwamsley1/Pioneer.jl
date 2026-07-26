@@ -287,7 +287,7 @@ end
 #   - In-fold for fold0 rows uses cls_trained_on.fold0 (only if compute_infold)
 # and symmetrically for fold1.
 #
-# Sidecar layout matches what mbr_streaming.jl's downstream readers expect:
+# Sidecar layout matches the post-integration MBR staging contract:
 #   (:precursor_idx, :scan_idx, :trace_prob_prepass, :trace_prob_infold)
 #
 # Scores are clamped to [1e-6, 1 - 1e-4] (matches the in-memory pipeline's

@@ -68,8 +68,8 @@ struct PrecursorScoringSearchParameters <: SearchParameters
 
     q_value_threshold::Float32
 
-    # When false, skip MBR feature computation, the MBR-boosted second pass,
-    # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
+    # When false, skip post-integration donor/counterfactual feature
+    # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
@@ -175,7 +175,9 @@ function summarize_results!(
     # PrecursorScoring reads/merges/MBR-folds in place, and only the
     # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
     main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
+    annotated_psms_folder = joinpath(temp_folder, "precursor_scored_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
+    !isdir(annotated_psms_folder) && mkdir(annotated_psms_folder)
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
     # No outer try/catch — true errors should surface and abort the run.
@@ -228,13 +230,9 @@ function summarize_results!(
         fold1_path = "$(base_path)_fold1.arrow"
         merged_path = "$(base_path).arrow"
 
-        # Collect data from both folds via PSMFileReference so the
-        # auto-discovered mbr_outputs sidecars (written by
-        # merge_mbr_sidecars_into_main!) are joined in. MainSearch
-        # initialized :trace_prob to zero in the fold files; the sidecar
-        # provides the real Pass-1 OOF score in :trace_prob_prepass, so we
-        # set :trace_prob = :trace_prob_prepass here (matching the legacy
-        # merge_mbr_sidecars_into_main! semantics).
+        # Collect data from both folds after Pass-1 scoring. The MBR-on and
+        # MBR-off paths both merge the frozen OOF score into the fold files
+        # before this step.
         fold_dfs = DataFrame[]
         fold_refs = PSMFileReference[]
         function _load_fold(path)
@@ -362,37 +360,54 @@ function summarize_results!(
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
 
-        # Phase B — Single per-file pipeline combining Steps 5+10.
-        # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
-        # :qval filter (their qval is overridden to 0). The cross-run
-        # :global_qval threshold still applies to all rows.
-        mbr_qval_bypass = "mbr_recovery_qval_bypass" => function(df)
-            if hasproperty(df, :mbr_recovered) && hasproperty(df, :qval)
-                qv = df[!, :qval]
-                rec = df[!, :mbr_recovered]
-                @inbounds for i in 1:nrow(df)
-                    if rec[i]
-                        qv[i] = 0.0f0
-                    end
-                end
-            end
-            return df
-        end
-
-        # Cross-run filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold).
-        # The :pep and :off variants are retained in git history if needed.
-        qval_conditions = [(:global_qval, params.q_value_threshold),
-                           (:qval,        params.q_value_threshold)]
-        combined_pipeline = TransformPipeline() |>
+        # Annotate the complete precursor table before filtering. MBR needs
+        # globally-supported rows that fail the run-level threshold, while
+        # donors and the baseline set still come from the ordinary dual-qvalue
+        # filter.
+        scoring_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
             add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
-            mbr_qval_bypass |>
-            add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-            filter_by_multiple_thresholds(qval_conditions)
+            add_interpolated_column(
+                :pep,
+                :prec_prob,
+                results.precursor_pep_interp[],
+            )
 
-        passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
+        annotated_refs = apply_pipeline_batch(
+            filtered_refs,
+            scoring_pipeline,
+            annotated_psms_folder,
+        )
+        initial_filter = TransformPipeline() |>
+            filter_by_multiple_thresholds([
+                (:global_qval, params.q_value_threshold),
+                (:qval, params.q_value_threshold),
+            ])
+        passing_refs = apply_pipeline_batch(
+            annotated_refs,
+            initial_filter,
+            passing_psms_folder,
+        )
+    end
+
+    if params.match_between_runs && !isempty(passing_refs)
+        staging_time = @elapsed begin
+            staging = prepare_postintegration_mbr!(
+                annotated_refs,
+                passing_refs,
+                passing_psms_folder;
+                q_value_threshold = params.q_value_threshold,
+                donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+            )
+            passing_refs = staging.integration_refs
+            @debug_l1 "Post-integration MBR candidates staged: " *
+                      "files=$(staging.n_files), rows=$(staging.n_rows), " *
+                      "candidates=$(staging.n_candidates)"
+        end
+        @debug_l1 "Post-integration MBR staging completed in " *
+                  "$(round(staging_time, digits=2)) seconds"
     end
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
@@ -401,18 +416,33 @@ function summarize_results!(
     # keep these files available for diagnostic inspection. Re-enable once the
     # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
-    # Step 11: Re-calculate q-values using filtered data (sidecar-based)
-    step11_time = @elapsed begin
-        # Sidecar lifecycle for new spline (on filtered data)
-        spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
-        if spline_result === nothing
-            @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-        else
-            recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline)
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+    # MBR-enabled searches recalculate q-values after chromatogram integration
+    # and transfer acceptance. The non-MBR path retains the original step.
+    if !params.match_between_runs
+        step11_time = @elapsed begin
+            spline_result = build_qvalue_spline_from_refs(
+                passing_refs,
+                :prec_prob,
+                results.merged_quant_path;
+                min_pep_points_per_bin = params.pep_bin_size,
+                fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+                temp_prefix = "recalc_sidecar",
+            )
+            if spline_result === nothing
+                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+            else
+                recalc_pipeline = TransformPipeline() |>
+                    add_interpolated_column(
+                        :qval,
+                        :prec_prob,
+                        spline_result.qval_spline,
+                    )
+                passing_refs = apply_pipeline_batch(
+                    passing_refs,
+                    recalc_pipeline,
+                    passing_psms_folder,
+                )
+            end
         end
     end
 

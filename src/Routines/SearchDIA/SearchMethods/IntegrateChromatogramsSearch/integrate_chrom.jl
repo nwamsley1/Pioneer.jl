@@ -493,7 +493,7 @@ end
                    ws::WHWorkspace, state::Chromatogram,
                    avg_cycle_time::Float32, λ::Float32;
                    n_pad::Int64=0,
-                   isplot::Bool=false) -> Tuple{Float32, UInt32, Int}
+                   isplot::Bool=false) -> Tuple{Float32, UInt32, Int, UInt32, UInt32}
 
 Integrate a single chromatographic peak.
 
@@ -514,6 +514,8 @@ on concrete `Vector{Float32}` fields of `ws`, eliminating GC-root / view-lifetim
 - Peak area
 - Updated apex scan index
 - Number of points integrated
+- Integration start scan index
+- Integration stop scan index
 
 # Internal Chromatogram Processing Functions
 
@@ -636,7 +638,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 )
             end
         end
-        return 0f0, scan_idx_col[apex_scan], Int(0)
+        return (
+            0.0f0,
+            scan_idx_col[apex_scan],
+            Int(0),
+            UInt32(0),
+            UInt32(0),
+        )
     end
 
     norm_factor, start_rt, rt_norm, best_rt = fillState!(
@@ -713,7 +721,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     end
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, scan_idx_col[apex_scan], num_points_integrated
+    return (
+        trapezoid_area,
+        scan_idx_col[apex_scan],
+        num_points_integrated,
+        UInt32(scan_idx_col[first(scan_range)]),
+        UInt32(scan_idx_col[last(scan_range)]),
+    )
 end
 
 function integrate_chrom(chrom::SubDataFrame,

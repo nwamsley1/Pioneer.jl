@@ -26,12 +26,9 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
 # (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
 #
-# Important: the MBR features (MBR_max_pair_prob_true, etc.) are NOT in
-# this list. They are computed AFTER Pass-1 LGBM trains (see steps 5-6
-# in _score_precursor_isotope_traces_mbr), so they wouldn't exist on the
-# DataFrame at Pass-1 training time anyway. MBR features are consumed
-# only by the FTR controller (mbr_ftr.jl::FTR_FEATURES_F_TRUE), which is
-# a separate LGBM trained later in the pipeline.
+# Important: MBR transfer features are not in this list. They are computed
+# from the integrated receiver chromatogram after Pass-1 and are consumed by
+# the separate post-integration transfer model.
 #
 # Pre-2026-05-19 this list redundantly included the 6 MBR features —
 # they were always silently filtered out by the hasproperty guard in

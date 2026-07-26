@@ -264,9 +264,6 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
-            "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
-            "mbr_streaming.jl",                # MBR Phase 2: donor dict + per-file MBR sidecars
-            "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
             "global_precursor_scoring.jl",     # Experiment-wide precursor scoring model
@@ -274,6 +271,20 @@ function importScripts()
             "scoring_interface.jl",            # Interface functions
             "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch
             "PrecursorScoringSearch.jl"        # Main implementation - depends on utils.jl
+        ]
+    )
+
+    # Post-integration MBR spans precursor scoring and chromatogram integration,
+    # so keep its implementation stage-neutral and load it before either stage
+    # invokes the public orchestration helpers.
+    include_files!(
+        joinpath(search_methods_dir, "MBR"),
+        [
+            "types.jl",
+            "pairing.jl",
+            "features.jl",
+            "rescoring.jl",
+            "pipeline.jl",
         ]
     )
 
