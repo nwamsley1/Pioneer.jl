@@ -67,15 +67,8 @@ function _mbr_candidate_mask(
             isfinite(Float32(frame.qval[row])) &&
             Float32(frame.qval[row]) <= q_value_threshold
         true_present = !Bool(frame[row, :MBR_best_is_missing_true])
-        false_present = false
-        for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
-            if !Bool(frame[row, _mbr_missing_feature(counterfactual_idx)])
-                false_present = true
-                break
-            end
-        end
         candidates[row] =
-            global_pass && !run_pass && true_present && false_present
+            global_pass && !run_pass && true_present
     end
     return candidates
 end
@@ -87,7 +80,8 @@ function _mbr_available_feature_sets(frame::DataFrame)
     ]
     for feature in MBR_FTR_FEATURES_TRUE
         hasproperty(frame, feature) || continue
-        if feature in MBR_RECEIVER_FEATURES
+        if feature in MBR_RECEIVER_FEATURES ||
+           feature in MBR_SHARED_FEATURES
             all_present = all(
                 counterfactual_idx ->
                     hasproperty(frame, feature),
@@ -103,7 +97,7 @@ function _mbr_available_feature_sets(frame::DataFrame)
 
         stem = nothing
         feature_string = String(feature)
-        for candidate_stem in MBR_PAIRED_FEATURE_STEMS
+        for candidate_stem in MBR_MODEL_PAIRED_FEATURE_STEMS
             if feature_string == candidate_stem * "_true"
                 stem = candidate_stem
                 break
@@ -129,9 +123,66 @@ function _mbr_available_feature_sets(frame::DataFrame)
     return true_features, false_features
 end
 
+@inline function _mbr_block_feature(
+    stem::AbstractString,
+    counterfactual_idx::Int,
+)
+    return counterfactual_idx == 0 ?
+        _mbr_true_feature(stem) :
+        _mbr_false_feature(stem, counterfactual_idx)
+end
+
+function _mbr_add_hellinger_contrasts!(frame::DataFrame)
+    n = nrow(frame)
+    for base in MBR_HELLINGER_CONTRAST_BASE_STEMS
+        source_columns = Symbol[
+            _mbr_block_feature(base, counterfactual_idx)
+            for counterfactual_idx in 0:MBR_N_COUNTERFACTUALS
+        ]
+        all(column -> hasproperty(frame, column), source_columns) ||
+            continue
+
+        for counterfactual_idx in 0:MBR_N_COUNTERFACTUALS
+            source_column = source_columns[counterfactual_idx + 1]
+            rank_column = _mbr_block_feature(
+                base * "_rank",
+                counterfactual_idx,
+            )
+            margin_column = _mbr_block_feature(
+                base * "_margin",
+                counterfactual_idx,
+            )
+            ranks = fill(-1.0f0, n)
+            margins = fill(-1.0f0, n)
+            @inbounds for row in 1:n
+                source_value = Float32(frame[row, source_column])
+                isfinite(source_value) && source_value >= 0.0f0 || continue
+                rank = 1
+                best_other = Inf32
+                for (other_idx, other_column) in enumerate(source_columns)
+                    other_idx == counterfactual_idx + 1 && continue
+                    other_value = Float32(frame[row, other_column])
+                    isfinite(other_value) && other_value >= 0.0f0 || continue
+                    other_value < source_value && (rank += 1)
+                    other_value < best_other && (best_other = other_value)
+                end
+                ranks[row] = Float32(rank)
+                margins[row] = isfinite(best_other) ?
+                    best_other - source_value :
+                    -1.0f0
+            end
+            frame[!, rank_column] = ranks
+            frame[!, margin_column] = margins
+        end
+    end
+    return frame
+end
+
 function _mbr_eval_mask_and_labels(
     scores::Vector{Float32},
     present::BitMatrix,
+    top_labels::BitVector,
+    top_mask::BitVector,
 )
     n_candidates, n_counterfactuals = size(present)
     n_blocks = 1 + n_counterfactuals
@@ -140,8 +191,8 @@ function _mbr_eval_mask_and_labels(
     eval_mask = falses(length(scores))
     labels = falses(length(scores))
     @inbounds for candidate_idx in 1:n_candidates
-        eval_mask[candidate_idx] = true
-        labels[candidate_idx] = true
+        eval_mask[candidate_idx] = top_mask[candidate_idx]
+        labels[candidate_idx] = top_labels[candidate_idx]
         best_false_idx = 0
         best_false_score = -Inf32
         for counterfactual_idx in 1:n_counterfactuals
@@ -164,9 +215,16 @@ function _mbr_iteration_metrics(
     scores::Vector{Float32},
     present::BitMatrix,
     target_top::BitVector,
+    top_labels::BitVector,
+    top_mask::BitVector,
 )
     n_candidates = length(target_top)
-    eval_mask, labels = _mbr_eval_mask_and_labels(scores, present)
+    eval_mask, labels = _mbr_eval_mask_and_labels(
+        scores,
+        present,
+        top_labels,
+        top_mask,
+    )
     qvalues = fill(Inf32, length(scores))
     peps = fill(Inf32, length(scores))
     eval_indices = findall(eval_mask)
@@ -235,23 +293,29 @@ end
 function _mbr_training_rows(
     folds::Vector{UInt8},
     positive_top::BitVector,
+    receiver_decoy_top::BitVector,
     present::BitMatrix,
     train_fold::UInt8;
     max_positives::Int = MBR_MAX_POSITIVE_TRAIN_PER_FOLD,
     max_negatives::Int = MBR_MAX_NEGATIVE_TRAIN_PER_FOLD,
 )
     n_candidates, n_counterfactuals = size(present)
+    length(receiver_decoy_top) == n_candidates ||
+        error("MBR receiver-decoy mask length mismatch")
     available_positives = 0
+    available_receiver_decoys = 0
     negative_counts = zeros(Int, n_counterfactuals)
     @inbounds for candidate_idx in 1:n_candidates
         folds[candidate_idx] == train_fold || continue
         available_positives += positive_top[candidate_idx]
+        available_receiver_decoys += receiver_decoy_top[candidate_idx]
         for counterfactual_idx in 1:n_counterfactuals
             present[candidate_idx, counterfactual_idx] || continue
             negative_counts[counterfactual_idx] += 1
         end
     end
-    available_negatives = sum(negative_counts)
+    available_negatives =
+        available_receiver_decoys + sum(negative_counts)
 
     if available_positives <= max_positives &&
        available_negatives <= max_negatives
@@ -270,6 +334,9 @@ function _mbr_training_rows(
             if positive_top[candidate_idx]
                 push!(train_rows, candidate_idx)
                 push!(train_labels, true)
+            elseif receiver_decoy_top[candidate_idx]
+                push!(train_rows, candidate_idx)
+                push!(train_labels, false)
             end
             for counterfactual_idx in 1:n_counterfactuals
                 present[candidate_idx, counterfactual_idx] || continue
@@ -287,6 +354,8 @@ function _mbr_training_rows(
             used_positives = available_positives,
             available_negatives = available_negatives,
             used_negatives = available_negatives,
+            available_receiver_decoys = available_receiver_decoys,
+            used_receiver_decoys = available_receiver_decoys,
             available_negatives_by_counterfactual = negative_counts,
             used_negatives_by_counterfactual = copy(negative_counts),
         )
@@ -294,6 +363,8 @@ function _mbr_training_rows(
 
     positives = Int[]
     sizehint!(positives, available_positives)
+    receiver_decoys = Int[]
+    sizehint!(receiver_decoys, available_receiver_decoys)
     negatives_by_counterfactual = [
         Int[] for _ in 1:n_counterfactuals
     ]
@@ -306,6 +377,8 @@ function _mbr_training_rows(
     @inbounds for candidate_idx in 1:n_candidates
         folds[candidate_idx] == train_fold || continue
         positive_top[candidate_idx] && push!(positives, candidate_idx)
+        receiver_decoy_top[candidate_idx] &&
+            push!(receiver_decoys, candidate_idx)
         for counterfactual_idx in 1:n_counterfactuals
             present[candidate_idx, counterfactual_idx] || continue
             push!(
@@ -319,12 +392,25 @@ function _mbr_training_rows(
         positives,
         max_positives,
     )
-    negative_caps = _mbr_proportional_caps(
+    all_negative_counts = vcat(
+        available_receiver_decoys,
         negative_counts,
+    )
+    all_negative_caps = _mbr_proportional_caps(
+        all_negative_counts,
         max_negatives,
     )
+    sampled_receiver_decoys = _mbr_evenly_spaced_sample(
+        receiver_decoys,
+        all_negative_caps[1],
+    )
+    negative_caps = all_negative_caps[2:end]
     sampled_negatives = Int[]
-    sizehint!(sampled_negatives, sum(negative_caps))
+    sizehint!(
+        sampled_negatives,
+        length(sampled_receiver_decoys) + sum(negative_caps),
+    )
+    append!(sampled_negatives, sampled_receiver_decoys)
     for counterfactual_idx in 1:n_counterfactuals
         append!(
             sampled_negatives,
@@ -347,6 +433,8 @@ function _mbr_training_rows(
         used_positives = length(sampled_positives),
         available_negatives = available_negatives,
         used_negatives = length(sampled_negatives),
+        available_receiver_decoys = available_receiver_decoys,
+        used_receiver_decoys = length(sampled_receiver_decoys),
         available_negatives_by_counterfactual = negative_counts,
         used_negatives_by_counterfactual = negative_caps,
     )
@@ -356,6 +444,7 @@ function _mbr_fit_oof_iteration(
     x::Matrix{Float32},
     folds::Vector{UInt8},
     positive_top::BitVector,
+    receiver_decoy_top::BitVector,
     present::BitMatrix,
 )
     n_candidates, n_counterfactuals = size(present)
@@ -383,6 +472,7 @@ function _mbr_fit_oof_iteration(
         training = _mbr_training_rows(
             folds,
             positive_top,
+            receiver_decoy_top,
             present,
             train_fold,
         )
@@ -391,11 +481,17 @@ function _mbr_fit_oof_iteration(
         capped =
             training.used_positives < training.available_positives ||
             training.used_negatives < training.available_negatives
+        used_counterfactuals =
+            sum(training.used_negatives_by_counterfactual)
+        available_counterfactuals =
+            sum(training.available_negatives_by_counterfactual)
         @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)): " *
                   "train positives=$(training.used_positives)/" *
                   "$(training.available_positives), " *
-                  "counterfactual negatives=$(training.used_negatives)/" *
-                  "$(training.available_negatives)" *
+                  "receiver decoys=$(training.used_receiver_decoys)/" *
+                  "$(training.available_receiver_decoys), " *
+                  "counterfactual negatives=$used_counterfactuals/" *
+                  "$available_counterfactuals" *
                   (capped ? " (capped)" : "")
         if isempty(train_rows) || length(unique(train_labels)) < 2
             scores[test_rows] .= isempty(train_labels) ?
@@ -481,6 +577,9 @@ function _mbr_semisupervised_oof(
     end
     target_top = BitVector(candidate_frame.target)
     positive_top = copy(target_top)
+    receiver_decoy_top = .!target_top
+    eval_top_labels = trues(n_candidates)
+    eval_top_mask = trues(n_candidates)
     folds = Vector{UInt8}(candidate_frame.cv_fold)
     best_state = nothing
     previous_positive = -1
@@ -490,9 +589,16 @@ function _mbr_semisupervised_oof(
             x,
             folds,
             positive_top,
+            receiver_decoy_top,
             present,
         )
-        metrics = _mbr_iteration_metrics(scores, present, target_top)
+        metrics = _mbr_iteration_metrics(
+            scores,
+            present,
+            target_top,
+            eval_top_labels,
+            eval_top_mask,
+        )
         current = (
             iteration = iteration,
             scores = scores,
@@ -500,20 +606,35 @@ function _mbr_semisupervised_oof(
             classifier = classifier,
         )
         if best_state === nothing ||
-           metrics.n_positive > best_state.metrics.n_positive
+           metrics.n_positive >= best_state.metrics.n_positive
             best_state = current
         end
         @debug_l1 "MBR transfer model iter $iteration: " *
-                  "training positives=$(count(positive_top)); " *
+                  "training positives=$(count(positive_top)), " *
+                  "receiver decoys=$(count(receiver_decoy_top)); " *
                   "FTR≤$(100 * MBR_SEMISUPERVISED_FTR_THRESHOLD)% " *
                   "target transfers=$(metrics.n_positive)"
-        if metrics.n_positive <= previous_positive
-            @debug_l1 "MBR transfer model stopping: target-transfer count did not increase; " *
-                      "using iteration $(best_state.iteration)"
+        if iteration > 1 && !_scoring_target_gain_sufficient(
+            previous_positive,
+            metrics.n_positive,
+        )
+            @debug_l1 "MBR transfer model stopping: target-transfer count " *
+                      "did not improve by " *
+                      "$(100 * SCORING_SEMISUPERVISED_MIN_TARGET_GAIN)% " *
+                      "over $previous_positive; using iteration " *
+                      "$(best_state.iteration) with " *
+                      "$(best_state.metrics.n_positive) target transfers"
+            break
+        elseif iteration == MBR_SEMISUPERVISED_MAX_ITERATIONS
+            @debug_l1 "MBR transfer model stopping: hit max iterations; " *
+                      "using iteration $(best_state.iteration) with " *
+                      "$(best_state.metrics.n_positive) target transfers"
             break
         end
         previous_positive = metrics.n_positive
         positive_top = metrics.positive_top
+        eval_top_labels = copy(positive_top)
+        eval_top_mask = positive_top .| receiver_decoy_top
     end
     return best_state, present
 end
@@ -741,6 +862,7 @@ function apply_postintegration_mbr_rescoring!(
     end
 
     candidates = frame[candidate_indices, :]
+    _mbr_add_hellinger_contrasts!(candidates)
     true_features, false_features = _mbr_available_feature_sets(candidates)
     best_state, present = _mbr_semisupervised_oof(
         candidates,
@@ -748,7 +870,12 @@ function apply_postintegration_mbr_rescoring!(
         false_features,
     )
     n_candidates = nrow(candidates)
-    real_scores = best_state.scores[1:n_candidates]
+    real_scores = copy(best_state.scores[1:n_candidates])
+    evaluated_top = @view best_state.metrics.eval_mask[1:n_candidates]
+    @inbounds for candidate_idx in 1:n_candidates
+        evaluated_top[candidate_idx] ||
+            (real_scores[candidate_idx] = NaN32)
+    end
     false_scores = _mbr_top_counterfactual_scores(
         best_state.scores,
         present,

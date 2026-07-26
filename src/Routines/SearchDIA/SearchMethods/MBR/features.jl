@@ -185,6 +185,7 @@ function build_mbr_integrated_donor_dict(
             :trace_prob_prepass,
             :qval,
             :global_qval,
+            :irt_pred,
             MBR_INTEGRATED_WEIGHT_COLUMN,
             MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
             MBR_INTEGRATED_APEX_IRT_COLUMN,
@@ -218,12 +219,7 @@ function build_mbr_integrated_donor_dict(
                 Float32(getproperty(tbl, MBR_INTEGRATED_APEX_IRT_COLUMN)[row])
             n_scans =
                 Float32(getproperty(tbl, MBR_INTEGRATED_N_SCANS_COLUMN)[row])
-            (
-                isfinite(weight) && weight > 0.0f0 &&
-                isfinite(irt_obs) &&
-                isfinite(n_scans) && n_scans > 0.0f0 &&
-                _mbr_sqrt_tuple_is_valid(integrated_frag_sqrt)
-            ) || continue
+            irt_pred = Float32(tbl.irt_pred[row])
             donor = _MBRDonorEntry(
                 score,
                 pid,
@@ -232,6 +228,7 @@ function build_mbr_integrated_donor_dict(
                     tbl,
                     MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
                 )[row]),
+                irt_pred - irt_obs,
                 irt_obs,
                 n_scans,
                 integrated_frag_sqrt,
@@ -255,6 +252,55 @@ function build_mbr_integrated_donor_dict(
         end
     end
     return donor_dict
+end
+
+function _mbr_lod_thresholds(
+    file_paths::Vector{String},
+    score_floor::Float32;
+    q_value_threshold::Float32,
+)
+    samples_by_file = Dict{UInt32, Vector{Float32}}()
+    global_samples = Float32[]
+    for path in file_paths
+        tbl = Arrow.Table(path)
+        weight_column = getproperty(tbl, MBR_INTEGRATED_WEIGHT_COLUMN)
+        @inbounds for row in eachindex(tbl.precursor_idx)
+            Bool(tbl.target[row]) || continue
+            _mbr_initial_pass(
+                tbl.qval[row],
+                tbl.global_qval[row],
+                q_value_threshold,
+            ) || continue
+            Float32(tbl.trace_prob_prepass[row]) >= score_floor || continue
+            weight = Float32(weight_column[row])
+            isfinite(weight) && weight > 0.0f0 || continue
+            log_weight = log2(weight)
+            file_idx = UInt32(tbl.ms_file_idx[row])
+            push!(
+                get!(() -> Float32[], samples_by_file, file_idx),
+                log_weight,
+            )
+            push!(global_samples, log_weight)
+        end
+    end
+
+    quantile_index(samples) = clamp(
+        ceil(Int, Float64(MBR_LOD_WEIGHT_QUANTILE) * length(samples)),
+        1,
+        length(samples),
+    )
+    by_file = Dict{UInt32, Float32}()
+    for (file_idx, samples) in samples_by_file
+        sort!(samples)
+        by_file[file_idx] = samples[quantile_index(samples)]
+    end
+    global_lod = if isempty(global_samples)
+        NaN32
+    else
+        sort!(global_samples)
+        global_samples[quantile_index(global_samples)]
+    end
+    return (by_file = by_file, global_lod = global_lod)
 end
 
 @inline function _mbr_donor_in_file(
@@ -299,6 +345,83 @@ end
     return best
 end
 
+@inline function _mbr_top_scoring_donor(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    receiver_file::UInt32,
+)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    best = nothing
+    best_score = -Inf32
+    @inbounds for donor in entries
+        donor.ms_file_idx == receiver_file && continue
+        score = donor.trace_prob
+        if best === nothing || score > best_score
+            best = donor
+            best_score = score
+        end
+    end
+    return best
+end
+
+@inline function _mbr_worst_alternate_donor(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid::UInt32,
+    receiver_file::UInt32,
+    best_donor::_MBRDonorEntry,
+)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    worst = nothing
+    worst_weight = Inf32
+    worst_score = Inf32
+    @inbounds for donor in entries
+        donor.ms_file_idx == receiver_file && continue
+        donor.ms_file_idx == best_donor.ms_file_idx && continue
+        weight = isfinite(donor.weight) ? donor.weight : Inf32
+        if worst === nothing ||
+           weight < worst_weight ||
+           (weight == worst_weight && donor.trace_prob < worst_score)
+            worst = donor
+            worst_weight = weight
+            worst_score = donor.trace_prob
+        end
+    end
+    return worst
+end
+
+@inline function _mbr_collect_false_donors_from_pool!(
+    donors::Vector{Union{Nothing, _MBRDonorEntry}},
+    seen_pids::BitSet,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pool::_MBRIrtPool,
+    target_irt::Float32,
+    receiver_pid::UInt32,
+    receiver_file::UInt32,
+    eligibility::_MBRCounterfactualEligibility,
+    atlas::Union{Nothing, RunSimilarityAtlas};
+    donor_file::Union{Nothing, UInt32} = nothing,
+)
+    n_found = count(donor -> donor !== nothing, donors)
+    @inbounds for pool_idx in _mbr_nearest_pool_order(pool, target_irt)
+        pid = pool.pids[pool_idx]
+        pid == receiver_pid && continue
+        Int(pid) in seen_pids && continue
+        _mbr_counterfactual_eligible(eligibility, receiver_file, pid) ||
+            continue
+        donor = donor_file === nothing ?
+            _mbr_select_donor(donor_dict, pid, receiver_file, atlas) :
+            _mbr_donor_in_file(donor_dict, pid, donor_file)
+        donor === nothing && continue
+        n_found += 1
+        donors[n_found] = donor
+        push!(seen_pids, Int(pid))
+        n_found == MBR_N_COUNTERFACTUALS && break
+    end
+    return n_found
+end
+
 function _mbr_false_donors(
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pools::_MBRPartnerPools,
@@ -310,6 +433,8 @@ function _mbr_false_donors(
     atlas::Union{Nothing, RunSimilarityAtlas},
 )
     pid_int = Int(receiver_pid)
+    fold = Int(pools.fold_by_pid[pid_int])
+    mz_bin = Int(pools.mz_bin_by_pid[pid_int])
     charge = Int(pools.charge_by_pid[pid_int])
     sequence_length = Int(pools.length_by_pid[pid_int])
     donors = Union{Nothing, _MBRDonorEntry}[
@@ -323,46 +448,121 @@ function _mbr_false_donors(
         (true_donor.ms_file_idx, charge, sequence_length),
         _empty_mbr_irt_pool(),
     )
-    for pool_idx in _mbr_nearest_pool_order(same_file_pool, target_irt)
-        pid = same_file_pool.pids[pool_idx]
-        pid == receiver_pid && continue
-        Int(pid) in seen_pids && continue
-        _mbr_counterfactual_eligible(eligibility, receiver_file, pid) || continue
-        donor = _mbr_donor_in_file(
-            donor_dict,
-            pid,
-            true_donor.ms_file_idx,
-        )
-        donor === nothing && continue
-        n_found += 1
-        donors[n_found] = donor
-        push!(seen_pids, Int(pid))
-        n_found == MBR_N_COUNTERFACTUALS && return donors
-    end
-
-    global_pool = get(
-        pools.charge_length_pool,
-        (charge, sequence_length),
-        _empty_mbr_irt_pool(),
+    n_found = _mbr_collect_false_donors_from_pool!(
+        donors,
+        seen_pids,
+        donor_dict,
+        same_file_pool,
+        target_irt,
+        receiver_pid,
+        receiver_file,
+        eligibility,
+        atlas;
+        donor_file = true_donor.ms_file_idx,
     )
-    for pool_idx in _mbr_nearest_pool_order(global_pool, target_irt)
-        pid = global_pool.pids[pool_idx]
-        pid == receiver_pid && continue
-        Int(pid) in seen_pids && continue
-        _mbr_counterfactual_eligible(eligibility, receiver_file, pid) || continue
-        donor = _mbr_select_donor(donor_dict, pid, receiver_file, atlas)
-        donor === nothing && continue
-        n_found += 1
-        donors[n_found] = donor
-        push!(seen_pids, Int(pid))
+    n_found == MBR_N_COUNTERFACTUALS && return donors
+
+    fallback_pools = (
+        get(
+            pools.fold_mz_charge_length_pool,
+            (fold, mz_bin, charge, sequence_length),
+            _empty_mbr_irt_pool(),
+        ),
+        get(
+            pools.fold_charge_length_pool,
+            (fold, charge, sequence_length),
+            _empty_mbr_irt_pool(),
+        ),
+        get(
+            pools.charge_length_pool,
+            (charge, sequence_length),
+            _empty_mbr_irt_pool(),
+        ),
+    )
+    for pool in fallback_pools
+        n_found = _mbr_collect_false_donors_from_pool!(
+            donors,
+            seen_pids,
+            donor_dict,
+            pool,
+            target_irt,
+            receiver_pid,
+            receiver_file,
+            eligibility,
+            atlas,
+        )
         n_found == MBR_N_COUNTERFACTUALS && break
     end
     return donors
 end
 
+@inline function _mbr_log2_weight_ratio(
+    receiver_weight::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_weight) && receiver_weight > 0.0f0 &&
+        isfinite(donor.weight) && donor.weight > 0.0f0 || return -1.0f0
+    return log2(receiver_weight / donor.weight)
+end
+
+@inline function _mbr_log2_explained_ratio(
+    receiver_explained::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_explained) &&
+        isfinite(donor.log2_intensity_explained) || return -1.0f0
+    return receiver_explained - donor.log2_intensity_explained
+end
+
+@inline function _mbr_abs_scan_diff(
+    receiver_n_scans::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_n_scans) &&
+        isfinite(donor.n_scans) || return -1.0f0
+    return abs(receiver_n_scans - donor.n_scans)
+end
+
+@inline function _mbr_log2_scan_ratio(
+    receiver_n_scans::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_n_scans) &&
+        isfinite(donor.n_scans) || return -1.0f0
+    return log2((receiver_n_scans + 1.0f0) / (donor.n_scans + 1.0f0))
+end
+
+@inline function _mbr_residual_irt_diff(
+    receiver_irt_pred::Float32,
+    receiver_irt::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_irt_pred) &&
+        isfinite(receiver_irt) &&
+        isfinite(donor.irt_residual) || return -1.0f0
+    return abs((receiver_irt_pred - receiver_irt) - donor.irt_residual)
+end
+
+@inline function _mbr_observed_irt_diff(
+    receiver_irt::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    donor !== nothing &&
+        isfinite(receiver_irt) &&
+        isfinite(donor.irt_obs) || return -1.0f0
+    return abs(receiver_irt - donor.irt_obs)
+end
+
 function _mbr_feature_values(
+    receiver_pid::UInt32,
     receiver_weight::Float32,
     receiver_explained::Float32,
+    receiver_irt_pred::Float32,
     receiver_irt::Float32,
     receiver_n_scans::Float32,
     receiver_temporal_mean::NTuple{8, Float32},
@@ -371,56 +571,76 @@ function _mbr_feature_values(
     donor::_MBRDonorEntry,
     receiver_file::UInt32,
     atlas::Union{Nothing, RunSimilarityAtlas},
+    clusters::_MBRReceiverRunClusters,
     bitvec_rank_table,
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
 )
-    log_weight_ratio =
-        receiver_weight > 0.0f0 && donor.weight > 0.0f0 ?
-        log2(receiver_weight / donor.weight) : -1.0f0
-    explained_ratio =
-        isfinite(receiver_explained) && isfinite(donor.log2_intensity_explained) ?
-        receiver_explained - donor.log2_intensity_explained : -1.0f0
-    irt_diff =
-        isfinite(receiver_irt) && isfinite(donor.irt_obs) ?
-        abs(receiver_irt - donor.irt_obs) : -1.0f0
-    scan_diff =
-        isfinite(receiver_n_scans) && isfinite(donor.n_scans) ?
-        abs(receiver_n_scans - donor.n_scans) : -1.0f0
-    scan_ratio =
-        receiver_n_scans > 0.0f0 && donor.n_scans > 0.0f0 ?
-        log2(receiver_n_scans / donor.n_scans) : -1.0f0
-
-    donor_mask = donor.frag_corr_bitvec
+    worst_donor = _mbr_worst_alternate_donor(
+        donor_dict,
+        donor.precursor_idx,
+        receiver_file,
+        donor,
+    )
+    hellinger_donor = _mbr_top_scoring_donor(
+        donor_dict,
+        donor.precursor_idx,
+        receiver_file,
+    )
+    hellinger_donor === nothing && (hellinger_donor = donor)
+    donor_mask = hellinger_donor.frag_corr_bitvec
     shared_mask = _mbr_shared_corr_mask(receiver_corr_mask, donor_mask)
-    return Float32[
+    cluster = _mbr_receiver_cluster_features(
+        clusters,
+        receiver_pid,
+        receiver_file,
+    )
+    return (
         donor.trace_prob,
+        worst_donor === nothing ? -1.0f0 : worst_donor.trace_prob,
         _mbr_run_similarity(atlas, receiver_file, donor.ms_file_idx),
-        log_weight_ratio,
-        explained_ratio,
-        irt_diff,
-        scan_diff,
-        scan_ratio,
+        cluster.support_count,
+        cluster.peer_count,
+        cluster.support_fraction,
+        _mbr_log2_weight_ratio(receiver_weight, donor),
+        _mbr_log2_weight_ratio(receiver_weight, worst_donor),
+        _mbr_log2_explained_ratio(receiver_explained, donor),
+        _mbr_log2_explained_ratio(receiver_explained, worst_donor),
+        _mbr_abs_scan_diff(receiver_n_scans, donor),
+        _mbr_abs_scan_diff(receiver_n_scans, worst_donor),
+        _mbr_log2_scan_ratio(receiver_n_scans, donor),
+        _mbr_log2_scan_ratio(receiver_n_scans, worst_donor),
+        _mbr_residual_irt_diff(receiver_irt_pred, receiver_irt, donor),
+        _mbr_residual_irt_diff(
+            receiver_irt_pred,
+            receiver_irt,
+            worst_donor,
+        ),
+        _mbr_observed_irt_diff(receiver_irt, donor),
+        _mbr_observed_irt_diff(receiver_irt, worst_donor),
+        worst_donor === nothing ? 1.0f0 : 0.0f0,
+        hellinger_donor.trace_prob,
         _mbr_hellinger_from_sqrt(
             receiver_temporal_mean,
-            donor.integrated_frag_sqrt,
+            hellinger_donor.integrated_frag_sqrt,
         ),
         _mbr_temporal_masked_hellinger(
             receiver_temporal_trace,
-            donor.integrated_frag_sqrt,
+            hellinger_donor.integrated_frag_sqrt,
             donor_mask,
         ),
         _mbr_temporal_masked_hellinger(
             receiver_temporal_trace,
-            donor.integrated_frag_sqrt,
+            hellinger_donor.integrated_frag_sqrt,
             receiver_corr_mask,
         ),
         _mbr_temporal_masked_hellinger(
             receiver_temporal_trace,
-            donor.integrated_frag_sqrt,
+            hellinger_donor.integrated_frag_sqrt,
             shared_mask,
         ),
-        Float32(donor.frag_corr_bitvec_rank),
+        Float32(hellinger_donor.frag_corr_bitvec_rank),
         Float32(_bitvec_pattern_rank(bitvec_rank_table, shared_mask)),
-    ]
+    )
 end
 
 function _mbr_sidecar_columns(n::Int)
@@ -428,6 +648,8 @@ function _mbr_sidecar_columns(n::Int)
         :precursor_idx => zeros(UInt32, n),
         :scan_idx => zeros(UInt32, n),
         :MBR_best_is_missing_true => trues(n),
+        :MBR_log2_weight_lod_ratio => fill(-1.0f0, n),
+        :MBR_receiver_frag_corr_bitvec_rank => fill(-1.0f0, n),
     )
     for stem in MBR_PAIRED_FEATURE_STEMS
         columns[_mbr_true_feature(stem)] = fill(-1.0f0, n)
@@ -442,12 +664,27 @@ function _mbr_sidecar_columns(n::Int)
     return columns
 end
 
+@inline function _mbr_log2_weight_lod_ratio(
+    weight::Float32,
+    file_idx::UInt32,
+    lod_by_file::Dict{UInt32, Float32},
+    global_lod::Float32,
+)
+    isfinite(weight) && weight > 0.0f0 || return -1.0f0
+    lod = get(lod_by_file, file_idx, global_lod)
+    isfinite(lod) || return -1.0f0
+    return log2(weight) - lod
+end
+
 function compute_postintegration_mbr_features!(
     main_path::String,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pools::_MBRPartnerPools,
     eligibility::_MBRCounterfactualEligibility;
     run_similarity_atlas::Union{Nothing, RunSimilarityAtlas},
+    receiver_run_clusters::_MBRReceiverRunClusters,
+    lod_log2_weight_by_file::Dict{UInt32, Float32},
+    lod_log2_weight_global::Float32,
     bitvec_rank_table = nothing,
 )
     main = Arrow.Table(main_path)
@@ -478,6 +715,11 @@ function compute_postintegration_mbr_features!(
         main,
         MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN,
     )
+    corr_rank_column = getproperty(
+        main,
+        MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
+    )
+    has_irt_pred = hasproperty(main, :irt_pred)
 
     @inbounds for row in 1:n
         receiver_pid = UInt32(main.precursor_idx[row])
@@ -493,6 +735,9 @@ function compute_postintegration_mbr_features!(
         receiver_weight = Float32(weight_column[row])
         receiver_explained = Float32(explained_column[row])
         receiver_irt = Float32(irt_column[row])
+        receiver_irt_pred = has_irt_pred ?
+            Float32(main.irt_pred[row]) :
+            pools.irt_by_pid[Int(receiver_pid)]
         receiver_n_scans = Float32(scan_count_column[row])
         receiver_temporal_mean = _mbr_sqrt_tuple(
             temporal_mean_columns,
@@ -500,10 +745,21 @@ function compute_postintegration_mbr_features!(
         )
         receiver_temporal_trace = temporal_trace_column[row]
         receiver_corr_mask = UInt8(corr_mask_column[row])
+        columns[:MBR_log2_weight_lod_ratio][row] =
+            _mbr_log2_weight_lod_ratio(
+                receiver_weight,
+                receiver_file,
+                lod_log2_weight_by_file,
+                lod_log2_weight_global,
+            )
+        columns[:MBR_receiver_frag_corr_bitvec_rank][row] =
+            Float32(corr_rank_column[row])
 
         true_values = _mbr_feature_values(
+            receiver_pid,
             receiver_weight,
             receiver_explained,
+            receiver_irt_pred,
             receiver_irt,
             receiver_n_scans,
             receiver_temporal_mean,
@@ -512,16 +768,16 @@ function compute_postintegration_mbr_features!(
             true_donor,
             receiver_file,
             run_similarity_atlas,
+            receiver_run_clusters,
             bitvec_rank_table,
+            donor_dict,
         )
         columns[:MBR_best_is_missing_true][row] = false
         for (feature_idx, stem) in enumerate(MBR_PAIRED_FEATURE_STEMS)
             columns[_mbr_true_feature(stem)][row] = true_values[feature_idx]
         end
 
-        target_irt = hasproperty(main, :irt_pred) ?
-            Float32(main.irt_pred[row]) :
-            pools.irt_by_pid[Int(receiver_pid)]
+        target_irt = receiver_irt_pred
         false_donors = _mbr_false_donors(
             donor_dict,
             pools,
@@ -536,8 +792,10 @@ function compute_postintegration_mbr_features!(
             false_donor = false_donors[counterfactual_idx]
             false_donor === nothing && continue
             false_values = _mbr_feature_values(
+                receiver_pid,
                 receiver_weight,
                 receiver_explained,
+                receiver_irt_pred,
                 receiver_irt,
                 receiver_n_scans,
                 receiver_temporal_mean,
@@ -546,7 +804,9 @@ function compute_postintegration_mbr_features!(
                 false_donor,
                 receiver_file,
                 run_similarity_atlas,
+                receiver_run_clusters,
                 bitvec_rank_table,
+                donor_dict,
             )
             columns[_mbr_missing_feature(counterfactual_idx)][row] = false
             for (feature_idx, stem) in enumerate(MBR_PAIRED_FEATURE_STEMS)
@@ -563,6 +823,9 @@ function compute_postintegration_mbr_features!(
     sidecar[!, :scan_idx] = columns[:scan_idx]
     sidecar[!, :MBR_best_is_missing_true] =
         columns[:MBR_best_is_missing_true]
+    for feature in MBR_SHARED_FEATURES
+        sidecar[!, feature] = columns[feature]
+    end
     for stem in MBR_PAIRED_FEATURE_STEMS
         sidecar[!, _mbr_true_feature(stem)] =
             columns[_mbr_true_feature(stem)]

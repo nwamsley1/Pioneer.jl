@@ -17,6 +17,7 @@ function _test_integrated_mbr_donor(
         precursor_idx,
         100.0f0,
         -1.0f0,
+        0.0f0,
         irt,
         5.0f0,
         spectrum,
@@ -62,9 +63,13 @@ end
         irts = irt,
     )
     pools = Pioneer._MBRPartnerPools(
+        fill(UInt8(0), 5),
+        fill(UInt8(1), 5),
         charge,
         sequence_length,
         irt,
+        Dict{Tuple{Int, Int, Int, Int}, Pioneer._MBRIrtPool}(),
+        Dict{Tuple{Int, Int, Int}, Pioneer._MBRIrtPool}(),
         Dict((2, 9) => global_pool),
         Dict((UInt32(2), 2, 9) => same_file_pool),
     )
@@ -137,6 +142,7 @@ end
     n_candidates = 12
     folds = fill(UInt8(1), n_candidates)
     positives = trues(n_candidates)
+    receiver_decoys = falses(n_candidates)
     present = falses(n_candidates, Pioneer.MBR_N_COUNTERFACTUALS)
     present[:, 1] .= true
     present[1:8, 2] .= true
@@ -145,6 +151,7 @@ end
     sampled = Pioneer._mbr_training_rows(
         folds,
         positives,
+        receiver_decoys,
         present,
         UInt8(1);
         max_positives = 5,
@@ -153,6 +160,7 @@ end
     sampled_again = Pioneer._mbr_training_rows(
         folds,
         positives,
+        receiver_decoys,
         present,
         UInt8(1);
         max_positives = 5,
@@ -172,6 +180,7 @@ end
     uncapped = Pioneer._mbr_training_rows(
         folds,
         positives,
+        receiver_decoys,
         present,
         UInt8(1);
         max_positives = 100,
@@ -193,6 +202,154 @@ end
     end
     @test uncapped.rows == expected_rows
     @test uncapped.labels == expected_labels
+end
+
+@testset "MBR receiver decoys remain explicit training negatives" begin
+    folds = fill(UInt8(1), 6)
+    positives = BitVector([true, true, false, false, false, false])
+    receiver_decoys =
+        BitVector([false, false, true, true, true, true])
+    present = falses(6, Pioneer.MBR_N_COUNTERFACTUALS)
+    present[1, 1] = true
+    present[3, 1] = true
+
+    training = Pioneer._mbr_training_rows(
+        folds,
+        positives,
+        receiver_decoys,
+        present,
+        UInt8(1);
+        max_positives = 100,
+        max_negatives = 100,
+    )
+
+    @test training.available_positives == 2
+    @test training.available_receiver_decoys == 4
+    @test training.available_negatives_by_counterfactual == [2, 0, 0]
+    @test training.rows == [1, 7, 2, 3, 9, 4, 5, 6]
+    @test training.labels ==
+        Bool[true, false, true, false, false, false, false, false]
+end
+
+@testset "MBR candidates do not require a counterfactual donor" begin
+    frame = DataFrame(
+        global_qval = Float32[0.005, 0.005, 0.02, 0.005],
+        qval = Float32[0.2, 0.005, 0.2, 0.2],
+        MBR_best_is_missing_true = Bool[false, false, false, true],
+    )
+
+    @test Pioneer._mbr_candidate_mask(frame, 0.01f0) ==
+        BitVector([true, false, false, false])
+end
+
+@testset "MBR evaluation retains no-counterfactual candidates" begin
+    scores = Float32[
+        0.9, 0.8, 0.7,
+        0.1, 0.6, 0.2,
+        0.3, 0.4, 0.5,
+        0.2, 0.1, 0.4,
+    ]
+    present = BitMatrix([
+        false false false
+        true  true  false
+        true  false true
+    ])
+    top_labels = BitVector([true, false, false])
+    top_mask = BitVector([true, true, false])
+
+    eval_mask, labels = Pioneer._mbr_eval_mask_and_labels(
+        scores,
+        present,
+        top_labels,
+        top_mask,
+    )
+
+    @test eval_mask[1]
+    @test labels[1]
+    @test eval_mask[2]
+    @test !labels[2]
+    @test !eval_mask[3]
+    @test count(eval_mask) == 4
+end
+
+@testset "MBR Hellinger contrasts rank real and counterfactual donors" begin
+    base = "MBR_best_temporal_frag_hellinger"
+    frame = DataFrame(
+        Pioneer._mbr_true_feature(base) => Float32[0.10, -1.0],
+        Pioneer._mbr_false_feature(base, 1) => Float32[0.20, 0.40],
+        Pioneer._mbr_false_feature(base, 2) => Float32[0.05, 0.30],
+        Pioneer._mbr_false_feature(base, 3) => Float32[-1.0, 0.20],
+    )
+
+    Pioneer._mbr_add_hellinger_contrasts!(frame)
+
+    @test frame.MBR_best_temporal_frag_hellinger_rank_true ==
+        Float32[2, -1]
+    @test frame.MBR_best_temporal_frag_hellinger_rank_false2 ==
+        Float32[1, 2]
+    @test frame.MBR_best_temporal_frag_hellinger_rank_false3 ==
+        Float32[-1, 1]
+    @test frame.MBR_best_temporal_frag_hellinger_margin_true[1] ≈ -0.05f0
+    @test frame.MBR_best_temporal_frag_hellinger_margin_false2[1] ≈
+        0.05f0
+end
+
+@testset "MBR receiver run-cluster support excludes the receiver run" begin
+    clusters = Pioneer._MBRReceiverRunClusters(
+        Dict(UInt32(1) => UInt32(1), UInt32(2) => UInt32(1),
+             UInt32(3) => UInt32(1)),
+        UInt32[3],
+        Dict(UInt32(10) => Dict(UInt32(1) => UInt32(2))),
+        Dict(UInt32(1) => BitSet([10])),
+    )
+
+    support = Pioneer._mbr_receiver_cluster_features(
+        clusters,
+        UInt32(10),
+        UInt32(1),
+    )
+    @test support.support_count == 1.0f0
+    @test support.peer_count == 2.0f0
+    @test support.support_fraction == 0.5f0
+end
+
+@testset "MBR donor feature tuple stays aligned with its sidecar schema" begin
+    donor = _test_integrated_mbr_donor(
+        UInt32(10),
+        0.95f0,
+        UInt32(2),
+    )
+    donor_dict = Dict(UInt32(10) => [donor])
+    spectrum = (
+        1.0f0, 0.0f0, 0.0f0, 0.0f0,
+        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+    )
+    temporal_trace = Float32[
+        1.0, 1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    ]
+
+    values = Pioneer._mbr_feature_values(
+        UInt32(10),
+        100.0f0,
+        -1.0f0,
+        10.0f0,
+        10.0f0,
+        5.0f0,
+        spectrum,
+        temporal_trace,
+        UInt8(0x03),
+        donor,
+        UInt32(3),
+        nothing,
+        Pioneer._MBRReceiverRunClusters(),
+        nothing,
+        donor_dict,
+    )
+
+    @test length(values) == length(Pioneer.MBR_PAIRED_FEATURE_STEMS)
+    @test values[19] == 1.0f0
+    @test values[20] == donor.trace_prob
 end
 
 @testset "paired post-integration MBR model produces OOF transfer scores" begin

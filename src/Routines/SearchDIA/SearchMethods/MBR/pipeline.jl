@@ -429,6 +429,15 @@ function finalize_postintegration_mbr!(
         donor_score_floor;
         q_value_threshold = q_value_threshold,
     )
+    lod_thresholds = _mbr_lod_thresholds(
+        file_paths,
+        donor_score_floor;
+        q_value_threshold = q_value_threshold,
+    )
+    receiver_run_clusters = build_mbr_receiver_run_clusters(
+        file_paths;
+        q_value_threshold = q_value_threshold,
+    )
     partner_pools = build_mbr_partner_pools(file_paths, precursors)
     eligibility = build_mbr_counterfactual_eligibility(
         file_paths;
@@ -453,6 +462,9 @@ function finalize_postintegration_mbr!(
                 partner_pools,
                 eligibility;
                 run_similarity_atlas = run_similarity_atlas,
+                receiver_run_clusters = receiver_run_clusters,
+                lod_log2_weight_by_file = lod_thresholds.by_file,
+                lod_log2_weight_global = lod_thresholds.global_lod,
                 bitvec_rank_table = rank_table,
             )
         end

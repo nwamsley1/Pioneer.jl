@@ -282,6 +282,7 @@ function importScripts()
         [
             "types.jl",
             "pairing.jl",
+            "clusters.jl",
             "features.jl",
             "rescoring.jl",
             "pipeline.jl",

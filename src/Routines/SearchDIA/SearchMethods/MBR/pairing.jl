@@ -15,28 +15,59 @@ function _sort_mbr_irt_pool(
     )
 end
 
+function _mbr_mz_decile_edges(mzs::Vector{Float32})
+    finite = filter(isfinite, mzs)
+    isempty(finite) && return Float32.(collect(LinRange(0.0, 1.0, 11)))
+    edges = Float32.(quantile(finite, 0:0.1:1))
+    if length(unique(edges)) < 11
+        minimum_mz, maximum_mz = extrema(finite)
+        maximum_mz > minimum_mz ||
+            (maximum_mz = nextfloat(minimum_mz))
+        edges = Float32.(collect(LinRange(minimum_mz, maximum_mz, 11)))
+    end
+    return edges
+end
+
+@inline function _mbr_mz_decile(mz::Float32, edges::Vector{Float32})
+    isfinite(mz) || return 5
+    return clamp(searchsortedlast(edges, mz), 1, 10)
+end
+
 """
     build_mbr_partner_pools(file_paths, precursors)
 
-Build deterministic same-charge/same-length counterfactual pools. The
-experiment-wide pool supports sparse-run fallback; the file-specific pool
-lets false transfers use the exact same donor run as the real transfer.
+Build deterministic counterfactual pools. Matching first uses the true
+donor's run, then receiver fold × m/z decile × charge × length, receiver fold
+× charge × length, and finally experiment-wide charge × length.
 """
 function build_mbr_partner_pools(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
 )
     n_precursors = length(precursors)
+    fold_by_pid = zeros(UInt8, n_precursors)
+    mz_bin_by_pid = zeros(UInt8, n_precursors)
     charge_by_pid = zeros(UInt8, n_precursors)
     length_by_pid = zeros(UInt8, n_precursors)
     irt_by_pid = Float32.(getIrt(precursors))
+    mz_by_pid = Float32.(getMz(precursors))
     charges = getCharge(precursors)
-    sequences = getSequence(precursors)
+    lengths = getLength(precursors)
+    mz_edges = _mbr_mz_decile_edges(mz_by_pid)
     @inbounds for pid in 1:n_precursors
         charge_by_pid[pid] = UInt8(charges[pid])
-        length_by_pid[pid] = UInt8(min(length(sequences[pid]), typemax(UInt8)))
+        length_by_pid[pid] = UInt8(min(lengths[pid], typemax(UInt8)))
+        mz_bin_by_pid[pid] = UInt8(_mbr_mz_decile(mz_by_pid[pid], mz_edges))
     end
 
+    fold_mz_pairs = Dict{
+        Tuple{Int, Int, Int, Int},
+        Vector{Tuple{Float32, UInt32}},
+    }()
+    fold_pairs = Dict{
+        Tuple{Int, Int, Int},
+        Vector{Tuple{Float32, UInt32}},
+    }()
     global_pairs = Dict{
         Tuple{Int, Int},
         Vector{Tuple{Float32, UInt32}},
@@ -48,7 +79,7 @@ function build_mbr_partner_pools(
 
     for path in file_paths
         tbl = Arrow.Table(path)
-        for col in (:precursor_idx, :ms_file_idx)
+        for col in (:precursor_idx, :ms_file_idx, :cv_fold)
             hasproperty(tbl, col) ||
                 error("MBR counterfactual pools require column $col in $path")
         end
@@ -61,25 +92,58 @@ function build_mbr_partner_pools(
                 irt_by_pid[pid_int] :
                 Float32(irt_col[row])
             isfinite(irt) || (irt = irt_by_pid[pid_int])
-            key = (
-                Int(charge_by_pid[pid_int]),
-                Int(length_by_pid[pid_int]),
+            fold = Int(UInt8(tbl.cv_fold[row]))
+            fold_by_pid[pid_int] = UInt8(fold)
+            mz_bin = Int(mz_bin_by_pid[pid_int])
+            charge = Int(charge_by_pid[pid_int])
+            sequence_length = Int(length_by_pid[pid_int])
+            pair = (irt, pid)
+            push!(
+                get!(
+                    () -> Tuple{Float32, UInt32}[],
+                    fold_mz_pairs,
+                    (fold, mz_bin, charge, sequence_length),
+                ),
+                pair,
             )
             push!(
-                get!(() -> Tuple{Float32, UInt32}[], global_pairs, key),
-                (irt, pid),
+                get!(
+                    () -> Tuple{Float32, UInt32}[],
+                    fold_pairs,
+                    (fold, charge, sequence_length),
+                ),
+                pair,
+            )
+            push!(
+                get!(
+                    () -> Tuple{Float32, UInt32}[],
+                    global_pairs,
+                    (charge, sequence_length),
+                ),
+                pair,
             )
             push!(
                 get!(
                     () -> Tuple{Float32, UInt32}[],
                     file_pairs,
-                    (file_idx, key[1], key[2]),
+                    (file_idx, charge, sequence_length),
                 ),
-                (irt, pid),
+                pair,
             )
         end
     end
 
+    fold_mz_charge_length_pool = Dict{
+        Tuple{Int, Int, Int, Int},
+        _MBRIrtPool,
+    }(
+        key => _sort_mbr_irt_pool(values)
+        for (key, values) in fold_mz_pairs
+    )
+    fold_charge_length_pool = Dict{Tuple{Int, Int, Int}, _MBRIrtPool}(
+        key => _sort_mbr_irt_pool(values)
+        for (key, values) in fold_pairs
+    )
     charge_length_pool = Dict{Tuple{Int, Int}, _MBRIrtPool}(
         key => _sort_mbr_irt_pool(values)
         for (key, values) in global_pairs
@@ -90,9 +154,13 @@ function build_mbr_partner_pools(
             for (key, values) in file_pairs
         )
     return _MBRPartnerPools(
+        fold_by_pid,
+        mz_bin_by_pid,
         charge_by_pid,
         length_by_pid,
         irt_by_pid,
+        fold_mz_charge_length_pool,
+        fold_charge_length_pool,
         charge_length_pool,
         file_charge_length_pool,
     )
