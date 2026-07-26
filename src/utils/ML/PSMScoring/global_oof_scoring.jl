@@ -20,6 +20,103 @@ const SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD = 0.01f0
 const SCORING_SEMISUPERVISED_MIN_TARGET_GAIN = 0.01f0
 const SCORING_SEMISUPERVISED_MAX_ITERATIONS = 8
 
+"""
+    _global_lightgbm_monotone_constraints(
+        feature_names,
+        increasing_features,
+        decreasing_features=(),
+    )
+
+Build a LightGBM monotonic-constraint vector in the exact order of the global
+model features. Increasing features receive `1`, decreasing features receive
+`-1`, and all other features receive `0`.
+"""
+function _global_lightgbm_monotone_constraints(
+    feature_names::AbstractVector{Symbol},
+    increasing_features,
+    decreasing_features = (),
+)
+    return Int[
+        if feature in increasing_features
+            1
+        elseif feature in decreasing_features
+            -1
+        else
+            0
+        end
+        for feature in feature_names
+    ]
+end
+
+function _count_passing_target_ids(
+    scores::AbstractVector{<:AbstractFloat},
+    targets::AbstractVector{Bool};
+    experiment_wide_id_counts::AbstractVector{<:Integer},
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    q_values = Vector{Float32}(undef, length(scores))
+    get_qvalues!(
+        scores,
+        targets,
+        q_values;
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    passing_id_count = 0
+    @inbounds for row in eachindex(targets, q_values, experiment_wide_id_counts)
+        targets[row] && q_values[row] <= q_threshold || continue
+        passing_id_count += experiment_wide_id_counts[row]
+    end
+    return passing_id_count
+end
+
+"""
+    _select_global_scores(model_scores, empirical_scores, targets; kwargs...)
+
+Select model scores only when they retain more total target IDs after applying
+both the configured global and experiment-wide q-value thresholds. The
+experiment-wide ID counts give each global entity its run-level multiplicity.
+Ties retain the empirical scores.
+"""
+function _select_global_scores(
+    model_scores::Vector{Float32},
+    empirical_scores::AbstractVector{Float32},
+    targets::AbstractVector{Bool};
+    scoring_name::AbstractString,
+    experiment_wide_id_counts::AbstractVector{<:Integer},
+    q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    model_passing_id_count = _count_passing_target_ids(
+        model_scores,
+        targets;
+        experiment_wide_id_counts = experiment_wide_id_counts,
+        q_threshold = q_threshold,
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    empirical_passing_id_count = _count_passing_target_ids(
+        empirical_scores,
+        targets;
+        experiment_wide_id_counts = experiment_wide_id_counts,
+        q_threshold = q_threshold,
+        fdr_scale_factor = fdr_scale_factor,
+    )
+    use_model = model_passing_id_count > empirical_passing_id_count
+    source = use_model ? :lightgbm : :empirical
+    selected_scores = use_model ? model_scores : empirical_scores
+
+    @debug_l1 "$scoring_name score selection at global q≤$q_threshold: " *
+              "LightGBM experiment-wide target IDs=$model_passing_id_count, " *
+              "empirical experiment-wide target IDs=$empirical_passing_id_count; " *
+              "selected $source"
+    return (
+        scores = selected_scores,
+        source = source,
+        model_passing_id_count = model_passing_id_count,
+        empirical_passing_id_count = empirical_passing_id_count,
+    )
+end
+
 function _scoring_semisupervised_train_mask(
     targets::AbstractVector{Bool},
     q_values::AbstractVector{<:Real};
@@ -173,6 +270,8 @@ function _score_global_features_oof(
     stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
     max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+    monotone_increasing_features = (),
+    monotone_decreasing_features = (),
 )
     observed_folds = sort!(unique(Vector{UInt8}(table.cv_fold)))
     observed_folds == cv_folds || throw(ArgumentError(
@@ -183,6 +282,11 @@ function _score_global_features_oof(
     ))
 
     targets = Vector{Bool}(table.target)
+    monotone_constraints = _global_lightgbm_monotone_constraints(
+        features,
+        monotone_increasing_features,
+        monotone_decreasing_features,
+    )
     training_mask = nothing
     previous_target_q01 = -1
     best_state = nothing
@@ -222,7 +326,11 @@ function _score_global_features_oof(
                 break
             end
 
-            classifier = build_lightgbm_classifier(; lgbm_hp...)
+            classifier = build_lightgbm_classifier(
+                ;
+                lgbm_hp...,
+                monotone_constraints = monotone_constraints,
+            )
             model = fit_lightgbm_model(
                 classifier,
                 view(table, train_indices, features),

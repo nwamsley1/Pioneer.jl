@@ -16,68 +16,22 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    count_protein_peptides(precursors::LibraryPrecursors)
+    load_run_level_protein_training_rows(pg_refs; include_qc_plot_columns = false)
 
-Count all possible peptides for each protein in the library.
-
-# Arguments
-- `precursors`: Library precursors
-
-# Returns
-- Dictionary mapping protein keys to sets of peptide sequences
+Load only the columns needed for run-level protein-model fitting from
+protein-group files. This avoids materializing string-heavy output columns like
+`peptide_list` that are not used by the model.
 """
-function count_protein_peptides(precursors::LibraryPrecursors)
-    protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
-
-    all_accession_numbers = getAccessionNumbers(precursors)
-    all_sequences = getSequence(precursors)
-    all_decoys = getIsDecoy(precursors)
-    all_entrap_ids = getEntrapmentGroupId(precursors)
-    n_precursors = length(all_accession_numbers)
-
-    # Each precursor's sequence must be added to its protein(s)' peptide set, so rows
-    # can't be skipped wholesale — but the (accession_string, target, entrap_id) tuple
-    # repeats across the ~6.8M precursors (only ~tens of thousands are distinct). Cache
-    # the destination Set vector per distinct tuple: a cache hit skips the split, the
-    # per-token String() interning, and the NamedTuple-key dict lookups, leaving only
-    # the unavoidable push! of the sequence. Bit-identical (same sets, same members).
-    set_cache = Dict{Tuple{String, Bool, UInt8}, Vector{Set{String}}}()
-    for i in 1:n_precursors
-        is_decoy = all_decoys[i]
-        entrap_id = all_entrap_ids[i]
-        target = !is_decoy
-
-        target_sets = get!(set_cache, (all_accession_numbers[i], target, entrap_id)) do
-            sets = Vector{Set{String}}()
-            for protein_name in split(all_accession_numbers[i], ';')
-                key = (protein_name = String(protein_name), target = target, entrap_id = entrap_id)
-                push!(sets, get!(() -> Set{String}(), protein_to_possible_peptides, key))
-            end
-            sets
-        end
-
-        seq = all_sequences[i]
-        for s in target_sets
-            push!(s, seq)
-        end
-    end
-
-    return protein_to_possible_peptides
-end
-
-"""
-    load_protein_probit_training_rows(pg_refs; include_qc_plot_columns = false)
-
-Load only the columns needed for protein probit fitting from protein-group files.
-This avoids materializing string-heavy output columns like `peptide_list` that
-are not used by the model.
-"""
-function load_protein_probit_training_rows(
+function load_run_level_protein_training_rows(
     pg_refs::Vector{ProteinGroupFileReference};
     include_qc_plot_columns::Bool = false
 )
-    columns_to_load = Symbol[:protein_name, :target, :n_peptides]
-    append!(columns_to_load, protein_probit_feature_names())
+    columns_to_load = Symbol[
+        :protein_name,
+        :target,
+        :n_non_mbr_peptides,
+    ]
+    append!(columns_to_load, run_level_protein_feature_names())
     if include_qc_plot_columns
         push!(columns_to_load, :species, :file_idx)
     end
@@ -112,13 +66,13 @@ function load_protein_probit_training_rows(
 end
 
 """
-    perform_protein_probit_regression(pg_refs::Vector{ProteinGroupFileReference},
-                                    max_in_memory_rows::Int64,
-                                    qc_folder::String,
-                                    precursors::LibraryPrecursors;
-                                    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+    perform_run_level_protein_scoring(pg_refs::Vector{ProteinGroupFileReference},
+                                      max_in_memory_rows::Int64,
+                                      qc_folder::String,
+                                      precursors::LibraryPrecursors;
+                                      protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
-Perform probit regression on protein groups.
+Fit and apply the run-level protein model.
 
 # Arguments
 - `pg_refs`: Vector of protein group file references
@@ -127,9 +81,9 @@ Perform probit regression on protein groups.
 - `precursors`: Library precursors
 - `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
 
-Returns `true` only when probit models were trained and applied to every fold.
+Returns `true` only when models were trained and applied to every fold.
 """
-function perform_protein_probit_regression(
+function perform_run_level_protein_scoring(
     pg_refs::Vector{ProteinGroupFileReference},
     max_in_memory_rows::Int64,
     qc_folder::String,
@@ -137,7 +91,6 @@ function perform_protein_probit_regression(
     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     write_qc_plots::Bool = true,
-    log_feature_importance::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
@@ -152,10 +105,10 @@ function perform_protein_probit_regression(
     max_protein_groups_in_memory_limit = max(max_in_memory_rows, 100_000)
 
     if total_protein_groups > max_protein_groups_in_memory_limit
-        error("Protein probit out-of-memory processing is not supported. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
+        error("Run-level protein scoring does not support out-of-memory fitting. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    all_protein_groups = load_protein_probit_training_rows(
+    all_protein_groups = load_run_level_protein_training_rows(
         pg_refs;
         include_qc_plot_columns = write_qc_plots
     )
@@ -164,7 +117,7 @@ function perform_protein_probit_regression(
     n_decoys = sum(.!all_protein_groups.target)
     skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
 
-    return perform_probit_analysis_multifold(
+    return perform_protein_scoring_multifold(
         all_protein_groups,
         qc_folder,
         pg_refs,
@@ -173,7 +126,6 @@ function perform_protein_probit_regression(
         file_idx_to_name = file_idx_to_name,
         skip_scoring = skip_scoring,
         write_qc_plots = write_qc_plots,
-        log_feature_importance = log_feature_importance,
         train_q_value_threshold = train_q_value_threshold,
         min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
@@ -185,11 +137,14 @@ function run_protein_scoring!(
     passing_refs::Vector{PSMFileReference},
     protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} =
         Dict{UInt32, Vector{ProteinKey}}(),
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    } = Dict{ProteinKey, ProteinPeptideOpportunityCounts}(),
     max_in_memory_table_mb::Float64,
     q_value_threshold::Float32,
     min_peptides::Int64,
     write_qc_plots::Bool,
-    log_feature_importance::Bool,
     min_pep_neg_threshold_itr::Float32,
     q_value_interpolation_points_per_bin::Int64
 )
@@ -203,7 +158,8 @@ function run_protein_scoring!(
     !isdir(qc_folder) && mkpath(qc_folder)
 
     precursors = getPrecursors(getSpecLib(search_context))
-    protein_to_possible_peptides = count_protein_peptides(precursors)
+    isempty(protein_peptide_opportunities) &&
+        error("Protein scoring requires theoretical unique/shared peptide opportunities")
 
     file_idx_to_name = Dict{Int64, String}()
     for (file_idx, file_name) in enumerate(getFileIdToName(getMSData(search_context)))
@@ -213,7 +169,7 @@ function run_protein_scoring!(
     pg_refs, psm_to_pg_mapping, protein_to_cv_fold = build_protein_group_tables(
         passing_refs,
         passing_proteins_folder,
-        protein_to_possible_peptides,
+        protein_peptide_opportunities,
         precursors = precursors,
         protein_ambiguity_candidates = protein_ambiguity_candidates,
         min_peptides = min_peptides,
@@ -233,7 +189,7 @@ function run_protein_scoring!(
 
     max_in_memory_rows = estimate_max_rows(max_in_memory_table_mb, file_path(first(pg_refs)))
     @debug_l1 "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"
-    protein_probit_scoring_succeeded = perform_protein_probit_regression(
+    protein_model_scoring_succeeded = perform_run_level_protein_scoring(
         pg_refs,
         max_in_memory_rows,
         qc_folder,
@@ -241,12 +197,38 @@ function run_protein_scoring!(
         protein_to_cv_fold = protein_to_cv_fold,
         file_idx_to_name = file_idx_to_name,
         write_qc_plots = write_qc_plots,
-        log_feature_importance = log_feature_importance,
         train_q_value_threshold = q_value_threshold,
         min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
     )
 
     n_proteins = length(getProteins(getSpecLib(search_context)))
+    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+    spline_result = build_qvalue_spline_from_refs(
+        pg_refs,
+        :pg_score,
+        sorted_pg_scores_path;
+        batch_size = 1_000_000,
+        compute_pep = true,
+        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
+        temp_prefix = "preglobal_pg_sidecar",
+    )
+    spline_result === nothing &&
+        error("Cannot build global protein model without run-level scores")
+    pg_qval_spline = spline_result.qval_spline
+    run_score_floor = _score_floor_for_qvalue(
+        pg_qval_spline,
+        q_value_threshold,
+    )
+    precursor_scoring_results = get_results(
+        search_context,
+        PrecursorScoringSearch,
+    )
+    run_similarity = if precursor_scoring_results isa PrecursorScoringSearchResults
+        precursor_scoring_results.run_similarity[]
+    else
+        nothing
+    end
+    n_runs_total = length(getFilePaths(getMSData(search_context)))
 
     global_pg_score_dict, pg_name_to_global_pg_score =
         build_global_protein_score_dicts(
@@ -254,19 +236,18 @@ function run_protein_scoring!(
             protein_to_cv_fold,
             n_proteins,
             length(pg_refs),
-            protein_probit_scoring_succeeded,
+            protein_model_scoring_succeeded,
+            run_score_floor,
+            n_experiment_runs = n_runs_total,
+            run_similarity = run_similarity,
+            q_value_threshold = q_value_threshold,
         )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
     global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
     search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
-    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000, compute_pep = true,
-        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
-        temp_prefix = "pg_sidecar")
-    search_context.pg_score_to_qval[] = spline_result.qval_spline
+    search_context.pg_score_to_qval[] = pg_qval_spline
     search_context.pg_score_to_pep[] = spline_result.pep_interp
 
     protein_combined_pipeline = TransformPipeline() |>
@@ -292,7 +273,7 @@ function run_protein_scoring!(
 
     pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
 
-    update_psms_with_probit_scores_refs(
+    update_psms_with_protein_scores_refs(
         paired_files,
         search_context.pg_name_to_global_pg_score[],
         search_context.pg_score_to_qval[],

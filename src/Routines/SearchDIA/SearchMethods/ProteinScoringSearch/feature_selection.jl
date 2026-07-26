@@ -18,9 +18,9 @@
 """
     remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
 
-Remove columns with zero variance from `feature_names` to prevent singular matrices
-in probit regression. This includes constant columns, columns with all missing values,
-and columns containing Inf/NaN values.
+Remove columns with zero variance from `feature_names` to prevent numerical
+issues during model fitting. This includes constant columns, columns with all
+missing values, and columns containing Inf/NaN values.
 
 # Arguments
 - `feature_names`: Vector of feature symbols to filter
@@ -72,18 +72,23 @@ function remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::Abstra
 end
 
 """
-    protein_probit_feature_names()
+    run_level_protein_feature_names()
 
-Return the fixed protein feature set used for probit rescoring.
+Return the fixed feature set used for run-level protein rescoring.
 """
-function protein_probit_feature_names()
+function run_level_protein_feature_names()
     return Symbol[
         :pg_score,
         :ambiguous_pg_score,
+        :shared_peptide_coverage_logit,
+        :shared_coverage_log_ratio,
         :peptide_coverage_logit,
         :any_common_peps,
         :coverage_log_ratio,
         :precursor_consensus_prefix_shape,
+        :shared_precursor_consensus_prefix_shape,
+        :single_non_mbr_peptide,
+        :single_non_mbr_prefix_shape,
         :mbr_recovered_peptides,
         :mbr_only_protein
     ]
@@ -99,4 +104,35 @@ function smoothed_coverage_logit(n_peptides::Integer, n_possible_peptides::Integ
     observed = Float32(n_peptides)
     possible = Float32(n_possible_peptides)
     return log((observed + 0.5f0) / (possible - observed + 0.5f0))
+end
+
+"""
+    shared_coverage_log_ratio(
+        n_shared_peptides,
+        n_possible_shared_peptides,
+        n_unique_peptides,
+        n_possible_unique_peptides
+    )
+
+Compare shared- and unique-peptide detection rates within a protein group.
+Each rate uses a 0.5 pseudocount before their ratio is log transformed.
+Return zero when either peptide class has no theoretical opportunities.
+"""
+function shared_coverage_log_ratio(
+    n_shared_peptides::Integer,
+    n_possible_shared_peptides::Integer,
+    n_unique_peptides::Integer,
+    n_possible_unique_peptides::Integer
+)::Float32
+    if n_possible_shared_peptides <= 0 || n_possible_unique_peptides <= 0
+        return 0.0f0
+    end
+
+    shared_rate =
+        (Float32(n_shared_peptides) + 0.5f0) /
+        (Float32(n_possible_shared_peptides) + 1.0f0)
+    unique_rate =
+        (Float32(n_unique_peptides) + 0.5f0) /
+        (Float32(n_possible_unique_peptides) + 1.0f0)
+    return log(shared_rate / unique_rate)
 end

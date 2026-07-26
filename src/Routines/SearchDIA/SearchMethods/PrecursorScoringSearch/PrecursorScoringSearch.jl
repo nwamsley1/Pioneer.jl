@@ -40,6 +40,7 @@ struct PrecursorScoringSearchResults <: SearchResults
     precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}}  # precursor_idx → global q-value
     precursor_qval_interp::Base.Ref{Any}  # Interpolation for run-specific q-values
     precursor_pep_interp::Base.Ref{Any}   # Interpolation for experiment-wide PEPs
+    run_similarity::Base.Ref{Union{Nothing, RunSimilarityAtlas}}
     merged_quant_path::String             # Path to merged quantification results
 end
 
@@ -98,6 +99,7 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
         Ref(Dict{UInt32, Float32}()),  # precursor_global_qval_dict
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
+        Ref{Union{Nothing, RunSimilarityAtlas}}(nothing),
         joinpath(getDataOutDir(search_context), "merged_quant.arrow")
     )
 end
@@ -162,6 +164,10 @@ function summarize_results!(
     params::PrecursorScoringSearchParameters,
     search_context::SearchContext
 )
+    # Downstream stages retrieve the same in-memory run-similarity atlas from
+    # the precursor-scoring result rather than rebuilding or serializing it.
+    store_results!(search_context, PrecursorScoringSearch, results)
+
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
 
     # Set up output folders. PSM intermediates all live in `main_search_psms/`
@@ -295,7 +301,44 @@ function summarize_results!(
         # Pre-allocation size from spectral library
         n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-        # A1: Build experiment-wide precursor scores.
+        # A1: Freeze the run-level q-value mapping before global scoring. The
+        # resulting score floor defines local evidence for run similarity, and
+        # the same spline is reused for the per-run q-value annotation below.
+        spline_result = build_qvalue_spline_from_refs(
+            filtered_refs,
+            :prec_prob,
+            results.merged_quant_path;
+            compute_pep = true,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = fdr_scale,
+            temp_prefix = "preglobal_qval_sidecar",
+        )
+        spline_result === nothing &&
+            error("Cannot build global precursor model without run-level scores")
+        qval_spline = spline_result.qval_spline
+        run_score_floor = _score_floor_for_qvalue(
+            qval_spline,
+            params.q_value_threshold,
+        )
+        if n_files_total > 1
+            @debug_l1 "Computing run similarity across $n_files_total runs " *
+                "(precursor score floor = " *
+                "$(round(run_score_floor, digits = 4)))..."
+            run_similarity_time = @elapsed begin
+                results.run_similarity[] = build_precursor_run_similarity(
+                    filtered_refs,
+                    run_score_floor,
+                    n_files_total,
+                )
+            end
+            @debug_l1 "Run similarity computation completed in " *
+                "$(round(run_similarity_time, digits = 2)) seconds"
+        else
+            results.run_similarity[] = nothing
+        end
+        run_similarity = results.run_similarity[]
+
+        # A2: Build experiment-wide precursor scores.
         if n_files_total > 1
             @user_info "Training global precursor scoring model..."
         end
@@ -304,18 +347,18 @@ function summarize_results!(
                 filtered_refs,
                 n_precursors,
                 n_files_total,
+                run_similarity = run_similarity,
+                run_score_floor = run_score_floor,
+                q_value_threshold = params.q_value_threshold,
+                fdr_scale_factor = fdr_scale,
             )
 
-        # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
+        # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
 
-        # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
-        spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
-            compute_pep=true, min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
-        qval_spline = spline_result.qval_spline
+        # A4-A5: Reuse the frozen run-level q-value spline + PEP interpolation.
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
 

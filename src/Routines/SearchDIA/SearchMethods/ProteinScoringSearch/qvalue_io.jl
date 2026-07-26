@@ -46,22 +46,19 @@ function build_protein_global_qval_dict(
 end
 
 """
-    update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
-                                       pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
-                                       pg_score_to_qval::Interpolations.Extrapolation,
-                                       global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
+    update_psms_with_protein_scores_refs(paired_refs::Vector{PairedSearchFiles},
+                                         pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
+                                         pg_score_to_qval::Interpolations.Extrapolation,
+                                         global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
 
-Update PSMs with probit-scored pg_score values and q-values using references.
+Update PSMs with model-scored `pg_score` values and q-values using references.
 """
-function update_psms_with_probit_scores_refs(
+function update_psms_with_protein_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
     pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
     global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
-    total_psms_updated = 0
-    files_processed = 0
-
     for paired_ref in paired_refs
         psm_ref = paired_ref.psm_ref
         pg_ref = paired_ref.protein_ref
@@ -94,7 +91,7 @@ function update_psms_with_probit_scores_refs(
             [:inferred_protein_group, :use_for_protein_quant,
              :target, :entrapment_group_id])
         n_psms = nrow(needed)
-        probit_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
+        protein_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
         global_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
         pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
         global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
@@ -111,26 +108,23 @@ function update_psms_with_probit_scores_refs(
             key = ProteinKey(ipg_col[i], tgt_col[i], ent_col[i])
             haskey(pg_score_lookup, key) || continue
             scores_tuple = pg_score_lookup[key]
-            probit_pg_scores[i] = scores_tuple[1]
+            protein_scores[i] = scores_tuple[1]
             pg_peps[i] = scores_tuple[2]
             haskey(pg_name_to_global_pg_score, key) ||
                 throw("Missing global pg score lookup key!!!")
             global_pg_scores[i] = pg_name_to_global_pg_score[key]
-            pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
+            pg_qvals[i] = pg_score_to_qval(protein_scores[i])
             dict_key = (key.name, key.is_target, key.entrap_id)
             global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
         end
 
         add_columns_via_sidecar!(psm_ref,
-            :pg_score        => probit_pg_scores,
+            :pg_score        => protein_scores,
             :global_pg_score => global_pg_scores,
             :pg_qval         => pg_qvals,
             :qlobal_pg_qval  => global_pg_qvals,
             :pg_pep          => pg_peps;
             tag = "pg_scores")
-        total_psms_updated += n_psms
-
-        files_processed += 1
     end
 end
 """

@@ -32,11 +32,34 @@ const GLOBAL_PROTEIN_SCORE_FEATURES = Symbol[
     :max_n_peptides_observed,
     :global_peptide_coverage,
     :max_peptide_coverage,
-    :n_runs_observed,
+    :n_passing_runs,
     :n_score_gt_0_5,
     :n_score_gt_0_9,
     :n_score_gt_0_99,
+    :observed_run_centrality_mean,
+    :observed_run_centrality_max,
+    :missing_run_similarity_mass_approx,
 ]
+
+const GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES = (
+    :empirical_global_score,
+    :top1_pg_score,
+    :top2_pg_score,
+    :top3_pg_score,
+    :top2_logodds_score,
+    :top3_logodds_score,
+    :mean_pg_score,
+    :median_pg_score,
+    :min_pg_score,
+    :n_unique_peptides_observed,
+    :max_n_peptides_observed,
+    :global_peptide_coverage,
+    :max_peptide_coverage,
+    :n_passing_runs,
+    :n_score_gt_0_5,
+    :n_score_gt_0_9,
+    :n_score_gt_0_99,
+)
 
 const GLOBAL_PROTEIN_LGBM_HP = (
     num_iterations = 100,
@@ -52,17 +75,23 @@ const GLOBAL_PROTEIN_LGBM_HP = (
     max_bin = 255,
     lambda_l1 = 1.0,
     lambda_l2 = 1.0,
+    monotone_constraints_method = "intermediate",
 )
 
 const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 100
 const GLOBAL_PROTEIN_MAX_TRAIN = 1_000_000
 const GlobalProteinKey = Tuple{String, Bool, UInt8}
 
+struct GlobalProteinRunScore
+    ms_file_idx::UInt32
+    score::Float32
+end
+
 struct GlobalProteinInputs
-    scores::Dict{GlobalProteinKey, Vector{Float32}}
+    run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
     observed_peptides::Dict{GlobalProteinKey, Set{String}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
-    n_possible_peptides::Dict{GlobalProteinKey, Int}
+    n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
     folds::Dict{GlobalProteinKey, UInt8}
 end
 
@@ -74,15 +103,15 @@ function _collect_global_protein_inputs(
     },
     n_proteins::Int,
 )
-    scores = Dict{GlobalProteinKey, Vector{Float32}}()
+    run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
     observed_peptides = Dict{GlobalProteinKey, Set{String}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
-    n_possible_peptides = Dict{GlobalProteinKey, Int}()
+    n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
     folds = Dict{GlobalProteinKey, UInt8}()
-    sizehint!(scores, n_proteins)
+    sizehint!(run_scores, n_proteins)
     sizehint!(observed_peptides, n_proteins)
     sizehint!(max_n_peptides, n_proteins)
-    sizehint!(n_possible_peptides, n_proteins)
+    sizehint!(n_possible_unique_peptides, n_proteins)
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
@@ -94,10 +123,16 @@ function _collect_global_protein_inputs(
                 Bool(table.target[row]),
                 UInt8(table.entrap_id[row]),
             )
-            protein_scores = get!(scores, key) do
-                Float32[]
+            protein_run_scores = get!(run_scores, key) do
+                GlobalProteinRunScore[]
             end
-            push!(protein_scores, Float32(table.pg_score[row]))
+            push!(
+                protein_run_scores,
+                GlobalProteinRunScore(
+                    UInt32(table.file_idx[row]),
+                    Float32(table.pg_score[row]),
+                ),
+            )
 
             protein_peptides = get!(observed_peptides, key) do
                 Set{String}()
@@ -108,18 +143,19 @@ function _collect_global_protein_inputs(
 
             n_peptides = Int(table.n_peptides[row])
             max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
-            n_possible_peptides[key] = Int(table.n_possible_peptides[row])
+            n_possible_unique_peptides[key] =
+                Int(table.n_possible_unique_peptides[row])
             folds[key] = protein_to_cv_fold[protein_name].cv_fold
         end
     end
 
-    isempty(scores) &&
+    isempty(run_scores) &&
         throw(ArgumentError("Global protein scoring requires observed protein groups"))
     return GlobalProteinInputs(
-        scores,
+        run_scores,
         observed_peptides,
         max_n_peptides,
-        n_possible_peptides,
+        n_possible_unique_peptides,
         folds,
     )
 end
@@ -127,8 +163,12 @@ end
 function _build_global_protein_feature_table(
     inputs::GlobalProteinInputs,
     n_runs_total::Int,
+    run_score_floor::Float32,
+    ;
+    n_experiment_runs::Int = n_runs_total,
+    run_similarity::Union{Nothing, RunSimilarityAtlas} = nothing,
 )
-    protein_keys = sort!(collect(keys(inputs.scores)))
+    protein_keys = sort!(collect(keys(inputs.run_scores)))
     n_proteins = length(protein_keys)
     top_run_count = isqrt(n_runs_total)
     feature_columns = Dict(
@@ -137,7 +177,11 @@ function _build_global_protein_feature_table(
     )
 
     @inbounds for (row, key) in enumerate(protein_keys)
-        scores = inputs.scores[key]
+        protein_run_scores = inputs.run_scores[key]
+        scores = Float32[
+            run_score.score
+            for run_score in protein_run_scores
+        ]
         sorted_scores = sort(scores; rev = true)
         n_observed = length(sorted_scores)
         top1 = sorted_scores[1]
@@ -145,7 +189,8 @@ function _build_global_protein_feature_table(
         top3 = n_observed >= 3 ? sorted_scores[3] : 0.0f0
         n_unique_peptides = length(inputs.observed_peptides[key])
         max_n_peptides = inputs.max_n_peptides[key]
-        n_possible_peptides = inputs.n_possible_peptides[key]
+        n_possible_unique_peptides =
+            inputs.n_possible_unique_peptides[key]
 
         feature_columns[:empirical_global_score][row] =
             _logodds_from_sorted(sorted_scores, top_run_count)
@@ -168,13 +213,33 @@ function _build_global_protein_feature_table(
         feature_columns[:n_unique_peptides_observed][row] = Float32(n_unique_peptides)
         feature_columns[:max_n_peptides_observed][row] = Float32(max_n_peptides)
         feature_columns[:global_peptide_coverage][row] =
-            Float32(n_unique_peptides) / Float32(n_possible_peptides)
+            Float32(n_unique_peptides) / Float32(n_possible_unique_peptides)
         feature_columns[:max_peptide_coverage][row] =
-            Float32(max_n_peptides) / Float32(n_possible_peptides)
-        feature_columns[:n_runs_observed][row] = Float32(n_observed)
+            Float32(max_n_peptides) / Float32(n_possible_unique_peptides)
         feature_columns[:n_score_gt_0_5][row] = Float32(count(>(0.5f0), scores))
         feature_columns[:n_score_gt_0_9][row] = Float32(count(>(0.9f0), scores))
         feature_columns[:n_score_gt_0_99][row] = Float32(count(>(0.99f0), scores))
+
+        centrality_sum = 0.0f0
+        centrality_max = 0.0f0
+        n_passing_runs = 0
+        for run_score in protein_run_scores
+            run_score.score >= run_score_floor || continue
+            n_passing_runs += 1
+            centrality = run_similarity === nothing ?
+                0.0f0 :
+                run_centrality(run_similarity, run_score.ms_file_idx)
+            centrality_sum += centrality
+            centrality_max = max(centrality_max, centrality)
+        end
+        centrality_mean = n_passing_runs > 0 ?
+            centrality_sum / Float32(n_passing_runs) : 0.0f0
+        n_missing_runs = max(n_experiment_runs - n_passing_runs, 0)
+        feature_columns[:n_passing_runs][row] = Float32(n_passing_runs)
+        feature_columns[:observed_run_centrality_mean][row] = centrality_mean
+        feature_columns[:observed_run_centrality_max][row] = centrality_max
+        feature_columns[:missing_run_similarity_mass_approx][row] =
+            centrality_mean * Float32(n_missing_runs)
     end
 
     table = DataFrame(
@@ -211,9 +276,15 @@ function _build_empirical_global_protein_score_dicts(
     inputs::GlobalProteinInputs,
     top_run_count::Int,
 )
-    protein_keys = sort!(collect(keys(inputs.scores)))
+    protein_keys = sort!(collect(keys(inputs.run_scores)))
     scores = Float32[
-        logodds(inputs.scores[key], top_run_count)
+        logodds(
+            Float32[
+                run_score.score
+                for run_score in inputs.run_scores[key]
+            ],
+            top_run_count,
+        )
         for key in protein_keys
     ]
     return _build_protein_score_dicts(protein_keys, scores)
@@ -226,7 +297,7 @@ function _global_protein_training_data_sufficient(
     for test_fold in cv_folds
         n_targets = 0
         n_decoys = 0
-        for key in keys(inputs.scores)
+        for key in keys(inputs.run_scores)
             inputs.folds[key] == test_fold && continue
             if key[2]
                 n_targets += 1
@@ -243,9 +314,9 @@ end
 function _global_protein_model_eligible(
     inputs::GlobalProteinInputs,
     cv_folds::Vector{UInt8},
-    protein_probit_scoring_succeeded::Bool,
+    run_level_scoring_succeeded::Bool,
 )
-    return protein_probit_scoring_succeeded &&
+    return run_level_scoring_succeeded &&
            length(cv_folds) > 1 &&
            _global_protein_training_data_sufficient(inputs, cv_folds)
 end
@@ -256,14 +327,17 @@ end
         protein_to_cv_fold,
         n_proteins,
         n_runs_total,
-        protein_probit_scoring_succeeded,
+        run_level_scoring_succeeded,
+        run_score_floor,
     )
 
-Build one score-distribution and peptide-support feature row per protein group
-and return out-of-fold global LightGBM scores. Use the existing top-run
-log-odds score when probit scoring was not applied, the observed protein groups
-belong to one CV fold, or any training split has fewer than 100 targets or 100
-decoys.
+Build one score-distribution, peptide-support, and run-context feature row per
+protein group and select out-of-fold global LightGBM scores only when they
+retain more total protein-run target IDs after applying both the configured
+global and experiment-wide q-value thresholds than the empirical top-run
+log-odds scores. Use the empirical score without training when run-level model
+scoring was not applied, the observed protein groups belong to one CV fold, or
+any training split has fewer than 100 targets or 100 decoys.
 """
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
@@ -273,7 +347,12 @@ function build_global_protein_score_dicts(
     },
     n_proteins::Int,
     n_runs_total::Int,
-    protein_probit_scoring_succeeded::Bool,
+    run_level_scoring_succeeded::Bool,
+    run_score_floor::Float32,
+    ;
+    n_experiment_runs::Int = n_runs_total,
+    run_similarity::Union{Nothing, RunSimilarityAtlas} = nothing,
+    q_value_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
 )
     inputs = _collect_global_protein_inputs(
         pg_refs,
@@ -284,7 +363,7 @@ function build_global_protein_score_dicts(
     if !_global_protein_model_eligible(
         inputs,
         cv_folds,
-        protein_probit_scoring_succeeded,
+        run_level_scoring_succeeded,
     )
         return _build_empirical_global_protein_score_dicts(
             inputs,
@@ -293,7 +372,13 @@ function build_global_protein_score_dicts(
     end
 
     @user_info "Training global protein scoring model..."
-    table = _build_global_protein_feature_table(inputs, n_runs_total)
+    table = _build_global_protein_feature_table(
+        inputs,
+        n_runs_total,
+        run_score_floor,
+        n_experiment_runs = n_experiment_runs,
+        run_similarity = run_similarity,
+    )
     scored = _score_global_features_oof(
         table,
         GLOBAL_PROTEIN_SCORE_FEATURES,
@@ -302,15 +387,25 @@ function build_global_protein_score_dicts(
         lgbm_hp = GLOBAL_PROTEIN_LGBM_HP,
         min_training_class_count = GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT,
         max_train = GLOBAL_PROTEIN_MAX_TRAIN,
+        monotone_increasing_features =
+            GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES,
+    )
+    selected = _select_global_scores(
+        scored.scores,
+        table.empirical_global_score,
+        table.target;
+        scoring_name = "Global protein",
+        experiment_wide_id_counts = Int.(table.n_passing_runs),
+        q_threshold = q_value_threshold,
     )
 
     protein_keys = GlobalProteinKey[
         (table.protein_name[row], table.target[row], table.entrap_id[row])
         for row in axes(table, 1)
     ]
-    score_dicts = _build_protein_score_dicts(protein_keys, scored.scores)
-    @debug_l1 "Global protein LightGBM scored $(length(protein_keys)) protein groups " *
+    score_dicts = _build_protein_score_dicts(protein_keys, selected.scores)
+    @debug_l1 "Global protein scoring scored $(length(protein_keys)) protein groups " *
               "with $(length(GLOBAL_PROTEIN_SCORE_FEATURES)) features; " *
-              "selected semi-supervised iteration $(scored.iter)"
+              "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dicts
 end

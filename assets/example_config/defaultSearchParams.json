@@ -25,8 +25,7 @@
     "proteinScoring": {
         "min_peptides": 1,
         "global_protein_inference": true,
-        "write_qc_plots": false,
-        "log_feature_importance": false
+        "write_qc_plots": false
     },
     "maxLFQ": {
         "run_to_run_normalization": false,
