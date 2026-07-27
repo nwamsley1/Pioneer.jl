@@ -57,9 +57,9 @@ function _count_psm_rows_by_fold(file_paths::Vector{String})
     return n0, n1
 end
 
-# Round-2 GROUP cross-run features (GROUP_COLS + DONOR_COLS + delta_irt) live in a row-aligned
-# sidecar rather than being appended to the ~80-column main fold file, which would require reading
-# and rewriting the whole file just to add 12 columns. `_feature_columns` is the single point
+# Round-2 GROUP cross-run features (GROUP_COLS + delta_irt) live in a row-aligned sidecar
+# rather than being appended to the ~80-column main fold file, which would require reading
+# and rewriting the whole file just to add 9 columns. `_feature_columns` is the single point
 # that reads a feature from wherever it lives; all three round-2 read sites go through it.
 const GROUP_SIDECAR_SUFFIX = ".group.sidecar.arrow"
 
@@ -67,7 +67,7 @@ const GROUP_SIDECAR_SUFFIX = ".group.sidecar.arrow"
 # when present and everything else from the main file. Order matches `features`.
 #
 # A feature absent from BOTH main and sidecar is a hard error, NOT a silent skip: the round-2
-# feature list is fixed at 83, and quietly dropping the GROUP cols (e.g. if this file's sidecar
+# feature list is fixed at 80, and quietly dropping the GROUP cols (e.g. if this file's sidecar
 # is missing) would train on 71 with no other symptom. The lone exception is a genuinely empty
 # file — its columns are never indexed (the sample/predict plans are empty), so a placeholder
 # empty vector is returned for any GROUP col whose sidecar was (correctly) never written.

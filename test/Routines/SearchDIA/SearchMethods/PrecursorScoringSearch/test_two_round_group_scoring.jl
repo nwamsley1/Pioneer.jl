@@ -3,9 +3,9 @@
 #
 # All functions under test are module-internal (not exported) and are referenced
 # as `Pioneer._name`. Fixtures are tiny synthetic fold Arrow files + matching
-# `.pass1_sidecar.arrow` sidecars, exercising the real inject/remove/group-feature
-# code paths. Randomness in the clustering path uses fixed internal seeds, so the
-# tests assert on partition structure and remain deterministic.
+# `.pass1_sidecar.arrow` sidecars, exercising the real group-feature code path.
+# Randomness in the clustering path uses fixed internal seeds, so the tests
+# assert on partition structure and remain deterministic.
 
 using Test
 using Pioneer
@@ -86,91 +86,6 @@ const _P = Pioneer
     end
 
     # ---------------------------------------------------------------
-    # 3b. GTopK4: donor evidence stays aligned with the top-2 scores
-    # ---------------------------------------------------------------
-    @testset "GTopK4 donor evidence" begin
-        @test _P.EMPTY_GTOPK4.t === _P.EMPTY_TOPK4
-        @test _P.EMPTY_GTOPK4.e == (_P.EMPTY_EV, _P.EMPTY_EV)
-
-        # Evidence is tagged with the run number so we can assert which run's
-        # values ended up in each slot. Insert out of score order on purpose.
-        ev(run) = _P.DonorEv(Float32(10 * run), Float32(run),
-                             ntuple(i -> Float16(i == run ? 1 : 0), 8))
-        g = _P.EMPTY_GTOPK4
-        g = _P._gt_insert(g, 0.60f0, UInt32(1), ev(1))
-        g = _P._gt_insert(g, 0.99f0, UInt32(2), ev(2))   # new top; 1 shifts to slot 2
-        g = _P._gt_insert(g, 0.90f0, UInt32(3), ev(3))   # lands in slot 2; 1 falls out of evidence
-        g = _P._gt_insert(g, 0.70f0, UInt32(4), ev(4))
-        g = _P._gt_insert(g, 0.80f0, UInt32(5), ev(5))
-
-        # Scores/runs behave exactly as the wrapped TopK4.
-        @test g.t.v == (0.99f0, 0.90f0, 0.80f0, 0.70f0)
-        @test g.t.r == (UInt32(2), UInt32(3), UInt32(5), UInt32(4))
-        # Evidence slots track the top-2 runs (2 then 3).
-        @test g.e[1] === ev(2)
-        @test g.e[2] === ev(3)
-
-        # A score below the current 4th never touches evidence.
-        g2 = _P._gt_insert(g, 0.10f0, UInt32(9), ev(9))
-        @test g2 === g
-
-        # LOO donor: excluding a non-top run keeps slot 1 (run 2).
-        s, d = _P._gt_loo_donor(g, UInt32(5))
-        @test s ≈ 0.99f0
-        @test d === ev(2)
-        # Excluding the top run itself falls through to slot 2 (run 3).
-        s, d = _P._gt_loo_donor(g, UInt32(2))
-        @test s ≈ 0.90f0
-        @test d === ev(3)
-        # No other run at all -> score 0 signals "no donor".
-        s, d = _P._gt_loo_donor(_P.EMPTY_GTOPK4, UInt32(1))
-        @test s == 0.0f0
-        @test d === _P.EMPTY_EV
-
-        # Insertion order must not matter: descending order gives the same record.
-        h = _P.EMPTY_GTOPK4
-        for (sc, ru) in ((0.99f0, 2), (0.90f0, 3), (0.80f0, 5), (0.70f0, 4), (0.60f0, 1))
-            h = _P._gt_insert(h, sc, UInt32(ru), ev(ru))
-        end
-        @test h.t.v == g.t.v && h.t.r == g.t.r && h.e == g.e
-    end
-
-    # ---------------------------------------------------------------
-    # 3c. Fragment-spectrum normalization + donor Hellinger
-    # ---------------------------------------------------------------
-    @testset "donor frag Hellinger" begin
-        f(v...) = _P._frag_sqrt_tuple(NTuple{8,Float32}(Float32.(v)))
-
-        # L1-normalize then sqrt: a single non-zero rank -> unit mass on that rank,
-        # regardless of its raw magnitude.
-        @test f(4, 0, 0, 0, 0, 0, 0, 0) == f(1, 0, 0, 0, 0, 0, 0, 0)
-        @test Float32(f(4, 0, 0, 0, 0, 0, 0, 0)[1]) ≈ 1.0f0
-        # Two equal ranks -> sqrt(1/2) each.
-        two = f(1, 1, 0, 0, 0, 0, 0, 0)
-        @test Float32(two[1]) ≈ sqrt(0.5f0) atol=1e-3
-        @test Float32(two[2]) ≈ sqrt(0.5f0) atol=1e-3
-        # No intensity -> the empty tuple, which is NOT a valid spectrum.
-        @test f(0, 0, 0, 0, 0, 0, 0, 0) == _P.EMPTY_FRAG
-        @test !_P._frag_is_valid(_P.EMPTY_FRAG)
-        @test _P._frag_is_valid(two)
-
-        a = f(1, 0, 0, 0, 0, 0, 0, 0)
-        b = f(0, 1, 0, 0, 0, 0, 0, 0)
-        # Identical spectra -> 0; fully disjoint -> 1 (the Hellinger bounds).
-        @test _P._donor_hellinger(a, a) ≈ 0.0f0 atol=1e-3
-        @test _P._donor_hellinger(a, b) ≈ 1.0f0 atol=1e-3
-        # Partial overlap sits strictly between, and is symmetric.
-        h_ab = _P._donor_hellinger(two, b)
-        @test 0.0f0 < h_ab < 1.0f0
-        @test h_ab ≈ _P._donor_hellinger(b, two) atol=1e-4
-        @test h_ab ≈ sqrt(0.5f0 * ((sqrt(0.5f0))^2 + (sqrt(0.5f0) - 1f0)^2)) atol=1e-3
-        # Either side empty -> sentinel, never 0 (an absent spectrum must not read
-        # as perfect agreement).
-        @test _P._donor_hellinger(a, _P.EMPTY_FRAG) == _P.DONOR_SENTINEL
-        @test _P._donor_hellinger(_P.EMPTY_FRAG, a) == _P.DONOR_SENTINEL
-    end
-
-    # ---------------------------------------------------------------
     # 4. _cluster_runs
     # ---------------------------------------------------------------
     @testset "_cluster_runs" begin
@@ -225,12 +140,11 @@ const _P = Pioneer
     # ---------------------------------------------------------------
     # Helpers for the Arrow-file fixtures (#6 and #7)
     # ---------------------------------------------------------------
-    # Minimal fold-file plus the Pass-1 sidecar holding its round-1 OOF scores.
+    # Minimal fold-file plus the Pass-1 sidecar holding its round-1 OOF scores
+    # (`trace_prob_prepass`) — what _write_group_features! reads as s1.
     function _write_fixture!(dir, name, df::DataFrame, s1::Vector{Float32})
         path = joinpath(dir, name)
         _P.writeArrow(path, df)
-        # `SHADOW_SIDECAR_SCORE_COL` was removed in 2093a9477; the Pass-1 sidecar's
-        # round-1 OOF score column is `trace_prob_prepass` (see pass1_oom.jl).
         side = DataFrame(trace_prob_prepass = s1)
         _P.writeArrow(path * _P.PASS1_SIDECAR_SUFFIX, side)
         return path
@@ -283,50 +197,40 @@ const _P = Pioneer
             # all three with distinct s1 and irt. R=3 < 9 -> cluster OFF, so
             # cluster cols mirror global cols. Everything is hand-checkable.
             files = String[]
-            # (s1, irt_obs, weight, log2_explained, frag-spectrum) — the last three feed DONOR_COLS.
-            # Spectra are chosen so the Hellingers are hand-checkable: run1 and run3 are disjoint
-            # (-> 1.0), run2 half-overlaps each.
-            specs = [(0.80f0, 100.0f0, 1.0f0, 2.0f0, Float32[1, 0, 0, 0, 0, 0, 0, 0]),
-                     (0.90f0, 110.0f0, 2.0f0, 3.0f0, Float32[1, 1, 0, 0, 0, 0, 0, 0]),
-                     (0.99f0, 120.0f0, 4.0f0, 5.0f0, Float32[0, 1, 0, 0, 0, 0, 0, 0])]
-            for (ri, (s1v, irtv, wv, ev, fr)) in enumerate(specs)
+            specs = [(0.80f0, 100.0f0), (0.90f0, 110.0f0), (0.99f0, 120.0f0)]
+            for (ri, (s1v, irtv)) in enumerate(specs)
                 df = DataFrame(
                     precursor_idx = UInt32[1],
                     cv_fold       = UInt8[0],
                     irt_obs       = Float32[irtv],
-                    weight        = Float32[wv],
-                    log2_intensity_explained = Float32[ev],
                 )
-                for (r, c) in enumerate(_P.SMOOTHED_FRAGMENT_INTENSITY_COLUMNS)
-                    df[!, c] = Float32[fr[r]]
-                end
                 push!(files, _write_fixture!(dir, "run$(ri)_fold0.arrow", df, Float32[s1v]))
             end
 
             _P._write_group_features!(files, 1)   # max_pid = 1 (single precursor id in this fixture)
 
-            # Read back per-file single-row values. The columns are written to a
-            # row-aligned `.group.sidecar.arrow`, not the main fold file.
+            # Read back per-file single-row values.
             gm = Float32[]; gt3 = Float32[]; np = Float32[]; nc = Float32[]
             cm = Float32[]; ct3 = Float32[]; cnp = Float32[]; cnc = Float32[]
             di = Float32[]
-            dh = Float32[]; dlw = Float32[]; dle = Float32[]
             for p in files
-                @test nrow(DataFrame(Arrow.Table(p))) == 1     # main file untouched
-                t = DataFrame(Arrow.Table(p * _P.GROUP_SIDECAR_SUFFIX))
+                t = DataFrame(Arrow.Table(p))
                 @test nrow(t) == 1
-                for c in vcat(_P.GROUP_COLS, _P.DONOR_COLS)
-                    @test hasproperty(t, c)
+                # The 9 GROUP columns go to a row-aligned `.group.sidecar.arrow`
+                # rather than being written back into the ~80-column fold file.
+                # Round-2 read sites resolve them via `_feature_columns`, and
+                # Step 1b's PSMFileReference auto-discovers the sidecar.
+                g = DataFrame(Arrow.Table(p * _P.GROUP_SIDECAR_SUFFIX))
+                @test nrow(g) == nrow(t)
+                for c in _P.GROUP_COLS
+                    @test hasproperty(g, c)
                 end
-                @test hasproperty(t, :delta_irt)
-                push!(gm, t.global_max[1]);            push!(gt3, t.global_top3_logodds[1])
-                push!(np, t.global_n_present[1]);      push!(nc, t.global_n_confident[1])
-                push!(cm, t.cluster_max[1]);           push!(ct3, t.cluster_top3_logodds[1])
-                push!(cnp, t.cluster_n_present[1]);    push!(cnc, t.cluster_n_confident[1])
-                push!(di, t.delta_irt[1])
-                push!(dh, t.donor_frag_hellinger[1])
-                push!(dlw, t.donor_log2_weight_ratio[1])
-                push!(dle, t.donor_log2_explained_ratio[1])
+                @test hasproperty(g, :delta_irt)
+                push!(gm, g.global_max[1]);            push!(gt3, g.global_top3_logodds[1])
+                push!(np, g.global_n_present[1]);      push!(nc, g.global_n_confident[1])
+                push!(cm, g.cluster_max[1]);           push!(ct3, g.cluster_top3_logodds[1])
+                push!(cnp, g.cluster_n_present[1]);    push!(cnc, g.cluster_n_confident[1])
+                push!(di, g.delta_irt[1])
             end
             @test all(isfinite, gm) && all(isfinite, gt3) && all(isfinite, di)
 
@@ -357,72 +261,6 @@ const _P = Pioneer
             @test ct3 == gt3
             @test cnp == np
             @test cnc == nc
-
-            # DONOR_COLS compare each row against its LEAVE-ONE-OUT top-scoring run:
-            # run1 and run2 both donate from run3 (0.99); run3 donates from run2 (0.90).
-            @test dlw[1] ≈ log2(1.0f0 / 4.0f0)   # -2
-            @test dlw[2] ≈ log2(2.0f0 / 4.0f0)   # -1
-            @test dlw[3] ≈ log2(4.0f0 / 2.0f0)   # +1
-
-            @test dle[1] ≈ 2.0f0 - 5.0f0         # -3
-            @test dle[2] ≈ 3.0f0 - 5.0f0         # -2
-            @test dle[3] ≈ 5.0f0 - 3.0f0         # +2
-
-            # run1's spectrum is disjoint from its donor run3's -> max distance.
-            @test dh[1] ≈ 1.0f0 atol=1e-3
-            # run2 half-overlaps run3, and run3 half-overlaps run2 -> equal, in (0,1).
-            half = sqrt(0.5f0 * ((sqrt(0.5f0))^2 + (sqrt(0.5f0) - 1f0)^2))
-            @test dh[2] ≈ half atol=1e-3
-            @test dh[3] ≈ half atol=1e-3
-            @test 0.0f0 < dh[2] < 1.0f0
-        end
-    end
-
-    # ---------------------------------------------------------------
-    # 8. DONOR_COLS sentinels: no other run, and a non-positive weight
-    # ---------------------------------------------------------------
-    @testset "DONOR_COLS sentinels" begin
-        mktempdir() do dir
-            # Fold 0, two runs. Precursor 1 is in both; precursor 2 only in run1
-            # (no donor). Run1's precursor 1 has weight 0 -> ratio undefined.
-            df1 = DataFrame(
-                precursor_idx = UInt32[1, 2],
-                cv_fold       = UInt8[0, 0],
-                irt_obs       = Float32[100.0, 50.0],
-                weight        = Float32[0.0, 5.0],
-                log2_intensity_explained = Float32[4.0, 4.0],
-            )
-            df2 = DataFrame(
-                precursor_idx = UInt32[1],
-                cv_fold       = UInt8[0],
-                irt_obs       = Float32[110.0],
-                weight        = Float32[2.0],
-                log2_intensity_explained = Float32[1.0],
-            )
-            # Row 1 of df1 carries a valid spectrum (so its Hellinger is real even though
-            # its weight is 0); row 2 has none, which is a second, independent sentinel path.
-            for (r, c) in enumerate(_P.SMOOTHED_FRAGMENT_INTENSITY_COLUMNS)
-                df1[!, c] = Float32[r == 1 ? 1.0 : 0.0, 0.0]
-                df2[!, c] = Float32[r == 1 ? 1.0 : 0.0]
-            end
-            f1 = _write_fixture!(dir, "run1_fold0.arrow", df1, Float32[0.80, 0.95])
-            f2 = _write_fixture!(dir, "run2_fold0.arrow", df2, Float32[0.90])
-
-            _P._write_group_features!([f1, f2], 2)
-
-            s1 = DataFrame(Arrow.Table(f1 * _P.GROUP_SIDECAR_SUFFIX))
-            # Row 1 (precursor 1): a donor exists, but own weight is 0 -> ONLY the weight
-            # ratio takes the sentinel. The spectra are identical (both unit mass on rank 1)
-            # so the Hellinger is 0, and the explained ratio is a real value.
-            @test s1.donor_log2_weight_ratio[1] == _P.DONOR_SENTINEL
-            @test s1.donor_frag_hellinger[1] ≈ 0.0f0 atol=1e-3
-            @test s1.donor_log2_explained_ratio[1] ≈ 4.0f0 - 1.0f0
-            # Row 2 (precursor 2): present in no other run -> all three sentinel, and
-            # global_n_present == 0 is what disambiguates them.
-            @test s1.global_n_present[2] == 0.0f0
-            @test s1.donor_log2_weight_ratio[2] == _P.DONOR_SENTINEL
-            @test s1.donor_frag_hellinger[2] == _P.DONOR_SENTINEL
-            @test s1.donor_log2_explained_ratio[2] == _P.DONOR_SENTINEL
         end
     end
 
