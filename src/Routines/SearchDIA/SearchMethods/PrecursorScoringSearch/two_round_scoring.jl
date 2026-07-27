@@ -40,13 +40,48 @@ end
 const GROUP_COLS = [:global_max, :global_top3_logodds, :cluster_max, :cluster_top3_logodds,
                     :global_n_present, :global_n_confident, :cluster_n_present, :cluster_n_confident]
 
-# Round-2 feature columns appended to ADVANCED_FEATURE_SET: the GROUP cross-run features + delta_irt.
-two_round_features() = vcat(GROUP_COLS, [:delta_irt])
+# DONOR cross-run features: receiver-vs-donor evidence agreement. The GROUP cols above are derived
+# from the round-1 SCORE distribution alone, so a run whose own evidence contradicts a cross-run
+# boost (right precursor, wrong run) looks identical to a genuine one. These three compare the
+# receiver row's own evidence against the leave-one-out TOP-SCORING OTHER RUN's (the donor the boost
+# effectively comes from): fragment-spectrum agreement, and the weight / explained-intensity ratios.
+# Semantics follow the MBR_best_{smoothed_frag_hellinger,log2_weight_ratio,log2_explained_ratio}
+# features on origin/codex/global-precursor-lightgbm. Global scope only — no cluster variant, since
+# for R<9 the cluster mirrors global anyway and the donor evidence would be identical.
+#
+# `donor_frag_hellinger` is the cross-run analog of `smoothed_2d_shadow_hellinger` (round-2's single
+# largest gain at ~32-41%), which measures only the receiver's OWN spectral fit. That branch's MBR
+# later swapped this for a TEMPORAL variant computed from per-scan traces; those traces are not in
+# the fold PSM files, so this is the plain smoothed-spectrum form (its predecessor there).
+#
+# iRT agreement is deliberately NOT duplicated here: `delta_irt` already references the highest-s1
+# run, and a row receiving a cross-run boost is by definition not that run, so delta_irt is already
+# the donor-iRT disagreement exactly where it matters. `log2_n_scans_ratio` was measured on Olsen +
+# KEAP1 and earned no gain (below the 30th-ranked feature in both), so it is not carried.
+#
+# `-1` is the no-donor / undefined sentinel (precursor seen in no other run of the fold, or an
+# undefined ratio/spectrum), disambiguated by global_n_present == 0, which the model already has.
+const DONOR_COLS = [:donor_frag_hellinger, :donor_log2_weight_ratio, :donor_log2_explained_ratio]
+const DONOR_SENTINEL = -1.0f0
+
+# Round-2 feature columns appended to ADVANCED_FEATURE_SET: the GROUP + DONOR cross-run features
+# and delta_irt.
+two_round_features() = vcat(GROUP_COLS, DONOR_COLS, [:delta_irt])
 
 # Cross-run feature columns grafted onto each shadow twin so every one keeps a 1:1 target/decoy
 # marginal — forcing round-2 LGBM to use them jointly with the base features, never as a standalone
 # signal. delta_irt is NOT grafted: each shadow keeps its source row's own iRT self-consistency.
-_mbr_graft_cols() = Tuple(c for c in GROUP_COLS)
+#
+# DONOR_COLS ARE grafted, same as the GROUP cols. They are cross-run quantities in exactly the same
+# sense — a donor-agreement value is only available because some other run saw the precursor — and
+# they carry a standalone target/decoy marginal (real IDs reproduce across runs, chance ones do
+# not). That marginal is precisely what would let round-2 justify a transfer with no local evidence,
+# which is the failure mode the shadows exist to block.
+#
+# Grafting a donor-agreement value onto a twin built from a different row's evidence is physically
+# incoherent, but that is the mechanism rather than a side effect: shadow rows are marginal-matched
+# counterweights, not plausible PSMs, and the same incoherence applies to a grafted global_max.
+_mbr_graft_cols() = Tuple(c for c in vcat(GROUP_COLS, DONOR_COLS))
 
 # Log a pass's LightGBM feature gains at @user_info (visible regardless of debug
 # level), top-N sorted. Used to compare round-1 vs round-2 gains.
@@ -100,6 +135,74 @@ end
         acc += _pos_logit(t.v[i]); taken += 1
     end
     return acc
+end
+
+# One run's receiver-side evidence for a precursor, carried alongside the top-2 scores so the
+# leave-one-out donor's values are available when the features are emitted. isbits, so `GTopK4`
+# below stores inline in its accumulator (no boxing, no GC pressure).
+#
+# `frag` holds sqrt of the L1-normalized smoothed fragment intensities — the Hellinger-ready form,
+# so the emit loop only differences two tuples. Float16 because every entry is in [0,1] and ~1e-3
+# relative precision is far below what a Hellinger distance resolves; it halves the accumulator
+# (DonorEv 40 -> 24 B, so `grec` is 80 B/precursor: 840 MB rather than 1.18 GB on a 10.5M-precursor
+# library).
+struct DonorEv
+    weight::Float32
+    explained::Float32
+    frag::NTuple{8,Float16}
+end
+const EMPTY_FRAG = ntuple(_ -> Float16(0), 8)
+const EMPTY_EV = DonorEv(0f0, 0f0, EMPTY_FRAG)
+
+# sqrt of the L1-normalized 8-fragment smoothed spectrum; all-zero when there is no intensity (which
+# `_donor_hellinger` treats as "undefined", never as perfect agreement).
+@inline function _frag_sqrt_tuple(f::NTuple{8,Float32})
+    s = f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]
+    (s > 0f0 && isfinite(s)) || return EMPTY_FRAG
+    inv_s = 1f0 / s
+    return ntuple(i -> Float16(sqrt(f[i] * inv_s)), Val(8))
+end
+
+@inline function _frag_is_valid(t::NTuple{8,Float16})
+    @inbounds for i in 1:8
+        t[i] > Float16(0) && return true
+    end
+    return false
+end
+
+# Hellinger distance between two sqrt-normalized spectra: sqrt(0.5 * Σ (√p - √q)²), in [0,1].
+# 0 = identical spectra, 1 = disjoint. Undefined (sentinel) if either side has no intensity.
+@inline function _donor_hellinger(r::NTuple{8,Float16}, d::NTuple{8,Float16})
+    (_frag_is_valid(r) && _frag_is_valid(d)) || return DONOR_SENTINEL
+    acc = 0f0
+    @inbounds for i in 1:8
+        delta = Float32(r[i]) - Float32(d[i])
+        acc += delta * delta
+    end
+    return sqrt(max(0f0, 0.5f0 * acc))
+end
+
+# TopK4 plus the evidence of its top-2 runs. Only two slots are needed: the leave-one-out donor is
+# slot 1, or slot 2 when slot 1 is the receiver's own run (same rule as `_tk_loo_max`).
+struct GTopK4
+    t::TopK4
+    e::NTuple{2,DonorEv}
+end
+const EMPTY_GTOPK4 = GTopK4(EMPTY_TOPK4, (EMPTY_EV, EMPTY_EV))
+@inline function _gt_insert(g::GTopK4, s::Float32, run::UInt32, ev::DonorEv)
+    t = g.t; v = t.v
+    s <= v[4] && return g
+    e = g.e
+    # Mirror _tk_insert's shift for the two slots that carry evidence.
+    ne = s > v[1] ? (ev, e[1]) :
+         s > v[2] ? (e[1], ev) : e
+    return GTopK4(_tk_insert(t, s, run), ne)
+end
+# Leave-one-out top donor: (score, evidence) of the highest-scoring run other than `own`.
+# score <= 0 means the precursor was seen in no other run of the fold.
+@inline function _gt_loo_donor(g::GTopK4, own::UInt32)
+    t = g.t
+    @inbounds return (t.r[1] != own) ? (t.v[1], g.e[1]) : (t.v[2], g.e[2])
 end
 
 # Randomized truncated SVD of the L2-row-normalized presence matrix M (runs × precursors), returning
@@ -249,6 +352,11 @@ records — `grec` over all the fold's runs, `crec` per cluster (reset via `touc
 leave-one-out `global_{max,top3_logodds}`, `cluster_{max,top3_logodds}`, and `delta_irt`.
 Run size follows `_group_size(R)`; R<9 → cluster OFF (cluster cols mirror global).
 
+`grec` additionally carries its top-2 runs' receiver-side evidence (`DonorEv`: weight,
+log2_intensity_explained, and the sqrt-normalized smoothed fragment spectrum), which yields the
+leave-one-out DONOR_COLS — the receiver row's agreement with the top-scoring OTHER run. `crec` does
+not: the donor cols are global-scope only.
+
 STREAMING: peak memory is O(`max_pid`) accumulators + the fold's sparse presence + one cluster's
 (≤`k` ≤ 9) files — independent of the number of runs. Files are re-read per pass (fold + emit)
 instead of the whole experiment being held in RAM, so this scales to hundreds of runs. `max_pid` is
@@ -264,7 +372,9 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
         fold_of[f] = _file_fold(Arrow.Table(file_paths[f]).cv_fold)
     end
 
-    # Read one file's (precursor_idx, s1, irt_obs). s1 = round-1 OOF score from the Pass-1 sidecar.
+    # Read one file's (precursor_idx, s1, irt_obs) plus the receiver-side evidence the DONOR_COLS
+    # compare across runs (weight, log2_intensity_explained, and the Hellinger-ready smoothed
+    # fragment spectrum). s1 = round-1 OOF score from the Pass-1 sidecar.
     read_file = function(f::Int)
         tbl  = Arrow.Table(file_paths[f])
         side = Arrow.Table(file_paths[f] * PASS1_SIDECAR_SUFFIX)
@@ -273,10 +383,19 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
         length(s1) == length(pid) ||
             error("_write_group_features!: sidecar row mismatch at $(file_paths[f])")
         irt  = collect(Float32.(tbl.irt_obs))
-        return pid, s1, irt
+        wt   = collect(Float32.(tbl.weight))
+        expl = collect(Float32.(tbl.log2_intensity_explained))
+        # Function barrier: the Arrow columns are untyped at this point, so normalize the spectra
+        # in a separate typed loop rather than inside the accumulator pass.
+        fcols = ntuple(r -> getproperty(tbl, SMOOTHED_FRAGMENT_INTENSITY_COLUMNS[r]), Val(8))
+        frag = Vector{NTuple{8,Float16}}(undef, length(pid))
+        @inbounds for i in eachindex(frag)
+            frag[i] = _frag_sqrt_tuple(ntuple(r -> Float32(fcols[r][i]), Val(8)))
+        end
+        return pid, s1, irt, wt, expl, frag
     end
 
-    grec    = fill(EMPTY_TOPK4, max_pid + 1)        # global records (reused per fold)
+    grec    = fill(EMPTY_GTOPK4, max_pid + 1)       # global records + top-2 donor evidence (per fold)
     crec    = fill(EMPTY_TOPK4, max_pid + 1)        # cluster records (reused per cluster via touched)
     gcnt_p  = zeros(Int32, max_pid + 1)             # global count: runs present (reused per fold)
     gcnt_c  = zeros(Int32, max_pid + 1)             # global count: runs with s1>=GROUP_CONF_S1
@@ -294,14 +413,14 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
 
         # Pass 1 (stream one file at a time): global records + counts + ref_irt, and the fold's
         # per-run presence for clustering.
-        fill!(grec, EMPTY_TOPK4); fill!(best_s1, -1.0f0); fill!(gcnt_p, 0); fill!(gcnt_c, 0)
+        fill!(grec, EMPTY_GTOPK4); fill!(best_s1, -1.0f0); fill!(gcnt_p, 0); fill!(gcnt_c, 0)
         run_present = Vector{Vector{UInt32}}(undef, R)
         for ri in 1:R
-            pid, s1, irt = read_file(files[ri])
+            pid, s1, irt, wt, expl, frag = read_file(files[ri])
             pres = UInt32[]
             @inbounds for i in eachindex(pid)
                 p = pid[i]; s = s1[i]
-                grec[p + 1] = _tk_insert(grec[p + 1], s, UInt32(ri))
+                grec[p + 1] = _gt_insert(grec[p + 1], s, UInt32(ri), DonorEv(wt[i], expl[i], frag[i]))
                 gcnt_p[p + 1] += Int32(1)
                 s >= GROUP_CONF_S1 && (gcnt_c[p + 1] += Int32(1))
                 if s > best_s1[p + 1]; best_s1[p + 1] = s; ref_irt[p + 1] = irt[i]; end
@@ -320,11 +439,13 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
         # then emit LOO features for its runs' rows and write each file's GROUP columns in place.
         for c in 1:ncl
             cl_ris = runs_in[c]
-            buf = Dict{Int, Tuple{Vector{UInt32}, Vector{Float32}, Vector{Float32}}}()
+            buf = Dict{Int, Tuple{Vector{UInt32}, Vector{Float32}, Vector{Float32},
+                                  Vector{Float32}, Vector{Float32},
+                                  Vector{NTuple{8,Float16}}}}()
             empty!(touched)
             for ri in cl_ris
-                pid, s1, irt = read_file(files[ri])
-                buf[ri] = (pid, s1, irt)
+                pid, s1, irt, wt, expl, frag = read_file(files[ri])
+                buf[ri] = (pid, s1, irt, wt, expl, frag)
                 @inbounds for i in eachindex(pid)
                     p = pid[i]; s = s1[i]
                     crec[p + 1] === EMPTY_TOPK4 && push!(touched, p)
@@ -335,18 +456,21 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
             end
             for ri in cl_ris
                 f = files[ri]; ru = UInt32(ri)
-                pid, s1, irt = buf[ri]
+                pid, s1, irt, wt, expl, frag = buf[ri]
                 n = length(pid)
                 gmax = Vector{Float32}(undef, n); gt3 = Vector{Float32}(undef, n)
                 cmax = Vector{Float32}(undef, n); ct3 = Vector{Float32}(undef, n)
                 gnp  = Vector{Float32}(undef, n); gnc = Vector{Float32}(undef, n)
                 cnp  = Vector{Float32}(undef, n); cnc = Vector{Float32}(undef, n)
                 di   = Vector{Float32}(undef, n)
+                dh   = Vector{Float32}(undef, n); dlw = Vector{Float32}(undef, n)
+                dle  = Vector{Float32}(undef, n)
                 @inbounds for i in 1:n
                     p = pid[i]; s = s1[i]
                     ownc = s >= GROUP_CONF_S1 ? Int32(1) : Int32(0)
-                    gmax[i] = _tk_loo_max(grec[p + 1], ru)
-                    gt3[i]  = _tk_loo_top3(grec[p + 1], ru)
+                    grp = grec[p + 1]
+                    gmax[i] = _tk_loo_max(grp.t, ru)
+                    gt3[i]  = _tk_loo_top3(grp.t, ru)
                     gnp[i]  = Float32(gcnt_p[p + 1] - Int32(1))       # exclude own row
                     gnc[i]  = Float32(gcnt_c[p + 1] - ownc)
                     if k <= 0
@@ -359,8 +483,18 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
                         cnc[i]  = Float32(ccnt_c[p + 1] - ownc)
                     end
                     di[i] = abs(irt[i] - ref_irt[p + 1])
+                    # DONOR_COLS: agreement with the leave-one-out top-scoring OTHER run.
+                    ds, dev = _gt_loo_donor(grp, ru)
+                    if ds <= 0f0                       # precursor seen in no other run of the fold
+                        dh[i] = DONOR_SENTINEL; dlw[i] = DONOR_SENTINEL; dle[i] = DONOR_SENTINEL
+                    else
+                        dh[i]  = _donor_hellinger(frag[i], dev.frag)
+                        dlw[i] = (wt[i] > 0f0 && dev.weight > 0f0) ?
+                                 log2(wt[i] / dev.weight) : DONOR_SENTINEL
+                        dle[i] = expl[i] - dev.explained
+                    end
                 end
-                # Write the 9 GROUP columns to a row-aligned sidecar instead of reading and
+                # Write the 12 GROUP/DONOR columns to a row-aligned sidecar instead of reading and
                 # rewriting the whole ~80-column fold file. The round-2 read sites resolve
                 # them via `_feature_columns` (pass1_oom.jl), and Step 1b's PSMFileReference
                 # auto-discovers `.group.sidecar.arrow` so they still reach the merged output.
@@ -372,14 +506,16 @@ function _write_group_features!(file_paths::Vector{String}, max_pid::Int)
                     :cluster_max          => cmax, :cluster_top3_logodds => ct3,
                     :global_n_present     => gnp,  :global_n_confident   => gnc,
                     :cluster_n_present    => cnp,  :cluster_n_confident  => cnc,
-                    :delta_irt            => di;
+                    :delta_irt            => di,
+                    :donor_frag_hellinger      => dh,  :donor_log2_weight_ratio => dlw,
+                    :donor_log2_explained_ratio => dle;
                     tag = "group")
             end
             for p in touched; crec[p + 1] = EMPTY_TOPK4; ccnt_p[p + 1] = Int32(0); ccnt_c[p + 1] = Int32(0); end
         end
     end
     nruns = count(!=(-1), fold_of) ÷ 2
-    @user_info "group-scoring (streaming): wrote global+cluster (max, top3_logodds, n_present, n_confident) + delta_irt for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
+    @user_info "group-scoring (streaming): wrote global+cluster (max, top3_logodds, n_present, n_confident) + delta_irt + donor (frag_hellinger, log2_weight_ratio, log2_explained_ratio) for ~$nruns runs/fold ($nfiles fold-files, k=$kseen)"
     return nothing
 end
 
