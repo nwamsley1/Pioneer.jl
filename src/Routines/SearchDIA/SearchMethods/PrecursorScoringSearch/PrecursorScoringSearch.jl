@@ -76,8 +76,11 @@ struct PrecursorScoringSearchParameters <: SearchParameters
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
-        mbr = hasproperty(global_params, :match_between_runs) ?
-                Bool(global_params.match_between_runs) : true
+        # BRANCH OVERRIDE: force match-between-runs OFF regardless of config.
+        # This branch is for MBR-off regression testing, so global.match_between_runs
+        # is intentionally ignored (skips MBR features, the MBR-boosted second pass,
+        # the FTR controller, and the qval bypass).
+        mbr = false
 
         new(
             Float64(ml_params.max_psm_memory_mb),
@@ -379,10 +382,11 @@ function summarize_results!(
             return df
         end
 
-        # Cross-run filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold).
-        # The :pep and :off variants are retained in git history if needed.
-        qval_conditions = [(:global_qval, params.q_value_threshold),
-                           (:qval,        params.q_value_threshold)]
+        # SEQUENTIAL FILTER (experiment): Part 1 filters on (:global_qval ≤ threshold)
+        # ONLY. The experiment-wide (:qval) filter is deferred to Step 11, where it
+        # is applied to the recomputed q-value (spline refit on the global-passing
+        # subset). Original simultaneous variant kept in git history.
+        qval_conditions = [(:global_qval, params.q_value_threshold)]
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
@@ -410,8 +414,12 @@ function summarize_results!(
         if spline_result === nothing
             @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
         else
+            # SEQUENTIAL FILTER (experiment): recompute experiment-wide qval on the
+            # global-passing survivors, THEN apply the deferred :qval ≤ threshold
+            # filter to that recomputed value.
             recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline)
+                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline) |>
+                filter_by_multiple_thresholds([(:qval, params.q_value_threshold)])
             passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
         end
     end
