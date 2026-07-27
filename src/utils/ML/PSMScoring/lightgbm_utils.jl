@@ -175,7 +175,38 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
                                     metric = ["binary_logloss"],
                                     objective::AbstractString = "binary",
                                     is_unbalance = false,
-                                    verbosity::Integer = -1)
+                                    verbosity::Integer = -1,
+                                    # Monotone / interaction regularization. All default to
+                                    # no-ops: LightGBM.jl's stringifyparams skips empty
+                                    # collections, so the parameter string handed to the C API
+                                    # is byte-identical unless a caller sets one.
+                                    #
+                                    # monotone_constraints is POSITIONAL — one entry per feature
+                                    # in COLUMN order (+1 increasing, -1 decreasing, 0 free). A
+                                    # wrong length raises (LightGBM checks it against
+                                    # num_total_features), but a right-length/wrong-order vector
+                                    # is silently accepted, so build it from the same filtered
+                                    # feature list used for the matrix, never a static list.
+                                    monotone_constraints::Vector{Int} = Int[],
+                                    monotone_constraints_method::AbstractString = "advanced",
+                                    monotone_penalty::Real = 0.0,
+                                    # interaction_constraints groups are 1-BASED feature indices;
+                                    # LightGBM.jl converts them to 0-based (it is in INDEXPARAMS).
+                                    interaction_constraints::Vector{Vector{Int}} = Vector{Int}[],
+                                    # Exposed only so experiments can measure seed sensitivity.
+                                    # 1776 is the long-standing hardcoded value, but note the
+                                    # master `seed` is INERT here: LightGBM only uses it to
+                                    # derive sub-seeds that are not set explicitly, and
+                                    # LightGBM.jl always emits bagging/feature_fraction/data
+                                    # seeds with its own defaults. To actually perturb the fit
+                                    # (e.g. to check an A/B result is not a seed artifact) vary
+                                    # `bagging_seed` — that is what selects the bagged rows.
+                                    # Defaults below are LightGBM.jl's own, so the parameter
+                                    # string stays byte-identical when they are not passed.
+                                    seed::Integer = 1776,
+                                    bagging_seed::Integer = 3,
+                                    feature_fraction_seed::Integer = 2,
+                                    data_random_seed::Integer = 1)
     return LightGBM.LGBMClassification(
         objective = objective,
         metric = metric,
@@ -195,9 +226,22 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
         num_class = 1,
         verbosity = Int(verbosity),
         is_unbalance = is_unbalance,
-        seed = 1776, # potentialy needed for stable results
+        seed = Int(seed), # potentialy needed for stable results
+        bagging_seed = Int(bagging_seed),
+        feature_fraction_seed = Int(feature_fraction_seed),
+        data_random_seed = Int(data_random_seed),
         deterministic = true, # potentialy needed for stable results
-        force_row_wise = true # potentialy needed for stable results
+        force_row_wise = true, # potentialy needed for stable results
+        monotone_constraints = monotone_constraints,
+        # When no constraints are set, emit LightGBM.jl's own default ("basic") so the
+        # parameter string handed to the C API is byte-identical to before this kwarg
+        # existed. The method is inert without constraints (LightGBM: "used only if
+        # monotone_constraints is set"), but keeping the string identical means the
+        # unconstrained path is provably unchanged rather than argued to be.
+        monotone_constraints_method = isempty(monotone_constraints) ?
+            "basic" : String(monotone_constraints_method),
+        monotone_penalty = float(monotone_penalty),
+        interaction_constraints = interaction_constraints
     )
 end
 
