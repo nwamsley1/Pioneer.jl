@@ -42,10 +42,31 @@ const MAINSEARCH_LGBM_HP = merge(SHARED_LGBM_HP,
     (max_depth = 4, num_leaves = 15, max_bin = 63))
 
 # Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
-# Same shape as SHARED_LGBM_HP but lower learning rate × more iterations:
-# the slower lr lets boosting refine more decision boundaries on the
-# larger, mixed-file PSM pool.
-const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
+# Same shape as SHARED_LGBM_HP, with more iterations for the larger, mixed-file PSM pool.
+#
+# learning_rate 0.10 → 0.20 (2026-07-27). The 0.10 was chosen on the theory that a slower
+# rate lets boosting refine more decision boundaries; measured offline, the model was simply
+# UNDER-FIT. Round-1 OOF targets at q≤0.01, via Pioneer's real trainer on dumped
+# main_search_psms, each arm paired against baseline at the same bagging_seed:
+#
+#   dataset              files   baseline    lr 0.20 alone      all-three aggressive
+#   SCP 250pg (3 files)      3       8.4k   +0.87% (8/12)      +1.32% ± 0.55 (9/12)
+#   KEAP1                    6       678k   —                  +1.06%
+#   Olsen Exploris 3P       23      1.31M   +1.19% ± 0.03 5/5  +1.56% ± 0.01 (5/5)
+#
+# Only the learning rate is raised. The other half of that "aggressive" bundle
+# (num_leaves 63→127, max_depth 8→12) was measured separately and is a worse trade:
+# less gain (+0.91% Olsen / +0.68% SCP), +36% train time, and the largest seed-to-seed
+# variance of any arm — whereas lr 0.20 costs no time (66s vs 70s) and no stability
+# (CV 0.04% vs 0.02% Olsen; on SCP it was *more* stable than 0.10). The two levers are
+# sub-additive (0.91 + 1.19 = 2.10% vs 1.56% combined), so leaves/depth stay put.
+#
+# NOT applied to GLOBAL_PRECURSOR_LGBM_HP: raising that model's rate measured slightly
+# NEGATIVE (140,731 → 140,554 OOF targets), so its 0.05 is left alone.
+#
+# Caveat: every measurement above is decoy-based OOF (the local libraries have no
+# entrapment), so it is blind to false TRANSFER. Confirm on entrapment EFDR.
+const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.20, max_depth=8,
                          num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                          bagging_fraction=0.8, bagging_freq=1, is_unbalance=true,
                          max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
