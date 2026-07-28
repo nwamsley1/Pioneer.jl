@@ -219,27 +219,51 @@ end
     return run_passed === nothing || !(pid_int in run_passed)
 end
 
-@inline function _mbr_nearest_pool_order(
+# Lazy nearest-first traversal of an iRT-sorted pool: a cursor that walks outward from the
+# insertion point, yielding pool indices in increasing |irt - target| order.
+#
+# The previous version materialised the WHOLE ordering into a `Vector{Int}` and returned it, while
+# every caller breaks after finding MBR_N_COUNTERFACTUALS (3) eligible donors. With pools in the low
+# thousands and up to 4 pools consulted per row that was ~107 kB allocated per row to consume a
+# handful of entries — measured at 41.28 GB, 96.8 % of the row loop, on Olsen 6-file.
+#
+# `_mbr_next_pool_idx!` returns 0 when the pool is exhausted. The comparison and the tie-break
+# (`<=` favours the left/lower side) are unchanged, so the visit ORDER is identical and donor
+# selection is bit-for-bit the same.
+mutable struct _MBRPoolCursor
+    left::Int
+    right::Int
+    n::Int
+end
+
+@inline function _mbr_pool_cursor(pool::_MBRIrtPool, target_irt::Float32)
+    n = length(pool.irts)
+    right = n == 0 ? 1 : searchsortedfirst(pool.irts, target_irt)
+    return _MBRPoolCursor(right - 1, right, n)
+end
+
+@inline function _mbr_next_pool_idx!(
+    cursor::_MBRPoolCursor,
     pool::_MBRIrtPool,
     target_irt::Float32,
 )
-    n = length(pool.irts)
-    n == 0 && return Int[]
-    right = searchsortedfirst(pool.irts, target_irt)
-    left = right - 1
-    order = Int[]
-    sizehint!(order, n)
-    while left >= 1 || right <= n
-        use_left = if right > n
-            true
-        elseif left < 1
-            false
-        else
-            abs(target_irt - pool.irts[left]) <=
-                abs(pool.irts[right] - target_irt)
-        end
-        push!(order, use_left ? left : right)
-        use_left ? (left -= 1) : (right += 1)
+    left = cursor.left
+    right = cursor.right
+    n = cursor.n
+    (left >= 1 || right <= n) || return 0
+    use_left = if right > n
+        true
+    elseif left < 1
+        false
+    else
+        @inbounds abs(target_irt - pool.irts[left]) <=
+            abs(pool.irts[right] - target_irt)
     end
-    return order
+    if use_left
+        cursor.left = left - 1
+        return left
+    else
+        cursor.right = right + 1
+        return right
+    end
 end

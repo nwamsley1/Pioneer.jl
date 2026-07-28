@@ -92,7 +92,11 @@ const _MBRIrtPool = NamedTuple{
     Tuple{Vector{UInt32}, Vector{Float32}},
 }
 
-_empty_mbr_irt_pool() = (pids = UInt32[], irts = Float32[])
+# Shared empty pool. `get(dict, key, default)` evaluates `default` EAGERLY, so the previous
+# `_empty_mbr_irt_pool()` allocated two Vectors on every lookup — up to four per candidate row —
+# even when the key was present. Nothing mutates a pool, so one immutable instance is safe.
+const EMPTY_MBR_IRT_POOL = (pids = UInt32[], irts = Float32[])
+_empty_mbr_irt_pool() = EMPTY_MBR_IRT_POOL
 
 struct _MBRCounterfactualEligibility
     global_passed::BitSet

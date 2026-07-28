@@ -391,9 +391,21 @@ end
     return worst
 end
 
+@inline function _mbr_pid_already_taken(
+    donors::Vector{Union{Nothing, _MBRDonorEntry}},
+    n_found::Int,
+    pid::UInt32,
+)
+    @inbounds for k in 1:n_found
+        donor = donors[k]
+        donor === nothing && continue
+        donor.precursor_idx == pid && return true
+    end
+    return false
+end
+
 @inline function _mbr_collect_false_donors_from_pool!(
     donors::Vector{Union{Nothing, _MBRDonorEntry}},
-    seen_pids::BitSet,
     donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
     pool::_MBRIrtPool,
     target_irt::Float32,
@@ -404,10 +416,18 @@ end
     donor_file::Union{Nothing, UInt32} = nothing,
 )
     n_found = count(donor -> donor !== nothing, donors)
-    @inbounds for pool_idx in _mbr_nearest_pool_order(pool, target_irt)
+    cursor = _mbr_pool_cursor(pool, target_irt)
+    @inbounds while true
+        pool_idx = _mbr_next_pool_idx!(cursor, pool, target_irt)
+        pool_idx == 0 && break
         pid = pool.pids[pool_idx]
         pid == receiver_pid && continue
-        Int(pid) in seen_pids && continue
+        # `seen_pids` was a per-row BitSet, but every pid pushed to it was exactly the pid of a
+        # donor just written to `donors` — so the set is derivable from `donors[1:n_found]`, a
+        # scan of at most MBR_N_COUNTERFACTUALS (3) entries. A BitSet spans min..max of its
+        # contents in a Vector{UInt64}, and precursor ids run into the millions, so the old
+        # version allocated a large bitmap per row to hold <= 3 scattered values.
+        _mbr_pid_already_taken(donors, n_found, pid) && continue
         _mbr_counterfactual_eligible(eligibility, receiver_file, pid) ||
             continue
         donor = donor_file === nothing ?
@@ -416,7 +436,6 @@ end
         donor === nothing && continue
         n_found += 1
         donors[n_found] = donor
-        push!(seen_pids, Int(pid))
         n_found == MBR_N_COUNTERFACTUALS && break
     end
     return n_found
@@ -431,16 +450,14 @@ function _mbr_false_donors(
     target_irt::Float32,
     true_donor::_MBRDonorEntry,
     atlas::Union{Nothing, RunSimilarityAtlas},
+    donors::Vector{Union{Nothing, _MBRDonorEntry}},
 )
     pid_int = Int(receiver_pid)
     fold = Int(pools.fold_by_pid[pid_int])
     mz_bin = Int(pools.mz_bin_by_pid[pid_int])
     charge = Int(pools.charge_by_pid[pid_int])
     sequence_length = Int(pools.length_by_pid[pid_int])
-    donors = Union{Nothing, _MBRDonorEntry}[
-        nothing for _ in 1:MBR_N_COUNTERFACTUALS
-    ]
-    seen_pids = BitSet()
+    fill!(donors, nothing)      # caller-owned buffer, reused across rows
     n_found = 0
 
     same_file_pool = get(
@@ -450,7 +467,6 @@ function _mbr_false_donors(
     )
     n_found = _mbr_collect_false_donors_from_pool!(
         donors,
-        seen_pids,
         donor_dict,
         same_file_pool,
         target_irt,
@@ -482,7 +498,6 @@ function _mbr_false_donors(
     for pool in fallback_pools
         n_found = _mbr_collect_false_donors_from_pool!(
             donors,
-            seen_pids,
             donor_dict,
             pool,
             target_irt,
@@ -732,6 +747,12 @@ function compute_postintegration_mbr_features!(
 
     # DIAGNOSTIC (PIONEER_MBR_ROW_DIAG=1): split the ~43 GB still in this loop into true-donor
     # featurisation, counterfactual DONOR SELECTION, and counterfactual featurisation.
+    # One buffer per file. compute_postintegration_mbr_features! is the unit of parallelism
+    # (parallel_foreach! over files), so a local here is per-task and needs no locking.
+    false_donor_buffer = Union{Nothing, _MBRDonorEntry}[
+        nothing for _ in 1:MBR_N_COUNTERFACTUALS
+    ]
+
     _rdiag = get(ENV, "PIONEER_MBR_ROW_DIAG", "0") == "1"
     _ra = Base.gc_bytes(); _rt = time()
 
@@ -806,6 +827,7 @@ function compute_postintegration_mbr_features!(
             target_irt,
             true_donor,
             run_similarity_atlas,
+            false_donor_buffer,
         )
         if _rdiag
             MBR_ROW_DIAG[:false_select_bytes] += Base.gc_bytes() - _ra
