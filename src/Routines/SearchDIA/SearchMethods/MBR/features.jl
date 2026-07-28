@@ -730,6 +730,11 @@ function compute_postintegration_mbr_features!(
     )
     has_irt_pred = hasproperty(main, :irt_pred)
 
+    # DIAGNOSTIC (PIONEER_MBR_ROW_DIAG=1): split the ~43 GB still in this loop into true-donor
+    # featurisation, counterfactual DONOR SELECTION, and counterfactual featurisation.
+    _rdiag = get(ENV, "PIONEER_MBR_ROW_DIAG", "0") == "1"
+    _ra = Base.gc_bytes(); _rt = time()
+
     @inbounds for row in 1:n
         receiver_pid = UInt32(main.precursor_idx[row])
         receiver_file = UInt32(main.ms_file_idx[row])
@@ -785,6 +790,11 @@ function compute_postintegration_mbr_features!(
         @inbounds for feature_idx in 1:MBR_N_PAIRED
             columns.paired[feature_idx][row] = true_values[feature_idx]
         end
+        if _rdiag
+            MBR_ROW_DIAG[:true_feat_bytes] += Base.gc_bytes() - _ra
+            MBR_ROW_DIAG[:true_feat_ms] += round(Int, (time() - _rt) * 1000)
+            _ra = Base.gc_bytes(); _rt = time()
+        end
 
         target_irt = receiver_irt_pred
         false_donors = _mbr_false_donors(
@@ -797,6 +807,12 @@ function compute_postintegration_mbr_features!(
             true_donor,
             run_similarity_atlas,
         )
+        if _rdiag
+            MBR_ROW_DIAG[:false_select_bytes] += Base.gc_bytes() - _ra
+            MBR_ROW_DIAG[:false_select_ms] += round(Int, (time() - _rt) * 1000)
+            MBR_ROW_DIAG[:n_rows_with_donor] += 1
+            _ra = Base.gc_bytes(); _rt = time()
+        end
         for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
             false_donor = false_donors[counterfactual_idx]
             false_donor === nothing && continue
@@ -824,6 +840,15 @@ function compute_postintegration_mbr_features!(
                     false_values[feature_idx]
             end
         end
+        if _rdiag
+            MBR_ROW_DIAG[:false_feat_bytes] += Base.gc_bytes() - _ra
+            MBR_ROW_DIAG[:false_feat_ms] += round(Int, (time() - _rt) * 1000)
+            _ra = Base.gc_bytes(); _rt = time()
+        end
+    end
+    if _rdiag
+        MBR_ROW_DIAG[:n_files] += 1
+        _mbr_row_diag_report()
     end
 
     # Same column order as before: ids, true-missing flag, shared, true block, then per
@@ -850,4 +875,28 @@ function compute_postintegration_mbr_features!(
     end
     writeArrow(main_path * MBR_SIDECAR_SUFFIX, sidecar)
     return main_path * MBR_SIDECAR_SUFFIX
+end
+
+
+# Accumulators for the row-loop diagnostic above. Threaded (parallel_foreach! over files), so these
+# counts are approximate under contention — they are for attribution, not exact accounting.
+const MBR_ROW_DIAG = Dict{Symbol, Int}(
+    :true_feat_bytes => 0,    :true_feat_ms => 0,
+    :false_select_bytes => 0, :false_select_ms => 0,
+    :false_feat_bytes => 0,   :false_feat_ms => 0,
+    :n_rows_with_donor => 0,  :n_files => 0,
+)
+
+function _mbr_row_diag_report()
+    d = MBR_ROW_DIAG
+    gb(x) = round(x / 2^30, digits = 2)
+    tot = d[:true_feat_bytes] + d[:false_select_bytes] + d[:false_feat_bytes]
+    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
+    @user_info """
+    MBR row-loop diagnostic ($(d[:n_files]) file(s), $(d[:n_rows_with_donor]) rows with a donor):
+      true-donor featurisation   : $(gb(d[:true_feat_bytes])) GB  $(d[:true_feat_ms]) ms  ($(pct(d[:true_feat_bytes]))%)
+      counterfactual SELECTION   : $(gb(d[:false_select_bytes])) GB  $(d[:false_select_ms]) ms  ($(pct(d[:false_select_bytes]))%)
+      counterfactual featurisation: $(gb(d[:false_feat_bytes])) GB  $(d[:false_feat_ms]) ms  ($(pct(d[:false_feat_bytes]))%)
+      TOTAL row loop             : $(gb(tot)) GB"""
+    return nothing
 end

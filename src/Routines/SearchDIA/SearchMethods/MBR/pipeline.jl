@@ -471,7 +471,11 @@ function finalize_postintegration_mbr!(
               "entries=$(sum(length, values(donor_dict)))"
 
     _mark(:eligibility)
-    parallel_foreach!(length(file_paths)) do chunk
+    # Base.gc_bytes() is process-global, so the row-loop probes inside
+    # compute_postintegration_mbr_features! are meaningless when files run concurrently — each
+    # thread's window absorbs every other thread's allocations. Run serially when diagnosing.
+    _serial_diag = get(ENV, "PIONEER_MBR_ROW_DIAG", "0") == "1"
+    _run_files = function (chunk)
         for file_position in chunk
             path = file_paths[file_position]
             tbl = Arrow.Table(path)
@@ -492,6 +496,13 @@ function finalize_postintegration_mbr!(
                 lod_log2_weight_global = lod_thresholds.global_lod,
                 bitvec_rank_table = rank_table,
             )
+        end
+    end
+    if _serial_diag
+        _run_files(1:length(file_paths))
+    else
+        parallel_foreach!(length(file_paths)) do chunk
+            _run_files(chunk)
         end
     end
 
