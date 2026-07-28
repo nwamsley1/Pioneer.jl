@@ -318,6 +318,12 @@ function process_file!(
         passing_psms = passing_psms[selected_rows, :]
     end
 
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): step-level attribution. add_mbr_integrated_spectra_to_psms!
+    # measured only ~5 GB of this step's ~78 GB, so the bulk is in extraction / isotope labelling /
+    # sort / integration below.
+    _sdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _st = time(); _sa = Base.gc_bytes()
+
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
         spectra,
@@ -328,6 +334,12 @@ function process_file!(
         ms_file_idx,
         MS2CHROM(),
     )
+    if _sdiag
+        MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:extract_ms] += round(Int, (time() - _st) * 1000)
+        MBR_STEP_DIAG[:n_chrom_rows] += nrow(chromatograms)
+        _st = time(); _sa = Base.gc_bytes()
+    end
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
@@ -351,7 +363,17 @@ function process_file!(
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
     end
+    if _sdiag
+        MBR_STEP_DIAG[:isotopes_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
+        _st = time(); _sa = Base.gc_bytes()
+    end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    if _sdiag
+        MBR_STEP_DIAG[:sort_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:sort_ms] += round(Int, (time() - _st) * 1000)
+        _st = time(); _sa = Base.gc_bytes()
+    end
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
@@ -381,6 +403,11 @@ function process_file!(
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
+        if _sdiag
+            MBR_STEP_DIAG[:integrate_bytes] += Base.gc_bytes() - _sa
+            MBR_STEP_DIAG[:integrate_ms] += round(Int, (time() - _st) * 1000)
+            _st = time(); _sa = Base.gc_bytes()
+        end
         if params.match_between_runs &&
            isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
             add_mbr_integrated_spectra_to_psms!(
@@ -433,10 +460,47 @@ function process_file!(
     # Clear chromatograms to free memory
     chromatograms = nothing
 
+    if _sdiag
+        MBR_STEP_DIAG[:tail_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:tail_ms] += round(Int, (time() - _st) * 1000)
+        MBR_STEP_DIAG[:n_files] += 1
+        _mbr_step_diag_report()
+    end
+
     # Store processed PSMs in results
     results.psms[] = passing_psms
 
     return results
+end
+
+const MBR_STEP_DIAG = Dict{Symbol, Int}(
+    :extract_bytes => 0,   :extract_ms => 0,
+    :isotopes_bytes => 0,  :isotopes_ms => 0,
+    :sort_bytes => 0,      :sort_ms => 0,
+    :integrate_bytes => 0, :integrate_ms => 0,
+    :tail_bytes => 0,      :tail_ms => 0,
+    :n_chrom_rows => 0, :n_files => 0,
+)
+
+function _mbr_step_diag_report()
+    d = MBR_STEP_DIAG
+    gb(x) = round(x / 2^30, digits = 2)
+    tot = d[:extract_bytes] + d[:isotopes_bytes] + d[:sort_bytes] +
+          d[:integrate_bytes] + d[:tail_bytes]
+    ms  = d[:extract_ms] + d[:isotopes_ms] + d[:sort_ms] + d[:integrate_ms] + d[:tail_ms]
+    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
+    # GB/s of allocation is the tell for allocator-bound vs compute-bound: Julia sustains several
+    # GB/s when allocation is the bottleneck, so a low rate means the time is going to real work.
+    rate(b, t) = t > 0 ? round((b / 2^30) / (t / 1000), digits = 2) : 0.0
+    @user_info """
+    MBR STEP diagnostic (cumulative over $(d[:n_files]) file(s), $(d[:n_chrom_rows]) chrom rows):
+      extract_chromatograms   : $(gb(d[:extract_bytes])) GB  $(d[:extract_ms]) ms  ($(pct(d[:extract_bytes]))%)  $(rate(d[:extract_bytes], d[:extract_ms])) GB/s
+      get_isotopes_captured!  : $(gb(d[:isotopes_bytes])) GB  $(d[:isotopes_ms]) ms  ($(pct(d[:isotopes_bytes]))%)  $(rate(d[:isotopes_bytes], d[:isotopes_ms])) GB/s
+      sort_chromatograms      : $(gb(d[:sort_bytes])) GB  $(d[:sort_ms]) ms  ($(pct(d[:sort_bytes]))%)  $(rate(d[:sort_bytes], d[:sort_ms])) GB/s
+      integrate_precursors    : $(gb(d[:integrate_bytes])) GB  $(d[:integrate_ms]) ms  ($(pct(d[:integrate_bytes]))%)  $(rate(d[:integrate_bytes], d[:integrate_ms])) GB/s
+      MBR feats + write tail   : $(gb(d[:tail_bytes])) GB  $(d[:tail_ms]) ms  ($(pct(d[:tail_bytes]))%)  $(rate(d[:tail_bytes], d[:tail_ms])) GB/s
+      STEP TOTAL              : $(gb(tot)) GB  $(ms) ms"""
+    return nothing
 end
 
 function process_search_results!(

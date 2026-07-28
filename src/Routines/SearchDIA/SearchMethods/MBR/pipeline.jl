@@ -348,6 +348,9 @@ function _recalculate_post_mbr_qvalues!(
 end
 
 function _cleanup_mbr_sidecars!(file_paths::Vector{String})
+    # PIONEER_MBR_KEEP_SIDECARS=1 preserves them so an optimisation can be checked for
+    # byte-identity against a reference run. Off by default.
+    get(ENV, "PIONEER_MBR_KEEP_SIDECARS", "0") == "1" && return nothing
     for path in file_paths
         for suffix in (
             PASS1_SIDECAR_SUFFIX,
@@ -418,27 +421,48 @@ function finalize_postintegration_mbr!(
         combined_error_rate = 0.0f0,
     )
 
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1). Measured on Olsen 6-file: this function is ~60 GB /
+    # ~36 s of MBR's ~73 GB / ~49 s total cost — the bulk — and it runs once inside
+    # summarize_results!, outside any per-file instrumentation. Phase probes below locate it.
+    _fdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _fstate = Ref((time(), Base.gc_bytes()))
+    _mark = function (key::Symbol)
+        _fdiag || return nothing
+        t0, a0 = _fstate[]
+        MBR_FINAL_DIAG[Symbol(key, :_bytes)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
+        MBR_FINAL_DIAG[Symbol(key, :_ms)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
+        _fstate[] = (time(), Base.gc_bytes())
+        return nothing
+    end
+
     donor_score_floor = _mbr_donor_score_floor(
         file_paths;
         donor_q_threshold = donor_q_threshold,
         require_initial_pass = true,
         q_value_threshold = q_value_threshold,
     )
+    _mark(:donor_floor)
     donor_dict = build_mbr_integrated_donor_dict(
         file_paths,
         donor_score_floor;
         q_value_threshold = q_value_threshold,
     )
+    _mark(:donor_dict)
     lod_thresholds = _mbr_lod_thresholds(
         file_paths,
         donor_score_floor;
         q_value_threshold = q_value_threshold,
     )
+    _mark(:lod_thresholds)
     receiver_run_clusters = build_mbr_receiver_run_clusters(
         file_paths;
         q_value_threshold = q_value_threshold,
     )
+    _mark(:run_clusters)
     partner_pools = build_mbr_partner_pools(file_paths, precursors)
+    _mark(:partner_pools)
     eligibility = build_mbr_counterfactual_eligibility(
         file_paths;
         q_value_threshold = q_value_threshold,
@@ -446,6 +470,7 @@ function finalize_postintegration_mbr!(
     @debug_l1 "Post-integration MBR donors: precursors=$(length(donor_dict)), " *
               "entries=$(sum(length, values(donor_dict)))"
 
+    _mark(:eligibility)
     parallel_foreach!(length(file_paths)) do chunk
         for file_position in chunk
             path = file_paths[file_position]
@@ -470,17 +495,22 @@ function finalize_postintegration_mbr!(
         end
     end
 
+    _mark(:compute_features)
     frame = load_postintegration_mbr_frame(file_paths)
+    _mark(:load_frame)
     summary = apply_postintegration_mbr_rescoring!(
         frame;
         alpha = q_value_threshold,
         q_value_threshold = q_value_threshold,
     )
+    _mark(:rescoring)
     _write_mbr_recovery_sidecars!(frame, file_paths)
     frame = DataFrame()
     GC.gc(false)
+    _mark(:write_sidecars)
     _merge_mbr_recoveries!(file_paths, q_value_threshold)
 
+    _mark(:merge_recoveries)
     refs = PSMFileReference[PSMFileReference(path) for path in file_paths]
     refs = _remap_mbr_scores!(
         refs,
@@ -490,6 +520,7 @@ function finalize_postintegration_mbr!(
         fdr_scale_factor = fdr_scale_factor,
         pre_mbr_qval_spline = pre_mbr_qval_spline,
     )
+    _mark(:remap_scores)
     refs = _recalculate_post_mbr_qvalues!(
         refs,
         merged_path;
@@ -497,7 +528,34 @@ function finalize_postintegration_mbr!(
         min_pep_points_per_bin = min_pep_points_per_bin,
         fdr_scale_factor = fdr_scale_factor,
     )
+    _mark(:recalc_qvalues)
     _drop_internal_mbr_columns!(file_paths)
     _cleanup_mbr_sidecars!(file_paths)
+    _mark(:cleanup)
+    _fdiag && _mbr_final_diag_report()
     return merge(summary, (n_files = length(file_paths),))
+end
+
+
+const MBR_FINAL_DIAG = Dict{Symbol, Int}()
+
+function _mbr_final_diag_report()
+    d = MBR_FINAL_DIAG
+    keys_ordered = [:donor_floor, :donor_dict, :lod_thresholds, :run_clusters, :partner_pools,
+                    :eligibility, :compute_features, :load_frame, :rescoring, :write_sidecars,
+                    :merge_recoveries, :remap_scores, :recalc_qvalues, :cleanup]
+    tot = sum(get(d, Symbol(k, :_bytes), 0) for k in keys_ordered)
+    totms = sum(get(d, Symbol(k, :_ms), 0) for k in keys_ordered)
+    gb(x) = round(x / 2^30, digits = 2)
+    lines = ["finalize_postintegration_mbr! phase diagnostic:"]
+    for k in keys_ordered
+        b = get(d, Symbol(k, :_bytes), 0); m = get(d, Symbol(k, :_ms), 0)
+        (b == 0 && m == 0) && continue
+        pc = tot > 0 ? round(100 * b / tot, digits = 1) : 0.0
+        rate = m > 0 ? round((b / 2^30) / (m / 1000), digits = 2) : 0.0
+        push!(lines, "  $(rpad(string(k), 22)) $(lpad(gb(b), 7)) GB  $(lpad(m, 7)) ms  ($(lpad(pc, 5))%)  $(rate) GB/s")
+    end
+    push!(lines, "  $(rpad("TOTAL", 22)) $(lpad(gb(tot), 7)) GB  $(lpad(totms, 7)) ms")
+    @user_info join(lines, "\n")
+    return nothing
 end

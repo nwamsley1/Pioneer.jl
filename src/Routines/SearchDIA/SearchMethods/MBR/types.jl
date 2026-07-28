@@ -260,6 +260,30 @@ end
         _mbr_false_feature("MBR_best_is_missing", counterfactual_idx)
 end
 
+# Sidecar column names resolved ONCE at load time. The per-row writers in
+# compute_postintegration_mbr_features! index these positionally; previously every one of ~104
+# writes per row rebuilt its Symbol through `Symbol(stem * "_true")` — a String allocation plus an
+# intern, ~41M of them over a 6-file Olsen run.
+const MBR_N_PAIRED = length(MBR_PAIRED_FEATURE_STEMS)
+
+# Flat and block-major: block 0 is the true pairing, block i is counterfactual i, so the position of
+# (block, feature) is `block * MBR_N_PAIRED + feature`. Built in the same order the old
+# `enumerate(MBR_PAIRED_FEATURE_STEMS)` loops used, so the sidecar schema is unchanged.
+const MBR_PAIRED_COLUMN_NAMES = Symbol[
+    (_mbr_true_feature(stem) for stem in MBR_PAIRED_FEATURE_STEMS)...,
+    (
+        _mbr_false_feature(stem, counterfactual_idx)
+        for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
+        for stem in MBR_PAIRED_FEATURE_STEMS
+    )...,
+]
+
+# Index 1 is the true block's flag; index 1+i is counterfactual i's.
+const MBR_MISSING_COLUMN_NAMES = Symbol[
+    :MBR_best_is_missing_true,
+    (_mbr_missing_feature(i) for i in 1:MBR_N_COUNTERFACTUALS)...,
+]
+
 const MBR_FTR_FEATURES_TRUE = Symbol[
     MBR_RECEIVER_FEATURES...,
     MBR_SHARED_FEATURES...,

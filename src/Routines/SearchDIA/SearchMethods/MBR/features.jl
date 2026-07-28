@@ -643,26 +643,35 @@ function _mbr_feature_values(
     )
 end
 
-function _mbr_sidecar_columns(n::Int)
-    columns = Dict{Symbol, Any}(
-        :precursor_idx => zeros(UInt32, n),
-        :scan_idx => zeros(UInt32, n),
-        :MBR_best_is_missing_true => trues(n),
-        :MBR_log2_weight_lod_ratio => fill(-1.0f0, n),
-        :MBR_receiver_frag_corr_bitvec_rank => fill(-1.0f0, n),
-    )
-    for stem in MBR_PAIRED_FEATURE_STEMS
-        columns[_mbr_true_feature(stem)] = fill(-1.0f0, n)
-    end
-    for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
-        columns[_mbr_missing_feature(counterfactual_idx)] = trues(n)
-        for stem in MBR_PAIRED_FEATURE_STEMS
-            columns[_mbr_false_feature(stem, counterfactual_idx)] =
-                fill(-1.0f0, n)
-        end
-    end
-    return columns
+# Concretely-typed replacement for the old `Dict{Symbol, Any}`. Every field is a concrete vector
+# type, so a feature write is a direct store — no Dict hash, no dynamic dispatch through an `Any`,
+# no boxed Float32. `paired` is block-major and positionally parallel to MBR_PAIRED_COLUMN_NAMES,
+# `missing_flags` to MBR_MISSING_COLUMN_NAMES, `shared` to MBR_SHARED_FEATURES.
+struct _MBRSidecarColumns
+    precursor_idx::Vector{UInt32}
+    scan_idx::Vector{UInt32}
+    shared::Vector{Vector{Float32}}
+    missing_flags::Vector{BitVector}
+    paired::Vector{Vector{Float32}}
 end
+
+function _mbr_sidecar_columns(n::Int)
+    return _MBRSidecarColumns(
+        zeros(UInt32, n),
+        zeros(UInt32, n),
+        Vector{Float32}[fill(-1.0f0, n) for _ in eachindex(MBR_SHARED_FEATURES)],
+        BitVector[trues(n) for _ in 1:(MBR_N_COUNTERFACTUALS + 1)],
+        Vector{Float32}[
+            fill(-1.0f0, n) for _ in eachindex(MBR_PAIRED_COLUMN_NAMES)
+        ],
+    )
+end
+
+# Positions of the two shared features within `shared`, resolved once at load time.
+const MBR_SHARED_LOD_RATIO_IDX =
+    findfirst(==(:MBR_log2_weight_lod_ratio), MBR_SHARED_FEATURES)
+const MBR_SHARED_CORR_RANK_IDX =
+    findfirst(==(:MBR_receiver_frag_corr_bitvec_rank), MBR_SHARED_FEATURES)
 
 @inline function _mbr_log2_weight_lod_ratio(
     weight::Float32,
@@ -690,8 +699,8 @@ function compute_postintegration_mbr_features!(
     main = Arrow.Table(main_path)
     n = length(main.precursor_idx)
     columns = _mbr_sidecar_columns(n)
-    columns[:precursor_idx] .= UInt32.(main.precursor_idx)
-    columns[:scan_idx] .= UInt32.(main.scan_idx)
+    columns.precursor_idx .= UInt32.(main.precursor_idx)
+    columns.scan_idx .= UInt32.(main.scan_idx)
 
     temporal_mean_columns = ntuple(
         rank -> getproperty(
@@ -745,14 +754,14 @@ function compute_postintegration_mbr_features!(
         )
         receiver_temporal_trace = temporal_trace_column[row]
         receiver_corr_mask = UInt8(corr_mask_column[row])
-        columns[:MBR_log2_weight_lod_ratio][row] =
+        columns.shared[MBR_SHARED_LOD_RATIO_IDX][row] =
             _mbr_log2_weight_lod_ratio(
                 receiver_weight,
                 receiver_file,
                 lod_log2_weight_by_file,
                 lod_log2_weight_global,
             )
-        columns[:MBR_receiver_frag_corr_bitvec_rank][row] =
+        columns.shared[MBR_SHARED_CORR_RANK_IDX][row] =
             Float32(corr_rank_column[row])
 
         true_values = _mbr_feature_values(
@@ -772,9 +781,9 @@ function compute_postintegration_mbr_features!(
             bitvec_rank_table,
             donor_dict,
         )
-        columns[:MBR_best_is_missing_true][row] = false
-        for (feature_idx, stem) in enumerate(MBR_PAIRED_FEATURE_STEMS)
-            columns[_mbr_true_feature(stem)][row] = true_values[feature_idx]
+        columns.missing_flags[1][row] = false          # block 0 = the true pairing
+        @inbounds for feature_idx in 1:MBR_N_PAIRED
+            columns.paired[feature_idx][row] = true_values[feature_idx]
         end
 
         target_irt = receiver_irt_pred
@@ -808,34 +817,35 @@ function compute_postintegration_mbr_features!(
                 bitvec_rank_table,
                 donor_dict,
             )
-            columns[_mbr_missing_feature(counterfactual_idx)][row] = false
-            for (feature_idx, stem) in enumerate(MBR_PAIRED_FEATURE_STEMS)
-                columns[_mbr_false_feature(
-                    stem,
-                    counterfactual_idx,
-                )][row] = false_values[feature_idx]
+            columns.missing_flags[counterfactual_idx + 1][row] = false
+            offset = counterfactual_idx * MBR_N_PAIRED
+            @inbounds for feature_idx in 1:MBR_N_PAIRED
+                columns.paired[offset + feature_idx][row] =
+                    false_values[feature_idx]
             end
         end
     end
 
+    # Same column order as before: ids, true-missing flag, shared, true block, then per
+    # counterfactual (its missing flag, then its features).
     sidecar = DataFrame()
-    sidecar[!, :precursor_idx] = columns[:precursor_idx]
-    sidecar[!, :scan_idx] = columns[:scan_idx]
-    sidecar[!, :MBR_best_is_missing_true] =
-        columns[:MBR_best_is_missing_true]
-    for feature in MBR_SHARED_FEATURES
-        sidecar[!, feature] = columns[feature]
+    sidecar[!, :precursor_idx] = columns.precursor_idx
+    sidecar[!, :scan_idx] = columns.scan_idx
+    sidecar[!, MBR_MISSING_COLUMN_NAMES[1]] = columns.missing_flags[1]
+    for (shared_idx, feature) in enumerate(MBR_SHARED_FEATURES)
+        sidecar[!, feature] = columns.shared[shared_idx]
     end
-    for stem in MBR_PAIRED_FEATURE_STEMS
-        sidecar[!, _mbr_true_feature(stem)] =
-            columns[_mbr_true_feature(stem)]
+    for feature_idx in 1:MBR_N_PAIRED
+        sidecar[!, MBR_PAIRED_COLUMN_NAMES[feature_idx]] =
+            columns.paired[feature_idx]
     end
     for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
-        missing_col = _mbr_missing_feature(counterfactual_idx)
-        sidecar[!, missing_col] = columns[missing_col]
-        for stem in MBR_PAIRED_FEATURE_STEMS
-            feature = _mbr_false_feature(stem, counterfactual_idx)
-            sidecar[!, feature] = columns[feature]
+        sidecar[!, MBR_MISSING_COLUMN_NAMES[counterfactual_idx + 1]] =
+            columns.missing_flags[counterfactual_idx + 1]
+        offset = counterfactual_idx * MBR_N_PAIRED
+        for feature_idx in 1:MBR_N_PAIRED
+            sidecar[!, MBR_PAIRED_COLUMN_NAMES[offset + feature_idx]] =
+                columns.paired[offset + feature_idx]
         end
     end
     writeArrow(main_path * MBR_SIDECAR_SUFFIX, sidecar)

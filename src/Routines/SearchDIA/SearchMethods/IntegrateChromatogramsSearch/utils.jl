@@ -853,6 +853,12 @@ function add_mbr_integrated_spectra_to_psms!(
     scan_column = chromatograms.scan_idx
     weight_column = chromatograms.intensity
 
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): per-phase bytes/time inside this function, accumulated
+    # across files. Chromatogram Integration allocates 77.7 GB on this branch vs 4.3 GB without MBR;
+    # this attributes that to the four index-building phases vs the per-row write loop.
+    _diag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _t0 = time(); _a0 = Base.gc_bytes()
+
     rows_by_pid = Dict{UInt32, Vector{Int}}()
     rows_by_trace =
         Dict{Tuple{UInt32, Tuple{Int8, Int8}}, Vector{Int}}()
@@ -879,6 +885,15 @@ function add_mbr_integrated_spectra_to_psms!(
         end
     end
 
+    if _diag
+        MBR_PHASE_DIAG[:rows_by_pid_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:rows_by_pid_ms] += round(Int, (time() - _t0) * 1000)
+        MBR_PHASE_DIAG[:n_chrom_rows] += nrow(chromatograms)
+        MBR_PHASE_DIAG[:n_psm_rows] += n
+        MBR_PHASE_DIAG[:n_pids] += length(rows_by_pid)
+        _t0 = time(); _a0 = Base.gc_bytes()
+    end
+
     neighbors = Dict{Tuple{UInt32, UInt32}, NTuple{3, Int}}()
     for (pid, rows) in rows_by_pid
         sort!(rows; by = row -> UInt32(scan_column[row]))
@@ -894,6 +909,13 @@ function add_mbr_integrated_spectra_to_psms!(
                 (apex_row, left_row, right_row)
         end
     end
+    if _diag
+        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
+        MBR_PHASE_DIAG[:n_neighbors] += length(neighbors)
+        _t0 = time(); _a0 = Base.gc_bytes()
+    end
+
     correlation_by_pid = Dict{UInt32, NamedTuple}()
     for (pid, rows) in rows_by_pid
         correlation_by_pid[pid] =
@@ -903,6 +925,12 @@ function add_mbr_integrated_spectra_to_psms!(
                 weight_column,
                 bitvec_rank_table,
             )
+    end
+
+    if _diag
+        MBR_PHASE_DIAG[:correlation_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:correlation_ms] += round(Int, (time() - _t0) * 1000)
+        _t0 = time(); _a0 = Base.gc_bytes()
     end
 
     @inbounds for row in 1:n
@@ -1027,7 +1055,39 @@ function add_mbr_integrated_spectra_to_psms!(
             )
         end
     end
+    if _diag
+        MBR_PHASE_DIAG[:perrow_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:perrow_ms] += round(Int, (time() - _t0) * 1000)
+        MBR_PHASE_DIAG[:n_files] += 1
+        _mbr_phase_diag_report()
+    end
     return passing_psms
+end
+
+# Accumulators for the phase diagnostic above. Printed after every file so a crash mid-run still
+# leaves usable numbers.
+const MBR_PHASE_DIAG = Dict{Symbol, Int}(
+    :rows_by_pid_bytes => 0, :rows_by_pid_ms => 0,
+    :neighbors_bytes => 0,   :neighbors_ms => 0,
+    :correlation_bytes => 0, :correlation_ms => 0,
+    :perrow_bytes => 0,      :perrow_ms => 0,
+    :n_chrom_rows => 0, :n_psm_rows => 0, :n_pids => 0, :n_neighbors => 0, :n_files => 0,
+)
+
+function _mbr_phase_diag_report()
+    d = MBR_PHASE_DIAG
+    gb(x) = round(x / 2^30, digits = 2)
+    tot = d[:rows_by_pid_bytes] + d[:neighbors_bytes] + d[:correlation_bytes] + d[:perrow_bytes]
+    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
+    @user_info """
+    MBR phase diagnostic (cumulative over $(d[:n_files]) file(s)):
+      chrom rows=$(d[:n_chrom_rows])  psm rows=$(d[:n_psm_rows])  pids=$(d[:n_pids])  neighbors entries=$(d[:n_neighbors])
+      rows_by_pid  + rows_by_trace : $(gb(d[:rows_by_pid_bytes])) GB  $(d[:rows_by_pid_ms]) ms  ($(pct(d[:rows_by_pid_bytes]))%)
+      neighbors Dict + sort!       : $(gb(d[:neighbors_bytes])) GB  $(d[:neighbors_ms]) ms  ($(pct(d[:neighbors_bytes]))%)
+      correlation_by_pid           : $(gb(d[:correlation_bytes])) GB  $(d[:correlation_ms]) ms  ($(pct(d[:correlation_bytes]))%)
+      per-row write loop           : $(gb(d[:perrow_bytes])) GB  $(d[:perrow_ms]) ms  ($(pct(d[:perrow_bytes]))%)
+      TOTAL in this function       : $(gb(tot)) GB"""
+    return nothing
 end
 
 #==========================================================
