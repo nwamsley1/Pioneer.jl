@@ -1004,6 +1004,11 @@ function add_mbr_integrated_spectra_to_psms!(
     end
 
     if _diag
+        # Read the phase timers FIRST. The monotonicity check below is an O(n_chrom) diagnostic; when
+        # it ran before this read it was timed as part of the phase and inflated the reported cost of
+        # this block by ~8.4 s -- a diagnostic measuring itself.
+        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
         # Assumption check for the combined-trace fast path: the stored order must be scan order.
         if scan_order === nothing
             bad = 0
@@ -1012,8 +1017,6 @@ function add_mbr_integrated_spectra_to_psms!(
             end
             MBR_PHASE_DIAG[:nonmonotonic_rows] += bad
         end
-        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
         _t0 = time(); _a0 = Base.gc_bytes()
     end
 

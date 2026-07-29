@@ -262,6 +262,12 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:IntegrateChromatogramSearchParameters}
 
+    # Whole-function envelope. The per-phase timers below start later, so without this the
+    # difference between "sum of phases" and "the actual step" is invisible and the phase shares
+    # silently read as shares of the whole step when they are shares of the instrumented part.
+    _fdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _ft = time(); _fa = Base.gc_bytes()
+
     # Check if required files exist (e.g. upstream step skipped this file)
     rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
     passing_psms_path = getPassingPsms(getMSData(search_context), ms_file_idx)
@@ -269,6 +275,10 @@ function process_file!(
     if isempty(rt_index_path) || isempty(passing_psms_path)
         file_name = getFileIdToName(getMSData(search_context), ms_file_idx)
         @debug_l2 "Skipping IntegrateChromatogramSearch for file $file_name - missing required files from previous steps"
+        if _fdiag
+            MBR_STEP_DIAG[:file_total_bytes] += Base.gc_bytes() - _fa
+            MBR_STEP_DIAG[:file_total_ms] += round(Int, (time() - _ft) * 1000)
+        end
         return results
     end
 
@@ -472,6 +482,10 @@ function process_file!(
         MBR_STEP_DIAG[:tail_bytes] += Base.gc_bytes() - _sa
         MBR_STEP_DIAG[:tail_ms] += round(Int, (time() - _st) * 1000)
         MBR_STEP_DIAG[:n_files] += 1
+    end
+    if _fdiag
+        MBR_STEP_DIAG[:file_total_bytes] += Base.gc_bytes() - _fa
+        MBR_STEP_DIAG[:file_total_ms] += round(Int, (time() - _ft) * 1000)
         _mbr_step_diag_report()
     end
 
@@ -489,7 +503,19 @@ const MBR_STEP_DIAG = Dict{Symbol, Int}(
     :tail_bytes => 0,      :tail_ms => 0,
     :n_chrom_rows => 0, :n_files => 0,
     :chrom_table_bytes => 0, :rss_at_extract => 0,
+    :file_total_bytes => 0, :file_total_ms => 0,
+    :finalize_total_bytes => 0, :finalize_total_ms => 0,
 )
+
+# Both diagnostic accumulators are module-level, so in a warm driver that runs several searches in
+# one process the second report would include the first run. Reset after reporting.
+function _mbr_diag_reset!()
+    for k in keys(MBR_STEP_DIAG); MBR_STEP_DIAG[k] = 0; end
+    for k in keys(MBR_PHASE_DIAG); MBR_PHASE_DIAG[k] = 0; end
+    empty!(MBR_FINAL_DIAG)          # finalize phases (MBR/pipeline.jl)
+    for k in keys(MBR_ROW_DIAG); MBR_ROW_DIAG[k] = 0; end
+    return nothing
+end
 
 function _mbr_step_diag_report()
     d = MBR_STEP_DIAG
@@ -510,7 +536,12 @@ function _mbr_step_diag_report()
       sort_chromatograms      : $(gb(d[:sort_bytes])) GB  $(d[:sort_ms]) ms  ($(pct(d[:sort_bytes]))%)  $(rate(d[:sort_bytes], d[:sort_ms])) GB/s
       integrate_precursors    : $(gb(d[:integrate_bytes])) GB  $(d[:integrate_ms]) ms  ($(pct(d[:integrate_bytes]))%)  $(rate(d[:integrate_bytes], d[:integrate_ms])) GB/s
       MBR feats + write tail   : $(gb(d[:tail_bytes])) GB  $(d[:tail_ms]) ms  ($(pct(d[:tail_bytes]))%)  $(rate(d[:tail_bytes], d[:tail_ms])) GB/s
-      STEP TOTAL              : $(gb(tot)) GB  $(ms) ms"""
+      ------------------------------------------------------------------
+      sum of phases           : $(gb(tot)) GB  $(ms) ms
+      process_file! envelope  : $(gb(d[:file_total_bytes])) GB  $(d[:file_total_ms]) ms
+      finalize envelope       : $(gb(d[:finalize_total_bytes])) GB  $(d[:finalize_total_ms]) ms
+      UNACCOUNTED in per-file : $(gb(d[:file_total_bytes] - tot)) GB  $(d[:file_total_ms] - ms) ms  ($(d[:file_total_ms] > 0 ? round(100 * (d[:file_total_ms] - ms) / d[:file_total_ms], digits = 1) : 0.0)% of per-file)
+      STEP TOTAL (file+final) : $(gb(d[:file_total_bytes] + d[:finalize_total_bytes])) GB  $(d[:file_total_ms] + d[:finalize_total_ms]) ms"""
     return nothing
 end
 
@@ -580,6 +611,8 @@ function summarize_results!(
         )
         precursor_results isa PrecursorScoringSearchResults ||
             error("Post-integration MBR requires precursor-scoring results")
+        _sumdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+        _sumt = time(); _suma = Base.gc_bytes()
         summary = finalize_postintegration_mbr!(
             passing_paths,
             getPrecursors(getSpecLib(search_context));
@@ -628,6 +661,15 @@ function summarize_results!(
                 ms_file_idx,
             )
             writeArrow(path, psms)
+        end
+        if _sumdiag
+            # Covers finalize_postintegration_mbr! AND the process_final_psms! rewrite loop above,
+            # which is a sixth full materialise-and-rewrite pass over every per-file table.
+            MBR_STEP_DIAG[:finalize_total_bytes] += Base.gc_bytes() - _suma
+            MBR_STEP_DIAG[:finalize_total_ms] += round(Int, (time() - _sumt) * 1000)
+            _mbr_step_diag_report()
+            _mbr_phase_diag_report()
+            _mbr_diag_reset!()          # so a warm driver's next run reports only its own numbers
         end
     end
     return nothing
