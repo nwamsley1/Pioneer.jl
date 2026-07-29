@@ -365,17 +365,16 @@ function _cleanup_mbr_sidecars!(file_paths::Vector{String})
     return nothing
 end
 
-function _drop_internal_mbr_columns!(file_paths::Vector{String})
-    for path in file_paths
-        main = DataFrame(Tables.columntable(Arrow.Table(path)))
-        internal_columns = Symbol[
-            column for column in MBR_INTERNAL_INTEGRATED_COLUMNS
-            if hasproperty(main, column)
-        ]
-        isempty(internal_columns) || select!(main, Not(internal_columns))
-        writeArrow(path, main)
-    end
-    return nothing
+# Drops the internal MBR evidence columns from an already-loaded table. This used to own its own
+# full materialise-and-rewrite pass over every file; it is now called from the process_final_psms!
+# loop in summarize_results!, which already reads and writes each table.
+function _drop_internal_mbr_columns!(main::DataFrame)
+    internal_columns = Symbol[
+        column for column in MBR_INTERNAL_INTEGRATED_COLUMNS
+        if hasproperty(main, column)
+    ]
+    isempty(internal_columns) || select!(main, Not(internal_columns))
+    return main
 end
 
 """
@@ -540,7 +539,10 @@ function finalize_postintegration_mbr!(
         fdr_scale_factor = fdr_scale_factor,
     )
     _mark(:recalc_qvalues)
-    _drop_internal_mbr_columns!(file_paths)
+    # The internal-column drop used to be its own full materialise-and-rewrite pass over every file
+    # (_drop_internal_mbr_columns!). It is pure per-file work with no cross-file dependency, so it is
+    # now folded into the process_final_psms! loop in summarize_results!, which already reads and
+    # writes each table. One fewer full pass; peak memory is unchanged (still one file at a time).
     _cleanup_mbr_sidecars!(file_paths)
     _mark(:cleanup)
     _fdiag && _mbr_final_diag_report()

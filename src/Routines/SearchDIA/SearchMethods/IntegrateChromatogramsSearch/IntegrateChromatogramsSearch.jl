@@ -647,6 +647,10 @@ function summarize_results!(
         )
             (isempty(path) || !isfile(path)) && continue
             psms = DataFrame(Tables.columntable(Arrow.Table(path)))
+            # Fused in from the former standalone _drop_internal_mbr_columns! pass, which read and
+            # rewrote every file just to drop these columns. Same relative order (it ran immediately
+            # before this loop) and same columns.
+            _drop_internal_mbr_columns!(psms)
             if nrow(psms) == 0 || ncol(psms) == 0
                 writeArrow(path, psms)
                 continue

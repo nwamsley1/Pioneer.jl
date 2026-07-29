@@ -54,8 +54,8 @@ end
             [Float32[1, 2, 3]]
         Arrow.write(path, table)
 
-        Pioneer._drop_internal_mbr_columns!([path])
         cleaned = DataFrame(Arrow.Table(path))
+        Pioneer._drop_internal_mbr_columns!(cleaned)
         @test hasproperty(cleaned, :mbr_recovered)
         @test !hasproperty(
             cleaned,
