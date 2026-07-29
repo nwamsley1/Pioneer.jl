@@ -925,6 +925,77 @@ function add_mbr_integrated_spectra_to_psms!(
     scan_column = chromatograms.scan_idx
     weight_column = chromatograms.intensity
 
+    # Computed here rather than in the kernel: both touch the DataFrames directly.
+    use_separate_traces =
+        hasproperty(chromatograms, :isotopes_captured) &&
+        hasproperty(passing_psms, :isotopes_captured)
+    chromatogram_isotopes = use_separate_traces ?
+        chromatograms.isotopes_captured :
+        nothing
+
+    # FUNCTION BARRIER -- see _add_mbr_integrated_kernel! for why this is not just tidiness.
+    _add_mbr_integrated_kernel!(
+        passing_psms,
+        n,
+        nrow(chromatograms),
+        rt_column,
+        precursor_column,
+        scan_column,
+        weight_column,
+        shadow_columns,
+        fitted_columns,
+        chromatogram_isotopes,
+        use_separate_traces,
+        rt_to_irt,
+        bitvec_rank_table,
+        scan_tic,
+        passing_psms.precursor_idx,
+        passing_psms.new_best_scan,
+        passing_psms.scan_idx,
+        passing_psms.integration_start_scan,
+        passing_psms.integration_stop_scan,
+        passing_psms.peak_area,
+        use_separate_traces ? passing_psms.isotopes_captured : nothing,
+    )
+    return passing_psms
+end
+
+
+# Function barrier for the hot part of add_mbr_integrated_spectra_to_psms!.
+#
+# WHY THIS EXISTS: `df.col` infers as `AbstractVector` and `ntuple(r -> df[!, c], 8)` as
+# `NTuple{8, AbstractVector}`. Used in a loop *inline in the same function*, every element access is
+# then a dynamic dispatch that boxes its result -- measured at 673 ms and 240 MB for a 5 M-element
+# sum, versus 0.5 ms and 0 B when the same column is reached through a function argument (1300x).
+# The previously reported 2.28 GB / 10,146 ms for two linear scans over 8.7 M rows was this.
+#
+# Passing the columns as ARGUMENTS is what fixes it: Julia specialises on the runtime type, so no
+# type assertion is needed and nothing breaks if a column's concrete type ever changes. Tuples are
+# covariant, so `shadow_columns` arrives here as a concrete `NTuple{8, Vector{...}}` even though the
+# caller could only infer `NTuple{8, AbstractVector}`.
+function _add_mbr_integrated_kernel!(
+    passing_psms::DataFrame,
+    n::Int,
+    n_chrom::Int,
+    rt_column,
+    precursor_column,
+    scan_column,
+    weight_column,
+    shadow_columns,
+    fitted_columns,
+    chromatogram_isotopes,
+    use_separate_traces::Bool,
+    rt_to_irt,
+    bitvec_rank_table,
+    scan_tic,
+    psm_pid,
+    psm_new_best_scan,
+    psm_scan_idx,
+    psm_start_scan,
+    psm_stop_scan,
+    psm_peak_area,
+    psm_isotopes,
+)
     # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): per-phase bytes/time inside this function, accumulated
     # across files. Chromatogram Integration allocates 77.7 GB on this branch vs 4.3 GB without MBR;
     # this attributes that to the four index-building phases vs the per-row write loop.
@@ -946,14 +1017,7 @@ function add_mbr_integrated_spectra_to_psms!(
     #   correlation_by_pid          : Dict{UInt32, NamedTuple} -- bare NamedTuple is ABSTRACT, so
     #                                 every value was boxed. Now a concretely-typed Vector indexed
     #                                 by group.
-    use_separate_traces =
-        hasproperty(chromatograms, :isotopes_captured) &&
-        hasproperty(passing_psms, :isotopes_captured)
-    chromatogram_isotopes = use_separate_traces ?
-        chromatograms.isotopes_captured :
-        nothing
 
-    n_chrom = nrow(chromatograms)
     # pass 1: count precursor groups (no allocation)
     n_groups = 0
     @inbounds let r = 1
@@ -1079,13 +1143,6 @@ function add_mbr_integrated_spectra_to_psms!(
     out_corr_best_weight =
         getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)::Vector{Float32}
 
-    psm_pid = passing_psms.precursor_idx
-    psm_new_best_scan = passing_psms.new_best_scan
-    psm_scan_idx = passing_psms.scan_idx
-    psm_start_scan = passing_psms.integration_start_scan
-    psm_stop_scan = passing_psms.integration_stop_scan
-    psm_peak_area = passing_psms.peak_area
-    psm_isotopes = use_separate_traces ? passing_psms.isotopes_captured : nothing
 
     @inbounds for row in 1:n
         pid = UInt32(psm_pid[row])
