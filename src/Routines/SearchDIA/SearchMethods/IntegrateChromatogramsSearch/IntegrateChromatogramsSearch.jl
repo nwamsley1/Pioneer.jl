@@ -325,7 +325,7 @@ function process_file!(
     _st = time(); _sa = Base.gc_bytes()
 
     # Extract chromatograms for all passing PSMs
-    chromatograms = extract_chromatograms(
+    chromatograms, scan_tic = extract_chromatograms(
         spectra,
         passing_psms,
         rt_index,
@@ -338,6 +338,12 @@ function process_file!(
         MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa
         MBR_STEP_DIAG[:extract_ms] += round(Int, (time() - _st) * 1000)
         MBR_STEP_DIAG[:n_chrom_rows] += nrow(chromatograms)
+        MBR_STEP_DIAG[:chrom_table_bytes] += sum(
+            c -> sizeof(c), eachcol(chromatograms); init = 0,
+        )
+        MBR_STEP_DIAG[:rss_at_extract] = max(
+            MBR_STEP_DIAG[:rss_at_extract], Int(Sys.maxrss()),
+        )
         _st = time(); _sa = Base.gc_bytes()
     end
     # MS1 chromatogram extraction is currently unwired; the MS1
@@ -416,6 +422,7 @@ function process_file!(
                 getRtIrtModel(search_context, ms_file_idx),
                 bitvec_rank_table =
                     getBitVecExcessRanks(search_context, ms_file_idx),
+                scan_tic = scan_tic,
             )
             selected_rows = _select_postintegration_mbr_rows(
                 passing_psms,
@@ -448,6 +455,7 @@ function process_file!(
             getRtIrtModel(search_context, ms_file_idx),
             bitvec_rank_table =
                 getBitVecExcessRanks(search_context, ms_file_idx),
+            scan_tic = scan_tic,
         )
         selected_rows = _select_postintegration_mbr_rows(
             passing_psms,
@@ -480,6 +488,7 @@ const MBR_STEP_DIAG = Dict{Symbol, Int}(
     :integrate_bytes => 0, :integrate_ms => 0,
     :tail_bytes => 0,      :tail_ms => 0,
     :n_chrom_rows => 0, :n_files => 0,
+    :chrom_table_bytes => 0, :rss_at_extract => 0,
 )
 
 function _mbr_step_diag_report()
@@ -494,6 +503,8 @@ function _mbr_step_diag_report()
     rate(b, t) = t > 0 ? round((b / 2^30) / (t / 1000), digits = 2) : 0.0
     @user_info """
     MBR STEP diagnostic (cumulative over $(d[:n_files]) file(s), $(d[:n_chrom_rows]) chrom rows):
+      chrom table (live cols)  : $(gb(d[:chrom_table_bytes])) GB total over $(d[:n_files]) files, $(d[:n_chrom_rows]) rows  => $(d[:n_chrom_rows] > 0 ? round(d[:chrom_table_bytes]/d[:n_chrom_rows], digits=1) : 0.0) B/row
+      peak RSS at extract      : $(gb(d[:rss_at_extract])) GB   (chrom table is $(d[:rss_at_extract] > 0 ? round(100*d[:chrom_table_bytes]/d[:n_files]/max(d[:rss_at_extract],1), digits=2) : 0.0)% of peak, per-file avg)
       extract_chromatograms   : $(gb(d[:extract_bytes])) GB  $(d[:extract_ms]) ms  ($(pct(d[:extract_bytes]))%)  $(rate(d[:extract_bytes], d[:extract_ms])) GB/s
       get_isotopes_captured!  : $(gb(d[:isotopes_bytes])) GB  $(d[:isotopes_ms]) ms  ($(pct(d[:isotopes_bytes]))%)  $(rate(d[:isotopes_bytes], d[:isotopes_ms])) GB/s
       sort_chromatograms      : $(gb(d[:sort_bytes])) GB  $(d[:sort_ms]) ms  ($(pct(d[:sort_bytes]))%)  $(rate(d[:sort_bytes], d[:sort_ms])) GB/s

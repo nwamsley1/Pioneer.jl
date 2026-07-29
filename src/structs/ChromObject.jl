@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+
 abstract type ChromObject end
 struct MS2ChromObject <: ChromObject
     rt::Float32
@@ -28,7 +29,6 @@ struct MS2MBRChromObject <: ChromObject
     intensity::Float32
     scan_idx::UInt32
     precursor_idx::UInt32
-    spectrum_intensity::Float32
     shadow_frag1_int::Float32
     shadow_frag2_int::Float32
     shadow_frag3_int::Float32

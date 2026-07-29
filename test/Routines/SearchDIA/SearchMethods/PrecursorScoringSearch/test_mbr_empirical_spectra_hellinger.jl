@@ -14,12 +14,13 @@ using Pioneer
         2.0f0,
         UInt32(3),
         UInt32(4),
-        ntuple(_ -> 0.0f0, 17)...,
+        ntuple(_ -> 0.0f0, 16)...,
     )
     @test sizeof(lean) == 16
-    @test sizeof(rich) == 84
-    @test !hasproperty(DataFrame([lean]), :spectrum_intensity)
-    @test hasproperty(DataFrame([rich]), :spectrum_intensity)
+    # spectrum_intensity is a per-SCAN quantity and now lives in a per-scan vector rather than
+    # being copied onto every chromatogram row.
+    @test sizeof(rich) == 80
+    @test !hasproperty(DataFrame([rich]), :spectrum_intensity)
 end
 
 @testset "integrated MBR temporal evidence uses the selected peak bounds" begin
@@ -36,7 +37,6 @@ end
         scan_idx = UInt32[9, 10, 11, 12],
         rt = Float32[1, 2, 3, 4],
         intensity = Float32[1, 2, 4, 2],
-        spectrum_intensity = fill(Float32(100), 4),
     )
     for rank in 1:8
         chromatograms[!, Symbol("shadow_frag$(rank)_int")] =
@@ -47,10 +47,14 @@ end
         ] = rank == 1 ? Float32[100, 100, 100, 100] : zeros(Float32, 4)
     end
 
+    scan_tic = zeros(Float32, 20)
+    scan_tic[9:12] .= 100.0f0
+
     Pioneer.add_mbr_integrated_spectra_to_psms!(
         psms,
         chromatograms,
-        identity,
+        identity;
+        scan_tic = scan_tic,
     )
 
     trace = psms[1, Pioneer.MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN]

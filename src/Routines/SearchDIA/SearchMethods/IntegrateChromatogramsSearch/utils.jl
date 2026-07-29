@@ -854,6 +854,7 @@ function add_mbr_integrated_spectra_to_psms!(
     chromatograms::DataFrame,
     rt_to_irt;
     bitvec_rank_table = nothing,
+    scan_tic::Union{Nothing, Vector{Float32}} = nothing,
 )
     n = nrow(passing_psms)
     for column in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
@@ -898,8 +899,8 @@ function add_mbr_integrated_spectra_to_psms!(
 
     hasproperty(chromatograms, :shadow_frag1_int) ||
         error("Integrated MBR requires chromatogram shadow fragments")
-    hasproperty(chromatograms, :spectrum_intensity) ||
-        error("Integrated MBR requires chromatogram spectrum intensity")
+    scan_tic === nothing &&
+        error("Integrated MBR requires the per-scan spectrum intensity vector")
     hasproperty(passing_psms, :integration_start_scan) ||
         error("Integrated MBR requires integration start scans")
     hasproperty(passing_psms, :integration_stop_scan) ||
@@ -919,7 +920,6 @@ function add_mbr_integrated_spectra_to_psms!(
         ],
         8,
     ) : nothing
-    spectrum_intensity = chromatograms.spectrum_intensity
     rt_column = chromatograms.rt
     precursor_column = chromatograms.precursor_idx
     scan_column = chromatograms.scan_idx
@@ -1147,9 +1147,11 @@ function add_mbr_integrated_spectra_to_psms!(
         apex_row == 0 && continue
         out_apex_irt[row] = Float32(rt_to_irt(Float32(rt_column[apex_row])))
         out_weight[row] = Float32(psm_peak_area[row])
+        # _chrom_neighbor_rows only returns a row whose scan == selected_scan, so the apex row's
+        # scan IS selected_scan; index the per-scan vector directly.
         out_log2_explained[row] = log2(
             max(shadow_sum, 1.0f-20) /
-            max(Float32(spectrum_intensity[apex_row]), 1.0f-20),
+            max(@inbounds(scan_tic[selected_scan]), 1.0f-20),
         )
         if fitted_columns !== nothing
             fitted_sqrt, _ =
@@ -1360,6 +1362,10 @@ function extract_chromatograms(
         precursor_rt_map[_pids[i]] = _rts[i]
     end
 
+    # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
+    # set of scan indices, so the writes never collide.
+    scan_tic = zeros(Float32, length(spectra))
+
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             thread_id = first(thread_task)
@@ -1375,12 +1381,13 @@ function extract_chromatograms(
                 search_data,
                 params,
                 ms_file_idx,
-                chrom_type
+                chrom_type;
+                scan_tic = scan_tic,
             )
         end
     end
     thread_dfs = fetch.(tasks)
-    return vcat(thread_dfs...)
+    return vcat(thread_dfs...), scan_tic
 end
 
 """
@@ -1408,7 +1415,8 @@ function build_chromatograms(
     search_data::SearchDataStructures,
     params::IntegrateChromatogramSearchParameters,
     ms_file_idx::Int64,
-    ::MS2CHROM
+    ::MS2CHROM;
+    scan_tic::Union{Nothing, Vector{Float32}} = nothing,
 )
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
@@ -1427,8 +1435,16 @@ function build_chromatograms(
     id_to_col = getIdToCol(search_data)
     unscored_psms = getTuningUnscoredPsms(search_data)  # placeholder — FusedRTIndexed record_match! is no-op
 
-    # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
-    estimated_points = length(scan_range) * 100
+    # Points per scan measured at 23.81 on 6-file Olsen Exploris (366,129 MS2 scans ->
+    # 8,717,899 chromatogram rows). The old estimate of 100 over-allocated 4.2x, which cost
+    # ~2.1 GB of cumulative allocation per run at 80 B/row.
+    #
+    # 32 leaves ~34 % headroom so the common case never resizes. Note that a resize is NOT free
+    # in cumulative terms: with initial E and k doublings the total allocated is E*(2^(k+1)-1),
+    # so E=20 + one doubling costs 60x scans while E=32 with no doubling costs 32x. The doubling
+    # below still covers datasets that run richer than this one (library size, RT tolerance and
+    # isolation width all move this number, and only one dataset has been measured).
+    estimated_points = length(scan_range) * 32
     initial_size = max(estimated_points, 10000)
     chromatograms = collect_mbr_evidence ?
         Vector{MS2MBRChromObject}(undef, initial_size) :
@@ -1463,9 +1479,12 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
-        spectrum_intensity = collect_mbr_evidence ?
-            Float32(sum(skipmissing(getIntensityArray(spectra, scan_idx)))) :
-            0.0f0
+        # The full-spectrum sum is a property of the SCAN, not of any one precursor. Record it
+        # once per scan; it used to be copied onto every chromatogram row of the scan.
+        if collect_mbr_evidence && scan_tic !== nothing
+            @inbounds scan_tic[scan_idx] =
+                Float32(sum(skipmissing(getIntensityArray(spectra, scan_idx))))
+        end
 
         if rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
@@ -1569,7 +1588,6 @@ function build_chromatograms(
                         iszero(col) ? zero(Float32) : weights[col],
                         scan_idx,
                         precs_temp[j],
-                        spectrum_intensity,
                         score === nothing ? 0.0f0 : Float32(score.shadow_frag1_int),
                         score === nothing ? 0.0f0 : Float32(score.shadow_frag2_int),
                         score === nothing ? 0.0f0 : Float32(score.shadow_frag3_int),
@@ -1611,7 +1629,6 @@ function build_chromatograms(
                         zero(Float32),
                         scan_idx,
                         precs_temp[j],
-                        spectrum_intensity,
                         0.0f0, 0.0f0, 0.0f0, 0.0f0,
                         0.0f0, 0.0f0, 0.0f0, 0.0f0,
                         0.0f0, 0.0f0, 0.0f0, 0.0f0,
