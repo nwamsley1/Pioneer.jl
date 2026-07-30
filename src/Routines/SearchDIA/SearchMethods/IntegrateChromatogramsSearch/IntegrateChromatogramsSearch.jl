@@ -591,6 +591,18 @@ function reset_results!(results::IntegrateChromatogramSearchResults)
     return nothing
 end
 
+# Function barrier. `df[!, col]` infers as AbstractVector, so comparing it element-wise in the same
+# function costs a dynamic dispatch per row. Note a `::AbstractVector{Float32}` assertion would NOT
+# help -- measured identical to no assertion at all (660 vs 665 ms, same 240 MB, on 5M elements);
+# only a concrete container type or a barrier like this one avoids it.
+function _qval_keep_mask(qcol, threshold::Float32)
+    keep = BitVector(undef, length(qcol))
+    @inbounds for row in eachindex(qcol)
+        keep[row] = qcol[row] <= threshold
+    end
+    return keep
+end
+
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
     params::P,
@@ -668,12 +680,10 @@ function summarize_results!(
                 # Deferred from the recalc pipeline, which applied it between adding :qval and :pep.
                 # Interpolation is pointwise, so filtering after computing both is equivalent for the
                 # surviving rows. `<=` matches filter_by_multiple_thresholds' default comparison.
-                qcol = psms[!, :qval]
-                keep = BitVector(undef, length(qcol))
-                @inbounds for row in eachindex(qcol)
-                    keep[row] = qcol[row] <= summary.qval_threshold
-                end
-                psms = psms[keep, :]
+                psms = psms[
+                    _qval_keep_mask(psms[!, :qval], summary.qval_threshold),
+                    :,
+                ]
             end
             # Fused in from the former standalone _drop_internal_mbr_columns! pass, which read and
             # rewrote every file just to drop these columns. Same relative order (it ran immediately
