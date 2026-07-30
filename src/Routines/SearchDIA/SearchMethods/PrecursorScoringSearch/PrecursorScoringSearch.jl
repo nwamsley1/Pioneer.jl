@@ -175,9 +175,7 @@ function summarize_results!(
     # PrecursorScoring reads/merges/MBR-folds in place, and only the
     # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
     main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
-    annotated_psms_folder = joinpath(temp_folder, "precursor_scored_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
-    !isdir(annotated_psms_folder) && mkdir(annotated_psms_folder)
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
     # No outer try/catch — true errors should surface and abort the run.
@@ -364,21 +362,23 @@ function summarize_results!(
         # globally-supported rows that fail the run-level threshold, while
         # donors and the baseline set still come from the ordinary dual-qvalue
         # filter.
-        scoring_pipeline = TransformPipeline() |>
-            add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
-            add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
-            add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
-            add_interpolated_column(:qval, :prec_prob, qval_spline) |>
-            add_interpolated_column(
-                :pep,
-                :prec_prob,
-                results.precursor_pep_interp[],
-            )
-
-        annotated_refs = apply_pipeline_batch(
+        # All five annotations are ADDITIVE -- no filter, no removal, no reordering -- so they do
+        # not need a full materialisation. This previously ran apply_pipeline_batch into
+        # precursor_scored_psms, rewriting every row and all columns (measured 1,454,472 rows x 121
+        # columns, 540 MB on disk, ~2 GB to materialise, ~4 GB counting read+write) just to attach
+        # five columns. It also consolidated the :prec_prob sidecar that aggregate_per_file! had
+        # deliberately created one step earlier.
+        #
+        # They now ride in a row-aligned sidecar. Consolidation happens at the next pass that must
+        # rewrite anyway: the initial_filter below removes rows, and its transform_and_write! path
+        # loads main + sidecars and bakes them in.
+        annotated_refs = _annotate_precursor_scores_via_sidecar!(
             filtered_refs,
-            scoring_pipeline,
-            annotated_psms_folder,
+            global_prob_dict,
+            global_qval_dict,
+            global_pep_dict,
+            qval_spline,
+            results.precursor_pep_interp[],
         )
         initial_filter = TransformPipeline() |>
             filter_by_multiple_thresholds([

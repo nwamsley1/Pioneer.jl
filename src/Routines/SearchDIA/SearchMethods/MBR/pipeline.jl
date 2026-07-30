@@ -45,8 +45,12 @@ end
            isfinite(global_q) && global_q <= q_value_threshold
 end
 
+# Takes REFS rather than paths: PrecursorScoringSearch now attaches :qval/:global_qval/:global_prob/
+# :global_pep/:pep as a row-aligned sidecar instead of materialising precursor_scored_psms, so the
+# candidate tables only carry them via their PSMFileReference. This function already rewrites every
+# row it keeps, so consolidating the sidecar here costs nothing extra.
 function _stage_mbr_integration_inputs!(
-    candidate_paths::Vector{String},
+    candidate_refs::Vector{PSMFileReference},
     output_folder::String,
     donor_files::Dict{UInt32, Vector{Tuple{UInt32, Float32}}},
     q_value_threshold::Float32,
@@ -55,10 +59,11 @@ function _stage_mbr_integration_inputs!(
     refs = PSMFileReference[]
     n_rows = 0
     n_candidates = 0
-    for path in candidate_paths
+    for candidate_ref in candidate_refs
+        path = file_path(candidate_ref)
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing MBR Pass-1 sidecar at $pass1_path")
-        main = DataFrame(Tables.columntable(Arrow.Table(path)))
+        main = load_with_sidecars(candidate_ref)
         pass1 = DataFrame(Tables.columntable(Arrow.Table(pass1_path)))
         nrow(main) == nrow(pass1) ||
             error("MBR Pass-1 sidecar row-count mismatch at $pass1_path")
@@ -144,7 +149,7 @@ function prepare_postintegration_mbr!(
         donor_score_floor,
     )
     staged = _stage_mbr_integration_inputs!(
-        candidate_paths,
+        PSMFileReference[ref for ref in candidate_refs if exists(ref)],
         output_folder,
         donor_files,
         q_value_threshold,
