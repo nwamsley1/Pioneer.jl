@@ -440,34 +440,64 @@ function _mbr_training_rows(
     )
 end
 
+# Row indices into `x` for each CV fold: the block-0 row of every candidate held out in that fold,
+# plus each counterfactual block that actually exists for it.
+#
+# This used to be rebuilt inside _mbr_fit_oof_iteration, i.e. on all 16 calls (2 folds x 8
+# semi-supervised iterations), from `folds`, `present` and n_candidates -- all three fixed for the
+# whole search, so all 16 builds produced identical vectors. It is now built once. Measured at
+# N = 391,370 with 3 counterfactuals: 487.5 ms / 271.2 MB rebuilt versus 11.9 ms / 33.9 MB hoisted.
+# The inline version also had no sizehint!, so most of that allocation was geometric regrowth; the
+# count-then-fill below removes it.
+#
+# Only `positive_top` changes between iterations (the semi-supervised label update), and it does not
+# enter this calculation -- so the hoist is value-preserving, not an approximation.
+function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
+    n_candidates, n_counterfactuals = size(present)
+    rows_by_fold = Vector{Vector{Int}}()
+    for test_fold in UInt8[0, 1]
+        n_rows = 0
+        @inbounds for candidate_idx in 1:n_candidates
+            folds[candidate_idx] == test_fold || continue
+            n_rows += 1
+            for counterfactual_idx in 1:n_counterfactuals
+                present[candidate_idx, counterfactual_idx] && (n_rows += 1)
+            end
+        end
+        rows = Vector{Int}(undef, n_rows)
+        position = 0
+        @inbounds for candidate_idx in 1:n_candidates
+            folds[candidate_idx] == test_fold || continue
+            position += 1
+            rows[position] = candidate_idx
+            for counterfactual_idx in 1:n_counterfactuals
+                present[candidate_idx, counterfactual_idx] || continue
+                position += 1
+                rows[position] =
+                    counterfactual_idx * n_candidates + candidate_idx
+            end
+        end
+        push!(rows_by_fold, rows)
+    end
+    return rows_by_fold
+end
+
 function _mbr_fit_oof_iteration(
     x::Matrix{Float32},
     folds::Vector{UInt8},
     positive_top::BitVector,
     receiver_decoy_top::BitVector,
     present::BitMatrix,
+    test_rows_by_fold::Vector{Vector{Int}},
 )
     n_candidates, n_counterfactuals = size(present)
     n_blocks = 1 + n_counterfactuals
     scores = fill(NaN32, n_blocks * n_candidates)
     last_classifier = nothing
 
-    for test_fold in UInt8[0, 1]
+    for (fold_position, test_fold) in enumerate(UInt8[0, 1])
         train_fold = UInt8(1) - test_fold
-        test_rows = Int[]
-
-        @inbounds for candidate_idx in 1:n_candidates
-            if folds[candidate_idx] == test_fold
-                push!(test_rows, candidate_idx)
-                for counterfactual_idx in 1:n_counterfactuals
-                    present[candidate_idx, counterfactual_idx] || continue
-                    push!(
-                        test_rows,
-                        counterfactual_idx * n_candidates + candidate_idx,
-                    )
-                end
-            end
-        end
+        test_rows = test_rows_by_fold[fold_position]
         isempty(test_rows) && continue
         training = _mbr_training_rows(
             folds,
@@ -602,6 +632,9 @@ function _mbr_semisupervised_oof(
     eval_top_labels = trues(n_candidates)
     eval_top_mask = trues(n_candidates)
     folds = Vector{UInt8}(candidate_frame.cv_fold)
+    # Fixed for the whole search: depends only on folds and present, neither of which the
+    # semi-supervised loop mutates.
+    test_rows_by_fold = _mbr_test_rows_by_fold(folds, present)
     best_state = nothing
     previous_positive = -1
 
@@ -612,6 +645,7 @@ function _mbr_semisupervised_oof(
             positive_top,
             receiver_decoy_top,
             present,
+            test_rows_by_fold,
         )
         metrics = _mbr_iteration_metrics(
             scores,
