@@ -710,6 +710,7 @@ function compute_postintegration_mbr_features!(
     lod_log2_weight_by_file::Dict{UInt32, Float32},
     lod_log2_weight_global::Float32,
     bitvec_rank_table = nothing,
+    q_value_threshold::Float32,
 )
     main = Arrow.Table(main_path)
     n = length(main.precursor_idx)
@@ -728,6 +729,9 @@ function compute_postintegration_mbr_features!(
         main,
         MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN,
     )
+    # Candidacy is decidable here, and only candidates ever have their paired features read.
+    qval_column = main.qval
+    global_qval_column = main.global_qval
     weight_column = getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
     explained_column = getproperty(
         main,
@@ -766,6 +770,24 @@ function compute_postintegration_mbr_features!(
             run_similarity_atlas,
         )
         true_donor === nothing && continue
+        # A true donor exists: record that before the candidacy test below, because
+        # _mbr_candidate_mask reads MBR_best_is_missing_true for EVERY row, candidate or not.
+        columns.missing_flags[1][row] = false
+
+        # The 104 paired feature values are consumed exactly once -- _mbr_available_feature_sets at
+        # rescoring.jl:921, on frame[candidate_indices, :]. _mbr_candidate_mask selects rows that
+        # pass globally but FAIL the run-level threshold and have a true donor, which is ~10 % of
+        # staged rows; the other ~90 % had their features computed and discarded. Baseline rows are
+        # still needed as DONORS, but build_mbr_integrated_donor_dict reads only the
+        # MBR_INTEGRATED_* columns, never these.
+        #
+        # Skipping them leaves the -1.0f0 sentinel the paired columns were initialised with, which is
+        # the existing "absent" convention and is never read for a non-candidate.
+        run_qval = Float32(qval_column[row])
+        global_qval = Float32(global_qval_column[row])
+        global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
+        run_pass = isfinite(run_qval) && run_qval <= q_value_threshold
+        (global_pass && !run_pass) || continue
 
         receiver_weight = Float32(weight_column[row])
         receiver_explained = Float32(explained_column[row])
@@ -807,7 +829,6 @@ function compute_postintegration_mbr_features!(
             bitvec_rank_table,
             donor_dict,
         )
-        columns.missing_flags[1][row] = false          # block 0 = the true pairing
         @inbounds for feature_idx in 1:MBR_N_PAIRED
             columns.paired[feature_idx][row] = true_values[feature_idx]
         end

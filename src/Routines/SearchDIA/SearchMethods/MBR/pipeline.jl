@@ -550,6 +550,7 @@ function finalize_postintegration_mbr!(
                 lod_log2_weight_by_file = lod_thresholds.by_file,
                 lod_log2_weight_global = lod_thresholds.global_lod,
                 bitvec_rank_table = rank_table,
+                q_value_threshold = q_value_threshold,
             )
         end
     end
