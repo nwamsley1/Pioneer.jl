@@ -310,6 +310,17 @@ function _remap_mbr_scores!(
     ]
 end
 
+# Sidecar tag for the deferred q-value columns. Deliberately NOT in _cleanup_mbr_sidecars!'s suffix
+# list: the sidecar must survive until summarize_results! consumes it.
+const MBR_QVAL_SIDECAR_TAG = "mbr_qval"
+
+# register_sidecar! REFUSES a column that already exists in main ("Sidecar column qval already exists
+# in main file schema") -- the sidecar mechanism is append-only by design. :qval and :pep are written
+# by PrecursorScoringSearch long before this, so the recomputed values are staged under distinct
+# names and copied over the originals when summarize_results! consolidates.
+const MBR_QVAL_STAGED_COL = :qval_post_mbr
+const MBR_PEP_STAGED_COL = :pep_post_mbr
+
 function _recalculate_post_mbr_qvalues!(
     refs::Vector{PSMFileReference},
     merged_path::String;
@@ -326,25 +337,39 @@ function _recalculate_post_mbr_qvalues!(
         fdr_scale_factor = fdr_scale_factor,
         temp_prefix = "post_integration_mbr",
     )
-    spline_result === nothing && return refs
-    pipeline = TransformPipeline() |>
-        add_interpolated_column(
-            :qval,
-            :prec_prob,
-            spline_result.qval_spline,
-        ) |>
-        filter_by_multiple_thresholds([
-            (:qval, q_value_threshold),
-        ]) |>
-        add_interpolated_column(
-            :pep,
-            :prec_prob,
-            spline_result.pep_interp,
+    spline_result === nothing && return refs, false
+
+    # This used to be an apply_pipeline! over every ref, which loads all 147 columns of each file and
+    # rewrites them (measured 107.9 MB per file; 6 files x load+write = 1.26 GB) purely to append two
+    # Float32 columns and drop rows. :qval and :pep are NEW columns, so they can ride in a row-aligned
+    # sidecar instead -- and the row filter is deferred to the process_final_psms! loop in
+    # summarize_results!, which already loads and rewrites each table.
+    #
+    # Order note: the old pipeline was add(:qval) -> filter -> add(:pep), so :pep was computed only on
+    # surviving rows. Interpolation is pointwise, so computing it for every row and filtering
+    # afterwards gives identical values for the rows that survive.
+    qval_spline = spline_result.qval_spline
+    pep_interp = spline_result.pep_interp
+    for ref in refs
+        scores = materialize_columns(ref, Symbol[:prec_prob])[!, :prec_prob]
+        n = length(scores)
+        qvals = Vector{Float32}(undef, n)
+        peps = Vector{Float32}(undef, n)
+        @inbounds for row in 1:n
+            score = Float32(scores[row])
+            qvals[row] = Float32(qval_spline(score))
+            peps[row] = Float32(pep_interp(score))
+        end
+        add_columns_via_sidecar!(
+            ref,
+            MBR_QVAL_STAGED_COL => qvals,
+            MBR_PEP_STAGED_COL => peps;
+            tag = MBR_QVAL_SIDECAR_TAG,
         )
-    apply_pipeline!(refs, pipeline; parallel = false)
-    return PSMFileReference[
-        PSMFileReference(file_path(ref)) for ref in refs
-    ]
+    end
+    # Return the SAME refs: rebuilding them (as this previously did) would discard the sidecar
+    # registration that summarize_results! depends on.
+    return refs, true
 end
 
 function _cleanup_mbr_sidecars!(file_paths::Vector{String})
@@ -531,7 +556,7 @@ function finalize_postintegration_mbr!(
         pre_mbr_qval_spline = pre_mbr_qval_spline,
     )
     _mark(:remap_scores)
-    refs = _recalculate_post_mbr_qvalues!(
+    refs, qval_deferred = _recalculate_post_mbr_qvalues!(
         refs,
         merged_path;
         q_value_threshold = q_value_threshold,
@@ -546,7 +571,18 @@ function finalize_postintegration_mbr!(
     _cleanup_mbr_sidecars!(file_paths)
     _mark(:cleanup)
     _fdiag && _mbr_final_diag_report()
-    return merge(summary, (n_files = length(file_paths),))
+    # refs carry the deferred :qval/:pep sidecars; qval_deferred says whether the q-value filter
+    # still has to be applied downstream (false when no spline could be built, matching the old
+    # behaviour of leaving rows unfiltered in that case).
+    return merge(
+        summary,
+        (
+            n_files = length(file_paths),
+            mbr_refs = refs,
+            qval_deferred = qval_deferred,
+            qval_threshold = q_value_threshold,
+        ),
+    )
 end
 
 

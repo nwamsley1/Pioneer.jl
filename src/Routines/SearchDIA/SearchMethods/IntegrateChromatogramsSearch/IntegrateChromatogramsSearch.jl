@@ -642,17 +642,46 @@ function summarize_results!(
                   "total=$(summary.total_errors)/$(summary.total_targets) " *
                   "($(round(100 * summary.combined_error_rate, digits=4))%)"
 
+        # _recalculate_post_mbr_qvalues! now stages :qval/:pep in a row-aligned sidecar instead of
+        # rewriting all 147 columns of every file. This loop already loads and rewrites each table,
+        # so it consolidates the sidecar and applies the deferred q-value filter here. Index the refs
+        # by path: finalize only sees non-empty existing files, so it is not aligned with this
+        # enumeration.
+        ref_by_path = Dict{String, PSMFileReference}(
+            file_path(r) => r for r in summary.mbr_refs
+        )
         for (ms_file_idx, path) in enumerate(
             getPassingPsms(getMSData(search_context)),
         )
             (isempty(path) || !isfile(path)) && continue
-            psms = DataFrame(Tables.columntable(Arrow.Table(path)))
+            ref = get(ref_by_path, path, nothing)
+            psms = ref === nothing ?
+                DataFrame(Tables.columntable(Arrow.Table(path))) :
+                load_with_sidecars(ref)
+            if ref !== nothing && summary.qval_deferred &&
+               hasproperty(psms, MBR_QVAL_STAGED_COL)
+                # Bake the staged columns over the originals. They are staged under distinct names
+                # because register_sidecar! rejects a column already present in main.
+                psms[!, :qval] = psms[!, MBR_QVAL_STAGED_COL]
+                psms[!, :pep] = psms[!, MBR_PEP_STAGED_COL]
+                select!(psms, Not([MBR_QVAL_STAGED_COL, MBR_PEP_STAGED_COL]))
+                # Deferred from the recalc pipeline, which applied it between adding :qval and :pep.
+                # Interpolation is pointwise, so filtering after computing both is equivalent for the
+                # surviving rows. `<=` matches filter_by_multiple_thresholds' default comparison.
+                qcol = psms[!, :qval]
+                keep = BitVector(undef, length(qcol))
+                @inbounds for row in eachindex(qcol)
+                    keep[row] = qcol[row] <= summary.qval_threshold
+                end
+                psms = psms[keep, :]
+            end
             # Fused in from the former standalone _drop_internal_mbr_columns! pass, which read and
             # rewrote every file just to drop these columns. Same relative order (it ran immediately
             # before this loop) and same columns.
             _drop_internal_mbr_columns!(psms)
             if nrow(psms) == 0 || ncol(psms) == 0
                 writeArrow(path, psms)
+                ref === nothing || clear_sidecars!(ref; delete_files = true)
                 continue
             end
             process_final_psms!(
@@ -665,6 +694,8 @@ function summarize_results!(
                 ms_file_idx,
             )
             writeArrow(path, psms)
+            # sidecar contents are now baked into main
+            ref === nothing || clear_sidecars!(ref; delete_files = true)
         end
         if _sumdiag
             # Covers finalize_postintegration_mbr! AND the process_final_psms! rewrite loop above,
