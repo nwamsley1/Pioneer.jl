@@ -217,9 +217,27 @@ function _write_mbr_recovery_sidecars!(
     return length(file_paths)
 end
 
+# Score-remap bounds derived from the frozen pre-MBR q-value spline. Extracted so the fused path in
+# _merge_mbr_recoveries! and the standalone _remap_mbr_scores! fallback compute them identically.
+function _mbr_remap_bounds(qval_spline, q_value_threshold::Float32)
+    score_ceiling = prevfloat(_score_floor_for_qvalue(
+        qval_spline,
+        q_value_threshold,
+    ))
+    score_floor = eps(Float32)
+    return score_floor, max(score_ceiling - score_floor, 0.0f0)
+end
+
+# `remap_bounds` fuses what used to be a separate full read-modify-write pass (_remap_mbr_scores!,
+# measured 1.24 GB / 930 ms) into this one. That pass only rewrote :prec_prob on rows where
+# mbr_recovered is true, and needs no global information when the caller supplies the frozen
+# pre-MBR spline -- which it always does. Every row it touches survives the filter below by
+# construction (keep = initial_pass || mbr_recovered), so applying it here, after the filter, is
+# equivalent to applying it to the file this function used to write.
 function _merge_mbr_recoveries!(
     file_paths::Vector{String},
-    q_value_threshold::Float32,
+    q_value_threshold::Float32;
+    remap_bounds::Union{Nothing, Tuple{Float32, Float32}} = nothing,
 )
     for path in file_paths
         recovery_path = path * RECOVERY_SIDECAR_SUFFIX
@@ -261,7 +279,20 @@ function _merge_mbr_recoveries!(
                 ) ||
                 Bool(main.mbr_recovered[row])
         end
-        writeArrow(path, main[keep, :])
+        kept = main[keep, :]
+        if remap_bounds !== nothing
+            score_floor, width = remap_bounds
+            recovered = kept[!, :mbr_recovered]
+            transfer = kept[!, :mbr_target_decoy_prob]
+            prec_prob = kept[!, :prec_prob]
+            @inbounds for row in eachindex(recovered)
+                Bool(recovered[row]) || continue
+                transfer_score =
+                    clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
+                prec_prob[row] = score_floor + width * transfer_score
+            end
+        end
+        writeArrow(path, kept)
     end
     return file_paths
 end
@@ -288,12 +319,7 @@ function _remap_mbr_scores!(
         spline_result === nothing && return refs
         qval_spline = spline_result.qval_spline
     end
-    score_ceiling = prevfloat(_score_floor_for_qvalue(
-        qval_spline,
-        q_value_threshold,
-    ))
-    score_floor = eps(Float32)
-    width = max(score_ceiling - score_floor, 0.0f0)
+    score_floor, width = _mbr_remap_bounds(qval_spline, q_value_threshold)
 
     for ref in refs
         path = file_path(ref)
@@ -548,18 +574,31 @@ function finalize_postintegration_mbr!(
     frame = DataFrame()
     GC.gc(false)
     _mark(:write_sidecars)
-    _merge_mbr_recoveries!(file_paths, q_value_threshold)
+    # When the caller supplies the frozen pre-MBR spline (it always does; see
+    # PrecursorScoringSearch.jl:358 -> IntegrateChromatogramsSearch.jl:628) the score remap needs no
+    # global pass, so it rides along with the merge instead of costing its own read-modify-write of
+    # every file. The standalone path is kept for the documented spline === nothing contract.
+    remap_bounds = pre_mbr_qval_spline === nothing ?
+        nothing :
+        _mbr_remap_bounds(pre_mbr_qval_spline, q_value_threshold)
+    _merge_mbr_recoveries!(
+        file_paths,
+        q_value_threshold;
+        remap_bounds = remap_bounds,
+    )
 
     _mark(:merge_recoveries)
     refs = PSMFileReference[PSMFileReference(path) for path in file_paths]
-    refs = _remap_mbr_scores!(
-        refs,
-        merged_path;
-        q_value_threshold = q_value_threshold,
-        min_pep_points_per_bin = min_pep_points_per_bin,
-        fdr_scale_factor = fdr_scale_factor,
-        pre_mbr_qval_spline = pre_mbr_qval_spline,
-    )
+    if remap_bounds === nothing
+        refs = _remap_mbr_scores!(
+            refs,
+            merged_path;
+            q_value_threshold = q_value_threshold,
+            min_pep_points_per_bin = min_pep_points_per_bin,
+            fdr_scale_factor = fdr_scale_factor,
+            pre_mbr_qval_spline = pre_mbr_qval_spline,
+        )
+    end
     _mark(:remap_scores)
     refs, qval_deferred = _recalculate_post_mbr_qvalues!(
         refs,
