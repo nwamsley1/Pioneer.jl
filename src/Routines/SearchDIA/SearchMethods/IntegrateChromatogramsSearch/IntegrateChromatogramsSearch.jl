@@ -347,6 +347,7 @@ function process_file!(
     if _sdiag
         MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa
         MBR_STEP_DIAG[:extract_ms] += round(Int, (time() - _st) * 1000)
+        get(ENV, "PIONEER_CHROM_BUILD_DIAG", "0") == "1" && _chrom_build_diag_report()
         MBR_STEP_DIAG[:n_chrom_rows] += nrow(chromatograms)
         MBR_STEP_DIAG[:chrom_table_bytes] += sum(
             c -> sizeof(c), eachcol(chromatograms); init = 0,
