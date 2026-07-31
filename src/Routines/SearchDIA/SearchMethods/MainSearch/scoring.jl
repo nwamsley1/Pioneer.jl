@@ -1043,12 +1043,26 @@ function add_trace_and_fragment_features!(
 
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
     scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
-    cycle_idxs = psms[!, :cycle_idx]
+    cycle_idxs = psms[!, :cycle_idx]::Vector{UInt32}
     weights = psms[!, :weight]::Vector{Float32}
     irt_obs = psms[!, :irt_obs]::Vector{Float32}
     ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
-    frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
-    fitted_frag_cols = Tuple(psms[!, c] for c in FITTED_FRAGMENT_INTENSITY_COLUMNS)
+    # `Tuple(psms[!, c] for c in ...)` inferred as an abstractly-typed tuple, because `df[!, col]`
+    # infers as `AbstractVector`. Unlike the gather helpers in features.jl -- whose result crosses a
+    # function boundary and so specialises on the concrete runtime tuple -- these are consumed by the
+    # per-row loops *in this same function*, so the abstract element type survived and every
+    # `Float32(col[row])` boxed and dispatched dynamically: 8 per row, per fragment helper.
+    # `ntuple` over the const 8-column tuple plus the assertion makes the type statically concrete.
+    # The columns are Float32 by construction (MainUnscoredPSM{Float32}), consistent with the
+    # `::Vector{Float32}` assertions already made above on this same table.
+    frag_cols = ntuple(
+        i -> psms[!, MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS),
+    )
+    fitted_frag_cols = ntuple(
+        i -> psms[!, FITTED_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(FITTED_FRAGMENT_INTENSITY_COLUMNS),
+    )
     shadow_frag_cols = Tuple(psms[!, c] for c in SHADOW_FRAGMENT_INTENSITY_COLUMNS)
 
     n_best = nrow(best_psms)
