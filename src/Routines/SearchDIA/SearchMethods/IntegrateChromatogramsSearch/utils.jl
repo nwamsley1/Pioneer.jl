@@ -1465,31 +1465,6 @@ Build chromatograms for a range of scans with RT bin caching.
 3. Matches peaks and performs deconvolution
 4. Records chromatogram points with weights
 """
-# DIAGNOSTIC (PIONEER_CHROM_BUILD_DIAG=1): splits build_chromatograms' inner scan loop. Time only --
-# Base.gc_bytes() is process-global and the scan partitions run concurrently, so byte attribution
-# would absorb every other thread's allocations. Each task accumulates locally and merges once.
-const CHROM_BUILD_DIAG = Dict{Symbol, Int}(
-    :fused_ms => 0, :solve_ms => 0, :frag_ms => 0, :write_ms => 0,
-    :tic_ms => 0, :scans => 0, :rows => 0,
-)
-const CHROM_BUILD_LOCK = ReentrantLock()
-
-function _chrom_build_diag_report()
-    d = CHROM_BUILD_DIAG
-    tot = d[:fused_ms] + d[:solve_ms] + d[:frag_ms] + d[:write_ms] + d[:tic_ms]
-    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
-    @user_info """
-    build_chromatograms inner-loop diagnostic (summed over threads; wall time per thread overlaps):
-      scans=$(d[:scans])  chrom rows=$(d[:rows])
-      run_fused! (match + design matrix) : $(d[:fused_ms]) ms  ($(pct(d[:fused_ms]))%)
-      solve_deconvolution! (huber)       : $(d[:solve_ms]) ms  ($(pct(d[:solve_ms]))%)
-      getFragmentIntensities!            : $(d[:frag_ms]) ms  ($(pct(d[:frag_ms]))%)
-      per-scan TIC sum                   : $(d[:tic_ms]) ms  ($(pct(d[:tic_ms]))%)
-      chromatogram row writes            : $(d[:write_ms]) ms  ($(pct(d[:write_ms]))%)
-      TOTAL (CPU across threads)         : $(tot) ms"""
-    return nothing
-end
-
 function build_chromatograms(
     spectra::MassSpecData,
     scan_range::Vector{Int64},
@@ -1519,10 +1494,6 @@ function build_chromatograms(
     prec_trans_buf = getPrecursorTransmission(search_data)
     id_to_col = getIdToCol(search_data)
     unscored_psms = getTuningUnscoredPsms(search_data)  # placeholder — FusedRTIndexed record_match! is no-op
-
-    _bdiag = get(ENV, "PIONEER_CHROM_BUILD_DIAG", "0") == "1"
-    _b_fused = 0.0; _b_solve = 0.0; _b_frag = 0.0; _b_write = 0.0; _b_tic = 0.0
-    _b_scans = 0
 
     # Points per scan measured at 23.81 on 6-file Olsen Exploris (366,129 MS2 scans ->
     # 8,717,899 chromatogram rows). The old estimate of 100 over-allocated 4.2x, which cost
@@ -1570,12 +1541,10 @@ function build_chromatograms(
         rt = getRetentionTime(spectra, scan_idx)
         # The full-spectrum sum is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
-        _bt = _bdiag ? time() : 0.0
         if collect_mbr_evidence && scan_tic !== nothing
             @inbounds scan_tic[scan_idx] =
                 Float32(sum(skipmissing(getIntensityArray(spectra, scan_idx))))
         end
-        if _bdiag; _b_tic += time() - _bt; _b_scans += 1; end
 
         if rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
@@ -1625,7 +1594,6 @@ function build_chromatograms(
 
         # 3. Fused match+build. iRT + iso_err_bounds filters already done
         #    upstream — skipped by FusedRTIndexed's check_prec_filters = false.
-        _bt = _bdiag ? time() : 0.0
         nmatches, nmisses = run_fused!(
             kind,
             Hs, unscored_psms, id_to_col, fused_scratch,
@@ -1639,7 +1607,6 @@ function build_chromatograms(
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             params.n_frag_isotopes,
             params.isotope_err_bounds)
-        _bdiag && (_b_fused += time() - _bt)
 
         if nmatches > 2
             # Resize weight buffers for new columns.
@@ -1657,21 +1624,16 @@ function build_chromatograms(
 
             initialize_weights!(id_to_col, weights, precursor_weights)
 
-            _bt = _bdiag ? time() : 0.0
             solve_deconvolution!(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff)
-            _bdiag && (_b_solve += time() - _bt)
-            _bt = _bdiag ? time() : 0.0
             # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
             # (MS2MBRChromObject has no other score field), so the five aggregate metrics
             # getDistanceMetrics computes are not calculated.
             collect_mbr_evidence &&
                 getFragmentIntensities!(weights, residuals, Hs, spectral_scores)
-            _bdiag && (_b_frag += time() - _bt)
-            _bt = _bdiag ? time() : 0.0
 
             # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
@@ -1716,7 +1678,6 @@ function build_chromatograms(
                 end
             end
 
-            _bdiag && (_b_write += time() - _bt)
             update_precursor_weights!(id_to_col, weights, precursor_weights)
         else
             # Too few matches → zero-weight points for every enumerated precursor.
@@ -1750,17 +1711,6 @@ function build_chromatograms(
         reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
-    if _bdiag
-        lock(CHROM_BUILD_LOCK) do
-            CHROM_BUILD_DIAG[:fused_ms] += round(Int, _b_fused * 1000)
-            CHROM_BUILD_DIAG[:solve_ms] += round(Int, _b_solve * 1000)
-            CHROM_BUILD_DIAG[:frag_ms] += round(Int, _b_frag * 1000)
-            CHROM_BUILD_DIAG[:write_ms] += round(Int, _b_write * 1000)
-            CHROM_BUILD_DIAG[:tic_ms] += round(Int, _b_tic * 1000)
-            CHROM_BUILD_DIAG[:scans] += _b_scans
-            CHROM_BUILD_DIAG[:rows] += rt_idx
-        end
-    end
     return DataFrame(@view(chromatograms[1:rt_idx]))
 end
 
