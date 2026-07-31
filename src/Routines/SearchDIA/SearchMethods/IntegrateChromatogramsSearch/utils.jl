@@ -1539,11 +1539,21 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
-        # The full-spectrum sum is a property of the SCAN, not of any one precursor. Record it
+        # The total ion current is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
+        #
+        # Read the instrument's stored TIC instead of re-summing the peak list. Re-summing was
+        # the only full traversal of the intensity column in this loop -- fragment matching
+        # touches matched peaks only -- so its cost scales with peaks-per-scan, which is ~10x
+        # higher on Astral than on Exploris.
+        #
+        # The two are not bit-identical, but they agree closely and one-sidedly: over 60,969
+        # MS2 scans, sum/TIC has median 0.99814 (mean 0.99719, sd 0.00344), with TIC >= sum in
+        # 86% of scans and exact equality in many. The peak list is a near-complete subset of
+        # what the TIC counted. Since the value is consumed as log2(shadow_sum / TIC), that
+        # shifts the feature by a median 0.0027 log2 units against a range of ~10.
         if collect_mbr_evidence && scan_tic !== nothing
-            @inbounds scan_tic[scan_idx] =
-                Float32(sum(skipmissing(getIntensityArray(spectra, scan_idx))))
+            @inbounds scan_tic[scan_idx] = Float32(getTIC(spectra, scan_idx))
         end
 
         if rt_binned_tol !== nothing
