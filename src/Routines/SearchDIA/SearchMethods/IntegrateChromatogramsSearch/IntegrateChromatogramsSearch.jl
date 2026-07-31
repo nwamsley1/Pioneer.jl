@@ -427,6 +427,22 @@ function process_file!(
         end
         if params.match_between_runs &&
            isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            # OFFLINE-PROFILING HOOK (PIONEER_MBR_ARG_DUMP=<path>): serialise the exact argument
+            # set for the first file so add_mbr_integrated_spectra_to_psms! can be driven under
+            # JET / AllocCheck / BenchmarkTools outside a search. Dumps once, then no-ops.
+            let dump_path = get(ENV, "PIONEER_MBR_ARG_DUMP", "")
+                if !isempty(dump_path) && !isfile(dump_path)
+                    mkpath(dirname(dump_path))
+                    Serialization.serialize(dump_path, (
+                        passing_psms = passing_psms,
+                        chromatograms = chromatograms,
+                        rt_to_irt = getRtIrtModel(search_context, ms_file_idx),
+                        bitvec_rank_table = getBitVecExcessRanks(search_context, ms_file_idx),
+                        scan_tic = scan_tic,
+                    ))
+                    @user_info "MBR arg dump written: $dump_path ($(nrow(passing_psms)) psms, $(nrow(chromatograms)) chrom rows)"
+                end
+            end
             add_mbr_integrated_spectra_to_psms!(
                 passing_psms,
                 chromatograms,
