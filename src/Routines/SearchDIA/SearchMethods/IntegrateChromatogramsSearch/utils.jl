@@ -1629,8 +1629,11 @@ function build_chromatograms(
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff)
+            # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
+            # (MS2MBRChromObject has no other score field), so the five aggregate metrics
+            # getDistanceMetrics computes are not calculated.
             collect_mbr_evidence &&
-                getDistanceMetrics(weights, residuals, Hs, spectral_scores)
+                getFragmentIntensities!(weights, residuals, Hs, spectral_scores)
 
             # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
