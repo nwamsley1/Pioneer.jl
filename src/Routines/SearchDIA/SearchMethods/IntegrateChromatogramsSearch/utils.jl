@@ -526,6 +526,11 @@ function integrate_precursors(chromatograms::DataFrame,
     )
 end
 
+# Rank weights for the 8 smoothed shadow fragments. `_fragment_rank_weights` is deterministic in its
+# argument, so the 8-fragment result is a constant; computing it per precursor group allocated one
+# 8-element Vector per group for nothing. Read-only -- never mutate.
+const MBR_FRAGMENT_RANK_WEIGHTS_8 = _fragment_rank_weights(8)
+
 @inline function _chrom_shadow_intensity(
     shadow_columns,
     row::Integer,
@@ -595,11 +600,40 @@ end
     return Float32(-log2(distance / observed_sum + 1.0f-10))
 end
 
+"""
+    _ChromCorrWorkspace
+
+Reusable scratch for `_chrom_shadow_fragment_correlation_features`, which runs once per precursor
+group. It previously allocated 11 vectors per call (8 fragment traces + their outer `Vector`, the
+weight trace, and the 8-element correlation vector); on a 6-file KEAP1 run that was 742,179 groups.
+
+Construct it with the largest group length the caller will ever pass (`_ChromCorrWorkspace(max_pts)`)
+so the buffers are allocated exactly once. Each call then `resize!`s to its own `n_points`, which
+stays within that capacity: shrinking is a length update and regrowing never reallocates, so the
+steady state is genuinely zero-allocation rather than merely amortised.
+
+Nothing here escapes the function — only the `isbits` `_ChromCorrFeatures` result does — so one
+workspace shared across every group of a kernel invocation is safe. The kernel's group loop is
+sequential; a threaded caller would need one workspace per thread.
+"""
+struct _ChromCorrWorkspace
+    fragment_traces::NTuple{8, Vector{Float32}}
+    weight_trace::Vector{Float32}
+    correlation_to_weight::Vector{Float32}
+end
+
+_ChromCorrWorkspace(max_points::Integer = 0) = _ChromCorrWorkspace(
+    ntuple(_ -> Vector{Float32}(undef, max_points), 8),
+    Vector{Float32}(undef, max_points),
+    Vector{Float32}(undef, 8),
+)
+
 function _chrom_shadow_fragment_correlation_features(
     rows::AbstractVector{<:Integer},
     shadow_columns,
     weight_column,
     bitvec_rank_table,
+    workspace::_ChromCorrWorkspace,
 )
     n_points = length(rows)
     n_points < 2 && return (
@@ -611,10 +645,16 @@ function _chrom_shadow_fragment_correlation_features(
         best_weight = 0.0f0,
     )
 
-    fragment_traces = [
-        Vector{Float32}(undef, n_points) for _ in 1:8
-    ]
-    weight_trace = Vector{Float32}(undef, n_points)
+    # Resized to EXACTLY n_points rather than viewed: `_frag_pcor` and `maximum` then see a plain
+    # `Vector{Float32}` instead of a `SubArray`, which measured ~80% faster in this phase. The
+    # workspace is pre-sized to the largest group, so these resizes stay within capacity and do not
+    # allocate; every element is overwritten below, so moving data would be harmless anyway.
+    fragment_traces = workspace.fragment_traces
+    @inbounds for rank in 1:8
+        resize!(fragment_traces[rank], n_points)
+    end
+    weight_trace = workspace.weight_trace
+    resize!(weight_trace, n_points)
     @inbounds for point_idx in 1:n_points
         chrom_row = rows[point_idx]
         weight_value = Float32(weight_column[chrom_row])
@@ -630,7 +670,7 @@ function _chrom_shadow_fragment_correlation_features(
         rank -> maximum(fragment_traces[rank]) > 0.0f0,
         8,
     )
-    correlation_to_weight = Vector{Float32}(undef, 8)
+    correlation_to_weight = workspace.correlation_to_weight
     @inbounds for rank in 1:8
         correlation_to_weight[rank] = has_signal[rank] ?
             _frag_pcor(fragment_traces[rank], weight_trace) :
@@ -646,9 +686,10 @@ function _chrom_shadow_fragment_correlation_features(
             correlation_mask |= UInt8(1) << (rank - 1)
         end
     end
-    rank_weights = _fragment_rank_weights(8)
+    # `_fragment_rank_weights(8)` is a pure function of the constant 8, but allocated a fresh
+    # 8-element Vector on every call -- once per precursor group. Hoisted to a const.
     strength, effective_n =
-        _positive_corr_summary(correlation_to_weight, rank_weights)
+        _positive_corr_summary(correlation_to_weight, MBR_FRAGMENT_RANK_WEIGHTS_8)
 
     best_rank = 0
     best_consensus = typemin(Float32)
@@ -692,9 +733,12 @@ end
     left_row::Integer,
     right_row::Integer,
 )
-    denominator = 2.0f0
-    left_row > 0 && (denominator += 1.0f0)
-    right_row > 0 && (denominator += 1.0f0)
+    # Single assignment on purpose. `denominator` is captured by the `ntuple` closure below, and a
+    # captured variable that is *reassigned* in the enclosing scope gets boxed as `Core.Box` (type
+    # `Any`). That boxing made `signal / denominator` a runtime dispatch, `values` an
+    # `NTuple{8, Any}`, and `sum(values)` a dynamic `afoldl` chain -- once per PSM row.
+    denominator =
+        2.0f0 + (left_row > 0 ? 1.0f0 : 0.0f0) + (right_row > 0 ? 1.0f0 : 0.0f0)
     values = ntuple(rank -> begin
         signal =
             2.0f0 *
@@ -1087,6 +1131,15 @@ function _add_mbr_integrated_kernel!(
     # Correlation features are a function of the precursor's whole chromatogram group, so compute
     # one per group into a concretely-typed vector (was Dict{UInt32, NamedTuple}, abstract).
     correlation_by_group = Vector{_ChromCorrFeatures}(undef, n_groups)
+    # One set of scratch buffers for every group, pre-sized to the largest group so the per-group
+    # `resize!`s never reallocate. Correlation always consumes a group's full row range, so the
+    # widest group extent is an exact bound.
+    max_group_points = 0
+    @inbounds for g in 1:n_groups
+        span = Int(group_hi[g]) - Int(group_lo[g]) + 1
+        span > max_group_points && (max_group_points = span)
+    end
+    corr_workspace = _ChromCorrWorkspace(max_group_points)
     @inbounds for g in 1:n_groups
         # The old `rows_by_pid[pid]` vectors were sorted IN PLACE by scan_idx before this ran, so
         # correlation consumed scan-ordered rows. Feed the same order here.
@@ -1096,6 +1149,7 @@ function _add_mbr_integrated_kernel!(
             shadow_columns,
             weight_column,
             bitvec_rank_table,
+            corr_workspace,
         )
         correlation_by_group[g] = _ChromCorrFeatures(
             c.n_correlated, c.corr_mask, c.bitvec_rank,
