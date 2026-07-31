@@ -823,8 +823,18 @@ function _chrom_temporal_fragment_data(
         end
         total_weight += weight
     end
-    temporal_mean = total_weight > 0.0f0 ?
-        ntuple(rank -> weighted_sqrt[rank] / total_weight, 8) :
+    # `total_weight` is reassigned in the loop above, so capturing it directly in the `ntuple`
+    # closure boxed it as `Core.Box` (type `Any`) -- making the division a runtime dispatch and the
+    # result an `NTuple{8, Any}`, once per PSM row. Copying to a single-assignment local removes the
+    # capture of the reassigned variable, so nothing is boxed. (`weighted_sqrt` is only mutated
+    # through `setindex!`, never reassigned, so capturing it was always fine.)
+    #
+    # Same bug, same file, as the `denominator` box in
+    # `_chrom_smoothed_shadow_sqrt_tuple_and_sum`. Kept as a division rather than multiplying by
+    # `inv(total_weight)` so the result stays bit-identical.
+    weight_total = total_weight
+    temporal_mean = weight_total > 0.0f0 ?
+        ntuple(rank -> weighted_sqrt[rank] / weight_total, 8) :
         MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
     return trace, temporal_mean
 end
