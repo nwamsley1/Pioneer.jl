@@ -803,7 +803,12 @@ function fit_intensity_mass_error_model(
         return old_model
     end
 
-    mz_residuals = da_errs .- [mz_spline_f64(m) for m in mz_f64]
+    # Bound to a single-assignment local before the comprehension. `mz_spline_f64` is reassigned in
+    # the fallback branch above, and a captured-and-reassigned local becomes a `Core.Box` (type
+    # `Any`) -- which made this a dynamic dispatch once per mass-error sample. Rebinding only; the
+    # same object is called with the same arguments, so the result is bit-identical.
+    mz_bias = mz_spline_f64
+    mz_residuals = da_errs .- [mz_bias(m) for m in mz_f64]
 
     # Step 2: intensity bias — monotone spline on ALL mz-corrected data
     I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
@@ -814,7 +819,8 @@ function fit_intensity_mass_error_model(
         return old_model
     end
 
-    intensity_residuals = mz_residuals .- [I_spline_f64(li) for li in log2I]
+    I_bias = I_spline_f64                       # see mz_bias above: avoids the Core.Box capture
+    intensity_residuals = mz_residuals .- [I_bias(li) for li in log2I]
 
     # Step 3: RT bias — binned robust spline on raw RT.
     rt_min = minimum(rt_f64)
@@ -841,7 +847,8 @@ function fit_intensity_mass_error_model(
         end
     end
 
-    full_residuals = intensity_residuals .- [rt_spline_f64(rt) for rt in rt_f64]
+    rt_bias = rt_spline_f64                     # see mz_bias above: avoids the Core.Box capture
+    full_residuals = intensity_residuals .- [rt_bias(rt) for rt in rt_f64]
 
     # Step 4: Spread — binned MAD → Gaussian σ per intensity bin
     full_residuals_mda = full_residuals .* 1e3  # Da → mDa
@@ -897,10 +904,14 @@ function fit_intensity_mass_error_model(
     # observed bias-corrected residuals. Per-file fit; clamped to
     # [EMPK_MIN_K, EMPK_CLAMP_HI] to avoid pathological under/over-widths.
     laplace_to_gauss = log(2.0) / 0.6744897501960817
+    # Both are reassigned in the `n >= 400` branch above and captured below, so each was a `Core.Box`
+    # -- two dynamic reads per iteration of this per-fragment loop. Rebinding only; same objects.
+    spread_corr_spline = mz_spread_spline_f64
+    spread_corr_extrap = mz_spread_extrap_f64
     σ_per_frag_mda = Vector{Float64}(undef, n)
     @inbounds for i in 1:n
         σ_base = max(Float64(spread_spline_f64(Float32(log2I[i]))), 1e-4) * laplace_to_gauss
-        mz_corr = Float64(_mz_spread_correction(mz_spread_spline_f64, mz_spread_extrap_f64, mz_f64[i]))
+        mz_corr = Float64(_mz_spread_correction(spread_corr_spline, spread_corr_extrap, mz_f64[i]))
         σ_per_frag_mda[i] = σ_base * mz_corr
     end
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
@@ -987,7 +998,9 @@ function fit_intensity_mass_error_model(
     # Model's unclamped worst-case: k * spread_mDa(leftmost) * max_mz_correction
     max_spread_mda = max(Float64(spread_spline(spread_spline.first)), 1e-4)
     mz_min, mz_max = Float64(minimum(mz_f64)), Float64(maximum(mz_f64))
-    _corr(mz) = Float64(_mz_spread_correction(mz_spread_spline_f64, mz_spread_extrap_f64, mz))
+    # Uses the hoisted single-assignment bindings rather than the reassigned originals. This closure
+    # runs only 3 times, but capturing the originals is what kept their `Core.Box` alive at all.
+    _corr(mz) = Float64(_mz_spread_correction(spread_corr_spline, spread_corr_extrap, mz))
     max_mz_corr = max(_corr(mz_min), _corr((mz_min + mz_max) / 2), _corr(mz_max), 0.1)
     model_max_mda = Float64(k) * max_spread_mda * max_mz_corr
 
