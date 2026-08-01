@@ -12,12 +12,41 @@
 # were removed — they were only used by FilteredMassSpecData's constructor to
 # copy metadata, which now accesses ms_data.data columns directly.
 
+"""
+    _MSDataPeakView{T}
+
+One scan's slice of the peak-list columns (`mz_array` / `intensity_array`). This exact type was
+previously spelled out inline in `getMzArray` / `getIntensityArray`; it is named here so the scalar
+getters and the plural getters below assert the *same* type and cannot silently diverge.
+"""
+const _MSDataPeakView{T} = SubArray{Union{Missing,T}, 1,
+                                    Arrow.Primitive{Union{Missing,T}, Vector{T}},
+                                    Tuple{UnitRange{Int64}}, true}
+
+"""
+    _MSDataPeakCol{T}
+
+The two representations a peak-list column can have. Same idea as `_MSDataCol` below, but peak lists
+are nested (`Arrow.List` of `_MSDataPeakView`) rather than flat `Arrow.Primitive`.
+
+Annotating this matters more than it looks. The scalar getters already asserted their return type, but
+the *plural* getters returned `Any`, so fetching a scan's peak view was a dynamic call and the
+`SubArray` was forced onto the heap instead of eliding to the stack: **~128 B per access**, four times
+the cost of a boxed scalar. With the annotation it is 0 B -- the view is built in a type-stable way and
+does not escape. Measured on both representations, and a fetch-and-sum-all-peaks loop costs exactly the
+same as a bare fetch, so all of it was the fetch and none of it the iteration.
+"""
+const _MSDataPeakCol{T} = Union{
+    Arrow.List{_MSDataPeakView{T}, Int32, Arrow.Primitive{Union{Missing,T}, Vector{T}}},
+    SentinelArrays.ChainedVector{_MSDataPeakView{T},
+        Arrow.List{_MSDataPeakView{T}, Int32, Arrow.Primitive{Union{Missing,T}, Vector{T}}}}}
+
 #==========================================================
 Singular getters (per-scan access)
 ==========================================================#
 
-getMzArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMzArrays(ms_data)[scan_idx]::SubArray{Union{Missing,T},1,Arrow.Primitive{Union{Missing,T},Vector{T}},Tuple{UnitRange{Int64}},true}
-getIntensityArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getIntensityArrays(ms_data)[scan_idx]::SubArray{Union{Missing,T},1,Arrow.Primitive{Union{Missing,T},Vector{T}},Tuple{UnitRange{Int64}},true}
+getMzArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMzArrays(ms_data)[scan_idx]::_MSDataPeakView{T}
+getIntensityArray(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getIntensityArrays(ms_data)[scan_idx]::_MSDataPeakView{T}
 # Scalar return types are asserted. `.data` is an `Arrow.Table`, which is concrete but
 # schema-dynamic: `ms_data.data[:col]` infers as `AbstractVector`, so an unannotated
 # `getXs(ms_data)[scan_idx]` returned `Any` and **boxed on every per-scan access**. A KEAP1 run
@@ -85,11 +114,10 @@ loud `TypeError` at the access site rather than silently degrading.
 const _MSDataCol{E,S} = Union{Arrow.Primitive{E, Vector{S}},
                               SentinelArrays.ChainedVector{E, Arrow.Primitive{E, Vector{S}}}}
 
-# Deliberately NOT annotated: mz_array / intensity_array use the Arrow.List shape rather than
-# Arrow.Primitive, and their per-access cost is SubArray construction (~60 B) rather than a scalar
-# box, so they need separate investigation. Their scalar getters are already asserted above.
-getMzArrays(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:mz_array]
-getIntensityArrays(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:intensity_array]
+getMzArrays(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:mz_array]::_MSDataPeakCol{T}
+getIntensityArrays(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:intensity_array]::_MSDataPeakCol{T}
 
 getRetentionTimes(ms_data::NonIonMobilityData{T}) where T =
     ms_data.data[:retentionTime]::_MSDataCol{T,T}
