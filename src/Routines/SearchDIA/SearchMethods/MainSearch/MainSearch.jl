@@ -148,29 +148,73 @@ Core Processing Methods
 ==========================================================#
 
 """
+    _gather_into!(dst, src, perm)
+
+`dst[i] = src[perm[i]]` for a concretely-typed column. Separate method so the loop specialises on the
+column's element type rather than the `AbstractVector` that `eachcol` statically yields.
+"""
+@noinline function _gather_into!(dst::Vector{T}, src::Vector{T}, perm::Vector{Int}) where {T}
+    @inbounds for i in eachindex(perm)
+        dst[i] = src[perm[i]]
+    end
+    return nothing
+end
+
+"""
     permute_psms_by_precursor_idx!(psms::DataFrame) -> DataFrame
 
-Sort `psms` in place by `:precursor_idx` using a hand-rolled column-wise
-`Base.permute!` over each column. ~4× faster than `DataFrames.sort!(psms,
-:precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols)
-because DataFrames.sort! allocates a fresh array per column instead of
-doing the in-place cycle permute (measured 2026-05-19).
+Sort `psms` in place by `:precursor_idx` with a hand-rolled column-wise gather. Much faster than
+`DataFrames.sort!(psms, :precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols),
+which allocates a fresh array per column (measured 2026-05-19).
+
+Each isbits column is gathered through a single shared byte buffer rather than letting
+`Base.permute!` allocate its own temporary per column — see the comments in the body for why that is
+both necessary and safe for peak memory.
 
 Establishes the sorted-by-precursor invariant that downstream passes
 (`_build_precursor_groups`, feature passes, `select_best_per_precursor!`)
 can take advantage of to skip their own sortperm.
 """
+
 function permute_psms_by_precursor_idx!(psms::DataFrame)
     n = nrow(psms)
     n == 0 && return psms
     perm = sortperm(psms[!, :precursor_idx]::Vector{UInt32})
-    # `Base.permute!` destroys its perm argument (uses negation as visited
-    # sentinel), so each column needs a fresh copy. Single scratch vector
-    # reused across columns.
-    p_scratch = similar(perm)
-    for col in eachcol(psms)
-        copyto!(p_scratch, perm)
-        Base.permute!(col, p_scratch)
+    # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
+    # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
+    # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
+    # hazard that no longer exists, while one full copy of every column went unnoticed: 17.3 GB per
+    # 6-file KEAP1 run, third-largest allocator in Main Search.
+    #
+    # A true O(1)-space cycle permutation removes the allocation entirely but is 28x SLOWER
+    # (0.0530 s vs 0.0019 s on 2M Float32) -- chasing random cycles is cache-hostile, which is
+    # presumably why Base allocates. So keep the sequential gather and reuse one buffer instead.
+    #
+    # One raw byte buffer, reinterpreted per column type: exactly one column-sized buffer is live at
+    # any moment, which is the same footprint `Base.permute!` allocated transiently. Peak RSS
+    # therefore cannot rise (measured: +0.0 MB vs +7.7 MB), while cumulative allocation falls ~88%.
+    # Only isbits columns may use the raw buffer. This table still carries Vector-valued columns at
+    # this point (they are removed later by `dropVectorColumns!`), and wrapping uninitialised bytes
+    # as a non-isbits element type would hand the GC garbage pointers. Those fall back to
+    # `Base.permute!`, which is correct, merely allocating.
+    max_bytes = 0
+    for c in eachcol(psms)
+        T = eltype(c)
+        isbitstype(T) && c isa Vector{T} && (max_bytes = max(max_bytes, sizeof(T) * n))
+    end
+    raw = max_bytes > 0 ? Vector{UInt8}(undef, max_bytes) : UInt8[]
+    GC.@preserve raw begin
+        for col in eachcol(psms)
+            T = eltype(col)
+            if isbitstype(T) && col isa Vector{T}
+                # `raw` is preserved for the whole loop and `buf` never escapes this iteration.
+                buf = unsafe_wrap(Vector{T}, Ptr{T}(pointer(raw)), n)
+                _gather_into!(buf, col, perm)
+                copyto!(col, buf)
+            else
+                Base.permute!(col, copy(perm))
+            end
+        end
     end
     return psms
 end
