@@ -387,6 +387,7 @@ function process_search_results!(
 
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
+    _b_pep = Base.gc_bytes()
 
     # ============================================================
     # PER-FILE PEP FILTER (PEP ≤ MAIN_PEP_FILTER_THR).
@@ -410,12 +411,14 @@ function process_search_results!(
                    "($n_before_pep → $(nrow(best_psms)) best-per-precursor PSMs)"
         _summarize_psm_counts(best_psms, "after PEP filter", ms_file_idx, file_name)
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] pep_filter: ",
+        round((Base.gc_bytes() - _b_pep) / 1e9, digits=3), " GB")
     t_pep_end = time()
     t_recal_start = t_pep_end
     # ============================================================
 
     # RT recalibration: refit iRT spline from high-confidence PSMs
-    recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
+    @alloc_bucket "recalibrate_rt" recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
 
     # Update irt_obs/irt_error with post-recalibration model so downstream
     # steps (ScoringSearch features, RT index, chromatogram extraction) are consistent
@@ -428,7 +431,7 @@ function process_search_results!(
         psms[!, :lgbm_score],
         psms[!, :target],
     )
-    add_precursor_fraction_transmitted!(
+    @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
         best_psms,
         getQuadTransmissionModel(search_context, ms_file_idx),
         getSearchData(search_context),
@@ -442,7 +445,7 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
-    add_trace_and_fragment_features!(
+    @alloc_bucket "trace_and_fragment_features" add_trace_and_fragment_features!(
         best_psms,
         psms,
         trace_pass_mask;
@@ -460,7 +463,7 @@ function process_search_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
     nce_model = getNceModel(search_context, ms_file_idx)
-    add_wide_window_features_to_table!(
+    @alloc_bucket "wide_window_features" add_wide_window_features_to_table!(
         best_psms,
         spectra,
         search_context,
@@ -472,6 +475,7 @@ function process_search_results!(
 
     # Write per-fold main_search_psms.
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
+    _b_write = Base.gc_bytes()
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
@@ -480,6 +484,8 @@ function process_search_results!(
             writeArrow(fold_path, best_psms[fold_mask, :])
         end
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] write_fold_arrow: ",
+        round((Base.gc_bytes() - _b_write) / 1e9, digits=3), " GB")
     t_write = time()
 
     # Timing summary — durations sum to ~t_total (within ~0.1s of bookkeeping).
@@ -560,8 +566,8 @@ function summarize_results!(
     # No PSM filter is applied here; the per-file PEP filter upstream already
     # gates what reaches ScoringSearch.
     t1_start = time()
-    fold0_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
-    fold1_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
+    fold0_result = @alloc_bucket "aggregate_prescore_fold0" aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
+    fold1_result = @alloc_bucket "aggregate_prescore_fold1" aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
     rt_binned_tol = fold0_result.rt_binned_tol !== nothing ?
                     fold0_result.rt_binned_tol : fold1_result.rt_binned_tol
     t1 = time() - t1_start
@@ -573,6 +579,7 @@ function summarize_results!(
     # later merges fold0+fold1 into a single per-file Arrow (also in
     # main_search_psms_dir) once LGBM training is done.
     t2_start = time()
+    _b_t2 = Base.gc_bytes()
 
     # Library lookups (shared across files)
     prec_irt = lib_irt
@@ -657,6 +664,8 @@ function summarize_results!(
             @debug "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
         end
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] summarize_global_filter: ",
+        round((Base.gc_bytes() - _b_t2) / 1e9, digits=3), " GB")
     t2 = time() - t2_start
 
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
