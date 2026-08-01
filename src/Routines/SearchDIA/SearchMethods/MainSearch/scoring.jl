@@ -1063,7 +1063,10 @@ function add_trace_and_fragment_features!(
         i -> psms[!, FITTED_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
         length(FITTED_FRAGMENT_INTENSITY_COLUMNS),
     )
-    shadow_frag_cols = Tuple(psms[!, c] for c in SHADOW_FRAGMENT_INTENSITY_COLUMNS)
+    shadow_frag_cols = ntuple(
+        i -> psms[!, SHADOW_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(SHADOW_FRAGMENT_INTENSITY_COLUMNS),
+    )
 
     n_best = nrow(best_psms)
     out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)
