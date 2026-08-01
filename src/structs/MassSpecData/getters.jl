@@ -59,14 +59,50 @@ getBasePeakIntensity(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T 
 Plural/batch getters (full-column access)
 ==========================================================#
 
+"""
+    _MSDataCol{E,S}
+
+The two representations a scalar `NonIonMobilityData` column can have: `Arrow.Primitive` for
+single-batch files and `SentinelArrays.ChainedVector` for multi-batch ones. `E` is the element type,
+`S` the underlying storage type (they differ only for nullable columns, where `E` is
+`Union{Missing,S}`).
+
+Annotating the plural getters with this Union is what makes the *scalar* getters allocation-free.
+`.data` is an `Arrow.Table` — concrete, but schema-dynamic — so `ms_data.data[:col]` infers as
+`AbstractVector`; indexing that is a dynamic dispatch whose result is boxed, which the scalar
+assertions added earlier could only check, not prevent. A two-member Union is concrete enough for
+Julia to union-split, so `getindex` becomes two statically-known branches and stops boxing, while a
+single method still covers both file layouts.
+
+Measured on a tight `getRetentionTime` loop: 31.9 -> 0.00 B/scan on a 132,210-scan multi-batch file
+and a 19,275-scan single-batch file alike.
+
+The constructor in `types.jl` already branches on exactly this two-way distinction
+(`typeof(table[:msOrder]) == Arrow.Primitive{UInt8, Vector{UInt8}}`), so the assumption that these are
+the only two representations is one the codebase already makes. If it is ever violated, this raises a
+loud `TypeError` at the access site rather than silently degrading.
+"""
+const _MSDataCol{E,S} = Union{Arrow.Primitive{E, Vector{S}},
+                              SentinelArrays.ChainedVector{E, Arrow.Primitive{E, Vector{S}}}}
+
+# Deliberately NOT annotated: mz_array / intensity_array use the Arrow.List shape rather than
+# Arrow.Primitive, and their per-access cost is SubArray construction (~60 B) rather than a scalar
+# box, so they need separate investigation. Their scalar getters are already asserted above.
 getMzArrays(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:mz_array]
 getIntensityArrays(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:intensity_array]
-getRetentionTimes(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:retentionTime]
-getLowMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:lowMz]
-getHighMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:highMz]
-getTICs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:TIC]
-getCenterMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:centerMz]
-getIsolationWidthMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:isolationWidthMz]
-getMsOrders(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:msOrder]
+
+getRetentionTimes(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:retentionTime]::_MSDataCol{T,T}
+getLowMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:lowMz]::_MSDataCol{T,T}
+getHighMzs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:highMz]::_MSDataCol{T,T}
+getTICs(ms_data::NonIonMobilityData{T}) where T = ms_data.data[:TIC]::_MSDataCol{T,T}
+# centerMz / isolationWidthMz are nullable in the Arrow schema, so the element type carries Missing
+# while the storage type does not.
+getCenterMzs(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:centerMz]::_MSDataCol{Union{Missing,T},T}
+getIsolationWidthMzs(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:isolationWidthMz]::_MSDataCol{Union{Missing,T},T}
+getMsOrders(ms_data::NonIonMobilityData{T}) where T =
+    ms_data.data[:msOrder]::_MSDataCol{UInt8,UInt8}
 getCycleIdxs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.cycle_idxs === nothing ? ms_data.data[:cycle_idx] : ms_data.cycle_idxs
