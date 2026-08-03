@@ -38,7 +38,8 @@ to the per-file Arrow files.
   Arrow files (output of MainSearch's prescore filter step).
 - `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to
   write the scored output back to.
-- `precursors`: Library precursor metadata (used to add `:accession_numbers`).
+- `precursors`: Library precursor metadata. Retained in the calling convention; the
+  `:accession_numbers` column is added later by `process_final_psms!`, not here.
 - `fragment_lookup`: Retained in the internal calling convention; integrated
   MBR evidence is built later during chromatogram integration.
 - `max_psms_in_memory`: Memory budget; surfaced for backward compatibility,
@@ -186,14 +187,13 @@ end
 # file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
 # into each main file ONE FILE AT A TIME — the full experiment is never materialised.
 # Reproduces the exact output columns the legacy in-memory path wrote:
-# `:accession_numbers`, `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
+# `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
 # `:mbr_recovered` (= false).
 function _merge_pass1_into_main!(
     file_paths::Vector{String},
     precursors::LibraryPrecursors;
     cleanup::Bool = true,
 )
-    acc = getAccessionNumbers(precursors)
     for path in file_paths
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || continue
@@ -209,7 +209,12 @@ function _merge_pass1_into_main!(
              main.scan_idx[i]      == pass1.scan_idx[i]) ||
                 error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
         end
-        main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
+        # :accession_numbers deliberately NOT added here. It was materialised per PSM row at this point
+        # and then overwritten wholesale by process_final_psms! (IntegrateChromatogramsSearch/utils.jl),
+        # so the early copy was carried through every intermediate read/write in between -- the MBR
+        # feature pass, merge_recoveries, and the finalize materialise -- and then discarded. Protein
+        # inference does not need it either: ProteinInferenceSearch reads getAccessionNumbers(precursors)
+        # and indexes by precursor_idx (utils.jl:157/175/423) rather than using the table column.
         main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
         if hasproperty(pass1, :trace_prob_infold)
