@@ -608,11 +608,14 @@ function _mbr_step_diag_report()
       ------------------------------------------------------------------
       sum of phases           : $(gb(tot)) GB  $(ms) ms
       process_file! envelope  : $(gb(d[:file_total_bytes])) GB  $(d[:file_total_ms]) ms
-      finalize envelope       : $(gb(d[:finalize_total_bytes])) GB  $(d[:finalize_total_ms]) ms
+      finalize envelope       : $(gb(d[:finalize_total_bytes])) GB  $(d[:finalize_total_ms]) ms$(
+        # The step report is emitted once per FILE, but the finalize counters only populate at the very
+        # end -- printing the split before then just showed a row of zeros. Suppress until populated.
+        d[:finalize_total_bytes] == 0 ? "" : """
         .. mbr rescoring       : $(gb(d[:fin_mbr_bytes])) GB  $(d[:fin_mbr_ms]) ms
         .. rewrite loop        : $(gb(d[:fin_rw_bytes])) GB  $(d[:fin_rw_ms]) ms  over $(d[:fin_rw_files]) files
         .. rewrite 1st file    : $(gb(d[:fin_rw1_bytes])) GB  $(d[:fin_rw1_ms]) ms  (incl. first-call JIT)
-        .. rewrite steady/file : $(gb(d[:fin_rw_files] > 1 ? div(d[:fin_rw_bytes] - d[:fin_rw1_bytes], d[:fin_rw_files] - 1) : 0)) GB  $(d[:fin_rw_files] > 1 ? div(d[:fin_rw_ms] - d[:fin_rw1_ms], d[:fin_rw_files] - 1) : 0) ms
+        .. rewrite steady/file : $(gb(d[:fin_rw_files] > 1 ? div(d[:fin_rw_bytes] - d[:fin_rw1_bytes], d[:fin_rw_files] - 1) : 0)) GB  $(d[:fin_rw_files] > 1 ? div(d[:fin_rw_ms] - d[:fin_rw1_ms], d[:fin_rw_files] - 1) : 0) ms""")
       UNACCOUNTED in per-file : $(gb(d[:file_total_bytes] - tot)) GB  $(d[:file_total_ms] - ms) ms  ($(d[:file_total_ms] > 0 ? round(100 * (d[:file_total_ms] - ms) / d[:file_total_ms], digits = 1) : 0.0)% of per-file)
       STEP TOTAL (file+final) : $(gb(d[:file_total_bytes] + d[:finalize_total_bytes])) GB  $(d[:file_total_ms] + d[:finalize_total_ms]) ms"""
     return nothing

@@ -234,57 +234,122 @@ end
 # pre-MBR spline -- which it always does. Every row it touches survives the filter below by
 # construction (keep = initial_pass || mbr_recovered), so applying it here, after the filter, is
 # equivalent to applying it to the file this function used to write.
+"""
+    _assert_recovery_aligned(main_pid, main_scan, rec_pid, rec_scan, n, path)
+
+Positional-alignment check for the MBR recovery sidecar. Exists as its own method purely as a function
+barrier: the columns arrive with abstract static types (`main` is a DataFrame, `recovery` an
+`Arrow.Table`), so resolving them inside the caller's loop meant a DataFrame `getproperty` AND an Arrow
+Symbol schema lookup *per row*, four per iteration. Passing them as arguments specialises the loop on
+their concrete types.
+"""
+@noinline function _assert_recovery_aligned(main_pid, main_scan, rec_pid, rec_scan,
+                                            n::Int, path::AbstractString)
+    @inbounds for row in 1:n
+        (main_pid[row] == rec_pid[row] && main_scan[row] == rec_scan[row]) ||
+            error("MBR recovery sidecar misalignment at row $row of $path")
+    end
+    return nothing
+end
+
+"""
+    _mbr_keep_mask(qval, global_qval, recovered, n, q_value_threshold) -> BitVector
+
+Rows to retain after MBR: those that passed the original q-value test, plus those MBR recovered.
+Separate method as a function barrier -- the three columns arrive abstractly typed from the DataFrame.
+"""
+@noinline function _mbr_keep_mask(qval, global_qval, recovered, n::Int,
+                                  q_value_threshold::Float32)
+    keep = BitVector(undef, n)
+    @inbounds for row in 1:n
+        keep[row] = _mbr_initial_pass(qval[row], global_qval[row], q_value_threshold) ||
+                    Bool(recovered[row])
+    end
+    return keep
+end
+
+"""
+    _copy_sidecar_column!(dest, src) -> dest
+
+Fill `dest` from `src`, converting elementwise. Replaces `collect(T.(src))`, which allocated twice --
+the broadcast materialises one array and `collect` copies it again. Conversion semantics are unchanged,
+including throwing on `missing`.
+"""
+@noinline function _copy_sidecar_column!(dest::Vector{T}, src) where {T}
+    @inbounds for i in eachindex(dest)
+        dest[i] = T(src[i])
+    end
+    return dest
+end
+
 function _merge_mbr_recoveries!(
     file_paths::Vector{String},
     q_value_threshold::Float32;
     remap_bounds::Union{Nothing, Tuple{Float32, Float32}} = nothing,
 )
+    # Sub-phase attribution for merge_recoveries. It is the largest single phase in finalize, and the
+    # obvious candidates (a redundant table copy, per-row column lookups) turned out to account for only
+    # ~17% of its bytes and ~3% of its time -- so the remainder needs measuring rather than guessing.
+    _mdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _mstate = Ref((time(), Base.gc_bytes()))
+    _mmark = function (key::Symbol)
+        _mdiag || return nothing
+        t0, a0 = _mstate[]
+        MBR_FINAL_DIAG[Symbol(key, :_bytes)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
+        MBR_FINAL_DIAG[Symbol(key, :_ms)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
+        _mstate[] = (time(), Base.gc_bytes())
+        return nothing
+    end
+
     for path in file_paths
+        _mdiag && (_mstate[] = (time(), Base.gc_bytes()))
         recovery_path = path * RECOVERY_SIDECAR_SUFFIX
         isfile(recovery_path) ||
             error("Missing MBR recovery sidecar at $recovery_path")
         main = DataFrame(Tables.columntable(Arrow.Table(path)))
         recovery = Arrow.Table(recovery_path)
         n = nrow(main)
+        _mmark(:mr_materialize)
         length(recovery.precursor_idx) == n ||
             error("MBR recovery sidecar row-count mismatch at $recovery_path")
-        @inbounds for row in 1:n
-            (
-                main.precursor_idx[row] == recovery.precursor_idx[row] &&
-                main.scan_idx[row] == recovery.scan_idx[row]
-            ) || error("MBR recovery sidecar misalignment at row $row of $path")
-        end
+        # Resolved once, not once per row -- see _assert_recovery_aligned.
+        _assert_recovery_aligned(main[!, :precursor_idx], main[!, :scan_idx],
+                                 recovery.precursor_idx, recovery.scan_idx, n, path)
+        _mmark(:mr_align)
 
-        main[!, :mbr_recovered] = collect(Bool.(recovery.mbr_recovered))
+        main[!, :mbr_recovered] =
+            _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered)
         main[!, :MBR_transfer_candidate] =
-            collect(Bool.(recovery.MBR_transfer_candidate))
+            _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate)
         main[!, :mbr_target_decoy_prob] =
-            collect(Float32.(recovery.mbr_target_decoy_prob))
+            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob)
         main[!, :ftr_qval_true] =
-            collect(Float32.(recovery.ftr_qval_true))
+            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_qval_true)
         main[!, :ftr_pep_true] =
-            collect(Float32.(recovery.ftr_pep_true))
+            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_pep_true)
         main[!, :mbr_total_error_qval_true] =
-            collect(Float32.(recovery.mbr_total_error_qval_true))
+            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_qval_true)
         main[!, :mbr_total_error_rate_true] =
-            collect(Float32.(recovery.mbr_total_error_rate_true))
+            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_rate_true)
+        _mmark(:mr_copycols)
 
-        keep = BitVector(undef, n)
-        @inbounds for row in 1:n
-            keep[row] =
-                _mbr_initial_pass(
-                    main.qval[row],
-                    main.global_qval[row],
-                    q_value_threshold,
-                ) ||
-                Bool(main.mbr_recovered[row])
-        end
-        kept = main[keep, :]
+        # Same hoist as the alignment check above: these were three DataFrame `getproperty` calls per
+        # row. Resolved once and passed to a barrier so the loop specialises on the concrete columns.
+        keep = _mbr_keep_mask(main[!, :qval], main[!, :global_qval],
+                              main[!, :mbr_recovered], n, q_value_threshold)
+        _mmark(:mr_keep)
+        # In place: `main[keep, :]` allocated a second full copy of a ~141-column table, and `main` is
+        # a fresh materialisation that nothing else references. deleteat! compacts each column in
+        # place instead.
+        deleteat!(main, .!keep)
+        _mmark(:mr_filter)
         if remap_bounds !== nothing
             score_floor, width = remap_bounds
-            recovered = kept[!, :mbr_recovered]
-            transfer = kept[!, :mbr_target_decoy_prob]
-            prec_prob = kept[!, :prec_prob]
+            recovered = main[!, :mbr_recovered]
+            transfer = main[!, :mbr_target_decoy_prob]
+            prec_prob = main[!, :prec_prob]
             @inbounds for row in eachindex(recovered)
                 Bool(recovered[row]) || continue
                 transfer_score =
@@ -292,7 +357,8 @@ function _merge_mbr_recoveries!(
                 prec_prob[row] = score_floor + width * transfer_score
             end
         end
-        writeArrow(path, kept)
+        writeArrow(path, main)
+        _mmark(:mr_write)
     end
     return file_paths
 end
@@ -638,6 +704,9 @@ function _mbr_final_diag_report()
     keys_ordered = [:donor_floor, :donor_dict, :lod_thresholds, :run_clusters, :partner_pools,
                     :eligibility, :compute_features, :load_frame, :rescoring, :write_sidecars,
                     :merge_recoveries, :remap_scores, :recalc_qvalues, :cleanup]
+    # merge_recoveries internals. Reported separately and EXCLUDED from TOTAL/percentages -- they are a
+    # breakdown of :merge_recoveries, so folding them in would double-count it.
+    sub_keys = [:mr_materialize, :mr_align, :mr_copycols, :mr_keep, :mr_filter, :mr_write]
     tot = sum(get(d, Symbol(k, :_bytes), 0) for k in keys_ordered)
     totms = sum(get(d, Symbol(k, :_ms), 0) for k in keys_ordered)
     gb(x) = round(x / 2^30, digits = 2)
@@ -650,6 +719,16 @@ function _mbr_final_diag_report()
         push!(lines, "  $(rpad(string(k), 22)) $(lpad(gb(b), 7)) GB  $(lpad(m, 7)) ms  ($(lpad(pc, 5))%)  $(rate) GB/s")
     end
     push!(lines, "  $(rpad("TOTAL", 22)) $(lpad(gb(tot), 7)) GB  $(lpad(totms, 7)) ms")
+    if any(get(d, Symbol(k, :_bytes), 0) > 0 for k in sub_keys)
+        mrb = get(d, :merge_recoveries_bytes, 0); mrm = get(d, :merge_recoveries_ms, 0)
+        push!(lines, "  -- merge_recoveries breakdown (of $(gb(mrb)) GB / $(mrm) ms) --")
+        for k in sub_keys
+            b = get(d, Symbol(k, :_bytes), 0); m = get(d, Symbol(k, :_ms), 0)
+            (b == 0 && m == 0) && continue
+            pc = mrb > 0 ? round(100 * b / mrb, digits = 1) : 0.0
+            push!(lines, "     $(rpad(string(k), 19)) $(lpad(gb(b), 7)) GB  $(lpad(m, 7)) ms  ($(lpad(pc, 5))%)")
+        end
+    end
     @user_info join(lines, "\n")
     return nothing
 end
