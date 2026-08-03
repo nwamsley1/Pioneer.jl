@@ -6,8 +6,6 @@ struct LightGBMModel
     constant_prediction::Union{Float32, Nothing}
 end
 
-const LightGBMModelVector = Vector{LightGBMModel}
-const LightGBMModelWrapper = LightGBMModel
 
 # Serializes every entry into LightGBM's C API. LightGBM's bundled OpenMP
 # (libomp) aborts in __kmpc_end_serialized_parallel when predict is entered

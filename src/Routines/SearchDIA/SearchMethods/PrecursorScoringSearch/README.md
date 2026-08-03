@@ -171,7 +171,7 @@ sort_of_percolator_in_memory!()
 │   │   └── update_mbr_features!() [if match_between_runs]
 │   └── Store fold predictions
 ├── Handle MBR transfer candidates [if match_between_runs]
-└── Return trained models (Dict{UInt8, LightGBMModelVector})
+└── Return trained models (Dict{UInt8, Vector{LightGBMModel}})
 ```
 
 ### Key Training Features

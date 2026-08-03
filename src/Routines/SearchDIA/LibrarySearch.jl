@@ -18,7 +18,6 @@
 # Toggle to profile steps with PProf during MainSearch only.
 # Saves a flamegraph .pb.gz per file to the output directory.
 const PROFILE_FRAG_INDEX = false   # fragment index search (searchFragmentIndexPartitionMajorHinted)
-const PROFILE_DECONV = false        # deconvolution (process_scans!)
 
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame

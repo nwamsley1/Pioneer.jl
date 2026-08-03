@@ -18,7 +18,6 @@
 
 ### ───────────── POSIX (Linux, macOS, …) ─────────────
 if Sys.isunix()
-    const RUSAGE_SELF = 0    # from sys/resource.h
 
     """
         peak_rss  →  Int64
