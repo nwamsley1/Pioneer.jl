@@ -772,6 +772,14 @@ function summarize_results!(
             # rewrote every file just to drop these columns. Same relative order (it ran immediately
             # before this loop) and same columns.
             _drop_internal_mbr_columns!(psms)
+            # Same free ride: this loop already materialises and rewrites every per-file table, and MBR
+            # has consumed everything it needs by here. The passing_psms files written below are what
+            # feeds MaxLFQ's chunked merge and therefore precursors_long, so dropping here is the point
+            # that actually reaches the output -- attaching this to PrecursorScoring's initial_filter did
+            # not, because MBR reads `annotated_refs` (full width) rather than `passing_refs`.
+            let drop = Symbol[c for c in PRECSCORE_DROPPABLE_COLUMNS if hasproperty(psms, c)]
+                isempty(drop) || select!(psms, Not(drop))
+            end
             if nrow(psms) == 0 || ncol(psms) == 0
                 writeArrow(path, psms)
                 ref === nothing || clear_sidecars!(ref; delete_files = true)
