@@ -700,7 +700,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     preprocessing_pipeline = TransformPipeline() |>
         filter_by_multiple_thresholds([
             (:pg_qval, q_value_threshold),
-            (:qlobal_pg_qval, q_value_threshold)
+            (:global_pg_qval, q_value_threshold)
         ]) |>
         filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
@@ -793,7 +793,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 data[!,:ms_file_idx], 
                                 data[!,:use_for_protein_quant],
                                 data[!,quant_col],
-                                data[!,:qlobal_pg_qval],
+                                data[!,:global_pg_qval],
                                 data[!,:pg_qval],
                                 data[!,:pg_pep],
                                 data[!,:pg_score],

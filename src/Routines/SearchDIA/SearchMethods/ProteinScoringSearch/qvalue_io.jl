@@ -122,7 +122,7 @@ function update_psms_with_protein_scores_refs(
             :pg_score        => protein_scores,
             :global_pg_score => global_pg_scores,
             :pg_qval         => pg_qvals,
-            :qlobal_pg_qval  => global_pg_qvals,
+            :global_pg_qval  => global_pg_qvals,
             :pg_pep          => pg_peps;
             tag = "pg_scores")
     end
