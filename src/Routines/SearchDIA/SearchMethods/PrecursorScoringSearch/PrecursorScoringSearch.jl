@@ -173,9 +173,20 @@ so removal is free rather than costing an extra pass. Everything downstream then
 narrower table -- `_merge_mbr_recoveries!` alone rewrites every file at ~2.45 GB of writeArrow.
 
 Deliberately RETAINED despite having no downstream reader, because they are plausibly wanted by whoever
-reads the output: best_rt, decoy, irt_fwhm, lgbm_prob, q_value, rt_fwhm, smoothness.
+reads the output: best_rt, irt_fwhm, rt_fwhm, smoothness.
+
+Four more were added after inspecting the actual output values:
+- `q_value` is initialised to zeros by `initialize_prob_group_features!` and never populated on this
+  table -- it read 0 in all 235,194 rows while `qval` carried the real values. Worse than a duplicate:
+  a reader would take q_value == 0 to mean every PSM is perfect.
+- `decoy` is exactly `!target` (0 mismatches in 235,194 rows).
+- `lgbm_prob` is bit-identical to `lgbm_score` (0 differing rows, same min/max). It stays in the
+  pipeline -- MainSearch reads it for prescore aggregation and recalibrate_rt -- but not in the output.
+- `trace_prob_prepass` is bit-identical to `trace_prob`. MBR consumes it, so it must survive to this
+  point; dropping here is after its last use.
 """
 const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
+    :q_value, :decoy, :lgbm_prob, :trace_prob_prepass,
     :longest_y, :y_count, :total_ions, :error, :max_matched_residual, :max_unmatched_residual,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int,
     :frag8_int, :top3_ms2_mass_error_mean, :cycle_idx, :ms1_m0_mass_err_ppm, :ms1_m0_intensity,
