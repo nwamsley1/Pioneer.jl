@@ -200,185 +200,197 @@ function _ensure_typed_missing_file_columns!(
     end
     return df
 end
-#Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
-#loading the entire table into memory. 
-function writePrecursorCSV(
-    long_precursors_path::String,
-    file_names::Vector{String},
-    normalized::Bool,
-    proteins::LibraryProteins;
-    output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
-    write_csv::Bool = true,
-    batch_size::Int64 = 2000000)
-
-    function makeWideFormat(
-        longdf::DataFrame,
-        cols::AbstractVector{Symbol},
-        normalized::Bool)
-
-        value_col = normalized ? :peak_area_normalized : :peak_area
-
-        return unstack(longdf,
-                    cols,
-                    :file_name,
-                    value_col;
-                    combine = sum)      # or combine = maximum, first, etc.
-
-    end
-    # Replace empty strings with missing to avoid CSV.write indexing errors on empty Strings
-    function _sanitize_empty_strings!(df::DataFrame)
-        for nm in names(df)
-            col = df[!, nm]
-            if eltype(col) <: AbstractString
-                if any(==(""), col)
-                    df[!, nm] = replace(col, "" => missing)
-                end
-            elseif eltype(col) <: Union{Missing, AbstractString}
-                has_empty = false
-                @inbounds for v in col
-                    if !ismissing(v) && v == ""
-                        has_empty = true
-                        break
-                    end
-                end
-                if has_empty
-                    df[!, nm] = replace(col, "" => missing)
-                end
-            end
-        end
-        return df
-    end
-    precursors_long = DataFrame(Arrow.Table(long_precursors_path))
-
-    unique_files_in_data = unique(precursors_long.file_name)
-
-    n_rows = size(precursors_long, 1)
-
-    out_dir, arrow_path = splitdir(long_precursors_path)
-    long_precursors_path = joinpath(out_dir,"precursors_long.tsv")
-    wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
-    wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
-    if isfile(wide_precursors_arrow_path)
-        safeRm(wide_precursors_arrow_path, nothing)
-    end
-    wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
-        "species",
-        "gene_names",
-        "inferred_protein_group",
-        "accession_numbers",
-        "sequence",
-        "charge",
-        "structural_mods",
-        "isotopic_mods",
-        "prec_mz",
-        "global_score",
-        "global_qval",
-        "use_for_protein_quant",
-        "precursor_idx",
-        "target",
-        "entrapment_group_id",
-    ])
-
-    long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
-    select!(precursors_long, Not(long_columns_exclude))
-
-    accs = getAccession(proteins)
-    genes = getGeneName(proteins)
-    gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
-    precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
-    # Build rename pairs dynamically to avoid conflicts
-    rename_pairs = Pair{Symbol,Symbol}[]
-    push!(rename_pairs, :new_best_scan => :apex_scan)
-    push!(rename_pairs, :prec_prob => :score)
-    push!(rename_pairs, :global_prob => :global_score)
-    push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
-    push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
-
-    # Apply all renames at once
-    if !isempty(rename_pairs)
-        rename!(precursors_long, rename_pairs)
-    end
-
-    requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
-        :file_name,
-        :species,
-        :gene_names,
-        :inferred_protein_group,
-        :accession_numbers,
-        :sequence,
-        :charge,
-        :structural_mods,
-        :isotopic_mods,
-        :prec_mz,
-        :missed_cleavage,
-        :global_score,
-        :score,
-        :global_qval,
-        :qval,
-        :pep,
-        :peak_area,
-        :peak_area_normalized,
-        :points_integrated,
-        :precursor_fraction_transmitted,
-        :isotopes_captured,
-        :rt,
-        :apex_scan,
-        :global_pg_score,
-        :pg_score,
-        :use_for_protein_quant,
-        :precursor_idx,
-        :target,
-        :entrapment_group_id,
-    ])
-    available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
-    select!(precursors_long, available_cols)
-
-    sorted_columns = vcat(wide_columns, file_names)
-    open(long_precursors_path,"w") do io1
-        open(wide_precursors_path, "w") do io2
-            #Make file headers
-            if write_csv
-                println(io1,join(names(precursors_long),"\t"))
-                println(io2,join(sorted_columns,"\t"))
-            end
-            batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
-            open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
-                while batch_start_idx <= n_rows
-                    #For the wide format, can't split a precursor between two batches.
-                    last_pid = precursors_long[batch_end_idx,:precursor_idx]
-                    while batch_end_idx < n_rows
-                        if precursors_long[batch_end_idx + 1,:precursor_idx] != last_pid
-                            break
-                        end
-                        batch_end_idx += 1
-                    end
-
-                    subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
-                    batch_start_idx = batch_end_idx + 1
-                    batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-                    if write_csv
-                        _sanitize_empty_strings!(subdf)
-                        CSV.write(io1, subdf, append=true, header=false, delim='\t')
-                    end
-                    subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-                    _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
-                    if write_csv
-                        _sanitize_empty_strings!(subunstack)
-                        CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
-                    end
-                    # Normalize column types for consistent Arrow schema across batches
-                    allowmissing!(subunstack)
-                    Arrow.write(arrow_writer, subunstack[!,sorted_columns])
-                end
-            end
-        end
-    end
-    if write_csv == false
-        safeRm(long_precursors_path, nothing, force = true)
-        safeRm(wide_precursors_path, nothing, force = true)
-    end
-    return wide_precursors_arrow_path
-end
+# ---------------------------------------------------------------------------------------------
+# DEAD CODE (commented out, not deleted).
+#
+# `writePrecursorCSV` is the unchunked precursor CSV writer. Nothing calls it: the live path is
+# `writePrecursorCSV_chunked` below (MaxLFQSearch.jl:228), and the only surviving mention of this
+# name is the phrase "Chunked version of writePrecursorCSV" in that function's docstring.
+#
+# It also would not survive being called today -- it does the full-table materialisation the
+# chunked version exists to avoid (`DataFrame(Arrow.Table(long_precursors_path))` over the whole
+# precursors table) and it never received the batch-boundary and column-subset fixes applied to
+# the chunked writer. If it is ever revived, port those first.
+# ---------------------------------------------------------------------------------------------
+# #Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
+# #loading the entire table into memory. 
+# function writePrecursorCSV(
+#     long_precursors_path::String,
+#     file_names::Vector{String},
+#     normalized::Bool,
+#     proteins::LibraryProteins;
+#     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
+#     write_csv::Bool = true,
+#     batch_size::Int64 = 2000000)
+#
+#     function makeWideFormat(
+#         longdf::DataFrame,
+#         cols::AbstractVector{Symbol},
+#         normalized::Bool)
+#
+#         value_col = normalized ? :peak_area_normalized : :peak_area
+#
+#         return unstack(longdf,
+#                     cols,
+#                     :file_name,
+#                     value_col;
+#                     combine = sum)      # or combine = maximum, first, etc.
+#
+#     end
+#     # Replace empty strings with missing to avoid CSV.write indexing errors on empty Strings
+#     function _sanitize_empty_strings!(df::DataFrame)
+#         for nm in names(df)
+#             col = df[!, nm]
+#             if eltype(col) <: AbstractString
+#                 if any(==(""), col)
+#                     df[!, nm] = replace(col, "" => missing)
+#                 end
+#             elseif eltype(col) <: Union{Missing, AbstractString}
+#                 has_empty = false
+#                 @inbounds for v in col
+#                     if !ismissing(v) && v == ""
+#                         has_empty = true
+#                         break
+#                     end
+#                 end
+#                 if has_empty
+#                     df[!, nm] = replace(col, "" => missing)
+#                 end
+#             end
+#         end
+#         return df
+#     end
+#     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
+#
+#     unique_files_in_data = unique(precursors_long.file_name)
+#
+#     n_rows = size(precursors_long, 1)
+#
+#     out_dir, arrow_path = splitdir(long_precursors_path)
+#     long_precursors_path = joinpath(out_dir,"precursors_long.tsv")
+#     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
+#     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
+#     if isfile(wide_precursors_arrow_path)
+#         safeRm(wide_precursors_arrow_path, nothing)
+#     end
+#     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
+#         "species",
+#         "gene_names",
+#         "inferred_protein_group",
+#         "accession_numbers",
+#         "sequence",
+#         "charge",
+#         "structural_mods",
+#         "isotopic_mods",
+#         "prec_mz",
+#         "global_score",
+#         "global_qval",
+#         "use_for_protein_quant",
+#         "precursor_idx",
+#         "target",
+#         "entrapment_group_id",
+#     ])
+#
+#     long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
+#     select!(precursors_long, Not(long_columns_exclude))
+#
+#     accs = getAccession(proteins)
+#     genes = getGeneName(proteins)
+#     gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
+#     precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
+#     # Build rename pairs dynamically to avoid conflicts
+#     rename_pairs = Pair{Symbol,Symbol}[]
+#     push!(rename_pairs, :new_best_scan => :apex_scan)
+#     push!(rename_pairs, :prec_prob => :score)
+#     push!(rename_pairs, :global_prob => :global_score)
+#     push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
+#     push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+#
+#     # Apply all renames at once
+#     if !isempty(rename_pairs)
+#         rename!(precursors_long, rename_pairs)
+#     end
+#
+#     requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
+#         :file_name,
+#         :species,
+#         :gene_names,
+#         :inferred_protein_group,
+#         :accession_numbers,
+#         :sequence,
+#         :charge,
+#         :structural_mods,
+#         :isotopic_mods,
+#         :prec_mz,
+#         :missed_cleavage,
+#         :global_score,
+#         :score,
+#         :global_qval,
+#         :qval,
+#         :pep,
+#         :peak_area,
+#         :peak_area_normalized,
+#         :points_integrated,
+#         :precursor_fraction_transmitted,
+#         :isotopes_captured,
+#         :rt,
+#         :apex_scan,
+#         :global_pg_score,
+#         :pg_score,
+#         :use_for_protein_quant,
+#         :precursor_idx,
+#         :target,
+#         :entrapment_group_id,
+#     ])
+#     available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
+#     select!(precursors_long, available_cols)
+#
+#     sorted_columns = vcat(wide_columns, file_names)
+#     open(long_precursors_path,"w") do io1
+#         open(wide_precursors_path, "w") do io2
+#             #Make file headers
+#             if write_csv
+#                 println(io1,join(names(precursors_long),"\t"))
+#                 println(io2,join(sorted_columns,"\t"))
+#             end
+#             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
+#             open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
+#                 while batch_start_idx <= n_rows
+#                     #For the wide format, can't split a precursor between two batches.
+#                     last_pid = precursors_long[batch_end_idx,:precursor_idx]
+#                     while batch_end_idx < n_rows
+#                         if precursors_long[batch_end_idx + 1,:precursor_idx] != last_pid
+#                             break
+#                         end
+#                         batch_end_idx += 1
+#                     end
+#
+#                     subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
+#                     batch_start_idx = batch_end_idx + 1
+#                     batch_end_idx = min(batch_start_idx + batch_size, n_rows)
+#                     if write_csv
+#                         _sanitize_empty_strings!(subdf)
+#                         CSV.write(io1, subdf, append=true, header=false, delim='\t')
+#                     end
+#                     subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
+#                     _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
+#                     if write_csv
+#                         _sanitize_empty_strings!(subunstack)
+#                         CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
+#                     end
+#                     # Normalize column types for consistent Arrow schema across batches
+#                     allowmissing!(subunstack)
+#                     Arrow.write(arrow_writer, subunstack[!,sorted_columns])
+#                 end
+#             end
+#         end
+#     end
+#     if write_csv == false
+#         safeRm(long_precursors_path, nothing, force = true)
+#         safeRm(wide_precursors_path, nothing, force = true)
+#     end
+#     return wide_precursors_arrow_path
+# end
 """
     _PRECURSOR_CSV_SOURCE_ALIASES
 
@@ -527,6 +539,10 @@ function writePrecursorCSV_chunked(
         :apex_scan,
         :global_pg_score,
         :pg_score,
+        # The protein-level q-values. The table already carried the scores but not the q-values they
+        # map to, so precursors_long.tsv gave no way to apply a protein FDR threshold.
+        :global_pg_qval,
+        :pg_qval,
         :use_for_protein_quant,
         :precursor_idx,
         :target,
