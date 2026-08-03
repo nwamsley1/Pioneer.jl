@@ -129,6 +129,58 @@ function getModifiedSequence(
 end
 
 """
+    _extend_batch_to_group_end(keys, batch_end_idx, n_rows) -> Int
+
+Walk `batch_end_idx` forward while `keys` keeps repeating, so a batch never splits one precursor
+(or protein group) across two batches -- the wide format needs every row of a group together.
+
+Takes the key column as a plain vector instead of indexing `df[i, :col]` inside the loop. That
+form re-resolves the column by symbol on every iteration and infers `Any`, and this loop can run
+once per row of the table.
+"""
+function _extend_batch_to_group_end(keys::AbstractVector, batch_end_idx::Int, n_rows::Int)
+    @inbounds begin
+        last_key = keys[batch_end_idx]
+        while batch_end_idx < n_rows && isequal(keys[batch_end_idx + 1], last_key)
+            batch_end_idx += 1
+        end
+    end
+    return batch_end_idx
+end
+
+"""
+    _modified_sequence_strings(peptide_lists, sequences, isotope_mods, structural_mods, charges)
+
+Semicolon-joined modified sequences, one string per protein group.
+
+Replaces a per-row loop that indexed `subdf[i, :peptides]` and assigned `subdf[i, :col] = ...`
+(a symbol lookup per row, inferring `Any`), allocated a fresh `Vector{String}` per row, and then
+allocated again in `filter(!isempty, ...)` before joining. Here the per-row scratch is one reused
+buffer and the columns are typed vectors, so the only allocation left is the output string itself.
+"""
+function _modified_sequence_strings(
+    peptide_lists::AbstractVector,
+    sequences::AbstractVector,
+    isotope_mods::AbstractVector,
+    structural_mods::AbstractVector,
+    charges::AbstractVector,
+)
+    out = Vector{String}(undef, length(peptide_lists))
+    buf = String[]
+    for i in eachindex(peptide_lists, out)
+        empty!(buf)
+        for pid in peptide_lists[i]
+            ismissing(pid) && continue
+            mod_seq = getModifiedSequence(
+                sequences[pid], isotope_mods[pid], structural_mods[pid], charges[pid])
+            isempty(mod_seq) || push!(buf, mod_seq)
+        end
+        out[i] = join(buf, ';')
+    end
+    return out
+end
+
+"""
     _ensure_typed_missing_file_columns!(df, file_names, T)
 
 Ensure each file column in `file_names` exists in `df` and has element type
@@ -328,6 +380,43 @@ function writePrecursorCSV(
     return wide_precursors_arrow_path
 end
 """
+    _PRECURSOR_CSV_SOURCE_ALIASES
+
+Output column name => the name it is read under in the merge chunk, for the columns the precursor
+CSV writer renames. Needed so the writer can load only the columns it uses: `requested_cols` holds
+post-rename names, while the chunk on disk still has the pre-rename ones.
+
+Over-inclusion is safe here (a column that is read but unused costs only the read), whereas
+under-inclusion would silently drop a column from the output, so the read set is the union of both
+spellings intersected with what the chunk actually contains.
+"""
+const _PRECURSOR_CSV_SOURCE_ALIASES = Dict{Symbol, Symbol}(
+    :global_score                   => :global_prob,
+    :score                          => :prec_prob,
+    :apex_scan                      => :new_best_scan,
+    :isotopes_captured              => :isotopes_captured_traces,
+    :precursor_fraction_transmitted => :precursor_fraction_transmitted_traces,
+)
+
+"""
+    _precursor_csv_read_columns(tbl, requested_cols) -> Vector{Symbol}
+
+The columns to pull out of a merge chunk: every requested output column, plus the pre-rename
+spelling of each renamed one, plus the two the writer needs internally (`:precursor_idx` for batch
+boundaries and `:accession_numbers` for the gene-name mapping), intersected with the chunk schema
+and returned in the chunk's own column order.
+"""
+function _precursor_csv_read_columns(tbl, requested_cols)
+    wanted = Set{Symbol}(requested_cols)
+    for (out_name, src_name) in _PRECURSOR_CSV_SOURCE_ALIASES
+        out_name in wanted && push!(wanted, src_name)
+    end
+    push!(wanted, :precursor_idx)
+    push!(wanted, :accession_numbers)
+    return Symbol[c for c in propertynames(tbl) if c in wanted]
+end
+
+"""
     writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins; ...)
 
 Chunked version of writePrecursorCSV that processes merge chunks one at a time,
@@ -457,7 +546,14 @@ function writePrecursorCSV_chunked(
                 pbar !== nothing && set_description(pbar, "Writing precursor CSV chunks:")
 
                 for (ci, chunk_ref) in enumerate(chunk_refs)
-                    precursors_long = DataFrame(Arrow.Table(file_path(chunk_ref)))
+                    # Load only the columns this writer uses. The chunk carries every column that
+                    # survived to the final table; the TSV emits a curated subset, so materialising
+                    # the whole chunk decoded columns that were dropped two lines later.
+                    chunk_tbl = Arrow.Table(file_path(chunk_ref))
+                    precursors_long = DataFrame()
+                    for col in _precursor_csv_read_columns(chunk_tbl, requested_cols)
+                        precursors_long[!, col] = chunk_tbl[col]
+                    end
                     n_rows = size(precursors_long, 1)
                     n_rows == 0 && continue
 
@@ -492,15 +588,11 @@ function writePrecursorCSV_chunked(
                     end
 
                     # Batch processing within chunk
+                    pid_col = precursors_long[!, :precursor_idx]
                     batch_start_idx, batch_end_idx = 1, min(batch_size + 1, n_rows)
                     while batch_start_idx <= n_rows
-                        last_pid = precursors_long[batch_end_idx, :precursor_idx]
-                        while batch_end_idx < n_rows
-                            if precursors_long[batch_end_idx + 1, :precursor_idx] != last_pid
-                                break
-                            end
-                            batch_end_idx += 1
-                        end
+                        batch_end_idx = _extend_batch_to_group_end(
+                            pid_col, batch_end_idx, n_rows)
 
                         subdf = precursors_long[range(batch_start_idx, batch_end_idx), :]
                         batch_start_idx = batch_end_idx + 1
@@ -636,6 +728,7 @@ function writeProteinGroupsCSV(
     select!(protein_groups_long, long_columns)
 
     sorted_columns = vcat(wide_columns, file_names)
+    protein_col = protein_groups_long[!, :protein]
     batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
     function write_batches!(io1, io2)
         #Make file headers
@@ -646,35 +739,14 @@ function writeProteinGroupsCSV(
         open(Arrow.Writer, wide_protein_groups_arrow; file=true) do arrow_writer
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
-                last_protein_group = protein_groups_long[batch_end_idx,:protein]
-                while batch_end_idx < n_rows
-                    if  protein_groups_long[batch_end_idx + 1,:protein] != last_protein_group
-                        break
-                    end
-                    batch_end_idx += 1
-                end
+                batch_end_idx = _extend_batch_to_group_end(
+                    protein_col, batch_end_idx, n_rows)
                 subdf = protein_groups_long[range(batch_start_idx, batch_end_idx),:]
                 batch_start_idx = batch_end_idx + 1
                 batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-                subdf[!,:modified_sequence] = Vector{String}(undef, size(subdf, 1))
-                for i in range(1, size(subdf, 1))
-                    peptides = subdf[i,:peptides]
-                    modified_sequences = Vector{String}(undef, length(peptides))
-                    for (j, pid) in enumerate(peptides)
-                        if ismissing(pid)
-                            modified_sequences[j] = ""
-                            continue
-                        end
-                        modified_sequences[j] = getModifiedSequence(
-                            sequences[pid],
-                            isotope_mods[pid],
-                            structural_mods[pid],
-                            precursor_charge[pid])
-                    end
-                    subdf[i,:modified_sequence] = join(filter(!isempty, modified_sequences),';')
-                end
-                subdf[!,:peptides] = subdf[!,:modified_sequence]
-                select!(subdf, Not([:modified_sequence]))
+                subdf[!, :peptides] = _modified_sequence_strings(
+                    subdf[!, :peptides], sequences, isotope_mods,
+                    structural_mods, precursor_charge)
                 # Replace empty peptide strings with missing to avoid writer edge-cases
                 try
                     allowmissing!(subdf, :peptides)
