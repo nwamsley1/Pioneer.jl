@@ -197,6 +197,17 @@ const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     # Exact elementwise duplicate of :rt (verified over 235,194 rows); :rt is the one the QC plots
     # read, so :best_rt is the copy that goes.
     :best_rt,
+    # Internal CV / scoring artefacts and ML features with no meaning outside the scorer.
+    :lgbm_score, :trace_prob, :trace_prob_infold, :log2_intensity_explained,
+    # length(sequence), which is already in the table.
+    :sequence_length,
+    # MBR false-transfer-rate diagnostics, for method development rather than end users.
+    # :mbr_recovered survives and is the flag that says whether a row was transferred.
+    :mbr_target_decoy_prob, :mbr_total_error_qval_true, :mbr_total_error_rate_true,
+    :ftr_qval_true, :ftr_pep_true,
+    # Same physical measurement as :rt_fwhm but in library iRT units, which are only interpretable
+    # relative to the library. :rt_fwhm is kept, in minutes.
+    :irt_fwhm,
     :longest_y, :y_count, :total_ions, :error, :max_matched_residual, :max_unmatched_residual,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int,
     :frag8_int, :top3_ms2_mass_error_mean, :cycle_idx, :ms1_m0_mass_err_ppm, :ms1_m0_intensity,
@@ -217,6 +228,45 @@ const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     :flanking_frag_corr_strength, :flanking_frag_corr_effective_n, :flanking_frag_corr_best_m0,
     :flanking_signal_support, :frag_apex_gt2x_flank_bitvec_rank, :irt_diff, :pair_id
 ]
+
+"""
+    OUTPUT_NARROWED_COLUMNS
+
+Columns converted from Float32 to Float16 in the same finalize rewrite that applies
+`PRECSCORE_DROPPABLE_COLUMNS`, i.e. after every reader has run.
+
+Float16 carries 10 mantissa bits, so ~0.05% *relative* precision at any magnitude. That makes it
+unsafe for absolute retention times -- at rt = 100 min the representable spacing is 0.0625 min
+(3.75 s), so `:rt` stays Float32 -- but safe for these two, which are small and already coarser
+than Float16's spacing:
+
+- `:rt_fwhm` is `max(rt) - min(rt)` over the scans above half apex weight (MainSearch/scoring.jl),
+  so it is quantised to the cycle time (~1 s). Float16 spacing at 1 min is 0.03 s, ~30x finer than
+  the underlying measurement. (Its 11% exact zeros are real: one scan above half max, i.e. a peak
+  narrower than one cycle -- not a missing value.)
+- `:irt_error` maxes out near 4.0 iRT, where Float16 spacing is 0.002 iRT, far below any tolerance
+  the value is compared against.
+
+Note that changing units would not help: Float16 is floating point, so scaling by 60 shifts the
+exponent and leaves relative precision unchanged.
+"""
+const OUTPUT_NARROWED_COLUMNS = (:rt_fwhm, :irt_error)
+
+"""
+    narrow_output_columns!(psms)
+
+Cast `OUTPUT_NARROWED_COLUMNS` to Float16 in place. No-op for columns that are absent or already
+narrowed.
+"""
+function narrow_output_columns!(psms)
+    for col in OUTPUT_NARROWED_COLUMNS
+        hasproperty(psms, col) || continue
+        v = psms[!, col]
+        v isa AbstractVector{Float32} || continue
+        psms[!, col] = Vector{Float16}(v)
+    end
+    return psms
+end
 
 
 """

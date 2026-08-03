@@ -780,6 +780,8 @@ function summarize_results!(
             let drop = Symbol[c for c in PRECSCORE_DROPPABLE_COLUMNS if hasproperty(psms, c)]
                 isempty(drop) || select!(psms, Not(drop))
             end
+            # Same rewrite, same reasoning: every reader of these has run, so narrow them here.
+            narrow_output_columns!(psms)
             if nrow(psms) == 0 || ncol(psms) == 0
                 writeArrow(path, psms)
                 ref === nothing || clear_sidecars!(ref; delete_files = true)
