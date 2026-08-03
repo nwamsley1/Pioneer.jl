@@ -187,6 +187,16 @@ Four more were added after inspecting the actual output values:
 """
 const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     :q_value, :decoy, :lgbm_prob, :trace_prob_prepass,
+    # Chromatographic / spectral ML features. Their last readers are the ScoringSearch feature list
+    # (model_config.jl) and the MBR donor-feature list (MBR/types.jl, MBR/features.jl for :n_scans),
+    # all of which run before this finalize loop. No reference in ProteinInference, ProteinScoring,
+    # MaxLFQ, the QC plots, or anywhere in src/utils or src/structs.
+    :weight_ratio_at_scan, :weight_rank_at_scan, :gof, :poisson, :err_norm,
+    :fitted_hellinger, :fitted_manhattan_distance, :smoothed_2d_shadow_hellinger,
+    :log_by_ratio_m0, :smoothness, :n_scans, :ms1_weight_apex_to_m0_apex_irt,
+    # Exact elementwise duplicate of :rt (verified over 235,194 rows); :rt is the one the QC plots
+    # read, so :best_rt is the copy that goes.
+    :best_rt,
     :longest_y, :y_count, :total_ions, :error, :max_matched_residual, :max_unmatched_residual,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int,
     :frag8_int, :top3_ms2_mass_error_mean, :cycle_idx, :ms1_m0_mass_err_ppm, :ms1_m0_intensity,
