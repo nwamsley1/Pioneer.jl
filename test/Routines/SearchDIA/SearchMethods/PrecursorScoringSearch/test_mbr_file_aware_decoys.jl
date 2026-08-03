@@ -92,6 +92,16 @@ end
         ],
     )
     true_donor = only(donor_dict[UInt32(1)])
+    # `_mbr_false_donors` writes into a caller-owned buffer (it `fill!`s it with `nothing` itself and
+    # returns it), so the buffer must be MBR_N_COUNTERFACTUALS long. fe8a00f76 introduced this
+    # parameter to stop allocating a fresh vector per row, but did not update this call.
+    # Explicitly `nothing`-filled rather than `undef`: the collector counts non-nothing entries to
+    # find its write position, and only works on an `undef` buffer because `_mbr_false_donors`
+    # happens to `fill!` first. Not worth depending on from a test.
+    donors_buf = fill!(
+        Vector{Union{Nothing, Pioneer._MBRDonorEntry}}(undef, Pioneer.MBR_N_COUNTERFACTUALS),
+        nothing,
+    )
     false_donors = Pioneer._mbr_false_donors(
         donor_dict,
         pools,
@@ -101,6 +111,7 @@ end
         10.0f0,
         true_donor,
         nothing,
+        donors_buf,
     )
 
     @test length(false_donors) == Pioneer.MBR_N_COUNTERFACTUALS
