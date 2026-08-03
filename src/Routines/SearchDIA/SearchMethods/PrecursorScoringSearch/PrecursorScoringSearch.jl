@@ -159,6 +159,42 @@ end
 """
 Process all results to get final protein scores.
 """
+const PRECSCORE_DIAG = Dict{Symbol, Int}()
+
+"""
+    _precscore_diag_report()
+
+Per-phase allocation/time attribution for the Precursor Scoring stage (~20 GB, previously the largest
+wholly uninstrumented stage). Gated on PIONEER_PRECSCORE_DIAG; the phases are recorded by `_pmark`
+inside `summarize_results!`.
+
+Each phase name describes the work that ENDED at that mark, so the boundaries are the major calls:
+fold_merge -> aggregate -> scoring -> run_similarity -> qvals_and_filtering -> rt_indices.
+`@alloc_bucket` (MainSearch) cannot be used here: importScripts.jl loads PrecursorScoringSearch before
+MainSearch, so that macro is not yet defined at parse time.
+"""
+function _precscore_diag_report()
+    d = PRECSCORE_DIAG
+    # Order = execution order. Each name is the phase that CLOSES at its mark; an earlier version had
+    # these off by one (each was named for the phase it OPENED), which put score_precursor_isotope_traces
+    # inside the fold-merge bucket and made LGBM scoring look like 3 s when it was not measured at all.
+    ks = [:setup, :scoring, :fold_merge, :aggregate, :run_similarity, :qvals_and_filtering, :rt_indices]
+    tot = sum(get(d, Symbol(k, :_bytes), 0) for k in ks)
+    totms = sum(get(d, Symbol(k, :_ms), 0) for k in ks)
+    gb(x) = round(x / 2^30, digits = 2)
+    lines = ["Precursor Scoring phase diagnostic:"]
+    for k in ks
+        b = get(d, Symbol(k, :_bytes), 0); m = get(d, Symbol(k, :_ms), 0)
+        (b == 0 && m == 0) && continue
+        pc = tot > 0 ? round(100 * b / tot, digits = 1) : 0.0
+        rate = m > 0 ? round((b / 2^30) / (m / 1000), digits = 2) : 0.0
+        push!(lines, "  $(rpad(string(k), 22)) $(lpad(gb(b), 7)) GB  $(lpad(m, 7)) ms  ($(lpad(pc, 5))%)  $(rate) GB/s")
+    end
+    push!(lines, "  $(rpad("TOTAL", 22)) $(lpad(gb(tot), 7)) GB  $(lpad(totms, 7)) ms")
+    @user_info join(lines, "\n")
+    return nothing
+end
+
 function summarize_results!(
     results::PrecursorScoringSearchResults,
     params::PrecursorScoringSearchParameters,
@@ -167,6 +203,18 @@ function summarize_results!(
     # Downstream stages retrieve the same in-memory run-similarity atlas from
     # the precursor-scoring result rather than rebuilding or serializing it.
     store_results!(search_context, PrecursorScoringSearch, results)
+    _pdiag = get(ENV, "PIONEER_PRECSCORE_DIAG", "0") == "1"
+    _pstate = Ref((time(), Base.gc_bytes()))
+    _pmark = function (key::Symbol)
+        _pdiag || return nothing
+        t0, a0 = _pstate[]
+        PRECSCORE_DIAG[Symbol(key, :_bytes)] =
+            get(PRECSCORE_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
+        PRECSCORE_DIAG[Symbol(key, :_ms)] =
+            get(PRECSCORE_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
+        _pstate[] = (time(), Base.gc_bytes())
+        return nothing
+    end
 
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
 
@@ -205,6 +253,7 @@ function summarize_results!(
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
+        _pmark(:setup)
         score_precursor_isotope_traces(
             main_search_psms_folder,
             valid_fold_paths,
@@ -216,6 +265,7 @@ function summarize_results!(
             match_between_runs = params.match_between_runs,
         )
     end
+    _pmark(:scoring)
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
     # Step 1b: Merge fold files back into single files per MS run
@@ -277,6 +327,7 @@ function summarize_results!(
 
     # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
     step2_time = @elapsed begin
+        _pmark(:fold_merge)
         aggregate_per_file!(second_pass_refs)
     end
 
@@ -321,6 +372,7 @@ function summarize_results!(
                 "(precursor score floor = " *
                 "$(round(run_score_floor, digits = 4)))..."
             run_similarity_time = @elapsed begin
+                _pmark(:aggregate)
                 results.run_similarity[] = build_precursor_run_similarity(
                     filtered_refs,
                     run_score_floor,
@@ -350,6 +402,7 @@ function summarize_results!(
             )
 
         # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
+        _pmark(:run_similarity)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
@@ -453,7 +506,10 @@ function summarize_results!(
 
     # Build RT indices for IntegrateChromatogramsSearch (all library precursors per file)
     # The per-file count is logged inside build_rt_indices! at @debug_l1.
+    _pmark(:qvals_and_filtering)
     build_rt_indices!(search_context, valid_file_indices, passing_refs)
+    _pmark(:rt_indices)
+    _pdiag && _precscore_diag_report()
 
     # Protein inference + protein-group scoring are handled downstream by
     # ProteinInferenceSearch and ProteinScoringSearch. Per-stage timings are
