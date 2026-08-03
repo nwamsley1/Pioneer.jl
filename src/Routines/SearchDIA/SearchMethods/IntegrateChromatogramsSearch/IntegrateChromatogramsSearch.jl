@@ -535,6 +535,28 @@ function process_file!(
     return results
 end
 
+"""
+    _fin_rw_record!(enabled, bytes0, t0)
+
+Accumulate one iteration of the finalize rewrite loop. The first iteration is recorded separately
+because it carries first-call compilation for `process_final_psms!` and the `writeArrow`
+specialisations; on the per-file phases that surcharge measured +33%, so folding it into the
+steady-state average would overstate the per-file cost of this loop.
+"""
+function _fin_rw_record!(enabled::Bool, bytes0::Int, t0::Float64)
+    enabled || return nothing
+    b = Base.gc_bytes() - bytes0
+    ms = round(Int, (time() - t0) * 1000)
+    MBR_STEP_DIAG[:fin_rw_files] += 1
+    MBR_STEP_DIAG[:fin_rw_bytes] += b
+    MBR_STEP_DIAG[:fin_rw_ms] += ms
+    if MBR_STEP_DIAG[:fin_rw_files] == 1
+        MBR_STEP_DIAG[:fin_rw1_bytes] = b
+        MBR_STEP_DIAG[:fin_rw1_ms] = ms
+    end
+    return nothing
+end
+
 const MBR_STEP_DIAG = Dict{Symbol, Int}(
     :extract_bytes => 0,   :extract_ms => 0,
     :isotopes_bytes => 0,  :isotopes_ms => 0,
@@ -545,6 +567,13 @@ const MBR_STEP_DIAG = Dict{Symbol, Int}(
     :chrom_table_bytes => 0, :rss_at_extract => 0,
     :file_total_bytes => 0, :file_total_ms => 0,
     :finalize_total_bytes => 0, :finalize_total_ms => 0,
+    # Split of the finalize envelope: the MBR rescoring call vs the per-file rewrite loop, and the
+    # rewrite loop's FIRST iteration separately -- it absorbs first-call JIT for process_final_psms!
+    # and the writeArrow specialisations, which would otherwise masquerade as steady-state cost.
+    :fin_mbr_bytes => 0,   :fin_mbr_ms => 0,
+    :fin_rw_bytes => 0,    :fin_rw_ms => 0,
+    :fin_rw1_bytes => 0,   :fin_rw1_ms => 0,
+    :fin_rw_files => 0,
 )
 
 # Both diagnostic accumulators are module-level, so in a warm driver that runs several searches in
@@ -580,6 +609,10 @@ function _mbr_step_diag_report()
       sum of phases           : $(gb(tot)) GB  $(ms) ms
       process_file! envelope  : $(gb(d[:file_total_bytes])) GB  $(d[:file_total_ms]) ms
       finalize envelope       : $(gb(d[:finalize_total_bytes])) GB  $(d[:finalize_total_ms]) ms
+        .. mbr rescoring       : $(gb(d[:fin_mbr_bytes])) GB  $(d[:fin_mbr_ms]) ms
+        .. rewrite loop        : $(gb(d[:fin_rw_bytes])) GB  $(d[:fin_rw_ms]) ms  over $(d[:fin_rw_files]) files
+        .. rewrite 1st file    : $(gb(d[:fin_rw1_bytes])) GB  $(d[:fin_rw1_ms]) ms  (incl. first-call JIT)
+        .. rewrite steady/file : $(gb(d[:fin_rw_files] > 1 ? div(d[:fin_rw_bytes] - d[:fin_rw1_bytes], d[:fin_rw_files] - 1) : 0)) GB  $(d[:fin_rw_files] > 1 ? div(d[:fin_rw_ms] - d[:fin_rw1_ms], d[:fin_rw_files] - 1) : 0) ms
       UNACCOUNTED in per-file : $(gb(d[:file_total_bytes] - tot)) GB  $(d[:file_total_ms] - ms) ms  ($(d[:file_total_ms] > 0 ? round(100 * (d[:file_total_ms] - ms) / d[:file_total_ms], digits = 1) : 0.0)% of per-file)
       STEP TOTAL (file+final) : $(gb(d[:file_total_bytes] + d[:finalize_total_bytes])) GB  $(d[:file_total_ms] + d[:finalize_total_ms]) ms"""
     return nothing
@@ -699,6 +732,11 @@ function summarize_results!(
         # so it consolidates the sidecar and applies the deferred q-value filter here. Index the refs
         # by path: finalize only sees non-empty existing files, so it is not aligned with this
         # enumeration.
+        if _sumdiag
+            MBR_STEP_DIAG[:fin_mbr_bytes] += Base.gc_bytes() - _suma
+            MBR_STEP_DIAG[:fin_mbr_ms] += round(Int, (time() - _sumt) * 1000)
+        end
+
         ref_by_path = Dict{String, PSMFileReference}(
             file_path(r) => r for r in summary.mbr_refs
         )
@@ -706,6 +744,8 @@ function summarize_results!(
             getPassingPsms(getMSData(search_context)),
         )
             (isempty(path) || !isfile(path)) && continue
+            _rwa = _sumdiag ? Base.gc_bytes() : 0
+            _rwt = _sumdiag ? time() : 0.0
             ref = get(ref_by_path, path, nothing)
             psms = ref === nothing ?
                 DataFrame(Tables.columntable(Arrow.Table(path))) :
@@ -732,6 +772,7 @@ function summarize_results!(
             if nrow(psms) == 0 || ncol(psms) == 0
                 writeArrow(path, psms)
                 ref === nothing || clear_sidecars!(ref; delete_files = true)
+                _fin_rw_record!(_sumdiag, _rwa, _rwt)
                 continue
             end
             process_final_psms!(
@@ -746,6 +787,7 @@ function summarize_results!(
             writeArrow(path, psms)
             # sidecar contents are now baked into main
             ref === nothing || clear_sidecars!(ref; delete_files = true)
+            _fin_rw_record!(_sumdiag, _rwa, _rwt)
         end
         if _sumdiag
             # Covers finalize_postintegration_mbr! AND the process_final_psms! rewrite loop above,
