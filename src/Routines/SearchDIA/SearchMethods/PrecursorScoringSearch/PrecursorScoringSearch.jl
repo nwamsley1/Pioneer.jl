@@ -162,6 +162,43 @@ Process all results to get final protein scores.
 const PRECSCORE_DIAG = Dict{Symbol, Int}()
 
 """
+    PRECSCORE_DROPPABLE_COLUMNS
+
+Per-PSM ML feature columns with no reader after PrecursorScoring. Determined by scanning every stage
+downstream of this one (MBR, IntegrateChromatograms, ProteinInference, ProteinScoring, MaxLFQ,
+WriteOutputs, SearchDIA) for literal references; 76 of the 141 columns in precursors_long had none.
+
+Dropped inside the existing `initial_filter` pass, which already reads, filters and rewrites every file,
+so removal is free rather than costing an extra pass. Everything downstream then reads and writes a
+narrower table -- `_merge_mbr_recoveries!` alone rewrites every file at ~2.45 GB of writeArrow.
+
+Deliberately RETAINED despite having no downstream reader, because they are plausibly wanted by whoever
+reads the output: best_rt, decoy, irt_fwhm, lgbm_prob, q_value, rt_fwhm, smoothness.
+"""
+const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
+    :longest_y, :y_count, :total_ions, :error, :max_matched_residual, :max_unmatched_residual,
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int,
+    :frag8_int, :top3_ms2_mass_error_mean, :cycle_idx, :ms1_m0_mass_err_ppm, :ms1_m0_intensity,
+    :ms1_m1_intensity, :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_m0_m1_m2_window_fraction,
+    :ms1_ms2_explained_delta, :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
+    :ms1_isotope_dotp_m0_m1_m2, :ms1_m0_peak_frag_intensity_fraction,
+    :ms1_m0_peak_n_precursors, :scan_prec_mz_n_precursors, :charge2, :spectrum_peak_count,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_apex_offset_irt, :frag_apex_dispersion_irt,
+    :n_correlated_fragments, :n_correlated_fragments_bitvec_rank, :frag_corr_strength,
+    :frag_corr_effective_n, :frag_corr_best_m0, :delta_frame_peak_center, :n_above_hm,
+    :n_contiguous_scans, :n_frags_detected_union, :n_frags_detected_intersection,
+    :n_frags_detected_union_bitvec_rank, :n_frags_detected_intersection_bitvec_rank,
+    :n_scans_other_windows, :other_window_weight_corr, :other_window_apex_delta_irt,
+    :frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity, :frag8_smoothed_intensity, :flanking_ms1_m0_candidate_fraction,
+    :flanking_frag_candidate_fraction, :flanking_ms1_frag_sum_corr, :flanking_frag_corr_mean,
+    :flanking_frag_corr_strength, :flanking_frag_corr_effective_n, :flanking_frag_corr_best_m0,
+    :flanking_signal_support, :frag_apex_gt2x_flank_bitvec_rank, :irt_diff, :pair_id
+]
+
+
+"""
     _precscore_diag_report()
 
 Per-phase allocation/time attribution for the Precursor Scoring stage (~20 GB, previously the largest

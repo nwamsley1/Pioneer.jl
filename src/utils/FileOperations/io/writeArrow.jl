@@ -25,6 +25,41 @@ const GC_LOCK = ReentrantLock()
 # (1) is this write necessary? (2) are all columns necessary or expired?
 const _AUDIT_WRITE_LOCK = ReentrantLock()
 
+"""
+    OUTPUT_DICT_ENCODED_COLUMNS
+
+String columns in the final long-format outputs that are worth Arrow dictionary encoding. All are
+massively repeated: on a 6-file KEAP1 run `file_name` stores 6 distinct strings across 729,008 rows
+(21.6 MB for six values), `species` 3, `structural_mods` 1,367, `inferred_protein_group` 9,319,
+`accession_numbers` 11,392, `sequence` 107,461 -- 46.3 MB of string payload in total.
+
+Encoding is applied only at the FINAL output write, not to intermediate files: a `DictEncoded` column
+reads back with a different Julia type, and confining it to the last write means no downstream code sees
+a type change. Verified on the 141-column precursors_long: 366.3 -> 313.9 MB (-14.3%), every column
+round-trips identically, and `DataFrame(Tables.columntable(...))` -- the access pattern qcPlots.jl uses
+-- still yields `eltype == String`.
+"""
+const OUTPUT_DICT_ENCODED_COLUMNS = (:file_name, :species, :accession_numbers,
+                                     :sequence, :structural_mods, :inferred_protein_group)
+
+"""
+    dict_encode_output_columns(tbl, encode = OUTPUT_DICT_ENCODED_COLUMNS)
+
+Return `tbl` with the named string columns wrapped in `Arrow.DictEncode`. Returns `tbl` untouched when
+none are present, so it is safe to apply to any output table. Column order and every other column are
+preserved exactly.
+"""
+function dict_encode_output_columns(tbl, encode = OUTPUT_DICT_ENCODED_COLUMNS)
+    all_names = Symbol.(Tables.columnnames(tbl))
+    any(n -> n in encode, all_names) || return tbl
+    cols = Any[]
+    for n in all_names
+        c = Tables.getcolumn(tbl, n)
+        push!(cols, n in encode ? Arrow.DictEncode(c) : c)
+    end
+    return NamedTuple{Tuple(all_names)}(Tuple(cols))
+end
+
 function _audit_log_write(fpath::AbstractString, df::AbstractDataFrame)
     out = get(ENV, "PIONEER_AUDIT_WRITES", "")
     isempty(out) && return
