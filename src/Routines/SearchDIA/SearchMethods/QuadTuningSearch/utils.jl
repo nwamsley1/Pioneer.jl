@@ -682,6 +682,186 @@ end
 #==========================================================
 Quad Transmission Search
 =========================================================#
+# Hoisted out of `perform_quad_transmission_search`, where both were nested functions. A nested
+# function gets a gensym'd type that no `precompile(...)` statement can name, so none of their
+# specialisations could be baked into the shipped binary -- together the largest uncovered group
+# (128 statements) in the precompile-coverage measurement. Both are self-contained: every input is
+# an explicit typed parameter and their bodies call only module-level functions. They move as a
+# pair because process_scan! calls record_scan_results!.
+function _quad_record_scan_results!(
+    search_data::SearchDataStructures,
+    tuning_results::Vector{@NamedTuple{
+        precursor_idx::UInt32,
+        scan_idx::UInt32,
+        weight::Float32,
+        iso_idx::UInt8,
+        center_mz::Float32,
+        n_matches::UInt8
+    }},
+    weights::Vector{Float32},
+    Hs::AbstractSparseDesignMatrix,
+    scan_idx::Int,
+    center_mz::Float32
+)
+    precursor_weights = getPrecursorWeights(search_data)
+    for (id, colid) in active_keys(getIdToCol(search_data))
+        # Update precursor weights
+        precursor_weights[id] = weights[colid]
+
+        # Decode artificial column key: id = (pid - 1) * 3 + iso_pass
+        isotope_idx = UInt8(((id - 1) % 3) + 1)
+        pid = UInt32(((id - 1) ÷ 3) + 1)
+
+        # Count matches via the abstract matched_at accessor — works
+        # for both SparseArray and SparseArrayFused layouts.
+        n_matches = 0
+        @inbounds for j in Hs.colptr[colid]:(Hs.colptr[colid+1] - 1)
+            n_matches += matched_at(Hs, j) ? 1 : 0
+        end
+
+        # Record result
+        push!(tuning_results, (
+            precursor_idx = pid,
+            scan_idx = scan_idx,
+            weight = weights[colid],
+            iso_idx = isotope_idx,
+            center_mz = center_mz,
+            n_matches = n_matches
+        ))
+    end
+    #Arrow.write("/Users/n.t.wamsley/Desktop/test.arrow", DataFrame(tuning_results))
+    #ttable = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/Desktop/test.arrow")))
+
+end
+
+"""
+Process a single scan for quad transmission search (fused kernel).
+
+Uses `run_fused!(FusedQuadEst(), ...)` to produce `Hs_fused` directly
+in CSC order. No `selectTransitions!` / `matchPeaks!` / `sort!` /
+`buildDesignMatrix!` / `sortSparse!` / `ScoreFragmentMatches!` — all
+replaced by the single fused pass.
+"""
+
+function _quad_process_scan!(
+    scan_idx::Int,
+    scan_idxs::Set{UInt32},
+    spectra::MassSpecData,
+    tuning_results::Vector{@NamedTuple{
+        precursor_idx::UInt32,
+        scan_idx::UInt32,
+        weight::Float32,
+        iso_idx::UInt8,
+        center_mz::Float32,
+        n_matches::UInt8
+    }},
+    search_context::SearchContext,
+    search_data::SearchDataStructures,
+    params::QuadTuningSearchParameters,
+    ms_file_idx::Int64,
+    Hs::SparseArrayFused{UInt32, Float32},
+    weights::Vector{Float32},
+    precursor_weights::AbstractPrecursorMap{Float32},
+    residuals::Vector{Float32},
+    scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}
+)
+    scan_idx ∉ scan_idxs && return
+
+    msn = getMsOrder(spectra, scan_idx)
+    msn ∉ params.spec_order && return
+
+    nce_model = getNceModel(search_context, ms_file_idx)
+    mem       = getMassErrorModel(search_context, ms_file_idx)
+    spec_lib  = getSpecLib(search_context)
+    ion_list  = getFragmentLookupTable(spec_lib)
+    precursors = getPrecursors(spec_lib)
+
+    prec_mzs     = getMz(precursors)
+    prec_charges = getCharge(precursors)
+    prec_sulfs   = getSulfurCount(precursors)
+    prec_irts    = getIrt(precursors)
+
+    # Thread-local SoA peak table + scratch.
+    corr_mz        = getScanCorrectedMz(search_data)
+    obs_low        = getScanObsLow(search_data)
+    obs_high       = getScanObsHigh(search_data)
+    isotopes_buf   = getIsotopes(search_data)
+    prec_trans_buf = getPrecursorTransmission(search_data)
+    fused_scratch  = getFusedScratch(search_data)
+    id_to_col      = getIdToCol(search_data)
+
+    scan_mz  = getMzArray(spectra, scan_idx)
+    scan_int = getIntensityArray(spectra, scan_idx)
+    scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
+    peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
+                                      mem, scan_mz, scan_int, scan_rt)
+
+    quad_fn = getQuadTransmissionFunction(
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getCenterMz(spectra, scan_idx),
+        getIsolationWidthMz(spectra, scan_idx))
+
+    precs_vec = scan_idx_to_prec_idx[scan_idx]
+
+    # FusedQuadEst: 3 outer iso-passes per precursor, one-hot
+    # transmission, artificial column IDs, no inline scoring.
+    # iRT/isotope_err_bounds filters skipped by dispatch.
+    nmatches, nmisses = run_fused!(
+        FusedQuadEst(),
+        Hs, getTuningUnscoredPsms(search_data), id_to_col, fused_scratch,
+        corr_mz, obs_low, obs_high, peak_mz_len,
+        isotopes_buf, prec_trans_buf,
+        ion_list, nce_model,
+        precs_vec, 1:length(precs_vec),
+        prec_mzs, prec_charges, prec_sulfs, prec_irts,
+        getIsoSplines(search_data), quad_fn, mem,
+        scan_int, 0f0, Float32(Inf),           # scan_irt / irt_tol — skipped by kind
+        (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
+        4,                                      # n_frag_isotopes — overridden to 0:3 via max_frag_iso_idx(FusedQuadEst)
+        (UInt8(0), UInt8(0))                    # isotope_err_bounds — skipped by kind
+    )
+
+    nmatches ≤ 2 && (reset!(id_to_col); reset!(Hs); return)
+
+    # Deconvolve: grow weight buffers to fit new columns, seed from
+    # precursor_weights, run solver. (Replaces classic
+    # perform_deconvolution!'s buildDesignMatrix + solve path.)
+    n_active_cols = n_active(id_to_col)
+    if n_active_cols > length(weights)
+        new_entries = n_active_cols - length(weights) + 1000
+        resize!(weights, length(weights) + new_entries)
+        resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
+    end
+
+    @inbounds for (k, col) in active_keys(id_to_col)
+        weights[col] = precursor_weights[k]
+    end
+
+    solve_deconvolution!(
+        params.deconvolution_solver,
+        Hs,
+        residuals,
+        weights,
+        getColNorm2(search_data),
+        getMu(search_data),
+        getObserved(search_data),
+        params.max_iter_outer,
+        params.max_diff)
+
+    # Record results (reads Hs.colptr + matched_at(Hs, j) per column).
+    _quad_record_scan_results!(
+        search_data,
+        tuning_results,
+        weights,
+        Hs,
+        scan_idx,
+        getCenterMz(spectra, scan_idx))
+
+    reset!(id_to_col)
+    reset!(Hs)
+end
+
+
 """
     perform_quad_transmission_search(spectra::MassSpecData,
                                   results::QuadTuningSearchResults,
@@ -723,177 +903,6 @@ function perform_quad_transmission_search(
     """
     Record results for a single scan.
     """
-    function record_scan_results!(
-        search_data::SearchDataStructures,
-        tuning_results::Vector{@NamedTuple{
-            precursor_idx::UInt32,
-            scan_idx::UInt32,
-            weight::Float32,
-            iso_idx::UInt8,
-            center_mz::Float32,
-            n_matches::UInt8
-        }},
-        weights::Vector{Float32},
-        Hs::AbstractSparseDesignMatrix,
-        scan_idx::Int,
-        center_mz::Float32
-    )
-        precursor_weights = getPrecursorWeights(search_data)
-        for (id, colid) in active_keys(getIdToCol(search_data))
-            # Update precursor weights
-            precursor_weights[id] = weights[colid]
-
-            # Decode artificial column key: id = (pid - 1) * 3 + iso_pass
-            isotope_idx = UInt8(((id - 1) % 3) + 1)
-            pid = UInt32(((id - 1) ÷ 3) + 1)
-
-            # Count matches via the abstract matched_at accessor — works
-            # for both SparseArray and SparseArrayFused layouts.
-            n_matches = 0
-            @inbounds for j in Hs.colptr[colid]:(Hs.colptr[colid+1] - 1)
-                n_matches += matched_at(Hs, j) ? 1 : 0
-            end
-
-            # Record result
-            push!(tuning_results, (
-                precursor_idx = pid,
-                scan_idx = scan_idx,
-                weight = weights[colid],
-                iso_idx = isotope_idx,
-                center_mz = center_mz,
-                n_matches = n_matches
-            ))
-        end
-        #Arrow.write("/Users/n.t.wamsley/Desktop/test.arrow", DataFrame(tuning_results))
-        #ttable = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/Desktop/test.arrow")))
-
-    end
-
-    """
-    Process a single scan for quad transmission search (fused kernel).
-
-    Uses `run_fused!(FusedQuadEst(), ...)` to produce `Hs_fused` directly
-    in CSC order. No `selectTransitions!` / `matchPeaks!` / `sort!` /
-    `buildDesignMatrix!` / `sortSparse!` / `ScoreFragmentMatches!` — all
-    replaced by the single fused pass.
-    """
-    function process_scan!(
-        scan_idx::Int,
-        scan_idxs::Set{UInt32},
-        spectra::MassSpecData,
-        tuning_results::Vector{@NamedTuple{
-            precursor_idx::UInt32,
-            scan_idx::UInt32,
-            weight::Float32,
-            iso_idx::UInt8,
-            center_mz::Float32,
-            n_matches::UInt8
-        }},
-        search_context::SearchContext,
-        search_data::SearchDataStructures,
-        params::QuadTuningSearchParameters,
-        ms_file_idx::Int64,
-        Hs::SparseArrayFused{UInt32, Float32},
-        weights::Vector{Float32},
-        precursor_weights::AbstractPrecursorMap{Float32},
-        residuals::Vector{Float32},
-        scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}
-    )
-        scan_idx ∉ scan_idxs && return
-
-        msn = getMsOrder(spectra, scan_idx)
-        msn ∉ params.spec_order && return
-
-        nce_model = getNceModel(search_context, ms_file_idx)
-        mem       = getMassErrorModel(search_context, ms_file_idx)
-        spec_lib  = getSpecLib(search_context)
-        ion_list  = getFragmentLookupTable(spec_lib)
-        precursors = getPrecursors(spec_lib)
-
-        prec_mzs     = getMz(precursors)
-        prec_charges = getCharge(precursors)
-        prec_sulfs   = getSulfurCount(precursors)
-        prec_irts    = getIrt(precursors)
-
-        # Thread-local SoA peak table + scratch.
-        corr_mz        = getScanCorrectedMz(search_data)
-        obs_low        = getScanObsLow(search_data)
-        obs_high       = getScanObsHigh(search_data)
-        isotopes_buf   = getIsotopes(search_data)
-        prec_trans_buf = getPrecursorTransmission(search_data)
-        fused_scratch  = getFusedScratch(search_data)
-        id_to_col      = getIdToCol(search_data)
-
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
-        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
-        peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                          mem, scan_mz, scan_int, scan_rt)
-
-        quad_fn = getQuadTransmissionFunction(
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getCenterMz(spectra, scan_idx),
-            getIsolationWidthMz(spectra, scan_idx))
-
-        precs_vec = scan_idx_to_prec_idx[scan_idx]
-
-        # FusedQuadEst: 3 outer iso-passes per precursor, one-hot
-        # transmission, artificial column IDs, no inline scoring.
-        # iRT/isotope_err_bounds filters skipped by dispatch.
-        nmatches, nmisses = run_fused!(
-            FusedQuadEst(),
-            Hs, getTuningUnscoredPsms(search_data), id_to_col, fused_scratch,
-            corr_mz, obs_low, obs_high, peak_mz_len,
-            isotopes_buf, prec_trans_buf,
-            ion_list, nce_model,
-            precs_vec, 1:length(precs_vec),
-            prec_mzs, prec_charges, prec_sulfs, prec_irts,
-            getIsoSplines(search_data), quad_fn, mem,
-            scan_int, 0f0, Float32(Inf),           # scan_irt / irt_tol — skipped by kind
-            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
-            4,                                      # n_frag_isotopes — overridden to 0:3 via max_frag_iso_idx(FusedQuadEst)
-            (UInt8(0), UInt8(0))                    # isotope_err_bounds — skipped by kind
-        )
-
-        nmatches ≤ 2 && (reset!(id_to_col); reset!(Hs); return)
-
-        # Deconvolve: grow weight buffers to fit new columns, seed from
-        # precursor_weights, run solver. (Replaces classic
-        # perform_deconvolution!'s buildDesignMatrix + solve path.)
-        n_active_cols = n_active(id_to_col)
-        if n_active_cols > length(weights)
-            new_entries = n_active_cols - length(weights) + 1000
-            resize!(weights, length(weights) + new_entries)
-            resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
-        end
-
-        @inbounds for (k, col) in active_keys(id_to_col)
-            weights[col] = precursor_weights[k]
-        end
-
-        solve_deconvolution!(
-            params.deconvolution_solver,
-            Hs,
-            residuals,
-            weights,
-            getColNorm2(search_data),
-            getMu(search_data),
-            getObserved(search_data),
-            params.max_iter_outer,
-            params.max_diff)
-
-        # Record results (reads Hs.colptr + matched_at(Hs, j) per column).
-        record_scan_results!(
-            search_data,
-            tuning_results,
-            weights,
-            Hs,
-            scan_idx,
-            getCenterMz(spectra, scan_idx))
-
-        reset!(id_to_col)
-        reset!(Hs)
-    end
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_idxs = Set(keys(scan_idx_to_prec_idx))
@@ -912,7 +921,7 @@ function perform_quad_transmission_search(
 
             # Process each scan
             for scan_idx in last(thread_task)
-                process_scan!(
+                _quad_process_scan!(
                     scan_idx,
                     scan_idxs,
                     spectra,
