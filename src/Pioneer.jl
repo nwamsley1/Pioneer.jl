@@ -18,8 +18,6 @@
 module Pioneer
 
 using Arrow, ArrowTypes, ArgParse, Dates
-using Profile
-using PProf
 using Base64
 using Base.Order
 using Base.Iterators: partition
