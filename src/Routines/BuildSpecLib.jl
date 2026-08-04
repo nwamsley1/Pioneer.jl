@@ -90,12 +90,16 @@ function BuildSpecLib(params_path::String)
     # @user_info / @user_warn macros that SearchDIA uses.
     debug_level = haskey(params, "logging") && haskey(params["logging"], "debug_console_level") ?
                   Int(params["logging"]["debug_console_level"]) : 0
+    # Same knob as SearchDIA: the debug log is populated independently of the console.
+    debug_file_lvl = haskey(params, "logging") && haskey(params["logging"], "debug_file_level") ?
+                     Int(params["logging"]["debug_file_level"]) : 1
     max_bytes = haskey(params, "logging") && haskey(params["logging"], "max_message_bytes") ?
                 Int(params["logging"]["max_message_bytes"]) : 4096
     warnings_full_path = init_pioneer_logging(
         lib_dir,
         "Pioneer Library Build Log";
         debug_console_level = debug_level,
+        debug_file_level    = debug_file_lvl,
         max_message_bytes   = max_bytes,
     )
 
