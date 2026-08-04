@@ -1894,7 +1894,7 @@ function build_protein_group_tables(
         protein_ambiguity_candidates = protein_ambiguity_candidates
     )
 
-    @user_info "Building per-run protein group tables and protein scoring features"
+    @debug_l1 "Building per-run protein group tables and protein scoring features"
 
     for (idx, psm_ref) in ProgressBar(indexed_refs)
         if !exists(psm_ref)

@@ -496,7 +496,7 @@ function summarize_results!(
 
         # A2: Build experiment-wide precursor scores.
         if n_files_total > 1
-            @user_info "Training global precursor scoring model..."
+            @debug_l1 "Training global precursor scoring model..."
         end
         global_prob_dict, target_dict =
             build_global_precursor_score_dicts(

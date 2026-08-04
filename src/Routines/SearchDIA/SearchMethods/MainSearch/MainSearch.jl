@@ -705,7 +705,7 @@ function summarize_results!(
             setSecondPassPsms!(ms_data, ms_file_idx, base_path)
             n_processed_files += 1
             pct = round(100.0 * n_after_file / max(1, n_before_file), digits=1)
-            @debug "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
+            @debug_l1 "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
         end
     end
     haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] summarize_global_filter: ",
@@ -725,7 +725,7 @@ function summarize_results!(
             @debug_l1 "No RT-binned tolerance registered — chromatogram extraction will fall back to the per-file iRT tolerance from recalibrate_rt!"
         end
     else
-        @warn "No files processed in MainSearch — skipping chromatographic tolerance computation"
+        @user_warn "No files processed in MainSearch — skipping chromatographic tolerance computation"
     end
     t3 = time() - t3_start
 

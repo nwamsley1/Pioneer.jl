@@ -53,7 +53,7 @@ function safeRm(fpath::String, file_handle; force::Bool=false)
                 run(`cmd /c del /f /q "$fpath"`)
                 return nothing
             catch
-                @user_info "safe_rm failed on try i=$i"
+                @debug_l1 "safe_rm failed on try i=$i"
                 if i == max_retries
                     # If all retries failed, try Windows-specific deletion
                     try

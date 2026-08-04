@@ -276,7 +276,7 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
                 fpath = key_to_path[lookup_key]
                 writeArrow(fpath, gpsms)
             else
-                @warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
+                @user_warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
             end
         end
     else
@@ -296,7 +296,7 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
                 fpath = index_to_path[file_idx]
                 writeArrow(fpath, gpsms)
             else
-                @warn "No output path found for file index $file_idx, skipping"
+                @user_warn "No output path found for file index $file_idx, skipping"
             end
         end
     end

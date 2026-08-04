@@ -272,7 +272,7 @@ function summarize_results!(
     )
 
     # Concatenate chunks into a final Arrow file-format export for QC plots.
-    @user_info "Concatenating chunks to precursors_long.arrow..."
+    @debug_l1 "Concatenating chunks to precursors_long.arrow..."
     isfile(precursors_long_path) && rm(precursors_long_path)
     open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
         for chunk_ref in chunk_refs
@@ -311,7 +311,7 @@ function summarize_results!(
             rm(chunk_dir; recursive=true, force=true)
         catch e
             # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
-            @debug "merge_chunks cleanup deferred" exception=e
+            @debug_l1 "merge_chunks cleanup deferred: $e"
         end
     end
     chunk_paths = nothing
@@ -323,7 +323,7 @@ function summarize_results!(
         try
             isdir(temp_path) && rm(temp_path; recursive=true, force=true)
         catch e
-            @warn "Could not fully remove temp_data (likely lingering file handles)" exception=e
+            @debug_l1 "Could not fully remove temp_data (likely lingering file handles): $e"
         end
     end
 

@@ -679,7 +679,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     if isnan(trapezoid_area) || isnan(raw_trap)
         z_has_nan = any(isnan, @view z[1:n_active])
         z_all_zero = all(==(0f0), @view z[1:n_active])
-        @warn "[NaN area] norm_factor=$norm_factor rt_norm=$rt_norm raw_trap=$raw_trap max_idx=$(state.max_index) m=$m n_pad=$n_pad z_all_zero=$z_all_zero z_has_nan=$z_has_nan scan_range=$scan_range" maxlog=10
+        @debug_l2 "[NaN area] norm_factor=$norm_factor rt_norm=$rt_norm raw_trap=$raw_trap max_idx=$(state.max_index) m=$m n_pad=$n_pad z_all_zero=$z_all_zero z_has_nan=$z_has_nan scan_range=$scan_range"
     end
 
     # Count points within the full width at 20% maximum of the smoothed signal

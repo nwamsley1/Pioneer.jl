@@ -151,7 +151,7 @@ function buildPionLib(spec_lib_path::String,
             prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
             precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
         catch e
-            @error "could not find library..."
+            @user_error "could not find library..."
             return nothing
         end
 

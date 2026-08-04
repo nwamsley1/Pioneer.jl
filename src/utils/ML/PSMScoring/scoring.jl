@@ -147,7 +147,7 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
         targets = collect(get_column(resolved_psms, :target))
         n_targets = sum(targets)
         n_decoys = sum(.!targets)
-        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(resolved_psms)) PSMs)"
+        @debug_l1 "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(resolved_psms)) PSMs)"
     end
 
     # Progress tracking (2 phases × n_folds)
@@ -168,9 +168,9 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
         imp = importance(fold_models[1])
         if imp !== nothing
             sorted_imp = sort(imp, by=x -> x[2], rev=true)
-            @user_info "LightGBM Feature Importances (gain, fold $first_fold):"
+            @debug_l1 "LightGBM Feature Importances (gain, fold $first_fold):"
             for (fname, gain) in sorted_imp
-                @user_info "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+                @debug_l1 "  $(rpad(fname, 40)) $(round(gain, digits=2))"
             end
         end
     end

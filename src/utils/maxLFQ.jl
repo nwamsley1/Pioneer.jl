@@ -330,7 +330,7 @@ function solve_maxlfq(
     end
 
     if maximum(component_sizes; init = 0) < n_runs
-        @debug "MaxLFQ protein graph disconnected" component_sizes=component_sizes best_component_id=best_component_id
+        @debug_l2 "MaxLFQ protein graph disconnected: component_sizes=$component_sizes best_component_id=$best_component_id"
     end
 
     return estimates, component_labels
@@ -599,9 +599,9 @@ function getProtAbundance(protein::String,
     # Debug: Check if all abundances are missing/NaN/Inf
     n_valid_abundances = sum(!ismissing(x) && isfinite(x) for x in log2_abundances)
     if n_valid_abundances == 0
-        @debug "MaxLFQ produced all invalid abundances for protein" protein=protein n_peptides=M n_experiments=N
+        @debug_l2 "MaxLFQ produced all invalid abundances for protein=$protein n_peptides=$M n_experiments=$N"
     elseif maximum(component_labels; init = 0) > 1
-        @debug "MaxLFQ protein solved with disconnected components" protein=protein component_labels=component_labels
+        @debug_l2 "MaxLFQ protein solved with disconnected components: protein=$protein component_labels=$component_labels"
     end
     
     appendResults!(
@@ -725,7 +725,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         initial_rows = nrow(subdf)
         for (desc, op) in preprocessing_pipeline.operations
             subdf = op(subdf)
-            @debug "Pipeline operation" operation=desc rows_before=initial_rows rows_after=nrow(subdf)
+            @debug_l1 "Pipeline operation '$desc': rows $initial_rows -> $(nrow(subdf))"
             initial_rows = nrow(subdf)
         end
         

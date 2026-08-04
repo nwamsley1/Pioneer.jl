@@ -753,7 +753,9 @@ function _stream_sorted_merge_chunked_impl(
     push!(chunk_paths, chunk_path())
 
     if rows_with_missing_group > 0
-        @user_warn "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key (shared peptides — filtered downstream by LFQ)"
+        # Expected, not a fault: the message itself says these rows are filtered downstream. It fired on
+        # every run, so it belongs in the debug log rather than the warnings sidecar.
+        @debug_l1 "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key (shared peptides — filtered downstream by LFQ)"
     end
 
     # Create output references
@@ -764,6 +766,6 @@ function _stream_sorted_merge_chunked_impl(
         ref
     end
 
-    @user_info "Chunked merge: $(length(chunk_refs)) chunk(s), $rows_processed total rows"
+    @debug_l1 "Chunked merge: $(length(chunk_refs)) chunk(s), $rows_processed total rows"
     return chunk_refs
 end

@@ -371,7 +371,7 @@ function build_global_protein_score_dicts(
         )
     end
 
-    @user_info "Training global protein scoring model..."
+    @debug_l1 "Training global protein scoring model..."
     table = _build_global_protein_feature_table(
         inputs,
         n_runs_total,

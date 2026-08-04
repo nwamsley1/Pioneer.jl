@@ -380,7 +380,7 @@ function run_protein_inference!(
 
     if !global_inference
         indexed_refs = collect(enumerate(passing_refs))
-        @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
+        @debug_l1 "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
 
         last_ambiguity_id = zero(UInt32)
 
@@ -413,7 +413,7 @@ function run_protein_inference!(
         )
     end
 
-    @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
+    @debug_l1 "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
 
     # Pass 1: stream :precursor_idx from each passing PSM Arrow file and look
     # up the (sequence, accession_numbers, is_decoy, entrap_id) tuple directly

@@ -507,7 +507,7 @@ function qcPlots(
                     getMissedCleavages(precursors)
                 )
             catch e
-                @warn "Failed to compute missed cleavage rate for $(fname)" exception=e
+                @user_warn "Failed to compute missed cleavage rate for $(fname): $e"
                 fname_to_cleavage_rate[fname] = 0.0f0
             end
         end

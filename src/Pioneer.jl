@@ -86,6 +86,11 @@ const WARNINGS_FILE = Ref{Union{Nothing, IOStream}}(nothing)   # All warnings
 
 # Global debug level setting (0 = no debug on console, 1-3 = show debug levels 1-3)
 const DEBUG_CONSOLE_LEVEL = Ref{Int}(0)
+# Verbosity of pioneer_search_debug.log, independent of the console. Previously the file write lived
+# inside the console-level check, so at the default console level of 0 the debug log received nothing
+# the console log did not already have -- 6,365 vs 6,263 bytes on a 6-file run, i.e. a duplicate.
+# Defaulting this to 1 gives a genuinely useful debug log while the terminal stays quiet.
+const DEBUG_FILE_LEVEL = Ref{Int}(1)
 
 # Max bytes of a single log message's content before truncation.
 # This applies to the message text; suffix indicating truncation may exceed this cap.
@@ -365,76 +370,66 @@ end
 
 # Debug logging functions - console output based on DEBUG_CONSOLE_LEVEL
 function debug_l1(msg::String, file::String="", line::String="", mod::String="")
-    # Only process if debug level allows
-    if DEBUG_CONSOLE_LEVEL[] >= 1
-        msg_trunc = truncate_for_log(msg)
-        # Console output WITHOUT line numbers
+    to_console = DEBUG_CONSOLE_LEVEL[] >= 1
+    to_file    = _debug_file_level()   >= 1 && DEBUG_FILE[] !== nothing
+    (to_console || to_file) || return nothing
+    msg_trunc = truncate_for_log(msg)
+    if to_console
         printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg_trunc)
-        # NO LINE NUMBER OUTPUT for debug_l1
-        
-        # File output WITHOUT line numbers (only when debug level allows)
-        if DEBUG_FILE[] !== nothing
-            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg_trunc")
-            flush(DEBUG_FILE[])
-        end
     end
-    # If debug level < 1, no output at all
+    if to_file
+        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg_trunc")
+        # Flushed per message deliberately: the point of this log is post-mortem
+        # diagnosis, so buffered lines must not be lost if the run dies.
+        flush(DEBUG_FILE[])
+    end
+    return nothing
 end
 
 function debug_l2(msg::String, file::String="", line::String="", mod::String="")
-    # Only process if debug level allows
-    if DEBUG_CONSOLE_LEVEL[] >= 2
+    to_console = DEBUG_CONSOLE_LEVEL[] >= 2
+    to_file    = _debug_file_level()   >= 2 && DEBUG_FILE[] !== nothing
+    if to_console || to_file
         msg_trunc = truncate_for_log(msg)
-        # Console output WITH line numbers
-        printstyled("┌ ", bold=true, color=:blue)
-        printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg_trunc)
-        
-        if !isempty(file) && !isempty(line)
-            printstyled("└ ", color=:blue)
-            println("@ $mod $file:$line")
+        source_loc = (!isempty(file) && !isempty(line)) ? " @ $mod $file:$line" : ""
+        if to_console
+            printstyled("┌ ", bold=true, color=:blue)
+            printstyled("Debug:", bold=true, color=:blue)
+            println(" ", msg_trunc)
+            isempty(source_loc) || (printstyled("└ ", color=:blue); println(source_loc))
         end
-        
-        # File output WITH line numbers (only when debug level allows)
-        if DEBUG_FILE[] !== nothing
+        if to_file
             debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-            source_loc = ""
-            if !isempty(file) && !isempty(line)
-                source_loc = " @ $mod $file:$line"
-            end
             println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg_trunc$source_loc")
-            flush(DEBUG_FILE[])
+        # Flushed per message deliberately: the point of this log is post-mortem
+        # diagnosis, so buffered lines must not be lost if the run dies.
+        flush(DEBUG_FILE[])
         end
     end
     # If debug level < 2, no output at all
 end
 
 function debug_l3(msg::String, file::String="", line::String="", mod::String="")
-    # Only process if debug level allows
-    if DEBUG_CONSOLE_LEVEL[] >= 3
+    to_console = DEBUG_CONSOLE_LEVEL[] >= 3
+    to_file    = _debug_file_level()   >= 3 && DEBUG_FILE[] !== nothing
+    if to_console || to_file
         msg_trunc = truncate_for_log(msg)
-        # Console output WITH line numbers
-        printstyled("┌ ", bold=true, color=:blue)
-        printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg_trunc)
-        
-        if !isempty(file) && !isempty(line)
-            printstyled("└ ", color=:blue)
-            println("@ $mod $file:$line")
+        source_loc = (!isempty(file) && !isempty(line)) ? " @ $mod $file:$line" : ""
+        if to_console
+            printstyled("┌ ", bold=true, color=:blue)
+            printstyled("Debug:", bold=true, color=:blue)
+            println(" ", msg_trunc)
+            isempty(source_loc) || (printstyled("└ ", color=:blue); println(source_loc))
         end
-        
-        # File output WITH line numbers (only when debug level allows)
-        if DEBUG_FILE[] !== nothing
+        if to_file
             debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-            source_loc = ""
-            if !isempty(file) && !isempty(line)
-                source_loc = " @ $mod $file:$line"
-            end
             println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg_trunc$source_loc")
-            flush(DEBUG_FILE[])
+        # Flushed per message deliberately: the point of this log is post-mortem
+        # diagnosis, so buffered lines must not be lost if the run dies.
+        flush(DEBUG_FILE[])
         end
     end
     # If debug level < 3, no output at all
@@ -467,6 +462,17 @@ function trace_msg(msg::String, file::String="", line::String="", mod::String=""
     end
     # If debug level < 4, no output at all
 end
+
+"""
+    _debug_enabled(level) -> Bool
+
+True when a debug message of `level` would reach either destination. Lets the macros skip building
+their message string entirely when nothing is listening.
+"""
+@inline _debug_file_level() = max(DEBUG_FILE_LEVEL[], DEBUG_CONSOLE_LEVEL[])
+
+@inline _debug_enabled(level::Int) =
+    DEBUG_CONSOLE_LEVEL[] >= level || (_debug_file_level() >= level && DEBUG_FILE[] !== nothing)
 
 # MACROS - defined once, used everywhere
 # These expand at parse time to function calls
@@ -502,8 +508,10 @@ macro user_print(msg)
 end
 
 macro debug_l1(msg)
+    # Guard BEFORE interpolating: the message used to be built at every call site regardless of
+    # level, so a suppressed debug line still paid for its own string.
     return quote
-        Pioneer.debug_l1(
+        Pioneer._debug_enabled(1) && Pioneer.debug_l1(
             string($(esc(msg))),
             $(string(__source__.file)),
             $(string(__source__.line)),
@@ -513,8 +521,10 @@ macro debug_l1(msg)
 end
 
 macro debug_l2(msg)
+    # Guard BEFORE interpolating: the message used to be built at every call site regardless of
+    # level, so a suppressed debug line still paid for its own string.
     return quote
-        Pioneer.debug_l2(
+        Pioneer._debug_enabled(2) && Pioneer.debug_l2(
             string($(esc(msg))),
             $(string(__source__.file)),
             $(string(__source__.line)),
@@ -524,8 +534,10 @@ macro debug_l2(msg)
 end
 
 macro debug_l3(msg)
+    # Guard BEFORE interpolating: the message used to be built at every call site regardless of
+    # level, so a suppressed debug line still paid for its own string.
     return quote
-        Pioneer.debug_l3(
+        Pioneer._debug_enabled(3) && Pioneer.debug_l3(
             string($(esc(msg))),
             $(string(__source__.file)),
             $(string(__source__.line)),
@@ -570,6 +582,7 @@ trace, and a warnings sidecar.
 function init_pioneer_logging(out_dir::AbstractString,
                               banner_title::AbstractString;
                               debug_console_level::Integer = 0,
+                              debug_file_level::Integer = 1,
                               max_message_bytes::Integer = 4096,
                               essential_filename::AbstractString = "pioneer_search_report.txt",
                               console_filename::AbstractString = "pioneer_search_log.log",
@@ -586,6 +599,7 @@ function init_pioneer_logging(out_dir::AbstractString,
         end
     end
     DEBUG_CONSOLE_LEVEL[] = Int(debug_console_level)
+    DEBUG_FILE_LEVEL[]    = Int(debug_file_level)
     MAX_LOG_MSG_BYTES[]   = clamp(max_bytes, 1024, 1048576)
 
     essential_path = joinpath(out_dir, essential_filename)

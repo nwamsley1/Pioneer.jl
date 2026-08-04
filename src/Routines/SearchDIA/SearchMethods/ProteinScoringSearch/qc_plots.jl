@@ -221,7 +221,7 @@ function _write_protein_model_fold_label_scatter(
 
     scatter_path = joinpath(qc_folder, "protein_model_fold_$(fold)_$(stage)_pg_score_vs_$(file_suffix).png")
     savefig(p_scatter, scatter_path)
-    @user_info "Wrote protein model fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
+    @debug_l1 "Wrote protein model fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
     return scatter_path
 end
 

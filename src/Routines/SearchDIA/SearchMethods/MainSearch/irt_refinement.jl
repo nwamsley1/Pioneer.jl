@@ -152,7 +152,7 @@ function _parse_residue_mods!(s::IrtCountScratch, structural_mods, L::Int)
         mend = i - 1
         i += 1   # past ')'
         if site == UInt8('n') || site == UInt8('c')
-            @warn "iRT refinement: unhandled terminal modification (ignored)" maxlog = 1
+            @debug_l2 "iRT refinement: unhandled terminal modification (ignored)"
         elseif 1 <= pos <= L
             code = _mod_name_code(str, mstart, mend)
             s.mod_at_pos[pos] = (s.mod_at_pos[pos] == 0) ? code : Int8(-1)
@@ -191,7 +191,7 @@ function count_token_ids!(
         code = position <= length(scratch.mod_at_pos) ? scratch.mod_at_pos[position] : Int8(0)
         k = _residue_token_k(aa, code)
         if k == 0
-            @warn "iRT refinement: unhandled residue token for '$(aa)' (ignored)" maxlog = 1
+            @debug_l2 "iRT refinement: unhandled residue token for '$(aa)' (ignored)"
             continue
         end
         _add!(scratch, k)

@@ -134,12 +134,16 @@ function SearchDIA(params_path::String)
 
     debug_level = haskey(params.logging, :debug_console_level) ?
                   params.logging.debug_console_level : 0
+    # Independent of the console: the debug log is useful by default (see DEBUG_FILE_LEVEL).
+    debug_file_level = haskey(params.logging, :debug_file_level) ?
+                       params.logging.debug_file_level : 1
     max_bytes = haskey(params.logging, :max_message_bytes) ?
                 try Int(params.logging.max_message_bytes) catch; 4096 end : 4096
     warnings_full_path = init_pioneer_logging(
         params.paths[:results],
         "Pioneer Search Log";
         debug_console_level = debug_level,
+        debug_file_level    = debug_file_level,
         max_message_bytes   = max_bytes,
     )
 
