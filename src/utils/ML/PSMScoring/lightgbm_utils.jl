@@ -83,28 +83,6 @@ end
 LGBMMatrixBuffers() = LGBMMatrixBuffers(Float32[], Float32[], Float32[], Float32[])
 
 """
-    Pass1FoldBuffers
-
-Reusable backing stores for the two per-file fold feature matrices built by the Pass-1 scoring
-path (`pass1_oom.jl`). That path walks files sequentially on the main thread -- a deliberate design
-choice so `LightGBM.predict` can use every core without libomp being entered from a worker -- so
-one buffer set serves every file and every semi-supervised iteration instead of allocating a fresh
-pair each time.
-
-Both matrices are live simultaneously: the OOF predict reads `fold0` and `fold1` before either is
-overwritten, and the in-fold predict reads them again. Hence two buffers, not one.
-
-Same discipline as `LGBMMatrixBuffers`: size *both* before wrapping *either*, because `resize!` may
-move the data and would leave an already-wrapped matrix dangling.
-"""
-struct Pass1FoldBuffers
-    fold0::Vector{Float32}
-    fold1::Vector{Float32}
-end
-
-Pass1FoldBuffers() = Pass1FoldBuffers(Float32[], Float32[])
-
-"""
     _size_matrix_buffer!(buf, n, m)
 
 Grow `buf` so it can back an `n × m` `Float32` matrix. Must run before any

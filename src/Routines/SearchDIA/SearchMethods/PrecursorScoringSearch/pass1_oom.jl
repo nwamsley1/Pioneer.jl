@@ -266,21 +266,10 @@ function _pass1_fold_feature_matrices(
     features::Vector{Symbol},
     idx0::AbstractVector{<:Integer},
     idx1::AbstractVector{<:Integer},
-    buffers::Union{Nothing, Pass1FoldBuffers} = nothing,
 )
     nfeat = length(features)
-    n0, n1 = length(idx0), length(idx1)
-    # `nothing` keeps the allocating behaviour, so this stays the reference implementation to diff
-    # against if a buffered result is ever suspect.
-    X0, X1 = if buffers === nothing
-        Matrix{Float32}(undef, n0, nfeat), Matrix{Float32}(undef, n1, nfeat)
-    else
-        # Size BOTH before wrapping EITHER: resize! may move the data.
-        _size_matrix_buffer!(buffers.fold0, n0, nfeat)
-        _size_matrix_buffer!(buffers.fold1, n1, nfeat)
-        (_wrap_matrix_buffer(buffers.fold0, n0, nfeat),
-         _wrap_matrix_buffer(buffers.fold1, n1, nfeat))
-    end
+    X0 = Matrix{Float32}(undef, length(idx0), nfeat)
+    X1 = Matrix{Float32}(undef, length(idx1), nfeat)
     feat_cols = AbstractVector[getproperty(tbl, features[j]) for j in 1:nfeat]
     Threads.@threads for j in 1:nfeat
         col = feat_cols[j]
@@ -311,7 +300,6 @@ function _predict_pass1_to_sidecar(
     scores_out = nothing,
     targets_out = nothing,
     return_predictions::Bool = true,
-    buffers::Union{Nothing, Pass1FoldBuffers} = nothing,
 )
     tbl = Arrow.Table(fpath)
     n = length(tbl.precursor_idx)
@@ -332,7 +320,7 @@ function _predict_pass1_to_sidecar(
     fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
     idx0 = fold_rows.fold0
     idx1 = fold_rows.fold1
-    X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1, buffers)
+    X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
 
     @inline function _predict_block(cls, rows::Vector{Int}, X_fold::Matrix{Float32})
         isempty(rows) && return Float32[]
@@ -399,7 +387,6 @@ function _predict_pass1_files(
     scores_out = nothing,
     targets_out = nothing,
     file_offsets = nothing,
-    buffers::Union{Nothing, Pass1FoldBuffers} = nothing,
 )
     direct_output = scores_out !== nothing || targets_out !== nothing
     collect_results = !direct_output && !write_sidecars
@@ -409,11 +396,7 @@ function _predict_pass1_files(
     # predict) is recovered via multi-threaded predict per file (_predict_block),
     # which is only safe because it runs on the main thread here. Matrix build +
     # sidecar write lose across-file parallelism (acceptable if predict-bound).
-    # The per-file fold matrices are `unsafe_wrap` views into these vectors, so root them for the
-    # whole loop rather than per call (same guarantee as MainSearch's predict_psm_classifier_scores).
-    b0 = buffers === nothing ? Float32[] : buffers.fold0
-    b1 = buffers === nothing ? Float32[] : buffers.fold1
-    GC.@preserve b0 b1 for f_idx in 1:length(file_paths)
+    for f_idx in 1:length(file_paths)
         first_row = direct_output ? file_offsets[f_idx] + 1 : 1
         last_row = direct_output ? file_offsets[f_idx + 1] : 0
         score_slice = scores_out === nothing ? nothing : @view scores_out[first_row:last_row]
@@ -427,7 +410,6 @@ function _predict_pass1_files(
             scores_out = score_slice,
             targets_out = target_slice,
             return_predictions = collect_results,
-            buffers = buffers,
         )
         collect_results && (results[f_idx] = result)
     end
@@ -492,9 +474,6 @@ function train_and_predict_pass1_oom!(
     total_sample = 0.0
     total_fit = 0.0
     total_predict = 0.0
-    # One set for every iteration and every file. Deliberately NOT used for the sampled training
-    # matrices: :509-512 frees those on purpose to hold peak down before the per-file predict.
-    predict_buffers = Pass1FoldBuffers()
 
     function _run_iteration(iter_idx::Int, training_masks)
         n0, n1 = _count_psm_rows_by_fold(file_paths, training_masks)
@@ -543,7 +522,6 @@ function train_and_predict_pass1_oom!(
             scores_out = scores_buffer,
             targets_out = iter_idx == 1 ? targets_buffer : nothing,
             file_offsets = file_offsets,
-            buffers = predict_buffers,
         )
         t_predict = time() - t_predict_start
 
@@ -637,7 +615,6 @@ function train_and_predict_pass1_oom!(
         best_state.cls_trained_on,
         compute_infold;
         write_sidecars = true,
-        buffers = predict_buffers,
     )
     t_predict = time() - t_predict_start
     total_predict += t_predict
