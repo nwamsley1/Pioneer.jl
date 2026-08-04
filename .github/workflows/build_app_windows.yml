@@ -94,7 +94,7 @@ jobs:
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12.6'  # must satisfy Project.toml's julia = "1.12.5" compat
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
@@ -133,7 +133,6 @@ jobs:
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
                 "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
                 "BuildSpecLib"=>"main_BuildSpecLib",
                 "SearchDIA"=>"main_SearchDIA",
                 "convertMzML"=>"main_convertMzML"
