@@ -175,6 +175,79 @@ function prepare_postintegration_mbr!(
     )
 end
 
+"""
+    _write_mbr_recovery_sidecars_from_candidates!(candidates, masks, n_rows, file_paths)
+
+Write the per-file recovery sidecars from a candidates-only frame.
+
+Non-candidate rows carry the defaults `apply_postintegration_mbr_rescoring!` assigns (`false` /
+`NaN32`), so each file's columns are filled with those and the candidate values scattered in by
+`masks[i]`. Candidates were concatenated in file order, so walking the masks in the same order
+consumes them contiguously.
+"""
+function _write_mbr_recovery_sidecars_from_candidates!(
+    candidates::DataFrame,
+    masks::Vector{BitVector},
+    n_rows::Vector{Int},
+    file_paths::Vector{String},
+)
+    length(masks) == length(file_paths) == length(n_rows) ||
+        error("MBR recovery mask/file count mismatch")
+    cand_precursor = candidates[!, :precursor_idx]
+    cand_scan      = candidates[!, :scan_idx]
+    cand_recovered = candidates[!, :mbr_recovered]
+    cand_flag      = candidates[!, :MBR_transfer_candidate]
+    cand_prob      = candidates[!, :mbr_target_decoy_prob]
+    cand_ftr_q     = candidates[!, :ftr_qval_true]
+    cand_ftr_pep   = candidates[!, :ftr_pep_true]
+    cand_tot_q     = candidates[!, :mbr_total_error_qval_true]
+    cand_tot_r     = candidates[!, :mbr_total_error_rate_true]
+    cursor = 0
+    for (file_idx, path) in enumerate(file_paths)
+        main = Arrow.Table(path)
+        n = n_rows[file_idx]
+        length(main.precursor_idx) == n ||
+            error("MBR recovery row-count mismatch at $path")
+        mask = masks[file_idx]
+        recovered = falses(n)
+        flag      = falses(n)
+        prob      = fill(NaN32, n)
+        ftr_q     = fill(NaN32, n)
+        ftr_pep   = fill(NaN32, n)
+        tot_q     = fill(NaN32, n)
+        tot_r     = fill(NaN32, n)
+        @inbounds for row in 1:n
+            mask[row] || continue
+            cursor += 1
+            (
+                main.precursor_idx[row] == cand_precursor[cursor] &&
+                main.scan_idx[row] == cand_scan[cursor]
+            ) || error("MBR recovery candidate misalignment at row $row of $path")
+            recovered[row] = cand_recovered[cursor]
+            flag[row]      = cand_flag[cursor]
+            prob[row]      = cand_prob[cursor]
+            ftr_q[row]     = cand_ftr_q[cursor]
+            ftr_pep[row]   = cand_ftr_pep[cursor]
+            tot_q[row]     = cand_tot_q[cursor]
+            tot_r[row]     = cand_tot_r[cursor]
+        end
+        writeArrow(path * RECOVERY_SIDECAR_SUFFIX, DataFrame(
+            precursor_idx = UInt32.(main.precursor_idx),
+            scan_idx = UInt32.(main.scan_idx),
+            mbr_recovered = recovered,
+            MBR_transfer_candidate = flag,
+            mbr_target_decoy_prob = prob,
+            ftr_qval_true = ftr_q,
+            ftr_pep_true = ftr_pep,
+            mbr_total_error_qval_true = tot_q,
+            mbr_total_error_rate_true = tot_r,
+        ))
+    end
+    cursor == nrow(candidates) ||
+        error("MBR recovery left $(nrow(candidates) - cursor) candidates unassigned")
+    return length(file_paths)
+end
+
 function _write_mbr_recovery_sidecars!(
     frame::DataFrame,
     file_paths::Vector{String},
@@ -629,15 +702,20 @@ function finalize_postintegration_mbr!(
     end
 
     _mark(:compute_features)
-    frame = load_postintegration_mbr_frame(file_paths)
+    # Candidates only (~10% of rows). See load_postintegration_mbr_candidates for why this is safe.
+    loaded = load_postintegration_mbr_candidates(file_paths, q_value_threshold)
+    frame = loaded.candidates
     _mark(:load_frame)
     summary = apply_postintegration_mbr_rescoring!(
         frame;
         alpha = q_value_threshold,
         q_value_threshold = q_value_threshold,
+        baseline_counts = (loaded.base_targets, loaded.base_decoys),
+        frame_is_candidates = true,
     )
     _mark(:rescoring)
-    _write_mbr_recovery_sidecars!(frame, file_paths)
+    _write_mbr_recovery_sidecars_from_candidates!(
+        frame, loaded.masks, loaded.n_rows, file_paths)
     frame = DataFrame()
     GC.gc(false)
     _mark(:write_sidecars)

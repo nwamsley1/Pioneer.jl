@@ -3,6 +3,111 @@
 # This file is part of Pioneer.jl
 # Licensed under AGPL v3+; see LICENSE.
 
+"""
+    load_postintegration_mbr_candidates(file_paths, q_value_threshold)
+
+Materialise **only the MBR candidate rows** across all files, plus what the caller needs to expand
+results back to full length later.
+
+Previously this concatenated every row of every file into one DataFrame and the candidate mask was
+applied afterwards. Candidates are only ~10% of rows (76,075 of 742,179 on a 6-file run), so the
+frame was ~10x larger than anything downstream used -- and because `parts` and the `vcat` result
+coexist, peak was ~2x that again. Extrapolated to 100 files that is ~9 GB to hand ~0.5 GB of
+candidates to the model.
+
+Safe because every input to the decision is row-local: `_mbr_candidate_mask_kernel` reads only that
+row's q-values and missing flag, the baseline predicate is row-local, and
+`_mbr_add_hellinger_contrasts!` compares a row's own four blocks. All cross-run features were already
+resolved into each file's sidecar by `compute_postintegration_mbr_features!` before this runs.
+
+Returns `(candidates, masks, n_rows, base_targets, base_decoys)`; `masks[i]` and `n_rows[i]` describe
+file `i` so `_write_mbr_recovery_sidecars!` can scatter per-candidate results back over all rows.
+"""
+function load_postintegration_mbr_candidates(
+    file_paths::Vector{String},
+    q_value_threshold::Float32,
+)
+    parts = DataFrame[]
+    masks = BitVector[]
+    n_rows = Int[]
+    base_targets = 0
+    base_decoys = 0
+    for path in file_paths
+        pass1_path = path * PASS1_SIDECAR_SUFFIX
+        mbr_path = path * MBR_SIDECAR_SUFFIX
+        isfile(pass1_path) || error("Missing MBR Pass-1 sidecar at $pass1_path")
+        isfile(mbr_path) || error("Missing MBR feature sidecar at $mbr_path")
+        main = Arrow.Table(path)
+        pass1 = Arrow.Table(pass1_path)
+        mbr = Arrow.Table(mbr_path)
+        n = length(main.precursor_idx)
+        length(pass1.precursor_idx) == n ||
+            error("Pass-1 sidecar row-count mismatch at $pass1_path")
+        length(mbr.precursor_idx) == n ||
+            error("MBR sidecar row-count mismatch at $mbr_path")
+        @inbounds for row in 1:n
+            (
+                main.precursor_idx[row] == pass1.precursor_idx[row] ==
+                    mbr.precursor_idx[row] &&
+                main.scan_idx[row] == pass1.scan_idx[row] ==
+                    mbr.scan_idx[row]
+            ) || error("MBR sidecar misalignment at row $row of $path")
+        end
+
+        # Same predicate as the old whole-frame path, evaluated here so only survivors materialise.
+        mask = _mbr_candidate_mask_kernel(
+            main.global_qval,
+            main.qval,
+            Tables.getcolumn(mbr, :MBR_best_is_missing_true),
+            q_value_threshold,
+        )
+        # Baseline counts need every row, but they are only two integers. Predicate must match
+        # apply_postintegration_mbr_rescoring! exactly: BOTH q-values under threshold.
+        @inbounds for row in 1:n
+            qv = Float32(main.qval[row])
+            gqv = Float32(main.global_qval[row])
+            (isfinite(qv) && qv <= q_value_threshold &&
+             isfinite(gqv) && gqv <= q_value_threshold) || continue
+            Bool(main.target[row]) ? (base_targets += 1) : (base_decoys += 1)
+        end
+        push!(masks, mask)
+        push!(n_rows, n)
+        if !any(mask)
+            continue
+        end
+
+        frame = DataFrame(
+            precursor_idx = UInt32.(main.precursor_idx[mask]),
+            scan_idx = UInt32.(main.scan_idx[mask]),
+            ms_file_idx = UInt32.(main.ms_file_idx[mask]),
+            cv_fold = UInt8.(main.cv_fold[mask]),
+            target = Bool.(main.target[mask]),
+            qval = Float32.(main.qval[mask]),
+            global_qval = Float32.(main.global_qval[mask]),
+            trace_prob_prepass = Float32.(pass1.trace_prob_prepass[mask]),
+            trace_prob_infold = Float32.(pass1.trace_prob_infold[mask]),
+        )
+        for feature in MBR_RECEIVER_FEATURES
+            feature === :trace_prob_infold && continue
+            hasproperty(main, feature) || continue
+            frame[!, feature] = Tables.getcolumn(main, feature)[mask]
+        end
+        for feature in Symbol.(Tables.columnnames(mbr))
+            feature in (:precursor_idx, :scan_idx) && continue
+            frame[!, feature] = Tables.getcolumn(mbr, feature)[mask]
+        end
+        push!(parts, frame)
+    end
+    candidates = isempty(parts) ? DataFrame() : vcat(parts...; cols = :union)
+    return (
+        candidates = candidates,
+        masks = masks,
+        n_rows = n_rows,
+        base_targets = base_targets,
+        base_decoys = base_decoys,
+    )
+end
+
 function load_postintegration_mbr_frame(file_paths::Vector{String})
     parts = DataFrame[]
     for path in file_paths
@@ -925,6 +1030,8 @@ function apply_postintegration_mbr_rescoring!(
     frame::DataFrame;
     alpha::Float32,
     q_value_threshold::Float32,
+    baseline_counts::Union{Nothing, Tuple{Int, Int}} = nothing,
+    frame_is_candidates::Bool = false,
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
@@ -951,18 +1058,27 @@ function apply_postintegration_mbr_rescoring!(
         combined_error_rate = 0.0f0,
     )
 
-    baseline = BitVector(undef, n)
-    @inbounds for row in 1:n
-        baseline[row] =
-            isfinite(Float32(frame.qval[row])) &&
-            Float32(frame.qval[row]) <= q_value_threshold &&
-            isfinite(Float32(frame.global_qval[row])) &&
-            Float32(frame.global_qval[row]) <= q_value_threshold
+    # Counts over ALL rows. When the caller pre-filtered to candidates it accumulated these
+    # per-file during the load, because they cannot be recovered from candidates alone.
+    base_targets, base_decoys = if baseline_counts === nothing
+        baseline = BitVector(undef, n)
+        @inbounds for row in 1:n
+            baseline[row] =
+                isfinite(Float32(frame.qval[row])) &&
+                Float32(frame.qval[row]) <= q_value_threshold &&
+                isfinite(Float32(frame.global_qval[row])) &&
+                Float32(frame.global_qval[row]) <= q_value_threshold
+        end
+        (count(baseline .& BitVector(frame.target)),
+         count(baseline .& .!BitVector(frame.target)))
+    else
+        baseline_counts
     end
-    base_targets = count(baseline .& BitVector(frame.target))
-    base_decoys = count(baseline .& .!BitVector(frame.target))
 
-    candidate_mask = _mbr_candidate_mask(frame, q_value_threshold)
+    # A pre-filtered frame holds candidates only, so re-deriving the mask would be redundant work
+    # over a frame that is by construction all-true.
+    candidate_mask = frame_is_candidates ? trues(n) :
+        _mbr_candidate_mask(frame, q_value_threshold)
     frame[!, :MBR_transfer_candidate] = candidate_mask
     candidate_indices = findall(candidate_mask)
     if isempty(candidate_indices)
