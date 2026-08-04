@@ -291,6 +291,51 @@ Performs mass error-focused fragment matching.
 Returns matched fragments for mass error analysis.
 """
 # Default method without chromatogram type - calls MS2CHROM version
+# Extracted from the `Threads.@spawn begin ... end` inside `mass_error_search`. The spawn body
+# carried the whole per-thread scan loop, so its inference lived in a gensym'd closure type that no
+# `precompile(...)` statement can name -- none of it could be baked into the shipped binary, and
+# Parameter Tuning is the largest remaining startup cost (+9.5 s of the measured 25 s).
+# Everything it used from the enclosing scope is now an explicit argument.
+function _pt_mass_err_thread_task(
+    thread_task,
+    search_data::AbstractVector{S},
+    spectra::MassSpecData,
+    scan_to_prec_idx,
+    mem::M,
+    ion_list,
+    precursor_idxs::Vector{UInt32},
+    max_rank::Int64,
+) where {S<:SearchDataStructures, M<:AbstractMassErrorModel}
+    thread_id = first(thread_task)
+    sd = search_data[thread_id]
+    corr_mz   = getScanCorrectedMz(sd)
+    obs_low   = getScanObsLow(sd)
+    obs_high  = getScanObsHigh(sd)
+    samples   = getMassErrSamples(sd)
+    sample_idx = 0
+
+    for scan_idx in last(thread_task)
+        (scan_idx == 0 || scan_idx > length(spectra)) && continue
+        ismissing(scan_to_prec_idx[scan_idx]) && continue
+
+        scan_mz  = getMzArray(spectra, scan_idx)
+        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+        peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
+                                          mem, scan_mz, scan_int, scan_rt)
+
+        sample_idx = run_fused_masserr!(
+            samples, sample_idx,
+            corr_mz, obs_low, obs_high, peak_mz_len,
+            ion_list,
+            precursor_idxs, scan_to_prec_idx[scan_idx],
+            mem, scan_mz, scan_int, scan_rt;
+            max_rank = max_rank)
+    end
+
+    @view(getMassErrSamples(sd)[1:sample_idx])
+end
+
 function mass_error_search(
     spectra::MassSpecData,
     scan_idxs::Vector{UInt32},
@@ -342,36 +387,9 @@ function mass_error_search(
     # triples (theoretical_mz, raw observed_mz, intensity) directly into the
     # per-thread mass_err_samples buffer.
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            thread_id = first(thread_task)
-            sd = search_data[thread_id]
-            corr_mz   = getScanCorrectedMz(sd)
-            obs_low   = getScanObsLow(sd)
-            obs_high  = getScanObsHigh(sd)
-            samples   = getMassErrSamples(sd)
-            sample_idx = 0
-
-            for scan_idx in last(thread_task)
-                (scan_idx == 0 || scan_idx > length(spectra)) && continue
-                ismissing(scan_to_prec_idx[scan_idx]) && continue
-
-                scan_mz  = getMzArray(spectra, scan_idx)
-                scan_int = getIntensityArray(spectra, scan_idx)
-                scan_rt = Float32(getRetentionTime(spectra, scan_idx))
-                peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                                  mem, scan_mz, scan_int, scan_rt)
-
-                sample_idx = run_fused_masserr!(
-                    samples, sample_idx,
-                    corr_mz, obs_low, obs_high, peak_mz_len,
-                    ion_list,
-                    precursor_idxs, scan_to_prec_idx[scan_idx],
-                    mem, scan_mz, scan_int, scan_rt;
-                    max_rank = max_rank)
-            end
-
-            @view(getMassErrSamples(sd)[1:sample_idx])
-        end
+        Threads.@spawn _pt_mass_err_thread_task(
+            thread_task, search_data, spectra, scan_to_prec_idx,
+            mem, ion_list, precursor_idxs, max_rank)
     end
     fetch.(tasks)
 end
