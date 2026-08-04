@@ -658,7 +658,9 @@ function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
 end
 
 function _mbr_fit_oof_iteration(
-    x::Matrix{Float32},
+    candidate_frame::DataFrame,
+    true_features::Vector{Symbol},
+    false_features::Vector{Vector{Symbol}},
     folds::Vector{UInt8},
     positive_top::BitVector,
     receiver_decoy_top::BitVector,
@@ -708,15 +710,26 @@ function _mbr_fit_oof_iteration(
         classifier = build_lightgbm_classifier(; SHARED_LGBM_HP...)
         LightGBM.fit!(
             classifier,
-            x[train_rows, :],
+            _mbr_gather_feature_rows(
+                candidate_frame, true_features, false_features,
+                train_rows, n_candidates),
             _prepare_labels(train_labels);
             verbosity = -1,
         )
-        raw = LightGBM.predict(classifier, x[test_rows, :])
-        predictions = ndims(raw) == 2 ?
-            dropdims(raw; dims = 2) :
-            raw
-        scores[test_rows] .= Float32.(predictions)
+        # Batched so the gathered matrix stays bounded regardless of candidate count. Predictions
+        # are per-row independent, so this is equivalent to one call over all test rows.
+        for batch_start in 1:MBR_PREDICT_ROW_BATCH:length(test_rows)
+            batch_stop = min(batch_start + MBR_PREDICT_ROW_BATCH - 1, length(test_rows))
+            batch_rows = @view test_rows[batch_start:batch_stop]
+            raw = LightGBM.predict(
+                classifier,
+                _mbr_gather_feature_rows(
+                    candidate_frame, true_features, false_features,
+                    batch_rows, n_candidates),
+            )
+            predictions = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            @inbounds scores[batch_rows] .= Float32.(predictions)
+        end
         last_classifier = classifier
     end
     return scores, last_classifier
@@ -779,17 +792,89 @@ function _mbr_feature_matrix(
     return x
 end
 
+"""
+    MBR_PREDICT_ROW_BATCH
+
+Rows per `LightGBM.predict` call in the OOF pass. Bounds the gathered matrix independently of
+experiment size; predictions are per-row independent so batching does not change them.
+"""
+const MBR_PREDICT_ROW_BATCH = 1_000_000
+
+# Typed kernel for the gather below. `candidate_frame[!, col]` infers as AbstractVector, so reading
+# it directly in the loop would dispatch per element (the same reason _mbr_fill_feature_block! exists).
+function _mbr_gather_kernel!(
+    dest::Matrix{Float32},
+    column::AbstractVector,
+    feature_idx::Int,
+    candidate_rows::Vector{Int},
+    dest_rows::Vector{Int},
+)
+    @inbounds for k in eachindex(candidate_rows, dest_rows)
+        value = column[candidate_rows[k]]
+        dest[dest_rows[k], feature_idx] =
+            value === missing ? 0.0f0 : Float32(value)
+    end
+    return nothing
+end
+
+"""
+    _mbr_gather_feature_rows(candidate_frame, true_features, false_features, rows, n_candidates)
+
+Materialise just the requested rows of the block-stacked feature matrix.
+
+`_mbr_feature_matrix` built the whole `(1 + MBR_N_COUNTERFACTUALS) * n_candidates` x n_features
+expansion up front, but it was only ever consumed as `x[train_rows, :]` and `x[test_rows, :]` --
+never as a whole. Gathering on demand keeps the identical row numbering (global row `r` is block
+`(r-1) ÷ n_candidates`, candidate `(r-1) % n_candidates + 1`) while making memory a function of the
+rows actually requested rather than of the experiment size.
+
+Rows are grouped by block first so each (block, feature) pair reads one concrete column, which is
+what lets the kernel specialise.
+"""
+function _mbr_gather_feature_rows(
+    candidate_frame::DataFrame,
+    true_features::Vector{Symbol},
+    false_features::Vector{Vector{Symbol}},
+    rows::AbstractVector{Int},
+    n_candidates::Int,
+)
+    n_features = length(true_features)
+    n_blocks = 1 + length(false_features)
+    dest = Matrix{Float32}(undef, length(rows), n_features)
+    candidate_rows = [Int[] for _ in 1:n_blocks]
+    dest_rows = [Int[] for _ in 1:n_blocks]
+    @inbounds for (position, row) in enumerate(rows)
+        block = div(row - 1, n_candidates)
+        (0 <= block < n_blocks) ||
+            throw(BoundsError("MBR gather row $row outside $n_blocks blocks of $n_candidates"))
+        push!(candidate_rows[block + 1], mod(row - 1, n_candidates) + 1)
+        push!(dest_rows[block + 1], position)
+    end
+    Threads.@threads for feature_idx in 1:n_features
+        for block in 0:(n_blocks - 1)
+            isempty(candidate_rows[block + 1]) && continue
+            column = candidate_frame[
+                !,
+                block == 0 ? true_features[feature_idx] :
+                    false_features[block][feature_idx],
+            ]
+            _mbr_gather_kernel!(
+                dest, column, feature_idx,
+                candidate_rows[block + 1], dest_rows[block + 1],
+            )
+        end
+    end
+    return dest
+end
+
 function _mbr_semisupervised_oof(
     candidate_frame::DataFrame,
     true_features::Vector{Symbol},
     false_features::Vector{Vector{Symbol}},
 )
     n_candidates = nrow(candidate_frame)
-    x = _mbr_feature_matrix(
-        candidate_frame,
-        true_features,
-        false_features,
-    )
+    # The block-stacked matrix is no longer materialised; _mbr_fit_oof_iteration gathers the rows it
+    # needs. _mbr_feature_matrix is retained as the reference implementation of the layout.
     present = falses(n_candidates, MBR_N_COUNTERFACTUALS)
     @inbounds for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
         missing = candidate_frame[
@@ -815,7 +900,9 @@ function _mbr_semisupervised_oof(
 
     for iteration in 1:MBR_SEMISUPERVISED_MAX_ITERATIONS
         scores, classifier = _mbr_fit_oof_iteration(
-            x,
+            candidate_frame,
+            true_features,
+            false_features,
             folds,
             positive_top,
             receiver_decoy_top,

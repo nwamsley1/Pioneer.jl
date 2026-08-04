@@ -462,3 +462,37 @@ end
     @test all(1 .<= training.rows .<= (1 + ncf) * n)
     @test sum(training.used_negatives_by_counterfactual) == 41
 end
+
+@testset "MBR row gather matches the block-stacked matrix" begin
+    # `_mbr_feature_matrix` used to build the whole (1 + NCF) * n_candidates x n_features expansion,
+    # but it was only ever consumed as x[train_rows, :] / x[test_rows, :]. `_mbr_gather_feature_rows`
+    # produces those subsets directly, so it must agree with the full matrix exactly -- including the
+    # missing -> 0.0f0 convention and the global row numbering.
+    ncf = Pioneer.MBR_N_COUNTERFACTUALS
+    n_candidates = 37
+    n_features = 4
+    true_features = [Symbol("gt_$j") for j in 1:n_features]
+    false_features = [[Symbol("gf_$(k)_$j") for j in 1:n_features] for k in 1:ncf]
+    df = DataFrames.DataFrame()
+    for j in 1:n_features
+        df[!, true_features[j]] = Float32.(collect(1:n_candidates) .+ 100j)
+        for k in 1:ncf
+            col = Vector{Union{Missing, Float32}}(Float32.(collect(1:n_candidates) .+ 1000k .+ 10j))
+            col[k] = missing                      # exercise the missing -> 0.0f0 path
+            df[!, false_features[k][j]] = col
+        end
+    end
+    x = Pioneer._mbr_feature_matrix(df, true_features, false_features)
+    n_rows = (1 + ncf) * n_candidates
+    @test size(x) == (n_rows, n_features)
+    @test Pioneer._mbr_gather_feature_rows(
+        df, true_features, false_features, collect(1:n_rows), n_candidates) == x
+    scattered = [n_rows, 1, n_candidates + 2, 7, 7, n_rows - 1]
+    @test Pioneer._mbr_gather_feature_rows(
+        df, true_features, false_features, scattered, n_candidates) == x[scattered, :]
+    view_rows = @view collect(1:n_rows)[3:11]
+    @test Pioneer._mbr_gather_feature_rows(
+        df, true_features, false_features, view_rows, n_candidates) == x[collect(view_rows), :]
+    @test_throws Exception Pioneer._mbr_gather_feature_rows(
+        df, true_features, false_features, [n_rows + 1], n_candidates)
+end
