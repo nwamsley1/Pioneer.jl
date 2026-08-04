@@ -424,3 +424,41 @@ end
     @test all(isfinite, frame.ftr_qval_true[candidate_rows])
     @test all(isfinite, frame.ftr_pep_true[candidate_rows])
 end
+
+@testset "MBR training caps bound work, not just output" begin
+    # The capped branch used to push every eligible row index into per-class Vector{Int}s and then
+    # sample those down, so hitting the cap allocated 8 bytes per *available* row to keep `limit` of
+    # them. Selecting 1.875M negatives out of 60M eligible would have cost ~480 MB of index vectors.
+    # Allocation must now track the cap, not the eligible population.
+    function _cap_alloc(n_eligible::Int)
+        ncf = Pioneer.MBR_N_COUNTERFACTUALS
+        folds = fill(UInt8(1), n_eligible)
+        positives = trues(n_eligible)
+        receivers = falses(n_eligible)
+        present = trues(n_eligible, ncf)
+        args = (folds, positives, receivers, present, UInt8(1))
+        Pioneer._mbr_training_rows(args...; max_positives = 50, max_negatives = 50)
+        GC.gc()
+        return @allocated Pioneer._mbr_training_rows(
+            args...; max_positives = 50, max_negatives = 50)
+    end
+    small = _cap_alloc(20_000)
+    large = _cap_alloc(200_000)
+    # 10x the eligible rows at the same cap must not cost materially more memory.
+    @test large < 2 * small
+
+    # And the cap is genuinely enforced at that scale.
+    ncf = Pioneer.MBR_N_COUNTERFACTUALS
+    n = 100_000
+    training = Pioneer._mbr_training_rows(
+        fill(UInt8(1), n), trues(n), falses(n), trues(n, ncf), UInt8(1);
+        max_positives = 37, max_negatives = 41,
+    )
+    @test training.used_positives == 37
+    @test training.used_negatives == 41
+    @test count(training.labels) == 37
+    @test count(!, training.labels) == 41
+    @test length(unique(training.rows)) == length(training.rows)
+    @test all(1 .<= training.rows .<= (1 + ncf) * n)
+    @test sum(training.used_negatives_by_counterfactual) == 41
+end

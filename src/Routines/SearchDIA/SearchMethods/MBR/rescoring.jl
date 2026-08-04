@@ -302,6 +302,24 @@ function _mbr_evenly_spaced_sample(
     ]
 end
 
+"""
+    _mbr_sample_positions(n, limit) -> Vector{Int}
+
+The 1-based positions `_mbr_evenly_spaced_sample` would pick out of a length-`n` list, without
+needing the list. Lets the capped branch of `_mbr_training_rows` emit only the rows it keeps rather
+than materialising every eligible row index first: selecting 1.875M negatives out of, say, 60M
+eligible ones used to allocate a 60M-element `Vector{Int}` (480 MB) purely to index into it.
+
+Positions are strictly increasing, so a single ordered pass over the candidates can match them off
+in lockstep.
+"""
+function _mbr_sample_positions(n::Int, limit::Int)
+    limit >= 0 || throw(ArgumentError("MBR training limit must be nonnegative"))
+    (n <= limit) && return collect(1:n)
+    limit == 0 && return Int[]
+    return Int[fld((2 * sample_idx - 1) * n, 2 * limit) + 1 for sample_idx in 1:limit]
+end
+
 function _mbr_proportional_caps(
     counts::Vector{Int},
     limit::Int,
@@ -398,37 +416,11 @@ function _mbr_training_rows(
         )
     end
 
-    positives = Int[]
-    sizehint!(positives, available_positives)
-    receiver_decoys = Int[]
-    sizehint!(receiver_decoys, available_receiver_decoys)
-    negatives_by_counterfactual = [
-        Int[] for _ in 1:n_counterfactuals
-    ]
-    for counterfactual_idx in 1:n_counterfactuals
-        sizehint!(
-            negatives_by_counterfactual[counterfactual_idx],
-            negative_counts[counterfactual_idx],
-        )
-    end
-    @inbounds for candidate_idx in 1:n_candidates
-        folds[candidate_idx] == train_fold || continue
-        positive_top[candidate_idx] && push!(positives, candidate_idx)
-        receiver_decoy_top[candidate_idx] &&
-            push!(receiver_decoys, candidate_idx)
-        for counterfactual_idx in 1:n_counterfactuals
-            present[candidate_idx, counterfactual_idx] || continue
-            push!(
-                negatives_by_counterfactual[counterfactual_idx],
-                counterfactual_idx * n_candidates + candidate_idx,
-            )
-        end
-    end
-
-    sampled_positives = _mbr_evenly_spaced_sample(
-        positives,
-        max_positives,
-    )
+    # Capped branch. Emit only the rows we keep: the previous version pushed every eligible row
+    # index into per-class Vector{Int}s and then sampled those down, so hitting the cap allocated
+    # 8 bytes per *available* row to select `limit` of them. `_mbr_sample_positions` gives the
+    # positions up front, and each class is matched off in one ordered pass. Selection is
+    # bit-identical -- same positions, same order.
     all_negative_counts = vcat(
         available_receiver_decoys,
         negative_counts,
@@ -437,11 +429,58 @@ function _mbr_training_rows(
         all_negative_counts,
         max_negatives,
     )
-    sampled_receiver_decoys = _mbr_evenly_spaced_sample(
-        receiver_decoys,
-        all_negative_caps[1],
-    )
     negative_caps = all_negative_caps[2:end]
+
+    positive_positions = _mbr_sample_positions(available_positives, max_positives)
+    receiver_positions = _mbr_sample_positions(available_receiver_decoys, all_negative_caps[1])
+    counterfactual_positions = [
+        _mbr_sample_positions(negative_counts[k], negative_caps[k])
+        for k in 1:n_counterfactuals
+    ]
+
+    sampled_positives = Vector{Int}(undef, length(positive_positions))
+    sampled_receiver_decoys = Vector{Int}(undef, length(receiver_positions))
+    sampled_by_counterfactual = [
+        Vector{Int}(undef, length(counterfactual_positions[k]))
+        for k in 1:n_counterfactuals
+    ]
+    # Running ordinal within each class, and how far into that class's position list we are.
+    seen_pos = 0; take_pos = 1
+    seen_rcv = 0; take_rcv = 1
+    seen_cf = zeros(Int, n_counterfactuals)
+    take_cf = ones(Int, n_counterfactuals)
+    @inbounds for candidate_idx in 1:n_candidates
+        folds[candidate_idx] == train_fold || continue
+        if positive_top[candidate_idx]
+            seen_pos += 1
+            if take_pos <= length(positive_positions) &&
+               positive_positions[take_pos] == seen_pos
+                sampled_positives[take_pos] = candidate_idx
+                take_pos += 1
+            end
+        end
+        if receiver_decoy_top[candidate_idx]
+            seen_rcv += 1
+            if take_rcv <= length(receiver_positions) &&
+               receiver_positions[take_rcv] == seen_rcv
+                sampled_receiver_decoys[take_rcv] = candidate_idx
+                take_rcv += 1
+            end
+        end
+        for counterfactual_idx in 1:n_counterfactuals
+            present[candidate_idx, counterfactual_idx] || continue
+            seen_cf[counterfactual_idx] += 1
+            positions = counterfactual_positions[counterfactual_idx]
+            take = take_cf[counterfactual_idx]
+            if take <= length(positions) &&
+               positions[take] == seen_cf[counterfactual_idx]
+                sampled_by_counterfactual[counterfactual_idx][take] =
+                    counterfactual_idx * n_candidates + candidate_idx
+                take_cf[counterfactual_idx] = take + 1
+            end
+        end
+    end
+
     sampled_negatives = Int[]
     sizehint!(
         sampled_negatives,
@@ -449,13 +488,7 @@ function _mbr_training_rows(
     )
     append!(sampled_negatives, sampled_receiver_decoys)
     for counterfactual_idx in 1:n_counterfactuals
-        append!(
-            sampled_negatives,
-            _mbr_evenly_spaced_sample(
-                negatives_by_counterfactual[counterfactual_idx],
-                negative_caps[counterfactual_idx],
-            ),
-        )
+        append!(sampled_negatives, sampled_by_counterfactual[counterfactual_idx])
     end
 
     train_rows = vcat(sampled_positives, sampled_negatives)
