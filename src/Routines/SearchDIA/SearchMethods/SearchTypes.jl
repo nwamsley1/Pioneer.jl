@@ -239,7 +239,12 @@ end
 """
 Primary search context holding all data structures and state for search execution.
 """
-mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
+# No thread-count type parameter. It used to carry `N = length(temp_structures)`, which typed
+# nothing -- `temp_structures` is an AbstractVector, not an NTuple{N} -- and was never dispatched on
+# or read. Its only effect was to give every method touching a SearchContext a separate
+# specialisation per thread count, which no precompile statement file can cover because the value
+# comes from the user's machine. See the note on ArrowTableReference below.
+mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # Core components
     spec_lib::L
     temp_structures::AbstractVector{<:SearchDataStructures}
@@ -306,8 +311,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
         n_precursors::Int64,
         buffer_size::Int64
     ) where {L<:SpectralLibrary,M<:MassSpecDataReference}
-        N = length(temp_structures)
-        new{N,L,M}(
+        new{L,M}(
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
