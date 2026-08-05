@@ -149,8 +149,6 @@ end
 # preceding BuildSpecLib target keeps this self-consistent: whatever code builds the library is the
 # same code that searches it, so a future format change cannot silently disable this target again.
 #
-# To go back to yeast, regenerate the Zenodo artifact with the current BuildSpecLib and restore the
-# search_yeast_altimeter*.json configs -- the yeast data is larger and exercises more scans per file.
 maybe_run("SearchDIA") do
     prepare_mixed_batch_ms_data(
         joinpath(data_dir, "ecoli_test", "raw"),
@@ -158,6 +156,47 @@ maybe_run("SearchDIA") do
     )
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
+end
+
+
+##########################################
+# Search -- yeast
+##########################################
+
+# The ecoli fixtures cannot reach two things, and both matter.
+#
+# 1. MS1. `ecoli_filtered_01.arrow` is 19,275 scans, every one msOrder=2. MainSearch computes a
+#    whole MS1 feature block (features.jl: ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio,
+#    ms1_isotope_dotp_m0_m1_m2, ...) via add_ms1_lookup_features!. Julia compiles whole method
+#    bodies, so those methods do compile on ecoli even though they early-return -- but the
+#    MS1-present path instantiates types the MS1-absent path never does.
+#
+# 2. Scale and shape. Measured against the snoop trace, a real yeast search compiles 301 statements
+#    (177 naming Pioneer) that the ecoli fixtures do not, and 203 of those are not covered by a real
+#    Olsen search either. One dataset is not a substitute for another: a binary precompiled from one
+#    and run on the other re-JITs ~150 Pioneer methods.
+#
+# The fixture is deliberately small: all MS1 scans kept, MS2 restricted to a 500-600 m/z band (the
+# same convention build_ecoli_altimeter.json uses), full RT range -- squeezing RT would make the RT
+# and quad spline fits degenerate, and those Interpolations paths are part of what we want compiled.
+#
+# Three files, and the split matters. rep1/rep2 are ALTERNATING CYCLES of a single run, so both span
+# the full 0-4.98 min gradient and both converge in parameter tuning (4,049 and 4,171 PSMs against
+# min_samples 3500) and quad tuning. lowsignal is 1 MB of void volume that yields zero PSMs; it is
+# there on purpose, because it is the only file that compiles the fallback paths -- parameter-tuning
+# fallback, SquareQuadModel, RT-recalibration skip -- which is what real users with a bad run hit.
+# Together: 3 files, 2 converged, 1 fallback; 17,444 precursors / 5,001 protein groups.
+#
+# Produced by split_yeast.jl; see .github/actions/precompile-data for the Zenodo artifact.
+#
+# This target reads a PRE-BUILT library rather than building one, because Koina is slow and
+# occasionally down, and a build-time network dependency is a poor thing to put on the critical path
+# of a release. That is the arrangement that produced bug #4 -- a stale Zenodo .poin whose failure
+# `maybe_run` swallowed into a warning, shipping a binary with SearchDIA uncompiled. It is safe now
+# only because report_snoop_failures() rethrows: a stale library fails the build instead of
+# degrading the artifact. Bump the precompile-data cache-key whenever the artifact is regenerated.
+maybe_run("SearchDIA_yeast") do
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 end
 
 

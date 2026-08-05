@@ -19,15 +19,33 @@ runs:
         restore-keys: |
           ${{ inputs.cache-key }}
 
+    # The previous artifact (record 16289168) was 611 MB of yeast.poin.zip plus two full arrows, and
+    # snoop.jl stopped using any of it in b18ac0176 -- a dead download on every cache miss. This
+    # replaces it with the trimmed fixture snoop actually searches: all MS1 scans, MS2 restricted to
+    # a 500-600 m/z band, and a library built for that band. ~213 MB.
+    #
+    # ZENODO_RECORD must be updated when the artifact is re-uploaded, and cache-key bumped with it --
+    # otherwise CI serves a cached copy of the old fixture and the yeast target searches stale data.
     - name: Download precompile data (if cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        mkdir -p temp/zenodo
+        set -euo pipefail
+        ZENODO_RECORD=REPLACE_ME_WITH_NEW_RECORD_ID
+        mkdir -p temp/zenodo/yeast_raw
         cd temp/zenodo
-        curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
-        unzip yeast.poin.zip
-        for i in 1 2; do
-          curl -L "https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep${i}.arrow?download=1" \
-            -o yeast_${i}.arrow
+        curl -fLJO "https://zenodo.org/record/${ZENODO_RECORD}/files/yeast_small_altimeter.poin.zip?download=1"
+        unzip -q yeast_small_altimeter.poin.zip
+        rm yeast_small_altimeter.poin.zip
+        # rep1/rep2 are alternating cycles of one run, so both span the full gradient and both
+        # converge in parameter tuning. lowsignal is 1 MB of void volume that yields zero PSMs --
+        # kept deliberately, because it is the only thing that compiles the fallback paths
+        # (parameter-tuning fallback, SquareQuadModel, RT-recalibration skip).
+        for f in yeast_rep1 yeast_rep2 yeast_lowsignal; do
+          curl -fL "https://zenodo.org/record/${ZENODO_RECORD}/files/${f}.arrow?download=1" \
+            -o "yeast_raw/${f}.arrow"
         done
+        # Fail here rather than inside create_app, where a missing fixture surfaces as a snoop
+        # target failure 40 minutes into the build.
+        test -f yeast_small_altimeter.poin/partitioned_fragment_index.jls
+        for f in yeast_rep1 yeast_rep2 yeast_lowsignal; do test -f "yeast_raw/${f}.arrow"; done

@@ -81,4 +81,10 @@ data/precompile/ecoli_raw_mixed/
 data/precompile/ecoli_altimeter_results/
 data/precompile/ecoli_altimeter_results_OOM/
 data/precompile/ecoli_prosit_results/
+data/precompile/yeast_altimeter_results/
 data/precompile/arrow_out/
+
+# Yeast precompile fixture, fetched from Zenodo by .github/actions/precompile-data.
+# Unlike the ecoli fixtures above this one is downloaded rather than derived, because building a
+# library at build time puts Koina on the critical path of every release.
+temp/
