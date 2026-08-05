@@ -18,7 +18,13 @@ using Base.Meta
 using Pioneer
 
 const FILE = joinpath(@__DIR__, "precompile_statements.jl")
-const MIN_SURVIVAL = length(ARGS) >= 1 ? parse(Float64, ARGS[1]) : 0.95
+
+# 99.5%, not 95%. Dropping the file-count parameter from ArrowTableReference invalidated exactly 120
+# statements -- the ones covering the whole search pipeline -- and at a 95% floor that scored 97.95%
+# and passed. A percentage is a crude proxy: 120 pipeline statements matter far more than 120
+# arbitrary Base ones. 0.5% of ~5,800 leaves ~29 statements of slack for ordinary dependency drift,
+# which is enough to avoid false alarms while still catching a structural break.
+const MIN_SURVIVAL = length(ARGS) >= 1 ? parse(Float64, ARGS[1]) : 0.995
 
 isfile(FILE) || error("missing $FILE -- create_app references it, so the build would ship without " *
                       "the real-workload statements")
