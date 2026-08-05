@@ -133,8 +133,17 @@ end
     return map((x,c) -> f(x,c), x, charge)
  end
 
-struct BinnedMedianNceModel{N, T<:AbstractFloat} <: NceModel{T}
-    medians::NTuple{N, T}
+# `medians` is a Vector, not an NTuple{N,T}, deliberately. It used to carry the bin count as a type
+# parameter, which specialised every method touching an NCE model per dataset -- the count depends on
+# how many m/z bins had enough PSMs, so a single trace can produce both {1} and {2}.
+#
+# Nothing was gained by it: the access below is a single runtime-indexed load (`medians[offset+idx-1]`),
+# which a tuple cannot do without spilling to the stack; `offsets` and `n_bins` already carry the
+# structure at runtime; the value is built as a Vector and converted at the end; there is one model
+# per file, fetched once per search method rather than per precursor; and it is stored in a
+# `Dict{Int64, NceModel}` whose abstract value type means the call site dispatches dynamically anyway.
+struct BinnedMedianNceModel{T<:AbstractFloat} <: NceModel{T}
+    medians::Vector{T}
     offsets::NTuple{6, UInt8}
     n_bins::NTuple{6, UInt8}
     mz_min::NTuple{6, T}
@@ -142,7 +151,7 @@ struct BinnedMedianNceModel{N, T<:AbstractFloat} <: NceModel{T}
     default_nce::T
 end
 
-function (m::BinnedMedianNceModel{N,T})(mz::AbstractFloat, charge::Integer) where {N,T}
+function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
     c = Int(charge)
     if c < 1 || c > 6 || m.offsets[c] == 0x00
         best_c = 0
@@ -221,9 +230,8 @@ function fit_binned_median_nce(
         end
     end
 
-    N = length(all_medians)
-    return BinnedMedianNceModel{N, T}(
-        NTuple{N, T}(all_medians),
+    return BinnedMedianNceModel{T}(
+        all_medians,
         NTuple{6, UInt8}(offsets),
         NTuple{6, UInt8}(n_bins_arr),
         NTuple{6, T}(mz_mins),

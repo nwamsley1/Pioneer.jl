@@ -33,7 +33,7 @@ Compute the fraction of precursor signal transmitted through the quadrupole.
 Uses the pre-allocated `precursor_transmission` buffer to avoid allocation.
 """
 @inline function _compute_fraction_transmitted(
-    iso_splines::IsotopeSplineModel{40, Float32},
+    iso_splines::IsotopeSplineModel{Float32},
     quad_transmission_model::QuadTransmissionModel,
     mz::Float32, charge::UInt8, sulfur::UInt8,
     scan_mz::Float32, window_width::Float32,
@@ -73,7 +73,7 @@ Multi-threaded: partitions rows into chunks and spawns tasks.
 """
 function get_isotopes_captured!(chroms::DataFrame,
                                 quad_transmission_model::QuadTransmissionModel,
-                                search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+                                search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{Float32}}},
                                 scan_idx::AbstractVector{UInt32},
                                 prec_charge::AbstractArray{UInt8},
                                 prec_mz::AbstractArray{Float32},

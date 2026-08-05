@@ -638,7 +638,7 @@ end
 function add_precursor_fraction_transmitted!(
     best_psms::DataFrame,
     quad_transmission_model::QuadTransmissionModel,
-    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{Float32}}},
     prec_charge::AbstractArray{UInt8},
     prec_mz::AbstractArray{Float32},
     sulfur_count::AbstractArray{UInt8},

@@ -76,14 +76,18 @@ function (qtf::QuadTransmission)(window_center::T, window_half_width::T, x::T) w
 end
 
 """
-    IsotopeSplineModel{N, T}
+    IsotopeSplineModel{T}
 
 Container for isotope probability splines indexed by [sulfur_count][isotope_index].
 Loaded from Goldfarb et al. 2018 XML via [`parseIsoXML`](@ref).
 Callable: `model(sulfur_count, isotope_idx, mass)` returns isotope probability.
 """
-struct IsotopeSplineModel{N, T<:Real}
-    splines::Vector{Vector{CubicSpline{N, T}}}
+# 40 is hardcoded rather than carried as a type parameter. parseIsoXML already builds these as
+# `CubicSpline{40, Float32}` with `SVector{40, Float32}` coefficients, so the parameter only ever
+# held the constant 40 while forcing every signature that mentions the model to spell it out. A
+# different coefficient count in the XML still fails loudly, at the SVector{40} conversion.
+struct IsotopeSplineModel{T<:Real}
+    splines::Vector{Vector{CubicSpline{40, T}}}
 end
 
 function (p::IsotopeSplineModel)(S, I, x)
@@ -91,7 +95,7 @@ function (p::IsotopeSplineModel)(S, I, x)
 end
 
 """
-    parseIsoXML(iso_xml_path::String) -> IsotopeSplineModel{40, Float32}
+    parseIsoXML(iso_xml_path::String) -> IsotopeSplineModel{Float32}
 
 Load isotope probability splines from the Goldfarb et al. 2018 XML file.
 Returns an `IsotopeSplineModel` indexed by [sulfur_count][isotope_index].
@@ -429,7 +433,7 @@ Compute the total fraction of precursor signal transmitted through the quadrupol
 allocating a temporary transmission buffer internally.
 """
 function getPrecursorFractionTransmitted!(
-    iso_splines::IsotopeSplineModel{40, Float32},
+    iso_splines::IsotopeSplineModel{Float32},
     precursor_isotopes::Tuple{I, I},
     qtf::QuadTransmissionFunction,
     prec_mono_mz::Float32,
@@ -454,7 +458,7 @@ Pre-allocated variant: reuses `precursor_transmission` buffer to avoid allocatio
 """
 function getPrecursorFractionTransmitted!(
     precursor_transmission::AbstractVector{Float32},
-    iso_splines::IsotopeSplineModel{40, Float32},
+    iso_splines::IsotopeSplineModel{Float32},
     precursor_isotopes::Tuple{I, I},
     qtf::QuadTransmissionFunction,
     prec_mono_mz::Float32,
@@ -471,7 +475,7 @@ end
 
 @inline function _precursor_fraction_transmitted(
     precursor_transmission::AbstractVector{Float32},
-    iso_splines::IsotopeSplineModel{40, Float32},
+    iso_splines::IsotopeSplineModel{Float32},
     precursor_isotopes::Tuple{I, I},
     prec_mono_mz::Float32,
     prec_charge::UInt8,
