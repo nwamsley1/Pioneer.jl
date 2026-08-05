@@ -123,7 +123,6 @@ function _add_psm_features!(psms::DataFrame,
     psms[!, :err_norm]            = err_norm
     psms[!, :charge]              = prec_charges
     psms[!, :cv_fold]             = cv_fold
-    psms[!, :charge2]             = Vector{UInt8}(prec_charges .== 2)
     psms[!, :irt_obs]             = irt_obs
     psms[!, :irt_pred]            = irt_pred
     psms[!, :irt_error]           = irt_error
@@ -974,9 +973,6 @@ populated by the deconv pipeline + Phase 1 MS1 lookup. Adds:
 function _add_ms1_chromatogram_features!(psms::DataFrame;
         groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
     n = nrow(psms)
-    psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
-    psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
-    psms[!, :ms1_apex_offset_irt]           = zeros(Float32, n)
     psms[!, :ms1_weight_apex_to_m0_apex_irt]= zeros(Float32, n)
     n == 0 && return
 
@@ -1005,7 +1001,6 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
     # pool size; safe under :static where threadid() is stable within the body.
     nthr = Threads.maxthreadid()
     vm0_scratch  = [Float32[] for _ in 1:nthr]
-    vm1_scratch  = [Float32[] for _ in 1:nthr]
     vw_scratch   = [Float32[] for _ in 1:nthr]
     virt_scratch = [Float32[] for _ in 1:nthr]
 
@@ -1020,23 +1015,14 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             # reused per-thread scratch.
             tid = Threads.threadid()
             v_m0  = vm0_scratch[tid];  resize!(v_m0, npts)
-            v_m1  = vm1_scratch[tid];  resize!(v_m1, npts)
             v_w   = vw_scratch[tid];   resize!(v_w, npts)
             v_irt = virt_scratch[tid]; resize!(v_irt, npts)
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 v_m0[k]  = m0[i_orig]
-                v_m1[k]  = m1[i_orig]
                 v_w[k]   = Float32(w[i_orig])
                 v_irt[k] = Float32(irt[i_orig])
             end
-
-            # Two Pearson correlations (uses the same top-level _frag_pcor
-            # helper defined for the fragment-chromatogram path). The third
-            # variant (c_wm1 = weight-vs-M1) was dropped 2026-05-19 — never
-            # in any feature list since 143d6b87.
-            c_wm0 = _frag_pcor(v_w,  v_m0)
-            c_m01 = _frag_pcor(v_m0, v_m1)
 
             # Apex of M0 and weight (arg-max). First-occurrence on ties.
             ai_m0 = 1; vmax_m0 = v_m0[1]
@@ -1052,15 +1038,9 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             # Scatter outputs back to original row indices. Bind the columns to
             # typed locals first — `psms.col` is type-unstable, so writing through
             # it boxes a value per row.
-            out_wm0  = psms.ms1_corr_weight_m0::Vector{Float32}
-            out_m01  = psms.ms1_corr_m0_m1::Vector{Float32}
-            out_aoff = psms.ms1_apex_offset_irt::Vector{Float32}
             out_w2m0 = psms.ms1_weight_apex_to_m0_apex_irt::Vector{Float32}
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
-                out_wm0[i_orig]  = c_wm0
-                out_m01[i_orig]  = c_m01
-                out_aoff[i_orig] = abs(v_irt[k] - irt_apex_m0)
                 out_w2m0[i_orig] = weight_apex_to_m0
             end
         end
