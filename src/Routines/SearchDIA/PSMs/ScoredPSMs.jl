@@ -82,8 +82,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     #Spectral Similarity
     gof::L
-    max_matched_residual::L
-    max_unmatched_residual::L
     fitted_manhattan_distance::L
     weight::H
 
@@ -200,8 +198,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             Float16(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
             L(spectral_scores[scores_idx].gof),
-            L(spectral_scores[scores_idx].max_matched_residual),
-            L(spectral_scores[scores_idx].max_unmatched_residual),
             L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
@@ -278,8 +274,6 @@ struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     error::L
 
     gof::L
-    max_matched_residual::L
-    max_unmatched_residual::L
     fitted_manhattan_distance::L
     weight::H
 
@@ -343,8 +337,6 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
             L(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
 
             L(spectral_scores[scores_idx].gof),
-            L(spectral_scores[scores_idx].max_matched_residual),
-            L(spectral_scores[scores_idx].max_unmatched_residual),
             L(spectral_scores[scores_idx].fitted_manhattan_distance),
             weight[scores_idx],
 
