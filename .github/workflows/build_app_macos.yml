@@ -188,6 +188,13 @@ jobs:
         with:
           cache-key: precompile-data-v1
 
+      # Before create_app, because a dead statements file is cheap to detect and expensive to ship.
+      # PackageCompiler skips unresolvable statements silently, so drift would otherwise be invisible.
+      - name: Check precompile statements
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --project=. src/build/check_statements.jl
+
       - name: Compile application
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
@@ -210,7 +217,8 @@ jobs:
                 "SearchDIA"=>"main_SearchDIA",
                 "convertMzML"=>"main_convertMzML"
               ],
-              precompile_execution_file="src/build/snoop.jl"
+              precompile_execution_file="src/build/snoop.jl",
+              precompile_statements_file="src/build/precompile_statements.jl"
             );
           '
 
