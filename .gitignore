@@ -46,8 +46,12 @@ data/test_build_spec_lib/**/output/*.poin/pioneer_search_report.txt
 # Smoke-test build outputs
 data/keap1_*_test.poin/
 
-# BuildSpecLib scratch params + fasta-test outputs
+# Param templates the GetSearchParams / GetBuildLibParams / GetParseSpecLibParams snoop targets
+# write into the working directory during the PackageCompiler build. Only the first was ignored,
+# so a build left the other two as untracked noise.
 /buildspeclib_params.json
+/parsespeclib_params.json
+/search_parameters.json
 /data/test_fasta_params/*.json
 /data/test_fasta_params/output/
 
