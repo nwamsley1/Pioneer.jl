@@ -31,10 +31,11 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        ZENODO_RECORD=REPLACE_ME_WITH_NEW_RECORD_ID
+        ZENODO_RECORD=21812589
         mkdir -p temp/zenodo/yeast_raw
         cd temp/zenodo
-        curl -fLJO "https://zenodo.org/record/${ZENODO_RECORD}/files/yeast_small_altimeter.poin.zip?download=1"
+        curl -fL "https://zenodo.org/records/${ZENODO_RECORD}/files/yeast_small_altimeter.poin.zip" \
+          -o yeast_small_altimeter.poin.zip
         unzip -q yeast_small_altimeter.poin.zip
         rm yeast_small_altimeter.poin.zip
         # rep1/rep2 are alternating cycles of one run, so both span the full gradient and both
@@ -42,7 +43,7 @@ runs:
         # kept deliberately, because it is the only thing that compiles the fallback paths
         # (parameter-tuning fallback, SquareQuadModel, RT-recalibration skip).
         for f in yeast_rep1 yeast_rep2 yeast_lowsignal; do
-          curl -fL "https://zenodo.org/record/${ZENODO_RECORD}/files/${f}.arrow?download=1" \
+          curl -fL "https://zenodo.org/records/${ZENODO_RECORD}/files/${f}.arrow" \
             -o "yeast_raw/${f}.arrow"
         done
         # Fail here rather than inside create_app, where a missing fixture surfaces as a snoop

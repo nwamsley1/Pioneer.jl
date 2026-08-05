@@ -112,7 +112,7 @@ jobs:
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v1
+          cache-key: precompile-data-v2-yeast
 
       # Before create_app, because a dead statements file is cheap to detect and expensive to ship.
       # PackageCompiler skips unresolvable statements silently, so drift would otherwise be invisible.
