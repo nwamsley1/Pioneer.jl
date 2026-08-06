@@ -265,6 +265,42 @@ jobs:
           echo "${{ steps.get_version.outputs.version }}" > \
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
 
+      # ---- GUI (gui/) -------------------------------------------------
+      # The desktop front end is a Tauri app built from source in this repo. It
+      # deliberately does NOT bundle a copy of the distribution: at runtime it
+      # resolves /usr/local/Pioneer, which is where this same .pkg installs the
+      # CLI. One payload, no duplication.
+      - name: Setup Node (GUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust (GUI)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Build GUI
+        working-directory: gui
+        env:
+          # Letting the Tauri bundler sign is more reliable than signing the
+          # .app afterwards: it signs nested binaries inside-out, which a flat
+          # find-and-sign loop over files cannot do correctly.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        run: |
+          npm ci
+          # --bundles app: only the .app is wanted, since it is staged into the
+          # .pkg below. The default target set also builds a DMG, whose
+          # bundle_dmg.sh drives Finder via AppleScript and fails on a headless
+          # runner — which would fail the whole release build for an artifact
+          # we then throw away.
+          npm run tauri:build -- --bundles app
+
       - name: Codesign & package macOS app
         if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         env:
@@ -313,6 +349,17 @@ jobs:
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
           mkdir -p "$PKGROOT/usr/local/$APP/data"
           cp -R assets/* "$PKGROOT/usr/local/$APP/data/" || true
+
+          # The GUI installs to /Applications and finds the CLI at
+          # /usr/local/Pioneer. It is signed by the Tauri bundler above, so it
+          # is deliberately not walked by the per-file signing loop below.
+          GUI_APP="gui/src-tauri/target/release/bundle/macos/Pioneer.app"
+          if [[ -d "$GUI_APP" ]]; then
+            mkdir -p "$PKGROOT/Applications"
+            cp -R "$GUI_APP" "$PKGROOT/Applications/"
+          else
+            echo "GUI bundle not found at $GUI_APP — packaging CLI only"
+          fi
           chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia" || true
 
           # Sign every file with retry
