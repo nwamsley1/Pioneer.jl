@@ -259,17 +259,20 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
-      # asset_path() falls back to <exe_dir>/../data for a packaged app, so a
-      # tree without data/ fails every search that relies on default params.
-      # This used to happen only inside the gated codesign step, which meant the
-      # plain app tree -- what gets tarred, and what anyone building without
-      # signing secrets gets -- never had it.
+      # Convenience only -- NOT on the release path. The shipped .pkg gets its
+      # data/ from the codesign step below, which the release always reaches
+      # (release.yml passes package_installer: true), and the .pkg is the only
+      # artifact this workflow uploads. But asset_path() falls back to
+      # <exe_dir>/../data, so a locally built app tree without data/ fails every
+      # search that relies on default params -- a footgun that has already cost
+      # two manual workarounds. Additive and guarded, so it cannot affect the
+      # package.
       - name: Copy assets into the app tree
         shell: bash
         run: |
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           mkdir -p "$DIST/data"
-          cp -R assets/* "$DIST/data/"
+          cp -R assets/* "$DIST/data/" || true
 
       - name: Write bundled version
         shell: bash
@@ -359,6 +362,8 @@ jobs:
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APP"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
+          mkdir -p "$PKGROOT/usr/local/$APP/data"
+          cp -R assets/* "$PKGROOT/usr/local/$APP/data/" || true
 
           # The GUI installs to /Applications and finds the CLI at
           # /usr/local/Pioneer. It is signed by the Tauri bundler above, so it
