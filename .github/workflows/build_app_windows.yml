@@ -215,6 +215,33 @@ jobs:
           "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "MSI_VERSION=$clean"
 
+      # ---- GUI (gui/) -------------------------------------------------
+      # windows-latest ships MSVC and the WebView2 runtime, so this needs no
+      # extra system packages. The exe is copied into $pioneerRoot below, where
+      # heat.exe harvests it automatically.
+      - name: Setup Node (GUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust (GUI)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Build GUI
+        working-directory: gui
+        shell: pwsh
+        run: |
+          npm ci
+          # --no-bundle: the bare exe is wanted, not Tauri's own MSI.
+          npm run tauri:build -- --no-bundle
+
       - name: Package Windows MSI
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         shell: pwsh
@@ -224,6 +251,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           Copy-Item assets\* $dataDir -Recurse
           Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
+
+          # Placed in the install root (not bin\) so the MSI's PATH entry,
+          # which points at INSTALLFOLDER, also covers the GUI. The Start Menu
+          # shortcut in installer.wxs refers to this same location.
+          $guiExe = "gui\src-tauri\target\release\pioneer-console.exe"
+          if (Test-Path $guiExe) {
+            Copy-Item $guiExe "$pioneerRoot\pioneer-gui.exe"
+            Write-Host "GUI included in MSI"
+          } else {
+            Write-Host "GUI exe not found at $guiExe - packaging CLI only"
+          }
           $artifactDir = "$pioneerRoot\share\julia\artifacts"
           if (Test-Path $artifactDir) {
             Get-ChildItem -Path $artifactDir -Recurse -Directory |

@@ -194,6 +194,45 @@ jobs:
           "$pioneer_root/pioneer" params-predict "$dummy" "$dummy" --params-path "$dummy/params.json"
           rm -rf "$dummy"
           
+      # ---- GUI (gui/) -------------------------------------------------
+      # This runner is self-hosted, so the webkit/gtk toolchain may or may not
+      # be present and apt may not be usable. Both steps are therefore
+      # non-fatal: a missing GUI degrades to a CLI-only .deb rather than
+      # failing the job, because `publish` needs all three platforms and a
+      # Linux failure would block the entire release.
+      - name: Setup Node (GUI)
+        continue-on-error: true
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        continue-on-error: true
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install GUI build dependencies
+        id: gui_deps
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          # Tauri v2 on Linux needs webkit2gtk 4.1 (not 4.0).
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf \
+            libayatana-appindicator3-dev
+
+      - name: Build GUI
+        id: gui_build
+        if: steps.gui_deps.outcome == 'success'
+        continue-on-error: true
+        working-directory: gui
+        run: |
+          npm ci
+          # --no-bundle: we want the bare binary, not Tauri's own .deb. It is
+          # installed into Pioneer's package below.
+          npm run tauri:build -- --no-bundle
+
       - name: Package Linux .deb
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         run: |
@@ -204,6 +243,34 @@ jobs:
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
+
+          # The GUI is optional: if its build was skipped or failed above, the
+          # package is still produced, just without it.
+          GUI_DEPENDS=""
+          GUI_BIN="gui/src-tauri/target/release/pioneer-console"
+          if [[ -f "$GUI_BIN" ]]; then
+            install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
+            ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
+            install -Dm644 gui/src-tauri/icons/icon.png \
+              deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
+            mkdir -p deb/usr/share/applications
+            cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Pioneer
+          Comment=Search and quantify DIA proteomics data
+          Exec=/usr/local/Pioneer/bin/pioneer-gui
+          Icon=pioneer
+          Terminal=false
+          Categories=Science;Biology;
+          DESKTOP
+            # Only declared when the GUI is actually shipped, so a CLI-only
+            # package stays dependency-free as it is today.
+            GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
+            echo "GUI included in .deb"
+          else
+            echo "GUI binary not found at $GUI_BIN - packaging CLI only"
+          fi
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)
@@ -231,6 +298,10 @@ jobs:
           Replaces: $REPLACES
           Description: $DESCRIPTION
           EOF
+
+          if [[ -n "$GUI_DEPENDS" ]]; then
+            sed -i "/^Description:/i Depends: $GUI_DEPENDS" deb/DEBIAN/control
+          fi
 
           dpkg-deb --build --root-owner-group deb \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
