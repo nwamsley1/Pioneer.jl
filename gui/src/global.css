@@ -1,0 +1,198 @@
+/* Ported from the <helmet> block of "Pioneer GUI - 1 Console.dc.html".
+   Fonts are bundled via @fontsource rather than fetched from Google Fonts —
+   the app must render identically offline and under a strict CSP. */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* The app is a fixed shell; the panes scroll, never the document. */
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c8cdd4;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@keyframes pio-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pio-barber {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 28px 0;
+  }
+}
+
+@keyframes pio-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+}
+
+/* Row-hover reveal for the per-job action buttons in the sidebar queue. */
+.pio-job .pio-jobact {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.pio-job:hover .pio-jobact {
+  opacity: 1;
+}
+
+/* The design expressed hover/focus with `style-hover` / `style-focus`
+   attributes, which the dc-runtime compiled into generated pseudo-classes.
+   React has no equivalent, so those states live here as real CSS. */
+.pio-nav-item:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.pio-nav-active:hover {
+  background: rgba(46, 77, 126, 0.18) !important;
+}
+
+.pio-row-hover:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+}
+
+.pio-iconbtn:hover {
+  color: #f0a8a8 !important;
+}
+
+.pio-iconbtn-view:hover {
+  color: #cbd8ee !important;
+}
+
+.pio-dashed:hover {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: #cbd8ee !important;
+}
+
+.pio-navtoggle:hover {
+  background: rgba(255, 255, 255, 0.13) !important;
+  color: #ffffff !important;
+}
+
+.pio-chip:hover {
+  color: #cbd8ee !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+.pio-step:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.pio-run:hover {
+  filter: brightness(1.06);
+}
+
+.pio-browse:hover {
+  background: #eef1f4 !important;
+}
+
+.pio-link:hover {
+  color: #2e4d7e !important;
+}
+
+.pio-link-underline:hover {
+  text-decoration: underline;
+}
+
+.pio-adv:hover {
+  background: #fafbfc !important;
+}
+
+.pio-numstep:hover {
+  background: #e8ecef !important;
+}
+
+.pio-input:focus {
+  border-color: #2e4d7e !important;
+  box-shadow: 0 0 0 3px rgba(46, 77, 126, 0.12);
+}
+
+.pio-textarea:focus {
+  border-color: #2e4d7e !important;
+}
+
+.pio-ghost:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.pio-ghost-strong:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+}
+
+.pio-danger:hover {
+  background: #b91c1c !important;
+}
+
+.pio-cancel:hover {
+  background: rgba(240, 120, 120, 0.12) !important;
+  border-color: rgba(240, 120, 120, 0.45) !important;
+}
+
+.pio-light-btn:hover {
+  background: #f1f3f5 !important;
+}
+
+.pio-drag:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.pio-bright:hover {
+  filter: brightness(1.08);
+}
+
+.pio-remove:hover {
+  color: #dc2626 !important;
+}
+
+.pio-dashed-add:hover {
+  border-color: #2e4d7e !important;
+  background: #f4f7fc !important;
+}

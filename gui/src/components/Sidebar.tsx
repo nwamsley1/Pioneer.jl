@@ -1,0 +1,629 @@
+/** The navy sidebar: brand, workflow picker, live job queue, thread picker
+ *  and the Run button. Ported from the `<aside>` block of the design.
+ *
+ *  The design's "Analysis" section (viewer tabs mounting Pioneer Viewer.dc.html)
+ *  is not included yet — that is a separate design file and a later phase.
+ */
+import { PioneerLogo } from './PioneerLogo'
+import type { CommandId, Job } from '../lib/types'
+
+const DOT_COLORS: Record<Job['status'], string> = {
+  queued: '#F59E0B',
+  running: '#6E92D6',
+  done: '#10B981',
+  failed: '#DC2626',
+  cancelled: '#6E7E97',
+}
+
+const STATUS_TEXT: Record<Job['status'], string> = {
+  queued: 'Queued',
+  running: 'Running…',
+  done: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+}
+
+/** The indeterminate "barber pole" bar the design uses while a job runs — an
+ *  honest choice, since Pioneer's stdout gives no reliable percentage. */
+const barberStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  borderRadius: 2,
+  background:
+    'repeating-linear-gradient(45deg,#6E92D6 0 7px,#9DBDF0 7px 14px)',
+  backgroundSize: '28px 100%',
+  animation: 'pio-barber .6s linear infinite',
+}
+
+interface NavItemProps {
+  id: CommandId
+  title: string
+  subtitle: string
+  chip: string
+  active: boolean
+  collapsed: boolean
+  disabled?: boolean
+  icon: React.ReactNode
+  onClick: (id: CommandId) => void
+}
+
+function NavItem({
+  id,
+  title,
+  subtitle,
+  chip,
+  active,
+  collapsed,
+  disabled,
+  icon,
+  onClick,
+}: NavItemProps) {
+  const base: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 11,
+    width: '100%',
+    padding: collapsed ? '11px 0' : '9px 11px',
+    borderRadius: 9,
+    border: 'none',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    textAlign: 'left',
+    transition: 'background .12s',
+    justifyContent: collapsed ? 'center' : undefined,
+    opacity: disabled ? 0.45 : 1,
+    ...(active
+      ? {
+          background: 'rgba(46,77,126,0.18)',
+          color: '#CBD8EE',
+          paddingLeft: 14,
+          boxShadow: 'inset 4px 0 0 #6E92D6, inset 6px 0 0 rgba(10,18,35,0.6)',
+        }
+      : { background: 'none', color: '#D2DAE6' }),
+  }
+  return (
+    <button
+      type="button"
+      className={active ? 'pio-nav-active' : 'pio-nav-item'}
+      onClick={() => !disabled && onClick(id)}
+      style={base}
+      title={disabled ? `${title} — not implemented yet` : title}
+    >
+      {icon}
+      {!collapsed && (
+        <span
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            lineHeight: 1.25,
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</span>
+          <span style={{ fontSize: 11, color: '#98A6BC' }}>{subtitle}</span>
+        </span>
+      )}
+      {!collapsed && (
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: 10,
+            fontWeight: 600,
+            color: '#6E7E97',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 5,
+            padding: '2px 5px',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {chip}
+        </span>
+      )}
+    </button>
+  )
+}
+
+interface Props {
+  collapsed: boolean
+  selected: CommandId
+  jobs: Job[]
+  viewJobId: string | null
+  threads: number
+  maxThreads: number
+  /** Hidden for the .NET converter, where Julia threads mean nothing. */
+  showThreads: boolean
+  runLabel: string
+  modKey: string
+  onSelect: (id: CommandId) => void
+  onToggleCollapsed: () => void
+  onToggleJson: () => void
+  onThreads: (n: number) => void
+  onRun: () => void
+  onViewJob: (id: string) => void
+  onJobAction: (id: string, kind: 'cancel' | 'delete') => void
+}
+
+export function Sidebar({
+  collapsed,
+  selected,
+  jobs,
+  viewJobId,
+  threads,
+  maxThreads,
+  showThreads,
+  runLabel,
+  modKey,
+  onSelect,
+  onToggleCollapsed,
+  onToggleJson,
+  onThreads,
+  onRun,
+  onViewJob,
+  onJobAction,
+}: Props) {
+  const sectionStyle: React.CSSProperties | undefined = collapsed
+    ? { display: 'none' }
+    : {
+        padding: '16px 12px 8px',
+        fontSize: 10.5,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: '#8593A8',
+        fontWeight: 600,
+      }
+
+  return (
+    <aside
+      style={{
+        width: collapsed ? 66 : 252,
+        flex: 'none',
+        background: '#1B2A4A',
+        color: '#E7EBF0',
+        display: 'flex',
+        flexDirection: 'column',
+        borderRight: '1px solid #131F38',
+        transition: 'width .16s ease',
+      }}
+    >
+      <div
+        style={{
+          padding: collapsed ? '22px 0 20px' : '22px 20px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          gap: 13,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        <PioneerLogo />
+      </div>
+
+      <div style={sectionStyle}>Workflow</div>
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '0 12px' }}>
+        <NavItem
+          id="convertraw"
+          title="ConvertRAW"
+          subtitle=".raw → .arrow"
+          chip={`${modKey}1`}
+          active={selected === 'convertraw'}
+          collapsed={collapsed}
+          onClick={onSelect}
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+              <path
+                d="M4 12h12M13 7l5 5-5 5"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          }
+        />
+        <NavItem
+          id="buildspeclib"
+          title="BuildSpecLib"
+          subtitle="FASTA → library"
+          chip={`${modKey}2`}
+          active={selected === 'buildspeclib'}
+          collapsed={collapsed}
+          onClick={onSelect}
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+              <ellipse cx="12" cy="5.5" rx="7" ry="2.8" stroke="currentColor" strokeWidth="1.6" />
+              <path
+                d="M5 5.5v13c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8v-13"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              />
+              <path d="M5 12c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          }
+        />
+        <NavItem
+          id="searchdia"
+          title="SearchDIA"
+          subtitle="Find & Quantify Proteins"
+          chip={`${modKey}3`}
+          active={selected === 'searchdia'}
+          collapsed={collapsed}
+          onClick={onSelect}
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+              <circle cx="11" cy="11" r="6.2" stroke="currentColor" strokeWidth="1.7" />
+              <path d="m20 20-3.7-3.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          }
+        />
+      </nav>
+
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          paddingTop: 2,
+        }}
+      >
+        <div style={sectionStyle}>Queue</div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            padding: '0 12px',
+          }}
+        >
+          {jobs.map((j, idx) => {
+            const running = j.status === 'running'
+            const pending = running || j.status === 'queued'
+            return (
+              <div
+                key={j.id}
+                className="pio-job pio-row-hover"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  padding: '8px 11px',
+                  border: 'none',
+                  borderRadius: 9,
+                  background: j.id === viewJobId ? 'rgba(46,77,126,0.22)' : 'none',
+                }}
+              >
+                <div
+                  onClick={() => onViewJob(j.id)}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: '50%',
+                      flex: 'none',
+                      background: DOT_COLORS[j.status],
+                      animation: running ? 'pio-pulse 1.1s ease-in-out infinite' : undefined,
+                    }}
+                  />
+                  {!collapsed && (
+                    <span
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'flex-start',
+                        lineHeight: 1.25,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          color: '#E7EBF0',
+                          maxWidth: 120,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {j.title}
+                      </span>
+                      {running ? (
+                        <div
+                          style={{
+                            position: 'relative',
+                            overflow: 'hidden',
+                            height: 3,
+                            width: 96,
+                            maxWidth: '100%',
+                            marginTop: 5,
+                            borderRadius: 2,
+                            background: 'rgba(255,255,255,0.16)',
+                          }}
+                        >
+                          <div style={barberStyle} />
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 10.5, color: '#98A6BC' }}>
+                          {STATUS_TEXT[j.status]}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {!collapsed && (
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        flex: 'none',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        fontFamily: "'IBM Plex Mono'",
+                        color: '#8593A8',
+                        minWidth: 16,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {idx + 1}
+                    </span>
+                  )}
+                </div>
+                {pending && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => onJobAction(j.id, 'cancel')}
+                    title="Cancel run"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: '#F0A8A8',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                    </svg>
+                  </button>
+                )}
+                {!pending && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => onJobAction(j.id, 'delete')}
+                    title="Delete from queue"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: '#8593A8',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: '10px 12px 4px',
+          marginTop: 2,
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        {!collapsed && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: showThreads ? 'space-between' : 'flex-start',
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            <button
+              type="button"
+              className="pio-chip"
+              onClick={onToggleJson}
+              title="Preview the .json config"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '6px 9px',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.04)',
+                cursor: 'pointer',
+                font: "600 11.5px 'IBM Plex Sans'",
+                color: '#98A6BC',
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M15 4h5v5M20 4l-8 8"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              JSON
+            </button>
+            {showThreads && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  color: '#8593A8',
+                }}
+              >
+                Threads
+              </span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  flex: 'none',
+                }}
+              >
+                <button
+                  type="button"
+                  className="pio-step"
+                  onClick={() => onThreads(Math.max(1, threads - 1))}
+                  title="Fewer threads"
+                  style={{
+                    padding: '4px 9px',
+                    border: 'none',
+                    background: 'rgba(255,255,255,0.05)',
+                    cursor: 'pointer',
+                    font: "700 13px 'IBM Plex Sans'",
+                    color: '#C8D0DA',
+                  }}
+                >
+                  −
+                </button>
+                <span
+                  title={`${maxThreads} available · max ${maxThreads}`}
+                  style={{
+                    padding: '0 8px',
+                    font: "600 12px 'IBM Plex Mono'",
+                    color: '#E7EBF0',
+                    minWidth: 22,
+                    textAlign: 'center',
+                  }}
+                >
+                  {threads}
+                </span>
+                <button
+                  type="button"
+                  className="pio-step"
+                  onClick={() => onThreads(Math.min(maxThreads, threads + 1))}
+                  title="More threads"
+                  style={{
+                    padding: '4px 9px',
+                    border: 'none',
+                    background: 'rgba(255,255,255,0.05)',
+                    cursor: 'pointer',
+                    font: "700 13px 'IBM Plex Sans'",
+                    color: '#C8D0DA',
+                  }}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className="pio-run"
+          onClick={onRun}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 9,
+            width: '100%',
+            padding: 11,
+            border: 'none',
+            borderRadius: 10,
+            cursor: 'pointer',
+            font: "700 13.5px 'IBM Plex Sans'",
+            color: '#fff',
+            background: 'linear-gradient(135deg,#3E62A0,#2E4D7E)',
+            boxShadow: '0 4px 14px rgba(46,77,126,0.35)',
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="#fff" style={{ flex: 'none' }}>
+            <path d="M7 4.5v15l13-7.5z" />
+          </svg>
+          {!collapsed && <span>{runLabel}</span>}
+        </button>
+      </div>
+
+      <button
+        type="button"
+        className="pio-navtoggle"
+        onClick={onToggleCollapsed}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 9,
+          margin: '8px 12px 16px',
+          padding: 12,
+          border: 'none',
+          borderRadius: 10,
+          background: 'rgba(255,255,255,0.07)',
+          color: '#D5DEEC',
+          cursor: 'pointer',
+          font: "600 13.5px 'IBM Plex Sans'",
+          letterSpacing: '0.01em',
+        }}
+      >
+        <svg
+          width="17"
+          height="17"
+          viewBox="0 0 24 24"
+          fill="none"
+          style={{
+            flex: 'none',
+            transition: 'transform .16s',
+            transform: collapsed ? 'rotate(180deg)' : undefined,
+          }}
+        >
+          <path
+            d="M14 7l-5 5 5 5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        {!collapsed && <span>Collapse</span>}
+      </button>
+    </aside>
+  )
+}
