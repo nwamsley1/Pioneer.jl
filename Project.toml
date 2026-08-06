@@ -21,6 +21,7 @@ FASTX = "c2308a5c-f048-11e8-3e8a-31650f418d12"
 FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
 GR = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
 InlineStrings = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
@@ -109,3 +110,15 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test"]
+
+[sources]
+# Pinned to a fork carrying a one-line AArch64 fix. HostCPUFeatures defines vscale() -- an
+# llvm.vscale intrinsic -- unconditionally, and LLVM cannot lower it on non-SVE AArch64 (all Apple
+# Silicon), so PackageCompiler's AOT object emission aborts and the macos-arm64 app build fails:
+#   LLVM ERROR: Cannot select: i64 = vscale ...   In function: julia_vscale_NNNNN
+# The function is dead upstream (its only reference is a commented-out line), so the fork simply
+# guards the definition behind the existing _has_aarch64_sve() predicate. HostCPUFeatures is listed
+# in [deps] only so this override applies -- Pioneer does not use it directly; it arrives via
+# LinearSolve -> RecursiveFactorization/TriangularSolve -> LoopVectorization.
+# Remove this once the fix is upstream. Filed at JuliaSIMD/HostCPUFeatures.jl.
+HostCPUFeatures = {url = "https://github.com/nwamsley1/HostCPUFeatures.jl", rev = "f678f3ccc6dbe84a61ffbd6f4f3cebb817bd9ebd"}
