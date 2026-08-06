@@ -120,5 +120,5 @@ test = ["Test"]
 # guards the definition behind the existing _has_aarch64_sve() predicate. HostCPUFeatures is listed
 # in [deps] only so this override applies -- Pioneer does not use it directly; it arrives via
 # LinearSolve -> RecursiveFactorization/TriangularSolve -> LoopVectorization.
-# Remove this once the fix is upstream. Filed at JuliaSIMD/HostCPUFeatures.jl.
+# Remove this once the fix is upstream (not yet reported to JuliaSIMD/HostCPUFeatures.jl).
 HostCPUFeatures = {url = "https://github.com/nwamsley1/HostCPUFeatures.jl", rev = "f678f3ccc6dbe84a61ffbd6f4f3cebb817bd9ebd"}
