@@ -154,7 +154,16 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl"
+              precompile_statements_file="src/build/precompile_statements.jl",
+              # Same change as the Windows leg. The x86_64 default is
+              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
+              # and clone_all emits a complete duplicate of every function for
+              # the sandybridge target, which dominates the --output-o step.
+              # This leg died there too, with the codegen child SIGKILLed.
+              # base(1) has to go with clone_all, since Julia requires a base
+              # target to clone everything. All three tiers remain, so no CPU
+              # loses its vector path.
+              cpu_target="generic;sandybridge,-xsaveopt;haswell,-rdrnd"
             );
           '
 
