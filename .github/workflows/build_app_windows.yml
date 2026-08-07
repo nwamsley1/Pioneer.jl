@@ -91,6 +91,41 @@ jobs:
         with:
           raw: ${{ steps.get_version.outputs.version }}
 
+      # The --output-o codegen peaked with only 151 MiB free on this 15.99 GB
+      # runner and was killed. macOS x64 completes the identical create_app on
+      # a runner with *less* RAM, because macOS compresses memory and grows
+      # swap on demand; the Windows images ship a small, fixed pagefile. So the
+      # shortfall is virtual-memory headroom rather than three cpu targets
+      # being inherently too expensive.
+      #
+      # This step is self-verifying on purpose: it prints the resulting
+      # pagefile and free disk. Pagefile changes can require a reboot to take
+      # effect, so if the "after" block does not show the new size we will know
+      # from the log immediately, rather than after another 2.5 hour build.
+      - name: Enlarge the pagefile
+        shell: pwsh
+        run: |
+          Write-Host "=== before ==="
+          Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBaseSize | Format-List
+          Get-PSDrive C, D -ErrorAction SilentlyContinue |
+            Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table
+
+          $cs = Get-CimInstance Win32_ComputerSystem
+          if ($cs.AutomaticManagedPagefile) {
+            Set-CimInstance -InputObject $cs -Property @{AutomaticManagedPagefile = $false}
+          }
+          # D: is the large volume on these images; C: is comparatively small.
+          $existing = Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue
+          foreach ($p in $existing) { Remove-CimInstance -InputObject $p -ErrorAction SilentlyContinue }
+          New-CimInstance -ClassName Win32_PageFileSetting `
+            -Property @{Name = 'D:\pagefile.sys'; InitialSize = 24576; MaximumSize = 49152} `
+            -ErrorAction SilentlyContinue | Out-Null
+
+          Write-Host "=== after ==="
+          Get-CimInstance Win32_PageFileSetting |
+            Select-Object Name, InitialSize, MaximumSize | Format-List
+          Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBaseSize | Format-List
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
         with:
@@ -147,22 +182,7 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl",
-              # The PackageCompiler x86_64 default is
-              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
-              # `clone_all` emits a complete duplicate of every function for the
-              # sandybridge target, which is the dominant cost of the --output-o
-              # step. This runner has 15.99 GB and free memory bottomed out at
-              # 151 MiB before the codegen child was killed.
-              #
-              # base(1) has to go with it: Julia rejects the pair with
-              #   ERROR: Invalid target option: base target must be clone_all.
-              # so a target referenced by base(n) must itself clone everything.
-              # Both specialised tiers therefore clone from the baseline
-              # instead. All three tiers remain, so no CPU loses its vector
-              # path; only the set of specialised functions narrows to those
-              # Julia judges to benefit.
-              cpu_target="generic;sandybridge,-xsaveopt;haswell,-rdrnd"
+              precompile_statements_file="src/build/precompile_statements.jl"
             );
           '
 
