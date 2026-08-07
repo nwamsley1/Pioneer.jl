@@ -109,6 +109,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
+          julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
           julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
