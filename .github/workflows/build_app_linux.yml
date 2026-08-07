@@ -127,6 +127,18 @@ jobs:
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
+          # PackageCompiler writes its sysimage and the --output-o object into
+          # $TMPDIR, defaulting to /tmp. On most Linux distributions /tmp is a
+          # tmpfs -- i.e. RAM, typically capped near 50% of physical memory --
+          # and the object is emitted for three CPU targets with clone_all, so
+          # it is several times the 2.1 GB finished distribution. Filling tmpfs
+          # is a direct route to the OOM killer, which matches the observed
+          # kill: the codegen child died with ProcessSignaled(9) and no message
+          # in the job log, while the snoop searches before it peaked at only
+          # 7.2 GB of 62.5 GB. $RUNNER_TEMP is real disk, like every other
+          # platform's temp.
+          export TMPDIR="$RUNNER_TEMP/jl-tmp"
+          mkdir -p "$TMPDIR"
           julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
