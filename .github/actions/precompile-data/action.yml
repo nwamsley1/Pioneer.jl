@@ -32,10 +32,37 @@ runs:
       run: |
         set -euo pipefail
         ZENODO_RECORD=21812589
+
+        # A bare `curl -fL` of a 132 MB file has no retry, and a dropped
+        # connection fails the build: seen on 2026-08-07, which died at 88% with
+        # `curl: (18) transfer closed with 15881024 bytes remaining`. On a tagged
+        # release that costs the whole release, since publish needs all three
+        # platforms.
+        #
+        # curl's own --retry does not cover exit 18, and --retry-all-errors is
+        # too new to rely on across a self-hosted runner and three OS images.
+        # So: --retry for the transient HTTP cases, wrapped in a loop that
+        # restarts from scratch on anything else. Deliberately not `-C -`;
+        # resuming a truncated transfer risks a silently corrupt file, and a
+        # clean re-fetch of 132 MB is cheap next to a failed release.
+        fetch() {
+          local url="$1" out="$2" attempt
+          for attempt in 1 2 3 4 5; do
+            if curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$out" "$url"; then
+              return 0
+            fi
+            echo "::warning::download attempt ${attempt}/5 failed: ${url}"
+            rm -f "$out"
+            sleep $((attempt * 10))
+          done
+          echo "::error::giving up after 5 attempts: ${url}"
+          return 1
+        }
+
         mkdir -p temp/zenodo/yeast_raw
         cd temp/zenodo
-        curl -fL "https://zenodo.org/records/${ZENODO_RECORD}/files/yeast_small_altimeter.poin.zip" \
-          -o yeast_small_altimeter.poin.zip
+        fetch "https://zenodo.org/records/${ZENODO_RECORD}/files/yeast_small_altimeter.poin.zip" \
+          yeast_small_altimeter.poin.zip
         unzip -q yeast_small_altimeter.poin.zip
         rm yeast_small_altimeter.poin.zip
         # rep1/rep2 are alternating cycles of one run, so both span the full gradient and both
@@ -43,8 +70,8 @@ runs:
         # kept deliberately, because it is the only thing that compiles the fallback paths
         # (parameter-tuning fallback, SquareQuadModel, RT-recalibration skip).
         for f in yeast_rep1 yeast_rep2 yeast_lowsignal; do
-          curl -fL "https://zenodo.org/records/${ZENODO_RECORD}/files/${f}.arrow" \
-            -o "yeast_raw/${f}.arrow"
+          fetch "https://zenodo.org/records/${ZENODO_RECORD}/files/${f}.arrow" \
+            "yeast_raw/${f}.arrow"
         done
         # Fail here rather than inside create_app, where a missing fixture surfaces as a snoop
         # target failure 40 minutes into the build.
