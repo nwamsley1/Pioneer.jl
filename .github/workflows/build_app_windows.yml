@@ -147,22 +147,7 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl",
-              # The PackageCompiler x86_64 default is
-              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
-              # `clone_all` emits a complete duplicate of every function for the
-              # sandybridge target, which is the dominant cost of the --output-o
-              # step. This runner has 15.99 GB and free memory bottomed out at
-              # 151 MiB before the codegen child was killed.
-              #
-              # base(1) has to go with it: Julia rejects the pair with
-              #   ERROR: Invalid target option: base target must be clone_all.
-              # so a target referenced by base(n) must itself clone everything.
-              # Both specialised tiers therefore clone from the baseline
-              # instead. All three tiers remain, so no CPU loses its vector
-              # path; only the set of specialised functions narrows to those
-              # Julia judges to benefit.
-              cpu_target="generic;sandybridge,-xsaveopt;haswell,-rdrnd"
+              precompile_statements_file="src/build/precompile_statements.jl"
             );
           '
 
