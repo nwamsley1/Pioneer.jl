@@ -125,7 +125,14 @@ jobs:
           "RUNNER_TEMP=$env:RUNNER_TEMP" | Out-File $out -Append
           Get-Content $out
 
-      - name: Upload the probe before anything can kill the runner
+      # NOTE: an "Enlarge the pagefile" step lived here. It was written for the
+      # disposable 16 GB hosted runner, where the codegen exhausted the 2.9 GB
+      # default pagefile. #449 moves this job to CB-GOLDFARB-01, a physical lab
+      # machine, where that step would disable automatic pagefile management and
+      # force a 32-64 GB pagefile permanently. Removed with the runner change.
+      # It never fixed the build anyway -- see the cpu_target note below.
+
+      - name: Upload the probe
         uses: actions/upload-artifact@v7
         with:
           name: windows-runner-probe
@@ -188,7 +195,27 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl"
+              precompile_statements_file="src/build/precompile_statements.jl",
+              # The PackageCompiler default is
+              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
+              # which is two problems in one string.
+              #
+              # clone_all emits a complete duplicate of every function for the
+              # sandybridge tier, roughly doubling codegen memory and output.
+              #
+              # Worse, sandybridge is AVX *without* AVX2: it has 256-bit float
+              # registers but no 256-bit integer ops, so integer vector code has
+              # to be split into 128-bit halves for that target. On 2026-08-10
+              # LLVM failed to do that split and aborted the build outright --
+              #   LLVM ERROR: Do not know how to split the result of this operator!
+              #   signal 22: SIGABRT -> ProcessExited(3)
+              # 29 minutes into codegen on CB-GOLDFARB-01, a box with ample RAM
+              # (run 31418689943). Not a capacity failure; a codegen failure.
+              #
+              # Dropping the sandybridge tier removes the duplicate and the
+              # broken target together. Haswell (2013) and newer still get
+              # AVX2/FMA; older CPUs fall back to the generic baseline.
+              cpu_target="generic;haswell,-rdrnd"
             );
           '
 
