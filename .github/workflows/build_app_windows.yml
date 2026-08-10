@@ -125,6 +125,43 @@ jobs:
           "RUNNER_TEMP=$env:RUNNER_TEMP" | Out-File $out -Append
           Get-Content $out
 
+      # The probe measured a 15.99 GB machine with only a 2.9 GB pagefile:
+      # 18.87 GB of virtual memory total, which the --output-o codegen
+      # exhausts (it dies with ~150-310 MiB free, reproducibly). D: has 142 GB
+      # free, so the headroom is available -- it just is not configured.
+      #
+      # Resize the EXISTING pagefile rather than deleting and recreating it.
+      # An earlier attempt deleted first, and when the recreate did not apply
+      # the run had less memory than the default. Never leave the machine
+      # without one.
+      - name: Enlarge the pagefile
+        shell: pwsh
+        run: |
+          $cs = Get-CimInstance Win32_ComputerSystem
+          if ($cs.AutomaticManagedPagefile) {
+            Set-CimInstance -InputObject $cs -Property @{AutomaticManagedPagefile = $false}
+          }
+          $pf = Get-CimInstance Win32_PageFileSetting | Select-Object -First 1
+          if ($pf) {
+            Write-Host "resizing existing: $($pf.Name)"
+            Set-CimInstance -InputObject $pf -Property @{InitialSize = 32768; MaximumSize = 65536}
+          } else {
+            Write-Host "no pagefile found; creating one on D:"
+            New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name = 'D:\pagefile.sys'} | Out-Null
+            $pf = Get-CimInstance Win32_PageFileSetting | Select-Object -First 1
+            Set-CimInstance -InputObject $pf -Property @{InitialSize = 32768; MaximumSize = 65536}
+          }
+
+          Write-Host "=== setting after ==="
+          Get-CimInstance Win32_PageFileSetting | Select-Object Name, InitialSize, MaximumSize | Format-List
+          Write-Host "=== allocation + virtual total after (does it apply without a reboot?) ==="
+          Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBaseSize | Format-List
+          $vm = (Get-CimInstance Win32_OperatingSystem).TotalVirtualMemorySize / 1MB
+          Write-Host ("TotalVirtual_GB = {0:N2}  (was 18.87)" -f $vm)
+          if ($vm -lt 20) {
+            Write-Host "::warning::pagefile change did not take effect live; a reboot is likely required"
+          }
+
       - name: Upload the probe before anything can kill the runner
         uses: actions/upload-artifact@v7
         with:
