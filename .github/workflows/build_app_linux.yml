@@ -180,7 +180,18 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl"
+              precompile_statements_file="src/build/precompile_statements.jl",
+              # Same change as build_app_windows.yml -- see the long note there.
+              # The PackageCompiler default marks sandybridge clone_all, which
+              # duplicates every function (codegen memory) and compiles integer
+              # vector code for an AVX-without-AVX2 target that LLVM could not
+              # legalize (SIGABRT on Windows, run 31418689943).
+              #
+              # This Linux job dies differently -- ProcessSignaled(9), SIGKILL,
+              # ~10 min into codegen, runs 31403512429 and 31419196190 -- and
+              # whether the two share this root cause is UNVERIFIED. The halved
+              # codegen is the reason to expect it might.
+              cpu_target="generic;haswell,-rdrnd"
             );
           '
 
