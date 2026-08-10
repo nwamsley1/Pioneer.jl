@@ -15,10 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Thread-safe lock for garbage collection calls to prevent race conditions
-# when multiple threads call GC.gc() concurrently on Windows
-const GC_LOCK = ReentrantLock()
-
 # Audit harness: when PIONEER_AUDIT_WRITES is set to a writable path,
 # every writeArrow call appends a TSV row recording {path, caller, nrows,
 # ncols, in-mem bytes, semicolon-joined column names}. Lets us answer
@@ -87,22 +83,6 @@ function _audit_log_write(fpath::AbstractString, df::AbstractDataFrame)
     return
 end
 
-#=
-function writeArrow(fpath::String, df::AbstractDataFrame)
-    fpath = normpath(fpath)
-    if Sys.iswindows()
-        tpath = tempname()
-        Arrow.write(tpath, df)
-        if isfile(fpath)
-            run(`cmd /c del /f "$fpath"`)
-        end
-        mv(tpath, fpath, force = true)
-    else     #If Linux/MacOS easy
-        Arrow.write(fpath, df)
-    end
-    return nothing
-end
-=#
 function writeArrow(fpath::String, df::AbstractDataFrame)
     _audit_log_write(fpath, df)
     fpath = normpath(fpath)
@@ -111,67 +91,9 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
         tpath = tempname() * ".arrow"
         # Write to the temporary file
         Arrow.write(tpath, df)
-        # Try to delete the existing file with retries
-        if isfile(fpath)
-            try
-                run(`cmd /c del /f /q "$fpath"`)#rm(fpath, force=true)
-            catch e 
-                #@user_info "Initial deletion failed for $fpath, attempting retries. \n"
-                @debug_l1 "Windows specifiec deletion failed for $fpath. \n"
-                # If that also fails, rename the old file instead of deleting
-                backup_path = fpath * ".backup_" * string(time_ns())
-                try
-                    mv(fpath, backup_path, force=true)
-                catch
-                    @debug_l1 "Renaming original failed for $fpath, attempting GC. \n"
-                    try
-                        lock(GC_LOCK) do
-                            GC.gc()
-                        end
-                        # Try to delete using Julia's rm with force flag
-                        rm(fpath, force=true)
-                        #break
-                    catch
-                        error("Unable to remove or rename existing file: $fpath")                            
-                    end
-                end
-                #max_retries = 5
-                #=
-                for i in 1:max_retries
-                    try
-                        # Force garbage collection to release any file handles
-                        # Use lock to prevent concurrent GC calls from multiple threads
-                        lock(GC_LOCK) do
-                            GC.gc()
-                        end
-
-                        # Try to delete using Julia's rm with force flag
-                        rm(fpath, force=true)
-                        break
-                    catch e
-                        if i == max_retries
-                            # If all retries failed, try Windows-specific deletion
-                            try
-                                run(`cmd /c del /f /q "$fpath"`)
-                            catch
-                                # If that also fails, rename the old file instead of deleting
-                                backup_path = fpath * ".backup_" * string(time_ns())
-                                try
-                                    mv(fpath, backup_path, force=true)
-                                catch
-                                    error("Unable to remove or rename existing file: $fpath")
-                                end
-                            end
-                        else
-                            # Wait a bit before retrying
-                            sleep(0.1 * i)
-                        end
-                    end
-                    @debug_l1 "Retry $i to delete $fpath failed"
-                end
-                =#
-            end
-        end
+        # Route replacement through the same normalized, retrying deletion
+        # path as every other Arrow cleanup operation.
+        safeRm(fpath; force=true)
         
         # Move the temporary file to the final location
         try

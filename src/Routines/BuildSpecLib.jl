@@ -206,11 +206,11 @@ function BuildSpecLib(params_path::String)
                 # mmap-locked, so a plain rm() throws EACCES (GC.gc() alone is
                 # not enough to release the mapping).
                 GC.gc()
-                safeRm(chronologer_in_path, nothing; force=true)
-                safeRm(chronologer_out_path, nothing; force=true)
+                safeRm(chronologer_in_path; force=true)
+                safeRm(chronologer_out_path; force=true)
                 dir, filename = splitdir(precursors_arrow_path)
                 raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
-                safeRm(raw_fragments_arrow_path, nothing; force=true)
+                safeRm(raw_fragments_arrow_path; force=true)
                 nothing
             end
             timings["Chronologer Output Processing"] = parse_timing
@@ -317,7 +317,7 @@ function BuildSpecLib(params_path::String)
                 # before the precursor DataFrame work + precursors_table.arrow write —
                 # so raw no longer coexists with fragments_table.arrow at the peak.
                 GC.gc()
-                safeRm(raw_fragments_arrow_path, nothing; force=true)
+                safeRm(raw_fragments_arrow_path; force=true)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -363,7 +363,7 @@ function BuildSpecLib(params_path::String)
                 # + File Verification. (raw_fragments.arrow was deleted earlier, right
                 # after parse_altimeter_fragments.) safeRm = GC + retry for the Windows
                 # mmap lock.
-                safeRm(precursors_arrow_path, nothing; force=true)
+                safeRm(precursors_arrow_path; force=true)
                 nothing
             end
             timings["Prediction Processing"] = process_timing

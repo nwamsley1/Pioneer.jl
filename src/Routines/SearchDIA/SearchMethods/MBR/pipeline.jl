@@ -161,7 +161,7 @@ function prepare_postintegration_mbr!(
         candidate_path in staged_paths && continue
         sidecar_path = candidate_path * PASS1_SIDECAR_SUFFIX
         isfile(sidecar_path) &&
-            safeRm(sidecar_path, nothing; force = true)
+            safeRm(sidecar_path; force = true)
     end
     @debug_l1 "Post-integration MBR staging: donor score floor=" *
               "$(round(donor_score_floor, digits=4)), " *
@@ -554,7 +554,7 @@ function _cleanup_mbr_sidecars!(file_paths::Vector{String})
         )
             sidecar_path = path * suffix
             isfile(sidecar_path) &&
-                safeRm(sidecar_path, nothing; force = true)
+                safeRm(sidecar_path; force = true)
         end
     end
     return nothing

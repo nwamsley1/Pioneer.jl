@@ -366,7 +366,7 @@ function _write_batch_typed(
             # Force garbage collection to release any lingering file handles
             GC.gc()
             # Use Windows-safe removal with retries to avoid permission errors
-            safeRm(output_path, nothing)
+            safeRm(output_path)
         end
         open(output_path, "w") do io
             Arrow.write(io, data_to_write; file=false)

@@ -306,7 +306,7 @@ function summarize_results!(
         GC.gc()
         try
             for chunk_path in chunk_paths
-                isfile(chunk_path) && safeRm(chunk_path, nothing; force=true)
+                isfile(chunk_path) && safeRm(chunk_path; force=true)
             end
             rm(chunk_dir; recursive=true, force=true)
         catch e

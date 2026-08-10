@@ -426,7 +426,7 @@ function summarize_results!(
     # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
     GC.gc(false)
     for fpath in fold_paths_to_delete
-        safeRm(fpath, nothing)
+        safeRm(fpath)
     end
 
     # Create references for second pass PSMs (now using merged files)

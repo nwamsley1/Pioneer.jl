@@ -44,6 +44,7 @@ include("./UnitTests/test_huber_tuning_global.jl")
 
 # FileOperations focused tests
 include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
+include("./utils/FileOperations/io/test_safe_file_ops.jl")
 include("./utils/FileOperations/core/test_core_references_basic.jl")
 include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 

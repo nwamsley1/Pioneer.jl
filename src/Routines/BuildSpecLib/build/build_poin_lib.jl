@@ -196,8 +196,8 @@ function buildPionLib(spec_lib_path::String,
         fragments_table = nothing
         prec_to_frag = nothing
         GC.gc()
-        safeRm(joinpath(spec_lib_path, "fragments_table.arrow"), nothing; force=true)
-        safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"), nothing; force=true)
+        safeRm(joinpath(spec_lib_path, "fragments_table.arrow"); force=true)
+        safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"); force=true)
     end
 
     # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
@@ -284,7 +284,7 @@ function cleanUpLibrary(spec_lib_path::String)
         fpath = joinpath(spec_lib_path, fname)
         if isfile(fpath)
             try
-                safeRm(fpath, nothing; force=true)
+                safeRm(fpath; force=true)
             catch e
                 @user_warn "Failed to remove temporary file $(fpath): $(sprint(showerror, e))"
             end
