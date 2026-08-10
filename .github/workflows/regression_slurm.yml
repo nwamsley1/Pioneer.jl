@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Prepare cluster workspace (configs, Pioneer, and depot)
         env:

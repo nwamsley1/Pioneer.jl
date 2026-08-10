@@ -75,7 +75,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION

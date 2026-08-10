@@ -29,7 +29,7 @@ jobs:
       - name: Checkout source branch
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ inputs.source_branch }}
 
       - name: Validate version and update Project.toml
@@ -47,10 +47,17 @@ jobs:
             exit 1
           fi
 
-          git fetch --tags --force
-          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null
+          TAG_LOOKUP_STATUS=$?
+          set -e
+
+          if [[ "$TAG_LOOKUP_STATUS" -eq 0 ]]; then
             echo "ERROR: tag v${VERSION} already exists"
             exit 1
+          elif [[ "$TAG_LOOKUP_STATUS" -ne 2 ]]; then
+            echo "ERROR: unable to query tag v${VERSION} from origin"
+            exit "$TAG_LOOKUP_STATUS"
           fi
 
           CURRENT_VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Project.toml | head -n1)
