@@ -24,14 +24,11 @@ end
 @testset "Windows delete command normalization" begin
     relative_path = joinpath("relative", "data", "file with spaces.arrow")
 
-    regular_cmd = _windows_delete_command(relative_path)
-    force_cmd = _windows_delete_command(relative_path; force=true)
+    delete_cmd = _windows_delete_command(relative_path)
 
-    @test regular_cmd.exec[1:5] == ["cmd.exe", "/d", "/c", "del", "/q"]
-    @test "/f" ∉ regular_cmd.exec
-    @test "/f" ∈ force_cmd.exec
-    @test !occursin("/", regular_cmd.exec[end])
-    @test endswith(regular_cmd.exec[end], "relative\\data\\file with spaces.arrow")
+    @test delete_cmd.exec[1:6] == ["cmd.exe", "/d", "/c", "del", "/f", "/q"]
+    @test !occursin("/", delete_cmd.exec[end])
+    @test endswith(delete_cmd.exec[end], "relative\\data\\file with spaces.arrow")
 end
 
 @testset "writeArrow replaces existing files through safeRm" begin
