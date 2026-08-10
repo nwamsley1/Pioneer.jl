@@ -154,11 +154,29 @@ jobs:
           key: julia-windows-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
           restore-keys: julia-windows-${{ matrix.identifier }}-
 
+      # --cpu-target=generic goes on EVERY julia invocation, not just create_app.
+      #
+      # HostCPUFeatures derives its feature set from LLVMGetHostCPUFeatures -- the
+      # BUILD machine's CPU -- at precompile time, and VectorizationBase emits
+      # intrinsics gated on it. Precompiled under the default "native" target on an
+      # AVX-512 host it bakes in @llvm.x86.avx512.rcp14.pd.128, which LLVM then
+      # cannot select when create_app compiles for haswell:
+      #   LLVM ERROR: Cannot select: v2f64 = X86ISD::RCP14      (run 31432163290)
+      #
+      # The package already guards against exactly this -- build_cpu_target is read
+      # from JLOptions at precompile time, and when it is not "native" make_generic()
+      # downgrades the feature set and freeze_cpu_target pins it. We never triggered
+      # it, because only create_app knew the target. Base.julia_cmd() carries -C to
+      # precompile workers, so setting it here propagates through the whole build.
+      #
+      # It must be `generic`, the LOWEST tier: the package takes split(target,";")[1],
+      # so freezing at haswell would bake AVX2 into the generic clone and reproduce
+      # the same failure one tier down.
       - name: Install dependencies
         shell: bash
         run: |
-          julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
-          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --cpu-target=generic --project=. -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --cpu-target=generic --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
@@ -171,7 +189,7 @@ jobs:
         shell: bash
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          julia --threads auto --project=. src/build/check_statements.jl
+          julia --threads auto --cpu-target=generic --project=. src/build/check_statements.jl
 
       - name: Compile application
         shell: bash
@@ -179,7 +197,7 @@ jobs:
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           fresh_depot="$(mktemp -d)"
           export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
-          julia --threads auto --project=dev -e '
+          julia --threads auto --cpu-target=generic --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",

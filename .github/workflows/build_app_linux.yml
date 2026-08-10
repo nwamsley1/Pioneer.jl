@@ -105,10 +105,16 @@ jobs:
           key: julia-linux-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
           restore-keys: julia-linux-${{ matrix.identifier }}-
 
+      # --cpu-target=generic on every julia invocation, not just create_app -- see
+      # the long note in build_app_windows.yml. Short version: HostCPUFeatures reads
+      # the BUILD host's CPU features at precompile time and VectorizationBase emits
+      # intrinsics gated on them, so an AVX-512 build machine bakes AVX-512 into an
+      # object compiled for haswell. Passing a non-native target at precompile time
+      # triggers the package's own make_generic() downgrade.
       - name: Install dependencies
         run: |
-          julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
-          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --cpu-target=generic --project=. -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --cpu-target=generic --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
@@ -120,7 +126,7 @@ jobs:
       - name: Check precompile statements
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          julia --threads auto --project=. src/build/check_statements.jl
+          julia --threads auto --cpu-target=generic --project=. src/build/check_statements.jl
 
       # Nothing has ever measured what the codegen actually needs. Every RSS
       # figure we have is from the snoop searches (6.8 GB), not the --output-o
@@ -165,7 +171,7 @@ jobs:
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
-          julia --threads auto --project=dev -e '
+          julia --threads auto --cpu-target=generic --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",
