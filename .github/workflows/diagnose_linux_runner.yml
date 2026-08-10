@@ -1,0 +1,101 @@
+# Throwaway diagnostics for the self-hosted Linux runner. Measurement only: no
+# checkout, no build, nothing written outside $RUNNER_TEMP. Delete the branch
+# (and this file) once the numbers are in.
+#
+# `on: push` rather than workflow_dispatch on purpose -- workflow_dispatch needs
+# the file to exist on the default branch, and this must not touch main.
+name: Diagnose Linux Runner
+
+on:
+  push:
+    branches:
+      - 'diag/**'
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, Linux, pioneer-compile]
+    timeout-minutes: 10
+    steps:
+      # The runner wipes _work/_temp at job start, so the sampler's output file is
+      # gone by path. The process still holds the fd, so /proc/<pid>/fd/1 reads it
+      # even though the file is unlinked -- this is the only surviving copy of the
+      # per-process RSS trace from run 31419196190, which ran through the SIGKILL.
+      - name: Recover the orphaned sampler
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "=== orphaned sampler processes ==="
+          pgrep -af sampler.sh || echo "  (none running -- trace is unrecoverable)"
+          for pid in $(pgrep -f sampler.sh 2>/dev/null || true); do
+            echo "=== pid $pid, started $(ps -o lstart= -p "$pid" 2>/dev/null) ==="
+            if [ -r "/proc/$pid/fd/1" ]; then
+              n=$(wc -l < "/proc/$pid/fd/1" 2>/dev/null || echo 0)
+              echo "--- $n samples; lowest 5 by availKB ---"
+              sort -t= -k2 -n "/proc/$pid/fd/1" 2>/dev/null | head -5
+              echo "--- last 40 samples ---"
+              tail -40 "/proc/$pid/fd/1" 2>/dev/null
+            else
+              echo "  (fd 1 not readable)"
+            fi
+          done
+          echo "=== by path, in case it survived ==="
+          ls -la "$RUNNER_TEMP"/mem-samples.txt /home/goldfarblab/Documents/actions-runner-pioneer/_work/_temp/mem-samples.txt 2>/dev/null || echo "  (not present)"
+
+      # SwapFree was 852 kB of 8 GiB at the last build's start. systemd-oomd's default
+      # swap policy kills above ~90% swap use, on pressure rather than on a limit --
+      # which would explain a SIGKILL with 34 GiB of RAM still available and no
+      # kernel OOM-killer line. Confirm or eliminate.
+      - name: systemd-oomd
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "=== is it running? ==="
+          systemctl is-active systemd-oomd 2>&1 || true
+          systemctl status systemd-oomd --no-pager 2>&1 | head -15 || true
+          echo "=== its policy ==="
+          for f in /etc/systemd/oomd.conf /usr/lib/systemd/oomd.conf; do
+            [ -r "$f" ] && { echo "--- $f ---"; grep -vE '^\s*#|^\s*$' "$f" || true; }
+          done
+          cat /etc/systemd/oomd.conf.d/*.conf /usr/lib/systemd/oomd.conf.d/*.conf 2>/dev/null || true
+          echo "=== ManagedOOM* on the runner service ==="
+          svc=$(systemctl list-units --type=service --no-legend 2>/dev/null | grep -i actions.runner | awk '{print $1}' | head -1)
+          echo "  service: ${svc:-<not found>}"
+          [ -n "$svc" ] && systemctl show "$svc" -p ManagedOOMSwap -p ManagedOOMMemoryPressure -p MemoryMax -p MemoryHigh -p MemoryCurrent 2>&1 || true
+          echo "=== kills it has performed ==="
+          journalctl -u systemd-oomd --since '8 hours ago' --no-pager 2>&1 | tail -40 || echo "  (journal not readable)"
+
+      - name: Kernel OOM evidence
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "=== dmesg ==="
+          (dmesg -T 2>/dev/null || dmesg 2>/dev/null) | grep -iE 'oom|killed process|out of memory' | tail -25 \
+            || echo "  (nothing, or dmesg not readable by this user)"
+          echo "=== kernel journal ==="
+          journalctl -k --since '8 hours ago' --no-pager 2>/dev/null | grep -iE 'oom|killed process' | tail -25 \
+            || echo "  (nothing, or journal not readable)"
+
+      # MemTotal - MemAvailable was 28.06 GiB and was never attributed. Shmem is the
+      # tmpfs figure; /tmp is RAM on this box (see c2d4c2047). Break it down properly
+      # instead of assuming other processes hold it.
+      - name: Memory inventory
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "=== free -h ==="
+          free -h
+          echo "=== where the memory actually is ==="
+          grep -E 'MemTotal|MemFree|MemAvailable|Buffers|^Cached|Shmem:|Dirty|SReclaimable|SUnreclaim|SwapTotal|SwapFree|Committed_AS' /proc/meminfo
+          echo "=== top 15 processes by RSS ==="
+          ps -eo pid,user,rss,vsz,etimes,comm --sort=-rss --no-headers | head -15
+          echo "=== tmpfs mounts (RAM held by files) ==="
+          df -h -t tmpfs 2>/dev/null || true
+          echo "  /tmp fstype: $(findmnt -no FSTYPE /tmp 2>/dev/null || echo unknown)"
+          echo "=== cpu/uptime context ==="
+          nproc; uptime
+
+      - name: Kill the orphan
+        continue-on-error: true
+        shell: bash
+        run: |
+          pkill -f sampler.sh && echo "  killed orphaned sampler(s)" || echo "  nothing to kill"
