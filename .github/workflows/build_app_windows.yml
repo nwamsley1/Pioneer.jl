@@ -188,7 +188,23 @@ jobs:
                 "convertMzML"=>"main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl"
+              precompile_statements_file="src/build/precompile_statements.jl",
+              # EXPERIMENT (diag/win-cpu-target). Sole change vs the parent commit,
+              # which died in create_sysimg_object_file after 29 min of codegen with
+              #   LLVM ERROR: Do not know how to split the result of this operator!
+              # (SIGABRT / ProcessExited(3), run 31418689943) on a box with ample RAM.
+              #
+              # The PackageCompiler default is
+              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
+              # where clone_all recompiles EVERY function for sandybridge -- AVX
+              # without AVX2 -- which both doubles codegen memory and drags the
+              # SIMD code onto a target where LLVM cannot legalize a vector op.
+              #
+              # This drops clone_all (and the base(1) that depends on it) while
+              # keeping all three CPU tiers, so no CPU coverage is lost. The Linux
+              # build at 57c2f0c82 used exactly this string and reached codegen
+              # without an LLVM error: weak, but supporting, evidence.
+              cpu_target="generic;sandybridge,-xsaveopt;haswell,-rdrnd"
             );
           '
 
