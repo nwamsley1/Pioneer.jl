@@ -1,0 +1,6 @@
+name = "PioneerAOTCanary"
+uuid = "39efe7cc-b3bd-48a5-91da-cf6774408e04"
+version = "0.1.0"
+
+[compat]
+julia = "1.12.5"

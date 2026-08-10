@@ -1,0 +1,10 @@
+# This file is machine-generated - editing it directly is not advised
+
+julia_version = "1.12.6"
+manifest_format = "2.0"
+project_hash = "174cfa367aa0f19454a36cc844b51a47372dd449"
+
+[[deps.PioneerAOTCanary]]
+path = "."
+uuid = "39efe7cc-b3bd-48a5-91da-cf6774408e04"
+version = "0.1.0"

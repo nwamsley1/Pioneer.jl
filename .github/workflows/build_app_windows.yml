@@ -160,6 +160,14 @@ jobs:
           julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
           julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
+      - name: AOT portability canary
+        shell: bash
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export PIONEER_AOT_CPU_TARGET='generic;haswell,-rdrnd'
+          julia --threads auto --project=. src/build/check_cpu_dependencies.jl
+          julia --threads auto --project=dev src/build/aot_canary.jl
+
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
@@ -196,25 +204,13 @@ jobs:
               ],
               precompile_execution_file="src/build/snoop.jl",
               precompile_statements_file="src/build/precompile_statements.jl",
-              # The PackageCompiler default is
-              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
-              # which is two problems in one string.
-              #
-              # clone_all emits a complete duplicate of every function for the
-              # sandybridge tier, roughly doubling codegen memory and output.
-              #
-              # Worse, sandybridge is AVX *without* AVX2: it has 256-bit float
-              # registers but no 256-bit integer ops, so integer vector code has
-              # to be split into 128-bit halves for that target. On 2026-08-10
-              # LLVM failed to do that split and aborted the build outright --
-              #   LLVM ERROR: Do not know how to split the result of this operator!
-              #   signal 22: SIGABRT -> ProcessExited(3)
-              # 29 minutes into codegen on CB-GOLDFARB-01, a box with ample RAM
-              # (run 31418689943). Not a capacity failure; a codegen failure.
-              #
-              # Dropping the sandybridge tier removes the duplicate and the
-              # broken target together. Haswell (2013) and newer still get
-              # AVX2/FMA; older CPUs fall back to the generic baseline.
+              # Keep the conservative two-tier target introduced with the GUI
+              # runner changes. Phase 1 removes the HostCPUFeatures /
+              # LoopVectorization path that could leak AVX-512 instructions
+              # from the build host (the class of failure seen in run
+              # 31418689943). Haswell and newer retain AVX2/FMA; older CPUs use
+              # the generic baseline. Phase 2 can benchmark whether restoring a
+              # Sandy Bridge tier is worth its clone_all codegen cost.
               cpu_target="generic;haswell,-rdrnd"
             );
           '

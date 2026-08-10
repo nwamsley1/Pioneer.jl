@@ -11,6 +11,8 @@
 
 include(joinpath(@__DIR__, "test_setup.jl"))
 
+include("./UnitTests/test_portable_cpu_boundary.jl")
+
 # No outer @testset wrapper — see runtests_part1_heavy.jl for why.
 # Per-file @testsets each print their own summary; the driver decides
 # pass/fail from this subprocess's exit code.

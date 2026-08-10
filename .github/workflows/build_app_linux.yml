@@ -110,6 +110,13 @@ jobs:
           julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
           julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
+      - name: AOT portability canary
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export PIONEER_AOT_CPU_TARGET='generic;haswell,-rdrnd'
+          julia --threads auto --project=. src/build/check_cpu_dependencies.jl
+          julia --threads auto --project=dev src/build/aot_canary.jl
+
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
@@ -181,16 +188,11 @@ jobs:
               ],
               precompile_execution_file="src/build/snoop.jl",
               precompile_statements_file="src/build/precompile_statements.jl",
-              # Same change as build_app_windows.yml -- see the long note there.
-              # The PackageCompiler default marks sandybridge clone_all, which
-              # duplicates every function (codegen memory) and compiles integer
-              # vector code for an AVX-without-AVX2 target that LLVM could not
-              # legalize (SIGABRT on Windows, run 31418689943).
-              #
-              # This Linux job dies differently -- ProcessSignaled(9), SIGKILL,
-              # ~10 min into codegen, runs 31403512429 and 31419196190 -- and
-              # whether the two share this root cause is UNVERIFIED. The halved
-              # codegen is the reason to expect it might.
+              # Keep the conservative two-tier target introduced with the GUI
+              # runner changes. Phase 1 removes the HostCPUFeatures /
+              # LoopVectorization path that could leak build-host instructions;
+              # Phase 2 can benchmark whether restoring a Sandy Bridge tier is
+              # worth its clone_all code-size and codegen-memory cost.
               cpu_target="generic;haswell,-rdrnd"
             );
           '
