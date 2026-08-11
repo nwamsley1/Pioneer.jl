@@ -229,7 +229,11 @@ function WHSmooth!(ws::WHWorkspace,
     end
 
     # Solves in-place; result lives in ws.z[1:active_length]
-    whitsmddw!(ws, x, b, w, active_length, λ)
+    if WH_ORDER3_LAMBDA[] > 0f0 && active_length >= 4
+        whitsm_order3!(ws, x, b, w, active_length, WH_ORDER3_LAMBDA[])
+    else
+        whitsmddw!(ws, x, b, w, active_length, λ)
+    end
     return nothing
 end
 
