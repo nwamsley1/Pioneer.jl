@@ -73,7 +73,7 @@ function debug_save_chromatogram_integration_plot(
     isempty(rt_col) && return nothing
     ensure_directory_exists(String(plot_path))
 
-    withenv("GKSwstype" => "100", "GKS_WSTYPE" => "100") do
+    withenv("GKSwstype" => "png", "GKS_WSTYPE" => "png") do
         Plots.gr()
 
         rt_vals = Float64.(rt_col)

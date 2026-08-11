@@ -744,8 +744,11 @@ function __init__()
     # multi-page PDFs by save_multipage_pdf — opening Qt windows here both
     # slows down PDF writes substantially and disrupts the user's desktop
     # during long searches. Set both legacy and modern env var names.
-    get!(ENV, "GKSwstype", "100")
-    get!(ENV, "GKS_WSTYPE", "100")
+    # "100" (nul) suppresses *all* output, so savefig writes 0-byte PNGs and
+    # PDF assembly then fails parsing them. "png" is off-screen but still
+    # renders to file.
+    get!(ENV, "GKSwstype", "png")
+    get!(ENV, "GKS_WSTYPE", "png")
 end
 
 export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML,
