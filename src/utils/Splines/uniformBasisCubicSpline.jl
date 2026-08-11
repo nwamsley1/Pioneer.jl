@@ -30,6 +30,18 @@ const _CUBIC_SPLINE_BASIS = NTuple{4, Polynomial}([
 ])
 
 """
+    _n_spline_coeffs(n_knots) -> Int
+
+Number of cubic B-spline basis functions over `n_knots` uniform knots, and hence
+the column count of the design matrix.
+
+`n_knots` knots bound `n_knots - 1` spans, and a cubic basis over those spans has
+`(n_knots - 1) + 3` functions. Callers that need to know how much data is required
+to identify a fit should use this rather than open-coding the arithmetic.
+"""
+_n_spline_coeffs(n_knots::Integer) = Int(n_knots) + 2
+
+"""
     _find_knot_index(t_val, knots_first, bin_width, n_knots)
 
 Find the knot span index for a data point. Clamped to [1, n_knots].
@@ -47,14 +59,29 @@ Rows are data points, columns are B-spline coefficients.
 function _build_numeric_design_matrix(t::Vector{T}, knots::Vector{T},
                                        bin_width::T) where {T<:AbstractFloat}
     n_data = length(t)
-    n_cols = length(knots) + 3
+    n_knots = length(knots)
+    # n_knots knots bound n_knots-1 spans, and a cubic B-spline basis over those
+    # spans has (n_knots-1)+3 = n_knots+2 functions -- not n_knots+3.
+    #
+    # The extra column was structurally unreachable. `_find_knot_index` clamps to
+    # n_knots, so the single point at t = max(t) landed one span past the last,
+    # at u = 0, and wrote basis[1](0) = 0 into column n_knots+3. That column was
+    # therefore always zero, every fit was rank deficient by one, and when the
+    # system happened to be square `\` dispatched to `lu` and raised
+    # SingularException on the zero pivot. See dev_docs/quant_spline_guard.
+    #
+    # Clamping one span lower puts that point at u = 1 of the last real span,
+    # which writes the same three non-zero values into the same columns: the
+    # matrix is the old one with the empty column removed, agreeing elsewhere to
+    # within 1e-16. Fitted values are unchanged; the system is now full rank.
+    n_spans = max(n_knots - 1, 1)
+    n_cols = _n_spline_coeffs(n_knots)
     X = zeros(T, n_data, n_cols)
     knots_first = first(knots)
-    n_knots = length(knots)
     basis = _CUBIC_SPLINE_BASIS
 
     for row in 1:n_data
-        knot_idx = _find_knot_index(t[row], knots_first, bin_width, n_knots)
+        knot_idx = min(_find_knot_index(t[row], knots_first, bin_width, n_knots), n_spans)
         u = (t[row] - knots[knot_idx]) / bin_width
         i = 4
         for col in knot_idx:(knot_idx + 3)
@@ -163,14 +190,18 @@ end
 function _make_uniform_spline_basis(t::Vector{T}, n_knots::Integer) where {T<:AbstractFloat}
     n_knots_int = Int(n_knots)
     knots, bin_width, _first, _last = _setup_knots(t, n_knots_int)
+    X = _build_numeric_design_matrix(t, knots, bin_width)
     return (
-        X = _build_numeric_design_matrix(t, knots, bin_width),
+        X = X,
         knots = knots,
         bin_width = bin_width,
         first = _first,
         last = _last,
         n_knots = n_knots_int,
-        n_coeffs = n_knots_int + 3,
+        # Read off the matrix rather than recomputed, so the coefficient count
+        # cannot drift from the number of columns callers actually solve against
+        # (fit_intensity_mass_error.jl sizes its coefficient vector from this).
+        n_coeffs = size(X, 2),
     )
 end
 
@@ -207,7 +238,15 @@ function _penalized_spline_system(
 end
 
 function _coeffs_to_spline(c::Vector{T}, basis) where {T<:AbstractFloat}
-    return _coeffs_to_spline(c, basis.knots, basis.bin_width, 3, basis.n_knots, basis.first, basis.last)
+    # The design matrix now has n_knots+2 columns, but `_build_piecewise_matrix`
+    # still emits n_knots segments over n_knots+3 coefficients -- the final segment
+    # covers only the single point t = last, where the dropped coefficient enters
+    # through b0(0) = 0 and so contributes nothing. Pad it back as an explicit zero
+    # rather than reshaping the piecewise conversion, which is shared with
+    # `build_temp_spline_from_coeffs` and the evaluation path's segment indexing.
+    n_expected = basis.n_knots + 3
+    padded = length(c) == n_expected ? c : vcat(c, zeros(T, n_expected - length(c)))
+    return _coeffs_to_spline(padded, basis.knots, basis.bin_width, 3, basis.n_knots, basis.first, basis.last)
 end
 
 #############################################################################

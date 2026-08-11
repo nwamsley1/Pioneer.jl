@@ -303,14 +303,8 @@ regardless of which binning policy is adopted.
 
 # Alternatives considered
 
-**Fix the design matrix off-by-one.** The honest fix for root cause 1: the tenth
-column contributes nothing to fitted values anywhere on the evaluation domain
-(the spline clamps to `[first, last]`), so dropping it is equivalent in exact
-arithmetic and makes the system full rank. But `_coeffs_to_spline` and
-`_build_piecewise_matrix` both assume `n_knots + 3` coefficients, so this touches
-spline machinery used elsewhere -- including RT alignment and quad transmission.
-Worth doing, but as its own change with its own validation, not folded into a
-quantification fix.
+**Fix the design matrix off-by-one.** *Done -- see "The off-by-one fix" below.*
+Originally deferred here as too broad to fold into a quantification change.
 
 **Penalized fit (`UniformSplinePenalized`, lambda > 0).** Makes `H = X'X + lambda*D`
 positive definite so the solve cannot fail. Removes the crash but keeps the
@@ -349,6 +343,54 @@ Status as implemented:
 Not done: a check that the `rep1`/`rep2` spline coefficients themselves move only
 as much as the rebinning explains. The identification counts being unchanged is
 good evidence but not proof.
+
+---
+
+# The off-by-one fix
+
+`_build_numeric_design_matrix` now allocates `_n_spline_coeffs(n_knots) =
+n_knots + 2` columns and clamps the knot index to the last real span. The row
+values are unchanged: for the point at `t = max(t)` the old code wrote columns
+7-10 as `[1/6, 4/6, 1/6, 0]` and the new writes columns 6-9 as
+`[0, 1/6, 4/6, 1/6]` -- the same three non-zero entries in the same columns, with
+only the always-zero column gone. Verified numerically: the matrices agree on
+columns 1..9 to 8e-17, and the result is **full rank at every knot count from 4 to
+12, with no empty column**.
+
+`_coeffs_to_spline` pads the coefficient vector back to `n_knots + 3` with an
+explicit zero, so `_build_piecewise_matrix` and the evaluation path's segment
+indexing are untouched. The dropped coefficient entered only through `b0(0) = 0`
+in the final segment, which covers the single point `t = last`, so it never
+affected a fitted value.
+
+`_make_uniform_spline_basis` now reports `n_coeffs = size(X, 2)` rather than
+recomputing it, because `fit_intensity_mass_error.jl` sizes its coefficient
+vector from that field and would otherwise have solved a 10-vector against a
+9-column matrix.
+
+## It is not results-neutral, and that needs a regression run
+
+The design matrix change is provably value-preserving, but the pipeline result is
+not, because the coefficient vector is also what the shape-constrained fits in
+`fit_intensity_mass_error.jl` project onto. `_project_convex_coeffs!` and
+`_project_monotone_coeffs!` previously enforced their constraint against a
+phantom trailing coefficient that the design matrix ignored; with it gone the
+projection applies only to real coefficients. That is more correct, and it changes
+the fitted intensity-mass-error model, which feeds PSM scoring.
+
+Measured on the ecoli fixture, before and after the off-by-one fix (both with
+occupancy binning in place):
+
+| | precursors (q<=1%) | protein groups |
+|---|---|---|
+| Altimeter | 3,427 -> **3,415** (-12, -0.4%) | 1,731 -> **1,699** (-32, -1.8%) |
+| Prosit | 3,206 -> **3,203** (-3, -0.1%) | 1,637 -> **1,636** (-1) |
+
+**Whether that is an improvement cannot be determined from a fixture.** Counts
+went down, but the fixture has no ground truth, and a more correct mass-error
+model that rejects marginal identifications is not the same thing as a worse one.
+This needs the regression suite with entrapment FDR before it can be called
+either way. It should not be merged on the strength of the unit tests alone.
 
 ---
 

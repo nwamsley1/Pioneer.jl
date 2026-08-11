@@ -51,44 +51,71 @@
         @test isempty(ob(-5, 100, 100))
     end
 
-    @testset "the skip threshold excludes the square-system crash" begin
-        # UniformSpline's design matrix has n_knots+3 columns, the last of which is
-        # structurally always zero. At exactly that many bins the system is square,
-        # `\` dispatches to lu, and it throws. _min_bins_for_spline must therefore
-        # be strictly greater than the coefficient count.
-        n_knots = 7
-        n_coeffs = n_knots + 3
-        @test Pioneer._min_bins_for_spline(n_knots) > n_coeffs
-        @test Pioneer._min_bins_for_spline(n_knots) == n_coeffs + 1
+    @testset "coefficient count and the bin threshold" begin
+        # n_knots knots bound n_knots-1 spans; a cubic basis over those spans has
+        # (n_knots-1)+3 functions. The design matrix used to allocate one more,
+        # which could never be filled -- that column is what made every fit rank
+        # deficient and made the square case throw.
+        for nk in 4:12
+            @test Pioneer._n_spline_coeffs(nk) == nk + 2
+            @test Pioneer._min_bins_for_spline(nk) == Pioneer._n_spline_coeffs(nk) + 1
+        end
 
-        # The crash this pins: reproduce it directly so a future change to the
-        # basis that removes the empty column makes this test fail loudly rather
-        # than leaving a threshold nobody can justify.
-        t_sq = collect(range(0.0, 1.0, length = n_coeffs))
-        u_sq = collect(range(1.0, 2.0, length = n_coeffs))
-        @test_throws LinearAlgebra.SingularException Pioneer.UniformSpline(u_sq, t_sq, 3, n_knots)
-
-        # One bin either side is fine, which is why the threshold is +1 and not
-        # something larger.
-        for k in (n_coeffs - 1, n_coeffs + 1)
-            t = collect(range(0.0, 1.0, length = k))
-            u = collect(range(1.0, 2.0, length = k))
-            @test Pioneer.UniformSpline(u, t, 3, n_knots) isa Pioneer.UniformSpline
+        # The design matrix is now full rank with no empty column, at every knot
+        # count. This is the property the fit depends on; if it regresses, the
+        # square case starts throwing again.
+        for nk in 4:12
+            t = collect(range(0.0, 1.0, length = 60))
+            knots = collect(LinRange(0.0, 1.0, nk))
+            bw = 1.0 / (nk - 1)
+            X = Pioneer._build_numeric_design_matrix(t, knots, bw)
+            @test size(X, 2) == Pioneer._n_spline_coeffs(nk)
+            @test rank(X) == size(X, 2)
+            @test !any(j -> all(iszero, @view X[:, j]), 1:size(X, 2))
         end
     end
 
-    @testset "occupancy floor keeps fits off the crash point" begin
-        # With min_occupancy = 100 the bin count is n ÷ 100, so a file lands on
-        # exactly n_coeffs bins only for n in 1000:1099 -- and those are skipped,
-        # because 10 < _min_bins_for_spline(7) = 11.
-        n_coeffs = 10
+    @testset "square and near-square systems no longer throw" begin
+        # Before the _n_spline_coeffs fix, exactly n_coeffs points gave a square
+        # matrix with a zero column, `\` dispatched to lu, and it raised
+        # SingularException -- the failure that started this work. Fitting at,
+        # below and above that count must all succeed now.
+        for nk in 4:12
+            nc = Pioneer._n_spline_coeffs(nk)
+            for k in (nc - 1, nc, nc + 1)
+                k < 4 && continue
+                t = collect(range(0.0, 1.0, length = k))
+                u = collect(range(1.0, 2.0, length = k))
+                @test Pioneer.UniformSpline(u, t, 3, nk) isa Pioneer.UniformSpline
+            end
+        end
+    end
+
+    @testset "fitted splines stay finite over the fitted domain" begin
+        # Guards against a rank fix that silently produces NaN/Inf coefficients on
+        # awkward inputs rather than throwing.
+        rng_t = [sort(rand(n)) .* 25.0 for n in (15, 40, 120, 400)]
+        for t in rng_t, nk in (4, 7, 10)
+            length(t) <= Pioneer._n_spline_coeffs(nk) && continue
+            u = [sin(x) * 3 + 10 for x in t]
+            s = Pioneer.UniformSpline(u, t, 3, nk)
+            grid = collect(range(minimum(t), maximum(t), length = 51))
+            @test all(isfinite, [s(g) for g in grid])
+        end
+    end
+
+    @testset "occupancy floor keeps fits over-determined" begin
+        # With min_occupancy = 100 the bin count is n ÷ 100. A file landing on
+        # exactly n_coeffs bins would interpolate rather than smooth, so the floor
+        # excludes it: n_coeffs = 9 bins needs 900-999 PSMs, below min_bins = 10.
+        n_coeffs = Pioneer._n_spline_coeffs(7)
         min_bins = Pioneer._min_bins_for_spline(7)
-        for n in 1000:25:1099
+        for n in 900:25:999
             @test length(ob(n, 100, 100)) == n_coeffs
             @test length(ob(n, 100, 100)) < min_bins      # therefore skipped
         end
-        # And no n at all produces a bin count that is both >= min_bins and equal
-        # to n_coeffs, which is the property that makes the crash unreachable.
+        # No PSM count yields a bin count that is both accepted and exactly the
+        # coefficient count, so every accepted fit is over-determined.
         for n in 100:50:20_000
             k = length(ob(n, 100, 100))
             @test !(k == n_coeffs && k >= min_bins)

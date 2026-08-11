@@ -28,13 +28,13 @@ const QUANT_MIN_BIN_OCCUPANCY = 100
 
 Fewest RT bins that may be handed to `UniformSpline`.
 
-Strictly greater than the coefficient count, not equal to it. `UniformSpline`'s
-design matrix has `n_knots + 3` columns of which the last can never hold a
-non-zero value, so at exactly `n_knots + 3` bins the system is square, `\\`
-dispatches to `lu`, and the empty column raises `SingularException`. One more bin
-makes it over-determined and `\\` takes the QR path instead.
+One more than the coefficient count, so the least-squares system is
+over-determined rather than exactly determined. The design matrix is full rank as
+of the `_n_spline_coeffs` fix, so a square system is no longer a failure -- but
+fitting `n` coefficients through exactly `n` points interpolates the bin medians
+instead of smoothing them, which is not what this estimator is for.
 """
-_min_bins_for_spline(spline_n_knots::Int) = spline_n_knots + 3 + 1
+_min_bins_for_spline(spline_n_knots::Int) = _n_spline_coeffs(spline_n_knots) + 1
 
 """
     _occupancy_bins(n, min_occupancy, max_bins) -> Vector{UnitRange{Int}}
@@ -102,7 +102,7 @@ function getQuantSplines(psms_paths::Vector{String},
             @user_warn "Skipping quant normalization for $(basename(fpath)): " *
                        "$nprecs PSMs support only $(length(bins)) RT bin(s) at " *
                        ">= $min_bin_occupancy PSMs each, and a " *
-                       "$(spline_n_knots + 3)-coefficient spline needs at least " *
+                       "$(_n_spline_coeffs(spline_n_knots))-coefficient spline needs at least " *
                        "$min_bins. Abundances are left uncorrected and excluded " *
                        "from the cross-file median."
             continue
