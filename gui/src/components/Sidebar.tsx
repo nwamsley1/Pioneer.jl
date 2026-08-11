@@ -4,6 +4,8 @@
  *  The design's "Analysis" section (viewer tabs mounting Pioneer Viewer.dc.html)
  *  is not included yet — that is a separate design file and a later phase.
  */
+import { useEffect, useRef, useState } from 'react'
+
 import { PioneerLogo } from './PioneerLogo'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
@@ -156,6 +158,27 @@ export function Sidebar({
   onViewJob,
   onJobAction,
 }: Props) {
+  const [themeOpen, setThemeOpen] = useState(false)
+  const themeRef = useRef<HTMLDivElement>(null)
+
+  // Close on a click anywhere else, so an accidental open does not leave the row
+  // expanded for the rest of the session.
+  useEffect(() => {
+    if (!themeOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!themeRef.current?.contains(e.target as Node)) setThemeOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setThemeOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [themeOpen])
+
   const sectionStyle: React.CSSProperties | undefined = collapsed
     ? { display: 'none' }
     : {
@@ -415,42 +438,49 @@ export function Sidebar({
         />
       </nav>
 
+      {/* Collapsed to a single swatch by default. Four permanent circles is a lot
+          of standing visual weight for something set once and rarely revisited,
+          so the alternatives only appear once asked for. */}
       {!collapsed && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
-            padding: '12px 14px 4px',
-          }}
-        >
-          {THEMES.map((t) => {
+        <div ref={themeRef} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 14px 4px' }}>
+          {(themeOpen ? THEMES : THEMES.filter((t) => t.id === theme)).map((t) => {
             const active = t.id === theme
             return (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => onTheme(t.id)}
-                title={t.label}
-                aria-label={`${t.label} theme`}
-                aria-pressed={active}
+                onClick={() => {
+                  if (!themeOpen) setThemeOpen(true)
+                  else {
+                    onTheme(t.id)
+                    setThemeOpen(false)
+                  }
+                }}
+                title={themeOpen ? t.label : `Theme: ${t.label} — click to change`}
+                aria-label={themeOpen ? `${t.label} theme` : `Theme: ${t.label}. Click to change.`}
+                aria-pressed={themeOpen ? active : undefined}
                 style={{
-                  width: 20,
-                  height: 20,
+                  width: 18,
+                  height: 18,
                   padding: 0,
                   borderRadius: '50%',
                   cursor: 'pointer',
-                  // Half surface, half accent: the swatch shows both the colour
-                  // the theme is named after and what the Run button becomes.
+                  // Half surface, half accent: previews both the sidebar colour
+                  // and what the Run button becomes.
                   background: `linear-gradient(135deg, ${t.swatch} 50%, ${t.accent} 50%)`,
-                  border: active
-                    ? '2px solid rgba(255,255,255,0.85)'
-                    : '1px solid rgba(255,255,255,0.22)',
-                  boxShadow: active ? '0 0 0 2px rgba(0,0,0,0.35)' : 'none',
+                  border:
+                    themeOpen && active
+                      ? '2px solid rgba(255,255,255,0.85)'
+                      : '1px solid rgba(255,255,255,0.22)',
+                  boxShadow: themeOpen && active ? '0 0 0 2px rgba(0,0,0,0.35)' : 'none',
+                  transition: 'border-color .12s',
                 }}
               />
             )
           })}
+          {themeOpen && (
+            <span style={{ fontSize: 10.5, color: '#6B7A93', marginLeft: 2 }}>theme</span>
+          )}
         </div>
       )}
 
