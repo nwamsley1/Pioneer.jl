@@ -67,10 +67,45 @@ export const onJobLine = (cb: (e: LineEvent) => void): Promise<UnlistenFn> =>
 export const onJobExit = (cb: (e: ExitEvent) => void): Promise<UnlistenFn> =>
   listen<ExitEvent>('job-exit', (e) => cb(e.payload))
 
+/** Where the last picker landed, so the next one opens there.
+ *
+ *  Without a `defaultPath` the native dialog opens wherever the OS decides,
+ *  which in a packaged build is the install directory — never a useful place to
+ *  start. Remembering one location across every picker matches how these are
+ *  actually used: MS data, library and results for a given experiment normally
+ *  live near each other.
+ *
+ *  Kept in localStorage rather than component state so it survives a restart,
+ *  same as the form parameters.
+ */
+const LAST_DIR_KEY = 'pioneerConsole.lastDir'
+
+function lastDir(): string | undefined {
+  try {
+    return localStorage.getItem(LAST_DIR_KEY) || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Remember where a pick landed. Files remember their parent folder. */
+function rememberDir(picked: string, isDirectory: boolean): void {
+  const sep = picked.includes('\\') && !picked.includes('/') ? '\\' : '/'
+  const dir = isDirectory ? picked : picked.slice(0, picked.lastIndexOf(sep))
+  if (!dir) return
+  try {
+    localStorage.setItem(LAST_DIR_KEY, dir)
+  } catch {
+    /* private mode / quota — the dialog just opens at the OS default */
+  }
+}
+
 /** Native folder picker. Returns null when the user cancels. */
 export async function pickFolder(title: string): Promise<string | null> {
-  const picked = await open({ directory: true, multiple: false, title })
-  return typeof picked === 'string' ? picked : null
+  const picked = await open({ directory: true, multiple: false, title, defaultPath: lastDir() })
+  if (typeof picked !== 'string') return null
+  rememberDir(picked, true)
+  return picked
 }
 
 /** FASTA picker. Returns [] when cancelled. */
@@ -80,9 +115,12 @@ export async function pickFastaFiles(multiple = true): Promise<string[]> {
     multiple,
     title: multiple ? 'Choose FASTA files' : 'Choose a FASTA file',
     filters: [{ name: 'FASTA', extensions: ['fasta', 'fa', 'faa', 'fna', 'fas', 'gz'] }],
+    defaultPath: lastDir(),
   })
   if (!picked) return []
-  return Array.isArray(picked) ? picked : [picked]
+  const paths = Array.isArray(picked) ? picked : [picked]
+  if (paths.length) rememberDir(paths[0], false)
+  return paths
 }
 
 /** Native file picker restricted to `extensions`. */
@@ -96,6 +134,9 @@ export async function pickFile(
     multiple: false,
     title,
     filters: [{ name, extensions }],
+    defaultPath: lastDir(),
   })
-  return typeof picked === 'string' ? picked : null
+  if (typeof picked !== 'string') return null
+  rememberDir(picked, false)
+  return picked
 }
