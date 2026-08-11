@@ -46,6 +46,13 @@
   --pio-nav-hair: rgba(255,255,255,0.12);        /* dividers, control borders */
   --pio-nav-hair-strong: rgba(255,255,255,0.22); /* the resize grip */
   --pio-nav-veil: rgba(255,255,255,0.05);        /* faint raised surfaces */
+
+  /* The Run button, kept separate from --pio-accent because that one also
+     colours link text on white cards, where the button's colour would be
+     unreadable. Defaults to the accent pair with white text. */
+  --pio-run-from: var(--pio-accent-lift);
+  --pio-run-to: var(--pio-accent);
+  --pio-run-fg: #FFFFFF;
 }
 
 :root[data-theme='navy'] {
@@ -94,6 +101,13 @@
   --pio-nav-hair: rgba(0,0,0,0.16);
   --pio-nav-hair-strong: rgba(0,0,0,0.28);
   --pio-nav-veil: rgba(0,0,0,0.05);
+
+  /* Light chrome wants a light button: a rich tan carrying dark text, rather
+     than the dark accent used for links, which would sit heavily on the pale
+     sidebar. */
+  --pio-run-from: #C9A86A;
+  --pio-run-to: #B08F4E;
+  --pio-run-fg: #2A2418;
 }
 
 :root[data-theme='olive'] {

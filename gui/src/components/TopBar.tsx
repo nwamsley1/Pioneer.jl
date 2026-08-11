@@ -153,13 +153,13 @@ export function TopBar({
           borderRadius: 10,
           cursor: 'pointer',
           font: "700 13.5px 'IBM Plex Sans'",
-          color: '#FFFFFF',
-          background: 'linear-gradient(135deg,var(--pio-accent-lift),var(--pio-accent))',
+          color: 'var(--pio-run-fg)',
+          background: 'linear-gradient(135deg,var(--pio-run-from),var(--pio-run-to))',
           boxShadow: '0 4px 12px var(--pio-accent-shadow)',
           flex: 'none',
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFFFFF">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 4.5v15l13-7.5z" />
         </svg>
         {runLabel}

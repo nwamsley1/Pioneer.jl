@@ -12,7 +12,9 @@ export interface ThemeDef {
   label: string
   /** The swatch colour: the surface the theme is named after. */
   swatch: string
-  /** Accent, so the swatch can hint at what the Run button will look like. */
+  /** The Run button's colour, so the swatch previews it. Not always the
+   *  same as --pio-accent: the light palette needs a lighter button than the
+   *  accent it uses for link text. */
   accent: string
 }
 
@@ -20,7 +22,7 @@ export const THEMES: ThemeDef[] = [
   { id: 'charcoal', label: 'Charcoal', swatch: '#23262B', accent: '#52626F' },
   { id: 'navy', label: 'Navy', swatch: '#1B2A4A', accent: '#3E62A0' },
   { id: 'brown', label: 'Brown', swatch: '#2B2019', accent: '#A8703F' },
-  { id: 'sand', label: 'Sand', swatch: '#CDBE9C', accent: '#7A5B2E' },
+  { id: 'sand', label: 'Sand', swatch: '#CDBE9C', accent: '#B08F4E' },
   { id: 'olive', label: 'Olive', swatch: '#262B1C', accent: '#74853F' },
 ]
 
