@@ -2070,9 +2070,16 @@ function process_final_psms!(
     parsed_fname::String,
     ms_file_idx::Int64
 )
-    # Remove invalid peak areas
+    # Remove invalid peak areas. The NaN guard stays unconditionally.
+    #
+    # The `peak_area > 0` drop is disabled: it assumes every real precursor
+    # integrates to something positive, which holds in DIA but not in DDA.
+    # Under dynamic exclusion a precursor is fragmented in ~1 MS2 scan
+    # (measured: median n_scans = 1), so the MS2 trace has no extent and the
+    # trapezoid is exactly 0 — not NaN, not negative. That silently deleted
+    # ~96% of q<=0.01 identifications on DDA input. Needs to become a
+    # DDA/DIA-conditional switch rather than an unconditional filter.
     filter!(row -> !isnan(row.peak_area::Float32), psms)
-    filter!(row -> row.peak_area::Float32 > 0.0, psms)
     # Add columns
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
