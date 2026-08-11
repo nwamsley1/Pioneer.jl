@@ -1,0 +1,402 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,
+  frame=single,framesep=4pt,backgroundcolor=\color{gray!8},
+  keywordstyle=\color{blue!70!black},commentstyle=\color{green!40!black}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\file}[1]{\textcolor{blue!50!black}{\texttt{\small #1}}}
+
+\title{\bf MS1-Level Quantitation for DDA in Pioneer\\[2pt]
+\large Design-matrix deconvolution over MS1 scans: implementation and test plan}
+\author{Pioneer.jl --- \code{feat/dda-ms1-quant}}
+\date{2026-08-11}
+\begin{document}
+\maketitle
+
+\section{Why this is needed (measured, not assumed)}
+
+Two files of LFQBench PXD028735 (\code{LFQ\_Orbitrap\_DDA\_Condition\_\{A,B\}\_Sample\_Alpha\_01},
+QE HF-X, 150\,min, HYE mix) were converted and searched end-to-end with the
+unmodified DIA pipeline. Findings that motivate this work:
+
+\begin{itemize}[nosep]
+  \item \textbf{There is no MS2 chromatogram in DDA.} Across identified precursors,
+        \code{n\_scans} has median $1$, mean $1.001$, max $3$. Dynamic exclusion means a
+        precursor is fragmented essentially once.
+  \item \textbf{Integration therefore returns exactly zero.} Instrumenting the two filters in
+        \code{process\_final\_psms!} gave, per file:
+        \code{dropped\_nan=0}, \code{dropped\_nonpos=86{,}143}/\code{83{,}229},
+        \code{zero=86{,}143}/\code{83{,}229}, \code{neg=0}. Never NaN, never negative ---
+        the trapezoid over a single-point trace is identically $0$.
+  \item \textbf{That deleted 96\% of identifications.} Removing the \code{peak\_area > 0}
+        filter (commit \code{50fb3eb6a}) took precursor rows from $7{,}245$ to $176{,}617$
+        and recovered exactly the pre-integration $q\le0.01$ set ($89{,}019$ / $86{,}377$),
+        at unchanged decoy rate ($0.69\%$).
+  \item \textbf{The IDs are alive but unquantified.} $169{,}372/176{,}617$ rows
+        ($95.9\%$) still carry \code{peak\_area}~$=0$.
+\end{itemize}
+
+\noindent\textbf{Success metric for this work:} the fraction of $q\le0.01$ rows with a
+non-zero abundance goes from $\sim4\%$ to near $100\%$, and those abundances reproduce
+the known HYE ratios.
+
+\section{What exists in the tree today}
+
+\subsection{Dead code that cannot simply be revived}
+
+\file{IntegrateChromatogramsSearch/utils.jl} lines \textbf{1798--2049} contain the entire
+historical MS1 \code{build\_chromatograms} inside a \code{\#= ... =\#} block. It calls
+\code{buildDesignMatrixMS1!}, \code{MzGroupingMap}, and \code{distribute\_ms1\_coefficients!},
+which were added in \code{1fba8b915} (2025-09-23) to
+\code{CommonSearchUtils/buildDesignMatrix.jl}. \textbf{That file no longer exists and none of
+those three symbols have a live definition anywhere in \code{src/}.} The classic
+\code{selectRTIndexedTransitions!\,/\,matchPeaks!\,/\,buildDesignMatrix!\,/\,PrecursorMatch}
+machinery they were written against was replaced by the fused architecture. So this is a
+\emph{port}, not an uncomment.
+
+\subsection{Live machinery we will reuse}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Location} \\
+\midrule
+MS2 scan loop to mirror (\code{build\_chromatograms}) & \file{IntegrateChromatogramsSearch/utils.jl}~$\sim$1540--1795 \\
+RT-window candidate collection & \code{collect\_rt\_window\_precursors!} (\file{utils.jl:1397}) \\
+Per-scan m/z pre-correction & \code{prepare\_scan\_peaks!} \\
+Deconvolution solvers & \file{utils/SpectralDeconvolution/solveHuber.jl:268} etc. \\
+Solver selection & \code{calibrated\_chromatogram\_deconvolution\_solver} \\
+Sulfur-aware isotope splines & \code{IsotopeSplineModel} (\file{utils/isotopeSplines.jl:89}) \\
+Exact elemental isotopes & \code{getElementalComposition}, \code{getIsotopes}, \code{QRoots} (\file{utils/isotopes.jl}) \\
+MS1 mass-error model & \code{getMs1MassErrorModel} (\file{SearchTypes.jl:556}) \\
+Output row type & \code{MS1ChromObject} (\file{structs/ChromObject.jl:49}) \\
+Downstream integrator & \code{integrate\_chrom} (\file{integrate\_chrom.jl:530}) \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\noindent \code{MS1ChromObject} already has exactly the shape we need and requires no change:
+\begin{lstlisting}
+struct MS1ChromObject <: ChromObject
+    rt::Float32; intensity::Float32; m0::Bool
+    n_iso::UInt8; scan_idx::UInt32; precursor_idx::UInt32
+end
+\end{lstlisting}
+
+\noindent The MS1 mass-error model already calibrates well on DDA: bias $0.1$/$0.21$\,ppm,
+tolerance $\pm9.2$\,ppm, from $9{,}336$/$9{,}538$ residuals per file. We inherit it for free.
+
+\section{Design}
+
+\subsection{Shape of the problem}
+
+The MS1 loop is \emph{structurally simpler} than the MS2 one. In MS2, each precursor
+contributes tens of fragment rows and requires the fused match/score/build kernel. In MS1,
+each precursor contributes only its isotope envelope --- $M_0,M_1,M_2$ (optionally $M_3$).
+There is no fragment lookup, no NCE model, no spectral scoring. The design matrix is
+$\sim$3 non-zeros per column.
+
+For MS1 scan $s$ with observed peaks $y \in \mathbb{R}^{m}$:
+\[
+\min_{w \ge 0} \; \rho\!\left( H w - y \right), \qquad
+H_{ki} = \tau_i \cdot \alpha_{i,\,\iota(k)}
+\]
+where column $i$ is a candidate precursor, row $k$ an observed peak, $\alpha_{i,j}$ the
+predicted relative abundance of isotope $j$ for precursor $i$, $\iota(k)$ the isotope index
+matching peak $k$, and $\rho$ the existing Huber loss. $\tau_i \equiv 1$: \textbf{there is no
+quadrupole transmission term at MS1}, which is the main structural difference from the MS2 path.
+
+\subsection{Per-scan algorithm}
+
+\begin{enumerate}[nosep]
+  \item Iterate scans with \code{getMsOrder(spectra, i) == 1}. (File A has $26{,}352$ MS1 scans
+        vs $109{,}507$ MS2; the MS1 loop is $\sim4\times$ cheaper in scan count.)
+  \item \textbf{Candidate selection.} Reuse the RT window logic:
+        \code{rt\_tol\_local = irt\_tol / max(local\_slope, 0.01)}, then walk \code{rt\_index}
+        bins. \emph{This requires an MS1 variant of} \code{collect\_rt\_window\_precursors!}:
+        its current signature (\file{utils.jl:1397}) takes \code{quad\_transmission\_func},
+        \code{precursor\_transmission}, and \code{min\_fraction\_transmitted}, all of which
+        are meaningless without an isolation window. Simplest approach: add a method that
+        omits the quad filter rather than passing a \code{NoQuadModel} sentinel through the
+        existing one.
+  \item \textbf{Peak pre-correction} via \code{prepare\_scan\_peaks!} using the
+        \textbf{MS1} mass-error model (\code{getMs1MassErrorModel}), not the MS2 one. The
+        historical code got this wrong once already --- see \code{9b46e745a},
+        ``use MS1 mass error model in ScoreFragmentMatches! (replace MS2 model)''.
+  \item \textbf{Build $H$.} For each candidate $i$ and isotope $j \in \{0,1,2\}$, compute
+        $m/z_{ij} = (\text{mono\_mass}_i + j\cdot\Delta_{^{13}\mathrm{C}})/z_i + \text{proton}$,
+        binary-search the peak list within the MS1 ppm tolerance, and if matched write
+        $\alpha_{ij}$ into the sparse column. Reuse the cursor-based lookup primitives
+        already written for MS1 features (\code{\_ms1\_find\_peak\_from\_cursor} and friends,
+        \file{MainSearch/features.jl:295--360}) rather than writing new search code.
+  \item \textbf{Solve} with \code{solve\_deconvolution!} and the configured solver.
+  \item \textbf{Emit} one \code{MS1ChromObject} per candidate per scan (zero weight when unmatched),
+        exactly as the MS2 path emits \code{MS2ChromObject}.
+\end{enumerate}
+
+\subsection{Collinearity: grouping plus ridge}
+\label{sec:collin}
+
+At MS1 there is no fragmentation, so \textbf{two precursors with the same m/z and charge are
+perfectly collinear} and their individual weights are unidentifiable. This is not an edge case:
+Pioneer's decoys are sequence permutations, so a decoy has the \emph{same elemental
+composition} --- hence the same precursor m/z, the same charge, and the same isotope envelope ---
+as its target. \textbf{Every target/decoy pair is an exactly duplicated column.} Isobaric
+distinct peptides (the VISSIEQK/IVSSIEQK pair is a known case in this codebase) add more.
+
+\subsubsection*{Resolution: collapse exact duplicates, then let ridge handle the rest}
+
+Two mechanisms, covering two different failure modes. Neither substitutes for the other.
+
+\begin{description}[nosep]
+  \item[Exact grouping $\rightarrow$ exactly-collinear columns.] Before building $H$, group
+        candidates by the key \textbf{(rounded m/z, charge)}. Emit \emph{one representative
+        column per group} into the solve. After fitting, assign the group's weight back to every
+        member. No amount of regularisation can separate identical columns, so these must be
+        collapsed structurally.
+  \item[Light ridge $\rightarrow$ \emph{near}-collinear columns.] Distinct peptides within the
+        MS1 tolerance ($\pm9.2$\,ppm as fitted on this data) match the \emph{same} observed peaks,
+        so their columns share support and differ only slightly in their $\alpha$ ratios. These
+        are ill-conditioned but not identical; an $\ell_2$ penalty is the right tool.
+\end{description}
+
+\noindent\textbf{The grouping key must include charge.} The historical \code{MzGroupingMap}
+keyed on \emph{m/z alone}, rounded to $10^{-5}$. That is incorrect: two precursors with equal
+m/z but different charge have isotope spacing $\Delta = 1.00336/z$, so their $M_1$ and $M_2$
+rows fall at \emph{different} m/z. Their columns are not identical and merging them would
+introduce a real error. Keying on (m/z, charge) fixes this.
+
+\noindent\textbf{Rounding precision.} $10^{-5}$ is $\sim0.02$\,ppm at $m/z\,500$, far finer than
+the $\pm9.2$\,ppm MS1 tolerance, so it collapses \emph{only} exact duplicates --- which is
+precisely the intended division of labour above. Keep it.
+
+\subsubsection*{The group weight is duplicated, not split}
+
+After the solve, each member of a group receives the \textbf{full} group coefficient. This is
+what the historical \code{distribute\_ms1\_coefficients!} did:
+
+\begin{lstlisting}
+# Assign this coefficient to all precursors in the group
+for prec_id in mz_grouping.mz_group_to_precids[mz_group]
+    precursor_weights[prec_id] = group_coefficient
+end
+\end{lstlisting}
+
+\noindent Splitting the weight $n$ ways is the intuitive alternative and it is \emph{wrong}: it
+would systematically underestimate every real peptide in proportion to how many isobars happen
+to share its m/z --- an abundance bias driven by library composition rather than by chemistry.
+Duplication gives each candidate the correct conditional quantity, ``the abundance \emph{if}
+this is the peptide,'' and the MS2 identification decides which member that is. Only the
+identified member survives FDR, so the duplicated values on the others are never consumed.
+
+\noindent\emph{Consequence to keep in mind:} a target and its decoy receive identical MS1
+weights by construction. That is safe for FDR (the value cannot discriminate, so it introduces
+no artificial separation), but it does mean \textbf{MS1 quant can never contribute a
+discriminating feature to scoring.} It is a quantitation mechanism only.
+
+\subsection{Solver and regularisation}
+\label{sec:solver}
+
+\textbf{Decision: Huber with a light $\lambda$ for the initial implementation.} It is the only
+solver that already supports a ridge penalty --- \code{HuberSolver} carries \code{lambda} and
+\code{reg\_type}, and \code{L2Norm} is implemented (\code{getRegL2} returns $2\lambda$,
+\file{solveHuber.jl:36}).
+
+Note the MS2 chromatogram path currently runs \emph{unregularised}:
+\begin{lstlisting}
+function default_chromatogram_integration_huber_solver()
+    return HuberSolver(300.0f0,  # delta
+                       0.0f0,    # lambda (no regularization)
+                       ..., NoNorm())
+\end{lstlisting}
+so the MS1 path needs its own solver instance with $\lambda>0$ and \code{L2Norm()} rather than
+reusing the MS2 default.
+
+\textbf{Gap to close later:} \code{OLSSolver} and \code{PoissonMMSolver} are empty singletons
+(\code{struct OLSSolver <: DeconvolutionSolver end}) with no penalty term at all, so
+``ridge + OLS'' and ``ridge + PMM'' do not currently exist. Adding an $\ell_2$ term to both,
+following the pattern already in \file{solveHuber.jl}, is a small but real piece of work.
+Sequencing: \textbf{Huber+ridge first, get MS1 quant working end-to-end, then add ridge to
+OLS/PMM and compare all three} (test T7). Carry $\lambda$ as a parameter on the MS1 path from
+the start so no plumbing changes when the other two solvers gain it.
+
+\subsection{Isotope abundances: splines vs.\ exact composition}
+\label{sec:iso}
+
+Both are live in the tree.
+
+\begin{description}[nosep]
+  \item[Sulfur-aware averagine splines.] \code{iso\_splines(S, I, mono\_mass)}
+        (\file{isotopeSplines.jl:89}), Goldfarb et al.\ 2018. Indexed by \emph{sulfur count} and
+        isotope index. Note this is \emph{not} plain averagine: sulfur is the dominant deviation
+        from averagine at $M_2$ (via $^{34}$S at $4.25\%$), and it is already corrected for.
+        \code{sulfur\_count} is carried per precursor in the library
+        (\code{getSulfurCount}, \file{precursors.jl:81}). $O(1)$ spline evaluation; already used
+        in the MS2 hot path and by \code{collect\_rt\_window\_precursors!}.
+  \item[Exact elemental composition.] \code{getElementalComposition(seq)} +
+        \code{getIsotopes(comp, roots, npeaks, charge, id)} using \code{QRoots}
+        (\file{utils/isotopes.jl}). Exact, but: (i) it needs the formula per precursor, and
+        (ii) \textbf{\code{mod\_to\_composition} currently contains exactly one entry},
+        \code{"ox" => Composition(0,-1,0,1,0)}. Any other modification would be silently
+        mis-composed. Extending that table is required before this path is trustworthy.
+\end{description}
+
+\noindent\textbf{Recommendation: start with the sulfur-aware splines}, for three reasons:
+they are already validated in this codebase, they cost nothing extra per scan, and the
+$M_0{:}M_1{:}M_2$ ratios they produce are accurate to well under the noise of a single MS1 scan
+for tryptic peptides once sulfur is accounted for. \textbf{But make the abundance source a
+function argument, not a hard-coded call}, so the exact path can be swapped in and A/B'd on the
+same data without touching the loop. Test~T3 below is designed to measure whether it matters.
+
+\section{Where it plugs into the pipeline}
+
+MS1 deconvolution runs inside \code{IntegrateChromatogramsSearch}, alongside the existing MS2
+extraction, producing a second chromatogram table. Then:
+
+\begin{enumerate}[nosep]
+  \item Both tables feed \code{integrate\_chrom}. \code{avg\_cycle\_time} is already computed
+        \emph{per trace} as \code{(rt\_last - rt\_first)/N} (\file{utils.jl:209}), so irregular
+        DDA sampling needs no change --- and MS1 sampling is far more regular than MS2.
+  \item \code{peak\_area} for a DDA run is taken from the MS1 trace. The MS2 trace is retained
+        for its existing role in scoring/MBR.
+  \item The \code{peak\_area > 0} filter, currently disabled outright, becomes the intended
+        DDA/DIA switch: with MS1 quant supplying real areas, a zero area again means something.
+\end{enumerate}
+
+\noindent\textbf{Integration width.} A separate but adjacent question. The candidate-inclusion rule
+is scan-centric and symmetric --- precursor $i$ enters scan $s$'s solve iff
+$|RT(s) - RT_{\text{pred}}(i)| \le$ \code{rt\_tol\_local}, anchored on \emph{library-predicted}
+iRT, not on the observed best scan. \code{irt\_tol} measures iRT prediction error and is
+acquisition-independent, so it carries over from DIA unchanged. At MS2 in DDA the $1.3$\,Th
+isolation window prunes candidates hard; \textbf{at MS1 there is no such pruning, so
+\code{rt\_tol} alone bounds the design-matrix width.} Expect materially wider matrices at MS1 and
+budget for it (\S\ref{sec:risk}).
+
+\section{Test and validation plan}
+
+Staged so each step is falsifiable before the next is built.
+
+\begin{description}
+  \item[T0 --- Golden regression (must run first).] The MS1 path must be inert for DIA. Run the
+        existing Olsen Exploris and MTAC 3P configs before and after; precursor counts,
+        q-values, and \code{peak\_area} must be \emph{bit-identical}. Gate the whole MS1 path
+        behind a flag so this is guaranteed by construction, and verify rather than assume.
+
+  \item[T1 --- Single-precursor sanity.] Pick $\sim$20 high-confidence HUMAN precursors from
+        \code{dda\_run4\_nofilter}. For each, dump the MS1 XIC and check by eye:
+        (i) is there a peak, (ii) does its apex sit at the MS2 detection RT, (iii) is the width
+        physically plausible ($\sim$10--30\,s for a 150\,min gradient). \emph{This is the
+        ``do the chromatograms make sense'' step and it gates everything after it.}
+
+  \item[T2 --- Envelope consistency.] For matched precursors, compare observed
+        $M_1/M_0$ and $M_2/M_0$ against predicted. Systematic deviation indicates a wrong
+        abundance model or a mass-tolerance problem; scatter indicates interference.
+        Reuses \code{ms1\_m1\_to\_m0\_ratio} / \code{ms1\_m1\_to\_m0\_pred}, which the feature
+        code already computes.
+
+  \item[T3 --- Splines vs.\ exact composition.] With the abundance source parameterised, run both
+        on the same file and compare T2 residuals and final CV. \textbf{Pre-registered decision
+        rule:} adopt exact composition only if it measurably improves envelope residuals
+        \emph{and} the \code{mod\_to\_composition} table has been extended to cover every mod in
+        the HYE library. Otherwise keep splines.
+
+  \item[T4 --- Coverage.] Fraction of $q\le0.01$ rows with \code{peak\_area}~$>0$.
+        Baseline today: $4.1\%$. Target: $>90\%$.
+
+  \item[T5 --- Accuracy and precision on the full A/B set.] Convert the remaining 22
+        Condition A/B files, then evaluate: (i) log-ratio distributions per species against the
+        known HYE design --- HUMAN centred at $0$, YEAST and ECOLI at their design ratios;
+        (ii) CV within the $4$ replicates of each sample group (Alpha/Beta/Gamma), which gives
+        a precision estimate independent of the fold-change check.
+
+  \item[T6 --- External comparator.] Sage on the same files (already at
+        \code{\textasciitilde/Projects/Sage}) for ID count and quant accuracy. Compare with MBR
+        off on both sides for an apples-to-apples result.
+
+  \item[T7 --- Solver comparison (deferred).] After Huber+ridge is working end-to-end and an
+        $\ell_2$ term has been added to \code{OLSSolver} and \code{PoissonMMSolver}, compare all
+        three on identical input at matched $\lambda$. Metrics: envelope residual (T2), coverage
+        (T4), replicate CV and fold-change accuracy (T5). Poisson is a priori attractive here
+        because MS1 peak intensities are closer to counting statistics than the heavy-tailed
+        interference Huber was chosen to resist, but this is a hypothesis to test, not an
+        assumption to build on.
+
+  \item[T8 --- $\lambda$ sensitivity.] Sweep the ridge penalty over $\sim$3--4 decades on one
+        file. Expect a plateau; pick from the middle of it rather than the optimum, and record
+        the curve so the choice is auditable. A sharp optimum would itself be a warning that the
+        problem is more ill-conditioned than \S\ref{sec:collin} assumes.
+\end{description}
+
+\subsection{Disk budget for T5}
+22 further raws at $\sim$3.7\,GB $=$ $\sim$81\,GB; only $\sim$77\,GB is free. Arrow output is
+$\sim$430\,MB/file ($\sim$12$\times$ smaller), so \textbf{convert-and-delete each raw in turn};
+the full converted set is only $\sim$10\,GB. Alternatively reclaim from the $56.8$\,GB of
+\code{RegressionTestsLite} run outputs.
+
+\section{Risks and things that could invalidate this}
+\label{sec:risk}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Design-matrix width at MS1.} With no isolation-window pruning, every library
+        precursor within \code{rt\_tol} of the scan is a candidate. Against a 5.25M-precursor
+        library this could be far larger than the MS2 case. Mitigation: restrict columns to the
+        \emph{passing} precursor set (the same \code{precursors\_passing} the MS2 path already
+        uses) --- roughly $10^5$ rather than $10^7$. Must be measured early, not assumed.
+  \item \textbf{Group weights are not per-precursor abundances.} Stated in \S3.3. If
+        apportionment cannot be made principled, MS1 quant is really
+        ``abundance of this m/z group'', which is honest but must be labelled as such.
+  \item \textbf{MS1 interference in a complex background.} HYE at $150$\,min is dense; co-eluting
+        isobars are common. T2 measures this directly.
+  \item \textbf{Splines wrong for modified peptides.} Splines are indexed by mass and sulfur only.
+        A heavily modified peptide's envelope may deviate. T3 is the check.
+  \item \textbf{DIA regression.} Any change to shared code (e.g.\ \code{collect\_rt\_window\_precursors!})
+        risks the DIA path. T0 guards this; prefer adding methods over editing existing ones.
+\end{enumerate}
+
+\section{Open questions for review}
+\label{sec:open}
+
+\textbf{Resolved since the first draft:} group-weight apportionment (\S\ref{sec:collin} ---
+collapse exact (m/z, charge) duplicates to one column, duplicate the weight back to all members,
+never split) and solver choice (\S\ref{sec:solver} --- Huber + light ridge now, OLS/PMM ridge
+later). Charge is no longer a separate question: it is part of the grouping key.
+
+\begin{enumerate}[nosep]
+  \item \textbf{Number of isotopes.} $M_0..M_2$, or include $M_3$ for heavier precursors?
+        More isotopes give more rows per column (better conditioning) but more interference.
+        Suggest starting at $M_0..M_2$ and testing $M_3$ as a variant under T2.
+  \item \textbf{Should decoys be deconvolved at all?} Given \S\ref{sec:collin}, every decoy is an
+        exact duplicate of its target and gets collapsed into the same column anyway --- so
+        including them costs almost nothing after grouping. The question is now mainly whether
+        carrying them buys anything. Leaning: keep them, since grouping has made them cheap.
+  \item \textbf{Does MS2 quant stay?} Proposal is to keep the MS2 trace for scoring/MBR and take
+        \code{peak\_area} from MS1 in DDA mode. Confirm.
+  \item \textbf{Where does the DDA/DIA switch live?} A config flag, or inferred from the data
+        (e.g.\ variable \code{centerMz} across MS2 scans, which is already how DDA is detectable
+        --- see the \code{cycle\_idx} collapse)? Inference is more convenient but a silent mode
+        switch on a heuristic is a debugging hazard.
+\end{enumerate}
+
+\section{Proposed milestones}
+
+\begin{enumerate}[nosep]
+  \item Flag-gated skeleton + MS1 variant of \code{collect\_rt\_window\_precursors!}; T0 green.
+  \item (m/z, charge) grouping + representative-column selection; assert one column per distinct
+        key and that every target/decoy pair collapses.
+  \item Design-matrix build with spline abundances; log matrix dimensions per scan (risk 1).
+  \item Solve with Huber + \code{L2Norm} light $\lambda$; emit \code{MS1ChromObject};
+        distribute weights back to group members. T1 chromatogram inspection.
+        \textbf{Review gate.}
+  \item Wire into \code{integrate\_chrom}; T2, T4, T8.
+  \item T3 spline-vs-exact A/B.
+  \item Convert remaining 22 files; T5, T6.
+  \item \emph{Deferred:} add $\ell_2$ to \code{OLSSolver} / \code{PoissonMMSolver}; T7.
+\end{enumerate}
+
+\end{document}
