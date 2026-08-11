@@ -44,7 +44,6 @@ import {
   type LogLine,
   type ModEntry,
   type PathInfo,
-  type PioneerInfo,
   type SearchParams,
 } from './lib/types'
 import {
@@ -181,7 +180,6 @@ export default function App() {
   // derive-from-core-count branch below unreachable.
   const [threads, setThreads] = useState(0)
   const [maxThreads, setMaxThreads] = useState(8)
-  const [pioneer, setPioneer] = useState<PioneerInfo | null>(null)
   const [pioneerError, setPioneerError] = useState('')
 
   const [jsonOpen, setJsonOpen] = useState(false)
@@ -241,9 +239,13 @@ export default function App() {
       })
       .catch(() => setThreads((t) => (t > 0 ? t : 1)))
 
+    // Resolve at startup purely to surface a failure: pioneerError blocks the
+    // Run button with the resolver's own message ("SearchDIA not found in ...,
+    // looked for bin/SearchDIA and the pioneer wrapper"), which is more use than
+    // the detail this used to print at the bottom of every page.
     backend
       .pioneerInfo()
-      .then(setPioneer)
+      .then(() => setPioneerError(''))
       .catch((e) => setPioneerError(String(e)))
   }, [])
 
@@ -1018,19 +1020,6 @@ export default function App() {
               />
             )}
 
-            {pioneer && (
-              <div
-                style={{
-                  marginTop: 18,
-                  fontSize: 11.5,
-                  color: '#98A2B3',
-                  fontFamily: "'IBM Plex Mono'",
-                }}
-                title={pioneer.home}
-              >
-                Pioneer: {pioneer.source} · {pioneer.executables.join(', ') || 'wrapper only'}
-              </div>
-            )}
           </div>
         </div>
 
