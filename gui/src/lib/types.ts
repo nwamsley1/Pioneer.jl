@@ -1,3 +1,5 @@
+import { modEntry } from './koinaMods'
+
 export type CommandId = 'searchdia' | 'buildspeclib' | 'convertraw'
 
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
@@ -145,8 +147,10 @@ export const BUILD_DEFAULTS: BuildParams = {
   addDecoys: true,
   includeContaminants: true,
   predictFragments: true,
-  variableMods: [{ pattern: 'M', label: 'Oxidation', name: 'Unimod:35', mass: '15.99491' }],
-  fixedMods: [{ pattern: 'C', label: 'Carbamidomethyl', name: 'Unimod:4', mass: '57.021464' }],
+  // Built from the catalogue so the starting rows are exactly what the picker
+  // would add; hand-written copies drifted (Oxidation was 15.99491).
+  variableMods: [modEntry('altimeter', 35)],
+  fixedMods: [modEntry('altimeter', 4)],
 }
 
 /** ConvertRAW is a .NET program driven entirely by CLI flags — there is no

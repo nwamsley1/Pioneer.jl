@@ -25,7 +25,8 @@ import {
   SEARCH_OWNED_PATHS,
   type Json,
 } from './lib/config'
-import { MOD_PRESETS, makeFastaRow, presetRegex } from './lib/fasta'
+import { makeFastaRow, presetRegex } from './lib/fasta'
+import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
 import { generateRunName } from './lib/names'
 import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
 import {
@@ -45,6 +46,7 @@ import {
   type ModEntry,
   type PathInfo,
   type SearchParams,
+  predictionModelById,
 } from './lib/types'
 import {
   calibrationNote,
@@ -515,8 +517,41 @@ export default function App() {
   const onParam = (key: string, value: string) => {
     if (isSearch) setSearch((p) => ({ ...p, [key]: value }))
     else if (isConvert) setConvert((p) => ({ ...p, [key]: value }))
+    else if (key === 'predictionModel') switchModel(value)
     else setBuild((p) => ({ ...p, [key]: value }))
     setRunError('')
+  }
+
+  /** Modification support is per model, so switching models can strand entries
+   *  the new model would have Koina reject. Keep what we can — a modification
+   *  the new model knows on a site it does not is moved to its first allowed
+   *  site — and drop only what it has no entry for at all. */
+  const switchModel = (modelId: string) => {
+    const label = predictionModelById(modelId).label
+    const retarget = (mods: ModEntry[]): { kept: ModEntry[]; note: string } => {
+      const kept: ModEntry[] = []
+      const moved: string[] = []
+      const dropped: string[] = []
+      for (const m of mods) {
+        const def = findMod(modelId, m.name)
+        if (!def) {
+          dropped.push(m.label || m.name)
+        } else if (siteAllowed(def, m.pattern)) {
+          kept.push(m)
+        } else {
+          moved.push(`${def.label} to ${def.sites[0]}`)
+          kept.push({ ...m, pattern: def.sites[0] })
+        }
+      }
+      const parts: string[] = []
+      if (dropped.length) parts.push(`removed ${dropped.join(', ')}`)
+      if (moved.length) parts.push(`moved ${moved.join(', ')}`)
+      return { kept, note: parts.length ? `${label}: ${parts.join('; ')}.` : '' }
+    }
+    const f = retarget(build.fixedMods)
+    const v = retarget(build.variableMods)
+    setModNote({ fixed: f.note, variable: v.note })
+    setBuild((p) => ({ ...p, predictionModel: modelId, fixedMods: f.kept, variableMods: v.kept }))
   }
 
   const onToggle = (key: string) => {
@@ -658,22 +693,28 @@ export default function App() {
     setRunError('')
   }
 
-  const addMod = (kind: 'fixed' | 'variable', preset: string) => {
-    if (!preset) return
-    const def = MOD_PRESETS[preset] ?? MOD_PRESETS.custom
+  const addMod = (kind: 'fixed' | 'variable', unimod: string) => {
+    if (!unimod) return
     const key = modKey(kind)
     setBuild((p) => {
-      const exists = p[key].some(
-        (m) => (m.name && m.name === def.name) || (m.pattern === def.pattern && m.label === def.label),
-      )
-      if (exists) {
+      const def = modsForModel(p.predictionModel).find((d) => d.unimod === Number(unimod))
+      if (!def) return p
+      if (p[key].some((m) => unimodId(m.name) === def.unimod)) {
         setModNote((n) => ({ ...n, [kind]: `${def.label} is already in the list.` }))
         return p
       }
       setModNote((n) => ({ ...n, [kind]: '' }))
       return {
         ...p,
-        [key]: [...p[key], { pattern: def.pattern, label: def.label, name: def.name, mass: def.mass }],
+        [key]: [
+          ...p[key],
+          {
+            pattern: def.sites[0],
+            label: def.label,
+            name: `Unimod:${def.unimod}`,
+            mass: String(def.mass),
+          },
+        ],
       }
     })
     setRunError('')

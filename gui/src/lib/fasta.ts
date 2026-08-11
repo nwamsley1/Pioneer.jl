@@ -1,11 +1,12 @@
-/** FASTA header presets and modification presets.
+/** FASTA header presets.
  *
- *  Ported from `presetDefs` / `detectPreset` / `deriveName` / `matchPreset` /
- *  `modPresetDefs` in the design. The UniProt regexes are byte-identical to the
+ *  Ported from `presetDefs` / `detectPreset` / `deriveName` / `matchPreset` in
+ *  the design. The UniProt regexes are byte-identical to the
  *  ones Pioneer's own `GetBuildLibParams` template emits, so the default row
  *  produces exactly the config Pioneer would have written itself.
  */
-import type { FastaEntry, HeaderPresetId, HeaderRegex, ModEntry } from './types'
+import { KOINA_MODS, unimodId } from './koinaMods'
+import type { FastaEntry, HeaderPresetId, HeaderRegex } from './types'
 
 export const HEADER_PRESETS: Record<HeaderPresetId, { label: string } & HeaderRegex> = {
   uniprot: {
@@ -98,57 +99,18 @@ export function makeFastaRow(path: string): FastaEntry {
 
 export { regexOf as presetRegex }
 
-export const MOD_PRESETS: Record<string, ModEntry & { menuLabel: string }> = {
-  carbamidomethyl: {
-    pattern: 'C',
-    label: 'Carbamidomethyl',
-    name: 'Unimod:4',
-    mass: '57.021464',
-    menuLabel: 'Carbamidomethyl (C) · +57.02',
-  },
-  oxidation: {
-    pattern: 'M',
-    label: 'Oxidation',
-    name: 'Unimod:35',
-    mass: '15.994915',
-    menuLabel: 'Oxidation (M) · +15.99',
-  },
-  acetylk: {
-    pattern: 'K',
-    label: 'Acetyl',
-    name: 'Unimod:1',
-    mass: '42.010565',
-    menuLabel: 'Acetyl (K) · +42.01',
-  },
-  phospho: {
-    pattern: 'STY',
-    label: 'Phospho',
-    name: 'Unimod:21',
-    mass: '79.966331',
-    menuLabel: 'Phospho (STY) · +79.97',
-  },
-  deamidation: {
-    pattern: 'NQ',
-    label: 'Deamidation',
-    name: 'Unimod:7',
-    mass: '0.984016',
-    menuLabel: 'Deamidation (NQ) · +0.98',
-  },
-  tmt6: {
-    pattern: 'K',
-    label: 'TMT6plex',
-    name: 'Unimod:737',
-    mass: '229.162932',
-    menuLabel: 'TMT6plex (K) · +229.16',
-  },
-  custom: { pattern: '', label: '', name: '', mass: '', menuLabel: 'Custom…' },
-}
-
-/** The human label for a Unimod accession, when we know it. */
+/** The human label for a Unimod accession, when we know it.
+ *
+ *  Looks across every model's catalogue rather than the selected model's, so a
+ *  config naming a modification the current model cannot predict still shows
+ *  its name — ModTable needs that to say what it is rejecting.
+ */
 export function unimodLabel(name: string): string {
-  for (const k of Object.keys(MOD_PRESETS)) {
-    const d = MOD_PRESETS[k]
-    if (d.name && d.name === name) return d.label
+  const id = unimodId(name)
+  if (id === null) return ''
+  for (const mods of Object.values(KOINA_MODS)) {
+    const hit = mods.find((m) => m.unimod === id)
+    if (hit) return hit.label
   }
   return ''
 }

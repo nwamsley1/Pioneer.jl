@@ -3,7 +3,8 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { HEADER_PRESETS, MOD_PRESETS } from '../lib/fasta'
+import { HEADER_PRESETS } from '../lib/fasta'
+import { findMod, modsForModel, siteAllowed, siteOptions, unimodId } from '../lib/koinaMods'
 import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
@@ -78,6 +79,8 @@ const removeBtn = (onClick: () => void, title: string, width?: number): React.Re
 function ModTable({
   kind,
   mods,
+  modelId,
+  modelLabel,
   note,
   onField,
   onRemove,
@@ -85,6 +88,8 @@ function ModTable({
 }: {
   kind: 'fixed' | 'variable'
   mods: ModEntry[]
+  modelId: string
+  modelLabel: string
   note: string
   onField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemove: (kind: 'fixed' | 'variable', idx: number) => void
@@ -98,6 +103,14 @@ function ModTable({
     boxSizing: 'border-box',
     ...extra,
   })
+
+  // Label, accession and mass are all determined by the chosen modification, so
+  // they are shown rather than edited. Only the site is a real choice.
+  const readOnly = (extra: React.CSSProperties): React.CSSProperties =>
+    cell({ background: '#F7F8FA', color: '#667085', ...extra })
+
+  const available = modsForModel(modelId)
+  const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
     <>
@@ -115,39 +128,90 @@ function ModTable({
       </div>
       {MOD_HEADERS}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} data-key={`${kind}Mods`}>
-        {mods.map((m, i) => (
-          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              className="pio-input"
-              value={m.pattern}
-              onChange={(e) => onField(kind, i, 'pattern', e.target.value)}
-              placeholder={kind === 'fixed' ? 'C' : 'M'}
-              style={cell({ width: 52, flex: 'none', padding: '8px 7px', font: "13px 'IBM Plex Mono'", textAlign: 'center' })}
-            />
-            <input
-              className="pio-input"
-              value={m.label}
-              onChange={(e) => onField(kind, i, 'label', e.target.value)}
-              placeholder={kind === 'fixed' ? 'Carbamidomethyl' : 'Oxidation'}
-              style={cell({ flex: 1, minWidth: 0, font: "12.5px 'IBM Plex Sans'" })}
-            />
-            <input
-              className="pio-input"
-              value={m.name}
-              onChange={(e) => onField(kind, i, 'name', e.target.value)}
-              placeholder={kind === 'fixed' ? 'Unimod:4' : 'Unimod:35'}
-              style={cell({ width: 120, flex: 'none', font: "12px 'IBM Plex Mono'" })}
-            />
-            <input
-              className="pio-input"
-              value={m.mass}
-              onChange={(e) => onField(kind, i, 'mass', e.target.value)}
-              placeholder={kind === 'fixed' ? '57.021464' : '15.99491'}
-              style={cell({ width: 96, flex: 'none', padding: '8px 8px', font: "12px 'IBM Plex Mono'", textAlign: 'right' })}
-            />
-            {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
-          </div>
-        ))}
+        {mods.map((m, i) => {
+          // A config loaded from disk can name a modification this model does
+          // not accept. Keep the row and flag it rather than dropping data the
+          // user did not ask us to touch.
+          const def = findMod(modelId, m.name)
+          const bad = def === null || !siteAllowed(def, m.pattern)
+          const warn = bad
+            ? `${modelLabel} does not accept ${m.label || m.name || 'this modification'}${
+                def ? ` on ${m.pattern}` : ''
+              }. Koina will reject the build.`
+            : undefined
+          return (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
+              {def ? (
+                <select
+                  className="pio-input"
+                  value={m.pattern}
+                  onChange={(e) => onField(kind, i, 'pattern', e.target.value)}
+                  style={cell({
+                    width: 52,
+                    flex: 'none',
+                    padding: '8px 4px',
+                    font: "13px 'IBM Plex Mono'",
+                    textAlign: 'center',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
+                  })}
+                >
+                  {/* A stored pattern outside the model's sites still needs an
+                      option, or the select would silently show a different one. */}
+                  {!siteAllowed(def, m.pattern) && <option value={m.pattern}>{m.pattern || '—'}</option>}
+                  {siteOptions(def).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div
+                  style={readOnly({
+                    width: 52,
+                    flex: 'none',
+                    padding: '8px 4px',
+                    font: "13px 'IBM Plex Mono'",
+                    textAlign: 'center',
+                    borderColor: '#B45309',
+                    color: '#B45309',
+                  })}
+                >
+                  {m.pattern || '—'}
+                </div>
+              )}
+              <div
+                style={readOnly({
+                  flex: 1,
+                  minWidth: 0,
+                  font: "12.5px 'IBM Plex Sans'",
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
+                })}
+              >
+                {def ? def.label : m.label || 'Not supported by this model'}
+              </div>
+              <div style={readOnly({ width: 120, flex: 'none', font: "12px 'IBM Plex Mono'" })}>
+                {m.name || '—'}
+              </div>
+              <div
+                style={readOnly({
+                  width: 96,
+                  flex: 'none',
+                  padding: '8px 8px',
+                  font: "12px 'IBM Plex Mono'",
+                  textAlign: 'right',
+                })}
+              >
+                {m.mass || '—'}
+              </div>
+              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
+            </div>
+          )
+        })}
       </div>
       {mods.length === 0 && (
         <div style={{ fontSize: 12, color: '#98A2B3', padding: '4px 0' }}>
@@ -175,9 +239,10 @@ function ModTable({
         }}
       >
         <option value="">+ Add {kind} modification…</option>
-        {Object.entries(MOD_PRESETS).map(([id, def]) => (
-          <option key={id} value={id}>
-            {def.menuLabel}
+        {available.map((d) => (
+          <option key={d.unimod} value={String(d.unimod)} disabled={inList.has(d.unimod)}>
+            {d.label} ({d.sites.join('')}) · {d.mass >= 0 ? '+' : '−'}
+            {Math.abs(d.mass).toFixed(2)}
           </option>
         ))}
       </select>
@@ -782,6 +847,8 @@ export function BuildSpecLibForm({
         <ModTable
           kind="fixed"
           mods={params.fixedMods}
+          modelId={params.predictionModel}
+          modelLabel={selectedModel.label}
           note={modNote.fixed}
           onField={onModField}
           onRemove={onRemoveMod}
@@ -791,6 +858,8 @@ export function BuildSpecLibForm({
         <ModTable
           kind="variable"
           mods={params.variableMods}
+          modelId={params.predictionModel}
+          modelLabel={selectedModel.label}
           note={modNote.variable}
           onField={onModField}
           onRemove={onRemoveMod}
