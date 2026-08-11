@@ -88,13 +88,29 @@ end
 # Predict libraries
 ##########################################
 
-# Build a tiny Prosit library and search it with low memory thresholds
-#maybe_run("BuildSpecLib") do
-#    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
-#end
 # Build a tiny Altimeter library
 maybe_run("BuildSpecLib") do
     Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+end
+
+# Build the same library through the Prosit (InstrumentAgnosticModel) path.
+#
+# This is not redundant with the Altimeter target. Prosit returns scalar intensities
+# rather than spline coefficients, so buildPionLib produces a StandardFragmentLookup
+# (ConstantType) where Altimeter produces a SplineFragmentLookup, and no spline knots
+# are written. Different concrete type, so every method downstream of a fragment
+# getter specialises differently -- the same trap documented for the
+# ChainedVector/Primitive split below, which measured a 43% gap in Pioneer-owned
+# methods when only one arm was precompiled.
+#
+# Same FASTA and m/z window as the Altimeter fixture, so the two are directly
+# comparable. Measured locally: 117s to build (about half the Altimeter target,
+# since there are no spline coefficients to fit), and searching it recovers 1,707
+# precursors / 855 protein groups against Altimeter's 1,822 / 902 -- 89% Jaccard
+# overlap on precursors, which is the expected level of agreement between two
+# independent fragment predictors rather than a degenerate subset.
+maybe_run("BuildSpecLib_prosit") do
+    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end
 
 
@@ -156,6 +172,22 @@ maybe_run("SearchDIA") do
     )
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
+end
+
+# Search the Prosit library built above. Building it is not enough: the search side
+# reads a StandardFragmentLookup (ConstantType) where every other target reads a
+# SplineFragmentLookup, so without this the whole search pipeline stays uncompiled
+# for anyone using a Prosit library and re-JITs on first use.
+#
+# Regenerates the mixed-batch fixture rather than assuming the SearchDIA target ran,
+# so this target still works when invoked alone via the `cmd` filter. The function
+# rm -rf's its output first, so calling it twice is safe.
+maybe_run("SearchDIA_prosit") do
+    prepare_mixed_batch_ms_data(
+        joinpath(data_dir, "ecoli_test", "raw"),
+        joinpath(data_dir, "precompile", "ecoli_raw_mixed"),
+    )
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
 end
 
 
