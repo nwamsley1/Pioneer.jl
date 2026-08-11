@@ -67,6 +67,18 @@
   --pio-accent-shadow: rgba(46,77,126,0.28);
 }
 
+:root[data-theme='burgundy'] {
+  --pio-nav: #2E1A20;
+  --pio-nav-border: #1E1015;
+  --pio-accent: #8C3A4E;
+  --pio-accent-lift: #A8485E;
+  --pio-accent-soft: #C97186;
+  --pio-accent-softer: #E8AEBC;
+  --pio-accent-wash: rgba(140,58,78,0.22);
+  --pio-accent-wash-strong: rgba(140,58,78,0.28);
+  --pio-accent-shadow: rgba(140,58,78,0.32);
+}
+
 :root[data-theme='brown'] {
   --pio-nav: #2B2019;
   --pio-nav-border: #1B120D;

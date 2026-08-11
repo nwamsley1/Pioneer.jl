@@ -19,7 +19,7 @@ const drawerPill = (status: JobStatus | 'idle'): React.CSSProperties => {
     done: { background: 'rgba(16,185,129,0.18)', color: '#34D399' },
     queued: { background: 'rgba(245,158,11,0.14)', color: '#FCD9A0' },
   }
-  return { ...PILL, ...(byStatus[status] ?? { background: 'rgba(255,255,255,0.08)', color: '#9AA4B0' }) }
+  return { ...PILL, ...(byStatus[status] ?? { background: 'var(--pio-nav-veil)', color: 'var(--pio-nav-fg-dim)' }) }
 }
 
 const GHOST_BTN: React.CSSProperties = {
@@ -28,9 +28,9 @@ const GHOST_BTN: React.CSSProperties = {
   gap: 6,
   padding: '6px 12px',
   borderRadius: 8,
-  border: '1px solid rgba(255,255,255,0.18)',
+  border: '1px solid var(--pio-nav-hair-strong)',
   background: 'none',
-  color: '#C8D0DA',
+  color: 'var(--pio-nav-fg)',
   font: "600 12px 'IBM Plex Sans'",
   cursor: 'pointer',
 }
@@ -126,10 +126,10 @@ export function LogDrawer({
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'ns-resize',
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--pio-nav-veil)',
         }}
       >
-        <div style={{ width: 42, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.24)' }} />
+        <div style={{ width: 42, height: 4, borderRadius: 2, background: 'var(--pio-nav-hair-strong)' }} />
       </div>
 
       <div
@@ -138,7 +138,7 @@ export function LogDrawer({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 18px',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
+          borderBottom: '1px solid var(--pio-nav-veil)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -146,7 +146,7 @@ export function LogDrawer({
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: '#C8D0DA',
+              color: 'var(--pio-nav-fg)',
               maxWidth: 420,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -220,7 +220,7 @@ export function LogDrawer({
           position: 'relative',
           overflow: 'hidden',
           height: 5,
-          background: 'rgba(255,255,255,0.14)',
+          background: 'var(--pio-nav-hair)',
           flex: 'none',
         }}
       >
@@ -236,7 +236,7 @@ export function LogDrawer({
           overflowY: 'auto',
           padding: '14px 18px',
           font: "12.5px/1.65 'IBM Plex Mono'",
-          color: '#AEC2E6',
+          color: 'var(--pio-nav-fg)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
@@ -246,7 +246,7 @@ export function LogDrawer({
           // so they can be recalled, but not the output, which is far too large
           // for localStorage. Say so rather than showing an empty pane that looks
           // like a bug.
-          <span style={{ color: '#6E7E97', fontStyle: 'italic' }}>
+          <span style={{ color: 'var(--pio-nav-fg-faint)', fontStyle: 'italic' }}>
             Output is not kept between sessions — this run's parameters were
             restored from history.
             {targetInfo === null

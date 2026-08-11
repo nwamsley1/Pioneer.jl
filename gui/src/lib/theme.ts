@@ -5,7 +5,7 @@
  *  so a failed restore lands on it rather than on an unstyled shell.
  */
 
-export type ThemeId = 'navy' | 'brown' | 'sand' | 'olive' | 'charcoal'
+export type ThemeId = 'charcoal' | 'navy' | 'burgundy' | 'brown' | 'sand' | 'olive'
 
 export interface ThemeDef {
   id: ThemeId
@@ -21,6 +21,7 @@ export interface ThemeDef {
 export const THEMES: ThemeDef[] = [
   { id: 'charcoal', label: 'Charcoal', swatch: '#23262B', accent: '#52626F' },
   { id: 'navy', label: 'Navy', swatch: '#1B2A4A', accent: '#3E62A0' },
+  { id: 'burgundy', label: 'Burgundy', swatch: '#2E1A20', accent: '#A8485E' },
   { id: 'brown', label: 'Brown', swatch: '#2B2019', accent: '#A8703F' },
   { id: 'sand', label: 'Sand', swatch: '#CDBE9C', accent: '#B08F4E' },
   { id: 'olive', label: 'Olive', swatch: '#262B1C', accent: '#74853F' },
