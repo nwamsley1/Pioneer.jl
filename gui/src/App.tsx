@@ -38,6 +38,7 @@ import {
   type FastaEntry,
   type HeaderPresetId,
   type Job,
+  type JobSnapshot,
   type JobStatus,
   type LogLine,
   type ModEntry,
@@ -61,6 +62,62 @@ import {
 } from './lib/validate'
 
 const PERSIST_KEY = 'pioneerConsole.v2'
+
+/** Finished runs, kept across sessions so their parameters can be recalled.
+ *
+ *  Separate key from the form draft so a corrupt or oversized history cannot
+ *  take the working parameters down with it.
+ *
+ *  Parameters only — no log output. A single SearchDIA log is megabytes, and
+ *  localStorage is a low-single-digit-megabyte budget shared with the draft; a
+ *  handful of runs would evict everything. Restored entries therefore show an
+ *  empty log, which is why the drawer says so rather than looking broken.
+ */
+const HISTORY_KEY = 'pioneerConsole.history.v1'
+const HISTORY_LIMIT = 100
+
+/** What survives a restart. A subset of Job: the identity, the outcome, and the
+ *  form state needed to put the run back on screen. */
+interface PersistedRun {
+  id: string
+  cmd: CommandId
+  title: string
+  target: string
+  threads: number
+  status: JobStatus
+  snapshot: JobSnapshot
+}
+
+function loadHistory(): Job[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    if (!raw) return []
+    const saved = JSON.parse(raw) as PersistedRun[]
+    if (!Array.isArray(saved)) return []
+    return saved
+      .filter((r) => r && r.id && r.snapshot && r.snapshot.cmd)
+      .map((r) => ({
+        ...r,
+        logLines: [],
+        failMsg: '',
+        paramsJson: '',
+        // Never used: Run always builds a fresh invocation from the form. Present
+        // only because Job requires it.
+        invocation: { kind: 'paramsFile' as const, json: '' },
+        viewerPaths:
+          r.snapshot.cmd === 'searchdia'
+            ? {
+                results: r.snapshot.search.results,
+                msData: r.snapshot.search.msData,
+                library: r.snapshot.search.library,
+              }
+            : null,
+        paramsPath: '',
+      }))
+  } catch {
+    return []
+  }
+}
 
 const TITLES: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
@@ -113,7 +170,7 @@ export default function App() {
   const [runError, setRunError] = useState('')
   const [modNote, setModNote] = useState({ fixed: '', variable: '' })
 
-  const [jobs, setJobs] = useState<Job[]>([])
+  const [jobs, setJobs] = useState<Job[]>(loadHistory)
   const [viewJobId, setViewJobId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
@@ -227,6 +284,28 @@ export default function App() {
     stashedDraft.current = null
     setInspectingJobId(null)
   }, [])
+
+  useEffect(() => {
+    const finished = jobs.filter(
+      (j) => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled',
+    )
+    // Keep the most recent HISTORY_LIMIT. Older entries fall off the front, so a
+    // long-running session cannot grow the stored blob without bound.
+    const keep = finished.slice(-HISTORY_LIMIT).map<PersistedRun>((j) => ({
+      id: j.id,
+      cmd: j.cmd,
+      title: j.title,
+      target: j.target,
+      threads: j.threads,
+      status: j.status,
+      snapshot: j.snapshot,
+    }))
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(keep))
+    } catch {
+      /* quota — history is a convenience, and the draft lives under its own key */
+    }
+  }, [jobs])
 
   // ---- live path validation ---------------------------------------------
 

@@ -238,7 +238,18 @@ export function LogDrawer({
           wordBreak: 'break-word',
         }}
       >
-        {job ? job.logLines.map((l) => l.text).join('\n') : ''}
+        {job && job.logLines.length === 0 && status !== 'running' && status !== 'queued' ? (
+          // A run restored from a previous session: history keeps the parameters
+          // so they can be recalled, but not the output, which is far too large
+          // for localStorage. Say so rather than showing an empty pane that looks
+          // like a bug.
+          <span style={{ color: '#6E7E97', fontStyle: 'italic' }}>
+            Output is not kept between sessions — this run's parameters were
+            restored from history. Its results are still on disk at {job.target}.
+          </span>
+        ) : (
+          job ? job.logLines.map((l) => l.text).join('\n') : ''
+        )}
         {status === 'running' && (
           <span style={{ color: '#2E4D7E', animation: 'pio-blink 1s step-end infinite' }}>▋</span>
         )}
