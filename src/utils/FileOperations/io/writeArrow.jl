@@ -28,19 +28,29 @@ const _AUDIT_WRITE_LOCK = ReentrantLock()
 """
     OUTPUT_DICT_ENCODED_COLUMNS
 
-String columns in the final long-format outputs that are worth Arrow dictionary encoding. All are
-massively repeated: on a 6-file KEAP1 run `file_name` stores 6 distinct strings across 729,008 rows
-(21.6 MB for six values), `species` 3, `structural_mods` 1,367, `inferred_protein_group` 9,319,
-`accession_numbers` 11,392, `sequence` 107,461 -- 46.3 MB of string payload in total.
+Low-cardinality string columns in the final long-format outputs that are safe and worthwhile to Arrow
+dictionary-encode. Their distinct-value count is bounded by run structure regardless of library size:
+`file_name` (one per MS file), `species` (1-3), `structural_mods` (~hundreds of mod combinations) --
+all far below 32,767. On a 6-file KEAP1 run `file_name` stores 6 distinct strings across 729,008 rows
+(21.6 MB for six values), `species` 3, `structural_mods` 1,367; these massively-repeated columns give
+the bulk of the size win.
+
+⚠️ High-cardinality identity columns (`sequence`, `accession_numbers`, `inferred_protein_group`) are
+DELIBERATELY NOT encoded. The precursors_long output is written to a persistent `Arrow.Writer` one merge
+chunk at a time, and each chunk reads back as a `ChainedVector` -> multiple record batches. Arrow.jl locks
+a column's dictionary index integer type from the FIRST batch's cardinality
+(`PooledArray(...; compress=true)`); if a later batch pushes the cumulative unique count past that type's
+max it throws "fatal error writing arrow data" (e.g. Int16 -> >32,767). Because the chunks are
+protein-group-sorted, the first batch sees only a slice of peptides, so `sequence` (100k-300k+ uniques)
+locks `Int16` and overflows on the next batch. Keeping these three as plain strings is robust across yeast
+and human/isoform libraries; they compress the worst under dict-encoding anyway, so little size is lost.
 
 Encoding is applied only at the FINAL output write, not to intermediate files: a `DictEncoded` column
 reads back with a different Julia type, and confining it to the last write means no downstream code sees
-a type change. Verified on the 141-column precursors_long: 366.3 -> 313.9 MB (-14.3%), every column
-round-trips identically, and `DataFrame(Tables.columntable(...))` -- the access pattern qcPlots.jl uses
--- still yields `eltype == String`.
+a type change. `DataFrame(Tables.columntable(...))` -- the access pattern qcPlots.jl uses -- still yields
+`eltype == String` for both encoded and plain columns.
 """
-const OUTPUT_DICT_ENCODED_COLUMNS = (:file_name, :species, :accession_numbers,
-                                     :sequence, :structural_mods, :inferred_protein_group)
+const OUTPUT_DICT_ENCODED_COLUMNS = (:file_name, :species, :structural_mods)
 
 """
     dict_encode_output_columns(tbl, encode = OUTPUT_DICT_ENCODED_COLUMNS)
