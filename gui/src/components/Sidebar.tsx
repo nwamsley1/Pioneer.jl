@@ -15,7 +15,7 @@ const DOT_COLORS: Record<Job['status'], string> = {
   running: 'var(--pio-accent-soft)',
   done: '#10B981',
   failed: '#DC2626',
-  cancelled: '#6E7E97',
+  cancelled: 'var(--pio-nav-fg-faint)',
 }
 
 const CMD_TEXT: Record<CommandId, string> = {
@@ -83,11 +83,11 @@ function NavItem({
     ...(active
       ? {
           background: 'var(--pio-accent-wash)',
-          color: '#CBD8EE',
+          color: 'var(--pio-nav-fg)',
           paddingLeft: 14,
           boxShadow: 'inset 4px 0 0 var(--pio-accent-soft), inset 6px 0 0 rgba(10,18,35,0.6)',
         }
-      : { background: 'none', color: '#D2DAE6' }),
+      : { background: 'none', color: 'var(--pio-nav-fg)' }),
   }
   return (
     <button
@@ -108,7 +108,7 @@ function NavItem({
           }}
         >
           <span style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</span>
-          <span style={{ fontSize: 11, color: '#98A6BC' }}>{subtitle}</span>
+          <span style={{ fontSize: 11, color: 'var(--pio-nav-fg-dim)' }}>{subtitle}</span>
         </span>
       )}
       {!collapsed && (
@@ -117,8 +117,8 @@ function NavItem({
             marginLeft: 'auto',
             fontSize: 10,
             fontWeight: 600,
-            color: '#6E7E97',
-            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'var(--pio-nav-fg-faint)',
+            border: '1px solid var(--pio-nav-hair)',
             borderRadius: 5,
             padding: '2px 5px',
             whiteSpace: 'nowrap',
@@ -186,7 +186,7 @@ export function Sidebar({
         fontSize: 10.5,
         letterSpacing: '0.08em',
         textTransform: 'uppercase',
-        color: '#8593A8',
+        color: 'var(--pio-nav-fg-faint)',
         fontWeight: 600,
       }
 
@@ -198,7 +198,7 @@ export function Sidebar({
   const emptyHint: React.CSSProperties = {
     padding: '2px 10px 8px',
     fontSize: 11.5,
-    color: '#6B7A93',
+    color: 'var(--pio-nav-fg-faint)',
   }
 
   const renderRow = (j: Job, idx: number) => {
@@ -253,7 +253,7 @@ export function Sidebar({
                         style={{
                           fontSize: 12.5,
                           fontWeight: 600,
-                          color: '#E7EBF0',
+                          color: 'var(--pio-nav-fg)',
                           maxWidth: 120,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -272,13 +272,13 @@ export function Sidebar({
                             maxWidth: '100%',
                             marginTop: 5,
                             borderRadius: 2,
-                            background: 'rgba(255,255,255,0.16)',
+                            background: 'var(--pio-nav-hair)',
                           }}
                         >
                           <div style={barberStyle} />
                         </div>
                       ) : (
-                        <span style={{ fontSize: 10.5, color: '#98A6BC' }}>
+                        <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-dim)' }}>
                           {CMD_TEXT[j.cmd]} · {STATUS_TEXT[j.status]}
                         </span>
                       )}
@@ -292,7 +292,7 @@ export function Sidebar({
                         fontSize: 11,
                         fontWeight: 700,
                         fontFamily: "'IBM Plex Mono'",
-                        color: '#8593A8',
+                        color: 'var(--pio-nav-fg-faint)',
                         minWidth: 16,
                         textAlign: 'right',
                       }}
@@ -334,7 +334,7 @@ export function Sidebar({
                       background: 'none',
                       cursor: 'pointer',
                       padding: 3,
-                      color: '#8593A8',
+                      color: 'var(--pio-nav-fg-faint)',
                       display: 'flex',
                     }}
                   >
@@ -359,7 +359,7 @@ export function Sidebar({
         width: collapsed ? 66 : 252,
         flex: 'none',
         background: 'var(--pio-nav)',
-        color: '#E7EBF0',
+        color: 'var(--pio-nav-fg)',
         display: 'flex',
         flexDirection: 'column',
         borderRight: '1px solid var(--pio-nav-border)',
@@ -373,7 +373,7 @@ export function Sidebar({
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'flex-start',
           gap: 13,
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          borderBottom: '1px solid var(--pio-nav-veil)',
         }}
       >
         <PioneerLogo />
@@ -438,6 +438,38 @@ export function Sidebar({
         />
       </nav>
 
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          paddingTop: 2,
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            padding: '0 12px',
+          }}
+        >
+          <div style={sectionStyle}>Queue</div>
+          {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
+          {queue.map(renderRow)}
+          <div style={{ ...sectionStyle, marginTop: 12 }}>History</div>
+          {history.length === 0 && !collapsed && (
+            <div style={emptyHint}>No finished runs yet.</div>
+          )}
+          {history.map(renderRow)}
+        </div>
+      </div>
+
+
       {/* Collapsed to a single swatch by default. Four permanent circles is a lot
           of standing visual weight for something set once and rarely revisited,
           so the alternatives only appear once asked for. */}
@@ -471,7 +503,7 @@ export function Sidebar({
                   border:
                     themeOpen && active
                       ? '2px solid rgba(255,255,255,0.85)'
-                      : '1px solid rgba(255,255,255,0.22)',
+                      : '1px solid var(--pio-nav-hair-strong)',
                   boxShadow: themeOpen && active ? '0 0 0 2px rgba(0,0,0,0.35)' : 'none',
                   transition: 'border-color .12s',
                 }}
@@ -479,42 +511,10 @@ export function Sidebar({
             )
           })}
           {themeOpen && (
-            <span style={{ fontSize: 10.5, color: '#6B7A93', marginLeft: 2 }}>theme</span>
+            <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-faint)', marginLeft: 2 }}>theme</span>
           )}
         </div>
       )}
-
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          paddingTop: 2,
-        }}
-      >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            padding: '0 12px',
-          }}
-        >
-          <div style={sectionStyle}>Queue</div>
-          {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
-          {queue.map(renderRow)}
-          <div style={{ ...sectionStyle, marginTop: 12 }}>History</div>
-          {history.length === 0 && !collapsed && (
-            <div style={emptyHint}>No finished runs yet.</div>
-          )}
-          {history.map(renderRow)}
-        </div>
-      </div>
-
 
       <button
         type="button"
@@ -530,8 +530,8 @@ export function Sidebar({
           padding: 12,
           border: 'none',
           borderRadius: 10,
-          background: 'rgba(255,255,255,0.07)',
-          color: '#D5DEEC',
+          background: 'var(--pio-nav-veil)',
+          color: 'var(--pio-nav-fg)',
           cursor: 'pointer',
           font: "600 13.5px 'IBM Plex Sans'",
           letterSpacing: '0.01em',

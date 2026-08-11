@@ -1,11 +1,11 @@
 /** Chrome colour themes.
  *
  *  The palettes live in global.css as custom properties; this only decides which
- *  one is active. Navy is the default and carries no `data-theme` attribute, so
- *  a failed restore lands on the original look rather than an unstyled one.
+ *  one is active. Charcoal is the default and carries no `data-theme` attribute,
+ *  so a failed restore lands on it rather than on an unstyled shell.
  */
 
-export type ThemeId = 'navy' | 'brown' | 'olive' | 'charcoal'
+export type ThemeId = 'navy' | 'brown' | 'sand' | 'olive' | 'charcoal'
 
 export interface ThemeDef {
   id: ThemeId
@@ -17,10 +17,11 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
+  { id: 'charcoal', label: 'Charcoal', swatch: '#23262B', accent: '#52626F' },
   { id: 'navy', label: 'Navy', swatch: '#1B2A4A', accent: '#3E62A0' },
   { id: 'brown', label: 'Brown', swatch: '#2B2019', accent: '#A8703F' },
+  { id: 'sand', label: 'Sand', swatch: '#CDBE9C', accent: '#7A5B2E' },
   { id: 'olive', label: 'Olive', swatch: '#262B1C', accent: '#74853F' },
-  { id: 'charcoal', label: 'Charcoal', swatch: '#23262B', accent: '#52626F' },
 ]
 
 const THEME_KEY = 'pioneerConsole.theme'
@@ -32,14 +33,14 @@ export function loadTheme(): ThemeId {
   } catch {
     /* private mode — fall through to the default */
   }
-  return 'navy'
+  return 'charcoal'
 }
 
 export function applyTheme(id: ThemeId): void {
   const el = document.documentElement
-  // Navy is the :root default, so it is expressed by the absence of the
+  // Charcoal is the :root default, so it is expressed by the absence of the
   // attribute rather than by a rule of its own.
-  if (id === 'navy') el.removeAttribute('data-theme')
+  if (id === 'charcoal') el.removeAttribute('data-theme')
   else el.setAttribute('data-theme', id)
   try {
     localStorage.setItem(THEME_KEY, id)
