@@ -127,6 +127,7 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
  *  keys the form does not surface — is preserved as extras. */
 export const BUILD_OWNED_PATHS = [
   'library_path',
+  'library_params.prediction_model',
   'calibration_raw_file',
   'fasta_paths',
   'fasta_names',
@@ -176,6 +177,9 @@ export function buildLibJsonBase(s: BuildParams): Json {
   const files = s.fastaFiles.length ? s.fastaFiles : [makeFastaRow('/path/to/fasta/file.fasta')]
   return {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
+    // Only this one key is emitted under library_params; the rest of that block
+    // comes from a loaded config's extras, so deepMerge must not clobber it.
+    library_params: { prediction_model: s.predictionModel },
     // Pioneer's own template carries this key with an empty default, so emit it
     // either way rather than omitting it when unset.
     calibration_raw_file: s.calibrationFile.trim(),

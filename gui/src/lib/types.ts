@@ -63,9 +63,57 @@ export interface ModEntry {
   mass: string
 }
 
+/** A fragment-prediction model Pioneer can drive. Mirrors MODEL_CONFIGS in
+ *  src/Pioneer.jl; `peptideLength` is that entry's `peptide_length`, with null
+ *  meaning unconstrained.
+ *
+ *  Pioneer clamps the digest to this range and warns
+ *  (clamp_digest_length_to_model), so a mismatch is never silent — but the
+ *  warning only appears once the build is already running. Surfacing the range
+ *  here lets the user see it while they are still choosing. */
+export interface PredictionModel {
+  id: string
+  label: string
+  note: string
+  peptideLength: { min: number; max: number } | null
+}
+
+export const PREDICTION_MODELS: PredictionModel[] = [
+  {
+    id: 'altimeter',
+    label: 'Altimeter',
+    note: 'Spline coefficients across collision energies; instrument-aware.',
+    peptideLength: null,
+  },
+  {
+    id: 'prosit_2020_hcd',
+    label: 'Prosit 2020 HCD',
+    note: 'Fixed collision energy, no PTM support beyond the defaults.',
+    peptideLength: { min: 7, max: 30 },
+  },
+  {
+    id: 'prosit_2024_ptm',
+    label: 'Prosit 2024 PTM',
+    note: 'Fixed collision energy, HCD, with PTM support.',
+    peptideLength: { min: 7, max: 30 },
+  },
+  {
+    id: 'prosit_2025_40ptm',
+    label: 'Prosit 2025 40-PTM',
+    note: 'As 2024 PTM, with a wider (40) modification vocabulary.',
+    peptideLength: { min: 7, max: 30 },
+  },
+]
+
+export function predictionModelById(id: string): PredictionModel {
+  return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
+}
+
 export interface BuildParams {
   fastaFiles: FastaEntry[]
   libPath: string
+  /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
+  predictionModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -86,6 +134,7 @@ export interface BuildParams {
 export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
+  predictionModel: 'altimeter',
   calibrationFile: '',
   minLen: '7',
   maxLen: '40',

@@ -4,6 +4,7 @@
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS, MOD_PRESETS } from '../lib/fasta'
+import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -232,6 +233,22 @@ export function BuildSpecLibForm({
   onRemoveMod,
   onAddMod,
 }: Props) {
+  const selectedModel = predictionModelById(params.predictionModel)
+
+  // Mirrors clamp_digest_length_to_model on the Julia side. Shown only when the
+  // requested range actually exceeds the model's, so the note appears exactly
+  // when the build would narrow it. Non-numeric input is left to the field's own
+  // validation rather than second-guessed here.
+  const lengthClamp = (() => {
+    const lim = selectedModel.peptideLength
+    if (!lim) return null
+    const lo = Number(params.minLen)
+    const hi = Number(params.maxLen)
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null
+    if (lo >= lim.min && hi <= lim.max) return null
+    return { min: Math.max(lo, lim.min), max: Math.min(hi, lim.max) }
+  })()
+
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: '7px 4px',
@@ -674,6 +691,49 @@ export function BuildSpecLibForm({
       </section>
 
       <section style={CARD}>
+        <h2 style={{ ...H2, marginBottom: 5 }}>Fragment prediction</h2>
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
+          Which model predicts fragment intensities. All are served by Koina, so a
+          build needs network access.
+        </p>
+        <select
+          value={params.predictionModel}
+          onChange={(e) => onParam('predictionModel', e.target.value)}
+          style={{
+            width: '100%',
+            padding: '9px 36px 9px 11px',
+            border: '1px solid #CBD2DA',
+            borderRadius: 9,
+            font: "600 12.5px 'IBM Plex Sans'",
+            color: '#1D2939',
+            background:
+              "#FFFFFF url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 12px center",
+            backgroundSize: '16px 16px',
+            cursor: 'pointer',
+            outline: 'none',
+            appearance: 'none',
+            WebkitAppearance: 'none',
+          }}
+        >
+          {PREDICTION_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <div style={{ marginTop: 9, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+          {selectedModel.note}
+          {selectedModel.peptideLength && (
+            <>
+              {' '}
+              Accepts peptides {selectedModel.peptideLength.min}–
+              {selectedModel.peptideLength.max} residues.
+            </>
+          )}
+        </div>
+      </section>
+
+      <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Digestion</h2>
         </div>
@@ -692,6 +752,25 @@ export function BuildSpecLibForm({
           <NumField fieldKey="maxCharge" value={params.maxCharge} onChange={onParam} />
           <NumField fieldKey="maxVarMods" value={params.maxVarMods} onChange={onParam} />
         </div>
+        {lengthClamp && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FFF7E6',
+              border: '1px solid #FFE0A3',
+              fontSize: 11.5,
+              color: '#7A5A11',
+              lineHeight: 1.5,
+            }}
+          >
+            {selectedModel.label} accepts {selectedModel.peptideLength!.min}–
+            {selectedModel.peptideLength!.max} residues. Pioneer will narrow this
+            digest to {lengthClamp.min}–{lengthClamp.max} and log a warning;
+            peptides outside that range are not built.
+          </div>
+        )}
       </section>
 
       <section style={CARD}>
