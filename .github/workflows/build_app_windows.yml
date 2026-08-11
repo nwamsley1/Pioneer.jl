@@ -352,6 +352,7 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-us `
+            -sval `
             -out "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
 
