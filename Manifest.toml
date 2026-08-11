@@ -662,10 +662,10 @@ version = "2.31.0"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [[deps.FixedPointNumbers]]
-deps = ["Statistics"]
-git-tree-sha1 = "05882d6995ae5c12bb5f36dd2ed3f61c98cbb172"
+deps = ["Random", "Statistics"]
+git-tree-sha1 = "59af96b98217c6ef4ae0dfe065ac7c20831d1a84"
 uuid = "53c48c17-4a7d-5ca2-90c5-79b7896eea93"
-version = "0.8.5"
+version = "0.8.6"
 
 [[deps.Fontconfig_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Expat_jll", "FreeType2_jll", "JLLWrappers", "Libdl", "Libuuid_jll", "Zlib_jll"]

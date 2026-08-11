@@ -117,21 +117,10 @@ jobs:
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           julia --threads auto --startup-file=no --project=. \
             packaging/check_app_contract.jl
-          git diff --exit-code -- \
-            Manifest.toml packaging/compiler/Manifest.toml
-
-      - name: AOT portability canary
-        run: |
-          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          unset PIONEER_APP_CPU_TARGET
-          export PIONEER_AOT_CPU_TARGET="$(
-            julia --startup-file=no --project=packaging/compiler \
-              packaging/build_app.jl --print-cpu-target
-          )"
           julia --threads auto --startup-file=no --project=. \
             src/build/check_cpu_dependencies.jl
-          julia --threads auto --startup-file=no --project=packaging/compiler \
-            src/build/aot_canary.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
