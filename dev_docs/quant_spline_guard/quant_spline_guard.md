@@ -213,10 +213,26 @@ insert!(quant_splines, fpath, splinefit)
 ## Choosing the two constants
 
 `min_bin_occupancy` is a statistical choice. The median of `m` samples has
-standard error about `1.25 sigma / sqrt(m)`, so `m = 1` gives the raw value,
-`m = 10` roughly `0.4 sigma`, `m = 20` roughly `0.28 sigma`. The healthy files sit
-at 87. Somewhere in **10 to 20** buys most of the averaging without starving the
-bin count on mid-sized files.
+standard error about `1.25 sigma / sqrt(m)`, so `m = 1` gives the raw value and
+`m = 100` roughly `0.125 sigma`.
+
+**Chosen: `m = 100`.**
+
+Two consequences worth stating plainly, because neither is neutral:
+
+- **Healthy files rebin.** `rep1` has 8,705 PSMs. Today it gets 100 bins of 87; at
+  `m = 100` it gets 87 bins of 100. The spline is fitted to different points, so
+  quantification shifts slightly for every file, not only the degenerate ones.
+  Measured on the ecoli fixture: identifications are unchanged (3,427 precursors /
+  1,731 protein groups for Altimeter, 3,206 / 1,637 for Prosit, before and after),
+  while the median normalized abundance moves +1.2% (Altimeter) and -0.2%
+  (Prosit).
+- **Small files are no longer normalized.** With `m = 100` and a floor of 11 bins,
+  a file needs about 1,100 PSMs before it is corrected at all. That is the
+  intended behaviour -- below that there is not enough signal to estimate an
+  RT-dependent correction -- but it is a larger exclusion than `m = 10` would give,
+  and it is worth knowing that a sparse run now passes through uncorrected rather
+  than being corrected badly.
 
 `min_bins_for_spline` must be **strictly greater than `n_coeffs`**, not equal to
 it. Requiring `>= n_coeffs` would permit `K == 10`, which is precisely the square
@@ -227,9 +243,21 @@ is overdetermined rather than barely determined.
 *This corrects an error in the first draft of this note, which proposed
 `length(median_rts) >= n_coeffs` and would have permitted the crashing case.*
 
-With `m = 10` and `min_bins = 11`, a file needs about 110 PSMs to be normalized at
-all. `lowsignal` (14 PSMs) yields one bin, falls below the threshold, and is
-skipped -- the correct outcome.
+With `m = 100` and `min_bins = 11`, `lowsignal` (14 PSMs) yields zero bins, falls
+below the threshold, and is skipped -- the correct outcome. The emitted warning is:
+
+```
+Skipping quant normalization for lowsignal.arrow: 14 PSMs support only 0 RT
+bin(s) at >= 100 PSMs each, and a 10-coefficient spline needs at least 11.
+Abundances are left uncorrected and excluded from the cross-file median.
+```
+
+There is a second, quieter benefit to `m = 100`. The crash needs exactly
+`n_coeffs = 10` bins, which at `m = 100` means a file of 1,000-1,099 PSMs -- and
+every such file yields 10 bins, below the floor of 11, so it is skipped. No PSM
+count produces a bin count that is both at or above the floor and equal to
+`n_coeffs`, which makes the square-system case unreachable rather than merely
+unlikely. There is a unit test asserting exactly that.
 
 ## Required downstream change
 
@@ -301,18 +329,26 @@ change nothing.
 
 # Verification
 
-1. `SearchDIA_yeast` passes with the minimum-width change in place.
-2. **`rep1`/`rep2` splines are unchanged.** With `m = 10` and `N = 100`, a file of
-   8,705 PSMs still yields 100 bins of 87, so the binning is identical and the
-   fitted coefficients should match today's exactly. This is the property to be
-   strictest about: the change must not move results for files that are fine.
-3. Unit tests for `_occupancy_bins`: every bin at least `m`; sizes differ by at
-   most one; total coverage exact; empty result below `m`; single bin between `m`
-   and `2m`.
-4. A regression test fitting at `K = 9, 10, 11` asserting none throws, pinning the
-   square-system case.
-5. Ecoli searches (Altimeter and Prosit) produce unchanged precursor and
-   protein-group counts.
+Status as implemented:
+
+1. **`SearchDIA_yeast` passes** with the minimum-width change in place, emitting
+   the skip warning for `lowsignal.arrow`. Done.
+2. **Ecoli searches produce identical identifications.** Altimeter 3,427
+   precursors / 1,731 protein groups and Prosit 3,206 / 1,637, before and after.
+   Median normalized abundance moves +1.2% and -0.2% respectively -- expected,
+   since `m = 100` rebins the healthy files too. Done.
+3. **721 unit tests** in `test/UnitTests/test_quant_bin_occupancy.jl`: bin
+   invariants (occupancy floor, sizes within one, exact tiling, contiguity),
+   occupancy-limited counts, degenerate collapse, defensive parameters, and the
+   threshold's relationship to the crash. Done.
+4. **The crash is pinned by a test**, not just avoided: the suite asserts
+   `UniformSpline` throws `SingularException` at exactly `n_coeffs` points and
+   succeeds at one either side. If a future change removes the empty column, that
+   test fails loudly rather than leaving a threshold nobody can justify.
+
+Not done: a check that the `rep1`/`rep2` spline coefficients themselves move only
+as much as the rebinning explains. The identification counts being unchanged is
+good evidence but not proof.
 
 ---
 

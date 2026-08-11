@@ -16,40 +16,113 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    getQuantSplines(psms_paths, quant_col_name; N=100, spline_n_knots=7)
+Minimum PSMs per RT bin. A bin median is only meaningful when taken over enough
+values; the previous fixed-bin-count scheme let this fall to 1, at which point
+`median_rts` was just the sorted per-PSM retention times and the fitted
+correction was noise. See dev_docs/quant_spline_guard.
+"""
+const QUANT_MIN_BIN_OCCUPANCY = 100
+
+"""
+    _min_bins_for_spline(spline_n_knots) -> Int
+
+Fewest RT bins that may be handed to `UniformSpline`.
+
+Strictly greater than the coefficient count, not equal to it. `UniformSpline`'s
+design matrix has `n_knots + 3` columns of which the last can never hold a
+non-zero value, so at exactly `n_knots + 3` bins the system is square, `\\`
+dispatches to `lu`, and the empty column raises `SingularException`. One more bin
+makes it over-determined and `\\` takes the QR path instead.
+"""
+_min_bins_for_spline(spline_n_knots::Int) = spline_n_knots + 3 + 1
+
+"""
+    _occupancy_bins(n, min_occupancy, max_bins) -> Vector{UnitRange{Int}}
+
+Contiguous bin ranges over `n` RT-sorted rows, each holding at least
+`min_occupancy` rows, and at most `max_bins` bins.
+
+Rather than forming `max_bins` bins and merging the undersized ones pairwise,
+this computes how many bins the data can actually fill (`n ÷ min_occupancy`) and
+lays them out evenly -- the same outcome with no merge loop to get wrong. Bin
+sizes differ by at most one and every row is covered, unlike the previous
+`bin_stop = bin_idx * bin_size` scheme, which silently dropped the final
+`n mod max_bins` rows.
+
+Returns a single range when `n` supports only one bin, and an empty vector when
+`n < min_occupancy`; the caller treats both as "cannot fit a spline here".
+"""
+function _occupancy_bins(n::Int, min_occupancy::Int, max_bins::Int)
+    (n <= 0 || min_occupancy <= 0 || max_bins <= 0) && return UnitRange{Int}[]
+    n >= min_occupancy || return UnitRange{Int}[]
+    k = min(max_bins, fld(n, min_occupancy))
+    k <= 1 && return [1:n]
+    base, rem = divrem(n, k)
+    bins = Vector{UnitRange{Int}}(undef, k)
+    start = 1
+    @inbounds for i in 1:k
+        len = base + (i <= rem ? 1 : 0)
+        bins[i] = start:(start + len - 1)
+        start += len
+    end
+    return bins
+end
+
+"""
+    getQuantSplines(psms_paths, quant_col_name; N=100, spline_n_knots=7,
+                    min_bin_occupancy=QUANT_MIN_BIN_OCCUPANCY)
 
 Fit RT-dependent quantification splines for each MS file. For each Arrow file,
-bins PSMs by observed iRT, computes median log2-abundance per bin, and fits a
-`UniformSpline` mapping iRT -> median log2-abundance.
+bins PSMs by observed iRT into bins of at least `min_bin_occupancy` rows (at most
+`N` bins), computes median log2-abundance per bin, and fits a `UniformSpline`
+mapping iRT -> median log2-abundance.
 
-Returns `(splines_dict, (min_rt, max_rt))` where `splines_dict` maps file path
-to fitted spline, and the RT range spans all files.
+Files whose PSM count cannot support `_min_bins_for_spline(spline_n_knots)` such
+bins get no entry in the returned dictionary: they are left uncorrected and
+excluded from the cross-file median. `applyNormalization!` handles the absent key.
+
+Returns `(splines_dict, (min_rt, max_rt))` where `splines_dict` maps file path to
+fitted spline, and the RT range spans only the files that got one.
 """
 function getQuantSplines(psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
-    spline_n_knots::Int = 7)
+    spline_n_knots::Int = 7,
+    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY)
     quant_splines = Dictionary{String, UniformSpline}()
     min_rt, max_rt = typemax(Float32), typemin(Float32)
+    min_bins = _min_bins_for_spline(spline_n_knots)
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        N_sample = min(N, size(psms, 1))
         fast_df_sort!(psms, (:irt_obs,))
+        nprecs = size(psms, 1)
+
+        bins = _occupancy_bins(nprecs, min_bin_occupancy, N)
+        if length(bins) < min_bins
+            @user_warn "Skipping quant normalization for $(basename(fpath)): " *
+                       "$nprecs PSMs support only $(length(bins)) RT bin(s) at " *
+                       ">= $min_bin_occupancy PSMs each, and a " *
+                       "$(spline_n_knots + 3)-coefficient spline needs at least " *
+                       "$min_bins. Abundances are left uncorrected and excluded " *
+                       "from the cross-file median."
+            continue
+        end
+
+        # Only files that get a spline define the correction grid. A skipped file
+        # receives no correction, so widening the grid to its RT range would only
+        # extrapolate the surviving splines further than their data supports.
         if minimum(psms[!,:irt_obs]) < min_rt
             min_rt = minimum(psms[!,:irt_obs])
         end
         if maximum(psms[!,:irt_obs]) > max_rt
             max_rt = maximum(psms[!,:irt_obs])
         end
-        nprecs = size(psms, 1)
-        bin_size = nprecs ÷ N_sample
-        median_quant = zeros(Float64, N_sample)
-        median_rts = zeros(Float64, N_sample)
-        for bin_idx in range(1, N_sample)
-            bin_start = (bin_idx - 1) * bin_size + 1
-            bin_stop = bin_idx * bin_size
-            median_rts[bin_idx] = median(@view(psms[bin_start:bin_stop, :irt_obs]))
-            median_quant[bin_idx] = log2(median(@view(psms[bin_start:bin_stop, quant_col_name])))
+
+        median_quant = Vector{Float64}(undef, length(bins))
+        median_rts = Vector{Float64}(undef, length(bins))
+        for (i, b) in enumerate(bins)
+            median_rts[i] = median(@view(psms[b, :irt_obs]))
+            median_quant[i] = log2(median(@view(psms[b, quant_col_name])))
         end
 
         splinefit = UniformSpline(median_quant, median_rts, 3, spline_n_knots)
@@ -106,7 +179,15 @@ function applyNormalization!(
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
         norm_quant_col = Symbol(string(quant_col) * "_normalized")
-        correction_spline = corrections[fpath]
+        # getQuantSplines skips files that cannot support a spline, so this key may
+        # be absent. Emit the column unchanged rather than omitting it: downstream
+        # readers assume every file carries the same schema.
+        correction_spline = get(corrections, fpath, nothing)
+        if correction_spline === nothing
+            psms[!, norm_quant_col] = Float64.(psms[!, quant_col])
+            writeArrow(fpath, psms)
+            continue
+        end
         n = size(psms, 1)
         norm_vals = Vector{Float64}(undef, n)
         for i in range(1, n)

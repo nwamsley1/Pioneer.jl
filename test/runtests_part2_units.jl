@@ -58,6 +58,7 @@ include("./UnitTests/test_protein_model_fit.jl")
 include("./UnitTests/test_protein_mbr_features.jl")
 include("./UnitTests/test_protein_ambiguous_scoring.jl")
 include("./UnitTests/test_model_limits.jl")
+include("./UnitTests/test_quant_bin_occupancy.jl")
 include("./Routines/SearchDIA/SearchMethods/ProteinScoringSearch/test_global_protein_scoring.jl")
 
 # Coverage data is normally flushed to .cov files by an atexit hook
