@@ -1,63 +1,115 @@
 ---
-title: "Guarding `getQuantSplines` against unidentifiable RT-normalization fits"
+title: "RT-normalization spline fits: root cause and a minimum-occupancy binning guard"
 date: 2026-08-11
 ---
 
 # Summary
 
-`getQuantSplines` fits a 10-coefficient cubic spline per MS file, mapping observed
-iRT to median log2 abundance, and uses it to normalize quantification across runs.
-It applies no check that the file actually contains enough distinct retention
-times to identify such a spline.
+Two separate defects sit behind the `SingularException` that failed the
+`SearchDIA_yeast` snoop target.
 
-On files that do not, two things happen. Occasionally the least-squares solve
-throws `LinearAlgebra.SingularException` and kills the search. Far more often it
-returns silently, having fitted 10 parameters through a rank-5 system, and the
-"normalization" derived from it is noise applied to every precursor in that file.
+1. **A structural off-by-one in the spline design matrix.** `UniformSpline`
+   allocates `n_knots + 3 = 10` basis columns, but the tenth can never hold a
+   non-zero value. Every RT-normalization fit in Pioneer is therefore rank
+   deficient by at least one column -- including the healthy files with 8,700
+   PSMs. It throws only in the narrow case where the system happens to be square,
+   because that is the only case Julia routes through `lu`.
 
-The crash is how this was found. The silent case is the reason to fix it.
+2. **No minimum occupancy in the RT binning.** `N_sample = min(N, nprecs)` gives a
+   14-PSM file fourteen bins of one PSM each, so the "median per bin" is just the
+   raw value and the fitted correction is noise.
 
-**Recommendation:** decline to fit when the spline is not identifiable, skip
-normalization for that file, and say so in the log. Do not force a fit.
+The first explains the crash exactly. The second is the statistical defect, and is
+the one that silently damages results.
+
+**Recommendation:** fix the binning by minimum occupancy (merge undersized bins
+into their neighbour; if a single merged bin is still undersized, skip
+normalization for that file), and make the solve robust so a rank-deficient system
+can never throw. Treat the design-matrix off-by-one as a separate, carefully
+validated change.
 
 ---
 
 # How it surfaced
 
-A local `create_app` build of `feat/integ-minwidth5-order3-portable` failed in the
-`SearchDIA_yeast` snoop target:
+A local `create_app` build of `feat/integ-minwidth5-order3-portable` failed in
+`SearchDIA_yeast`:
 
 ```
 LinearAlgebra.SingularException(10)
-  MaxLFQSearch.jl:195  summarize_results!
-  normalizeQuant.jl:137  normalizeQuant
-  normalizeQuant.jl:55   getQuantSplines
+  MaxLFQSearch.jl:195   summarize_results!
+  normalizeQuant.jl:137 normalizeQuant
+  normalizeQuant.jl:55  getQuantSplines
   uniformBasisCubicSpline.jl:227  UniformSpline
 ```
 
-Three tests isolated the trigger:
+Bisected to a single change:
 
 | test | result |
 |---|---|
 | branch as-is | fails, `SingularException(10)` |
-| 3rd-order WH smoothing disabled (`WH_ORDER3_LAMBDA[] = 0`) | still fails, `SingularException(2)` |
+| 3rd-order WH smoothing disabled | still fails, `SingularException(2)` |
 | `feature/portable-packaging-phase1` (no integration changes) | **passes** |
-| branch with only `apex_padded ±2` reverted to `±1` | **passes** |
+| only `apex_padded +/-2` reverted to `+/-1` | **passes** |
 
-So the trigger is the minimum 5-scan integration width --- a two-line change to the
-boundary search in `getIntegrationBounds!`.
-
-It is worth being precise about what that means: the integration change did not
-introduce a defect in `normalizeQuant`. It perturbed quantification by a handful
-of PSMs on one file, and that was enough to tip an already-unidentifiable fit from
-"silently wrong" to "throws". Any change anywhere upstream of quantification can
-do the same.
+The trigger is the minimum 5-scan integration width. It did not introduce a defect
+in `normalizeQuant`; it perturbed quantification enough to move one file onto the
+one bin count that crashes.
 
 ---
 
-# What the data actually looks like
+# Root cause 1: a column that can never be filled
 
-Instrumenting the fit to report its inputs, on the three-file yeast fixture:
+`_build_numeric_design_matrix` allocates `n_cols = length(knots) + 3`. For each
+data point it finds `knot_idx` and writes four basis values into columns
+`knot_idx : knot_idx+3`.
+
+With `n_knots = 7`, knot indices run 1..7, so columns 1..10 are all *written*.
+But counting non-zeros over 100 evenly spaced points:
+
+| column | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | **10** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| non-zero rows | 17 | 33 | 50 | 65 | 66 | 65 | 50 | 33 | 17 | **0** |
+
+Column 10 is reached only by the single point at `t = max(t)`, where `u = 0`, and
+that basis function is zero at `u = 0`. So it is written, always with the value
+zero.
+
+The consequence is not data-dependent:
+
+| bins `K` | 8 | 9 | 10 | 12 | 20 | 50 | 100 |
+|---|---|---|---|---|---|---|---|
+| rank of `X` | 8 | 9 | 9 | 9 | 9 | 9 | 9 |
+| empty columns | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+
+**Rank 9 of 10 at every bin count, including 100.** Every quant-normalization
+spline Pioneer has ever fitted is rank deficient.
+
+## Why it usually does not throw
+
+Julia's `\` dispatches on shape. Non-square goes to QR, which returns a solution
+for a rank-deficient system without complaint. Square goes to `lu`, which raises
+`SingularException(k)` on a zero pivot at column `k`. Reproduced directly:
+
+```
+K=9   (X is  9x10, non-square -> qr)  -> OK
+K=10  (X is 10x10, SQUARE     -> lu)  -> SingularException(10)
+K=11  (X is 11x10, non-square -> qr)  -> OK
+```
+
+The `(10)` in the production stack trace is the index of the structurally empty
+column. The crash needs `K == n_coeffs` exactly -- a one-in-many coincidence that
+the integration change happened to land on.
+
+This also explains the `SingularException(2)` seen with 3rd-order smoothing
+disabled: a square system whose *second* column had no support, which happens when
+the bin centres are clustered away from that knot span.
+
+---
+
+# Root cause 2: no minimum bin occupancy
+
+Measured on the yeast fixture by instrumenting the fit:
 
 **With the minimum-width change (fails):**
 
@@ -75,63 +127,12 @@ Instrumenting the fit to report its inputs, on the three-file yeast fixture:
 | `rep1.arrow` | 8,634 | 100 | 86 | 100 | 19.448 |
 | `rep2.arrow` | 8,636 | 100 | 86 | 100 | 19.827 |
 
-In every case the spline has `n_coeffs = n_knots + 3 = 10` coefficients.
+`bin_size = 1`. The binning has collapsed: `median_rts` is not a set of bin
+medians, it is the sorted per-PSM iRTs. The averaging that makes this estimator
+meaningful on `rep1`/`rep2` (87 PSMs per bin) is entirely absent.
 
-Two observations:
-
-1. **The margin is four PSMs.** 18 passes, 14 throws. Nothing about the current
-   code makes 18 safe --- it is simply on the tolerable side of a cliff.
-
-2. **`bin_size = 1`.** The binning has collapsed entirely. `median_rts` is not a
-   set of bin medians; it is just the sorted per-PSM iRTs. The averaging that
-   makes this estimator sensible on `rep1`/`rep2` (87 PSMs per bin) is absent.
-
-`lowsignal` is in the fixture deliberately --- `snoop.jl` describes it as *"1 MB of
-void volume that yields zero PSMs... the only file that compiles the fallback
-paths."* It is a stand-in for a real user's failed run, and real users have those.
-
----
-
-# Why the fit is ill-posed
-
-`_setup_knots` places `n_knots = 7` knots uniformly across `[min(t), max(t)]`, and
-`_build_numeric_design_matrix` gives each row four non-zero entries in the columns
-of the cubic B-splines covering that point. A column is all-zero whenever no data
-point falls in its support.
-
-Measured directly on synthetic distributions matching the failing file's shape
-(14 points, span 0.851, `n_knots = 7`, so `X` is 14x10):
-
-| iRT distribution | rank of `X` | all-zero columns |
-|---|---|---|
-| evenly spaced, 14 points | 9 | 1 |
-| 12 clustered + 2 outliers | 6 | 2 |
-| 13 clustered + 1 outlier | 5 | 3 |
-| two tight clumps of 7 | 8 | 2 |
-
-**Every one of these is rank-deficient**, including the evenly-spaced case. Ten
-basis functions cannot be identified from fourteen points spanning 0.85 iRT units,
-however they are arranged. The system is underdetermined before any numerical
-question arises.
-
-Whether that surfaces as an exception depends on the shape of `X`. With more rows
-than columns, `\` takes a QR path that returns *a* solution for a rank-deficient
-system without complaining --- which is why none of the four synthetic cases above
-throws. The exception requires an additional condition that this analysis did not
-isolate; the observed stack goes through `lu`, which Julia selects for square
-systems, implying a file where `N_sample` lands exactly on `n_coeffs = 10`.
-
-**That uncertainty does not affect the recommendation, and is itself the point.**
-The crash is a narrow special case of a broad problem. Fixing only the crash would
-leave the common case --- a rank-5 fit accepted silently --- untouched.
-
----
-
-# The failure that matters
-
-When `\` does not throw, `getQuantSplines` returns a spline fitted through a
-rank-5-of-10 system. That spline is then used, in `getQuantCorrections`, on equal
-footing with the splines from `rep1` and `rep2`:
+That file's spline then enters `getQuantCorrections` weighted equally with files
+of 8,700 PSMs:
 
 ```julia
 for (key, spline) in pairs(quant_splines)
@@ -141,72 +142,101 @@ end
 median_quant = reshape(median(median_quant, dims = 1), (N,))
 ```
 
-The cross-file median that defines the normalization target is computed with the
-degenerate file weighted the same as files with 8,700 PSMs. Its spline is then
-also evaluated *outside* the 0.85-unit range it was fitted on --- `rt_grid` spans
-the union of all files' RT ranges, roughly 20 units --- where `UniformSpline` clamps
-to the endpoints. The correction it contributes is an extrapolated constant
-derived from noise.
-
-Then in `applyNormalization!`, every precursor in that file is scaled by it:
-
-```julia
-norm_vals[i] = 2^(log2(max(psms[i, quant_col], 0.0)) - hc)
-```
-
-So the cost of the missing guard is not primarily a crashed search. It is that
-low-signal files silently receive, and silently contribute, a meaningless
-RT-dependent abundance correction.
+and is evaluated across `rt_grid`, which spans the union of all files' RT ranges
+(~20 units) versus the 0.851 units it was fitted on. `UniformSpline` clamps
+outside its range, so the contribution is an extrapolated constant derived from
+noise -- both to the cross-file median every other file is corrected against, and
+to every precursor in that file via `applyNormalization!`.
 
 ---
 
-# Proposed guard
+# Proposed design
 
-## Identifiability check
+## Minimum occupancy with neighbour merging
+
+Replace "fixed number of bins" with "bins of at least `m` PSMs":
 
 ```julia
 """
-    _quant_spline_identifiable(median_rts, n_coeffs) -> Bool
+    _occupancy_bins(n, min_occupancy, max_bins) -> Vector{UnitRange{Int}}
 
-Whether a cubic spline with `n_coeffs` coefficients can be identified from these
-bin centres. Requires at least `n_coeffs` *distinct* retention times and a
-non-degenerate span; fewer distinct values than coefficients leaves at least one
-B-spline basis column with no support, so the least-squares system is rank
-deficient regardless of how the points are arranged.
+Contiguous bin ranges over `n` RT-sorted PSMs, each holding at least
+`min_occupancy` rows, and at most `max_bins` bins.
+
+Undersized bins are merged into their neighbour rather than kept, so the median
+per bin is always taken over at least `min_occupancy` values. Returns a single
+range covering everything when `n` cannot support two bins, and an empty vector
+when it cannot support even one -- the caller treats that as "do not normalize
+this file".
 """
-function _quant_spline_identifiable(median_rts::AbstractVector, n_coeffs::Int)
-    length(median_rts) >= n_coeffs || return false
-    length(unique(median_rts)) >= n_coeffs || return false
-    return (maximum(median_rts) - minimum(median_rts)) > 0
+function _occupancy_bins(n::Int, min_occupancy::Int, max_bins::Int)
+    n >= min_occupancy || return UnitRange{Int}[]
+    k = min(max_bins, n / min_occupancy |> floor |> Int)   # bins we can fill
+    k <= 1 && return [1:n]
+    base, rem = divrem(n, k)          # spread the remainder; sizes differ by <= 1
+    bins = Vector{UnitRange{Int}}(undef, k)
+    start = 1
+    for i in 1:k
+        len = base + (i <= rem ? 1 : 0)
+        bins[i] = start:(start + len - 1)
+        start += len
+    end
+    return bins
 end
 ```
+
+`k = n / min_occupancy` is the merge, expressed directly: rather than forming
+`N_sample` bins and merging the short ones pairwise, compute how many bins the
+data can fill and lay them out evenly. The result is the same and there is no
+iteration to get wrong.
 
 ## In `getQuantSplines`
 
 ```julia
-n_coeffs = spline_n_knots + 3
-if !_quant_spline_identifiable(median_rts, n_coeffs)
+bins = _occupancy_bins(nprecs, min_bin_occupancy, N)
+
+if length(bins) < min_bins_for_spline
     @user_warn "Skipping quant normalization for $(basename(fpath)): " *
-               "$(length(unique(median_rts))) distinct RT bins over a span of " *
-               "$(round(maximum(median_rts) - minimum(median_rts), digits=3)) " *
-               "cannot identify a $(n_coeffs)-coefficient spline. This file's " *
-               "abundances are left uncorrected and excluded from the cross-file median."
-    continue                      # no entry inserted for this file
+               "$nprecs PSMs support only $(length(bins)) RT bin(s) at >= " *
+               "$min_bin_occupancy PSMs each; a $(spline_n_knots + 3)-coefficient " *
+               "spline needs at least $min_bins_for_spline. Abundances are left " *
+               "uncorrected and excluded from the cross-file median."
+    continue
 end
+
+median_quant = [log2(median(@view psms[b, quant_col_name])) for b in bins]
+median_rts   = [median(@view psms[b, :irt_obs])             for b in bins]
 splinefit = UniformSpline(median_quant, median_rts, 3, spline_n_knots)
 insert!(quant_splines, fpath, splinefit)
 ```
 
-Skipping rather than fitting is deliberate. A file that cannot support the fit
-also cannot contribute usefully to a cross-file median; including a forced fit
-adds noise to the target that every *other* file is then corrected against.
+## Choosing the two constants
+
+`min_bin_occupancy` is a statistical choice. The median of `m` samples has
+standard error about `1.25 sigma / sqrt(m)`, so `m = 1` gives the raw value,
+`m = 10` roughly `0.4 sigma`, `m = 20` roughly `0.28 sigma`. The healthy files sit
+at 87. Somewhere in **10 to 20** buys most of the averaging without starving the
+bin count on mid-sized files.
+
+`min_bins_for_spline` must be **strictly greater than `n_coeffs`**, not equal to
+it. Requiring `>= n_coeffs` would permit `K == 10`, which is precisely the square
+case that throws. Until the design matrix is fixed this should be
+`n_coeffs + 1 = 11` at minimum, and more realistically `2 * n_coeffs` so the fit
+is overdetermined rather than barely determined.
+
+*This corrects an error in the first draft of this note, which proposed
+`length(median_rts) >= n_coeffs` and would have permitted the crashing case.*
+
+With `m = 10` and `min_bins = 11`, a file needs about 110 PSMs to be normalized at
+all. `lowsignal` (14 PSMs) yields one bin, falls below the threshold, and is
+skipped -- the correct outcome.
 
 ## Required downstream change
 
-`getQuantCorrections` iterates `pairs(quant_splines)` and needs no change --- a
-skipped file simply does not participate, which is the desired behaviour.
+`getQuantCorrections` iterates `pairs(quant_splines)` and needs no change; a
+skipped file simply does not participate.
 
-`applyNormalization!` does need one:
+`applyNormalization!` does:
 
 ```julia
 correction_spline = corrections[fpath]        # KeyError for a skipped file
@@ -217,64 +247,84 @@ becomes
 ```julia
 correction_spline = get(corrections, fpath, nothing)
 if correction_spline === nothing
-    # No spline for this file: copy the raw column through unchanged so the
-    # `_normalized` column exists with the same schema everywhere downstream.
-    psms[!, norm_quant_col] = Float64.(psms[!, quant_col])
+    psms[!, norm_quant_col] = Float64.(psms[!, quant_col])   # pass through unchanged
     writeArrow(fpath, psms)
     continue
 end
 ```
 
-Emitting the `_normalized` column unchanged, rather than omitting it, keeps the
-Arrow schema uniform across files --- downstream readers assume every file has it.
+Emitting the `_normalized` column unchanged rather than omitting it keeps the
+Arrow schema uniform, which downstream readers assume.
+
+## Making the solve robust
+
+Independently of the binning, the fit should not be able to throw on a
+rank-deficient system. The cheapest change is to stop letting shape decide the
+algorithm -- a pivoted QR handles both cases and returns a least-norm solution
+where a column has no support:
+
+```julia
+c = qr(basis.X, ColumnNorm()) \ sorted_u
+```
+
+This is behaviour-preserving for the overdetermined case all healthy files already
+take, and removes the square-system crash class entirely. It should go in
+regardless of which binning policy is adopted.
 
 ---
 
 # Alternatives considered
 
-**Fit with a penalty instead of skipping.** `UniformSplinePenalized` already
-exists and `_penalized_spline_system` supports a ridge term, so `H = X'X + lambdaD` is
-positive-definite and cannot be singular. This removes the crash but keeps the
-silent problem: it still produces a correction for a file with no information to
-justify one, and still lets that file into the cross-file median.
+**Fix the design matrix off-by-one.** The honest fix for root cause 1: the tenth
+column contributes nothing to fitted values anywhere on the evaluation domain
+(the spline clamps to `[first, last]`), so dropping it is equivalent in exact
+arithmetic and makes the system full rank. But `_coeffs_to_spline` and
+`_build_piecewise_matrix` both assume `n_knots + 3` coefficients, so this touches
+spline machinery used elsewhere -- including RT alignment and quad transmission.
+Worth doing, but as its own change with its own validation, not folded into a
+quantification fix.
 
-**Lower `spline_n_knots` adaptively for small files.** Reduces `n_coeffs` until
-identifiable. More faithful in principle, but it changes the estimator per file,
-so files are then normalized against a median assembled from splines of differing
-flexibility. Harder to reason about than declining.
+**Penalized fit (`UniformSplinePenalized`, lambda > 0).** Makes `H = X'X + lambda*D`
+positive definite so the solve cannot fail. Removes the crash but keeps the
+statistical problem: it still produces a correction for a file with no information
+to justify one, and still admits that file to the cross-file median.
 
-**Deduplicate identical median RTs.** Addresses only one of several ways the
-matrix loses rank (the failing file has 13 distinct values out of 14, so
-deduplication would remove exactly one point and change nothing).
+**Adaptive `spline_n_knots` per file.** Lower the knot count until the fit is
+identifiable. More faithful in principle, but files would then be normalized
+against a median assembled from splines of differing flexibility.
+
+**Deduplicate identical median RTs.** Addresses one narrow way rank is lost. The
+failing file has 13 distinct values out of 14, so this would remove one point and
+change nothing.
 
 ---
 
 # Verification
 
-1. `SearchDIA_yeast` passes with the minimum-width change in place --- the case that
-   currently fails.
-2. `rep1`/`rep2` splines are byte-identical to today's, confirming healthy files
-   are untouched. This matters: the guard must not perturb existing results.
-3. A unit test over the degenerate shapes in the rank table above, asserting the
-   guard declines and no exception escapes.
-4. The ecoli searches (which pass today, both Altimeter and Prosit) produce
-   unchanged precursor and protein-group counts.
-
-Point 2 is the one to be strict about. The purpose here is to stop normalizing
-files that cannot support it, not to change normalization for files that can.
+1. `SearchDIA_yeast` passes with the minimum-width change in place.
+2. **`rep1`/`rep2` splines are unchanged.** With `m = 10` and `N = 100`, a file of
+   8,705 PSMs still yields 100 bins of 87, so the binning is identical and the
+   fitted coefficients should match today's exactly. This is the property to be
+   strictest about: the change must not move results for files that are fine.
+3. Unit tests for `_occupancy_bins`: every bin at least `m`; sizes differ by at
+   most one; total coverage exact; empty result below `m`; single bin between `m`
+   and `2m`.
+4. A regression test fitting at `K = 9, 10, 11` asserting none throws, pinning the
+   square-system case.
+5. Ecoli searches (Altimeter and Prosit) produce unchanged precursor and
+   protein-group counts.
 
 ---
 
-# What this does not address
+# Not addressed here
 
-- **Why `bin_size` collapses to 1.** `N_sample = min(N, nprecs)` means a file with
-  14 PSMs gets 14 bins of one PSM each. The guard rejects the resulting fit, but
-  the binning logic is arguably wrong well before that point --- it should probably
-  require a minimum bin occupancy rather than a minimum bin count.
 - **Whether the minimum 5-scan integration width is correct.** It is the trigger,
-  not the defect, and it reduced `lowsignal` from 18 identified PSMs to 14. That
-  drop is worth understanding separately: widening the integration window should
-  not usually cost identifications.
-- **The `SingularException` special case.** The guard prevents it by rejecting the
-  fits that produce it, but the precise condition under which `\` throws rather
-  than silently returning a rank-deficient solution was not pinned down.
+  not the defect, but it reduced `lowsignal` from 18 identified PSMs to 14.
+  Widening an integration window should not usually cost identifications, and that
+  deserves its own look.
+- **Whether `N = 100` bins is right** for large files now that occupancy is the
+  binding constraint.
+- **The other `UniformSpline` callers.** The empty-column defect is in the shared
+  basis construction, so RT alignment and quad transmission fits are rank
+  deficient in the same way. None is known to have thrown, because none has hit
+  the square case -- but the fits are equally over-parameterised.
