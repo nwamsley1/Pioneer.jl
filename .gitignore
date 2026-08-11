@@ -2,7 +2,9 @@
 *.jl.cov
 *.jl.mem
 Manifest.toml
+!/Manifest.toml
 !src/build/aot_canary/Manifest.toml
+!packaging/compiler/Manifest.toml
 docs/Manifest.toml
 docs/build/
 data/ecoli_test/ecoli_test_results/

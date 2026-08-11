@@ -8,10 +8,11 @@
 # build remains the release gate.
 #
 # Run:
-#   julia --project=dev src/build/aot_canary.jl
+#   julia --project=packaging/compiler src/build/aot_canary.jl
 # Defaults to PackageCompiler's application target. Override when the full app
 # build uses a different target:
-#   PIONEER_AOT_CPU_TARGET='generic;haswell,-rdrnd' julia --project=dev src/build/aot_canary.jl
+#   PIONEER_AOT_CPU_TARGET='generic;haswell,-rdrnd' \
+#       julia --project=packaging/compiler src/build/aot_canary.jl
 
 using Libdl
 using PackageCompiler

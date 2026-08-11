@@ -3,9 +3,9 @@
 # `create_app` wraps every precompile statement in try/catch and skips anything that fails to parse,
 # resolve, or eval (PackageCompiler.jl, create_sysimg_object_file). A statements file can therefore
 # go 90% dead -- because a dependency bumped a version, or because Pioneer code moved -- and the
-# build stays green while shipping a binary that JIT-compiles at startup again. `Manifest.toml` is
-# gitignored, so CI resolves fresh dependency versions on every run and this drift is expected over
-# time, not hypothetical.
+# build stays green while shipping a binary that JIT-compiles at startup again. The committed root
+# `Manifest.toml` makes release resolution deterministic; this guard catches statement drift when
+# that lock or Pioneer code is deliberately updated.
 #
 # This replays the same parse -> eval pipeline and fails loudly when the survival rate drops. It is
 # the analogue of what b18ac0176 did for snoop.jl, which had the identical failure mode: a green

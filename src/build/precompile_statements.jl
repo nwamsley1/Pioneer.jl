@@ -1,5 +1,5 @@
-# GENERATED FILE -- do not hand-edit. Consumed by `create_app(...; precompile_statements_file=...)`
-# in the three .github/workflows/build_app_*.yml, and checked by src/build/check_statements.jl.
+# GENERATED FILE -- do not hand-edit. Consumed by packaging/build_app.jl through
+# `create_app(...; precompile_statements_file=...)` and checked by src/build/check_statements.jl.
 #
 # Why this exists
 # ---------------
@@ -410,7 +410,6 @@ precompile(Tuple{Base.Compiler.var"#inferiterate#abstract_iteration##0"{Type{Str
 precompile(Tuple{StaticArrays.var"##s25#88", Any, Any, Any})
 precompile(Tuple{typeof(Base.map), Type{StaticArrays.SOneTo{n} where n}, Tuple{StaticArraysCore.Dynamic, StaticArraysCore.Dynamic}})
 precompile(Tuple{Type{JSON.JSONReadStyle{JSON.Object{String, Any}, T, S} where S where T}, Nothing, StructUtils.DefaultStyle, Bool})
-precompile(Tuple{JSON.var"##s76#61", Vararg{Any, 5}})
 precompile(Tuple{typeof(Base.indexed_iterate), Tuple{Bool, Nothing}, Int64})
 precompile(Tuple{typeof(Base.indexed_iterate), Tuple{Bool, Nothing}, Int64, Int64})
 precompile(Tuple{JSON.var"##parse#52", Type{Base.Dict{String, Any}}, Nothing, StructUtils.DefaultStyle, Symbol, Base.Pairs{Symbol, Bool, Nothing, NamedTuple{(:jsonlines,), Tuple{Bool}}}, typeof(JSON.parse), Array{UInt8, 1}, Type{Any}})
