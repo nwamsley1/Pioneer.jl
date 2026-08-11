@@ -198,3 +198,54 @@ mod extension_tests {
         assert_eq!(extension_of(Path::new(".fasta")), "");
     }
 }
+
+#[cfg(test)]
+mod missing_path_tests {
+    use super::inspect;
+
+    /// A history entry can name a folder that has since been deleted, moved, or
+    /// that lives on an unmounted volume. `inspect` must report that plainly
+    /// rather than erroring: NotFound is the normal case here, not a fault.
+    #[test]
+    fn a_deleted_directory_reports_absent_without_an_error() {
+        let dir = std::env::temp_dir().join("pioneer_gui_missing_test_lib.poin");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let before = inspect(dir.to_str().unwrap());
+        assert!(before.exists, "fixture should exist before removal");
+        assert!(before.is_dir);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let after = inspect(dir.to_str().unwrap());
+        assert!(!after.exists, "a removed directory must report exists = false");
+        assert!(!after.is_dir);
+        assert!(
+            after.error.is_none(),
+            "NotFound is expected, not an error to surface: {:?}",
+            after.error
+        );
+        // The extension still parses, so the UI can keep describing what it was.
+        assert_eq!(after.extension, "poin");
+    }
+
+    #[test]
+    fn a_library_folder_stops_looking_like_one_when_emptied() {
+        let dir = std::env::temp_dir().join("pioneer_gui_emptied_lib.poin");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("precursors_table.arrow"), b"x").unwrap();
+        std::fs::write(dir.join("detailed_fragments.jls"), b"x").unwrap();
+        assert!(inspect(dir.to_str().unwrap()).is_pion_library);
+
+        // A folder that still exists but has lost its contents is the nastier
+        // case: the path resolves, so only the marker check catches it.
+        std::fs::remove_file(dir.join("precursors_table.arrow")).unwrap();
+        let after = inspect(dir.to_str().unwrap());
+        assert!(after.exists);
+        assert!(!after.is_pion_library, "an emptied folder must not pass as a library");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
