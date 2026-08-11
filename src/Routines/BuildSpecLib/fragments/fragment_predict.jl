@@ -66,7 +66,7 @@ The conversion needs per-fragment sulfur, computed on the fly from the precursor
 """
 struct AgnosticFragFilterCtx
     annotation_cache::Dict{String, PioneerFragAnnotation}
-    iso_splines::IsotopeSplineModel{40, Float32}
+    iso_splines::IsotopeSplineModel{Float32}
     sequences::Vector{String}
     mods::Vector{String}
     mods_to_sulfur_diff::Dict{String, Int8}
