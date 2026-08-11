@@ -158,9 +158,12 @@ function BuildSpecLib(params_path::String)
             # Fragment prediction workflow
             @user_info "Starting fragment prediction workflow..."
 
-            # Altimeter (SplineCoefficientModel) is the only supported fragment-prediction model.
+            # Fragment-prediction model: Altimeter (SplineCoefficientModel) by default;
+            # Prosit (prosit_2020_hcd, InstrumentAgnosticModel) selectable via config.
             model_timing = @timed begin
-                prediction_model = "altimeter"
+                prediction_model = String(get(_params.library_params, "prediction_model", "altimeter"))
+                haskey(MODEL_CONFIGS, prediction_model) || error(
+                    "Unknown prediction_model '$prediction_model'. Valid: $(join(keys(MODEL_CONFIGS), ", "))")
                 @user_info "Using prediction model: $prediction_model"
                 frag_annotation_type = MODEL_CONFIGS[prediction_model].annotation_type
                 koina_model_type = MODEL_CONFIGS[prediction_model].model_type
@@ -240,24 +243,45 @@ function BuildSpecLib(params_path::String)
                 # apply the same metadata + rank filters that getDetailedFrags
                 # otherwise applies after raw_fragments.arrow is on disk.
                 precursors_df_for_ctx = DataFrame(Arrow.Table(precursors_arrow_path))
-                filter_ctx = build_spline_frag_filter_ctx(
-                    frag_bounds,
-                    precursors_df_for_ctx,
-                    asset_path("ion_dictionary.txt"),
-                    asset_path("immonium.txt"),
-                    frag_annotation_type;
-                    y_start = const_y_start,
-                    b_start = const_b_start,
-                    include_p = const_include_p,
-                    include_isotope = const_include_isotope,
-                    include_immonium = const_include_immonium,
-                    include_internal = const_include_internal,
-                    include_neutral_diff = const_include_neutral_diff,
-                    max_frag_charge = const_max_frag_charge,
-                    max_frag_rank = const_max_frag_rank,
-                    length_to_frag_count_multiple = const_length_to_frag_count_multiple,
-                    min_frag_intensity = const_min_frag_intensity,
-                )
+
+                filter_ctx = if koina_model_type isa InstrumentAgnosticModel
+                    # Prosit: string-annotation + iso-spline mono->total + topN filter.
+                    build_agnostic_frag_filter_ctx(
+                        frag_bounds,
+                        precursors_df_for_ctx,
+                        Dict{String, Int8}();
+                        y_start = const_y_start,
+                        b_start = const_b_start,
+                        include_p = const_include_p,
+                        include_isotope = const_include_isotope,
+                        include_immonium = const_include_immonium,
+                        include_internal = const_include_internal,
+                        include_neutral_diff = const_include_neutral_diff,
+                        max_frag_charge = const_max_frag_charge,
+                        max_frag_rank = const_max_frag_rank,
+                        length_to_frag_count_multiple = const_length_to_frag_count_multiple,
+                        min_frag_intensity = const_min_frag_intensity,
+                    )
+                else
+                    build_spline_frag_filter_ctx(
+                        frag_bounds,
+                        precursors_df_for_ctx,
+                        asset_path("ion_dictionary.txt"),
+                        asset_path("immonium.txt"),
+                        frag_annotation_type;
+                        y_start = const_y_start,
+                        b_start = const_b_start,
+                        include_p = const_include_p,
+                        include_isotope = const_include_isotope,
+                        include_immonium = const_include_immonium,
+                        include_internal = const_include_internal,
+                        include_neutral_diff = const_include_neutral_diff,
+                        max_frag_charge = const_max_frag_charge,
+                        max_frag_rank = const_max_frag_rank,
+                        length_to_frag_count_multiple = const_length_to_frag_count_multiple,
+                        min_frag_intensity = const_min_frag_intensity,
+                    )
+                end
                 predict_fragments(
                     precursors_arrow_path,
                     raw_fragments_arrow_path,
@@ -276,32 +300,45 @@ function BuildSpecLib(params_path::String)
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
                 fragments_table = Arrow.Table(raw_fragments_arrow_path)
-                # Record the spline knots (stored as Arrow metadata, not per-row column).
-                # Altimeter is the only supported fragment-prediction backend, so the knot
-                # metadata is always present.
-                meta = Arrow.getmetadata(fragments_table)
-                spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
-                serialize_to_jls(
-                    joinpath(lib_dir, "spline_knots.jls"),
-                    spl_knots
-                )
-                ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
-
                 # Fused: decode raw_fragments directly into the final
-                # Vector{SplineCompactFrag} + CSR, in memory, skipping the
-                # fragments_table.arrow re-encode/re-read. Handed to buildPionLib
+                # Vector{SplineCompactFrag or CompactFrag} + CSR, in memory, skipping
+                # the fragments_table.arrow re-encode/re-read. Handed to buildPionLib
                 # below without touching disk.
-                detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
-                    precursors_table,
-                    fragments_table,
-                    frag_annotation_type,
-                    ion_dictionary,
-                    asset_path("immonium.txt"),
-                    lib_dir,
-                    Dict{String, Int8}(),
-                    iso_mod_to_mass,
-                    koina_model_type
-                )
+                if koina_model_type isa InstrumentAgnosticModel
+                    # Prosit: scalar total-abundance intensities, string annotations,
+                    # NO spline knots (contrast Altimeter below).
+                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        asset_path("immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+                else
+                    # Altimeter: record the spline knots (Arrow metadata) + decode via
+                    # the integer altimeter ion dictionary.
+                    meta = Arrow.getmetadata(fragments_table)
+                    spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
+                    serialize_to_jls(
+                        joinpath(lib_dir, "spline_knots.jls"),
+                        spl_knots
+                    )
+                    ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
+                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        ion_dictionary,
+                        asset_path("immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+                end
 
 
 

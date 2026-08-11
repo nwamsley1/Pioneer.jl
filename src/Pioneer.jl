@@ -735,17 +735,52 @@ const ModelPeptideLength = Union{Nothing, @NamedTuple{min::Int, max::Int}}
 # entries legitimately differ (UniSpec vs Generic annotations, spline vs
 # instrument-agnostic models). This is build-time configuration read once per
 # library build, never in a hot loop, so the dynamic dispatch does not matter.
+# `fragmentation_type`: nothing for models taking no fragmentation input; a string
+# ("HCD"/"CID") for the PTM models that require the extra `fragmentation_types`
+# Koina input. prepare_koina_batch reads it and sends the input iff it is set.
 const MODEL_CONFIGS = Dict{String, @NamedTuple{
     annotation_type::FragAnnotation,
     model_type::KoinaModelType,
     instruments::Set,
+    fragmentation_type::Union{Nothing, String},
     peptide_length::ModelPeptideLength,
 }}(
     "altimeter" => (
         annotation_type = UniSpecFragAnnotation("y1^1"),
         model_type = SplineCoefficientModel("altimeter"),
         instruments = Set([]),
+        fragmentation_type = nothing,
         peptide_length = nothing,
+    ),
+    # Prosit models. All three are instrument-agnostic scalar-intensity models:
+    # fixed fragment intensities at one collision energy, no NCE spline.
+    #
+    # peptide_length is (7, 30) for every Prosit variant. 30 is a hard cap -- the
+    # tokenizer cannot represent a longer peptide -- and 7 is the shortest the
+    # models were trained on. clamp_digest_length_to_model narrows the digest to
+    # this and warns, so a build cannot hand Prosit peptides it will drop.
+    "prosit_2020_hcd" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
+        instruments = Set([]),
+        fragmentation_type = nothing,
+        peptide_length = (min = 7, max = 30),
+    ),
+    "prosit_2024_ptm" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2024_ptm"),
+        instruments = Set([]),
+        fragmentation_type = "HCD",
+        peptide_length = (min = 7, max = 30),
+    ),
+    # Prosit 2025 40-PTM: format-identical drop-in for prosit_2024_ptm (same
+    # y1+1 annotation, same mz/intensity outputs), with a wider PTM vocabulary.
+    "prosit_2025_40ptm" => (
+        annotation_type = GenericFragAnnotation("y1+1"),
+        model_type = InstrumentAgnosticModel("prosit_2025_40ptm"),
+        instruments = Set([]),
+        fragmentation_type = "HCD",
+        peptide_length = (min = 7, max = 30),
     ),
 )
 
@@ -753,6 +788,9 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
 const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
+    "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
+    "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
+    "prosit_2025_40ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2025_intensity_40PTM/infer",
 )
 
 function __init__()

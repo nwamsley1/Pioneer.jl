@@ -171,7 +171,8 @@ function prepare_chronologer_input(
         fasta_entries,
         fixed_mods,
         var_mods,
-        _params.fasta_digest_params["max_var_mods"]))
+        _params.fasta_digest_params["max_var_mods"],
+        Int(get(_params.fasta_digest_params, "min_var_mods", 0))))
 
     # Step 3: Assign base_pep_id for peptide tracking (after modifications)
     pep_entries_processed = assign_base_pep_ids!(fasta_entries)
@@ -280,9 +281,10 @@ multiple modification variants.
 """
 function add_mods(
     fasta_peptides::Vector{FastaEntry},
-    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
     var_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
-    max_var_mods::Int)
+    max_var_mods::Int,
+    min_var_mods::Int = 0)
 
 
     fasta_mods = Vector{FastaEntry}()
@@ -302,15 +304,18 @@ function add_mods(
 
         #Get each instance of a variable mod
         var_mod_matches = matchVarMods(sequence, var_mod_names)
-        #Count number of unique variable mod combinations 
-        n_var_mod_combinations = countVarModCombinations(var_mod_matches, max_var_mods)
-        
+        #Count number of unique variable mod combinations (>= min_var_mods)
+        n_var_mod_combinations = countVarModCombinations(var_mod_matches, max_var_mods, min_var_mods)
+
+        # min_var_mods>0 excludes the unmodified form (and drops peptides with too few
+        # sites, whose combination count is 0 -> empty var_mods -> no entries emitted).
         var_mods = Vector{Vector{PeptideMod}}(undef, n_var_mod_combinations)
-        #Build modification strings for all combinations of variable mods 
+        #Build modification strings for all combinations of variable mods
         fillVarModStrings!(var_mods,
                             var_mod_matches,
                             fixed_mods_vector,
-                            max_var_mods
+                            max_var_mods,
+                            min_var_mods
                             )
 
         for var_mod in var_mods

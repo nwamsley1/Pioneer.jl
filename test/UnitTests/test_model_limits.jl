@@ -14,6 +14,7 @@
         annotation_type = Pioneer.UniSpecFragAnnotation("y1^1"),
         model_type = Pioneer.SplineCoefficientModel(key),
         instruments = Set([]),
+        fragmentation_type = nothing,
         peptide_length = (min = 7, max = 30),
     )
     try
