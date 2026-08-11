@@ -380,12 +380,24 @@ function process_file!(
         )
         _st = time(); _sa = Base.gc_bytes()
     end
-    # MS1 chromatogram extraction is currently unwired; the MS1
-    # build_chromatograms body is block-commented in utils.jl pending a
-    # fused port. The ms1_quant knob has been removed from the public
-    # config schema.
-    #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
-    #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    # MS1 chromatogram extraction (DDA quant). Off by default: when the flag is
+    # unset nothing below runs and the DIA path is bit-identical. See
+    # ms1_quant.jl and ms1_quant_dda_plan.pdf.
+    if get(ENV, "PIONEER_MS1_QUANT", "0") == "1"
+        ms1_chromatograms, _ = extract_chromatograms(
+            spectra,
+            passing_psms,
+            rt_index,
+            search_context,
+            params,
+            ms_file_idx,
+            MS1CHROM(),
+        )
+        if get(ENV, "PIONEER_MS1_DIMS", "0") == "1"
+            report_ms1_dim_stats()
+            reset_ms1_dim_stats!()
+        end
+    end
     if nrow(chromatograms) > 0
         # WH smoothing uses precursor transmission as both a correction factor
         # and an observation weight. Separate-trace mode also uses isotope

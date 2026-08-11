@@ -328,7 +328,8 @@ function importScripts()
     include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
         "integrate_chrom.jl",
         "IntegrateChromatogramsSearch.jl",
-        "utils.jl"
+        "utils.jl",
+        "ms1_quant.jl"
     ])
 
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
