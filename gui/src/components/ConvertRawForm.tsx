@@ -9,7 +9,7 @@
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import type { ConvertParams } from '../lib/types'
-import { convertTotalThreads, type Note } from '../lib/validate'
+import { type Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
   background: '#fff',
@@ -56,10 +56,8 @@ const noteStyle = (note: Note): React.CSSProperties => ({
 interface Props {
   params: ConvertParams
   /** Logical cores, for the oversubscription warning. */
-  maxThreads: number
   inputNote: Note
   outputNote: Note
-  threadsNote: Note
   advancedOpen: boolean
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
@@ -70,10 +68,8 @@ interface Props {
 
 export function ConvertRawForm({
   params,
-  maxThreads,
   inputNote,
   outputNote,
-  threadsNote,
   advancedOpen,
   onParam,
   onToggle,
@@ -95,7 +91,6 @@ export function ConvertRawForm({
 
   // The two knobs multiply: N files in flight, each with M scan-reader threads.
   // Shared with the validator so the readout and the block can never disagree.
-  const total = convertTotalThreads(params)
 
   const defaultOut = params.input.trim()
     ? `${params.inputMode === 'file' ? params.input.trim().replace(/[^\\/]+$/, '').replace(/[\\/]$/, '') : params.input.trim()}/arrow_out`
@@ -222,36 +217,6 @@ export function ConvertRawForm({
             onClick={() => onToggle('skipExisting')}
           />
         </div>
-      </section>
-
-      <section style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
-          <h2 style={H2}>Parallelism</h2>
-        </div>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          The converter works on several files at once, and splits each file across its own scan
-          readers — so these multiply. The Julia thread setting does not apply here; this is a .NET
-          program.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <NumField fieldKey="concurrentFiles" value={params.concurrentFiles} onChange={onParam} />
-          <NumField fieldKey="threadsPerFile" value={params.threadsPerFile} onChange={onParam} />
-        </div>
-        <div style={{ marginTop: 10, fontSize: 12, color: '#475467' }}>
-          ≈ <strong style={{ fontFamily: "'IBM Plex Mono'" }}>{total}</strong> threads in total ·{' '}
-          {maxThreads} available
-          {params.inputMode === 'file' && parseInt(params.concurrentFiles, 10) > 1 && (
-            <span style={{ color: '#B45309' }}>
-              {' '}
-              · converting a single file, so only threads-per-file matters
-            </span>
-          )}
-        </div>
-        {threadsNote.msg && (
-          <div style={{ marginTop: 9, fontSize: 12, lineHeight: 1.4, color: '#C0392B' }}>
-            ⚠&nbsp; {threadsNote.msg}
-          </div>
-        )}
       </section>
 
       <section

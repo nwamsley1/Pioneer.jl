@@ -158,8 +158,6 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. */
   outputDir: string
   skipExisting: boolean
-  concurrentFiles: string
-  threadsPerFile: string
   batchSize: string
   scanChunkSize: string
 }
@@ -169,8 +167,6 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   outputDir: '',
   skipExisting: false,
-  concurrentFiles: '2',
-  threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
 }

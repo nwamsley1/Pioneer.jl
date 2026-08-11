@@ -97,11 +97,14 @@ export function LogDrawer({
   return (
     <div
       style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
+        // A flex sibling of the form pane, not an overlay. It used to be
+        // `position: absolute; bottom: 0`, which floated it over the form: the
+        // bottom of the parameter panel became unreachable the moment a run
+        // started, because the pane still believed it had the full height and
+        // its last rows sat underneath the console.
+        flex: 'none',
         height,
+        minHeight: 0,
         background: '#1B2A4A',
         borderTop: '1px solid #131F38',
         display: 'flex',

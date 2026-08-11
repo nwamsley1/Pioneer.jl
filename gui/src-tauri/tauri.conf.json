@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Pioneer",
-        "width": 1320,
-        "height": 880,
+        "width": 980,
+        "height": 840,
         "minWidth": 980,
-        "minHeight": 640
+        "minHeight": 620
       }
     ],
     "security": {

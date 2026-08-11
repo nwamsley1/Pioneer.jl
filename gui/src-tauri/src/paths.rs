@@ -40,11 +40,29 @@ const MS_EXTENSIONS: [&str; 3] = ["raw", "mzml", "arrow"];
 /// serialization difference between library versions does not matter.
 const PION_MARKERS: [&str; 2] = ["precursors_table", "detailed_fragments"];
 
+/// Lowercased extension, looking through a trailing `.gz`.
+///
+/// Pioneer reads gzipped FASTA directly, so `proteins.fasta.gz` must report
+/// "fasta" rather than "gz". `Path::extension` returns only the final component,
+/// which made the validator reject every compressed FASTA even though the file
+/// picker offered them and the search would have accepted them.
 fn extension_of(p: &Path) -> String {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .unwrap_or_default()
+    let ext = |q: &Path| {
+        q.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let last = ext(p);
+    if last == "gz" {
+        // `file_stem` of "proteins.fasta.gz" is "proteins.fasta"; take its
+        // extension. Falls back to "gz" for a bare "archive.gz".
+        let inner = p.file_stem().map(Path::new).map(ext).unwrap_or_default();
+        if !inner.is_empty() {
+            return inner;
+        }
+    }
+    last
 }
 
 pub fn inspect(path: &str) -> PathInfo {
@@ -143,4 +161,40 @@ pub fn read_config(path: &str) -> Result<String, String> {
         p
     };
     std::fs::read_to_string(&target).map_err(|e| format!("Could not read {}: {e}", target.display()))
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::extension_of;
+    use std::path::Path;
+
+    #[test]
+    fn looks_through_a_trailing_gz() {
+        // The case Dennis hit: the picker offered it, the validator rejected it.
+        assert_eq!(extension_of(Path::new("proteins.fasta.gz")), "fasta");
+        assert_eq!(extension_of(Path::new("/a/b/UP000005640.fa.gz")), "fa");
+        assert_eq!(extension_of(Path::new("x.FAA.GZ")), "faa");
+    }
+
+    #[test]
+    fn leaves_uncompressed_paths_alone() {
+        assert_eq!(extension_of(Path::new("proteins.fasta")), "fasta");
+        assert_eq!(extension_of(Path::new("run.raw")), "raw");
+        assert_eq!(extension_of(Path::new("lib.poin")), "poin");
+        assert_eq!(extension_of(Path::new("noext")), "");
+    }
+
+    #[test]
+    fn a_bare_gz_is_still_gz() {
+        // Nothing to look through, so the trailing component stands.
+        assert_eq!(extension_of(Path::new("archive.gz")), "gz");
+    }
+
+    #[test]
+    fn a_dotfile_named_gz_has_no_extension() {
+        // Rust treats a leading-dot name as a hidden file rather than an
+        // extension, so ".gz" reports "" and never reaches the look-through.
+        assert_eq!(extension_of(Path::new("/tmp/.gz")), "");
+        assert_eq!(extension_of(Path::new(".fasta")), "");
+    }
 }

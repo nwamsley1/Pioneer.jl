@@ -127,17 +127,9 @@ interface Props {
   selected: CommandId
   jobs: Job[]
   viewJobId: string | null
-  threads: number
-  maxThreads: number
-  /** Hidden for the .NET converter, where Julia threads mean nothing. */
-  showThreads: boolean
-  runLabel: string
   modKey: string
   onSelect: (id: CommandId) => void
   onToggleCollapsed: () => void
-  onToggleJson: () => void
-  onThreads: (n: number) => void
-  onRun: () => void
   onViewJob: (id: string) => void
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
 }
@@ -147,16 +139,9 @@ export function Sidebar({
   selected,
   jobs,
   viewJobId,
-  threads,
-  maxThreads,
-  showThreads,
-  runLabel,
   modKey,
   onSelect,
   onToggleCollapsed,
-  onToggleJson,
-  onThreads,
-  onRun,
   onViewJob,
   onJobAction,
 }: Props) {
@@ -431,156 +416,6 @@ export function Sidebar({
         </div>
       </div>
 
-      <div
-        style={{
-          padding: '10px 12px 4px',
-          marginTop: 2,
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-        }}
-      >
-        {!collapsed && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: showThreads ? 'space-between' : 'flex-start',
-              gap: 8,
-              marginBottom: 10,
-            }}
-          >
-            <button
-              type="button"
-              className="pio-chip"
-              onClick={onToggleJson}
-              title="Preview the .json config"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '6px 9px',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 8,
-                background: 'rgba(255,255,255,0.04)',
-                cursor: 'pointer',
-                font: "600 11.5px 'IBM Plex Sans'",
-                color: '#98A6BC',
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M15 4h5v5M20 4l-8 8"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              JSON
-            </button>
-            {showThreads && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  color: '#8593A8',
-                }}
-              >
-                Threads
-              </span>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  border: '1px solid rgba(255,255,255,0.14)',
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  flex: 'none',
-                }}
-              >
-                <button
-                  type="button"
-                  className="pio-step"
-                  onClick={() => onThreads(Math.max(1, threads - 1))}
-                  title="Fewer threads"
-                  style={{
-                    padding: '4px 9px',
-                    border: 'none',
-                    background: 'rgba(255,255,255,0.05)',
-                    cursor: 'pointer',
-                    font: "700 13px 'IBM Plex Sans'",
-                    color: '#C8D0DA',
-                  }}
-                >
-                  −
-                </button>
-                <span
-                  title={`${maxThreads} available · max ${maxThreads}`}
-                  style={{
-                    padding: '0 8px',
-                    font: "600 12px 'IBM Plex Mono'",
-                    color: '#E7EBF0',
-                    minWidth: 22,
-                    textAlign: 'center',
-                  }}
-                >
-                  {threads}
-                </span>
-                <button
-                  type="button"
-                  className="pio-step"
-                  onClick={() => onThreads(Math.min(maxThreads, threads + 1))}
-                  title="More threads"
-                  style={{
-                    padding: '4px 9px',
-                    border: 'none',
-                    background: 'rgba(255,255,255,0.05)',
-                    cursor: 'pointer',
-                    font: "700 13px 'IBM Plex Sans'",
-                    color: '#C8D0DA',
-                  }}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            )}
-          </div>
-        )}
-        <button
-          type="button"
-          className="pio-run"
-          onClick={onRun}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 9,
-            width: '100%',
-            padding: 11,
-            border: 'none',
-            borderRadius: 10,
-            cursor: 'pointer',
-            font: "700 13.5px 'IBM Plex Sans'",
-            color: '#fff',
-            background: 'linear-gradient(135deg,#3E62A0,#2E4D7E)',
-            boxShadow: '0 4px 14px rgba(46,77,126,0.35)',
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="#fff" style={{ flex: 'none' }}>
-            <path d="M7 4.5v15l13-7.5z" />
-          </svg>
-          {!collapsed && <span>{runLabel}</span>}
-        </button>
-      </div>
 
       <button
         type="button"
