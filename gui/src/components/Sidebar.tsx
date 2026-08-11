@@ -15,6 +15,12 @@ const DOT_COLORS: Record<Job['status'], string> = {
   cancelled: '#6E7E97',
 }
 
+const CMD_TEXT: Record<CommandId, string> = {
+  searchdia: 'SearchDIA',
+  buildspeclib: 'BuildSpecLib',
+  convertraw: 'ConvertRAW',
+}
+
 const STATUS_TEXT: Record<Job['status'], string> = {
   queued: 'Queued',
   running: 'Running…',
@@ -156,6 +162,169 @@ export function Sidebar({
         fontWeight: 600,
       }
 
+  // Pending runs and finished runs are different things to look at: the queue is
+  // what is about to happen, history is what to go back to. Same row renderer for
+  // both, so a finished run stays clickable and still loads its parameters.
+  const queue = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
+  const history = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running')
+  const emptyHint: React.CSSProperties = {
+    padding: '2px 10px 8px',
+    fontSize: 11.5,
+    color: '#6B7A93',
+  }
+
+  const renderRow = (j: Job, idx: number) => {
+            const running = j.status === 'running'
+            const pending = running || j.status === 'queued'
+            return (
+              <div
+                key={j.id}
+                className="pio-job pio-row-hover"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  padding: '8px 11px',
+                  border: 'none',
+                  borderRadius: 9,
+                  background: j.id === viewJobId ? 'rgba(46,77,126,0.22)' : 'none',
+                }}
+              >
+                <div
+                  onClick={() => onViewJob(j.id)}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: '50%',
+                      flex: 'none',
+                      background: DOT_COLORS[j.status],
+                      animation: running ? 'pio-pulse 1.1s ease-in-out infinite' : undefined,
+                    }}
+                  />
+                  {!collapsed && (
+                    <span
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'flex-start',
+                        lineHeight: 1.25,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          color: '#E7EBF0',
+                          maxWidth: 120,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {j.title}
+                      </span>
+                      {running ? (
+                        <div
+                          style={{
+                            position: 'relative',
+                            overflow: 'hidden',
+                            height: 3,
+                            width: 96,
+                            maxWidth: '100%',
+                            marginTop: 5,
+                            borderRadius: 2,
+                            background: 'rgba(255,255,255,0.16)',
+                          }}
+                        >
+                          <div style={barberStyle} />
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 10.5, color: '#98A6BC' }}>
+                          {CMD_TEXT[j.cmd]} · {STATUS_TEXT[j.status]}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {!collapsed && (
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        flex: 'none',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        fontFamily: "'IBM Plex Mono'",
+                        color: '#8593A8',
+                        minWidth: 16,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {idx + 1}
+                    </span>
+                  )}
+                </div>
+                {pending && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => onJobAction(j.id, 'cancel')}
+                    title="Cancel run"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: '#F0A8A8',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                    </svg>
+                  </button>
+                )}
+                {!pending && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => onJobAction(j.id, 'delete')}
+                    title="Delete from queue"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: '#8593A8',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )
+  }
+
   return (
     <aside
       style={{
@@ -250,7 +419,6 @@ export function Sidebar({
           paddingTop: 2,
         }}
       >
-        <div style={sectionStyle}>Queue</div>
         <div
           style={{
             flex: 1,
@@ -262,157 +430,14 @@ export function Sidebar({
             padding: '0 12px',
           }}
         >
-          {jobs.map((j, idx) => {
-            const running = j.status === 'running'
-            const pending = running || j.status === 'queued'
-            return (
-              <div
-                key={j.id}
-                className="pio-job pio-row-hover"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  width: '100%',
-                  padding: '8px 11px',
-                  border: 'none',
-                  borderRadius: 9,
-                  background: j.id === viewJobId ? 'rgba(46,77,126,0.22)' : 'none',
-                }}
-              >
-                <div
-                  onClick={() => onViewJob(j.id)}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: '50%',
-                      flex: 'none',
-                      background: DOT_COLORS[j.status],
-                      animation: running ? 'pio-pulse 1.1s ease-in-out infinite' : undefined,
-                    }}
-                  />
-                  {!collapsed && (
-                    <span
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'flex-start',
-                        lineHeight: 1.25,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          color: '#E7EBF0',
-                          maxWidth: 120,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {j.title}
-                      </span>
-                      {running ? (
-                        <div
-                          style={{
-                            position: 'relative',
-                            overflow: 'hidden',
-                            height: 3,
-                            width: 96,
-                            maxWidth: '100%',
-                            marginTop: 5,
-                            borderRadius: 2,
-                            background: 'rgba(255,255,255,0.16)',
-                          }}
-                        >
-                          <div style={barberStyle} />
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 10.5, color: '#98A6BC' }}>
-                          {STATUS_TEXT[j.status]}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                  {!collapsed && (
-                    <span
-                      style={{
-                        marginLeft: 'auto',
-                        flex: 'none',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        fontFamily: "'IBM Plex Mono'",
-                        color: '#8593A8',
-                        minWidth: 16,
-                        textAlign: 'right',
-                      }}
-                    >
-                      {idx + 1}
-                    </span>
-                  )}
-                </div>
-                {pending && (
-                  <button
-                    type="button"
-                    className="pio-jobact pio-iconbtn"
-                    onClick={() => onJobAction(j.id, 'cancel')}
-                    title="Cancel run"
-                    style={{
-                      flex: 'none',
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      padding: 3,
-                      color: '#F0A8A8',
-                      display: 'flex',
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-                    </svg>
-                  </button>
-                )}
-                {!pending && (
-                  <button
-                    type="button"
-                    className="pio-jobact pio-iconbtn"
-                    onClick={() => onJobAction(j.id, 'delete')}
-                    title="Delete from queue"
-                    style={{
-                      flex: 'none',
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      padding: 3,
-                      color: '#8593A8',
-                      display: 'flex',
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13"
-                        stroke="currentColor"
-                        strokeWidth="1.7"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )
-          })}
+          <div style={sectionStyle}>Queue</div>
+          {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
+          {queue.map(renderRow)}
+          <div style={{ ...sectionStyle, marginTop: 12 }}>History</div>
+          {history.length === 0 && !collapsed && (
+            <div style={emptyHint}>No finished runs yet.</div>
+          )}
+          {history.map(renderRow)}
         </div>
       </div>
 

@@ -26,6 +26,7 @@ import {
   type Json,
 } from './lib/config'
 import { MOD_PRESETS, makeFastaRow, presetRegex } from './lib/fasta'
+import { generateRunName } from './lib/names'
 import {
   BUILD_DEFAULTS,
   CONVERT_DEFAULTS,
@@ -132,6 +133,18 @@ export default function App() {
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
 
+  /** Set while the form is showing a past run's parameters rather than your own
+   *  draft. The drafts are stashed here on entry and put back when you click a
+   *  workflow tab, so inspecting a run — or tweaking it and running the tweak —
+   *  never costs you the work in progress. */
+  const [inspectingJobId, setInspectingJobId] = useState<string | null>(null)
+  const stashedDraft = useRef<{
+    command: CommandId
+    search: SearchParams
+    build: BuildParams
+    convert: ConvertParams
+  } | null>(null)
+
   const jobSeq = useRef(0)
   const startedIds = useRef(new Set<string>())
   /** Job ids restart at 1 each launch, but the params file each job writes is
@@ -176,12 +189,44 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // Not while inspecting a past run: the form is showing that run's params,
+    // and saving them here would overwrite the draft this session is meant to
+    // give back when you click a workflow tab.
+    if (inspectingJobId) return
     try {
       localStorage.setItem(PERSIST_KEY, JSON.stringify({ command, search, build, convert, threads }))
     } catch {
       /* private mode / quota — persistence is a convenience, not a requirement */
     }
-  }, [command, search, build, convert, threads])
+  }, [command, search, build, convert, threads, inspectingJobId])
+
+  /** Put a past run's parameters on screen, switching to its workflow. */
+  const inspectJob = useCallback((job: Job) => {
+    setInspectingJobId((current) => {
+      // Stash only on the way in. Clicking from one run straight to another must
+      // not overwrite the draft with the first run's params.
+      if (!current) {
+        stashedDraft.current = { command, search, build, convert }
+      }
+      return job.id
+    })
+    setCommand(job.cmd)
+    if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
+    else if (job.snapshot.cmd === 'buildspeclib') setBuild(job.snapshot.build)
+    else setConvert(job.snapshot.convert)
+    setRunError('')
+  }, [command, search, build, convert])
+
+  /** Leave inspection and restore the draft, if there is one to restore. */
+  const restoreDraft = useCallback(() => {
+    const d = stashedDraft.current
+    if (!d) return
+    setSearch(d.search)
+    setBuild(d.build)
+    setConvert(d.convert)
+    stashedDraft.current = null
+    setInspectingJobId(null)
+  }, [])
 
   // ---- live path validation ---------------------------------------------
 
@@ -563,7 +608,12 @@ export default function App() {
     const job: Job = {
       id,
       cmd: command,
-      title: TITLES[command],
+      title: generateRunName(jobs.map((j) => j.title)),
+      snapshot: isConvert
+        ? { cmd: 'convertraw' as const, convert }
+        : isSearch
+          ? { cmd: 'searchdia' as const, search }
+          : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
           ? convert.outputDir || convert.input
@@ -584,6 +634,10 @@ export default function App() {
       paramsPath: '',
     }
     setJobs((prev) => [...prev, job])
+    // If this run came from tweaking a past one, follow the new job rather than
+    // staying pointed at the old one. The stashed draft is deliberately kept, so
+    // a workflow tab still gives back the work in progress.
+    setInspectingJobId((current) => (current ? id : null))
     setViewJobId(id)
     setDrawerOpen(true)
     setRunError('')
@@ -736,11 +790,15 @@ export default function App() {
         viewJobId={viewJobId}
         modKey={modKeyLabel}
         onSelect={(id) => {
+          // Clicking a workflow tab always means "back to my own parameters".
+          restoreDraft()
           setCommand(id)
           setRunError('')
         }}
         onToggleCollapsed={() => setNavCollapsed((c) => !c)}
         onViewJob={(id) => {
+          const job = jobs.find((j) => j.id === id)
+          if (job) inspectJob(job)
           if (drawerOpen && viewJobId === id) setDrawerOpen(false)
           else {
             setViewJobId(id)

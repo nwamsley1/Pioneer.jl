@@ -190,10 +190,24 @@ export interface LogLine {
   transient: boolean
 }
 
+/** The form state a run was launched from, kept so the queue and history can put
+ *  it back on screen.
+ *
+ *  Stored as the form's own params rather than the serialized params file:
+ *  ConvertRAW's `paramsJson` is a display command line and cannot be parsed back,
+ *  and even for the Julia commands round-tripping through the Pioneer JSON would
+ *  lose anything the form models but the config does not. */
+export type JobSnapshot =
+  | { cmd: 'searchdia'; search: SearchParams }
+  | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'convertraw'; convert: ConvertParams }
+
 export interface Job {
   id: string
   cmd: CommandId
+  /** Generated adjective-noun name, e.g. "brisk-otter". */
   title: string
+  snapshot: JobSnapshot
   /** The output path this run writes to — shown next to the title. */
   target: string
   threads: number
