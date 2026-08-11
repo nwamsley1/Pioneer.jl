@@ -722,11 +722,30 @@ const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.01)
 
 
 
-const MODEL_CONFIGS = Dict(
+# `peptide_length`: the residue range a model accepts, as `(min = m, max = M)`,
+# or `nothing` when no limit is known. clamp_digest_length_to_model narrows the
+# user's fasta_digest_params to this range and warns, so a build cannot hand a
+# model peptides it will silently reject.
+const ModelPeptideLength = Union{Nothing, @NamedTuple{min::Int, max::Int}}
+
+# The value type is spelled out rather than inferred. Left to `Dict(...)`, a
+# single entry narrows the type to that entry exactly -- with only "altimeter"
+# present, `peptide_length` inferred as `Nothing` and any model declaring a real
+# range could not be added. The field types are the abstract supertypes because
+# entries legitimately differ (UniSpec vs Generic annotations, spline vs
+# instrument-agnostic models). This is build-time configuration read once per
+# library build, never in a hot loop, so the dynamic dispatch does not matter.
+const MODEL_CONFIGS = Dict{String, @NamedTuple{
+    annotation_type::FragAnnotation,
+    model_type::KoinaModelType,
+    instruments::Set,
+    peptide_length::ModelPeptideLength,
+}}(
     "altimeter" => (
         annotation_type = UniSpecFragAnnotation("y1^1"),
         model_type = SplineCoefficientModel("altimeter"),
-        instruments = Set([])
+        instruments = Set([]),
+        peptide_length = nothing,
     ),
 )
 
