@@ -164,7 +164,7 @@ function ModTable({
           border: '1px dashed #CBD2DA',
           borderRadius: 9,
           font: "600 12.5px 'IBM Plex Sans'",
-          color: '#2E4D7E',
+          color: 'var(--pio-accent)',
           background:
             "#FAFBFC url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 12px center",
           backgroundSize: '16px 16px',
@@ -455,7 +455,7 @@ export function BuildSpecLibForm({
                 <span
                   style={{
                     fontSize: 11.5,
-                    color: f.auto && f.presetId !== 'custom' ? '#2E4D7E' : '#98A2B3',
+                    color: f.auto && f.presetId !== 'custom' ? 'var(--pio-accent)' : '#98A2B3',
                   }}
                 >
                   {f.presetId === 'custom'
@@ -471,7 +471,7 @@ export function BuildSpecLibForm({
                     border: 'none',
                     cursor: 'pointer',
                     font: "600 11.5px 'IBM Plex Sans'",
-                    color: '#2E4D7E',
+                    color: 'var(--pio-accent)',
                   }}
                 >
                   {f.showRegex ? 'Hide header regex' : 'Header parsing regex'}
@@ -557,7 +557,7 @@ export function BuildSpecLibForm({
             background: 'none',
             cursor: 'pointer',
             font: "600 13px 'IBM Plex Sans'",
-            color: '#2E4D7E',
+            color: 'var(--pio-accent)',
           }}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none">

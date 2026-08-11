@@ -88,7 +88,7 @@ export function JsonModal({
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#1B2A4A',
+          background: 'var(--pio-nav)',
           borderRadius: 14,
           width: 600,
           maxWidth: '100%',
@@ -128,7 +128,7 @@ export function JsonModal({
                 textTransform: 'uppercase',
                 padding: '2px 8px',
                 borderRadius: 20,
-                background: hasExtras ? 'rgba(46,77,126,0.18)' : 'rgba(255,255,255,0.07)',
+                background: hasExtras ? 'var(--pio-accent-wash)' : 'rgba(255,255,255,0.07)',
                 color: hasExtras ? '#CBD8EE' : '#98A6BC',
               }}
             >
@@ -287,11 +287,11 @@ export function JsonModal({
                     font: "600 13px 'IBM Plex Sans'",
                     ...(error
                       ? {
-                          background: 'rgba(46,77,126,0.25)',
+                          background: 'var(--pio-accent-wash-strong)',
                           color: 'rgba(255,255,255,0.5)',
                           cursor: 'not-allowed',
                         }
-                      : { background: '#2E4D7E', color: '#FFFFFF', cursor: 'pointer' }),
+                      : { background: 'var(--pio-accent)', color: '#FFFFFF', cursor: 'pointer' }),
                   }}
                 >
                   Apply

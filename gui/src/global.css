@@ -8,6 +8,72 @@
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 
+/* ---------------------------------------------------------------------------
+   Theme palettes.
+
+   Must stay BELOW the @import rules: CSS ignores any @import that is not at the
+   top of the sheet, so putting this above them silently stops the IBM Plex fonts
+   from loading and everything falls back to system fonts.
+
+   Only the chrome is themed -- the sidebar and log drawer surfaces, the dark
+   modal panels, and the accent used for the Run button, toggles, links and the
+   active-nav rail. The light content area keeps its near-black heading colour in
+   every theme; tinting body text buys nothing and costs legibility.
+
+   Applied by setting data-theme on <html>. Navy is the default and needs no
+   attribute, so a failure to restore the saved theme lands on the original look.
+   --------------------------------------------------------------------------- */
+:root {
+  --pio-accent-shadow: rgba(46,77,126,0.28);
+  --pio-accent-wash: rgba(46,77,126,0.18);
+  --pio-accent-wash-strong: rgba(46,77,126,0.22);
+  --pio-nav: #1B2A4A;           /* sidebar + drawer surface */
+  --pio-nav-border: #131F38;
+  --pio-accent: #2E4D7E;        /* primary action, toggles, links */
+  --pio-accent-lift: #3E62A0;   /* lighter end of the Run gradient */
+  --pio-accent-soft: #6E92D6;   /* running indicator, active-nav rail */
+  --pio-accent-softer: #9DBDF0; /* second stripe of the barber pole */
+}
+
+:root[data-theme='brown'] {
+  --pio-accent-shadow: rgba(138,90,51,0.32);
+  --pio-accent-wash: rgba(138,90,51,0.20);
+  --pio-accent-wash-strong: rgba(138,90,51,0.26);
+  --pio-nav: #2B2019;
+  --pio-nav-border: #1B120D;
+  --pio-accent: #8A5A33;
+  --pio-accent-lift: #A8703F;
+  --pio-accent-soft: #C89364;
+  --pio-accent-softer: #E4BB90;
+}
+
+:root[data-theme='olive'] {
+  --pio-accent-shadow: rgba(92,107,51,0.32);
+  --pio-accent-wash: rgba(92,107,51,0.22);
+  --pio-accent-wash-strong: rgba(92,107,51,0.28);
+  --pio-nav: #262B1C;
+  --pio-nav-border: #171B10;
+  --pio-accent: #5C6B33;
+  --pio-accent-lift: #74853F;
+  --pio-accent-soft: #97A85F;
+  --pio-accent-softer: #C0CE94;
+}
+
+:root[data-theme='charcoal'] {
+  --pio-accent-shadow: rgba(61,74,87,0.34);
+  --pio-accent-wash: rgba(132,150,166,0.16);
+  --pio-accent-wash-strong: rgba(132,150,166,0.22);
+  --pio-nav: #23262B;
+  --pio-nav-border: #14171A;
+  /* Kept slightly blue rather than neutral grey: a pure-grey Run button stops
+     reading as the primary action. */
+  --pio-accent: #3D4A57;
+  --pio-accent-lift: #52626F;
+  --pio-accent-soft: #8496A6;
+  --pio-accent-softer: #B8C6D2;
+}
+
+
 * {
   box-sizing: border-box;
 }

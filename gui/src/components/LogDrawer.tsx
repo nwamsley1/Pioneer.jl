@@ -85,7 +85,7 @@ export function LogDrawer({
       ? {
           position: 'absolute',
           inset: 0,
-          background: 'repeating-linear-gradient(45deg,#6E92D6 0 7px,#9DBDF0 7px 14px)',
+          background: 'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
           backgroundSize: '28px 100%',
           animation: 'pio-barber .6s linear infinite',
         }
@@ -108,8 +108,8 @@ export function LogDrawer({
         flex: 'none',
         height,
         minHeight: 0,
-        background: '#1B2A4A',
-        borderTop: '1px solid #131F38',
+        background: 'var(--pio-nav)',
+        borderTop: '1px solid var(--pio-nav-border)',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '0 -8px 30px rgba(15,20,27,0.18)',
@@ -259,7 +259,7 @@ export function LogDrawer({
           job ? job.logLines.map((l) => l.text).join('\n') : ''
         )}
         {status === 'running' && (
-          <span style={{ color: '#2E4D7E', animation: 'pio-blink 1s step-end infinite' }}>▋</span>
+          <span style={{ color: 'var(--pio-accent)', animation: 'pio-blink 1s step-end infinite' }}>▋</span>
         )}
       </pre>
 

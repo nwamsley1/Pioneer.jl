@@ -154,8 +154,8 @@ export function TopBar({
           cursor: 'pointer',
           font: "700 13.5px 'IBM Plex Sans'",
           color: '#FFFFFF',
-          background: 'linear-gradient(135deg,#3E62A0,#2E4D7E)',
-          boxShadow: '0 4px 12px rgba(46,77,126,0.28)',
+          background: 'linear-gradient(135deg,var(--pio-accent-lift),var(--pio-accent))',
+          boxShadow: '0 4px 12px var(--pio-accent-shadow)',
           flex: 'none',
         }}
       >

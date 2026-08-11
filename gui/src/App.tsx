@@ -27,6 +27,7 @@ import {
 } from './lib/config'
 import { MOD_PRESETS, makeFastaRow, presetRegex } from './lib/fasta'
 import { generateRunName } from './lib/names'
+import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
 import {
   BUILD_DEFAULTS,
   CONVERT_DEFAULTS,
@@ -189,6 +190,7 @@ export default function App() {
   const [overwriteOpen, setOverwriteOpen] = useState(false)
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
+  const [theme, setTheme] = useState<ThemeId>(loadTheme)
 
   /** Set while the form is showing a past run's parameters rather than your own
    *  draft. The drafts are stashed here on entry and put back when you click a
@@ -320,6 +322,10 @@ export default function App() {
       /* quota — history is a convenience, and the draft lives under its own key */
     }
   }, [jobs])
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   // ---- live path validation ---------------------------------------------
 
@@ -882,6 +888,8 @@ export default function App() {
         jobs={jobs}
         viewJobId={viewJobId}
         modKey={modKeyLabel}
+        theme={theme}
+        onTheme={setTheme}
         onSelect={(id) => {
           // Clicking a workflow tab always means "back to my own parameters".
           restoreDraft()

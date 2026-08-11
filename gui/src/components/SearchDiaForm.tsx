@@ -244,7 +244,7 @@ export function SearchDiaForm({
                 padding: 0,
                 cursor: 'pointer',
                 font: "500 12px 'IBM Plex Sans'",
-                color: '#2E4D7E',
+                color: 'var(--pio-accent)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,

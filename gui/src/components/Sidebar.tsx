@@ -5,11 +5,12 @@
  *  is not included yet — that is a separate design file and a later phase.
  */
 import { PioneerLogo } from './PioneerLogo'
+import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
 
 const DOT_COLORS: Record<Job['status'], string> = {
   queued: '#F59E0B',
-  running: '#6E92D6',
+  running: 'var(--pio-accent-soft)',
   done: '#10B981',
   failed: '#DC2626',
   cancelled: '#6E7E97',
@@ -36,7 +37,7 @@ const barberStyle: React.CSSProperties = {
   inset: 0,
   borderRadius: 2,
   background:
-    'repeating-linear-gradient(45deg,#6E92D6 0 7px,#9DBDF0 7px 14px)',
+    'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
   backgroundSize: '28px 100%',
   animation: 'pio-barber .6s linear infinite',
 }
@@ -79,10 +80,10 @@ function NavItem({
     opacity: disabled ? 0.45 : 1,
     ...(active
       ? {
-          background: 'rgba(46,77,126,0.18)',
+          background: 'var(--pio-accent-wash)',
           color: '#CBD8EE',
           paddingLeft: 14,
-          boxShadow: 'inset 4px 0 0 #6E92D6, inset 6px 0 0 rgba(10,18,35,0.6)',
+          boxShadow: 'inset 4px 0 0 var(--pio-accent-soft), inset 6px 0 0 rgba(10,18,35,0.6)',
         }
       : { background: 'none', color: '#D2DAE6' }),
   }
@@ -134,6 +135,8 @@ interface Props {
   jobs: Job[]
   viewJobId: string | null
   modKey: string
+  theme: ThemeId
+  onTheme: (id: ThemeId) => void
   onSelect: (id: CommandId) => void
   onToggleCollapsed: () => void
   onViewJob: (id: string) => void
@@ -146,6 +149,8 @@ export function Sidebar({
   jobs,
   viewJobId,
   modKey,
+  theme,
+  onTheme,
   onSelect,
   onToggleCollapsed,
   onViewJob,
@@ -188,7 +193,7 @@ export function Sidebar({
                   padding: '8px 11px',
                   border: 'none',
                   borderRadius: 9,
-                  background: j.id === viewJobId ? 'rgba(46,77,126,0.22)' : 'none',
+                  background: j.id === viewJobId ? 'var(--pio-accent-wash-strong)' : 'none',
                 }}
               >
                 <div
@@ -330,11 +335,11 @@ export function Sidebar({
       style={{
         width: collapsed ? 66 : 252,
         flex: 'none',
-        background: '#1B2A4A',
+        background: 'var(--pio-nav)',
         color: '#E7EBF0',
         display: 'flex',
         flexDirection: 'column',
-        borderRight: '1px solid #131F38',
+        borderRight: '1px solid var(--pio-nav-border)',
         transition: 'width .16s ease',
       }}
     >
@@ -409,6 +414,45 @@ export function Sidebar({
           }
         />
       </nav>
+
+      {!collapsed && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding: '12px 14px 4px',
+          }}
+        >
+          {THEMES.map((t) => {
+            const active = t.id === theme
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onTheme(t.id)}
+                title={t.label}
+                aria-label={`${t.label} theme`}
+                aria-pressed={active}
+                style={{
+                  width: 20,
+                  height: 20,
+                  padding: 0,
+                  borderRadius: '50%',
+                  cursor: 'pointer',
+                  // Half surface, half accent: the swatch shows both the colour
+                  // the theme is named after and what the Run button becomes.
+                  background: `linear-gradient(135deg, ${t.swatch} 50%, ${t.accent} 50%)`,
+                  border: active
+                    ? '2px solid rgba(255,255,255,0.85)'
+                    : '1px solid rgba(255,255,255,0.22)',
+                  boxShadow: active ? '0 0 0 2px rgba(0,0,0,0.35)' : 'none',
+                }}
+              />
+            )
+          })}
+        </div>
+      )}
 
       <div
         style={{

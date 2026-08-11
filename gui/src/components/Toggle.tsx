@@ -22,7 +22,7 @@ export function Toggle({ on, onClick, fieldKey }: Props) {
           display: 'inline-block',
           flex: 'none',
           transition: 'background .15s',
-          background: on ? '#2E4D7E' : '#CDD2D9',
+          background: on ? 'var(--pio-accent)' : '#CDD2D9',
         }}
       >
         <span
