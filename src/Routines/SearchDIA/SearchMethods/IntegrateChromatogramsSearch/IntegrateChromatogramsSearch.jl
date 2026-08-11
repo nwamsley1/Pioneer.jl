@@ -397,6 +397,13 @@ function process_file!(
             report_ms1_dim_stats()
             reset_ms1_dim_stats!()
         end
+        if get(ENV, "PIONEER_MS1_DUMP", "0") == "1" && nrow(ms1_chromatograms) > 0
+            dump_dir = joinpath(getDataOutDir(search_context), "ms1_chroms")
+            isdir(dump_dir) || mkpath(dump_dir)
+            fname = getParsedFileName(search_context, ms_file_idx)
+            writeArrow(joinpath(dump_dir, "$(fname).arrow"), ms1_chromatograms)
+            @user_info "[MS1-DUMP] $fname: $(nrow(ms1_chromatograms)) chromatogram rows"
+        end
     end
     if nrow(chromatograms) > 0
         # WH smoothing uses precursor transmission as both a correction factor

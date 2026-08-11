@@ -304,6 +304,172 @@ function distribute_ms1_group_weights!(
 end
 
 #==========================================================
+Design matrix
+==========================================================#
+
+"""Number of precursor isotopes modelled per column (M0, M1, M2)."""
+const MS1_N_ISOTOPES = 3
+
+"""
+Ridge penalty for the MS1 solve.
+
+Grouping removes exactly-collinear columns; this handles the NEAR-collinear ones
+(distinct peptides inside the MS1 ppm tolerance, whose columns share support and
+differ only slightly in their isotope ratios). Override with PIONEER_MS1_LAMBDA.
+"""
+const MS1_LAMBDA_DEFAULT = 1.0f0
+
+function ms1_lambda()::Float32
+    s = get(ENV, "PIONEER_MS1_LAMBDA", "")
+    isempty(s) && return MS1_LAMBDA_DEFAULT
+    v = tryparse(Float32, s)
+    return (v === nothing || v < 0f0) ? MS1_LAMBDA_DEFAULT : v
+end
+
+"""
+Huber delta for the MS1 solve — set high enough to be effectively OLS.
+
+The MS2 chromatogram default is 300, calibrated against Pioneer's MS2
+deconvolution scale. MS1 peak intensities on this data run 2.7e3 - 1.7e9
+(median 6e5), so delta=300 puts EVERY residual in the Huber *linear* regime,
+where the second derivative vanishes and the per-column Newton/bisection solve
+stalls. Measured consequence: fitted weights collapsed into 16.8-148.6 while the
+M0 intensity driving them spanned six orders of magnitude.
+
+delta=1e10 exceeds the largest observed residual, so the loss is purely
+quadratic everywhere and this behaves as OLS with an L2 penalty. That is the
+intended starting point; a properly scaled delta (or a real MS1 Huber tuning
+step) is a later optimisation. Override with PIONEER_MS1_HUBER_DELTA.
+"""
+const MS1_HUBER_DELTA_DEFAULT = 1.0f10
+
+function ms1_huber_delta()::Float32
+    s = get(ENV, "PIONEER_MS1_HUBER_DELTA", "")
+    isempty(s) && return MS1_HUBER_DELTA_DEFAULT
+    v = tryparse(Float32, s)
+    return (v === nothing || v <= 0f0) ? MS1_HUBER_DELTA_DEFAULT : v
+end
+
+"""
+    ms1_huber_solver() -> HuberSolver
+
+The MS2 chromatogram solver runs unregularised (`lambda=0`, `NoNorm()`); MS1
+needs its own instance with an L2 term. OLSSolver/PoissonMMSolver carry no
+penalty fields at all, so Huber is currently the only option here (plan T7).
+"""
+function ms1_huber_solver()
+    return HuberSolver(
+        ms1_huber_delta(),  # delta — effectively OLS, see above
+        ms1_lambda(),   # lambda
+        Int64(50),      # max_iter_newton
+        Int64(100),     # max_iter_bisection
+        10.0f0,         # accuracy_newton
+        10.0f0,         # accuracy_bisection
+        L2Norm(),
+    )
+end
+
+"""
+    build_ms1_design_matrix!(Hs, groups, n_cols, scan_mz, scan_int, n_peaks,
+                             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
+                             mass_err_model) -> Int
+
+Fill `Hs` (CSC) with one column per m/z group and up to `MS1_N_ISOTOPES` rows per
+column, returning the number of non-zeros.
+
+Column i, isotope j contributes at m/z = `prec_mz + j*C13_C12_MASS_DIFF/charge`
+with value `iso_splines(sulfur, j, mono_mass)` — the sulfur-aware Goldfarb
+splines, i.e. NOT plain averagine. Row index is the observed peak index, so
+unmatched peaks are simply empty rows (residual 0, no loss contribution).
+
+Unlike the MS2 path there is no quadrupole transmission factor: at MS1 the whole
+precursor m/z range is observed.
+"""
+function build_ms1_design_matrix!(
+    Hs::SparseArrayFused{UInt32, Float32},
+    groups::Ms1MzGroups,
+    n_cols::Int,
+    scan_mz::AbstractVector,
+    scan_int::AbstractVector,
+    n_peaks::Int,
+    prec_mzs::AbstractArray{Float32},
+    prec_charges::AbstractArray{UInt8},
+    prec_sulfurs::AbstractArray{UInt8},
+    iso_splines::IsotopeSplineModel,
+    mass_err_model,
+    m0_obs::Vector{Float32} = Float32[],
+)
+    needed = n_cols * MS1_N_ISOTOPES
+    if needed + 1 > length(Hs.rowval)
+        grow = needed + 1 - length(Hs.rowval)
+        append!(Hs.rowval, zeros(UInt32, grow))
+        append!(Hs.nzval,  zeros(Float32, grow))
+        append!(Hs.x,      zeros(Float32, grow))
+        append!(Hs.meta,   fill(UInt8(1), grow))
+        append!(Hs.rank,   zeros(UInt8, grow))
+    end
+    if n_cols + 2 > length(Hs.colptr)
+        append!(Hs.colptr, zeros(UInt32, n_cols + 2 - length(Hs.colptr)))
+    end
+
+    want_m0 = !isempty(m0_obs)
+    if want_m0 && n_cols > length(m0_obs)
+        resize!(m0_obs, n_cols)
+    end
+
+    nnz = 0
+    @inbounds for col in 1:n_cols
+        Hs.colptr[col] = UInt32(nnz + 1)
+        want_m0 && (m0_obs[col] = 0f0)
+
+        prec_idx = groups.col_rep[col]
+        prec_mz = prec_mzs[prec_idx]
+        charge  = prec_charges[prec_idx]
+        sulfur  = prec_sulfurs[prec_idx]
+        mono_mass = (prec_mz - Float32(PROTON)) * Float32(charge)
+        inv_charge = 1f0 / Float32(charge)
+
+        for j in 0:(MS1_N_ISOTOPES - 1)
+            target = prec_mz + Float32(j) * C13_C12_MASS_DIFF_F32 * inv_charge
+            lo, hi = getMzBounds(mass_err_model, target)
+
+            # Peaks are m/z-sorted: first peak >= lo.
+            p = searchsortedfirst(view(scan_mz, 1:n_peaks), lo)
+            (p > n_peaks || Float32(scan_mz[p]) > hi) && continue
+
+            # Within tolerance take the most intense peak.
+            best_p = p; best_i = Float32(scan_int[p])
+            q = p + 1
+            while q <= n_peaks && Float32(scan_mz[q]) <= hi
+                iq = Float32(scan_int[q])
+                if iq > best_i
+                    best_i = iq; best_p = q
+                end
+                q += 1
+            end
+
+            alpha = iso_splines(Int64(min(sulfur, UInt8(5))), j, mono_mass)
+            alpha <= 0f0 && continue
+
+            want_m0 && j == 0 && (m0_obs[col] = best_i)
+
+            nnz += 1
+            Hs.rowval[nnz] = UInt32(best_p)
+            Hs.nzval[nnz]  = Float32(alpha)
+            Hs.x[nnz]      = best_i
+            Hs.meta[nnz]   = pack_meta(true, UInt8(j))
+            Hs.rank[nnz]   = UInt8(0)
+        end
+    end
+    Hs.colptr[n_cols + 1] = UInt32(nnz + 1)
+
+    Hs.n_vals = nnz
+    Hs.n = n_cols
+    Hs.m = n_peaks
+    return nnz
+end
+
+#==========================================================
 MS1 scan loop
 ==========================================================#
 
@@ -336,6 +502,18 @@ function build_chromatograms(
     precs_temp = getPrecIds(search_data)
     groups = Ms1MzGroups()
 
+    Hs = SparseArrayFused(UInt32(5000))
+    weights = zeros(Float32, 8192)
+    residuals = zeros(Float32, 8192)
+    colnorm2 = zeros(Float32, 8192)
+    solver = ms1_huber_solver()
+    iso_splines = getIsoSplines(search_data)
+    ms1_mass_err = getMs1MassErrorModel(search_context, ms_file_idx)
+
+    m0_obs = zeros(Float32, 8192)
+    chrom_rt = Float32[]; chrom_int = Float32[]; chrom_m0 = Float32[]
+    chrom_scan = UInt32[]; chrom_prec = UInt32[]
+
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     has_rt_tol = haskey(getRtTolerances(search_context), ms_file_idx)
     rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
@@ -345,6 +523,7 @@ function build_chromatograms(
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mz_arr = getMz(precursors)
     prec_charge_arr = getCharge(precursors)
+    prec_sulfur_arr = getSulfurCount(precursors)
 
     n_scans = 0; n_cand_total = 0; n_cand_max = 0; n_col_total = 0; n_col_max = 0
     n_visited = 0; n_empty_bins = 0; n_zero_cand = 0
@@ -387,6 +566,38 @@ function build_chromatograms(
         n_cols = build_ms1_mz_groups!(groups, precs_temp, n_cands,
                                       prec_mz_arr, prec_charge_arr)
 
+        scan_mz  = getMzArray(spectra, scan_idx)
+        scan_int = getIntensityArray(spectra, scan_idx)
+        n_peaks  = length(scan_mz)
+
+        nnz = build_ms1_design_matrix!(
+            Hs, groups, n_cols, scan_mz, scan_int, n_peaks,
+            prec_mz_arr, prec_charge_arr, prec_sulfur_arr,
+            iso_splines, ms1_mass_err, m0_obs)
+
+        if nnz > 0
+            if n_cols > length(weights)
+                resize!(weights, n_cols + 1000)
+                resize!(colnorm2, n_cols + 1000)
+            end
+            @inbounds for c in 1:n_cols
+                weights[c] = 0f0
+            end
+            solve_deconvolution!(solver, Hs, residuals, weights, colnorm2,
+                                 getMu(search_data), getObserved(search_data),
+                                 params.max_iter_outer, params.max_diff)
+
+            rt32 = Float32(rt); scan32 = UInt32(scan_idx)
+            @inbounds for j in 1:n_cands
+                col = groups.col_of_cand[j]
+                push!(chrom_rt, rt32)
+                push!(chrom_int, iszero(col) ? 0f0 : max(weights[col], 0f0))
+                push!(chrom_m0, iszero(col) ? 0f0 : m0_obs[col])
+                push!(chrom_scan, scan32)
+                push!(chrom_prec, precs_temp[j])
+            end
+        end
+
         if collect_dims
             n_scans += 1
             n_cand_total += n_cands; n_cand_max = max(n_cand_max, n_cands)
@@ -408,7 +619,10 @@ function build_chromatograms(
     end
 
     return DataFrame(
-        rt = Float32[], intensity = Float32[], m0 = Bool[],
-        n_iso = UInt8[], scan_idx = UInt32[], precursor_idx = UInt32[],
+        rt = chrom_rt,
+        intensity = chrom_int,
+        m0_intensity = chrom_m0,
+        scan_idx = chrom_scan,
+        precursor_idx = chrom_prec,
     )
 end
