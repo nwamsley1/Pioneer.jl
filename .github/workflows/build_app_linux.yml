@@ -259,13 +259,10 @@ jobs:
           rm -rf "$dummy"
           
       # ---- GUI (gui/) -------------------------------------------------
-      # This runner is self-hosted, so the webkit/gtk toolchain may or may not
-      # be present and apt may not be usable. Both steps are therefore
-      # non-fatal: a missing GUI degrades to a CLI-only .deb rather than
-      # failing the job, because `publish` needs all three platforms and a
-      # Linux failure would block the entire release.
+      # The self-hosted runner is provisioned with the native Tauri toolchain.
+      # Verify those host dependencies without attempting privileged package
+      # installation from a non-interactive Actions job.
       - name: Setup Node (GUI)
-        continue-on-error: true
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -273,23 +270,31 @@ jobs:
           cache-dependency-path: gui/package-lock.json
 
       - name: Setup Rust (GUI)
-        continue-on-error: true
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install GUI build dependencies
-        id: gui_deps
-        continue-on-error: true
+      - name: Verify GUI build dependencies
         run: |
-          sudo apt-get update
-          # Tauri v2 on Linux needs webkit2gtk 4.1 (not 4.0).
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf \
+          required_packages=(
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            librsvg2-dev
+            patchelf
             libayatana-appindicator3-dev
+          )
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+            if [[ "$status" != "install ok installed" ]]; then
+              missing_packages+=("$package")
+            fi
+          done
+          if (( ${#missing_packages[@]} > 0 )); then
+            echo "Missing GUI prerequisites on the self-hosted runner:"
+            printf '  %s\n' "${missing_packages[@]}"
+            exit 1
+          fi
 
       - name: Build GUI
-        id: gui_build
-        if: steps.gui_deps.outcome == 'success'
-        continue-on-error: true
         working-directory: gui
         run: |
           npm ci
@@ -308,17 +313,17 @@ jobs:
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
 
-          # The GUI is optional: if its build was skipped or failed above, the
-          # package is still produced, just without it.
-          GUI_DEPENDS=""
           GUI_BIN="gui/src-tauri/target/release/pioneer-console"
-          if [[ -f "$GUI_BIN" ]]; then
-            install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
-            ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
-            install -Dm644 gui/src-tauri/icons/icon.png \
-              deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
-            mkdir -p deb/usr/share/applications
-            cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
+          if [[ ! -f "$GUI_BIN" ]]; then
+            echo "GUI build succeeded without producing $GUI_BIN"
+            exit 1
+          fi
+          install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
+          ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
+          install -Dm644 gui/src-tauri/icons/icon.png \
+            deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
+          mkdir -p deb/usr/share/applications
+          cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
           [Desktop Entry]
           Type=Application
           Name=Pioneer
@@ -328,13 +333,8 @@ jobs:
           Terminal=false
           Categories=Science;Biology;
           DESKTOP
-            # Only declared when the GUI is actually shipped, so a CLI-only
-            # package stays dependency-free as it is today.
-            GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
-            echo "GUI included in .deb"
-          else
-            echo "GUI binary not found at $GUI_BIN - packaging CLI only"
-          fi
+          GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
+          echo "GUI included in .deb"
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)
