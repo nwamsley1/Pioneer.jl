@@ -3,7 +3,7 @@
  *  Ported from the LOG DRAWER block of the design.
  */
 import { useEffect, useRef } from 'react'
-import type { Job, JobStatus } from '../lib/types'
+import type { Job, JobStatus, PathInfo } from '../lib/types'
 
 const PILL: React.CSSProperties = {
   fontSize: 11.5,
@@ -37,6 +37,8 @@ const GHOST_BTN: React.CSSProperties = {
 
 interface Props {
   job: Job | null
+  /** Stat of the run's output folder, or null if not checked yet. */
+  targetInfo: PathInfo | null
   height: number
   statusText: string
   confirmCancel: boolean
@@ -49,6 +51,7 @@ interface Props {
 
 export function LogDrawer({
   job,
+  targetInfo,
   height,
   statusText,
   confirmCancel,
@@ -245,7 +248,12 @@ export function LogDrawer({
           // like a bug.
           <span style={{ color: '#6E7E97', fontStyle: 'italic' }}>
             Output is not kept between sessions — this run's parameters were
-            restored from history. Its results are still on disk at {job.target}.
+            restored from history.
+            {targetInfo === null
+              ? ` Its results were written to ${job.target}.`
+              : targetInfo.exists
+                ? ` Its results are still at ${job.target}.`
+                : ` Its results are no longer at ${job.target} — the folder has been moved or deleted.`}
           </span>
         ) : (
           job ? job.logLines.map((l) => l.text).join('\n') : ''

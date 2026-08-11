@@ -257,6 +257,20 @@ export default function App() {
     }
   }, [command, search, build, convert, threads, inspectingJobId])
 
+  // A restored run has no log, so the drawer offers its output folder instead.
+  // Whether that folder still exists is not knowable from the stored history --
+  // it may have been moved, deleted, or be on a volume that is not mounted -- so
+  // stat it rather than claiming.
+  useEffect(() => {
+    if (viewJobId) {
+      const j = jobs.find((x) => x.id === viewJobId)
+      if (j && j.logLines.length === 0 && j.target && j.target !== '—') {
+        inspect('jobTarget', j.target)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewJobId])
+
   /** Put a past run's parameters on screen, switching to its workflow. */
   const inspectJob = useCallback((job: Job) => {
     setInspectingJobId((current) => {
@@ -1015,6 +1029,7 @@ export default function App() {
         {drawerOpen && (
           <LogDrawer
             job={viewJob}
+            targetInfo={pathInfos['jobTarget'] ?? null}
             height={drawerHeight}
             statusText={statusText}
             confirmCancel={confirmCancel}
