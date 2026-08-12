@@ -1141,6 +1141,13 @@ export default function App() {
               setConfirmCancel(false)
               if (viewJobId) backend.cancelJob(viewJobId).catch(() => undefined)
             }}
+            onOpenTarget={() => {
+              const job = jobs.find((j) => j.id === viewJobId)
+              if (!job?.target) return
+              // The folder can go between the last stat and the click, so the
+              // failure is reported rather than swallowed.
+              backend.openFolder(job.target).catch((e) => setRunError(String(e)))
+            }}
             onClose={() => setDrawerOpen(false)}
           />
         )}

@@ -62,6 +62,9 @@ export const startJob = (
 
 export const cancelJob = (jobId: string): Promise<void> => invoke('cancel_job', { jobId })
 
+/** Reveal a finished run's output folder. Rejects if it is no longer there. */
+export const openFolder = (path: string): Promise<void> => invoke('open_folder', { path })
+
 export const onJobLine = (cb: (e: LineEvent) => void): Promise<UnlistenFn> =>
   listen<LineEvent>('job-line', (e) => cb(e.payload))
 

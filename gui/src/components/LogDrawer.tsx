@@ -46,6 +46,7 @@ interface Props {
   onAskCancel: () => void
   onKeepRunning: () => void
   onConfirmCancel: () => void
+  onOpenTarget: () => void
   onClose: () => void
 }
 
@@ -59,6 +60,7 @@ export function LogDrawer({
   onAskCancel,
   onKeepRunning,
   onConfirmCancel,
+  onOpenTarget,
   onClose,
 }: Props) {
   const status: JobStatus | 'idle' = job ? job.status : 'idle'
@@ -199,6 +201,38 @@ export function LogDrawer({
                 Stop
               </button>
             </div>
+          )}
+          {/* Finished runs only: while one is running the folder is half
+              written, and the drawer already says when the output has been
+              moved or deleted -- so the button is disabled rather than opening
+              nothing. */}
+          {job && job.target && status !== 'running' && status !== 'queued' && (
+            <button
+              type="button"
+              className="pio-ghost"
+              onClick={onOpenTarget}
+              disabled={targetInfo !== null && !targetInfo.exists}
+              title={
+                targetInfo !== null && !targetInfo.exists
+                  ? `${job.target} is no longer there`
+                  : `Show ${job.target} in the file manager`
+              }
+              style={{
+                ...GHOST_BTN,
+                opacity: targetInfo !== null && !targetInfo.exists ? 0.45 : 1,
+                cursor: targetInfo !== null && !targetInfo.exists ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17V7.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Open folder
+            </button>
           )}
           <button type="button" className="pio-ghost" onClick={onClose} title="Hide" style={GHOST_BTN}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">

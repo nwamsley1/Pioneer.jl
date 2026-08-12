@@ -27,13 +27,13 @@ use crate::pioneer;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(windows)]
-fn hide_console(cmd: &mut Command) {
+pub fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
-fn hide_console(_cmd: &mut Command) {}
+pub fn hide_console(_cmd: &mut Command) {}
 
 /// A line of output from a running job.
 #[derive(Clone, serde::Serialize)]
