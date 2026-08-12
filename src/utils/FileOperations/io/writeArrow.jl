@@ -104,7 +104,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
         # Route replacement through the same normalized, retrying deletion
         # path as every other Arrow cleanup operation.
         safeRm(fpath; force=true)
-        
+
         # Move the temporary file to the final location
         try
             mv(tpath, fpath, force=true)
