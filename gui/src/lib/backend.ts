@@ -62,6 +62,29 @@ export const startJob = (
 
 export const cancelJob = (jobId: string): Promise<void> => invoke('cancel_job', { jobId })
 
+/** One finished run as the store holds it. `snapshot` is the form state as
+ *  JSON — opaque to the Rust side, which should not need to know the shape of
+ *  three different parameter sets. */
+export interface StoredRun {
+  id: string
+  run_no: number
+  cmd: string
+  title: string
+  target: string
+  threads: number
+  status: string
+  snapshot: string
+  finished_at: number
+}
+
+export const historyLoad = (): Promise<StoredRun[]> => invoke('history_load')
+export const historySave = (run: StoredRun): Promise<void> => invoke('history_save', { run })
+export const historyDelete = (id: string): Promise<void> => invoke('history_delete', { id })
+export const historyNextRunNo = (): Promise<number> => invoke('history_next_run_no')
+export const historyNeedsImport = (): Promise<boolean> => invoke('history_needs_import')
+export const historyImport = (runs: StoredRun[], counter: number): Promise<void> =>
+  invoke('history_import', { runs, counter })
+
 /** What a .poin library records about itself, read from its own config. */
 export interface LibraryInfo {
   is_library: boolean

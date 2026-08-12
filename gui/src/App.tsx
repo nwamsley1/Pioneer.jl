@@ -99,26 +99,6 @@ function nextRunNo(): number {
   return n
 }
 
-/** Write the history, giving up entries rather than the whole store.
- *
- *  There is deliberately no cap: the thousandth search should still be there.
- *  But history shares localStorage with the form draft, and an unbounded blob
- *  will eventually exceed the quota. On failure, drop the oldest half and try
- *  again — losing old runs is recoverable, losing the store is not. A real
- *  database (see the plan's F2) removes the need for this entirely.
- */
-function saveHistory(runs: PersistedRun[]): void {
-  let keep = runs
-  while (keep.length > 0) {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(keep))
-      return
-    } catch {
-      keep = keep.slice(Math.ceil(keep.length / 2))
-    }
-  }
-}
-
 /** What survives a restart. A subset of Job: the identity, the outcome, and the
  *  form state needed to put the run back on screen. */
 interface PersistedRun {
@@ -133,6 +113,55 @@ interface PersistedRun {
   snapshot: JobSnapshot
 }
 
+/** A stored row as a Job the sidebar can render. */
+function runToJob(r: backend.StoredRun): Job | null {
+  let snapshot: JobSnapshot
+  try {
+    snapshot = JSON.parse(r.snapshot) as JobSnapshot
+  } catch {
+    return null
+  }
+  if (!snapshot?.cmd) return null
+  return {
+    id: r.id,
+    runNo: r.run_no,
+    cmd: r.cmd as CommandId,
+    title: r.title,
+    target: r.target,
+    threads: r.threads,
+    status: r.status as JobStatus,
+    snapshot,
+    logLines: [],
+    failMsg: '',
+    paramsJson: '',
+    invocation: { kind: 'paramsFile' as const, json: '' },
+    viewerPaths:
+      snapshot.cmd === 'searchdia'
+        ? {
+            results: snapshot.search.results,
+            msData: snapshot.search.msData,
+            library: snapshot.search.library,
+          }
+        : null,
+    paramsPath: '',
+  }
+}
+
+function jobToRun(j: Job): backend.StoredRun {
+  return {
+    id: j.id,
+    run_no: j.runNo,
+    cmd: j.cmd,
+    title: j.title,
+    target: j.target,
+    threads: j.threads,
+    status: j.status,
+    snapshot: JSON.stringify(j.snapshot),
+    finished_at: 0,
+  }
+}
+
+/** The old localStorage history, read only to hand it to the store once. */
 function loadHistory(): Job[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY)
@@ -216,7 +245,7 @@ export default function App() {
   const [runError, setRunError] = useState('')
   const [modNote, setModNote] = useState({ fixed: '', variable: '' })
 
-  const [jobs, setJobs] = useState<Job[]>(loadHistory)
+  const [jobs, setJobs] = useState<Job[]>([])
   const [viewJobId, setViewJobId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
@@ -351,22 +380,55 @@ export default function App() {
     setInspectingJobId(null)
   }, [])
 
+  /** Ids already written, so a re-render does not rewrite the whole history —
+   *  one row per finished run is the point of moving off localStorage. */
+  const savedRuns = useRef(new Set<string>())
+
   useEffect(() => {
-    const finished = jobs.filter(
-      (j) => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled',
-    )
-    const keep = finished.map<PersistedRun>((j) => ({
-      id: j.id,
-      runNo: j.runNo,
-      cmd: j.cmd,
-      title: j.title,
-      target: j.target,
-      threads: j.threads,
-      status: j.status,
-      snapshot: j.snapshot,
-    }))
-    saveHistory(keep)
+    for (const j of jobs) {
+      const finished = j.status === 'done' || j.status === 'failed' || j.status === 'cancelled'
+      if (!finished || savedRuns.current.has(j.id)) continue
+      savedRuns.current.add(j.id)
+      backend.historySave(jobToRun(j)).catch(() => {
+        // Allow a retry rather than silently dropping the run.
+        savedRuns.current.delete(j.id)
+      })
+    }
   }, [jobs])
+
+  /** Read the store, importing the old localStorage history the first time. */
+  const refreshHistory = useCallback(async () => {
+    try {
+      if (await backend.historyNeedsImport()) {
+        const legacy = loadHistory()
+        const counter = Number(localStorage.getItem(RUN_COUNTER_KEY)) || 0
+        await backend.historyImport(legacy.map(jobToRun), counter)
+      }
+      const rows = await backend.historyLoad()
+      const restored = rows.map(runToJob).filter((j): j is Job => j !== null)
+      restored.forEach((j) => savedRuns.current.add(j.id))
+      // Live jobs belong to this session and are not in the store; keep them.
+      setJobs((prev) => [
+        ...restored,
+        ...prev.filter((j) => j.status === 'queued' || j.status === 'running'),
+      ])
+    } catch {
+      /* store unavailable — leave whatever is on screen alone */
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshHistory()
+  }, [refreshHistory])
+
+  // Re-read when the window regains focus. Redundant while the app is
+  // single-instance, but the database is a file: anything else that writes it
+  // shows up on the next focus rather than needing a restart.
+  useEffect(() => {
+    const onFocus = () => void refreshHistory()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshHistory])
 
   useEffect(() => {
     applyTheme(theme)
@@ -863,10 +925,13 @@ export default function App() {
       ? searchNotes.results
       : libNote
 
-  const enqueue = () => {
+  const enqueue = async () => {
     jobSeq.current += 1
     const id = `${sessionId.current}-job${jobSeq.current}`
-    const runNo = nextRunNo()
+    // From the store, so it keeps climbing across restarts and cannot
+    // diverge from the rows it numbers. Falls back to the local counter if
+    // the store is unavailable.
+    const runNo = await backend.historyNextRunNo().catch(() => nextRunNo())
     const job: Job = {
       id,
       runNo,
@@ -935,7 +1000,7 @@ export default function App() {
       setOverwriteOpen(true)
       return
     }
-    enqueue()
+    void enqueue()
   }
 
   /** Apply an edited or loaded config. Returns an error message, or null. */
@@ -1255,6 +1320,8 @@ export default function App() {
             onConfirm={() => {
               const { id, kind } = jobConfirm
               if (kind === 'delete') {
+                // Also from the store, or the next read brings it back.
+                backend.historyDelete(id).catch(() => undefined)
                 setJobs((prev) => {
                   const rest = prev.filter((j) => j.id !== id)
                   if (viewJobId === id) {
