@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { PioneerLogo } from './PioneerLogo'
+import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
 
@@ -367,8 +368,13 @@ export function Sidebar({
       }}
     >
       <div
+        data-tauri-drag-region
         style={{
-          padding: collapsed ? '22px 0 20px' : '22px 20px 20px',
+          // On macOS the title bar is an overlay, so the webview starts at
+          // y=0 and the traffic lights float over this block; TITLEBAR_H is
+          // their clearance. It is 0 elsewhere, where the real title bar
+          // already sits above us.
+          padding: `${22 + TITLEBAR_H}px ${collapsed ? 0 : 20}px 20px`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'flex-start',

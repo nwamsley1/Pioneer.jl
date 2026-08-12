@@ -28,6 +28,7 @@ import {
 import { makeFastaRow, presetRegex } from './lib/fasta'
 import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
 import { generateRunName } from './lib/names'
+import { TITLEBAR_H } from './lib/styles'
 import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
 import {
   BUILD_DEFAULTS,
@@ -957,15 +958,19 @@ export default function App() {
 
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>
         <header
+          data-tauri-drag-region
           style={{
-            height: 62,
+            // 62 of header plus the overlay title bar's strip, so the title and
+            // Run button keep the same clearance they had under the OS bar
+            // rather than riding up into it.
+            height: 62 + TITLEBAR_H,
             flex: 'none',
             borderBottom: '1px solid #E5E9ED',
             background: '#fff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '0 28px',
+            padding: `${TITLEBAR_H}px 28px 0`,
           }}
         >
           <div style={{ minWidth: 0 }}>

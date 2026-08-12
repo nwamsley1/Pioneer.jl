@@ -25,3 +25,12 @@ export const HINT: CSSProperties = {
   fontSize: 11.5,
   color: '#98A2B3',
 }
+
+/** Space reserved at the top of the window for the macOS traffic lights.
+ *
+ *  The window sets titleBarStyle "Overlay", so on macOS the webview starts at
+ *  y=0 and the lights float over our own chrome. That setting is macOS-only —
+ *  Windows and Linux keep an ordinary title bar above the webview, and
+ *  reserving the strip there would just be dead space under it.
+ */
+export const TITLEBAR_H = navigator.userAgent.includes('Mac OS X') ? 28 : 0
