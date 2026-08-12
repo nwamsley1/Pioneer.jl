@@ -401,6 +401,17 @@ export function Sidebar({
     .filter((j) => j.status !== 'queued' && j.status !== 'running')
     .slice()
     .sort((a, b) => b.runNo - a.runNo)
+
+  /** What the collapsed strip shows: everything pending, plus whatever finished
+   *  while it was collapsed — in `jobs` order, which is the order they were
+   *  queued in.
+   *
+   *  One list rather than pending-then-finished, so a run that goes green stays
+   *  where it was instead of jumping to the bottom. It only leaves the strip
+   *  when the sidebar is opened, which is when it joins the history proper. */
+  const collapsedRows = jobs.filter(
+    (j) => j.status === 'queued' || j.status === 'running' || watched.current.has(j.id),
+  )
   // Every term must appear somewhere, so "yeast phospho" narrows rather than
   // widening. Matched case-insensitively across the whole of searchableText.
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -738,10 +749,7 @@ export function Sidebar({
         >
           <div style={sectionStyle}>Queue</div>
           {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
-          {queue.map(renderRow)}
-          {/* Finished while collapsed: kept on the strip so the run you were
-              watching turns green rather than disappearing. */}
-          {collapsed && history.filter((j) => watched.current.has(j.id)).map(renderRow)}
+          {(collapsed ? collapsedRows : queue).map(renderRow)}
           <div
             style={{
               ...sectionStyle,
