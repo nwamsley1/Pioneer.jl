@@ -35,6 +35,7 @@ const DOT_COLORS: Record<Job['status'], string> = {
   done: '#10B981',
   failed: '#DC2626',
   cancelled: 'var(--pio-nav-fg-faint)',
+  interrupted: '#F59E0B',
 }
 
 const CMD_TEXT: Record<CommandId, string> = {
@@ -49,6 +50,7 @@ const STATUS_TEXT: Record<Job['status'], string> = {
   done: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  interrupted: 'Interrupted — click to reload its parameters',
 }
 
 /** The indeterminate "barber pole" bar the design uses while a job runs — an
@@ -301,6 +303,7 @@ export function Sidebar({
   onJobAction,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const themeRef = useRef<HTMLDivElement>(null)
 
   // Close on a click anywhere else, so an accidental open does not leave the row
@@ -337,6 +340,17 @@ export function Sidebar({
   // both, so a finished run stays clickable and still loads its parameters.
   const queue = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
   const history = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running')
+  // Name, command and output path — the three things anyone would remember a
+  // run by. Matched case-insensitively on any of them rather than requiring the
+  // user to know which field they are searching.
+  const q = query.trim().toLowerCase()
+  const shown = q
+    ? history.filter((j) =>
+        [j.title, CMD_TEXT[j.cmd], j.target, String(j.runNo)].some((v) =>
+          (v ?? '').toLowerCase().includes(q),
+        ),
+      )
+    : history
   const emptyHint: React.CSSProperties = {
     padding: '2px 10px 8px',
     fontSize: 11.5,
@@ -667,10 +681,36 @@ export function Sidebar({
           {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
           {queue.map(renderRow)}
           <div style={{ ...sectionStyle, marginTop: 12 }}>History</div>
+          {/* Only once there is enough history to be worth searching — a box
+              above two runs is clutter. */}
+          {!collapsed && history.length > 4 && (
+            <div style={{ padding: '0 12px 6px' }}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search runs…"
+                aria-label="Search run history"
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '6px 9px',
+                  borderRadius: 7,
+                  border: '1px solid var(--pio-nav-hair-strong)',
+                  background: 'var(--pio-nav-veil)',
+                  color: 'var(--pio-nav-fg)',
+                  font: "12px 'IBM Plex Sans'",
+                  outline: 'none',
+                }}
+              />
+            </div>
+          )}
           {history.length === 0 && !collapsed && (
             <div style={emptyHint}>No finished runs yet.</div>
           )}
-          {history.map(renderRow)}
+          {history.length > 0 && shown.length === 0 && !collapsed && (
+            <div style={emptyHint}>No run matches “{query}”.</div>
+          )}
+          {shown.map(renderRow)}
         </div>
       </div>
 
