@@ -427,7 +427,7 @@ export function Sidebar({
     color: 'var(--pio-nav-fg-faint)',
   }
 
-  const renderRow = (j: Job, idx: number) => {
+  const renderRow = (j: Job) => {
             const running = j.status === 'running'
             const pending = running || j.status === 'queued'
             return (
@@ -523,11 +523,14 @@ export function Sidebar({
                         textAlign: 'right',
                       }}
                     >
-                      {/* Two different numbers. In the queue, position is the
-                          useful fact, so it renumbers as runs start or are
-                          removed. In history it is an identity: run 1000 stays
-                          1000 however many earlier runs were deleted. */}
-                      {pending ? idx + 1 : j.runNo || ''}
+                      {/* One number per run, for its whole life. It is handed
+                          out when the run is queued, so a queued job already
+                          shows the number it will keep in the history -- queue
+                          three after run 41 and they are 42, 43, 44, including
+                          if one is cancelled before it starts. A separate
+                          queue-position count would have meant the same run
+                          wearing two different numbers. */}
+                      {j.runNo || ''}
                     </span>
                   )}
                 </div>
