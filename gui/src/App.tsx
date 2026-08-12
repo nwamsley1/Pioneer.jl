@@ -1103,7 +1103,7 @@ export default function App() {
             title={jobConfirm.kind === 'delete' ? 'Delete this run?' : 'Stop this run?'}
             body={
               jobConfirm.kind === 'delete'
-                ? 'This removes the run and its log from the queue. This can’t be undone.'
+                ? 'This removes the run and its log from the history. This can’t be undone.'
                 : 'This stops the Pioneer process and lets the next queued job start.'
             }
             detail={jobConfirm.title}

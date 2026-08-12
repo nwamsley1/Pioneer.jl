@@ -35,9 +35,24 @@ const SMALL_INPUT: React.CSSProperties = {
   boxSizing: 'border-box',
 }
 
+/** The chevron the form's other selects draw, so the site picker matches them
+ *  rather than falling back to the native control. */
+const CHEVRON =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 8px center"
+
+/** Wide enough for the longest all-sites value the catalogue offers — Methyl's
+ *  ten residues — so the column does not resize as modifications are added. */
+const SITE_CELL: React.CSSProperties = {
+  width: 112,
+  flex: 'none',
+  padding: '8px 10px',
+  font: "12.5px 'IBM Plex Mono'",
+  boxSizing: 'border-box',
+}
+
 const MOD_HEADERS = (
   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-    <span style={{ width: 52, flex: 'none', fontSize: 10.5, fontWeight: 600, color: '#98A2B3', textAlign: 'center' }}>
+    <span style={{ width: 112, flex: 'none', fontSize: 10.5, fontWeight: 600, color: '#98A2B3' }}>
       Site
     </span>
     <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: '#98A2B3' }}>
@@ -143,19 +158,21 @@ function ModTable({
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
               {def ? (
                 <select
-                  className="pio-input"
                   value={m.pattern}
                   onChange={(e) => onField(kind, i, 'pattern', e.target.value)}
-                  style={cell({
-                    width: 52,
-                    flex: 'none',
-                    padding: '8px 4px',
-                    font: "13px 'IBM Plex Mono'",
-                    textAlign: 'center',
-                    background: '#fff',
+                  style={{
+                    ...SITE_CELL,
+                    padding: '8px 24px 8px 10px',
+                    border: `1px solid ${bad ? '#B45309' : '#CBD2DA'}`,
+                    borderRadius: 9,
+                    color: bad ? '#B45309' : '#1D2939',
+                    background: `#FFFFFF ${CHEVRON}`,
+                    backgroundSize: '14px 14px',
                     cursor: 'pointer',
-                    ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
-                  })}
+                    outline: 'none',
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                  }}
                 >
                   {/* A stored pattern outside the model's sites still needs an
                       option, or the select would silently show a different one. */}
@@ -169,11 +186,7 @@ function ModTable({
               ) : (
                 <div
                   style={readOnly({
-                    width: 52,
-                    flex: 'none',
-                    padding: '8px 4px',
-                    font: "13px 'IBM Plex Mono'",
-                    textAlign: 'center',
+                    ...SITE_CELL,
                     borderColor: '#B45309',
                     color: '#B45309',
                   })}

@@ -327,7 +327,7 @@ export function Sidebar({
                     type="button"
                     className="pio-jobact pio-iconbtn"
                     onClick={() => onJobAction(j.id, 'delete')}
-                    title="Delete from queue"
+                    title="Delete from history"
                     style={{
                       flex: 'none',
                       border: 'none',
