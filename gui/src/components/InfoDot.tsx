@@ -24,6 +24,11 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
         border: `1px solid ${tone === 'dark' ? 'var(--pio-nav-hair-strong)' : '#B6BFC9'}`,
         color: tone === 'dark' ? 'var(--pio-nav-fg-faint)' : '#8A93A0',
         font: "italic 700 9.5px 'IBM Plex Serif', Georgia, serif",
+        // The `font` shorthand does not cover these two, so without them the
+        // dot inherits the sidebar heading's uppercase and tracking and renders
+        // as a spaced capital I rather than the lowercase i the forms show.
+        textTransform: 'none',
+        letterSpacing: 'normal',
         cursor: 'help',
         userSelect: 'none',
       }}
