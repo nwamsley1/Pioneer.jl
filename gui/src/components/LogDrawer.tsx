@@ -281,13 +281,23 @@ export function LogDrawer({
           // for localStorage. Say so rather than showing an empty pane that looks
           // like a bug.
           <span style={{ color: 'var(--pio-nav-fg-faint)', fontStyle: 'italic' }}>
-            Output is not kept between sessions — this run's parameters were
-            restored from history.
-            {targetInfo === null
-              ? ` Its results were written to ${job.target}.`
-              : targetInfo.exists
-                ? ` Its results are still at ${job.target}.`
-                : ` Its results are no longer at ${job.target} — the folder has been moved or deleted.`}
+            {status === 'interrupted' ? (
+              <>
+                This run was still going when Pioneer last closed, so it did not
+                finish. Its parameters were kept — click Run to start it again.
+                {job.target ? ` Anything it had written is in ${job.target}.` : ''}
+              </>
+            ) : (
+              <>
+                Output is not kept between sessions — this run's parameters were
+                restored from history.
+                {targetInfo === null
+                  ? ` Its results were written to ${job.target}.`
+                  : targetInfo.exists
+                    ? ` Its results are still at ${job.target}.`
+                    : ` Its results are no longer at ${job.target} — the folder has been moved or deleted.`}
+              </>
+            )}
           </span>
         ) : (
           job ? job.logLines.map((l) => l.text).join('\n') : ''

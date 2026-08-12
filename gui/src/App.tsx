@@ -380,18 +380,22 @@ export default function App() {
     setInspectingJobId(null)
   }, [])
 
-  /** Ids already written, so a re-render does not rewrite the whole history —
-   *  one row per finished run is the point of moving off localStorage. */
+  /** `${id}:${status}` pairs already written, so a re-render does not rewrite
+   *  the history — but a status *change* does write, which is what lets an
+   *  interrupted run be recognised later. */
   const savedRuns = useRef(new Set<string>())
 
   useEffect(() => {
     for (const j of jobs) {
-      const finished = j.status === 'done' || j.status === 'failed' || j.status === 'cancelled'
-      if (!finished || savedRuns.current.has(j.id)) continue
-      savedRuns.current.add(j.id)
+      // Queued and running rows are written too, not just finished ones. That
+      // is how interruption is detected: if the app goes away, the row stays
+      // pending on disk and startup can see it never finished. Waiting for a
+      // close event would miss a crash or a force quit.
+      const key = `${j.id}:${j.status}`
+      if (savedRuns.current.has(key)) continue
+      savedRuns.current.add(key)
       backend.historySave(jobToRun(j)).catch(() => {
-        // Allow a retry rather than silently dropping the run.
-        savedRuns.current.delete(j.id)
+        savedRuns.current.delete(key)
       })
     }
   }, [jobs])
@@ -405,8 +409,22 @@ export default function App() {
         await backend.historyImport(legacy.map(jobToRun), counter)
       }
       const rows = await backend.historyLoad()
-      const restored = rows.map(runToJob).filter((j): j is Job => j !== null)
-      restored.forEach((j) => savedRuns.current.add(j.id))
+      const restored = rows
+        .map(runToJob)
+        .filter((j): j is Job => j !== null)
+        // A row still pending on disk means the app went away mid-run. Say so
+        // rather than re-queuing it: starting a multi-hour search because
+        // someone opened the app is not a reasonable thing to do unasked.
+        .map((j) =>
+          j.status === 'queued' || j.status === 'running'
+            ? { ...j, status: 'interrupted' as JobStatus }
+            : j,
+        )
+      restored.forEach((j) => savedRuns.current.add(`${j.id}:${j.status}`))
+      // Persist the reinterpretation, so it is not redone on every launch.
+      restored
+        .filter((j) => j.status === 'interrupted')
+        .forEach((j) => void backend.historySave(jobToRun(j)).catch(() => undefined))
       // Live jobs belong to this session and are not in the store; keep them.
       setJobs((prev) => [
         ...restored,
@@ -1100,7 +1118,14 @@ export default function App() {
   const statusText = viewJob
     ? viewJob.status === 'running'
       ? `Running ${viewJob.title}…`
-      : { queued: 'Queued', done: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }[viewJob.status]
+      : {
+          queued: 'Queued',
+          done: 'Completed',
+          failed: 'Failed',
+          cancelled: 'Cancelled',
+          interrupted: 'Interrupted',
+          running: 'Running',
+        }[viewJob.status]
     : 'Ready'
   const extraKeys = extraLeafPaths(currentExtras)
   const modKeyLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl '

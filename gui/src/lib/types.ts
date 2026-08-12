@@ -186,7 +186,16 @@ export type Invocation =
   | { kind: 'paramsFile'; json: string }
   | { kind: 'args'; args: string[] }
 
-export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+/** `interrupted` is not reported by a run — it is inferred at startup for a
+ *  row still marked queued or running, which can only mean the app went away
+ *  before it finished. */
+export type JobStatus =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
 
 /** `app` marks lines the GUI itself wrote (the command line, the params path,
  *  the exit message). Terminal cursor control only ever rewrites the stream it
