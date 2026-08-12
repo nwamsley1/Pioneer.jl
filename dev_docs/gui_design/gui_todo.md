@@ -3,16 +3,11 @@
 Checklist derived from the meeting plan (`gui_meeting_plan.pdf`) and the design
 notes (`gui_design_notes.pdf`). Tick items as they land.
 
-Last updated 2026-08-12 (second pass).
+Last updated 2026-08-12 (third pass).
 
 ---
 
 ## Next up
-
-- [ ] **B3 — "Isotopes (n)"**
-      The last of the naming items. Ambiguous between precursor and fragment
-      isotopes; the parameter is fragment isotopes. One line now that
-      `NumSpec.info` and `InfoDot` exist — the same treatment `Initial NCE` got.
 
 - [ ] **Clear the 20 seeded runs** when they have served their purpose.
       Deleting them in the UI works. The run counter deliberately will not
@@ -109,15 +104,21 @@ wrong, all three icons are SVGs at matching stroke weight.
 
 Meeting plan — A1 collapse icon, A2 logo removed, B1 Reference MS file,
 B2 Initial NCE, B4 debug logging, C1 library save dialog, C2 browse-from-home
-and configurable, C4 remember the last library, C5 drag and drop onto the
-field, D1 library metadata, E1 Windows console window, E2 open the output
+and configurable, C4 remember the last library, B3 Fragment isotopes, C5 drag and drop onto
+the field, D1 library metadata, E1 Windows console window, E2 open the output
 folder, F1 stable history numbers and no cap, F2 SQLite, F3 history search,
 F4 interrupted runs.
 
 Also landed, not from either document — the Koina modification picker, the
 settings panel behind the gear, the threads field being clearable, the
-single-instance guard, Confidence & output beside Advanced, and Advanced
-always open on SearchDIA.
+single-instance guard, Confidence & output beside Advanced, Advanced always
+open on SearchDIA, an explanation of what history search matches, and the
+removal of the trace mode control.
+
+A third bug found only by running it: the trace mode control's "separated"
+value was never one Pioneer accepts — it wants "combined" or "separate", so
+choosing it failed the run at IntegrateChromatogramsSearch. Removing the
+control removed the bug.
 
 Two bugs found by testing rather than by reading: the window could not be
 dragged at all (the overlay title bar needs core:window:allow-start-dragging,
