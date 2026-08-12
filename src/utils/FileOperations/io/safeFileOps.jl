@@ -18,7 +18,7 @@
 # Safe file operations for cross-platform compatibility
 
 const WINDOWS_DELETE_MAX_ATTEMPTS = 3
-const GC_LOCK = ReentrantLock()
+const _WINDOWS_DELETE_GC_LOCK = ReentrantLock()
 
 """
     _windows_delete_command(fpath)
@@ -88,7 +88,7 @@ function safeRm(fpath::AbstractString; force::Bool=false)
         # several threads entered GC.gc() concurrently. Keep this last-resort
         # collection serialized even though the deletion logic is centralized.
         try
-            lock(GC_LOCK) do
+            lock(_WINDOWS_DELETE_GC_LOCK) do
                 GC.gc(true)
             end
             rm(path; force=true)

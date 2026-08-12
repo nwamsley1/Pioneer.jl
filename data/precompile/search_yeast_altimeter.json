@@ -31,7 +31,7 @@
     "output": {
         "plots_per_page": 12,
         "write_decoys": false,
-        "write_csv": false,
+        "write_csv": true,
         "delete_temp": true
     },
     "chromatogram": {

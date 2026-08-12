@@ -13,12 +13,6 @@ const REPOSITORY_ROOT = normpath(joinpath(PACKAGING_DIR, ".."))
 const APP_PROJECT = REPOSITORY_ROOT
 const COMPILER_PROJECT = joinpath(PACKAGING_DIR, "compiler", "Project.toml")
 const PRECOMPILE_EXECUTION_FILE = joinpath(REPOSITORY_ROOT, "src", "build", "snoop.jl")
-const PRECOMPILE_STATEMENTS_FILE = joinpath(
-    REPOSITORY_ROOT,
-    "src",
-    "build",
-    "precompile_statements.jl",
-)
 
 include(joinpath(PACKAGING_DIR, "app_config.jl"))
 
@@ -49,7 +43,6 @@ function check_build_environment()
         joinpath(REPOSITORY_ROOT, "Manifest.toml"),
         joinpath(dirname(COMPILER_PROJECT), "Manifest.toml"),
         PRECOMPILE_EXECUTION_FILE,
-        PRECOMPILE_STATEMENTS_FILE,
     )
         isfile(required_file) || error("missing application build input: $required_file")
     end
@@ -73,7 +66,6 @@ function build_app(output_dir::AbstractString)
             force=true,
             executables=PIONEER_APP_EXECUTABLES,
             precompile_execution_file=PRECOMPILE_EXECUTION_FILE,
-            precompile_statements_file=PRECOMPILE_STATEMENTS_FILE,
             cpu_target=cpu_target,
         )
     end
