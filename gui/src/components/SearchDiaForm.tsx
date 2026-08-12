@@ -259,7 +259,13 @@ export function SearchDiaForm({
         </div>
       </section>
 
-      <section style={CARD}>
+      {/* Confidence & output and Advanced sit side by side at half width each.
+          Basis 300px, not 340: at the window's 980px minimum the sidebar and
+          padding leave about 670px, so 340 each would exceed it and wrap to a
+          column at the default size. At 300 they fit and then grow to ~330.
+          flex-start so the shorter card does not stretch to match the taller. */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <section style={{ ...CARD, flex: '1 1 300px', minWidth: 0 }}>
         <div
           style={{
             display: 'flex',
@@ -332,6 +338,8 @@ export function SearchDiaForm({
           border: '1px solid #E7EAEE',
           borderRadius: 13,
           overflow: 'hidden',
+          flex: '1 1 300px',
+          minWidth: 0,
         }}
       >
         <button
@@ -423,7 +431,8 @@ export function SearchDiaForm({
             </div>
           </div>
         )}
-      </section>
+        </section>
+      </div>
     </div>
   )
 }
