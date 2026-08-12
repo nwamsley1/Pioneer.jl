@@ -42,7 +42,7 @@ const DOT_COLORS: Record<Job['status'], string> = {
 /** Everything about a run worth matching a search against.
  *
  *  Not just the name and output folder: the input paths are usually what
- *  someone remembers a run by — "the one on the Olsen data", "the one that
+ *  someone remembers a run by — "the one on the yeast data", "the one that
  *  used the phospho library". Every path in the snapshot is included, so a
  *  match on any part of any of them finds the run.
  */
@@ -366,8 +366,17 @@ export function Sidebar({
   // what is about to happen, history is what to go back to. Same row renderer for
   // both, so a finished run stays clickable and still loads its parameters.
   const queue = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
-  const history = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running')
-  // Every term must appear somewhere, so "olsen prosit" narrows rather than
+  // Newest first. Sorted here rather than relying on the order rows come back
+  // in, because a run that finishes during this session is appended to the end
+  // of `jobs` and would otherwise land at the bottom of the history even though
+  // it is the most recent. Copy before sorting — `jobs` is props.
+  //
+  // The queue keeps insertion order: there, position is the point.
+  const history = jobs
+    .filter((j) => j.status !== 'queued' && j.status !== 'running')
+    .slice()
+    .sort((a, b) => b.runNo - a.runNo)
+  // Every term must appear somewhere, so "yeast phospho" narrows rather than
   // widening. Matched case-insensitively across the whole of searchableText.
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const shown = terms.length
@@ -722,7 +731,7 @@ export function Sidebar({
               text={
                 'Search matches a run\u2019s name, number, command and status, and every path it used \u2014 MS data folder, spectral library, results folder, FASTA files. ' +
                 'For a library build it also matches the modifications and the prediction model, so \u201coxidation\u201d or \u201cprosit\u201d finds one. ' +
-                'Several words narrow rather than widen: \u201colsen prosit\u201d matches only runs with both. ' +
+                'Several words narrow rather than widen: \u201cyeast phospho\u201d matches only runs with both. ' +
                 'Individual MS file names are not searchable \u2014 only the folder they are in was recorded.'
               }
             />
