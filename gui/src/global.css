@@ -233,6 +233,14 @@ body {
 /* The sidebar header's gear and collapse buttons. Not .pio-iconbtn: that hovers
    to a warning red, which is right for the cancel and delete buttons it was
    written for and wrong for a settings control. */
+/* The field a drag is currently over. Applied imperatively by lib/dragdrop —
+   Tauri's drop event is window-level, so there is no React target to style. */
+.pio-droptarget {
+  outline: 2px dashed var(--pio-accent) !important;
+  outline-offset: 2px;
+  background: var(--pio-accent-wash) !important;
+}
+
 .pio-navicon:hover {
   color: var(--pio-nav-fg) !important;
   background: var(--pio-nav-veil) !important;

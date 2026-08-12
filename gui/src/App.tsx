@@ -27,6 +27,7 @@ import {
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
 import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
+import { listenForDrops } from './lib/dragdrop'
 import { generateRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
 import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
@@ -374,6 +375,49 @@ export default function App() {
   useEffect(() => {
     void backend.initHomeDir()
   }, [])
+
+  useEffect(() => {
+    let stop: (() => void) | undefined
+    let cancelled = false
+    listenForDrops((key, kind, paths) => {
+      void (async () => {
+        const path = paths[0]
+        // Trust the drop for the path but not for what it is: a folder named
+        // lib.poin and a file named lib.poin are indistinguishable by string.
+        const info = await backend.inspectPath(path)
+        const isDir = info.is_dir
+        if (kind === 'dir' && !isDir) {
+          setRunError('That is a file — this field takes a folder.')
+          return
+        }
+        if (kind === 'file' && isDir) {
+          setRunError('That is a folder — this field takes a single file.')
+          return
+        }
+        setRunError('')
+        if (key === 'fastaAdd') {
+          // Every dropped path, not just the first: picking several FASTAs at
+          // once is the normal case.
+          setBuild((b) => ({ ...b, fastaFiles: [...b.fastaFiles, ...paths.map(makeFastaRow)] }))
+          return
+        }
+        if (key === 'convertInput') {
+          setConvert((c) => ({ ...c, input: path, inputMode: isDir ? 'folder' : 'file' }))
+          return
+        }
+        onParam(key, path)
+      })()
+    }).then((un) => {
+      if (cancelled) un()
+      else stop = un
+    })
+    return () => {
+      cancelled = true
+      stop?.()
+    }
+    // onParam closes over the current command, so the listener is rebound when
+    // the tab changes; otherwise a drop would land in the previous form.
+  }, [command])
 
   // ---- live path validation ---------------------------------------------
 
