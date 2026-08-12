@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { defaultDir, pickDefaultDir, setDefaultDir } from '../lib/backend'
+import { InfoDot } from './InfoDot'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
@@ -36,6 +37,32 @@ const DOT_COLORS: Record<Job['status'], string> = {
   failed: '#DC2626',
   cancelled: 'var(--pio-nav-fg-faint)',
   interrupted: '#F59E0B',
+}
+
+/** Everything about a run worth matching a search against.
+ *
+ *  Not just the name and output folder: the input paths are usually what
+ *  someone remembers a run by — "the one on the Olsen data", "the one that
+ *  used the phospho library". Every path in the snapshot is included, so a
+ *  match on any part of any of them finds the run.
+ */
+function searchableText(j: Job): string {
+  const parts: string[] = [j.title, CMD_TEXT[j.cmd], j.target, String(j.runNo), j.status]
+  const s = j.snapshot
+  if (s.cmd === 'searchdia') {
+    parts.push(s.search.msData, s.search.library, s.search.results)
+  } else if (s.cmd === 'buildspeclib') {
+    parts.push(s.build.libPath, s.build.calibrationFile)
+    parts.push(...s.build.fastaFiles.map((f) => f.path))
+    parts.push(...s.build.fastaFiles.map((f) => f.name))
+    // The modifications a library was built with, so "phospho" finds it.
+    parts.push(...s.build.variableMods.map((m) => m.label))
+    parts.push(...s.build.fixedMods.map((m) => m.label))
+    parts.push(s.build.predictionModel)
+  } else {
+    parts.push(s.convert.input, s.convert.outputDir)
+  }
+  return parts.filter(Boolean).join(' \u0000 ').toLowerCase()
 }
 
 const CMD_TEXT: Record<CommandId, string> = {
@@ -340,16 +367,14 @@ export function Sidebar({
   // both, so a finished run stays clickable and still loads its parameters.
   const queue = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
   const history = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running')
-  // Name, command and output path — the three things anyone would remember a
-  // run by. Matched case-insensitively on any of them rather than requiring the
-  // user to know which field they are searching.
-  const q = query.trim().toLowerCase()
-  const shown = q
-    ? history.filter((j) =>
-        [j.title, CMD_TEXT[j.cmd], j.target, String(j.runNo)].some((v) =>
-          (v ?? '').toLowerCase().includes(q),
-        ),
-      )
+  // Every term must appear somewhere, so "olsen prosit" narrows rather than
+  // widening. Matched case-insensitively across the whole of searchableText.
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const shown = terms.length
+    ? history.filter((j) => {
+        const hay = searchableText(j)
+        return terms.every((t) => hay.includes(t))
+      })
     : history
   const emptyHint: React.CSSProperties = {
     padding: '2px 10px 8px',
@@ -680,7 +705,28 @@ export function Sidebar({
           <div style={sectionStyle}>Queue</div>
           {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
           {queue.map(renderRow)}
-          <div style={{ ...sectionStyle, marginTop: 12 }}>History</div>
+          <div
+            style={{
+              ...sectionStyle,
+              marginTop: 12,
+              display: collapsed ? 'none' : 'flex',
+              alignItems: 'center',
+              gap: 7,
+            }}
+          >
+            History
+            {/* What is searchable is not guessable from a box that says
+                "Search runs…" — the paths and modifications in particular. */}
+            <InfoDot
+              tone="dark"
+              text={
+                'Search matches a run\u2019s name, number, command and status, and every path it used \u2014 MS data folder, spectral library, results folder, FASTA files. ' +
+                'For a library build it also matches the modifications and the prediction model, so \u201coxidation\u201d or \u201cprosit\u201d finds one. ' +
+                'Several words narrow rather than widen: \u201colsen prosit\u201d matches only runs with both. ' +
+                'Individual MS file names are not searchable \u2014 only the folder they are in was recorded.'
+              }
+            />
+          </div>
           {/* Only once there is enough history to be worth searching — a box
               above two runs is clutter. */}
           {!collapsed && history.length > 4 && (

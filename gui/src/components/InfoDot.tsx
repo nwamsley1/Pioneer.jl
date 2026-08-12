@@ -5,7 +5,7 @@
  *  detail rather than something needed to use the field, and a title is
  *  keyboard- and screen-reader-reachable for free.
  */
-export function InfoDot({ text }: { text: string }) {
+export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light' | 'dark' }) {
   return (
     <span
       title={text}
@@ -19,8 +19,10 @@ export function InfoDot({ text }: { text: string }) {
         height: 14,
         flex: 'none',
         borderRadius: '50%',
-        border: '1px solid #B6BFC9',
-        color: '#8A93A0',
+        // The sidebar is dark; the forms are not. Two fixed palettes rather
+        // than currentColor, so neither has to be styled by its parent.
+        border: `1px solid ${tone === 'dark' ? 'var(--pio-nav-hair-strong)' : '#B6BFC9'}`,
+        color: tone === 'dark' ? 'var(--pio-nav-fg-faint)' : '#8A93A0',
         font: "italic 700 9.5px 'IBM Plex Serif', Georgia, serif",
         cursor: 'help',
         userSelect: 'none',
