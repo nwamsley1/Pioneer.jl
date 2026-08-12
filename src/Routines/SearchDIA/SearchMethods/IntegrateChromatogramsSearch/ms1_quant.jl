@@ -52,10 +52,11 @@ function collect_ms1_window_precursors!(
     scan_rt::Float32,
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
     rt_tol_fallback::Float32,
-    rt_tol_floor::Float32 = 0f0)
+    rt_tol_fixed::Float32 = 0f0)
 
     size = 0
     has_rt_filter = precursor_rt_map !== nothing
+    use_fixed = rt_tol_fixed > 0f0
 
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
@@ -69,10 +70,15 @@ function collect_ms1_window_precursors!(
             if has_rt_filter
                 prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
                 if !isnan(prec_rt_val)
-                    prec_tol = rt_binned_tol !== nothing ?
-                        get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
-                    # Floor: the DIA-derived tolerance is 0 on DDA data.
-                    prec_tol = max(prec_tol, rt_tol_floor)
+                    # REPLACE, don't floor. The DIA-derived tolerance is
+                    # meaningless on DDA data: 0 across most of the gradient,
+                    # but in sparse RT bins prescore_aggregation falls back to
+                    # median(rt_fwhm_hc)/2, which max() would then adopt --
+                    # producing multi-minute windows for a few percent of
+                    # precursors around second-wide peaks.
+                    prec_tol = use_fixed ? rt_tol_fixed :
+                        (rt_binned_tol !== nothing ?
+                            get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback)
                     abs(scan_rt - prec_rt_val) > prec_tol && continue
                 end
             end
@@ -107,7 +113,10 @@ DDA retention-time tolerance
 ==========================================================#
 
 """
-Default half-width (minutes) of the DDA extraction window: 15 s.
+Half-width (minutes) of the DDA extraction window: 30 s.
+
+This REPLACES the DIA-derived RTBinnedTolerance in DDA mode rather than acting
+as a floor on it.
 
 The DIA-derived RT tolerance cannot be reused. `RTBinnedTolerance` is built in
 `prescore_aggregation.jl` from the observed MS2 chromatographic FWHM:
@@ -130,13 +139,25 @@ non-zero:
   2. That offset is one-sided and variable, so a window centred on the anchor
      must be wide enough to contain the apex on either side.
 
-A fixed floor is a placeholder. Determining this automatically for DDA (e.g.
-from the MS1 XIC width of confident IDs, once MS1 traces exist) is future work.
-Override with PIONEER_DDA_RT_TOL_MIN (minutes).
-"""
-const MS1_DDA_RT_TOL_DEFAULT = 0.25f0
+Flooring was the first attempt and was wrong: in sparse RT bins
+prescore_aggregation takes an `else` branch (`rt_tols[bin] =
+median(rt_fwhm_hc)/2`) that returns a large value, which `max()` then adopted.
+That gave ~4.4% of precursors multi-minute windows -- one observed trace spanned
+8 minutes around a few-second peak. Because WHSmooth! normalises the RT axis by
+the window width before building the penalty, an oversized window also destroys
+the smoothing: effective strength scales roughly as (window/peak)^4, so those
+traces were flattened entirely.
 
-function ms1_dda_rt_tol_floor()::Float32
+A fixed width is still a placeholder. Measured MS1 FWHM here is 9.3 s median
+(55% below 10 s) against this 60 s window, so most of a trace is baseline; the
+window is wide because the MS2 ID scan is offset from the apex (52.9% > 5 s,
+23.5% > 10 s) and must be bracketed. Deriving it from that offset distribution,
+or splitting into a wide apex-finding pass and a narrow integration pass, is
+future work. Override with PIONEER_DDA_RT_TOL_MIN (minutes).
+"""
+const MS1_DDA_RT_TOL_DEFAULT = 0.5f0
+
+function ms1_dda_rt_tol()::Float32
     s = get(ENV, "PIONEER_DDA_RT_TOL_MIN", "")
     isempty(s) && return MS1_DDA_RT_TOL_DEFAULT
     v = tryparse(Float32, s)
@@ -518,7 +539,7 @@ function build_chromatograms(
     has_rt_tol = haskey(getRtTolerances(search_context), ms_file_idx)
     rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
-    rt_tol_floor = ms1_dda_rt_tol_floor()
+    rt_tol_floor = ms1_dda_rt_tol()
 
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mz_arr = getMz(precursors)
@@ -543,7 +564,9 @@ function build_chromatograms(
             local_slope = abs((rt_irt_model(rt + h) - rt_irt_model(rt - h)) / (2f0 * h))
             rt_tol_local = irt_tol / max(local_slope, 0.01f0)
         end
-        rt_tol_local = max(rt_tol_local, rt_tol_floor)
+        # Bin range must match the admission test exactly, or we would walk
+        # bins whose precursors are then all rejected (or worse, miss some).
+        rt_tol_floor > 0f0 && (rt_tol_local = rt_tol_floor)
 
         rt_bin_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local,
                                              lt=(r,x)->r.lb<x) - 1, 1)
