@@ -52,7 +52,11 @@ export function buildSearchJsonBase(s: SearchParams): Json {
     global: { q_value_threshold: num(s.qValue, 0.01) },
     search: { n_isotopes: num(s.nIsotopes, 2) },
     acquisition: { nce: num(s.nce, 26) },
-    optimization: { chromatogram_integration: { trace_mode: s.traceMode } },
+    // Always combined. The GUI no longer offers a choice, and the value it
+    // used to send for the other option -- "separated" -- was not one Pioneer
+    // accepts. It expects "combined" or "separate", so choosing it failed the
+    // run at IntegrateChromatogramsSearch.
+    optimization: { chromatogram_integration: { trace_mode: 'combined' } },
     proteinScoring: { min_peptides: num(s.minPeptides, 1) },
     maxLFQ: { run_to_run_normalization: s.runToRunNorm },
     // Console verbosity only. The debug *file* level is left alone: Pioneer
@@ -318,11 +322,6 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   }
   if (isObj(obj.acquisition) && obj.acquisition.nce != null) {
     set.nce = String(obj.acquisition.nce)
-  }
-  const opt = isObj(obj.optimization) ? obj.optimization : {}
-  const ci = isObj(opt.chromatogram_integration) ? opt.chromatogram_integration : {}
-  if (ci.trace_mode === 'combined' || ci.trace_mode === 'separated') {
-    set.traceMode = ci.trace_mode
   }
   if (isObj(obj.proteinScoring) && obj.proteinScoring.min_peptides != null) {
     set.minPeptides = String(obj.proteinScoring.min_peptides)

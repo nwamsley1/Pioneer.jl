@@ -14,7 +14,6 @@ export interface SearchParams {
   qValue: string
   nIsotopes: string
   nce: string
-  traceMode: 'combined' | 'separated'
   minPeptides: string
   runToRunNorm: boolean
   /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
@@ -31,7 +30,6 @@ export const SEARCH_DEFAULTS: SearchParams = {
   qValue: '0.01',
   nIsotopes: '2',
   nce: '26',
-  traceMode: 'combined',
   minPeptides: '1',
   runToRunNorm: false,
   debugLogging: false,

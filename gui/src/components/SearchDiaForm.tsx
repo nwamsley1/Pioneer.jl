@@ -172,19 +172,6 @@ export function SearchDiaForm({
   onOpenLoad,
   onGoToBuild,
 }: Props) {
-  const seg = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '7px 0',
-    border: 'none',
-    borderRadius: 6,
-    font: "600 12.5px 'IBM Plex Sans'",
-    cursor: 'pointer',
-    transition: 'all .12s',
-    ...(active
-      ? { background: '#fff', color: '#1B2A4A', boxShadow: '0 1px 3px rgba(15,20,27,0.12)' }
-      : { background: 'none', color: '#667085' }),
-  })
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
@@ -353,34 +340,13 @@ export function SearchDiaForm({
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr 1fr',
                 gap: 14,
-                alignItems: 'start',
+                alignItems: 'stretch',
                 marginTop: 16,
               }}
             >
               <NumField fieldKey="nIsotopes" value={params.nIsotopes} onChange={onParam} />
               <NumField fieldKey="nce" value={params.nce} onChange={onParam} />
               <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
-            </div>
-            <div style={{ marginTop: 14, maxWidth: 280 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#475467', marginBottom: 6 }}>
-                Trace mode
-              </label>
-              <div style={{ display: 'flex', padding: 3, background: '#EEF1F4', borderRadius: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => onParam('traceMode', 'combined')}
-                  style={seg(params.traceMode === 'combined')}
-                >
-                  combined
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onParam('traceMode', 'separated')}
-                  style={seg(params.traceMode === 'separated')}
-                >
-                  separated
-                </button>
-              </div>
             </div>
         </div>
         </section>
