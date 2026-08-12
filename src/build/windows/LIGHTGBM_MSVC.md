@@ -15,7 +15,7 @@ This branch applies that swap in two places:
 
 | Channel | Who | Mechanism |
 |---|---|---|
-| **Packaged Windows app (MSI)** | end users | build-time DLL swap in `.github/workflows/build_app_windows.yml` + app-local VC++ runtime. Zero user action. |
+| **Packaged Windows app** | end users | build-time DLL swap + a WiX bootstrapper (`PioneerSetup.exe`) that installs the VC++ redistributable, then Pioneer. One UAC prompt at install; nothing at first launch. |
 | **Source / `Pkg.add` installs** | developers | `Pioneer.setup_windows_lightgbm()` writes a `LightGBM_jll` artifact override. Run once, restart Julia. |
 
 Both are pinned to a SHA-256-verified MSVC `lib_lightgbm.dll` v3.3.5.
@@ -95,18 +95,21 @@ PyPI wheel (a zip). It imports `VCOMP140.DLL` / `VCRUNTIME140.dll` / `MSVCP140.d
 ### 3a. Packaged app (end users) — build-time swap
 
 `PackageCompiler.create_app` bundles a private copy of the LightGBM artifact into the app tree.
-The workflow step **"Swap in MSVC LightGBM DLL"** in `.github/workflows/build_app_windows.yml`
-(added by this branch) runs right after `create_app` and:
+Two workflow steps in `.github/workflows/build_app_windows.yml` (added by this branch) do the work.
+
+**"Swap in MSVC LightGBM DLL"** runs right after `create_app` and:
 
 1. downloads the pinned wheel and verifies its SHA-256;
 2. extracts `lib_lightgbm.dll` and verifies its SHA-256;
 3. overwrites every bundled `lib_lightgbm.dll` under the app tree (and **fails the build** if
-   none is found, so a future `create_app` layout change can never silently skip the fix);
-4. copies the VC++ runtime (`vcomp140.dll`, `vcruntime140.dll`, `msvcp140.dll`) from the build
-   runner's `System32` into the app **app-local** (next to the executables and the DLL).
+   none is found, so a future `create_app` layout change can never silently skip the fix).
 
-Because the runtime ships app-local, the shipped app needs **no** separate VC++ redistributable
-install and **no** `Overrides.toml`. It just uses MSVC out of the box.
+**"Download VC++ redistributable"** + **"Build installer bundle"** then wrap the Pioneer MSI in a
+WiX Burn bootstrapper (`src/build/windows/Bundle.wxs`) that chains Microsoft's official
+`vc_redist.x64.exe` ahead of the MSI. The shipped artifact is a single `PioneerSetup-*.exe`; the
+bare `.msi` is still emitted as an internal component (see §4). The MSVC DLL needs **no**
+`Overrides.toml` — the bundled artifact simply *is* the MSVC build — and its runtime is provided
+by the redistributable the bootstrapper installs.
 
 ### 3b. Source / `Pkg.add` installs (developers) — `setup_windows_lightgbm()`
 
@@ -127,21 +130,44 @@ SHA-256, and unzip go through PowerShell; the TOML merge uses `Base.TOML`. Imple
 
 ## 4. Visual C++ Redistributable
 
-The MSVC DLL needs the VC++ runtime. This branch handles it by the **least-moving-parts** route:
+The MSVC `lib_lightgbm.dll` depends on the VC++ 2015-2022 runtime. Its imports are **`VCOMP140.DLL`
+(the MSVC OpenMP runtime — the whole reason the swap works), `VCRUNTIME140.dll`,
+`VCRUNTIME140_1.dll`, and `MSVCP140.dll`** (and `msvcp140.dll` itself also imports
+`vcruntime140_1.dll`). Note `vcruntime140_1.dll` — a *separate* file from `vcruntime140.dll`,
+introduced with VS 2019 for the C++ exception-handling ABI. It is easy to miss when hand-listing
+DLLs, and omitting it makes LightGBM fail to load on a clean machine.
 
-- **Packaged app:** the three runtime DLLs are shipped **app-local** by the CI step above, so
-  there is nothing to check or install on the user's machine.
-- **Source installs:** `setup_windows_lightgbm()` **detects** the runtime (looks for
-  `vcomp140.dll` etc. in `System32`) and, if missing, prints the official download link
-  (`https://aka.ms/vs/17/release/vc_redist.x64.exe`). A Julia function cannot install it
-  silently (that needs elevation), and dev machines almost always already have it.
+**Packaged app — the installer installs the official redistributable (implemented).** The Burn
+bootstrapper chains `vc_redist.x64.exe` (fetched at build time from Microsoft's official
+`https://aka.ms/vs/17/release/vc_redist.x64.exe`) ahead of the Pioneer MSI, with a registry
+`DetectCondition` so it is skipped when the runtime is already present and a `3010` exit-code
+handler for the reboot-required case. This runs **at install time** (one UAC prompt, before the
+app is ever launched — not lazily on first use, which would be a chicken-and-egg trap since the
+missing runtime is exactly what the app needs to start). It is:
 
-**Alternative considered (not applied):** convert the plain MSI (`installer.wxs`) into a WiX
-**Burn bundle** that chains `vc_redist.x64.exe` (the standard "install the redist if absent"
-pattern). That relies on the system-wide redist (better for security updates) but is a larger
-installer restructure and needs MSI-build testing. App-local was chosen first because it is
-self-contained and cannot fail on a bare machine. If you prefer the system-wide route, the Burn
-bundle is the place to add it and app-local copying in the CI step can be dropped.
+- **complete by construction** — installs the entire runtime, so `vcruntime140_1` and any future
+  dependency are covered automatically, with no per-DLL bookkeeping;
+- **correct on provenance** — `vc_redist.x64.exe` is Microsoft's redistributable, explicitly
+  licensed for distribution, unlike copying the same-named DLLs out of `System32` (covered by the
+  Windows licence, not the "Distributable Code" grant);
+- **self-updating** — tracks the latest security-patched runtime;
+- **independent of the build machine** — fetched from Microsoft, not scraped from the runner's
+  `System32` or a VS `VC\Redist` folder (that folder is an *optional* VS component and is not
+  guaranteed present even when Visual Studio / Build Tools is installed).
+
+It requires the installing user to have admin rights (the MSI already installs per-machine into
+`Program Files`, so this is no new constraint).
+
+**Rejected: app-local runtime DLLs.** Copying `vcomp140`/`vcruntime140`/`vcruntime140_1`/`msvcp140`
+next to the app avoids elevation and keeps a portable copy, but we would own keeping that DLL set
+complete (the first cut missed `vcruntime140_1`), and copying from `System32` takes the file from
+the source that does not grant redistribution. If a no-admin/portable install is ever needed, the
+provenance-correct app-local route is to **extract** the DLLs from the downloaded
+`vc_redist.x64.exe` rather than from `System32`.
+
+**Source installs:** `setup_windows_lightgbm()` **detects** the runtime (looks for `vcomp140.dll`
+etc. in `System32`) and, if missing, prints the official download link. A Julia function cannot
+install it silently (that needs elevation), and dev machines almost always already have it.
 
 ## 5. Maintenance: version coupling (important)
 

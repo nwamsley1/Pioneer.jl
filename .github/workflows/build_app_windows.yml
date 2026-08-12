@@ -176,16 +176,14 @@ jobs:
           if ($targets.Count -eq 0) { throw "no bundled lib_lightgbm.dll under $app - create_app layout changed?" }
           foreach ($t in $targets) { Copy-Item $msvc $t.FullName -Force; Write-Host "swapped: $($t.FullName)" }
 
-          # 4) app-local VC++ runtime (vcomp140 = OpenMP) so the MSVC DLL loads with no
-          #    separate redistributable install. Placed next to the executables and the DLL.
-          $bin = Join-Path $app "bin"
-          foreach ($vc in 'vcomp140.dll','vcruntime140.dll','msvcp140.dll') {
-            $src = Join-Path $env:WINDIR "System32\$vc"
-            if (-not (Test-Path $src)) { throw "VC runtime $vc not present on the build runner" }
-            Copy-Item $src $bin -Force
-            foreach ($t in $targets) { Copy-Item $src $t.Directory.FullName -Force }
-          }
-          Write-Host "MSVC LightGBM swap + app-local VC runtime complete."
+          # NOTE: the MSVC DLL's runtime dependencies (vcomp140 = OpenMP, vcruntime140,
+          # vcruntime140_1, msvcp140) are NOT copied app-local. They are installed by the
+          # Visual C++ 2015-2022 redistributable that the installer bundle chains ahead of
+          # the Pioneer MSI (see the "Build installer bundle" step and
+          # src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}). The redist is the licensed,
+          # complete, self-updating source; hand-copying individual DLLs risked omitting
+          # one (vcruntime140_1 is a real dependency here) and the wrong license grant.
+          Write-Host "MSVC LightGBM swap complete."
 
       - name: Download PioneerConverter
         shell: pwsh
@@ -306,10 +304,61 @@ jobs:
             -out "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
 
+      - name: Download VC++ redistributable
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Microsoft's official, always-latest VC++ 2015-2022 x64 redistributable. The
+          # MSVC lib_lightgbm.dll we ship depends on this runtime (vcomp140 OpenMP +
+          # vcruntime140 / vcruntime140_1 / msvcp140). We intentionally track "latest"
+          # (aka.ms) so security fixes flow through; the SHA-256 is logged for build
+          # provenance rather than pinned (the redist is idempotent + self-detecting).
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile vc_redist.x64.exe -UseBasicParsing
+          Write-Host ("vc_redist.x64.exe SHA-256 = " + (Get-FileHash -Algorithm SHA256 vc_redist.x64.exe).Hash)
+
+      - name: Build installer bundle (VC++ redist + Pioneer MSI)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Wrap the Pioneer MSI in a WiX "Burn" bootstrapper that installs the VC++
+          # redistributable first (skipped if already present), then Pioneer. Output is a
+          # single PioneerSetup-*.exe. See src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}.
+          $msi = "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi"
+          if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
+          if (-not (Test-Path 'vc_redist.x64.exe')) { throw 'vc_redist.x64.exe not downloaded' }
+          $identifier = (Get-Content src\build\package_info.json | ConvertFrom-Json).identifier
+
+          & candle.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -dProductVersion="${{ steps.norm.outputs.msi }}" `
+            -dPackageIdentifier="$identifier" `
+            -dMsiFile="$msi" `
+            -dVcRedistFile="vc_redist.x64.exe" `
+            -dLicenseRtf="src\build\windows\LICENSE.rtf" `
+            -arch x64 `
+            src\build\windows\Bundle.wxs
+
+          & light.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -out "PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe" `
+            Bundle.wixobj
+
       - name: Upload MSI
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-msi
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Upload installer bundle
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pioneer-${{ matrix.identifier }}-setup
+          path: PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe
           retention-days: ${{ inputs.artifact_retention_days }}
