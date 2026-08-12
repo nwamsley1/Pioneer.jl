@@ -1165,11 +1165,9 @@ export default function App() {
                 params={search}
                 notes={searchNotes}
                 libInfo={libInfo}
-                advancedOpen={advancedOpen}
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
-                onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
               />

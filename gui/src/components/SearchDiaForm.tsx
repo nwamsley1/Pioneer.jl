@@ -155,11 +155,9 @@ interface Props {
   notes: { msData: Note; library: Note; results: Note }
   /** What the selected .poin records about itself; null when none is chosen. */
   libInfo: LibraryInfo | null
-  advancedOpen: boolean
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowse: (key: 'msData' | 'library' | 'results') => void
-  onToggleAdvanced: () => void
   onOpenLoad: () => void
   onGoToBuild: () => void
 }
@@ -168,11 +166,9 @@ export function SearchDiaForm({
   params,
   notes,
   libInfo,
-  advancedOpen,
   onParam,
   onToggle,
   onBrowse,
-  onToggleAdvanced,
   onOpenLoad,
   onGoToBuild,
 }: Props) {
@@ -342,59 +338,16 @@ export function SearchDiaForm({
           minWidth: 0,
         }}
       >
-        <button
-          type="button"
-          className="pio-adv"
-          onClick={onToggleAdvanced}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '15px 20px',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            font: 'inherit',
-            textAlign: 'left',
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                color: '#1B2A4A',
-              }}
-            >
-              Advanced parameters
-            </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
-              Defaults suit most experiments
-            </div>
+        {/* Always open. Collapsed, this card was a half-width empty box beside
+            Confidence & output, and the four settings inside it are short
+            enough that hiding them saved nothing. */}
+        <div style={{ padding: '15px 20px 0' }}>
+          <h2 style={H2}>Advanced parameters</h2>
+          <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
+            Defaults suit most experiments
           </div>
-          <span
-            style={{
-              display: 'flex',
-              transition: 'transform .18s',
-              transform: advancedOpen ? 'rotate(180deg)' : undefined,
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path
-                d="m6 9 6 6 6-6"
-                stroke="#667085"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        </button>
-        {advancedOpen && (
-          <div style={{ padding: '4px 20px 20px', borderTop: '1px solid #EEF1F4' }}>
+        </div>
+        <div style={{ padding: '4px 20px 20px' }}>
             <div
               style={{
                 display: 'grid',
@@ -429,8 +382,7 @@ export function SearchDiaForm({
                 </button>
               </div>
             </div>
-          </div>
-        )}
+        </div>
         </section>
       </div>
     </div>
