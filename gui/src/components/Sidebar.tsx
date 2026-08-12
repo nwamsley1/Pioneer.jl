@@ -331,6 +331,31 @@ export function Sidebar({
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
+
+  /** Runs that were pending at some point since the sidebar was last open.
+   *
+   *  Collapsed, the sidebar is a strip of status dots, and a run you were
+   *  watching should not vanish the instant it finishes — you want to see it go
+   *  green. But the whole history would make the strip useless, so only these
+   *  stay. Opening the sidebar shows them in the history proper, which is the
+   *  acknowledgement: the set is cleared, and collapsing again leaves them
+   *  behind.
+   *
+   *  A ref rather than state: every change that matters also changes `jobs` or
+   *  `collapsed`, so a render is already coming. */
+  const watched = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!collapsed) {
+      watched.current.clear()
+      return
+    }
+    // Anything pending now, plus anything that becomes pending while collapsed.
+    // Runs on collapse too, which is what captures the queue as it stood then.
+    for (const j of jobs) {
+      if (j.status === 'queued' || j.status === 'running') watched.current.add(j.id)
+    }
+  }, [collapsed, jobs])
   const themeRef = useRef<HTMLDivElement>(null)
 
   // Close on a click anywhere else, so an accidental open does not leave the row
@@ -714,6 +739,9 @@ export function Sidebar({
           <div style={sectionStyle}>Queue</div>
           {queue.length === 0 && !collapsed && <div style={emptyHint}>Nothing queued.</div>}
           {queue.map(renderRow)}
+          {/* Finished while collapsed: kept on the strip so the run you were
+              watching turns green rather than disappearing. */}
+          {collapsed && history.filter((j) => watched.current.has(j.id)).map(renderRow)}
           <div
             style={{
               ...sectionStyle,
@@ -765,7 +793,9 @@ export function Sidebar({
           {history.length > 0 && shown.length === 0 && !collapsed && (
             <div style={emptyHint}>No run matches “{query}”.</div>
           )}
-          {shown.map(renderRow)}
+          {/* Collapsed, history is deliberately absent: the strip is for what is
+              happening now, plus whatever finished while you were not looking. */}
+          {!collapsed && shown.map(renderRow)}
         </div>
       </div>
 
