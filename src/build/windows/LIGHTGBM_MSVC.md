@@ -196,9 +196,20 @@ filter(h -> occursin("lightgbm", lowercase(h)), Libdl.dllist())
 A quick FIT on ~1M×50 should now saturate the cores (Task Manager) instead of sitting near
 one core.
 
+**CI coverage and its limit.** `validate_installers.yml` (Windows job) installs the
+`PioneerSetup-*.exe` bootstrapper and runs a smoke search, so the bundle is exercised end to
+end on every validation run. But that runner already has the VC++ runtime, so the redist's
+`DetectCondition` finds it present and **skips** installation — CI therefore proves the bundle
+builds/installs/runs, **not** that the redist installs correctly on a bare machine. That case
+must be checked **manually once on a runtime-free Windows VM** before a release: on a clean image
+with no VC++ redistributable, run `PioneerSetup-*.exe`, confirm the redist actually installs, and
+confirm a search runs (LightGBM loads). Hosted runners cannot cover this because they all ship the
+runtime.
+
 **Roll back a source install:** delete the `0e4427ef-1ff7-5cd7-8faa-8ff0877bb2ec` entry from
 `~/.julia/artifacts/Overrides.toml` (and optionally remove `<depot>/pioneer_lgbm_msvc`), then
-restart Julia. **Roll back the app:** revert the CI workflow step.
+restart Julia. **Roll back the app:** revert the CI workflow steps (the swap step and the bundle
+build/upload).
 
 ## 7. Known dead end (do not retry)
 
