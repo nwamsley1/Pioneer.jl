@@ -26,6 +26,28 @@ export const HINT: CSSProperties = {
   color: '#98A2B3',
 }
 
+/** The Browse button beside a path input.
+ *
+ *  Deliberately quieter than the input it sits next to. The input is the
+ *  control you act on; Browse is the fallback for when typing a path is
+ *  inconvenient. It previously carried a heavier border and semibold text than
+ *  the field, so it won the row it was meant to support.
+ *
+ *  Was defined identically in SearchDiaForm and ConvertRawForm and inlined
+ *  three more times in BuildSpecLibForm — five copies, already drifting on
+ *  radius and font size.
+ */
+export const BROWSE: CSSProperties = {
+  flex: 'none',
+  padding: '0 14px',
+  border: '1px solid #E3E8EC',
+  borderRadius: 9,
+  background: '#FBFCFD',
+  font: "500 12.5px 'IBM Plex Sans'",
+  color: '#667085',
+  cursor: 'pointer',
+}
+
 /** Space reserved at the top of the window for the macOS traffic lights.
  *
  *  The window sets titleBarStyle "Overlay", so on macOS the webview starts at

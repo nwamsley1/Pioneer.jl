@@ -5,6 +5,7 @@ import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
 import { findMod, modsForModel, siteAllowed, siteOptions, unimodId } from '../lib/koinaMods'
+import { BROWSE } from '../lib/styles'
 import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
@@ -440,16 +441,7 @@ export function BuildSpecLibForm({
                   type="button"
                   className="pio-browse"
                   onClick={() => onBrowseFasta(i)}
-                  style={{
-                    flex: 'none',
-                    padding: '0 14px',
-                    border: '1px solid #D7DBE0',
-                    borderRadius: 8,
-                    background: '#F8FAFB',
-                    font: "600 12px 'IBM Plex Sans'",
-                    color: '#344054',
-                    cursor: 'pointer',
-                  }}
+                  style={BROWSE}
                 >
                   Browse
                 </button>
@@ -679,16 +671,7 @@ export function BuildSpecLibForm({
             type="button"
             className="pio-browse"
             onClick={onBrowseCalibration}
-            style={{
-              flex: 'none',
-              padding: '0 14px',
-              border: '1px solid #D7DBE0',
-              borderRadius: 9,
-              background: '#F8FAFB',
-              font: "600 12.5px 'IBM Plex Sans'",
-              color: '#344054',
-              cursor: 'pointer',
-            }}
+            style={BROWSE}
           >
             Browse
           </button>
@@ -734,16 +717,7 @@ export function BuildSpecLibForm({
             type="button"
             className="pio-browse"
             onClick={onBrowseLibPath}
-            style={{
-              flex: 'none',
-              padding: '0 14px',
-              border: '1px solid #D7DBE0',
-              borderRadius: 9,
-              background: '#F8FAFB',
-              font: "600 12.5px 'IBM Plex Sans'",
-              color: '#344054',
-              cursor: 'pointer',
-            }}
+            style={BROWSE}
           >
             Browse
           </button>

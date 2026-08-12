@@ -8,7 +8,7 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { LABEL } from '../lib/styles'
+import { BROWSE, LABEL } from '../lib/styles'
 import type { ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
@@ -26,17 +26,6 @@ const H2: React.CSSProperties = {
   letterSpacing: '0.04em',
   textTransform: 'uppercase',
   color: '#1B2A4A',
-}
-
-const BROWSE: React.CSSProperties = {
-  flex: 'none',
-  padding: '0 14px',
-  border: '1px solid #D7DBE0',
-  borderRadius: 9,
-  background: '#F8FAFB',
-  font: "600 12.5px 'IBM Plex Sans'",
-  color: '#344054',
-  cursor: 'pointer',
 }
 
 const noteStyle = (note: Note): React.CSSProperties => ({
