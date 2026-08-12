@@ -22,6 +22,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `bundled` compiles SQLite from source rather than linking the system one, so
+# the packaged app does not depend on what the target machine happens to ship.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
 codegen-units = 1
