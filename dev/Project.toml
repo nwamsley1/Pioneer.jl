@@ -11,14 +11,18 @@ Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Documenter = "1.5"
 DocumenterTools = "0.1"
 PProf = "3.2.0"
-julia = "1.11"
-PackageCompiler = "=2.2.3"
+# Was pinned to "=2.2.3", which cannot produce a working binary on Julia >= 1.12: the app entry
+# point it generates assigns `Base.PROGRAM_FILE`, and 1.12 reinstated the check that forbids
+# assigning an undeclared global (JuliaLang/julia#56933). The binary builds and then dies at
+# startup with "Global Base.PROGRAM_FILE does not exist and cannot be assigned."
+PackageCompiler = "2.4"
+# Tracks the main Project.toml, which requires 1.12.5. This said "1.11" while the package itself
+# had moved to 1.12.5 (6bab0dadb), so the build workflows installed a Julia that could not resolve
+# Pioneer at all.
+julia = "1.12.5"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test"]
-
-[preferences.HostCPUFeatures]
-allow_runtime_invalidation = true

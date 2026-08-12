@@ -380,7 +380,8 @@ end
 
 """
     integrate_precursors(chromatograms, isotope_trace_type, min_fraction_transmitted, precursor_idx,
-                         apex_scan_idx, peak_area, new_best_scan, points_integrated;
+                         apex_scan_idx, peak_area, new_best_scan, points_integrated,
+                         integration_start_scan, integration_stop_scan;
                          isotopes_captured=nothing, λ=1.0f0)
 
 Integrate chromatographic peaks for multiple precursors in parallel.
@@ -394,7 +395,8 @@ uses one trace per precursor; separate mode keys rows by
 For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
-`peak_area`, `new_best_scan`, and `points_integrated`.
+`peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
+scan indices.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -403,7 +405,9 @@ function integrate_precursors(chromatograms::DataFrame,
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
-                             points_integrated::AbstractVector{UInt32};
+                             points_integrated::AbstractVector{UInt32},
+                             integration_start_scan::AbstractVector{UInt32},
+                             integration_stop_scan::AbstractVector{UInt32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -460,7 +464,9 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
-                peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
+                peak_area[i], new_best_scan[i], points_integrated[i],
+                    integration_start_scan[i], integration_stop_scan[i] =
+                    integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
                     @view(intensity_all[chrom_range]),
@@ -500,7 +506,9 @@ function integrate_precursors(chromatograms::DataFrame,
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
-                             points_integrated::AbstractVector{UInt32};
+                             points_integrated::AbstractVector{UInt32},
+                             integration_start_scan::AbstractVector{UInt32},
+                             integration_stop_scan::AbstractVector{UInt32};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -511,9 +519,821 @@ function integrate_precursors(chromatograms::DataFrame,
         apex_scan_idx,
         peak_area,
         new_best_scan,
-        points_integrated;
+        points_integrated,
+        integration_start_scan,
+        integration_stop_scan;
         λ = λ,
     )
+end
+
+# Rank weights for the 8 smoothed shadow fragments. `_fragment_rank_weights` is deterministic in its
+# argument, so the 8-fragment result is a constant; computing it per precursor group allocated one
+# 8-element Vector per group for nothing. Read-only -- never mutate.
+const MBR_FRAGMENT_RANK_WEIGHTS_8 = _fragment_rank_weights(8)
+
+@inline function _chrom_shadow_intensity(
+    shadow_columns,
+    row::Integer,
+    rank::Integer,
+)
+    value = Float32(shadow_columns[rank][row])
+    return isfinite(value) ? max(value, 0.0f0) : 0.0f0
+end
+
+@inline function _chrom_positive_intensity(
+    columns,
+    row::Integer,
+    rank::Integer,
+)
+    value = Float32(columns[rank][row])
+    return isfinite(value) ? max(value, 0.0f0) : 0.0f0
+end
+
+@inline function _chrom_spectrum_sqrt_tuple_and_sum(columns, row::Integer)
+    values = ntuple(
+        rank -> _chrom_positive_intensity(columns, row, rank),
+        8,
+    )
+    total = sum(values)
+    total > 0.0f0 ||
+        return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0
+    inverse_total = inv(total)
+    return ntuple(
+        rank -> sqrt(values[rank] * inverse_total),
+        8,
+    ), total
+end
+
+@inline function _chrom_hellinger_score_from_sqrt(
+    observed::NTuple{8, Float32},
+    fitted::NTuple{8, Float32},
+)
+    (_mbr_sqrt_tuple_is_valid(observed) &&
+     _mbr_sqrt_tuple_is_valid(fitted)) || return 0.0f0
+    bhattacharyya = 0.0f0
+    @inbounds for rank in 1:8
+        bhattacharyya += observed[rank] * fitted[rank]
+    end
+    hellinger_squared = max(0.0f0, 1.0f0 - bhattacharyya)
+    return Float32(-log2(max(hellinger_squared, 1.0f-10)))
+end
+
+@inline function _chrom_manhattan_score(
+    observed_columns,
+    fitted_columns,
+    row::Integer,
+)
+    observed = ntuple(
+        rank -> _chrom_positive_intensity(observed_columns, row, rank),
+        8,
+    )
+    fitted = ntuple(
+        rank -> _chrom_positive_intensity(fitted_columns, row, rank),
+        8,
+    )
+    observed_sum = sum(observed)
+    observed_sum > 0.0f0 || return 0.0f0
+    distance = 0.0f0
+    @inbounds for rank in 1:8
+        distance += abs(fitted[rank] - observed[rank])
+    end
+    return Float32(-log2(distance / observed_sum + 1.0f-10))
+end
+
+"""
+    _ChromCorrWorkspace
+
+Reusable scratch for `_chrom_shadow_fragment_correlation_features`, which runs once per precursor
+group. It previously allocated 11 vectors per call (8 fragment traces + their outer `Vector`, the
+weight trace, and the 8-element correlation vector); on a 6-file KEAP1 run that was 742,179 groups.
+
+Construct it with the largest group length the caller will ever pass (`_ChromCorrWorkspace(max_pts)`)
+so the buffers are allocated exactly once. Each call then `resize!`s to its own `n_points`, which
+stays within that capacity: shrinking is a length update and regrowing never reallocates, so the
+steady state is genuinely zero-allocation rather than merely amortised.
+
+Nothing here escapes the function — only the `isbits` `_ChromCorrFeatures` result does — so one
+workspace shared across every group of a kernel invocation is safe. The kernel's group loop is
+sequential; a threaded caller would need one workspace per thread.
+"""
+struct _ChromCorrWorkspace
+    fragment_traces::NTuple{8, Vector{Float32}}
+    weight_trace::Vector{Float32}
+    correlation_to_weight::Vector{Float32}
+end
+
+_ChromCorrWorkspace(max_points::Integer = 0) = _ChromCorrWorkspace(
+    ntuple(_ -> Vector{Float32}(undef, max_points), 8),
+    Vector{Float32}(undef, max_points),
+    Vector{Float32}(undef, 8),
+)
+
+function _chrom_shadow_fragment_correlation_features(
+    rows::AbstractVector{<:Integer},
+    shadow_columns,
+    weight_column,
+    bitvec_rank_table,
+    workspace::_ChromCorrWorkspace,
+)
+    n_points = length(rows)
+    n_points < 2 && return (
+        n_correlated = UInt8(0),
+        corr_mask = UInt8(0),
+        bitvec_rank = UInt16(0),
+        strength = 0.0f0,
+        effective_n = 0.0f0,
+        best_weight = 0.0f0,
+    )
+
+    # Resized to EXACTLY n_points rather than viewed: `_frag_pcor` and `maximum` then see a plain
+    # `Vector{Float32}` instead of a `SubArray`, which measured ~80% faster in this phase. The
+    # workspace is pre-sized to the largest group, so these resizes stay within capacity and do not
+    # allocate; every element is overwritten below, so moving data would be harmless anyway.
+    fragment_traces = workspace.fragment_traces
+    @inbounds for rank in 1:8
+        resize!(fragment_traces[rank], n_points)
+    end
+    weight_trace = workspace.weight_trace
+    resize!(weight_trace, n_points)
+    @inbounds for point_idx in 1:n_points
+        chrom_row = rows[point_idx]
+        weight_value = Float32(weight_column[chrom_row])
+        weight_trace[point_idx] =
+            isfinite(weight_value) ? max(weight_value, 0.0f0) : 0.0f0
+        for rank in 1:8
+            fragment_traces[rank][point_idx] =
+                _chrom_shadow_intensity(shadow_columns, chrom_row, rank)
+        end
+    end
+
+    has_signal = ntuple(
+        rank -> maximum(fragment_traces[rank]) > 0.0f0,
+        8,
+    )
+    correlation_to_weight = workspace.correlation_to_weight
+    @inbounds for rank in 1:8
+        correlation_to_weight[rank] = has_signal[rank] ?
+            _frag_pcor(fragment_traces[rank], weight_trace) :
+            0.0f0
+    end
+
+    n_correlated = UInt8(0)
+    correlation_mask = UInt8(0)
+    @inbounds for rank in 1:8
+        has_signal[rank] || continue
+        if correlation_to_weight[rank] > 0.7f0
+            n_correlated += UInt8(1)
+            correlation_mask |= UInt8(1) << (rank - 1)
+        end
+    end
+    # `_fragment_rank_weights(8)` is a pure function of the constant 8, but allocated a fresh
+    # 8-element Vector on every call -- once per precursor group. Hoisted to a const.
+    strength, effective_n =
+        _positive_corr_summary(correlation_to_weight, MBR_FRAGMENT_RANK_WEIGHTS_8)
+
+    best_rank = 0
+    best_consensus = typemin(Float32)
+    @inbounds for rank in 1:8
+        has_signal[rank] || continue
+        consensus = 0.0f0
+        n_pairs = 0
+        for other_rank in 1:8
+            (other_rank == rank || !has_signal[other_rank]) && continue
+            consensus += _frag_pcor(
+                fragment_traces[rank],
+                fragment_traces[other_rank],
+            )
+            n_pairs += 1
+        end
+        average = n_pairs > 0 ?
+            consensus / n_pairs :
+            typemin(Float32)
+        if average > best_consensus
+            best_consensus = average
+            best_rank = rank
+        end
+    end
+    best_weight = best_rank > 0 ?
+        correlation_to_weight[best_rank] :
+        0.0f0
+    return (
+        n_correlated = n_correlated,
+        corr_mask = correlation_mask,
+        bitvec_rank =
+            _bitvec_pattern_rank(bitvec_rank_table, correlation_mask),
+        strength = strength,
+        effective_n = effective_n,
+        best_weight = best_weight,
+    )
+end
+
+@inline function _chrom_smoothed_shadow_sqrt_tuple_and_sum(
+    shadow_columns,
+    apex_row::Integer,
+    left_row::Integer,
+    right_row::Integer,
+)
+    # Single assignment on purpose. `denominator` is captured by the `ntuple` closure below, and a
+    # captured variable that is *reassigned* in the enclosing scope gets boxed as `Core.Box` (type
+    # `Any`). That boxing made `signal / denominator` a runtime dispatch, `values` an
+    # `NTuple{8, Any}`, and `sum(values)` a dynamic `afoldl` chain -- once per PSM row.
+    denominator =
+        2.0f0 + (left_row > 0 ? 1.0f0 : 0.0f0) + (right_row > 0 ? 1.0f0 : 0.0f0)
+    values = ntuple(rank -> begin
+        signal =
+            2.0f0 *
+            _chrom_shadow_intensity(shadow_columns, apex_row, rank)
+        left_row > 0 &&
+            (signal += _chrom_shadow_intensity(
+                shadow_columns,
+                left_row,
+                rank,
+            ))
+        right_row > 0 &&
+            (signal += _chrom_shadow_intensity(
+                shadow_columns,
+                right_row,
+                rank,
+            ))
+        Float32(signal / denominator)
+    end, 8)
+    total = sum(values)
+    total > 0.0f0 ||
+        return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0
+    inverse_total = inv(total)
+    return ntuple(
+        rank -> sqrt(values[rank] * inverse_total),
+        8,
+    ), total
+end
+
+function _chrom_temporal_fragment_data(
+    rows::AbstractVector{<:Integer},
+    shadow_columns,
+    weight_column,
+    scan_column,
+    start_scan::UInt32,
+    stop_scan::UInt32,
+)
+    (start_scan == UInt32(0) || stop_scan == UInt32(0)) &&
+        return Float32[], MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    scan_low, scan_high = minmax(start_scan, stop_scan)
+
+    # Count qualifying scans first, then fill by index: the trace is exactly
+    # MBR_TEMPORAL_TRACE_STRIDE (=9) floats per qualifying scan, so `push!` and its geometric
+    # regrowth are unnecessary. Predicate must match the fill loop below exactly.
+    n_qual = 0
+    @inbounds for chrom_row in rows
+        scan = UInt32(scan_column[chrom_row])
+        scan_low <= scan <= scan_high || continue
+        wv = Float32(weight_column[chrom_row])
+        (isfinite(wv) ? max(wv, 0.0f0) : 0.0f0) > 0.0f0 || continue
+        n_qual += 1
+    end
+    trace = Vector{Float32}(undef, MBR_TEMPORAL_TRACE_STRIDE * n_qual)
+    pos = 0
+    weighted_sqrt = zeros(Float32, 8)
+    total_weight = 0.0f0
+
+    @inbounds for chrom_row in rows
+        scan = UInt32(scan_column[chrom_row])
+        scan_low <= scan <= scan_high || continue
+        weight_value = Float32(weight_column[chrom_row])
+        weight = isfinite(weight_value) ?
+            max(weight_value, 0.0f0) :
+            0.0f0
+        weight > 0.0f0 || continue
+        trace[pos + 1] = weight
+
+        spectrum_total = 0.0f0
+        for rank in 1:8
+            intensity =
+                _chrom_shadow_intensity(shadow_columns, chrom_row, rank)
+            trace[pos + 1 + rank] = intensity
+            spectrum_total += intensity
+        end
+        pos += MBR_TEMPORAL_TRACE_STRIDE
+        spectrum_total > 0.0f0 || continue
+        inverse_total = inv(spectrum_total)
+        for rank in 1:8
+            intensity =
+                _chrom_shadow_intensity(shadow_columns, chrom_row, rank)
+            weighted_sqrt[rank] +=
+                weight * sqrt(intensity * inverse_total)
+        end
+        total_weight += weight
+    end
+    # `total_weight` is reassigned in the loop above, so capturing it directly in the `ntuple`
+    # closure boxed it as `Core.Box` (type `Any`) -- making the division a runtime dispatch and the
+    # result an `NTuple{8, Any}`, once per PSM row. Copying to a single-assignment local removes the
+    # capture of the reassigned variable, so nothing is boxed. (`weighted_sqrt` is only mutated
+    # through `setindex!`, never reassigned, so capturing it was always fine.)
+    #
+    # Same bug, same file, as the `denominator` box in
+    # `_chrom_smoothed_shadow_sqrt_tuple_and_sum`. Kept as a division rather than multiplying by
+    # `inv(total_weight)` so the result stays bit-identical.
+    weight_total = total_weight
+    temporal_mean = weight_total > 0.0f0 ?
+        ntuple(rank -> weighted_sqrt[rank] / weight_total, 8) :
+        MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT
+    return trace, temporal_mean
+end
+
+# Concrete replacement for the values previously stored in a Dict{UInt32, NamedTuple}; a bare
+# NamedTuple is an abstract type, so every value was boxed and retrieved by dynamic dispatch.
+struct _ChromCorrFeatures
+    n_correlated::UInt8
+    corr_mask::UInt8
+    bitvec_rank::UInt16
+    strength::Float32
+    effective_n::Float32
+    best_weight::Float32
+end
+
+# (apex, left, right) chromatogram rows for `selected_scan`, reproducing the old
+# `sort!(rows; by = scan_idx)` + adjacent-position logic without the per-row Dict.
+#
+# `order === nothing` means the stored row order is already scan order (CombineTraces sorts
+# [:precursor_idx, :rt], and rt is monotonic in scan_idx), so positions ARE row indices.
+# Otherwise `order` is a permutation whose [lo, hi] slice lists the precursor's rows in scan order
+# (SeperateTraces sorts [:precursor_idx, :isotopes_captured, :rt], so scan_idx is not monotonic
+# across the precursor's range and the rows must be re-ordered exactly as the old code did).
+@inline function _chrom_neighbor_rows(
+    scan_column, order, lo::Int, hi::Int, selected_scan::UInt32,
+)
+    lo > hi && return (0, 0, 0)
+    @inline row_at(pos::Int) = order === nothing ? pos : Int(order[pos])
+    left, right = lo, hi
+    @inbounds while left <= right          # binary search over scan order
+        mid = (left + right) >>> 1
+        if UInt32(scan_column[row_at(mid)]) < selected_scan
+            left = mid + 1
+        else
+            right = mid - 1
+        end
+    end
+    pos = left
+    (pos > hi || @inbounds(UInt32(scan_column[row_at(pos)])) != selected_scan) &&
+        return (0, 0, 0)
+    return (
+        row_at(pos),
+        pos > lo ? row_at(pos - 1) : 0,
+        pos < hi ? row_at(pos + 1) : 0,
+    )
+end
+
+# Contiguous sub-range of [lo, hi] whose isotopes_captured equals `iso` (middle sort key).
+@inline function _chrom_isotope_subrange(iso_column, lo::Int, hi::Int, iso)
+    lo > hi && return 1:0
+    s = 0; e = -1
+    @inbounds for i in lo:hi
+        if Tuple{Int8, Int8}(iso_column[i]) == iso
+            s == 0 && (s = i)
+            e = i
+        elseif s != 0
+            break                          # contiguous, so stop at the first miss after a hit
+        end
+    end
+    return s == 0 ? (1:0) : (s:e)
+end
+
+"""
+    add_mbr_integrated_spectra_to_psms!(psms, chromatograms, rt_to_irt)
+
+Attach the receiver chromatogram evidence consumed by post-integration MBR.
+The temporal trace is restricted to the exact peak-integration bounds.
+"""
+function add_mbr_integrated_spectra_to_psms!(
+    passing_psms::DataFrame,
+    chromatograms::DataFrame,
+    rt_to_irt;
+    bitvec_rank_table = nothing,
+    scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+)
+    n = nrow(passing_psms)
+    for column in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
+        passing_psms[!, column] = zeros(Float32, n)
+    end
+    for column in MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS
+        passing_psms[!, column] = zeros(Float32, n)
+    end
+    passing_psms[!, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN] =
+        [Float32[] for _ in 1:n]
+    passing_psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_WEIGHT_COLUMN] = fill(NaN32, n)
+    passing_psms[
+        !,
+        MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
+    ] = fill(NaN32, n)
+    passing_psms[
+        !,
+        MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN,
+    ] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] =
+        fill(NaN32, n)
+    passing_psms[
+        !,
+        MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN,
+    ] = fill(NaN32, n)
+    passing_psms[!, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN] =
+        zeros(UInt8, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN] =
+        zeros(UInt8, n)
+    passing_psms[
+        !,
+        MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
+    ] = zeros(UInt16, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN] =
+        zeros(Float32, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN] =
+        zeros(Float32, n)
+    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN] =
+        zeros(Float32, n)
+    (n == 0 || nrow(chromatograms) == 0) && return passing_psms
+
+    hasproperty(chromatograms, :shadow_frag1_int) ||
+        error("Integrated MBR requires chromatogram shadow fragments")
+    scan_tic === nothing &&
+        error("Integrated MBR requires the per-scan spectrum intensity vector")
+    hasproperty(passing_psms, :integration_start_scan) ||
+        error("Integrated MBR requires integration start scans")
+    hasproperty(passing_psms, :integration_stop_scan) ||
+        error("Integrated MBR requires integration stop scans")
+
+    shadow_columns = ntuple(
+        rank -> chromatograms[!, Symbol("shadow_frag$(rank)_int")],
+        8,
+    )
+    fitted_columns = all(
+        column -> hasproperty(chromatograms, column),
+        FITTED_FRAGMENT_INTENSITY_COLUMNS,
+    ) ? ntuple(
+        rank -> chromatograms[
+            !,
+            FITTED_FRAGMENT_INTENSITY_COLUMNS[rank],
+        ],
+        8,
+    ) : nothing
+    rt_column = chromatograms.rt
+    precursor_column = chromatograms.precursor_idx
+    scan_column = chromatograms.scan_idx
+    weight_column = chromatograms.intensity
+
+    # Computed here rather than in the kernel: both touch the DataFrames directly.
+    use_separate_traces =
+        hasproperty(chromatograms, :isotopes_captured) &&
+        hasproperty(passing_psms, :isotopes_captured)
+    chromatogram_isotopes = use_separate_traces ?
+        chromatograms.isotopes_captured :
+        nothing
+
+    # FUNCTION BARRIER -- see _add_mbr_integrated_kernel! for why this is not just tidiness.
+    _add_mbr_integrated_kernel!(
+        passing_psms,
+        n,
+        nrow(chromatograms),
+        rt_column,
+        precursor_column,
+        scan_column,
+        weight_column,
+        shadow_columns,
+        fitted_columns,
+        chromatogram_isotopes,
+        use_separate_traces,
+        rt_to_irt,
+        bitvec_rank_table,
+        scan_tic,
+        passing_psms.precursor_idx,
+        passing_psms.new_best_scan,
+        passing_psms.scan_idx,
+        passing_psms.integration_start_scan,
+        passing_psms.integration_stop_scan,
+        passing_psms.peak_area,
+        use_separate_traces ? passing_psms.isotopes_captured : nothing,
+    )
+    return passing_psms
+end
+
+
+# Function barrier for the hot part of add_mbr_integrated_spectra_to_psms!.
+#
+# WHY THIS EXISTS: `df.col` infers as `AbstractVector` and `ntuple(r -> df[!, c], 8)` as
+# `NTuple{8, AbstractVector}`. Used in a loop *inline in the same function*, every element access is
+# then a dynamic dispatch that boxes its result -- measured at 673 ms and 240 MB for a 5 M-element
+# sum, versus 0.5 ms and 0 B when the same column is reached through a function argument (1300x).
+# The previously reported 2.28 GB / 10,146 ms for two linear scans over 8.7 M rows was this.
+#
+# Passing the columns as ARGUMENTS is what fixes it: Julia specialises on the runtime type, so no
+# type assertion is needed and nothing breaks if a column's concrete type ever changes. Tuples are
+# covariant, so `shadow_columns` arrives here as a concrete `NTuple{8, Vector{...}}` even though the
+# caller could only infer `NTuple{8, AbstractVector}`.
+function _add_mbr_integrated_kernel!(
+    passing_psms::DataFrame,
+    n::Int,
+    n_chrom::Int,
+    rt_column,
+    precursor_column,
+    scan_column,
+    weight_column,
+    shadow_columns,
+    fitted_columns,
+    chromatogram_isotopes,
+    use_separate_traces::Bool,
+    rt_to_irt,
+    bitvec_rank_table,
+    scan_tic,
+    psm_pid,
+    psm_new_best_scan,
+    psm_scan_idx,
+    psm_start_scan,
+    psm_stop_scan,
+    psm_peak_area,
+    psm_isotopes,
+)
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): per-phase bytes/time inside this function, accumulated
+    # across files. Chromatogram Integration allocates 77.7 GB on this branch vs 4.3 GB without MBR;
+    # this attributes that to the four index-building phases vs the per-row write loop.
+    _diag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _t0 = time(); _a0 = Base.gc_bytes()
+
+    # Chromatograms are sorted [:precursor_idx, :rt] (SeperateTraces: [:precursor_idx,
+    # :isotopes_captured, :rt]) by sort_chromatograms_for_integration! at
+    # IntegrateChromatogramsSearch.jl:354, BEFORE this runs at :386. So every precursor's rows are
+    # already contiguous and time-ordered, which makes the old index structures redundant:
+    #   rows_by_pid / rows_by_trace : Dict of one heap Vector{Int} per precursor -> a group table
+    #                                 built by count-then-fill (no push!)
+    #   per-pid sort!(rows; by=...) : data is already in scan order
+    #   neighbors Dict              : held ONE tuple-keyed entry per chromatogram row (measured
+    #                                 8,717,899 = exactly the row count) purely to answer
+    #                                 "(pid, selected_scan) -> row"; that is a searchsortedfirst
+    #                                 inside the precursor's range, and the neighbours are the
+    #                                 adjacent indices.
+    #   correlation_by_pid          : Dict{UInt32, NamedTuple} -- bare NamedTuple is ABSTRACT, so
+    #                                 every value was boxed. Now a concretely-typed Vector indexed
+    #                                 by group.
+
+    # pass 1: count precursor groups (no allocation)
+    n_groups = 0
+    @inbounds let r = 1
+        while r <= n_chrom
+            pid = UInt32(precursor_column[r])
+            n_groups += 1
+            while r <= n_chrom && UInt32(precursor_column[r]) == pid
+                r += 1
+            end
+        end
+    end
+    # pass 2: fill exact-size group table
+    group_pid = Vector{UInt32}(undef, n_groups)
+    group_lo  = Vector{Int32}(undef, n_groups)
+    group_hi  = Vector{Int32}(undef, n_groups)
+    @inbounds let r = 1, g = 0
+        while r <= n_chrom
+            pid = UInt32(precursor_column[r]); s0 = r
+            while r <= n_chrom && UInt32(precursor_column[r]) == pid
+                r += 1
+            end
+            g += 1
+            group_pid[g] = pid; group_lo[g] = Int32(s0); group_hi[g] = Int32(r - 1)
+        end
+    end
+
+    if _diag
+        MBR_PHASE_DIAG[:rows_by_pid_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:rows_by_pid_ms] += round(Int, (time() - _t0) * 1000)
+        MBR_PHASE_DIAG[:n_chrom_rows] += n_chrom
+        MBR_PHASE_DIAG[:n_psm_rows] += n
+        MBR_PHASE_DIAG[:n_pids] += n_groups
+        _t0 = time(); _a0 = Base.gc_bytes()
+    end
+
+    # SeperateTraces stores rows grouped by isotope set, so scan_idx is not monotonic across a
+    # precursor. Reproduce the old per-precursor sort with ONE Int32 permutation (4 B/row) instead
+    # of a Dict holding a tuple entry per chromatogram row.
+    scan_order = if use_separate_traces
+        perm = collect(Int32(1):Int32(n_chrom))
+        @inbounds for g in 1:n_groups
+            lo, hi = Int(group_lo[g]), Int(group_hi[g])
+            hi > lo && sort!(view(perm, lo:hi); by = i -> UInt32(scan_column[i]))
+        end
+        perm
+    else
+        nothing
+    end
+
+    if _diag
+        # Read the phase timers FIRST. The monotonicity check below is an O(n_chrom) diagnostic; when
+        # it ran before this read it was timed as part of the phase and inflated the reported cost of
+        # this block by ~8.4 s -- a diagnostic measuring itself.
+        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
+        # Assumption check for the combined-trace fast path: the stored order must be scan order.
+        if scan_order === nothing
+            bad = 0
+            @inbounds for g in 1:n_groups, r in (Int(group_lo[g]) + 1):Int(group_hi[g])
+                UInt32(scan_column[r]) <= UInt32(scan_column[r - 1]) && (bad += 1)
+            end
+            MBR_PHASE_DIAG[:nonmonotonic_rows] += bad
+        end
+        _t0 = time(); _a0 = Base.gc_bytes()
+    end
+
+    # Correlation features are a function of the precursor's whole chromatogram group, so compute
+    # one per group into a concretely-typed vector (was Dict{UInt32, NamedTuple}, abstract).
+    correlation_by_group = Vector{_ChromCorrFeatures}(undef, n_groups)
+    # One set of scratch buffers for every group, pre-sized to the largest group so the per-group
+    # `resize!`s never reallocate. Correlation always consumes a group's full row range, so the
+    # widest group extent is an exact bound.
+    max_group_points = 0
+    @inbounds for g in 1:n_groups
+        span = Int(group_hi[g]) - Int(group_lo[g]) + 1
+        span > max_group_points && (max_group_points = span)
+    end
+    corr_workspace = _ChromCorrWorkspace(max_group_points)
+    @inbounds for g in 1:n_groups
+        # The old `rows_by_pid[pid]` vectors were sorted IN PLACE by scan_idx before this ran, so
+        # correlation consumed scan-ordered rows. Feed the same order here.
+        lo, hi = Int(group_lo[g]), Int(group_hi[g])
+        c = _chrom_shadow_fragment_correlation_features(
+            scan_order === nothing ? (lo:hi) : view(scan_order, lo:hi),
+            shadow_columns,
+            weight_column,
+            bitvec_rank_table,
+            corr_workspace,
+        )
+        correlation_by_group[g] = _ChromCorrFeatures(
+            c.n_correlated, c.corr_mask, c.bitvec_rank,
+            c.strength, c.effective_n, c.best_weight,
+        )
+    end
+
+    if _diag
+        MBR_PHASE_DIAG[:correlation_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:correlation_ms] += round(Int, (time() - _t0) * 1000)
+        _t0 = time(); _a0 = Base.gc_bytes()
+    end
+
+    # Bind every column touched in the loop ONCE. `df[row, ::Symbol]` and `df.col` each do a
+    # Dict{Symbol,Int} lookup and return an abstractly-typed column, so the ~34 accesses per row
+    # were dynamic. These bindings are concrete, so the loop body specialises.
+    out_frag_sqrt = ntuple(
+        r -> getproperty(passing_psms, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[r])::Vector{Float32},
+        Val(8),
+    )
+    out_temporal_mean = ntuple(
+        r -> getproperty(passing_psms, MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[r])::Vector{Float32},
+        Val(8),
+    )
+    out_trace = getproperty(passing_psms, MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN)::Vector{Vector{Float32}}
+    out_apex_irt = getproperty(passing_psms, MBR_INTEGRATED_APEX_IRT_COLUMN)::Vector{Float32}
+    out_weight = getproperty(passing_psms, MBR_INTEGRATED_WEIGHT_COLUMN)::Vector{Float32}
+    out_log2_explained =
+        getproperty(passing_psms, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)::Vector{Float32}
+    out_fitted_manhattan =
+        getproperty(passing_psms, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)::Vector{Float32}
+    out_fitted_hellinger =
+        getproperty(passing_psms, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)::Vector{Float32}
+    out_smoothed_2d =
+        getproperty(passing_psms, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)::Vector{Float32}
+    out_n_corr = getproperty(passing_psms, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)::Vector{UInt8}
+    out_corr_bitvec = getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)::Vector{UInt8}
+    out_bitvec_rank = getproperty(
+        passing_psms, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
+    )::Vector{UInt16}
+    out_corr_strength =
+        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)::Vector{Float32}
+    out_corr_effective_n =
+        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)::Vector{Float32}
+    out_corr_best_weight =
+        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)::Vector{Float32}
+
+
+    @inbounds for row in 1:n
+        pid = UInt32(psm_pid[row])
+        selected_scan = UInt32(psm_new_best_scan[row])
+        selected_scan == UInt32(0) &&
+            (selected_scan = UInt32(psm_scan_idx[row]))
+        gidx = searchsortedfirst(group_pid, pid)
+        has_group = gidx <= n_groups && group_pid[gidx] == pid
+        neighbor_rows = has_group ?
+            _chrom_neighbor_rows(
+                scan_column, scan_order, Int(group_lo[gidx]), Int(group_hi[gidx]), selected_scan,
+            ) : (0, 0, 0)
+        fragment_sqrt, shadow_sum = neighbor_rows[1] == 0 ?
+            (MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0) :
+            _chrom_smoothed_shadow_sqrt_tuple_and_sum(
+                shadow_columns,
+                neighbor_rows[1],
+                neighbor_rows[2],
+                neighbor_rows[3],
+            )
+        for rank in 1:8
+            out_frag_sqrt[rank][row] = fragment_sqrt[rank]
+        end
+
+        temporal_rows = if !has_group
+            1:0                                   # empty range, no allocation
+        elseif use_separate_traces
+            # isotopes_captured is the MIDDLE sort key, so its groups are contiguous inside the
+            # precursor's range; narrow with a second search rather than a second Dict.
+            isotope_set = Tuple{Int8, Int8}(psm_isotopes[row])
+            _chrom_isotope_subrange(
+                chromatogram_isotopes, Int(group_lo[gidx]), Int(group_hi[gidx]), isotope_set,
+            )
+        else
+            Int(group_lo[gidx]):Int(group_hi[gidx])
+        end
+        temporal_trace, temporal_mean =
+            _chrom_temporal_fragment_data(
+                temporal_rows,
+                shadow_columns,
+                weight_column,
+                scan_column,
+                UInt32(psm_start_scan[row]),
+                UInt32(psm_stop_scan[row]),
+            )
+        out_trace[row] = temporal_trace
+        for rank in 1:8
+            out_temporal_mean[rank][row] = temporal_mean[rank]
+        end
+
+        if has_group
+            correlation = correlation_by_group[gidx]
+            out_n_corr[row] = correlation.n_correlated
+            out_corr_bitvec[row] = correlation.corr_mask
+            out_bitvec_rank[row] = correlation.bitvec_rank
+            out_corr_strength[row] = correlation.strength
+            out_corr_effective_n[row] = correlation.effective_n
+            out_corr_best_weight[row] = correlation.best_weight
+        end
+
+        apex_row = neighbor_rows[1]
+        apex_row == 0 && continue
+        out_apex_irt[row] = Float32(rt_to_irt(Float32(rt_column[apex_row])))
+        out_weight[row] = Float32(psm_peak_area[row])
+        # _chrom_neighbor_rows only returns a row whose scan == selected_scan, so the apex row's
+        # scan IS selected_scan; index the per-scan vector directly.
+        out_log2_explained[row] = log2(
+            max(shadow_sum, 1.0f-20) /
+            max(@inbounds(scan_tic[selected_scan]), 1.0f-20),
+        )
+        if fitted_columns !== nothing
+            fitted_sqrt, _ =
+                _chrom_spectrum_sqrt_tuple_and_sum(
+                    fitted_columns,
+                    apex_row,
+                )
+            apex_shadow_sqrt, _ =
+                _chrom_spectrum_sqrt_tuple_and_sum(
+                    shadow_columns,
+                    apex_row,
+                )
+            out_fitted_manhattan[row] = _chrom_manhattan_score(
+                shadow_columns,
+                fitted_columns,
+                apex_row,
+            )
+            out_fitted_hellinger[row] =
+                _chrom_hellinger_score_from_sqrt(apex_shadow_sqrt, fitted_sqrt)
+            out_smoothed_2d[row] =
+                _chrom_hellinger_score_from_sqrt(fragment_sqrt, fitted_sqrt)
+        end
+    end
+    if _diag
+        MBR_PHASE_DIAG[:perrow_bytes] += Base.gc_bytes() - _a0
+        MBR_PHASE_DIAG[:perrow_ms] += round(Int, (time() - _t0) * 1000)
+        MBR_PHASE_DIAG[:n_files] += 1
+        _mbr_phase_diag_report()
+    end
+    return passing_psms
+end
+
+# Accumulators for the phase diagnostic above. Printed after every file so a crash mid-run still
+# leaves usable numbers.
+const MBR_PHASE_DIAG = Dict{Symbol, Int}(
+    :rows_by_pid_bytes => 0, :rows_by_pid_ms => 0,
+    :neighbors_bytes => 0,   :neighbors_ms => 0,
+    :correlation_bytes => 0, :correlation_ms => 0,
+    :perrow_bytes => 0,      :perrow_ms => 0,
+    :n_chrom_rows => 0, :n_psm_rows => 0, :n_pids => 0, :n_neighbors => 0, :n_files => 0,
+    :nonmonotonic_rows => 0,
+)
+
+function _mbr_phase_diag_report()
+    d = MBR_PHASE_DIAG
+    gb(x) = round(x / 2^30, digits = 2)
+    tot = d[:rows_by_pid_bytes] + d[:neighbors_bytes] + d[:correlation_bytes] + d[:perrow_bytes]
+    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
+    @user_info """
+    MBR phase diagnostic (cumulative over $(d[:n_files]) file(s)):
+      chrom rows=$(d[:n_chrom_rows])  psm rows=$(d[:n_psm_rows])  pids=$(d[:n_pids])  neighbors entries=$(d[:n_neighbors])
+      combined-mode non-scan-ordered rows (MUST be 0): $(d[:nonmonotonic_rows])
+      rows_by_pid  + rows_by_trace : $(gb(d[:rows_by_pid_bytes])) GB  $(d[:rows_by_pid_ms]) ms  ($(pct(d[:rows_by_pid_bytes]))%)
+      neighbors Dict + sort!       : $(gb(d[:neighbors_bytes])) GB  $(d[:neighbors_ms]) ms  ($(pct(d[:neighbors_bytes]))%)
+      correlation_by_pid           : $(gb(d[:correlation_bytes])) GB  $(d[:correlation_ms]) ms  ($(pct(d[:correlation_bytes]))%)
+      per-row write loop           : $(gb(d[:perrow_bytes])) GB  $(d[:perrow_ms]) ms  ($(pct(d[:perrow_bytes]))%)
+      TOTAL in this function       : $(gb(tot)) GB"""
+    return nothing
 end
 
 #==========================================================
@@ -666,6 +1486,10 @@ function extract_chromatograms(
         precursor_rt_map[_pids[i]] = _rts[i]
     end
 
+    # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
+    # set of scan indices, so the writes never collide.
+    scan_tic = zeros(Float32, length(spectra))
+
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             thread_id = first(thread_task)
@@ -681,12 +1505,13 @@ function extract_chromatograms(
                 search_data,
                 params,
                 ms_file_idx,
-                chrom_type
+                chrom_type;
+                scan_tic = scan_tic,
             )
         end
     end
     thread_dfs = fetch.(tasks)
-    return vcat(thread_dfs...)
+    return vcat(thread_dfs...), scan_tic
 end
 
 """
@@ -714,7 +1539,8 @@ function build_chromatograms(
     search_data::SearchDataStructures,
     params::IntegrateChromatogramSearchParameters,
     ms_file_idx::Int64,
-    ::MS2CHROM
+    ::MS2CHROM;
+    scan_tic::Union{Nothing, Vector{Float32}} = nothing,
 )
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
@@ -722,6 +1548,8 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    spectral_scores = getMainSearchSpectralScores(search_data)
+    collect_mbr_evidence = params.match_between_runs
     fused_scratch = getFusedScratch(search_data)
     corr_mz = getScanCorrectedMz(search_data)
     obs_low = getScanObsLow(search_data)
@@ -731,9 +1559,20 @@ function build_chromatograms(
     id_to_col = getIdToCol(search_data)
     unscored_psms = getTuningUnscoredPsms(search_data)  # placeholder — FusedRTIndexed record_match! is no-op
 
-    # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
-    estimated_points = length(scan_range) * 100
-    chromatograms = Vector{MS2ChromObject}(undef, max(estimated_points, 10000))
+    # Points per scan measured at 23.81 on 6-file Olsen Exploris (366,129 MS2 scans ->
+    # 8,717,899 chromatogram rows). The old estimate of 100 over-allocated 4.2x, which cost
+    # ~2.1 GB of cumulative allocation per run at 80 B/row.
+    #
+    # 32 leaves ~34 % headroom so the common case never resizes. Note that a resize is NOT free
+    # in cumulative terms: with initial E and k doublings the total allocated is E*(2^(k+1)-1),
+    # so E=20 + one doubling costs 60x scans while E=32 with no doubling costs 32x. The doubling
+    # below still covers datasets that run richer than this one (library size, RT tolerance and
+    # isolation width all move this number, and only one dataset has been measured).
+    estimated_points = length(scan_range) * 32
+    initial_size = max(estimated_points, 10000)
+    chromatograms = collect_mbr_evidence ?
+        Vector{MS2MBRChromObject}(undef, initial_size) :
+        Vector{MS2ChromObject}(undef, initial_size)
 
     # RT bin tracking state — RT index is in empirical RT space
     rt_bin_start, rt_bin_stop = 1, 1
@@ -764,6 +1603,22 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
+        # The total ion current is a property of the SCAN, not of any one precursor. Record it
+        # once per scan; it used to be copied onto every chromatogram row of the scan.
+        #
+        # Read the instrument's stored TIC instead of re-summing the peak list. Re-summing was
+        # the only full traversal of the intensity column in this loop -- fragment matching
+        # touches matched peaks only -- so its cost scales with peaks-per-scan, which is ~10x
+        # higher on Astral than on Exploris.
+        #
+        # The two are not bit-identical, but they agree closely and one-sidedly: over 60,969
+        # MS2 scans, sum/TIC has median 0.99814 (mean 0.99719, sd 0.00344), with TIC >= sum in
+        # 86% of scans and exact equality in many. The peak list is a near-complete subset of
+        # what the TIC counted. Since the value is consumed as log2(shadow_sum / TIC), that
+        # shifts the feature by a median 0.0027 log2 units against a range of ~10.
+        if collect_mbr_evidence && scan_tic !== nothing
+            @inbounds scan_tic[scan_idx] = Float32(getTIC(spectra, scan_idx))
+        end
 
         if rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
@@ -834,6 +1689,11 @@ function build_chromatograms(
                 new_entries = n_active_cols - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
                 resize!(colnorm2, length(colnorm2) + new_entries)
+                collect_mbr_evidence &&
+                    resize!(
+                        spectral_scores,
+                        length(spectral_scores) + new_entries,
+                    )
             end
 
             initialize_weights!(id_to_col, weights, precursor_weights)
@@ -843,6 +1703,11 @@ function build_chromatograms(
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff)
+            # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
+            # (MS2MBRChromObject has no other score field), so the five aggregate metrics
+            # getDistanceMetrics computes are not calculated.
+            collect_mbr_evidence &&
+                getFragmentIntensities!(weights, residuals, Hs, spectral_scores)
 
             # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
@@ -851,11 +1716,40 @@ function build_chromatograms(
                     resize!(chromatograms, length(chromatograms) * 2)
                 end
                 col = id_to_col[precs_temp[j]]
-                chromatograms[rt_idx] = MS2ChromObject(
-                    Float32(getRetentionTime(spectra, scan_idx)),
-                    iszero(col) ? zero(Float32) : weights[col],
-                    scan_idx,
-                    precs_temp[j])
+                score = !collect_mbr_evidence || iszero(col) ?
+                    nothing :
+                    spectral_scores[col]
+                if collect_mbr_evidence
+                    chromatograms[rt_idx] = MS2MBRChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        iszero(col) ? zero(Float32) : weights[col],
+                        scan_idx,
+                        precs_temp[j],
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag1_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag2_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag3_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag4_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag5_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag6_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag7_int),
+                        score === nothing ? 0.0f0 : Float32(score.shadow_frag8_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag1_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag2_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag3_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag4_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag5_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag6_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag7_int),
+                        score === nothing ? 0.0f0 : Float32(score.fitted_frag8_int),
+                    )
+                else
+                    chromatograms[rt_idx] = MS2ChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        iszero(col) ? zero(Float32) : weights[col],
+                        scan_idx,
+                        precs_temp[j],
+                    )
+                end
             end
 
             update_precursor_weights!(id_to_col, weights, precursor_weights)
@@ -866,9 +1760,25 @@ function build_chromatograms(
                 if rt_idx + 1 > length(chromatograms)
                     resize!(chromatograms, length(chromatograms) * 2)
                 end
-                chromatograms[rt_idx] = MS2ChromObject(
-                    Float32(getRetentionTime(spectra, scan_idx)),
-                    zero(Float32), scan_idx, precs_temp[j])
+                if collect_mbr_evidence
+                    chromatograms[rt_idx] = MS2MBRChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        zero(Float32),
+                        scan_idx,
+                        precs_temp[j],
+                        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                        0.0f0, 0.0f0, 0.0f0, 0.0f0,
+                    )
+                else
+                    chromatograms[rt_idx] = MS2ChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        zero(Float32),
+                        scan_idx,
+                        precs_temp[j],
+                    )
+                end
             end
         end
 

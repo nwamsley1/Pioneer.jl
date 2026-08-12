@@ -1,7 +1,7 @@
 using Test
 using Pioneer
 import Pioneer: truncate_for_log, MAX_LOG_MSG_BYTES
-import Pioneer: DEBUG_CONSOLE_LEVEL, ESSENTIAL_FILE, CONSOLE_FILE, DEBUG_FILE, WARNINGS_FILE
+import Pioneer: DEBUG_CONSOLE_LEVEL, DEBUG_FILE_LEVEL, ESSENTIAL_FILE, CONSOLE_FILE, DEBUG_FILE, WARNINGS_FILE
 
 function _with_temp_logs_trunc(f::Function)
     tmp = mktempdir()

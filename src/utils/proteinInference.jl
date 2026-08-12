@@ -503,7 +503,7 @@ function infer_proteins(
             # Sanity check: ensure no conflicts (same peptide assigned to different proteins)
             if haskey(combined_result, pep)
                 if combined_result[pep] != prot
-                    @warn "Peptide $(pep.sequence) assigned to multiple proteins across groups: " *
+                    @user_warn "Peptide $(pep.sequence) assigned to multiple proteins across groups: " *
                           "$(combined_result[pep].name) vs $(prot.name)"
                 end
             else

@@ -7,7 +7,7 @@
     state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
     debug_plot_data = Ref{Any}(nothing)
 
-    _, best_scan, _ = Pioneer.integrate_chrom(
+    _, best_scan, _, start_scan, stop_scan = Pioneer.integrate_chrom(
         rt,
         scan_idx,
         intensity,
@@ -22,6 +22,8 @@
     )
 
     @test best_scan == UInt32(3)
+    @test start_scan == UInt32(2)
+    @test stop_scan == UInt32(4)
     @test debug_plot_data[].scan_range == 2:4
 end
 

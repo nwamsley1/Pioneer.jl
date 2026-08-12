@@ -45,7 +45,7 @@ function read_detailed_frags(filepath::String)
 
     # Fall back to legacy .jld2
     if isfile(filepath) && endswith(filepath, ".jld2")
-        @warn "Loading legacy JLD2 format. Consider rebuilding library."
+        @user_warn "Loading legacy JLD2 format. Consider rebuilding library."
         data = load(filepath)
         # Handle both key names used historically
         return haskey(data, "fragments") ? data["fragments"] : data["data"]

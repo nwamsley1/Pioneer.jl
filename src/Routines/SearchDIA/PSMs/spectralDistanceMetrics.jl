@@ -39,16 +39,20 @@ struct SpectralScoresMainSearch{T<:AbstractFloat,I<:AbstractFloat} <: SpectralSc
     shadow_frag7_int::I
     shadow_frag8_int::I
 end
-function getDistanceMetrics(w::Vector{T},
+"""
+    _accumulate_residuals!(w, r, H)
+
+Fill `r` with the fit residual for every row touched by `H`: `r[row]` becomes the summed fitted
+intensity across all columns minus the observed intensity. Both scorers below need this, because
+a column's deconvolved share of a peak is `w[col]*H.nzval[i] - r[row]`.
+"""
+function _accumulate_residuals!(w::Vector{T},
     r::Vector{T},
     H::AbstractSparseDesignMatrix{Ti,T},
-    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
-   ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
+   ) where {Ti<:Integer,T}
 
     # Zero residual vector
-    @turbo for i in range(1, H.m)
-        r[i] = zero(T)
-    end
+    fill!(@view(r[1:H.m]), zero(T))
 
     for n in range(1, H.n_vals)
         if iszero(r[H.rowval[n]])
@@ -63,6 +67,16 @@ function getDistanceMetrics(w::Vector{T},
             r[H.rowval[n]] += w[col]*H.nzval[n]
         end
     end
+    return nothing
+end
+
+function getDistanceMetrics(w::Vector{T},
+    r::Vector{T},
+    H::AbstractSparseDesignMatrix{Ti,T},
+    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
+   ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
+
+    _accumulate_residuals!(w, r, H)
 
     # Single-pass scoring per precursor
     for col in 1:H.n
@@ -179,6 +193,111 @@ function getDistanceMetrics(w::Vector{T},
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             U(fitted_hellinger),
+            V(fitted_frag1_int),
+            V(fitted_frag2_int),
+            V(fitted_frag3_int),
+            V(fitted_frag4_int),
+            V(fitted_frag5_int),
+            V(fitted_frag6_int),
+            V(fitted_frag7_int),
+            V(fitted_frag8_int),
+            V(shadow_frag1_int),
+            V(shadow_frag2_int),
+            V(shadow_frag3_int),
+            V(shadow_frag4_int),
+            V(shadow_frag5_int),
+            V(shadow_frag6_int),
+            V(shadow_frag7_int),
+            V(shadow_frag8_int)
+        )
+    end
+end
+
+"""
+    getFragmentIntensities!(w, r, H, spectral_scores)
+
+Rank-1..8 fitted and deconvolved ("shadow") fragment intensities per column -- the ONLY fields
+IntegrateChromatogramsSearch reads back. `MS2MBRChromObject` has no gof, residual, manhattan or
+Hellinger field, so `getDistanceMetrics`' five aggregate metrics cannot be consumed there; this
+computes the 16 that are and leaves the rest zero.
+
+Dropped relative to getDistanceMetrics, per non-zero: the manhattan and observed-sum accumulators,
+the residual magnitude and its matched/unmatched maxima, and the Bhattacharyya `sqrt`. Per column:
+five `log2` and one `sqrt`. The residual construction and the fragment accumulation are unchanged,
+so the 16 retained values are bit-identical.
+"""
+function getFragmentIntensities!(w::Vector{T},
+    r::Vector{T},
+    H::AbstractSparseDesignMatrix{Ti,T},
+    spectral_scores::Vector{SpectralScoresMainSearch{U,V}}
+   ) where {Ti<:Integer,T,U<:AbstractFloat,V<:AbstractFloat}
+
+    _accumulate_residuals!(w, r, H)
+
+    for col in 1:H.n
+        # Skip zero-weight columns
+        if w[col] <= zero(T)
+            spectral_scores[col] = SpectralScoresMainSearch(
+                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V),
+                zero(V), zero(V), zero(V), zero(V)
+            )
+            continue
+        end
+
+        fitted_frag1_int = zero(T)
+        fitted_frag2_int = zero(T)
+        fitted_frag3_int = zero(T)
+        fitted_frag4_int = zero(T)
+        fitted_frag5_int = zero(T)
+        fitted_frag6_int = zero(T)
+        fitted_frag7_int = zero(T)
+        fitted_frag8_int = zero(T)
+        shadow_frag1_int = zero(T)
+        shadow_frag2_int = zero(T)
+        shadow_frag3_int = zero(T)
+        shadow_frag4_int = zero(T)
+        shadow_frag5_int = zero(T)
+        shadow_frag6_int = zero(T)
+        shadow_frag7_int = zero(T)
+        shadow_frag8_int = zero(T)
+
+        @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
+            fitted_peak = w[col]*H.nzval[i]
+            shadow_peak = fitted_peak - r[H.rowval[i]]
+            x_i = max(shadow_peak, zero(T))  # clamp negative shadows
+            rank = rank_at(H, i)
+            if rank == UInt8(1)
+                fitted_frag1_int += fitted_peak
+                shadow_frag1_int += x_i
+            elseif rank == UInt8(2)
+                fitted_frag2_int += fitted_peak
+                shadow_frag2_int += x_i
+            elseif rank == UInt8(3)
+                fitted_frag3_int += fitted_peak
+                shadow_frag3_int += x_i
+            elseif rank == UInt8(4)
+                fitted_frag4_int += fitted_peak
+                shadow_frag4_int += x_i
+            elseif rank == UInt8(5)
+                fitted_frag5_int += fitted_peak
+                shadow_frag5_int += x_i
+            elseif rank == UInt8(6)
+                fitted_frag6_int += fitted_peak
+                shadow_frag6_int += x_i
+            elseif rank == UInt8(7)
+                fitted_frag7_int += fitted_peak
+                shadow_frag7_int += x_i
+            elseif rank == UInt8(8)
+                fitted_frag8_int += fitted_peak
+                shadow_frag8_int += x_i
+            end
+        end
+
+        spectral_scores[col] = SpectralScoresMainSearch(
+            zero(U), zero(U), zero(U), zero(U), zero(U),
             V(fitted_frag1_int),
             V(fitted_frag2_int),
             V(fitted_frag3_int),

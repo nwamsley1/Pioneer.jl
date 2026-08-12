@@ -4,7 +4,7 @@ using Dates
 # Import macros and internal logging state
 using Pioneer: @user_info, @user_warn, @user_error, @user_print,
                @debug_l1, @debug_l2, @debug_l3, @trace
-import Pioneer: DEBUG_CONSOLE_LEVEL, ESSENTIAL_FILE, CONSOLE_FILE, DEBUG_FILE, WARNINGS_FILE
+import Pioneer: DEBUG_CONSOLE_LEVEL, DEBUG_FILE_LEVEL, ESSENTIAL_FILE, CONSOLE_FILE, DEBUG_FILE, WARNINGS_FILE
 
 function _with_temp_logs(f::Function)
     tmp = mktempdir()
@@ -20,6 +20,7 @@ function _with_temp_logs(f::Function)
 
     # Save originals
     old_level = DEBUG_CONSOLE_LEVEL[]
+    old_file_level = DEBUG_FILE_LEVEL[]
     old_ess = ESSENTIAL_FILE[]
     old_con = CONSOLE_FILE[]
     old_dbg = DEBUG_FILE[]
@@ -34,6 +35,7 @@ function _with_temp_logs(f::Function)
     finally
         # Restore refs and level
         DEBUG_CONSOLE_LEVEL[] = old_level
+        DEBUG_FILE_LEVEL[] = old_file_level
         ESSENTIAL_FILE[] = old_ess
         CONSOLE_FILE[] = old_con
         DEBUG_FILE[] = old_dbg
@@ -71,12 +73,30 @@ end
         @test occursin("[warn] Something happened", dbg)
     end
 
-    # debug_l1 gated by level
+    # debug_l1: console and file levels are independent. A quiet console (level 0) must still
+    # populate the debug file at the default file level of 1 -- that is the point of the split.
     _with_temp_logs() do (ess_path, con_path, dbg_path, wrn_path)
         DEBUG_CONSOLE_LEVEL[] = 0
+        DEBUG_FILE_LEVEL[] = 1
         @debug_l1 "no-console"
         dbg = read(dbg_path, String)
+        @test occursin("[DEBUG1] no-console", dbg)
+    end
+    # Only silencing the file level suppresses the file entry.
+    _with_temp_logs() do (ess_path, con_path, dbg_path, wrn_path)
+        DEBUG_CONSOLE_LEVEL[] = 0
+        DEBUG_FILE_LEVEL[] = 0
+        @debug_l1 "nowhere"
+        dbg = read(dbg_path, String)
         @test !occursin("DEBUG1", dbg)
+    end
+    # Raising the console level must imply file capture, even if the file level is lower.
+    _with_temp_logs() do (ess_path, con_path, dbg_path, wrn_path)
+        DEBUG_CONSOLE_LEVEL[] = 2
+        DEBUG_FILE_LEVEL[] = 0
+        @debug_l2 "console-implies-file"
+        dbg = read(dbg_path, String)
+        @test occursin("[DEBUG2] console-implies-file", dbg)
     end
     _with_temp_logs() do (ess_path, con_path, dbg_path, wrn_path)
         DEBUG_CONSOLE_LEVEL[] = 1

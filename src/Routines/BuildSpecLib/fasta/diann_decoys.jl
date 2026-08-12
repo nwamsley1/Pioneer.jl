@@ -147,7 +147,7 @@ function apply_diann_decoy_style!(lib_path::String)
     detailed_frags = load_detailed_frags(joinpath(lib_path, "detailed_fragments.jls"))
     pid_to_fid = deserialize_from_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"))
 
-    @info "DIA-NN decoy generation: $n_targets target precursors, $(length(detailed_frags)) fragments"
+    @debug_l1 "DIA-NN decoy generation: $n_targets target precursors, $(length(detailed_frags)) fragments"
 
     # Build decoy fragments
     F = eltype(detailed_frags)
@@ -233,7 +233,7 @@ function apply_diann_decoy_style!(lib_path::String)
         n_created += 1
     end
 
-    @info "DIA-NN decoy generation: created $n_created decoys, skipped $n_skipped (too short)"
+    @debug_l1 "DIA-NN decoy generation: created $n_created decoys, skipped $n_skipped (too short)"
 
     # Combine target + decoy precursor tables
     combined_df = vcat(prec_df, decoy_rows)
@@ -302,7 +302,7 @@ function apply_diann_decoy_style!(lib_path::String)
         partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
     serialize_to_jls(joinpath(lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
-    @info "DIA-NN decoy generation complete: $n_total total precursors ($n_targets targets + $n_created decoys)"
+    @debug_l1 "DIA-NN decoy generation complete: $n_total total precursors ($n_targets targets + $n_created decoys)"
     return nothing
 end
 

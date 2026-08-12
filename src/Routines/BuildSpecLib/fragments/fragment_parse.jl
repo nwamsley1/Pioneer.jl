@@ -814,3 +814,133 @@ function _fill_detailed_from_raw!(
     end
     return nothing
 end
+
+"""
+    build_detailed_frags_from_raw(precursor_table, fragment_table, annotation_type,
+        immonium_data_path, out_dir, mods_to_sulfur_diff, iso_mod_to_mass,
+        ::InstrumentAgnosticModel) -> (detailed_frags, prec_to_frag)
+
+Prosit analog of the spline fused decode: decode the topN-filtered
+`raw_fragments.arrow` directly into `Vector{CompactFrag}` (constant scalar
+intensity) + the CSR precursor→fragment index, in one pass. Differs from the
+spline path only in that Prosit carries STRING annotations (parsed via the
+`GenericFragAnnotation` parser, cached) and a scalar `:intensities` column that
+already holds *total* abundance (the mono→total conversion happened in
+`filter_fragments!(::InstrumentAgnosticModel)`). Per-fragment sulfur is recomputed
+here with the same `count_sulfurs!`/`get_fragment_indices` used at predict time
+(deterministic — keeps this decode symmetric with the spline path, no sulfur column
+in `raw_fragments.arrow`). Serializes `ion_annotations.jls` for parity.
+"""
+function build_detailed_frags_from_raw(
+    precursor_table::Arrow.Table,
+    fragment_table::Arrow.Table,
+    annotation_type::FragAnnotation,
+    immonium_data_path::String,
+    out_dir::String,
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    ::InstrumentAgnosticModel
+)
+    n_frags = length(fragment_table[:mz])
+    n_precursors = length(precursor_table[1])
+    detailed = Vector{CompactFrag{Float32}}(undef, n_frags)
+    prec_to_frag = fill(zero(UInt64), n_precursors + 1)
+    annotation_cache = Dict{String, PioneerFragAnnotation}()
+
+    _fill_compact_from_raw!(
+        detailed, prec_to_frag,
+        fragment_table[:annotation], fragment_table[:precursor_idx],
+        fragment_table[:mz], fragment_table[:intensities],
+        precursor_table[:sequence], precursor_table[:mods],
+        precursor_table[:isotope_mods], precursor_table[:precursor_charge],
+        annotation_cache, mods_to_sulfur_diff, iso_mod_to_mass,
+        n_frags, n_precursors)
+
+    serialize_to_jls(joinpath(out_dir, "ion_annotations.jls"), annotation_cache)
+    return detailed, prec_to_frag
+end
+
+# Type-stable kernel for the Prosit (InstrumentAgnosticModel) fused decode.
+# Mirrors _fill_detailed_from_raw! (same per-precursor sulfur/iso-mod setup, same
+# per-fragment span sulfur, same CSR back-fill, same per-precursor positional rank)
+# but reads a scalar `:intensities` (already total abundance) and emits CompactFrag
+# with a STRING-annotation lookup instead of the Int32 ion-dict.
+function _fill_compact_from_raw!(
+    detailed::Vector{CompactFrag{T}},
+    prec_to_frag::Vector{UInt64},
+    frag_ann, frag_pid, frag_mzs, frag_ints,
+    seqs, mods_col, iso_mod_col, charge_col,
+    annotation_cache::Dict{String, PioneerFragAnnotation},
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    n_frags::Int, n_precursors::Int) where {T}
+
+    seq_idx_to_sulfur  = zeros(UInt8, 255)
+    seq_idx_to_iso_mod = zeros(Float32, 255)
+    last_pid = zero(UInt32)
+    prec_sulfur_count = 0
+    prec_length = zero(UInt8)
+    prec_charge = zero(UInt8)
+    rank = 0
+
+    @inbounds for fi in 1:n_frags
+        pid = frag_pid[fi]
+        if pid != last_pid
+            last_pid = pid
+            rank = 0
+            if prec_to_frag[pid] == 0
+                prec_to_frag[pid] = UInt64(fi)
+            end
+            fill!(seq_idx_to_sulfur, zero(UInt8))
+            fill!(seq_idx_to_iso_mod, zero(Float32))
+            seq = seqs[pid]
+            prec_sulfur_count = Int(count_sulfurs!(
+                seq_idx_to_sulfur, seq, parseMods(mods_col[pid]), mods_to_sulfur_diff))
+            fill_isotope_mods!(seq_idx_to_iso_mod, parseMods(iso_mod_col[pid]), iso_mod_to_mass)
+            prec_length = UInt8(length(seq))
+            prec_charge = UInt8(charge_col[pid])
+        end
+        rank += 1
+
+        frag_data = _agnostic_annotation!(annotation_cache, frag_ann[fi])
+        start_idx, stop_idx = get_fragment_indices(
+            frag_data.base_type, frag_data.frag_index, prec_length)
+
+        sulfur_count = 0
+        if !frag_data.immonium
+            for i in start_idx:stop_idx
+                sulfur_count += seq_idx_to_sulfur[i]
+            end
+        end
+        sulfur_count += frag_data.sulfur_diff
+
+        frag_mz = frag_mzs[fi] + apply_isotope_mod(
+            frag_data.charge, seq_idx_to_iso_mod, start_idx, stop_idx)
+
+        detailed[fi] = CompactFrag(
+            UInt32(pid),
+            frag_mz,
+            Float16(frag_ints[fi]),
+            frag_data.base_type == 'y',
+            frag_data.base_type == 'b',
+            frag_data.base_type == 'p',
+            frag_data.isotope > 0,
+            frag_data.charge,
+            frag_data.frag_index,
+            prec_charge,
+            UInt8(rank),
+            UInt8(min(sulfur_count, prec_sulfur_count)),
+        )
+    end
+
+    prec_to_frag[end] = UInt64(n_frags + 1)
+    next = prec_to_frag[end]
+    for i in n_precursors:-1:1
+        if prec_to_frag[i] == 0
+            prec_to_frag[i] = next
+        else
+            next = prec_to_frag[i]
+        end
+    end
+    return nothing
+end

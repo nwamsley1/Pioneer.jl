@@ -124,9 +124,19 @@ Concrete Types
 """
 Reference to MS data stored in Arrow files.
 """
-struct ArrowTableReference{N} <: MassSpecDataReference
-    file_paths::NTuple{N, String}
-    file_id_to_name::NTuple{N, String}
+# No file-count type parameter. `{N}` typed only the first two fields as NTuple{N,String} while the
+# other seven were already Vector{String}, and nothing needed a compile-time length: the only call
+# sites are the per-file iterator below and `n_files = length(msdr.file_paths)`, both of which read
+# the field rather than the parameter.
+#
+# What it cost was a separate specialisation of everything downstream -- SearchContext carries this
+# type, so every closure touching the search context respecialised -- for each distinct number of
+# input files. That is unbounded and user-supplied, so no precompile statements file can cover it:
+# measured at ~50 statements re-JIT'd on a 3-file search by a binary precompiled on 2- and 6-file
+# searches.
+struct ArrowTableReference <: MassSpecDataReference
+    file_paths::Vector{String}
+    file_id_to_name::Vector{String}
     main_search_psms::Vector{String}
     fragment_index_matches::Vector{String}
     filtered_fragment_matches::Vector{String}
@@ -146,9 +156,9 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             @user_warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
         end
         n = length(file_paths)
-        new{n}(
-            NTuple{n, String}(file_paths),
-            NTuple{n, String}(file_id_to_name),
+        new(
+            file_paths,
+            file_id_to_name,
             fill("", n),
             fill("", n),
             fill("", n),
@@ -166,8 +176,11 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             @user_warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
         n = length(file_paths)
-        new{n}(
-            NTuple{n, String}(file_paths...),
+        # This constructor was unreachable and broken: it passed `fill("", n)`, a Vector, into the
+        # NTuple{N,String} `file_id_to_name` field, for which no convert method exists. Making both
+        # fields Vector fixes it as a side effect.
+        new(
+            file_paths,
             fill("", n),
             fill("", n),
             fill("", n),
@@ -239,7 +252,12 @@ end
 """
 Primary search context holding all data structures and state for search execution.
 """
-mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
+# No thread-count type parameter. It used to carry `N = length(temp_structures)`, which typed
+# nothing -- `temp_structures` is an AbstractVector, not an NTuple{N} -- and was never dispatched on
+# or read. Its only effect was to give every method touching a SearchContext a separate
+# specialisation per thread count, which no precompile statement file can cover because the value
+# comes from the user's machine. See the note on ArrowTableReference below.
+mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # Core components
     spec_lib::L
     temp_structures::AbstractVector{<:SearchDataStructures}
@@ -306,8 +324,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
         n_precursors::Int64,
         buffer_size::Int64
     ) where {L<:SpectralLibrary,M<:MassSpecDataReference}
-        N = length(temp_structures)
-        new{N,L,M}(
+        new{L,M}(
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
@@ -343,7 +360,7 @@ getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference
-Base.length(::ArrowTableReference{N}) where N = N
+Base.length(r::ArrowTableReference) = length(r.file_paths)
 
 import Base: enumerate
 function enumerate(msdr::ArrowTableReference)

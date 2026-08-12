@@ -229,7 +229,11 @@ function WHSmooth!(ws::WHWorkspace,
     end
 
     # Solves in-place; result lives in ws.z[1:active_length]
-    whitsmddw!(ws, x, b, w, active_length, λ)
+    if WH_ORDER3_LAMBDA[] > 0f0 && active_length >= 4
+        whitsm_order3!(ws, x, b, w, active_length, WH_ORDER3_LAMBDA[])
+    else
+        whitsmddw!(ws, x, b, w, active_length, λ)
+    end
     return nothing
 end
 
@@ -303,9 +307,10 @@ function getIntegrationBounds!(u2::Vector{Float32},
 
     #return pad_start:pad_end
 
-    # initialise search bounds (clamp to valid padded range)
-    start = max(apex_padded - 1, pad_start)
-    stop  = min(apex_padded + 1, pad_end)
+    # initialise search bounds (clamp to valid padded range). Start the boundary
+    # search at apex ± 2 (not ± 1) so the integrated peak is at least 5 scans wide.
+    start = max(apex_padded - 2, pad_start)
+    stop  = min(apex_padded + 2, pad_end)
 
     # ──────────────── search to the right (RH boundary) ────────────────
     # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
@@ -493,7 +498,7 @@ end
                    ws::WHWorkspace, state::Chromatogram,
                    avg_cycle_time::Float32, λ::Float32;
                    n_pad::Int64=0,
-                   isplot::Bool=false) -> Tuple{Float32, UInt32, Int}
+                   isplot::Bool=false) -> Tuple{Float32, UInt32, Int, UInt32, UInt32}
 
 Integrate a single chromatographic peak.
 
@@ -514,6 +519,8 @@ on concrete `Vector{Float32}` fields of `ws`, eliminating GC-root / view-lifetim
 - Peak area
 - Updated apex scan index
 - Number of points integrated
+- Integration start scan index
+- Integration stop scan index
 
 # Internal Chromatogram Processing Functions
 
@@ -636,7 +643,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 )
             end
         end
-        return 0f0, scan_idx_col[apex_scan], Int(0)
+        return (
+            0.0f0,
+            scan_idx_col[apex_scan],
+            Int(0),
+            UInt32(0),
+            UInt32(0),
+        )
     end
 
     norm_factor, start_rt, rt_norm, best_rt = fillState!(
@@ -671,7 +684,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     if isnan(trapezoid_area) || isnan(raw_trap)
         z_has_nan = any(isnan, @view z[1:n_active])
         z_all_zero = all(==(0f0), @view z[1:n_active])
-        @warn "[NaN area] norm_factor=$norm_factor rt_norm=$rt_norm raw_trap=$raw_trap max_idx=$(state.max_index) m=$m n_pad=$n_pad z_all_zero=$z_all_zero z_has_nan=$z_has_nan scan_range=$scan_range" maxlog=10
+        @debug_l2 "[NaN area] norm_factor=$norm_factor rt_norm=$rt_norm raw_trap=$raw_trap max_idx=$(state.max_index) m=$m n_pad=$n_pad z_all_zero=$z_all_zero z_has_nan=$z_has_nan scan_range=$scan_range"
     end
 
     # Count points within the full width at 20% maximum of the smoothed signal
@@ -713,7 +726,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     end
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, scan_idx_col[apex_scan], num_points_integrated
+    return (
+        trapezoid_area,
+        scan_idx_col[apex_scan],
+        num_points_integrated,
+        UInt32(scan_idx_col[first(scan_range)]),
+        UInt32(scan_idx_col[last(scan_range)]),
+    )
 end
 
 function integrate_chrom(chrom::SubDataFrame,

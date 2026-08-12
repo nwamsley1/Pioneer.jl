@@ -40,24 +40,48 @@ function get_pep_interpolation(
     targets = Vector{Bool}(df[!, :target])
 
     pep_vals = Vector{Float32}(undef, length(scores))
-    get_PEP!(scores, targets, pep_vals; doSort=true,
+    # merged_psms_path is produced by stream_sorted_merge(..., reverse=[true,true]), so scores
+    # arrive sorted descending and get_PEP!'s internal sortperm is redundant. Check rather than
+    # assume: issorted is O(N) and ~10x cheaper than the sortperm it avoids.
+    scores_descending = issorted(scores, rev = true)
+    get_PEP!(scores, targets, pep_vals; doSort = !scores_descending,
              fdr_scale_factor=fdr_scale_factor)
 
-    # Collapse redundant PEP values by taking the minimum score for each PEP
-    pep_to_score = Dict{Float32, Float32}()
-    order = sortperm(scores)
-    for idx in order
-        p = pep_vals[idx]
-        s = scores[idx]
-        if !haskey(pep_to_score, p)
-            pep_to_score[p] = s
+    # Collapse redundant PEP values by taking the minimum score for each PEP.
+    #
+    # This used to build a Dict{Float32,Float32} keyed on PEP plus a full sortperm of the scores.
+    # Neither is needed: PAVA output is monotone in the input order, so with scores descending the
+    # PEP values are non-decreasing in i, and each distinct PEP occupies a CONTIGUOUS run. Walking i
+    # from N down to 1 therefore visits scores in ascending order and meets each distinct PEP exactly
+    # once, at its minimum score -- the same pair the Dict selected, already ordered for the x-dedup
+    # below. (The Dict's iteration order also made ties between equal scores arbitrary; this is
+    # deterministic.)
+    xs_tmp = Float32[]
+    ys_tmp = Float32[]
+    if scores_descending
+        prev_pep = NaN32
+        @inbounds for i in length(scores):-1:1
+            p = pep_vals[i]
+            if p != prev_pep
+                push!(xs_tmp, scores[i])
+                push!(ys_tmp, p)
+                prev_pep = p
+            end
         end
+    else
+        pep_to_score = Dict{Float32, Float32}()
+        order = sortperm(scores)
+        for idx in order
+            p = pep_vals[idx]
+            s = scores[idx]
+            if !haskey(pep_to_score, p)
+                pep_to_score[p] = s
+            end
+        end
+        ordered = sort(collect(pep_to_score), by = last)
+        xs_tmp = Float32[last(pair) for pair in ordered]
+        ys_tmp = Float32[first(pair) for pair in ordered]
     end
-
-    # Sort the resulting pairs by score for interpolation
-    ordered = sort(collect(pep_to_score), by = last)
-    xs_tmp = Float32[last(pair) for pair in ordered]
-    ys_tmp = Float32[first(pair) for pair in ordered]
 
     # Remove duplicate knot values explicitly
     xs = Float32[]
@@ -90,6 +114,52 @@ Create q-value interpolation function from merged scores.
 
 Returns interpolation for mapping scores to q-values.
 """
+# Hot kernel for get_qvalue_spline. Takes the columns as ARGUMENTS so Julia specialises on their
+# concrete types; the arithmetic is unchanged from the inline version it replaces, including the
+# NaN that results when the trailing partial bin is empty (callers filter those out).
+function _qvalue_bin_sweep!(
+    bin_qval::Vector{Float32},
+    bin_mean_prob::Vector{Float32},
+    target_col,
+    score_vals,
+    Q::Int,
+    min_pep_points_per_bin::Int,
+    fdr_scale_factor::Float32,
+)
+    targets = 0
+    decoys = 0
+    @inbounds for i in 1:Q
+        t = target_col[i]
+        targets += t
+        decoys += (1 - t)
+    end
+    bin_size = 0
+    bin_idx = 0
+    mean_prob = 0.0f0
+    min_q_val = typemax(Float32)
+    @inbounds for i in Q:-1:1
+        bin_size += 1
+        t = target_col[i]
+        targets -= t
+        decoys -= (1 - t)
+        mean_prob += score_vals[i]
+        if bin_idx == 0 || bin_size == min_pep_points_per_bin
+            bin_idx += 1
+            # Apply FDR scale factor to correct for library target/decoy ratio
+            qval = (decoys * fdr_scale_factor) / max(targets, 1)
+            if qval > min_q_val
+                bin_qval[bin_idx] = min_q_val
+            else
+                min_q_val = qval
+                bin_qval[bin_idx] = qval
+            end
+            bin_mean_prob[bin_idx] = mean_prob / bin_size
+            bin_size, mean_prob = zero(Int64), zero(Float32)
+        end
+    end
+    return targets, decoys, mean_prob, bin_size
+end
+
 function get_qvalue_spline(
                             merged_psms_path::String,
                             score_col::Symbol,
@@ -113,33 +183,19 @@ function get_qvalue_spline(
     Q = size(psms_scores, 1)
     M = ceil(Int, (Q - 1) / min_pep_points_per_bin) + 1
     bin_qval, bin_mean_prob = Vector{Float32}(undef, M), Vector{Float32}(undef, M)
-    bin_size = 0
-    bin_idx = 0
-    mean_prob, targets, decoys = 0.0f0, 0, 0
-    for i in range(1, Q)
-        targets += psms_scores[!, :target][i]
-        decoys += (1 - psms_scores[!, :target][i])
-    end
-    min_q_val = typemax(Float32)
-    for i in reverse(range(1, Q))
-        bin_size += 1
-        targets -= psms_scores[!, :target][i]
-        decoys -= (1 - psms_scores[!, :target][i])
-        mean_prob += psms_scores[!, score_col][i]
-        if bin_idx == 0 || bin_size == min_pep_points_per_bin
-            bin_idx += 1
-            # Apply FDR scale factor to correct for library target/decoy ratio
-            qval = (decoys * fdr_scale_factor) / max(targets, 1)
-            if qval > min_q_val
-                bin_qval[bin_idx] = min_q_val
-            else
-                min_q_val = qval
-                bin_qval[bin_idx] = qval
-            end
-            bin_mean_prob[bin_idx] = mean_prob/bin_size
-            bin_size, mean_prob = zero(Int64), zero(Float32)
-        end
-    end
+    # Function barrier: `df[!, col]` infers as AbstractVector, so writing `psms_scores[!, :target][i]`
+    # inside the loops costs a Dict{Symbol,Int} lookup AND a dynamically-dispatched index on EVERY
+    # iteration -- five per row across the two sweeps. Measured on a real 387,410-row merged file:
+    # 141.8 ms / 56.8 MB as written, 9.6 ms / 0 B with the columns passed as arguments (15x).
+    targets, decoys, mean_prob, bin_size = _qvalue_bin_sweep!(
+        bin_qval,
+        bin_mean_prob,
+        psms_scores[!, :target],
+        psms_scores[!, score_col],
+        Q,
+        min_pep_points_per_bin,
+        Float32(fdr_scale_factor),
+    )
     # Apply FDR scale factor to final bin calculation
     bin_qval[end] = (decoys * fdr_scale_factor) / max(targets, 1)
     bin_mean_prob[end] = mean_prob/bin_size

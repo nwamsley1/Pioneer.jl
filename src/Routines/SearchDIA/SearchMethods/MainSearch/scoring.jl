@@ -109,6 +109,11 @@ Two-fold CV LightGBM training with the shared hyperparameters
 
 Used by both `train_lgbm_and_select_best` (MainSearch) and
 `score_precursor_isotope_traces` (PrecursorScoringSearch).
+
+`buffers` supplies reusable backing stores for the feature matrices; the default
+allocates a fresh set per call, so callers that don't reuse buffers are
+unaffected. MainSearch passes a per-search set (see `MainSearchResults`) so the
+population-scaled matrices are built once and reused across every file.
 """
 function train_psm_classifier_with_fallback(
     psms::DataFrame;
@@ -117,14 +122,42 @@ function train_psm_classifier_with_fallback(
     compute_infold::Bool = false,
     max_train::Int = MAIN_LGBM_MAX_TRAIN,
     training_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
+    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
+)
+    # The feature matrices built below are `unsafe_wrap` views into these backing
+    # vectors, and the inner CV closures capture the wrapped matrices — a capture
+    # boxes the variable and does NOT root the backing store. Preserve the
+    # vectors here, in a frame no closure captures, for the whole call.
+    b_all, b_train, b_test, b_infold =
+        buffers.all, buffers.train, buffers.test, buffers.infold
+    return GC.@preserve b_all b_train b_test b_infold _train_psm_classifier_with_fallback(
+        psms;
+        features = features,
+        lgbm_hp = lgbm_hp,
+        compute_infold = compute_infold,
+        max_train = max_train,
+        training_mask = training_mask,
+        buffers = buffers,
+    )
+end
+
+function _train_psm_classifier_with_fallback(
+    psms::DataFrame;
+    features::Vector{Symbol},
+    lgbm_hp,
+    compute_infold::Bool,
+    max_train::Int,
+    training_mask::Union{Nothing, AbstractVector{Bool}},
+    buffers::LGBMMatrixBuffers,
 )
     targets_col = psms[!, :target]
     n_total = nrow(psms)
 
     available_features = filter(f -> hasproperty(psms, f), features)
+    n_features = length(available_features)
 
     # Build feature matrix
-    X_all = feature_matrix(psms, available_features)
+    X_all = feature_matrix!(buffers.all, psms, available_features)
 
     # Two-fold cross-validation using existing cv_fold column
     cv_fold = psms[!, :cv_fold]
@@ -156,13 +189,24 @@ function train_psm_classifier_with_fallback(
     min_fit_size = minimum(length(fit_idx) for (fit_idx, _, _) in fold_pairs)
     low_data = min_fit_size < LOW_DATA_THRESHOLD
 
-    # LightGBM CV. Slices train/test matrices on demand (transient peak) to avoid
-    # retaining two ~400MB per-fold matrices across the whole function.
+    # Size the slice buffers to the largest slice each will ever hold on this
+    # call, up front and once. Every row count is already known here (both folds'
+    # sub-sample sizes and both folds' full sizes), so nothing below resizes a
+    # buffer — a resize can move the data and would dangle a live wrap.
+    _size_matrix_buffer!(buffers.train, maximum(length, sub_positions; init = 0), n_features)
+    max_fold_rows = max(length(idx0), length(idx1))
+    _size_matrix_buffer!(buffers.test, max_fold_rows, n_features)
+    compute_infold && _size_matrix_buffer!(buffers.infold, max_fold_rows, n_features)
+
+    # LightGBM CV. Train/test matrices are gathered into the caller's pre-sized
+    # buffers rather than sliced into fresh matrices — same values, no per-file
+    # allocation. `bufs` is an explicit parameter (not a capture) so the closure
+    # doesn't box it.
     # When compute_infold=true, also predicts on the FULL train fold per
     # iteration (rtv3: "memorization gap" — pairing OOF + in-fold scores lets
     # the downstream MBR-FTR LGBM see how overconfident the Pass-1 model is on
     # rows it was trained on, which is independent of the OOF probability).
-    function _lgbm_cv(hp_overrides::NamedTuple = NamedTuple())
+    function _lgbm_cv(bufs::LGBMMatrixBuffers, hp_overrides::NamedTuple = NamedTuple())
         hp_eff = isempty(hp_overrides) ? lgbm_hp : merge(lgbm_hp, hp_overrides)
         fold_scores  = Vector{Vector{Float64}}(undef, 2)
         infold_scores = compute_infold ? Vector{Vector{Float64}}(undef, 2) : nothing
@@ -172,7 +216,7 @@ function train_psm_classifier_with_fallback(
         for (fi, (fit_idx, full_train_idx, test_idx)) in enumerate(fold_pairs)
             sub_pos = fit_idx[sub_positions[fi]]
             ts = time()
-            X_tr = X_all[sub_pos, :]
+            X_tr = gather_rows!(bufs.train, X_all, sub_pos)
             y_lbl = _prepare_labels(targets_col[sub_pos])
             t_slice += time() - ts
             if isempty(y_lbl) || length(unique(y_lbl)) == 1
@@ -190,7 +234,7 @@ function train_psm_classifier_with_fallback(
             else
                 cls = build_lightgbm_classifier(; hp_eff...)
                 tf = time(); LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1); t_fit += time() - tf
-                ts2 = time(); X_te = X_all[test_idx, :]; t_slice += time() - ts2
+                ts2 = time(); X_te = gather_rows!(bufs.test, X_all, test_idx); t_slice += time() - ts2
                 tp = time(); raw = LightGBM.predict(cls, X_te); t_predict += time() - tp
                 fold_scores[fi] = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
                 fold_predictors[fi] = (
@@ -200,7 +244,7 @@ function train_psm_classifier_with_fallback(
                     beta = nothing,
                 )
                 if compute_infold
-                    ts3 = time(); X_tr_full = X_all[full_train_idx, :]; t_slice += time() - ts3
+                    ts3 = time(); X_tr_full = gather_rows!(bufs.infold, X_all, full_train_idx); t_slice += time() - ts3
                     tp2 = time(); raw_in = LightGBM.predict(cls, X_tr_full); t_predict += time() - tp2
                     infold_scores[fi] = ndims(raw_in) == 2 ? dropdims(raw_in; dims=2) : raw_in
                 end
@@ -285,7 +329,7 @@ function train_psm_classifier_with_fallback(
 
     # Always run the default-HP LGBM (single source of truth for big datasets
     # and the safest fallback for small ones).
-    lgbm_scores, lgbm_infold_scores, lgbm_predictors, last_classifier, lgbm_timings = _lgbm_cv()
+    lgbm_scores, lgbm_infold_scores, lgbm_predictors, last_classifier, lgbm_timings = _lgbm_cv(buffers)
     @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s " *
                "fit=$(round(lgbm_timings.fit, digits=2))s " *
                "predict=$(round(lgbm_timings.predict, digits=2))s"
@@ -327,7 +371,7 @@ function train_psm_classifier_with_fallback(
 
     if adaptive
         for (variant_name, hp_over) in pairs(ADAPTIVE_HP_OVERRIDES)
-            sc, infold, preds, lc, _ = _lgbm_cv(hp_over)
+            sc, infold, preds, lc, _ = _lgbm_cv(buffers, hp_over)
             push!(candidates, (name="lgbm_$(variant_name)", scores=sc, infold=infold,
                                last=lc, predictors=preds, oof=_oof_count(sc)))
         end
@@ -404,19 +448,39 @@ end
 
 function predict_psm_classifier_scores(
     psms::DataFrame,
+    predictor;
+    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
+)
+    # As in train_psm_classifier_with_fallback: the matrices below are
+    # `unsafe_wrap` views into these vectors, so root them for the whole call.
+    b_all, b_test = buffers.all, buffers.test
+    return GC.@preserve b_all b_test _predict_psm_classifier_scores(psms, predictor, buffers)
+end
+
+function _predict_psm_classifier_scores(
+    psms::DataFrame,
     predictor,
+    buffers::LGBMMatrixBuffers,
 )
     available_features = Vector{Symbol}(predictor.available_features)
-    X_all = feature_matrix(psms, available_features)
+    X_all = feature_matrix!(buffers.all, psms, available_features)
     cv_fold = psms[!, :cv_fold]
     test_indices = [findall(cv_fold .== 0), findall(cv_fold .== 1)]
     scores = Vector{Float64}(undef, nrow(psms))
+    # Both folds gather into the same buffer, pre-sized to the larger of the two
+    # so the loop never resizes it. Each fold's matrix is fully consumed by the
+    # predict below before the next iteration overwrites it.
+    _size_matrix_buffer!(
+        buffers.test,
+        max(length(test_indices[1]), length(test_indices[2])),
+        length(available_features),
+    )
     for fi in 1:2
         idx = test_indices[fi]
         isempty(idx) && continue
         scores[idx] .= _predict_psm_classifier_fold(
             predictor.fold_predictors[fi],
-            X_all[idx, :],
+            gather_rows!(buffers.test, X_all, idx),
         )
     end
     return scores
@@ -443,6 +507,7 @@ function train_lgbm_and_select_best(
     lgbm_hp = MAINSEARCH_LGBM_HP,
     center_mzs = nothing,
     isolation_widths = nothing,
+    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -458,6 +523,7 @@ function train_lgbm_and_select_best(
         psms;
         features = features,
         lgbm_hp = lgbm_hp,
+        buffers = buffers,
     )
     t_train_cv = time()
 
@@ -524,6 +590,7 @@ function reapply_psm_classifier_and_select_best!(
     predictor;
     center_mzs = nothing,
     isolation_widths = nothing,
+    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
 )
     t0 = time()
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
@@ -534,7 +601,7 @@ function reapply_psm_classifier_and_select_best!(
         psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
     end
 
-    all_scores = predict_psm_classifier_scores(psms, predictor)
+    all_scores = predict_psm_classifier_scores(psms, predictor; buffers = buffers)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
     best_psms = select_best_per_precursor!(
@@ -571,7 +638,7 @@ end
 function add_precursor_fraction_transmitted!(
     best_psms::DataFrame,
     quad_transmission_model::QuadTransmissionModel,
-    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+    search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{Float32}}},
     prec_charge::AbstractArray{UInt8},
     prec_mz::AbstractArray{Float32},
     sulfur_count::AbstractArray{UInt8},
@@ -976,13 +1043,30 @@ function add_trace_and_fragment_features!(
 
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
     scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
-    cycle_idxs = psms[!, :cycle_idx]
+    cycle_idxs = psms[!, :cycle_idx]::Vector{UInt32}
     weights = psms[!, :weight]::Vector{Float32}
     irt_obs = psms[!, :irt_obs]::Vector{Float32}
     ms1_m0_intensities = psms[!, :ms1_m0_intensity]::Vector{Float32}
-    frag_cols = Tuple(psms[!, c] for c in MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS)
-    fitted_frag_cols = Tuple(psms[!, c] for c in FITTED_FRAGMENT_INTENSITY_COLUMNS)
-    shadow_frag_cols = Tuple(psms[!, c] for c in SHADOW_FRAGMENT_INTENSITY_COLUMNS)
+    # `Tuple(psms[!, c] for c in ...)` inferred as an abstractly-typed tuple, because `df[!, col]`
+    # infers as `AbstractVector`. Unlike the gather helpers in features.jl -- whose result crosses a
+    # function boundary and so specialises on the concrete runtime tuple -- these are consumed by the
+    # per-row loops *in this same function*, so the abstract element type survived and every
+    # `Float32(col[row])` boxed and dispatched dynamically: 8 per row, per fragment helper.
+    # `ntuple` over the const 8-column tuple plus the assertion makes the type statically concrete.
+    # The columns are Float32 by construction (MainUnscoredPSM{Float32}), consistent with the
+    # `::Vector{Float32}` assertions already made above on this same table.
+    frag_cols = ntuple(
+        i -> psms[!, MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(MAINSEARCH_FRAGMENT_INTENSITY_COLUMNS),
+    )
+    fitted_frag_cols = ntuple(
+        i -> psms[!, FITTED_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(FITTED_FRAGMENT_INTENSITY_COLUMNS),
+    )
+    shadow_frag_cols = ntuple(
+        i -> psms[!, SHADOW_FRAGMENT_INTENSITY_COLUMNS[i]]::Vector{Float32},
+        length(SHADOW_FRAGMENT_INTENSITY_COLUMNS),
+    )
 
     n_best = nrow(best_psms)
     out_flanking_core_scan_min = Vector{UInt32}(undef, n_best)

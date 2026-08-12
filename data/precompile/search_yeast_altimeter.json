@@ -23,12 +23,15 @@
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
-        }
+        },
+        "ms1_scoring": true,
+        "ms1_quant": false,
+        "match_between_runs": true
     },
     "output": {
         "plots_per_page": 12,
         "write_decoys": false,
-        "write_csv": false,
+        "write_csv": true,
         "delete_temp": true
     },
     "chromatogram": {
@@ -106,8 +109,8 @@
         "global_prescore_qvalue_threshold": 0.01
     },
     "paths": {
-        "ms_data": "./temp/zenodo",
-        "library": "./temp/zenodo/yeast.poin",
-        "results": "./data/precompile/ecoli_prosit_results"
+        "ms_data": "./temp/zenodo/yeast_raw",
+        "library": "./temp/zenodo/yeast_small_altimeter.poin",
+        "results": "./data/precompile/yeast_altimeter_results"
     }
 }

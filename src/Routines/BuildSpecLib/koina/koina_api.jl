@@ -44,7 +44,7 @@ function make_koina_http_request(json_data::String,
             throw(KoinaRequestError("Error in response", attempt, response))
         catch e
             if attempt == max_attempts
-                @error "Failed after $max_attempts attempts" exception=e
+                @user_error "Failed after $max_attempts attempts: $e"
                 rethrow(e)
             end
             if e isa KoinaRequestError

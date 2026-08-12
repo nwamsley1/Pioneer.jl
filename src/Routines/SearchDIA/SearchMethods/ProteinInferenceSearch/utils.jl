@@ -380,7 +380,7 @@ function run_protein_inference!(
 
     if !global_inference
         indexed_refs = collect(enumerate(passing_refs))
-        @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
+        @debug_l1 "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
 
         last_ambiguity_id = zero(UInt32)
 
@@ -413,7 +413,7 @@ function run_protein_inference!(
         )
     end
 
-    @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
+    @debug_l1 "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
 
     # Pass 1: stream :precursor_idx from each passing PSM Arrow file and look
     # up the (sequence, accession_numbers, is_decoy, entrap_id) tuple directly
@@ -477,14 +477,13 @@ function run_protein_inference!(
         # By the time ProteinInference runs, IntegrateChromatograms has
         # already populated :sequence, :accession_numbers, :species,
         # :structural_mods, :isotopic_mods on the main file. We only need
-        # to add the 6 columns it does NOT already provide:
-        #   :is_decoy, :entrap_id, :base_pep_id  (from library lookup)
+        # to add the 5 columns it does NOT already provide:
+        #   :entrap_id, :base_pep_id  (from library lookup)
         #   :inferred_protein_group, :use_for_protein_quant,
         #   :protein_ambiguity_id  (from inference)
         # The old code redundantly overwrote the IntegrateChromatograms cols.
         pidx = materialize_columns(psm_ref, [:precursor_idx])[!, :precursor_idx]::AbstractVector{UInt32}
         n = length(pidx)
-        is_decoys     = Vector{Bool}(undef, n)
         entrap_ids    = Vector{UInt8}(undef, n)
         base_pep_ids  = Vector{UInt32}(undef, n)
         inferred      = Vector{Union{Missing, String}}(undef, n)
@@ -496,7 +495,6 @@ function run_protein_inference!(
             seq = all_seqs[p]
             dec = all_decoys[p]
             ent = all_entraps[p]
-            is_decoys[i]    = dec
             entrap_ids[i]   = ent
             base_pep_ids[i] = all_base_pep_ids[p]
             pep_key = PeptideKey(seq, !dec, ent)
@@ -514,8 +512,10 @@ function run_protein_inference!(
             end
         end
 
+        # :is_decoy is deliberately NOT emitted: it equals `decoy`, itself exactly `!target`, so it
+        # was the third output column encoding one bit (0 mismatches across 235,194 rows). Nothing in
+        # the search path read it; the only `is_decoy` readers are in BuildSpecLib, a different table.
         add_columns_via_sidecar!(psm_ref,
-            :is_decoy               => is_decoys,
             :entrap_id              => entrap_ids,
             :base_pep_id            => base_pep_ids,
             :inferred_protein_group => inferred,

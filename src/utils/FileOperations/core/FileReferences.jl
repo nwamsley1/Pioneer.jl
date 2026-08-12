@@ -179,7 +179,7 @@ on disk are removed via `safeRm`.
 function clear_sidecars!(ref::PSMFileReference; delete_files::Bool=false)
     if delete_files
         for s in ref.sidecars
-            isfile(s.path) && safeRm(s.path, nothing)
+            isfile(s.path) && safeRm(s.path)
         end
     end
     empty!(ref.sidecars)

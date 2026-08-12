@@ -180,27 +180,6 @@ function _scoring_semisupervised_metrics_and_mask(
     )
 end
 
-function _scoring_training_target_decoy_counts(
-    targets::AbstractVector{Bool},
-    training_mask::Union{Nothing, AbstractVector{Bool}},
-)
-    if training_mask === nothing
-        n_targets = count(targets)
-        return n_targets, length(targets) - n_targets
-    end
-    n_targets = 0
-    n_decoys = 0
-    @inbounds for i in eachindex(targets)
-        training_mask[i] || continue
-        if targets[i]
-            n_targets += 1
-        else
-            n_decoys += 1
-        end
-    end
-    return n_targets, n_decoys
-end
-
 function _scoring_target_gain_sufficient(
     previous_targets::Integer,
     current_targets::Integer;

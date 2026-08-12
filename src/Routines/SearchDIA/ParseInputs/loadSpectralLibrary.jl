@@ -70,7 +70,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     raw_frags = if isfile(frag_path * ".jls")
         deserialize_from_jls(frag_path * ".jls")
     elseif isfile(frag_path * ".jld2")
-        @warn "Loading legacy JLD2 format for detailed_fragments. Consider rebuilding library."
+        @user_warn "Loading legacy JLD2 format for detailed_fragments. Consider rebuilding library."
         jldopen(frag_path * ".jld2", "r") do file
             read(file, "data")
         end
@@ -92,7 +92,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     prec_frag_ranges = if isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
         deserialize_from_jls(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
     elseif isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))
-        @warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
+        @user_warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
         load(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     else
         error("precursor_to_fragment_indices file not found in $SPEC_LIB_DIR")
@@ -105,7 +105,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             spl_knots = if isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
                 deserialize_from_jls(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
             elseif isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))
-                @warn "Loading legacy JLD2 format for spline_knots. Consider rebuilding library."
+                @user_warn "Loading legacy JLD2 format for spline_knots. Consider rebuilding library."
                 load(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))["spl_knots"]
             else
                 error("spline_knots file not found in $SPEC_LIB_DIR")

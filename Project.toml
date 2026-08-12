@@ -30,15 +30,12 @@ LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LightGBM = "7acf609c-83a4-11e9-1ffb-b912bcd3b04a"
 LightXML = "9c8b4983-aa76-5018-a973-4c85ecc9e179"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
-LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 MLJModelInterface = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
 Measures = "442fdcdd-2543-5da2-b0f3-8c86c306513e"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
-PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -82,15 +79,12 @@ KernelDensity = "0.6"
 LaTeXStrings = "1"
 LightGBM = "2.2"
 LightXML = "0.9"
-LinearSolve = "2.31"
 Logging = "1.11.0"
 LoggingExtras = "1.1.0"
-LoopVectorization = "0.12"
 MLJModelInterface = "1.12.0"
 Measures = "0.3"
 NumericalIntegration = "0.2"
 Optim = "1"
-PProf = "3.2.0"
 Plots = "1.40"
 Polynomials = "4.0"
 Profile = "1.11.0"
@@ -108,9 +102,6 @@ julia = "1.12.5"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[preferences.HostCPUFeatures]
-allow_runtime_invalidation = true
 
 [targets]
 test = ["Test"]

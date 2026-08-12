@@ -98,9 +98,17 @@ end
 
 """
 Results container for main search.
+
+`lgbm_buffers` holds the reusable backing stores for the per-file LightGBM
+feature matrices. The file loop in `execute_search` is sequential, so one buffer
+set serves every file — the matrices are population-scaled (hundreds of MB per
+file), so allocating them per file is churn that grows with file count. Living
+here scopes them to MainSearch: they are released with the results container
+instead of being retained through the later search phases.
 """
 struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
+    lgbm_buffers::LGBMMatrixBuffers
 end
 
 #==========================================================
@@ -130,7 +138,8 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
     end
 
     return MainSearchResults(
-        DataFrame()
+        DataFrame(),
+        LGBMMatrixBuffers()
     )
 end
 
@@ -139,29 +148,73 @@ Core Processing Methods
 ==========================================================#
 
 """
+    _gather_into!(dst, src, perm)
+
+`dst[i] = src[perm[i]]` for a concretely-typed column. Separate method so the loop specialises on the
+column's element type rather than the `AbstractVector` that `eachcol` statically yields.
+"""
+@noinline function _gather_into!(dst::Vector{T}, src::Vector{T}, perm::Vector{Int}) where {T}
+    @inbounds for i in eachindex(perm)
+        dst[i] = src[perm[i]]
+    end
+    return nothing
+end
+
+"""
     permute_psms_by_precursor_idx!(psms::DataFrame) -> DataFrame
 
-Sort `psms` in place by `:precursor_idx` using a hand-rolled column-wise
-`Base.permute!` over each column. ~4× faster than `DataFrames.sort!(psms,
-:precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols)
-because DataFrames.sort! allocates a fresh array per column instead of
-doing the in-place cycle permute (measured 2026-05-19).
+Sort `psms` in place by `:precursor_idx` with a hand-rolled column-wise gather. Much faster than
+`DataFrames.sort!(psms, :precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols),
+which allocates a fresh array per column (measured 2026-05-19).
+
+Each isbits column is gathered through a single shared byte buffer rather than letting
+`Base.permute!` allocate its own temporary per column — see the comments in the body for why that is
+both necessary and safe for peak memory.
 
 Establishes the sorted-by-precursor invariant that downstream passes
 (`_build_precursor_groups`, feature passes, `select_best_per_precursor!`)
 can take advantage of to skip their own sortperm.
 """
+
 function permute_psms_by_precursor_idx!(psms::DataFrame)
     n = nrow(psms)
     n == 0 && return psms
     perm = sortperm(psms[!, :precursor_idx]::Vector{UInt32})
-    # `Base.permute!` destroys its perm argument (uses negation as visited
-    # sentinel), so each column needs a fresh copy. Single scratch vector
-    # reused across columns.
-    p_scratch = similar(perm)
-    for col in eachcol(psms)
-        copyto!(p_scratch, perm)
-        Base.permute!(col, p_scratch)
+    # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
+    # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
+    # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
+    # hazard that no longer exists, while one full copy of every column went unnoticed: 17.3 GB per
+    # 6-file KEAP1 run, third-largest allocator in Main Search.
+    #
+    # A true O(1)-space cycle permutation removes the allocation entirely but is 28x SLOWER
+    # (0.0530 s vs 0.0019 s on 2M Float32) -- chasing random cycles is cache-hostile, which is
+    # presumably why Base allocates. So keep the sequential gather and reuse one buffer instead.
+    #
+    # One raw byte buffer, reinterpreted per column type: exactly one column-sized buffer is live at
+    # any moment, which is the same footprint `Base.permute!` allocated transiently. Peak RSS
+    # therefore cannot rise (measured: +0.0 MB vs +7.7 MB), while cumulative allocation falls ~88%.
+    # Only isbits columns may use the raw buffer. This table still carries Vector-valued columns at
+    # this point (they are removed later by `dropVectorColumns!`), and wrapping uninitialised bytes
+    # as a non-isbits element type would hand the GC garbage pointers. Those fall back to
+    # `Base.permute!`, which is correct, merely allocating.
+    max_bytes = 0
+    for c in eachcol(psms)
+        T = eltype(c)
+        isbitstype(T) && c isa Vector{T} && (max_bytes = max(max_bytes, sizeof(T) * n))
+    end
+    raw = max_bytes > 0 ? Vector{UInt8}(undef, max_bytes) : UInt8[]
+    GC.@preserve raw begin
+        for col in eachcol(psms)
+            T = eltype(col)
+            if isbitstype(T) && col isa Vector{T}
+                # `raw` is preserved for the whole loop and `buf` never escapes this iteration.
+                buf = unsafe_wrap(Vector{T}, Ptr{T}(pointer(raw)), n)
+                _gather_into!(buf, col, perm)
+                copyto!(col, buf)
+            else
+                Base.permute!(col, copy(perm))
+            end
+        end
     end
     return psms
 end
@@ -341,6 +394,7 @@ function process_search_results!(
             psms;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
+            buffers = results.lgbm_buffers,
         )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
@@ -362,6 +416,7 @@ function process_search_results!(
             lgbm_predictor;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
+            buffers = results.lgbm_buffers,
         )
         best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
@@ -376,6 +431,7 @@ function process_search_results!(
 
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
+    _b_pep = Base.gc_bytes()
 
     # ============================================================
     # PER-FILE PEP FILTER (PEP ≤ MAIN_PEP_FILTER_THR).
@@ -399,12 +455,14 @@ function process_search_results!(
                    "($n_before_pep → $(nrow(best_psms)) best-per-precursor PSMs)"
         _summarize_psm_counts(best_psms, "after PEP filter", ms_file_idx, file_name)
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] pep_filter: ",
+        round((Base.gc_bytes() - _b_pep) / 1e9, digits=3), " GB")
     t_pep_end = time()
     t_recal_start = t_pep_end
     # ============================================================
 
     # RT recalibration: refit iRT spline from high-confidence PSMs
-    recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
+    @alloc_bucket "recalibrate_rt" recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
 
     # Update irt_obs/irt_error with post-recalibration model so downstream
     # steps (ScoringSearch features, RT index, chromatogram extraction) are consistent
@@ -417,7 +475,7 @@ function process_search_results!(
         psms[!, :lgbm_score],
         psms[!, :target],
     )
-    add_precursor_fraction_transmitted!(
+    @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
         best_psms,
         getQuadTransmissionModel(search_context, ms_file_idx),
         getSearchData(search_context),
@@ -431,7 +489,7 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
-    add_trace_and_fragment_features!(
+    @alloc_bucket "trace_and_fragment_features" add_trace_and_fragment_features!(
         best_psms,
         psms,
         trace_pass_mask;
@@ -449,7 +507,7 @@ function process_search_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
     nce_model = getNceModel(search_context, ms_file_idx)
-    add_wide_window_features_to_table!(
+    @alloc_bucket "wide_window_features" add_wide_window_features_to_table!(
         best_psms,
         spectra,
         search_context,
@@ -461,6 +519,7 @@ function process_search_results!(
 
     # Write per-fold main_search_psms.
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
+    _b_write = Base.gc_bytes()
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
@@ -469,6 +528,8 @@ function process_search_results!(
             writeArrow(fold_path, best_psms[fold_mask, :])
         end
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] write_fold_arrow: ",
+        round((Base.gc_bytes() - _b_write) / 1e9, digits=3), " GB")
     t_write = time()
 
     # Timing summary — durations sum to ~t_total (within ~0.1s of bookkeeping).
@@ -549,8 +610,8 @@ function summarize_results!(
     # No PSM filter is applied here; the per-file PEP filter upstream already
     # gates what reaches ScoringSearch.
     t1_start = time()
-    fold0_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
-    fold1_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
+    fold0_result = @alloc_bucket "aggregate_prescore_fold0" aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
+    fold1_result = @alloc_bucket "aggregate_prescore_fold1" aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
     rt_binned_tol = fold0_result.rt_binned_tol !== nothing ?
                     fold0_result.rt_binned_tol : fold1_result.rt_binned_tol
     t1 = time() - t1_start
@@ -562,6 +623,7 @@ function summarize_results!(
     # later merges fold0+fold1 into a single per-file Arrow (also in
     # main_search_psms_dir) once LGBM training is done.
     t2_start = time()
+    _b_t2 = Base.gc_bytes()
 
     # Library lookups (shared across files)
     prec_irt = lib_irt
@@ -604,7 +666,7 @@ function summarize_results!(
 
             if n_after == 0
                 # Drop the on-disk file so downstream code skips this fold.
-                safeRm(psm_path, nothing)
+                safeRm(psm_path)
                 continue
             end
 
@@ -643,9 +705,11 @@ function summarize_results!(
             setSecondPassPsms!(ms_data, ms_file_idx, base_path)
             n_processed_files += 1
             pct = round(100.0 * n_after_file / max(1, n_before_file), digits=1)
-            @debug "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
+            @debug_l1 "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
         end
     end
+    haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] summarize_global_filter: ",
+        round((Base.gc_bytes() - _b_t2) / 1e9, digits=3), " GB")
     t2 = time() - t2_start
 
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
@@ -661,7 +725,7 @@ function summarize_results!(
             @debug_l1 "No RT-binned tolerance registered — chromatogram extraction will fall back to the per-file iRT tolerance from recalibrate_rt!"
         end
     else
-        @warn "No files processed in MainSearch — skipping chromatographic tolerance computation"
+        @user_warn "No files processed in MainSearch — skipping chromatographic tolerance computation"
     end
     t3 = time() - t3_start
 

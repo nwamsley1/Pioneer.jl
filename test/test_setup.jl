@@ -55,7 +55,7 @@ using CSV, Combinatorics, CodecZlib
 using DataFrames, Dictionaries, Distributions
 import DataStructures  # qualified to avoid reset! conflict
 using FASTX, Interpolations, JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
+using LinearAlgebra, LightXML
 using Measures, NumericalIntegration, Optim
 using Plots, Polynomials, ProgressBars
 using Tables, StatsPlots, SentinelArrays

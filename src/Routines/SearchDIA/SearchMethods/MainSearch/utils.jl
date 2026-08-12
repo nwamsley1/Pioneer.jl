@@ -21,7 +21,7 @@ function recalibrate_rt!(
     n_calib = count(calib_mask)
 
     if n_calib < min_calib_psms
-        @warn "RT recalibration: only $n_calib high-confidence PSMs (need $min_calib_psms), skipping"
+        @user_warn "RT recalibration: only $n_calib high-confidence PSMs (need $min_calib_psms), skipping"
         return nothing
     end
 
@@ -36,7 +36,7 @@ function recalibrate_rt!(
     try
         model, rts, irts, mad = fit_irt_model(calib_df)
     catch e
-        @warn "RT recalibration: fit_irt_model failed ($e), skipping"
+        @user_warn "RT recalibration: fit_irt_model failed ($e), skipping"
         return nothing
     end
 

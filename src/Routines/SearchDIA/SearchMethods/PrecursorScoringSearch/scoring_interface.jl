@@ -40,6 +40,62 @@ function _aggregate_trace_to_precursor_probs!(df::DataFrame)
     return df
 end
 
+
+"""
+    _annotate_precursor_scores_via_sidecar!(refs, global_prob_dict, global_qval_dict,
+                                            global_pep_dict, qval_spline, pep_interp) -> refs
+
+Attach the five per-row precursor score annotations as a row-aligned sidecar instead of rewriting
+every file. All five are additive, so no full materialisation is required here; the next pass that
+removes rows (the initial q-value filter) consolidates them via load_with_sidecars.
+
+Reads only :precursor_idx and :prec_prob -- :prec_prob itself lives in a sidecar after
+aggregate_per_file!, which materialize_columns resolves.
+"""
+function _annotate_precursor_scores_via_sidecar!(
+    refs::Vector{PSMFileReference},
+    global_prob_dict::Dict{UInt32, Float32},
+    global_qval_dict::Dict{UInt32, Float32},
+    global_pep_dict::Dict{UInt32, Float32},
+    qval_spline,
+    pep_interp,
+)
+    for ref in refs
+        exists(ref) || continue
+        cols = materialize_columns(ref, Symbol[:precursor_idx, :prec_prob])
+        pids = cols[!, :precursor_idx]
+        probs = cols[!, :prec_prob]
+        n = length(pids)
+
+        # add_dict_column produces Vector{Union{V,Missing}} for absent keys; match that exactly.
+        global_prob = Vector{Union{Float32, Missing}}(undef, n)
+        global_qval = Vector{Union{Float32, Missing}}(undef, n)
+        global_pep = Vector{Union{Float32, Missing}}(undef, n)
+        qvals = Vector{Float32}(undef, n)
+        peps = Vector{Float32}(undef, n)
+        @inbounds for row in 1:n
+            pid = UInt32(pids[row])
+            global_prob[row] = get(global_prob_dict, pid, missing)
+            global_qval[row] = get(global_qval_dict, pid, missing)
+            global_pep[row] = get(global_pep_dict, pid, missing)
+            score = Float32(probs[row])
+            qvals[row] = Float32(qval_spline(score))
+            peps[row] = Float32(pep_interp(score))
+        end
+
+        add_columns_via_sidecar!(
+            ref,
+            :global_prob => global_prob,
+            :global_qval => global_qval,
+            :global_pep => global_pep,
+            :qval => qvals,
+            :pep => peps;
+            tag = "precursor_scores",
+        )
+    end
+    return refs
+end
+
 """
     aggregate_per_file!(refs)
 
@@ -202,7 +258,7 @@ function build_qvalue_spline_from_refs(
     finally
         GC.gc(false)
         for ref in sidecar_refs
-            safeRm(file_path(ref), nothing; force=true)
+            safeRm(file_path(ref); force=true)
         end
     end
 

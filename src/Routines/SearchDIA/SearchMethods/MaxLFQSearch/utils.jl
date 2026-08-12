@@ -33,7 +33,6 @@ function create_qc_plots(
     # - CV distributions
     # - Dynamic range
     # Implementation depends on plotting library
-    @user_info "Generating final QC plots"
     all_file_paths = collect(getFilePaths(getMSData(search_context)))
     file_indices = collect(1:length(all_file_paths))
 

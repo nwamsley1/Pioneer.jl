@@ -38,9 +38,10 @@ to the per-file Arrow files.
   Arrow files (output of MainSearch's prescore filter step).
 - `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to
   write the scored output back to.
-- `precursors`: Library precursor metadata (used to add `:accession_numbers`).
-- `fragment_lookup`: Library fragment metadata used by MBR empirical-spectrum
-  features.
+- `precursors`: Library precursor metadata. Retained in the calling convention; the
+  `:accession_numbers` column is added later by `process_final_psms!`, not here.
+- `fragment_lookup`: Retained in the internal calling convention; integrated
+  MBR evidence is built later during chromatogram integration.
 - `max_psms_in_memory`: Memory budget; surfaced for backward compatibility,
   currently unused (in-memory always; per-fold sub-sampling inside the
   shared helper handles large datasets).
@@ -54,17 +55,16 @@ function score_precursor_isotope_traces(
     second_pass_folder::String,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    fragment_lookup::LibraryFragmentLookup,
+    ::LibraryFragmentLookup,
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
 )
-    # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
-    # MBR features, FTR recovery) — best_psms is never materialised as the
-    # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
+    # MBR-on freezes OOF and in-fold Pass-1 scores for later integrated
+    # transfer rescoring. MBR-off keeps the legacy in-memory path.
     if match_between_runs
-        return _score_precursor_isotope_traces_mbr(file_paths, precursors, fragment_lookup)
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors)
     else
         return _score_precursor_isotope_traces_no_mbr(
             second_pass_folder, file_paths, precursors,
@@ -72,109 +72,23 @@ function score_precursor_isotope_traces(
     end
 end
 
-function _train_scoring_classifier_semisupervised(
-    psms::DataFrame;
-    features::Vector{Symbol},
-    lgbm_hp = SCORING_LGBM_HP,
-    max_train::Int = SCORING_LGBM_MAX_TRAIN,
-    train_q_threshold::Float32 = SCORING_SEMISUPERVISED_TRAIN_QVALUE_THRESHOLD,
-    stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
-    min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
-    max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
-)
-    targets = Vector{Bool}(psms[!, :target])
-    training_mask = nothing
-    previous_target_q01 = -1
-    best_state = nothing
-
-    for iter_idx in 1:max_iterations
-        n_train_targets, n_train_decoys = _scoring_training_target_decoy_counts(
-            targets,
-            training_mask,
-        )
-        all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
-            psms;
-            features = features,
-            lgbm_hp = lgbm_hp,
-            compute_infold = false,
-            max_train = max_train,
-            training_mask = training_mask,
-        )
-        scores = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
-        metrics = _scoring_semisupervised_metrics_and_mask(
-            scores,
-            targets;
-            train_q_threshold = train_q_threshold,
-            stop_q_threshold = stop_q_threshold,
-        )
-        current_state = (
-            scores = scores,
-            last_classifier = last_classifier,
-            info = info,
-            target_q01 = metrics.target_q01,
-            decoy_q01 = metrics.decoy_q01,
-            iter = iter_idx,
-        )
-        @debug_l1 "ScoringSearch semi-supervised iter $iter_idx (in-memory): " *
-                   "train targets=$n_train_targets decoys=$n_train_decoys; " *
-                   "q≤.01 targets=$(metrics.target_q01) decoys=$(metrics.decoy_q01)"
-
-        if iter_idx > 1 && !_scoring_target_gain_sufficient(
-            previous_target_q01,
-            metrics.target_q01;
-            min_fraction = min_gain,
-        )
-            best_state = _scoring_better_iteration_state(best_state, current_state)
-            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
-                       "iter $iter_idx q≤.01 targets=$(metrics.target_q01) did not improve by " *
-                       "$(round(100 * min_gain, digits=2))% over $previous_target_q01; " *
-                       "using iter $(best_state.iter) with q≤.01 targets=$(best_state.target_q01)"
-            break
-        end
-
-        best_state = _scoring_better_iteration_state(best_state, current_state)
-        if iter_idx == max_iterations
-            @debug_l1 "ScoringSearch semi-supervised stopping (in-memory): " *
-                       "hit max iterations $max_iterations; using iter $(best_state.iter) " *
-                       "with q≤.01 targets=$(best_state.target_q01)"
-            break
-        end
-
-        previous_target_q01 = metrics.target_q01
-        training_mask = metrics.training_mask
-    end
-
-    return best_state.scores, best_state.last_classifier, best_state.info, best_state
-end
-
-# Streaming MBR-on path. Walks the per-file Arrow tables for everything;
-# the only DataFrame ever materialised is the slim FTR table (10 cols)
-# reconstructed from sidecars right before the FTR controller runs.
+# MBR-on Pass-1 path. Candidate selection, donor comparisons, and transfer
+# rescoring now happen after the initial q-value filters and chromatogram
+# integration. This stage only produces the frozen pre-MBR OOF and in-fold
+# scores needed by those later steps.
 function _score_precursor_isotope_traces_mbr(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    fragment_lookup::LibraryFragmentLookup,
 )
-    # 1. Counterfactual iRT pools for deterministic file-aware partner resolution.
-    cf_partner_pools = build_counterfactual_partner_pools(file_paths, precursors)
-    fragment_keys = build_mbr_fragment_annotation_keys(fragment_lookup)
-
-    # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
-    # out, so no quantile-binned features need pre-computing.
     features = copy(ADVANCED_FEATURE_SET)
-
-    # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
-    # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,
-        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
+        compute_infold  = true,
         lgbm_hp         = SCORING_LGBM_HP,
         semisupervised  = true,
     )
 
-    # 4. Pass-1 feature importance (last_classifier is whichever fold's
-    # booster the OOM trainer kept — only used for the diagnostic dump).
     if pass1.last_classifier !== nothing
         lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
         imp = importance(lgbm_model)
@@ -188,70 +102,23 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    # 5. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
-    @debug_l1 "MBR Batch F: building donor dict via sweep-1..."
-    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
-    @debug_l1 "  donor dict pids: $(length(donor_dict))"
-
-    # Parallelize the per-file MBR feature compute + sidecar write across
-    # files. donor_dict and cf_partner_pools are read-only across this loop
-    # (built before, not mutated by the per-file function), and each file
-    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
-    @debug_l1 "MBR Batch F: writing per-file MBR sidecars..."
-    parallel_foreach!(length(file_paths)) do chunk
-        for f_idx in chunk
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(
-                file_paths[f_idx],
-                donor_dict,
-                cf_partner_pools,
-                fragment_keys,
-            )
-        end
-    end
-
-    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    cf_partner_pools = nothing
-    fragment_keys = nothing
-    GC.gc()
-
-    # 6. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
-    # only as wide as the FTR controller needs.
-    @debug_l1 "MBR Batch F: loading slim FTR DataFrame..."
-    psms = load_ftr_slim_dataframe(file_paths)
-    @debug_l1 "  slim FTR rows: $(nrow(psms))"
-
-    # 7. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
-    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
-
-    # 8. Paired-counterfactual FTR.
-    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
-
-    # 9. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
-    # back into each main file in one pass.
-    @debug_l1 "MBR Batch F: writing recovery sidecars..."
-    write_recovery_sidecars(psms, file_paths)
-    psms = DataFrame()
-    GC.gc()
-    @debug_l1 "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
-    merge_mbr_sidecars_into_main!(file_paths)
-
+    _merge_pass1_into_main!(file_paths, precursors)
     return nothing
 end
 
 # Legacy in-memory path used only when match_between_runs = false. Kept for
 # small / non-MBR runs where the full best_psms easily fits in memory.
-# No-MBR Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
+# Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
 # file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
 # into each main file ONE FILE AT A TIME — the full experiment is never materialised.
 # Reproduces the exact output columns the legacy in-memory path wrote:
-# `:accession_numbers`, `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
+# `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
 # `:mbr_recovered` (= false).
-function _merge_pass1_into_main_no_mbr!(
+function _merge_pass1_into_main!(
     file_paths::Vector{String},
     precursors::LibraryPrecursors;
     cleanup::Bool = true,
 )
-    acc = getAccessionNumbers(precursors)
     for path in file_paths
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || continue
@@ -261,20 +128,29 @@ function _merge_pass1_into_main_no_mbr!(
         pass1 = Arrow.Table(pass1_path)
         n = nrow(main)
         length(pass1.precursor_idx) == n ||
-            error("_merge_pass1_into_main_no_mbr!: row-count mismatch at $path")
+            error("_merge_pass1_into_main!: row-count mismatch at $path")
         @inbounds for i in 1:n
             (main.precursor_idx[i] == pass1.precursor_idx[i] &&
              main.scan_idx[i]      == pass1.scan_idx[i]) ||
-                error("_merge_pass1_into_main_no_mbr!: sidecar misaligned at row $i of $path")
+                error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
         end
-        main[!, :accession_numbers]  = [acc[pid] for pid in main[!, :precursor_idx]]
+        # :accession_numbers deliberately NOT added here. It was materialised per PSM row at this point
+        # and then overwritten wholesale by process_final_psms! (IntegrateChromatogramsSearch/utils.jl),
+        # so the early copy was carried through every intermediate read/write in between -- the MBR
+        # feature pass, merge_recoveries, and the finalize materialise -- and then discarded. Protein
+        # inference does not need it either: ProteinInferenceSearch reads getAccessionNumbers(precursors)
+        # and indexes by precursor_idx (utils.jl:157/175/423) rather than using the table column.
         main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
+        if hasproperty(pass1, :trace_prob_infold)
+            main[!, :trace_prob_infold] =
+                collect(Float32.(pass1.trace_prob_infold))
+        end
         main[!, :trace_prob]         = main[!, :trace_prob_prepass]
         main[!, :mbr_recovered]      = falses(n)
         pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
         writeArrow(path, main)
-        cleanup && safeRm(pass1_path, nothing; force=true)
+        cleanup && safeRm(pass1_path; force=true)
     end
     return nothing
 end
@@ -312,7 +188,7 @@ function _score_precursor_isotope_traces_no_mbr(
         end
     end
 
-    _merge_pass1_into_main_no_mbr!(file_paths, precursors)
+    _merge_pass1_into_main!(file_paths, precursors)
     return nothing
 end
 
@@ -400,7 +276,7 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
                 fpath = key_to_path[lookup_key]
                 writeArrow(fpath, gpsms)
             else
-                @warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
+                @user_warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
             end
         end
     else
@@ -420,7 +296,7 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
                 fpath = index_to_path[file_idx]
                 writeArrow(fpath, gpsms)
             else
-                @warn "No output path found for file index $file_idx, skipping"
+                @user_warn "No output path found for file index $file_idx, skipping"
             end
         end
     end

@@ -17,73 +17,89 @@
 
 # Safe file operations for cross-platform compatibility
 
+const WINDOWS_DELETE_MAX_ATTEMPTS = 3
+const _WINDOWS_DELETE_GC_LOCK = ReentrantLock()
+
 """
-    safeRm(fpath::String, file_handle; force::Bool=false)
+    _windows_delete_command(fpath)
+
+Build a deterministic `cmd.exe del` command for `fpath`. Windows command
+built-ins interpret `/` as the start of a switch, so paths must be made
+absolute and converted to backslashes before they reach `del`. The `/f` flag
+preserves the historical Windows behavior of removing read-only files.
+"""
+function _windows_delete_command(fpath::AbstractString)
+    win_path = replace(abspath(normpath(String(fpath))), "/" => "\\")
+    args = String["cmd.exe", "/d", "/c", "del", "/f", "/q"]
+    push!(args, win_path)
+    return Cmd(args)
+end
+
+"""
+    safeRm(fpath; force=false)
 
 Safely remove a file with Windows-specific handling for file locks and permissions.
 
 # Arguments
 - `fpath`: Path to file to remove
-- `file_handle`: File handle or reference that should be cleared before deletion (e.g., Arrow.Table, IOStream, or nothing)
-- `force`: Force removal even if file is read-only
+- `force`: Force removal on Unix. Windows preserves its historical forced-delete behavior.
 
 # Implementation
-- Clears the file_handle by setting it to nothing before attempting deletion
-- On Windows: Multiple retry attempts, fallback to cmd del, final fallback to rename
+- On Windows: Normalize once, retry `cmd.exe del`, fall back to rename, then
+  use serialized garbage collection and forced removal as a last resort
 - On Unix: Standard rm() call
 
 This function handles common Windows file locking issues that occur with Arrow files
-and other binary formats that may have lingering file handles.
+and other binary formats that may have lingering memory mappings. Callers must let
+their Arrow or IO references leave scope before invoking this function; rebinding an
+argument inside `safeRm` cannot release a reference held by the caller.
 """
-function safeRm(fpath::String, file_handle; force::Bool=false)
-    # Clear the file handle before attempting deletion
-    file_handle = nothing
-    
-    if Sys.iswindows()
-        # Return early if file doesn't exist
-        if !isfile(fpath)
+function safeRm(fpath::AbstractString; force::Bool=false)
+    path = abspath(normpath(String(fpath)))
+    (isfile(path) || islink(path)) || return nothing
+
+    if !Sys.iswindows()
+        rm(path; force=force)
+        return nothing
+    end
+
+    delete_cmd = _windows_delete_command(path)
+    delete_error = nothing
+    for attempt in 1:WINDOWS_DELETE_MAX_ATTEMPTS
+        try
+            run(delete_cmd)
             return nothing
-        end
-        
-        max_retries = 3  # Reduced since we're explicitly clearing handles
-        for i in 1:max_retries
-            try
-                # Try Julia's rm with force flag
-                #rm(fpath, force=force)
-                run(`cmd /c del /f /q "$fpath"`)
-                return nothing
-            catch
-                @user_info "safe_rm failed on try i=$i"
-                if i == max_retries
-                    # If all retries failed, try Windows-specific deletion
-                    try
-                        # Convert to a Windows-style path for the cmd call
-                        win_path = replace(abspath(fpath), "/" => "\\")
-                        cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
-                        run(cmd_del)
-                        return nothing
-                    catch
-                        # If that also fails, rename the old file instead of deleting
-                        backup_path = fpath * ".backup_" * string(time_ns())
-                        try
-                            mv(fpath, backup_path, force=true)
-                            @user_warn "Could not delete $fpath, renamed to $backup_path"
-                            return nothing
-                        catch
-                            error("Unable to remove or rename file: $fpath")
-                        end
-                    end
-                else
-                    # Wait with exponential backoff before retrying
-                    sleep(0.1 * i)
-                end
-            end
-        end
-    else
-        # For Linux/MacOS, use the simple approach
-        if isfile(fpath)
-            rm(fpath, force=force)
+        catch delete_attempt_error
+            delete_error = delete_attempt_error
+            @debug_l1 "Windows deletion failed on attempt $attempt for $path: $(sprint(showerror, delete_attempt_error))"
+            attempt < WINDOWS_DELETE_MAX_ATTEMPTS && sleep(0.1 * attempt)
         end
     end
-    return nothing
+
+    backup_path = path * ".backup_" * string(time_ns())
+    try
+        mv(path, backup_path; force=true)
+        @user_warn "Could not delete $path, renamed to $backup_path"
+        return nothing
+    catch rename_error
+        @debug_l1 "Windows rename fallback failed for $path: $(sprint(showerror, rename_error))"
+
+        # Parallel MaxLFQ writes have previously crashed Julia on Windows when
+        # several threads entered GC.gc() concurrently. Keep this last-resort
+        # collection serialized even though the deletion logic is centralized.
+        try
+            lock(_WINDOWS_DELETE_GC_LOCK) do
+                GC.gc(true)
+            end
+            rm(path; force=true)
+            return nothing
+        catch final_error
+            error(
+                "Unable to remove or rename file $path. " *
+                "Delete error: $(sprint(showerror, delete_error)). " *
+                "Rename error: $(sprint(showerror, rename_error)). " *
+                "Final removal error: $(sprint(showerror, final_error))."
+            )
+        end
+    end
 end

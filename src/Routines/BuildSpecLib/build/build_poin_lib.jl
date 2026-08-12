@@ -151,7 +151,7 @@ function buildPionLib(spec_lib_path::String,
             prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
             precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
         catch e
-            @error "could not find library..."
+            @user_error "could not find library..."
             return nothing
         end
 
@@ -196,8 +196,8 @@ function buildPionLib(spec_lib_path::String,
         fragments_table = nothing
         prec_to_frag = nothing
         GC.gc()
-        safeRm(joinpath(spec_lib_path, "fragments_table.arrow"), nothing; force=true)
-        safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"), nothing; force=true)
+        safeRm(joinpath(spec_lib_path, "fragments_table.arrow"); force=true)
+        safeRm(joinpath(spec_lib_path, "prec_to_frag.arrow"); force=true)
     end
 
     # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
@@ -258,6 +258,82 @@ function buildPionLib(spec_lib_path::String,
 end
 
 """
+    buildPionLib(..., model_type::InstrumentAgnosticModel; detailed_frags, pid_to_fid)
+
+Prosit analog of the spline `buildPionLib`. Builds a `StandardFragmentLookup`
+(constant scalar intensity, `ConstantType`) instead of a `SplineFragmentLookup`,
+so there are no spline knots. Fused path only — `detailed_frags`/`pid_to_fid` are
+handed in from `build_detailed_frags_from_raw(::InstrumentAgnosticModel)` (Prosit
+resume-from-disk is not supported yet).
+"""
+function buildPionLib(spec_lib_path::String,
+                      y_start_index::UInt8,
+                      y_start::UInt8,
+                      b_start_index::UInt8,
+                      b_start::UInt8,
+                      include_p_index::Bool,
+                      include_p::Bool,
+                      include_isotope::Bool,
+                      include_immonium::Bool,
+                      include_internal::Bool,
+                      include_neutral_diff::Bool,
+                      max_frag_charge::UInt8,
+                      max_frag_rank::UInt8,
+                      length_to_frag_count_multiple::AbstractFloat,
+                      min_frag_intensity::Float32,
+                      frag_bounds::FragBoundModel,
+                      frag_bin_tol_ppm::Float32,
+                      rt_bin_tol_ppm::Float32,
+                      model_type::InstrumentAgnosticModel;
+                      frag_bin_tol_mda::Float32 = 2.0f0,
+                      detailed_frags = nothing,
+                      pid_to_fid = nothing,
+                      )
+    validate_fragment_index_filters(
+        y_start_index, y_start,
+        b_start_index, b_start,
+        include_p_index, include_p,
+    )
+
+    if detailed_frags === nothing
+        error("buildPionLib(::InstrumentAgnosticModel) requires the fused path " *
+              "(detailed_frags/pid_to_fid); Prosit resume-from-disk is not supported yet.")
+    end
+
+    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
+    temp_precursors = SetPrecursors(precursors_arrow)
+    temp_lookup = StandardFragmentLookup(detailed_frags, pid_to_fid)
+    temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
+    empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
+    temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+
+    partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        rt_bin_tol=rt_bin_tol_ppm,
+        y_start_index=y_start_index, b_start_index=b_start_index,
+        include_p_index=include_p_index)
+
+    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        rt_bin_tol=typemax(Float32),
+        y_start_index=y_start_index, b_start_index=b_start_index,
+        include_p_index=include_p_index)
+
+    sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
+
+    serialize_to_jls(joinpath(spec_lib_path, "detailed_fragments.jls"), detailed_frags)
+    serialize_to_jls(joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"), pid_to_fid)
+    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
+    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
+
+    detailed_frags = nothing
+    pid_to_fid = nothing
+    GC.gc()
+
+    return nothing
+end
+
+"""
     cleanUpLibrary(spec_lib_path::String)
 
 Remove intermediate files after library building is complete.
@@ -284,7 +360,7 @@ function cleanUpLibrary(spec_lib_path::String)
         fpath = joinpath(spec_lib_path, fname)
         if isfile(fpath)
             try
-                safeRm(fpath, nothing; force=true)
+                safeRm(fpath; force=true)
             catch e
                 @user_warn "Failed to remove temporary file $(fpath): $(sprint(showerror, e))"
             end

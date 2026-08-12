@@ -78,6 +78,46 @@ function parse_koina_batch(model::SplineCoefficientModel,
 end
 
 """
+Parse results for instrument-agnostic scalar-intensity models (Prosit).
+
+Prosit returns a fixed-width `(n_precs × n_frags)` block of raw fragment
+`intensities` (base-peak-normalized), `mz`, and string `annotation` (e.g.
+"y7+1"). Outputs are looked up by name — Koina may reorder them and synthetic /
+fixture clients may differ. `n_frags` comes from the `intensities` shape.
+
+Note the singular output name `annotation` (Altimeter uses plural `annotations`);
+we store it in the `:annotation` column for the downstream decode.
+"""
+function parse_koina_batch(model::InstrumentAgnosticModel,
+                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+    df = DataFrame()
+
+    intensities_output = nothing
+    for o in response["outputs"]
+        if o["name"] == "intensities"
+            intensities_output = o
+            break
+        end
+    end
+    intensities_output === nothing && throw(ArgumentError(
+        "InstrumentAgnosticModel response is missing an 'intensities' output"))
+    n_precs, n_frags = Int.(intensities_output["shape"])
+
+    for col in response["outputs"]
+        col_name = Symbol(col["name"])
+        if col_name == :intensities
+            df[!, :intensities] = Float32.(col["data"])::Vector{Float32}
+        elseif col_name == :mz
+            df[!, :mz] = Float32.(col["data"])::Vector{Float32}
+        elseif col_name == :annotation
+            df[!, :annotation] = string.(col["data"])
+        end
+    end
+
+    return KoinaBatchResult(df, Int64(n_frags), nothing)
+end
+
+"""
 Parse results for retention time prediction models.
 """
 function parse_koina_batch(model::RetentionTimeModel,

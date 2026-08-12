@@ -68,8 +68,8 @@ struct PrecursorScoringSearchParameters <: SearchParameters
 
     q_value_threshold::Float32
 
-    # When false, skip MBR feature computation, the MBR-boosted second pass,
-    # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
+    # When false, skip post-integration donor/counterfactual feature
+    # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
@@ -159,6 +159,150 @@ end
 """
 Process all results to get final protein scores.
 """
+const PRECSCORE_DIAG = Dict{Symbol, Int}()
+
+"""
+    PRECSCORE_DROPPABLE_COLUMNS
+
+Per-PSM ML feature columns with no reader after PrecursorScoring. Determined by scanning every stage
+downstream of this one (MBR, IntegrateChromatograms, ProteinInference, ProteinScoring, MaxLFQ,
+WriteOutputs, SearchDIA) for literal references; 76 of the 141 columns in precursors_long had none.
+
+Dropped inside the existing `initial_filter` pass, which already reads, filters and rewrites every file,
+so removal is free rather than costing an extra pass. Everything downstream then reads and writes a
+narrower table -- `_merge_mbr_recoveries!` alone rewrites every file at ~2.45 GB of writeArrow.
+
+Deliberately RETAINED despite having no downstream reader, because they are plausibly wanted by whoever
+reads the output: best_rt, irt_fwhm, rt_fwhm, smoothness.
+
+Four more were added after inspecting the actual output values:
+- `q_value` is initialised to zeros by `initialize_prob_group_features!` and never populated on this
+  table -- it read 0 in all 235,194 rows while `qval` carried the real values. Worse than a duplicate:
+  a reader would take q_value == 0 to mean every PSM is perfect.
+- `decoy` is exactly `!target` (0 mismatches in 235,194 rows).
+- `lgbm_prob` is bit-identical to `lgbm_score` (0 differing rows, same min/max). It stays in the
+  pipeline -- MainSearch reads it for prescore aggregation and recalibrate_rt -- but not in the output.
+- `trace_prob_prepass` is bit-identical to `trace_prob`. MBR consumes it, so it must survive to this
+  point; dropping here is after its last use.
+"""
+const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
+    :q_value, :decoy, :lgbm_prob, :trace_prob_prepass,
+    # Chromatographic / spectral ML features. Their last readers are the ScoringSearch feature list
+    # (model_config.jl) and the MBR donor-feature list (MBR/types.jl, MBR/features.jl for :n_scans),
+    # all of which run before this finalize loop. No reference in ProteinInference, ProteinScoring,
+    # MaxLFQ, the QC plots, or anywhere in src/utils or src/structs.
+    :weight_ratio_at_scan, :weight_rank_at_scan, :gof, :poisson, :err_norm,
+    :fitted_hellinger, :fitted_manhattan_distance, :smoothed_2d_shadow_hellinger,
+    :log_by_ratio_m0, :smoothness, :n_scans, :ms1_weight_apex_to_m0_apex_irt,
+    # Exact elementwise duplicate of :rt (verified over 235,194 rows); :rt is the one the QC plots
+    # read, so :best_rt is the copy that goes.
+    :best_rt,
+    # Internal CV / scoring artefacts and ML features with no meaning outside the scorer.
+    :lgbm_score, :trace_prob, :trace_prob_infold, :log2_intensity_explained,
+    # length(sequence), which is already in the table.
+    :sequence_length,
+    # MBR false-transfer-rate diagnostics, for method development rather than end users.
+    # :mbr_recovered survives and is the flag that says whether a row was transferred.
+    :mbr_target_decoy_prob, :mbr_total_error_qval_true, :mbr_total_error_rate_true,
+    :ftr_qval_true, :ftr_pep_true,
+    # Same physical measurement as :rt_fwhm but in library iRT units, which are only interpretable
+    # relative to the library. :rt_fwhm is kept, in minutes.
+    :irt_fwhm,
+    :longest_y, :y_count, :total_ions, :error, :max_matched_residual, :max_unmatched_residual,
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int,
+    :frag8_int, :top3_ms2_mass_error_mean, :cycle_idx, :ms1_m0_mass_err_ppm, :ms1_m0_intensity,
+    :ms1_m1_intensity, :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_m0_m1_m2_window_fraction,
+    :ms1_ms2_explained_delta, :ms1_m0_m1_m2_window_fraction_pc, :ms1_ms2_explained_delta_pc,
+    :ms1_isotope_dotp_m0_m1_m2, :ms1_m0_peak_frag_intensity_fraction,
+    :ms1_m0_peak_n_precursors, :scan_prec_mz_n_precursors, :charge2, :spectrum_peak_count,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_apex_offset_irt, :frag_apex_dispersion_irt,
+    :n_correlated_fragments, :n_correlated_fragments_bitvec_rank, :frag_corr_strength,
+    :frag_corr_effective_n, :frag_corr_best_m0, :delta_frame_peak_center, :n_above_hm,
+    :n_contiguous_scans, :n_frags_detected_union, :n_frags_detected_intersection,
+    :n_frags_detected_union_bitvec_rank, :n_frags_detected_intersection_bitvec_rank,
+    :n_scans_other_windows, :other_window_weight_corr, :other_window_apex_delta_irt,
+    :frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity,
+    :frag4_smoothed_intensity, :frag5_smoothed_intensity, :frag6_smoothed_intensity,
+    :frag7_smoothed_intensity, :frag8_smoothed_intensity, :flanking_ms1_m0_candidate_fraction,
+    :flanking_frag_candidate_fraction, :flanking_ms1_frag_sum_corr, :flanking_frag_corr_mean,
+    :flanking_frag_corr_strength, :flanking_frag_corr_effective_n, :flanking_frag_corr_best_m0,
+    :flanking_signal_support, :frag_apex_gt2x_flank_bitvec_rank, :irt_diff, :pair_id
+]
+
+"""
+    OUTPUT_NARROWED_COLUMNS
+
+Columns converted from Float32 to Float16 in the same finalize rewrite that applies
+`PRECSCORE_DROPPABLE_COLUMNS`, i.e. after every reader has run.
+
+Float16 carries 10 mantissa bits, so ~0.05% *relative* precision at any magnitude. That makes it
+unsafe for absolute retention times -- at rt = 100 min the representable spacing is 0.0625 min
+(3.75 s), so `:rt` stays Float32 -- but safe for these two, which are small and already coarser
+than Float16's spacing:
+
+- `:rt_fwhm` is `max(rt) - min(rt)` over the scans above half apex weight (MainSearch/scoring.jl),
+  so it is quantised to the cycle time (~1 s). Float16 spacing at 1 min is 0.03 s, ~30x finer than
+  the underlying measurement. (Its 11% exact zeros are real: one scan above half max, i.e. a peak
+  narrower than one cycle -- not a missing value.)
+- `:irt_error` maxes out near 4.0 iRT, where Float16 spacing is 0.002 iRT, far below any tolerance
+  the value is compared against.
+
+Note that changing units would not help: Float16 is floating point, so scaling by 60 shifts the
+exponent and leaves relative precision unchanged.
+"""
+const OUTPUT_NARROWED_COLUMNS = (:rt_fwhm, :irt_error)
+
+"""
+    narrow_output_columns!(psms)
+
+Cast `OUTPUT_NARROWED_COLUMNS` to Float16 in place. No-op for columns that are absent or already
+narrowed.
+"""
+function narrow_output_columns!(psms)
+    for col in OUTPUT_NARROWED_COLUMNS
+        hasproperty(psms, col) || continue
+        v = psms[!, col]
+        v isa AbstractVector{Float32} || continue
+        psms[!, col] = Vector{Float16}(v)
+    end
+    return psms
+end
+
+
+"""
+    _precscore_diag_report()
+
+Per-phase allocation/time attribution for the Precursor Scoring stage (~20 GB, previously the largest
+wholly uninstrumented stage). Gated on PIONEER_PRECSCORE_DIAG; the phases are recorded by `_pmark`
+inside `summarize_results!`.
+
+Each phase name describes the work that ENDED at that mark, so the boundaries are the major calls:
+fold_merge -> aggregate -> scoring -> run_similarity -> qvals_and_filtering -> rt_indices.
+`@alloc_bucket` (MainSearch) cannot be used here: importScripts.jl loads PrecursorScoringSearch before
+MainSearch, so that macro is not yet defined at parse time.
+"""
+function _precscore_diag_report()
+    d = PRECSCORE_DIAG
+    # Order = execution order. Each name is the phase that CLOSES at its mark; an earlier version had
+    # these off by one (each was named for the phase it OPENED), which put score_precursor_isotope_traces
+    # inside the fold-merge bucket and made LGBM scoring look like 3 s when it was not measured at all.
+    ks = [:setup, :scoring, :fold_merge, :aggregate, :run_similarity, :qvals_and_filtering, :rt_indices]
+    tot = sum(get(d, Symbol(k, :_bytes), 0) for k in ks)
+    totms = sum(get(d, Symbol(k, :_ms), 0) for k in ks)
+    gb(x) = round(x / 2^30, digits = 2)
+    lines = ["Precursor Scoring phase diagnostic:"]
+    for k in ks
+        b = get(d, Symbol(k, :_bytes), 0); m = get(d, Symbol(k, :_ms), 0)
+        (b == 0 && m == 0) && continue
+        pc = tot > 0 ? round(100 * b / tot, digits = 1) : 0.0
+        rate = m > 0 ? round((b / 2^30) / (m / 1000), digits = 2) : 0.0
+        push!(lines, "  $(rpad(string(k), 22)) $(lpad(gb(b), 7)) GB  $(lpad(m, 7)) ms  ($(lpad(pc, 5))%)  $(rate) GB/s")
+    end
+    push!(lines, "  $(rpad("TOTAL", 22)) $(lpad(gb(tot), 7)) GB  $(lpad(totms, 7)) ms")
+    @user_info join(lines, "\n")
+    return nothing
+end
+
 function summarize_results!(
     results::PrecursorScoringSearchResults,
     params::PrecursorScoringSearchParameters,
@@ -167,6 +311,18 @@ function summarize_results!(
     # Downstream stages retrieve the same in-memory run-similarity atlas from
     # the precursor-scoring result rather than rebuilding or serializing it.
     store_results!(search_context, PrecursorScoringSearch, results)
+    _pdiag = get(ENV, "PIONEER_PRECSCORE_DIAG", "0") == "1"
+    _pstate = Ref((time(), Base.gc_bytes()))
+    _pmark = function (key::Symbol)
+        _pdiag || return nothing
+        t0, a0 = _pstate[]
+        PRECSCORE_DIAG[Symbol(key, :_bytes)] =
+            get(PRECSCORE_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
+        PRECSCORE_DIAG[Symbol(key, :_ms)] =
+            get(PRECSCORE_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
+        _pstate[] = (time(), Base.gc_bytes())
+        return nothing
+    end
 
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
 
@@ -205,6 +361,7 @@ function summarize_results!(
     step1_time = @elapsed begin
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
+        _pmark(:setup)
         score_precursor_isotope_traces(
             main_search_psms_folder,
             valid_fold_paths,
@@ -216,6 +373,7 @@ function summarize_results!(
             match_between_runs = params.match_between_runs,
         )
     end
+    _pmark(:scoring)
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
     # Step 1b: Merge fold files back into single files per MS run
@@ -228,13 +386,9 @@ function summarize_results!(
         fold1_path = "$(base_path)_fold1.arrow"
         merged_path = "$(base_path).arrow"
 
-        # Collect data from both folds via PSMFileReference so the
-        # auto-discovered mbr_outputs sidecars (written by
-        # merge_mbr_sidecars_into_main!) are joined in. MainSearch
-        # initialized :trace_prob to zero in the fold files; the sidecar
-        # provides the real Pass-1 OOF score in :trace_prob_prepass, so we
-        # set :trace_prob = :trace_prob_prepass here (matching the legacy
-        # merge_mbr_sidecars_into_main! semantics).
+        # Collect data from both folds after Pass-1 scoring. The MBR-on and
+        # MBR-off paths both merge the frozen OOF score into the fold files
+        # before this step.
         fold_dfs = DataFrame[]
         fold_refs = PSMFileReference[]
         function _load_fold(path)
@@ -272,7 +426,7 @@ function summarize_results!(
     # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
     GC.gc(false)
     for fpath in fold_paths_to_delete
-        safeRm(fpath, nothing)
+        safeRm(fpath)
     end
 
     # Create references for second pass PSMs (now using merged files)
@@ -281,6 +435,7 @@ function summarize_results!(
 
     # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
     step2_time = @elapsed begin
+        _pmark(:fold_merge)
         aggregate_per_file!(second_pass_refs)
     end
 
@@ -325,6 +480,7 @@ function summarize_results!(
                 "(precursor score floor = " *
                 "$(round(run_score_floor, digits = 4)))..."
             run_similarity_time = @elapsed begin
+                _pmark(:aggregate)
                 results.run_similarity[] = build_precursor_run_similarity(
                     filtered_refs,
                     run_score_floor,
@@ -340,7 +496,7 @@ function summarize_results!(
 
         # A2: Build experiment-wide precursor scores.
         if n_files_total > 1
-            @user_info "Training global precursor scoring model..."
+            @debug_l1 "Training global precursor scoring model..."
         end
         global_prob_dict, target_dict =
             build_global_precursor_score_dicts(
@@ -354,6 +510,7 @@ function summarize_results!(
             )
 
         # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
+        _pmark(:run_similarity)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
@@ -362,37 +519,56 @@ function summarize_results!(
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
 
-        # Phase B — Single per-file pipeline combining Steps 5+10.
-        # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
-        # :qval filter (their qval is overridden to 0). The cross-run
-        # :global_qval threshold still applies to all rows.
-        mbr_qval_bypass = "mbr_recovery_qval_bypass" => function(df)
-            if hasproperty(df, :mbr_recovered) && hasproperty(df, :qval)
-                qv = df[!, :qval]
-                rec = df[!, :mbr_recovered]
-                @inbounds for i in 1:nrow(df)
-                    if rec[i]
-                        qv[i] = 0.0f0
-                    end
-                end
-            end
-            return df
+        # Annotate the complete precursor table before filtering. MBR needs
+        # globally-supported rows that fail the run-level threshold, while
+        # donors and the baseline set still come from the ordinary dual-qvalue
+        # filter.
+        # All five annotations are ADDITIVE -- no filter, no removal, no reordering -- so they do
+        # not need a full materialisation. This previously ran apply_pipeline_batch into
+        # precursor_scored_psms, rewriting every row and all columns (measured 1,454,472 rows x 121
+        # columns, 540 MB on disk, ~2 GB to materialise, ~4 GB counting read+write) just to attach
+        # five columns. It also consolidated the :prec_prob sidecar that aggregate_per_file! had
+        # deliberately created one step earlier.
+        #
+        # They now ride in a row-aligned sidecar. Consolidation happens at the next pass that must
+        # rewrite anyway: the initial_filter below removes rows, and its transform_and_write! path
+        # loads main + sidecars and bakes them in.
+        annotated_refs = _annotate_precursor_scores_via_sidecar!(
+            filtered_refs,
+            global_prob_dict,
+            global_qval_dict,
+            global_pep_dict,
+            qval_spline,
+            results.precursor_pep_interp[],
+        )
+        initial_filter = TransformPipeline() |>
+            filter_by_multiple_thresholds([
+                (:global_qval, params.q_value_threshold),
+                (:qval, params.q_value_threshold),
+            ])
+        passing_refs = apply_pipeline_batch(
+            annotated_refs,
+            initial_filter,
+            passing_psms_folder,
+        )
+    end
+
+    if params.match_between_runs && !isempty(passing_refs)
+        staging_time = @elapsed begin
+            staging = prepare_postintegration_mbr!(
+                annotated_refs,
+                passing_refs,
+                passing_psms_folder;
+                q_value_threshold = params.q_value_threshold,
+                donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+            )
+            passing_refs = staging.integration_refs
+            @debug_l1 "Post-integration MBR candidates staged: " *
+                      "files=$(staging.n_files), rows=$(staging.n_rows), " *
+                      "candidates=$(staging.n_candidates)"
         end
-
-        # Cross-run filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold).
-        # The :pep and :off variants are retained in git history if needed.
-        qval_conditions = [(:global_qval, params.q_value_threshold),
-                           (:qval,        params.q_value_threshold)]
-        combined_pipeline = TransformPipeline() |>
-            add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
-            add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
-            add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
-            add_interpolated_column(:qval, :prec_prob, qval_spline) |>
-            mbr_qval_bypass |>
-            add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-            filter_by_multiple_thresholds(qval_conditions)
-
-        passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
+        @debug_l1 "Post-integration MBR staging completed in " *
+                  "$(round(staging_time, digits=2)) seconds"
     end
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
@@ -401,18 +577,33 @@ function summarize_results!(
     # keep these files available for diagnostic inspection. Re-enable once the
     # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
-    # Step 11: Re-calculate q-values using filtered data (sidecar-based)
-    step11_time = @elapsed begin
-        # Sidecar lifecycle for new spline (on filtered data)
-        spline_result = build_qvalue_spline_from_refs(passing_refs, :prec_prob, results.merged_quant_path;
-            min_pep_points_per_bin=params.pep_bin_size,
-            fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
-        if spline_result === nothing
-            @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-        else
-            recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline)
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+    # MBR-enabled searches recalculate q-values after chromatogram integration
+    # and transfer acceptance. The non-MBR path retains the original step.
+    if !params.match_between_runs
+        step11_time = @elapsed begin
+            spline_result = build_qvalue_spline_from_refs(
+                passing_refs,
+                :prec_prob,
+                results.merged_quant_path;
+                min_pep_points_per_bin = params.pep_bin_size,
+                fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+                temp_prefix = "recalc_sidecar",
+            )
+            if spline_result === nothing
+                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+            else
+                recalc_pipeline = TransformPipeline() |>
+                    add_interpolated_column(
+                        :qval,
+                        :prec_prob,
+                        spline_result.qval_spline,
+                    )
+                passing_refs = apply_pipeline_batch(
+                    passing_refs,
+                    recalc_pipeline,
+                    passing_psms_folder,
+                )
+            end
         end
     end
 
@@ -423,7 +614,10 @@ function summarize_results!(
 
     # Build RT indices for IntegrateChromatogramsSearch (all library precursors per file)
     # The per-file count is logged inside build_rt_indices! at @debug_l1.
+    _pmark(:qvals_and_filtering)
     build_rt_indices!(search_context, valid_file_indices, passing_refs)
+    _pmark(:rt_indices)
+    _pdiag && _precscore_diag_report()
 
     # Protein inference + protein-group scoring are handled downstream by
     # ProteinInferenceSearch and ProteinScoringSearch. Per-stage timings are

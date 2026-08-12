@@ -15,11 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Toggle to profile steps with PProf during MainSearch only.
-# Saves a flamegraph .pb.gz per file to the output directory.
-const PROFILE_FRAG_INDEX = false   # fragment index search (searchFragmentIndexPartitionMajorHinted)
-const PROFILE_DECONV = false        # deconvolution (process_scans!)
-
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
 
@@ -110,27 +105,35 @@ function library_search(
     # scan_to_prec_idx[scan] = range into precursors_passed (or missing if no candidates)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     t_frag_start = time()
-    if PROFILE_FRAG_INDEX && params isa MainSearchParameters
-        Profile.clear()
-        Profile.init(n=50_000_000, delay=0.0005)
-        Profile.@profile precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
-            scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-            Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
-            getMz(precursors);
-            score_filter = score_filter, max_peaks = max_peaks,
-            scratch = getFragIndexScratch(search_context))
-        out_dir = getDataOutDir(search_context)
-        prof_path = joinpath(out_dir, "frag_index_profile_$(ms_file_idx).pb.gz")
-        pprof(out=prof_path, web=false)
-        @user_info "Fragment index profile saved to $prof_path\n"
-    else
-        precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
-            scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-            Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
-            getMz(precursors);
-            score_filter = score_filter, max_peaks = max_peaks,
-            scratch = getFragIndexScratch(search_context))
-    end
+    # DEVELOPER PROFILING (disabled by default; deliberately not behind a runtime flag).
+    #
+    # PProf is NOT a dependency of Pioneer. It used to be, purely to support the block below --
+    # which is guarded by a `const false`, so it could never execute in a release build, yet the
+    # package was still compiled into every shipped binary. It also pulled FlameGraphs, which caps
+    # FixedPointNumbers below 0.9 and makes local `incremental=false` builds fragile.
+    #
+    # To profile the fragment index search: uncomment this block, add `using Profile, PProf` to
+    # src/Pioneer.jl, and run from the `dev` environment (which has PProf). Do not commit either.
+    #
+    #     Profile.clear()
+    #     Profile.init(n = 50_000_000, delay = 0.0005)
+    #     Profile.@profile precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
+    #         scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+    #         Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+    #         getMz(precursors);
+    #         score_filter = score_filter, max_peaks = max_peaks,
+    #         scratch = getFragIndexScratch(search_context))
+    #     prof_path = joinpath(getDataOutDir(search_context),
+    #                          "frag_index_profile_$(ms_file_idx).pb.gz")
+    #     pprof(out = prof_path, web = false)
+    #     @user_info "Fragment index profile saved to $prof_path\n"
+    #
+    precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
+        scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+        Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+        getMz(precursors);
+        score_filter = score_filter, max_peaks = max_peaks,
+        scratch = getFragIndexScratch(search_context))
     t_frag = time() - t_frag_start
 
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---

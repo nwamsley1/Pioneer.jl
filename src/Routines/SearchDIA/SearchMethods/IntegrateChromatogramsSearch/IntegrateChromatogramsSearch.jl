@@ -142,6 +142,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # Analysis strategies
     isotope_tracetype::I
     prec_estimation::P
+    match_between_runs::Bool
+    q_value_threshold::Float32
+    pep_bin_size::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -161,6 +164,12 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # n_isotopes lives at search.n_isotopes; falls back to the legacy
         # nested location for old configs (see _resolve_n_isotopes).
         n_isotopes_val = _resolve_n_isotopes(search_params)
+        global_params = params.global_settings
+        machine_learning_params = params.optimization.machine_learning
+        match_between_runs =
+            hasproperty(global_params, :match_between_runs) ?
+            Bool(global_params.match_between_runs) :
+            true
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(1), UInt8(0)),  # isotope err_bounds
@@ -179,6 +188,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             isotope_trace_type,
             prec_estimation,
+            match_between_runs,
+            _resolve_q_value_threshold(global_params),
+            Int64(machine_learning_params.pep_bin_size),
         )
     end
 end
@@ -202,6 +214,64 @@ function init_search_results(::IntegrateChromatogramSearchParameters, search_con
     )
 end
 
+function _filter_mbr_sidecars_by_rows!(
+    main_path::String,
+    selected_rows::Vector{Int},
+)
+    for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX)
+        sidecar_path = main_path * suffix
+        isfile(sidecar_path) || continue
+        sidecar = DataFrame(Tables.columntable(Arrow.Table(sidecar_path)))
+        writeArrow(sidecar_path, sidecar[selected_rows, :])
+    end
+    return nothing
+end
+
+# Runs once per file over every staged row. The comprehension it replaces used `psms[row, col]`,
+# a two-argument getindex doing a Dict{Symbol,Int} lookup PER CELL, fetched :peak_area twice per row
+# (once for isfinite, once for the comparison), and had no capacity hint on the result. Measured at
+# 65,233 rows x 6 files: 230.7 ms / 95.0 MB as written versus 2.8 ms / 3.0 MB through the kernel.
+function _select_postintegration_mbr_rows(
+    psms::DataFrame,
+    q_value_threshold::Float32,
+)
+    return _select_postintegration_mbr_rows_kernel(
+        psms[!, :qval],
+        psms[!, :global_qval],
+        psms[!, :peak_area],
+        psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN],
+        q_value_threshold,
+    )
+end
+
+function _select_postintegration_mbr_rows_kernel(
+    qval_col,
+    global_qval_col,
+    peak_area_col,
+    apex_irt_col,
+    q_value_threshold::Float32,
+)
+    n = length(qval_col)
+    rows = Int[]
+    sizehint!(rows, n)
+    @inbounds for row in 1:n
+        # _mbr_initial_pass is evaluated first and short-circuits, so peak_area/apex_irt are only
+        # read when it fails -- the same order as the comprehension.
+        keep = _mbr_initial_pass(
+            qval_col[row],
+            global_qval_col[row],
+            q_value_threshold,
+        )
+        if !keep
+            area = Float32(peak_area_col[row])
+            keep = isfinite(area) && area > 0.0f0 &&
+                   isfinite(Float32(apex_irt_col[row]))
+        end
+        keep && push!(rows, row)
+    end
+    return rows
+end
+
 """
 Process a single file for chromatogram integration.
 
@@ -216,6 +286,12 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:IntegrateChromatogramSearchParameters}
 
+    # Whole-function envelope. The per-phase timers below start later, so without this the
+    # difference between "sum of phases" and "the actual step" is invisible and the phase shares
+    # silently read as shares of the whole step when they are shares of the instrumented part.
+    _fdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _ft = time(); _fa = Base.gc_bytes()
+
     # Check if required files exist (e.g. upstream step skipped this file)
     rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
     passing_psms_path = getPassingPsms(getMSData(search_context), ms_file_idx)
@@ -223,6 +299,10 @@ function process_file!(
     if isempty(rt_index_path) || isempty(passing_psms_path)
         file_name = getFileIdToName(getMSData(search_context), ms_file_idx)
         @debug_l2 "Skipping IntegrateChromatogramSearch for file $file_name - missing required files from previous steps"
+        if _fdiag
+            MBR_STEP_DIAG[:file_total_bytes] += Base.gc_bytes() - _fa
+            MBR_STEP_DIAG[:file_total_ms] += round(Int, (time() - _ft) * 1000)
+        end
         return results
     end
 
@@ -237,25 +317,49 @@ function process_file!(
     # output happens later in MaxLFQSearch when output.write_decoys=false.
     passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
 
+    # Initialize the integration schema before the empty-file check so an
+    # empty staged MBR file remains consumable by the post-integration pass.
+    passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
+    passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_start_scan] =
+        zeros(UInt32, nrow(passing_psms))
+    passing_psms[!, :integration_stop_scan] =
+        zeros(UInt32, nrow(passing_psms))
+
     # If there are no PSMs to integrate (e.g. sparse / empty file), skip
     # chromatogram extraction entirely. Downstream steps treat an empty
     # results table as a no-op file.
     if nrow(passing_psms) == 0
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            add_mbr_integrated_spectra_to_psms!(
+                passing_psms,
+                DataFrame(),
+                identity,
+            )
+        end
         results.psms[] = passing_psms
         return results
     end
 
     if !seperateTraces(params.isotope_tracetype)
-        passing_psms = select_combined_trace_seed_psms_by_score(passing_psms)
+        selected_rows = select_combined_trace_seed_rows_by_score(passing_psms)
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+        end
+        passing_psms = passing_psms[selected_rows, :]
     end
 
-    # Initialize columns written by chromatogram integration.
-    passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
-    passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
-    passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): step-level attribution. add_mbr_integrated_spectra_to_psms!
+    # measured only ~5 GB of this step's ~78 GB, so the bulk is in extraction / isotope labelling /
+    # sort / integration below.
+    _sdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _st = time(); _sa = Base.gc_bytes()
 
     # Extract chromatograms for all passing PSMs
-    chromatograms = extract_chromatograms(
+    chromatograms, scan_tic = extract_chromatograms(
         spectra,
         passing_psms,
         rt_index,
@@ -264,6 +368,18 @@ function process_file!(
         ms_file_idx,
         MS2CHROM(),
     )
+    if _sdiag
+        MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:extract_ms] += round(Int, (time() - _st) * 1000)
+        MBR_STEP_DIAG[:n_chrom_rows] += nrow(chromatograms)
+        MBR_STEP_DIAG[:chrom_table_bytes] += sum(
+            c -> sizeof(c), eachcol(chromatograms); init = 0,
+        )
+        MBR_STEP_DIAG[:rss_at_extract] = max(
+            MBR_STEP_DIAG[:rss_at_extract], Int(Sys.maxrss()),
+        )
+        _st = time(); _sa = Base.gc_bytes()
+    end
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
@@ -287,7 +403,17 @@ function process_file!(
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
     end
+    if _sdiag
+        MBR_STEP_DIAG[:isotopes_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
+        _st = time(); _sa = Base.gc_bytes()
+    end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    if _sdiag
+        MBR_STEP_DIAG[:sort_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:sort_ms] += round(Int, (time() - _st) * 1000)
+        _st = time(); _sa = Base.gc_bytes()
+    end
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
@@ -312,9 +438,54 @@ function process_file!(
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
+            passing_psms[!, :integration_start_scan],
+            passing_psms[!, :integration_stop_scan],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
+        if _sdiag
+            MBR_STEP_DIAG[:integrate_bytes] += Base.gc_bytes() - _sa
+            MBR_STEP_DIAG[:integrate_ms] += round(Int, (time() - _st) * 1000)
+            _st = time(); _sa = Base.gc_bytes()
+        end
+        if params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+            # OFFLINE-PROFILING HOOK (PIONEER_MBR_ARG_DUMP=<path>): serialise the exact argument
+            # set for the first file so add_mbr_integrated_spectra_to_psms! can be driven under
+            # JET / AllocCheck / BenchmarkTools outside a search. Dumps once, then no-ops.
+            let dump_path = get(ENV, "PIONEER_MBR_ARG_DUMP", "")
+                if !isempty(dump_path) && !isfile(dump_path)
+                    mkpath(dirname(dump_path))
+                    Serialization.serialize(dump_path, (
+                        passing_psms = passing_psms,
+                        chromatograms = chromatograms,
+                        rt_to_irt = getRtIrtModel(search_context, ms_file_idx),
+                        bitvec_rank_table = getBitVecExcessRanks(search_context, ms_file_idx),
+                        scan_tic = scan_tic,
+                    ))
+                    @user_info "MBR arg dump written: $dump_path ($(nrow(passing_psms)) psms, $(nrow(chromatograms)) chrom rows)"
+                end
+            end
+            add_mbr_integrated_spectra_to_psms!(
+                passing_psms,
+                chromatograms,
+                getRtIrtModel(search_context, ms_file_idx),
+                bitvec_rank_table =
+                    getBitVecExcessRanks(search_context, ms_file_idx),
+                scan_tic = scan_tic,
+            )
+            selected_rows = _select_postintegration_mbr_rows(
+                passing_psms,
+                params.q_value_threshold,
+            )
+            if length(selected_rows) != nrow(passing_psms)
+                _filter_mbr_sidecars_by_rows!(
+                    passing_psms_path,
+                    selected_rows,
+                )
+                passing_psms = passing_psms[selected_rows, :]
+            end
+        end
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(
                 chromatograms,
@@ -326,15 +497,128 @@ function process_file!(
                 getFileIdToName(getMSData(search_context), ms_file_idx),
             )
         end
+    elseif params.match_between_runs &&
+           isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
+        add_mbr_integrated_spectra_to_psms!(
+            passing_psms,
+            chromatograms,
+            getRtIrtModel(search_context, ms_file_idx),
+            bitvec_rank_table =
+                getBitVecExcessRanks(search_context, ms_file_idx),
+            scan_tic = scan_tic,
+        )
+        selected_rows = _select_postintegration_mbr_rows(
+            passing_psms,
+            params.q_value_threshold,
+        )
+        _filter_mbr_sidecars_by_rows!(passing_psms_path, selected_rows)
+        passing_psms = passing_psms[selected_rows, :]
     end
     # MS1 integration disabled — see extract_chromatograms call above.
     # Clear chromatograms to free memory
     chromatograms = nothing
 
+    if _sdiag
+        MBR_STEP_DIAG[:tail_bytes] += Base.gc_bytes() - _sa
+        MBR_STEP_DIAG[:tail_ms] += round(Int, (time() - _st) * 1000)
+        MBR_STEP_DIAG[:n_files] += 1
+    end
+    if _fdiag
+        MBR_STEP_DIAG[:file_total_bytes] += Base.gc_bytes() - _fa
+        MBR_STEP_DIAG[:file_total_ms] += round(Int, (time() - _ft) * 1000)
+        _mbr_step_diag_report()
+    end
+
     # Store processed PSMs in results
     results.psms[] = passing_psms
 
     return results
+end
+
+"""
+    _fin_rw_record!(enabled, bytes0, t0)
+
+Accumulate one iteration of the finalize rewrite loop. The first iteration is recorded separately
+because it carries first-call compilation for `process_final_psms!` and the `writeArrow`
+specialisations; on the per-file phases that surcharge measured +33%, so folding it into the
+steady-state average would overstate the per-file cost of this loop.
+"""
+function _fin_rw_record!(enabled::Bool, bytes0::Int, t0::Float64)
+    enabled || return nothing
+    b = Base.gc_bytes() - bytes0
+    ms = round(Int, (time() - t0) * 1000)
+    MBR_STEP_DIAG[:fin_rw_files] += 1
+    MBR_STEP_DIAG[:fin_rw_bytes] += b
+    MBR_STEP_DIAG[:fin_rw_ms] += ms
+    if MBR_STEP_DIAG[:fin_rw_files] == 1
+        MBR_STEP_DIAG[:fin_rw1_bytes] = b
+        MBR_STEP_DIAG[:fin_rw1_ms] = ms
+    end
+    return nothing
+end
+
+const MBR_STEP_DIAG = Dict{Symbol, Int}(
+    :extract_bytes => 0,   :extract_ms => 0,
+    :isotopes_bytes => 0,  :isotopes_ms => 0,
+    :sort_bytes => 0,      :sort_ms => 0,
+    :integrate_bytes => 0, :integrate_ms => 0,
+    :tail_bytes => 0,      :tail_ms => 0,
+    :n_chrom_rows => 0, :n_files => 0,
+    :chrom_table_bytes => 0, :rss_at_extract => 0,
+    :file_total_bytes => 0, :file_total_ms => 0,
+    :finalize_total_bytes => 0, :finalize_total_ms => 0,
+    # Split of the finalize envelope: the MBR rescoring call vs the per-file rewrite loop, and the
+    # rewrite loop's FIRST iteration separately -- it absorbs first-call JIT for process_final_psms!
+    # and the writeArrow specialisations, which would otherwise masquerade as steady-state cost.
+    :fin_mbr_bytes => 0,   :fin_mbr_ms => 0,
+    :fin_rw_bytes => 0,    :fin_rw_ms => 0,
+    :fin_rw1_bytes => 0,   :fin_rw1_ms => 0,
+    :fin_rw_files => 0,
+)
+
+# Both diagnostic accumulators are module-level, so in a warm driver that runs several searches in
+# one process the second report would include the first run. Reset after reporting.
+function _mbr_diag_reset!()
+    for k in keys(MBR_STEP_DIAG); MBR_STEP_DIAG[k] = 0; end
+    for k in keys(MBR_PHASE_DIAG); MBR_PHASE_DIAG[k] = 0; end
+    empty!(MBR_FINAL_DIAG)          # finalize phases (MBR/pipeline.jl)
+    for k in keys(MBR_ROW_DIAG); MBR_ROW_DIAG[k] = 0; end
+    return nothing
+end
+
+function _mbr_step_diag_report()
+    d = MBR_STEP_DIAG
+    gb(x) = round(x / 2^30, digits = 2)
+    tot = d[:extract_bytes] + d[:isotopes_bytes] + d[:sort_bytes] +
+          d[:integrate_bytes] + d[:tail_bytes]
+    ms  = d[:extract_ms] + d[:isotopes_ms] + d[:sort_ms] + d[:integrate_ms] + d[:tail_ms]
+    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
+    # GB/s of allocation is the tell for allocator-bound vs compute-bound: Julia sustains several
+    # GB/s when allocation is the bottleneck, so a low rate means the time is going to real work.
+    rate(b, t) = t > 0 ? round((b / 2^30) / (t / 1000), digits = 2) : 0.0
+    @user_info """
+    MBR STEP diagnostic (cumulative over $(d[:n_files]) file(s), $(d[:n_chrom_rows]) chrom rows):
+      chrom table (live cols)  : $(gb(d[:chrom_table_bytes])) GB total over $(d[:n_files]) files, $(d[:n_chrom_rows]) rows  => $(d[:n_chrom_rows] > 0 ? round(d[:chrom_table_bytes]/d[:n_chrom_rows], digits=1) : 0.0) B/row
+      peak RSS at extract      : $(gb(d[:rss_at_extract])) GB   (chrom table is $(d[:rss_at_extract] > 0 ? round(100*d[:chrom_table_bytes]/d[:n_files]/max(d[:rss_at_extract],1), digits=2) : 0.0)% of peak, per-file avg)
+      extract_chromatograms   : $(gb(d[:extract_bytes])) GB  $(d[:extract_ms]) ms  ($(pct(d[:extract_bytes]))%)  $(rate(d[:extract_bytes], d[:extract_ms])) GB/s
+      get_isotopes_captured!  : $(gb(d[:isotopes_bytes])) GB  $(d[:isotopes_ms]) ms  ($(pct(d[:isotopes_bytes]))%)  $(rate(d[:isotopes_bytes], d[:isotopes_ms])) GB/s
+      sort_chromatograms      : $(gb(d[:sort_bytes])) GB  $(d[:sort_ms]) ms  ($(pct(d[:sort_bytes]))%)  $(rate(d[:sort_bytes], d[:sort_ms])) GB/s
+      integrate_precursors    : $(gb(d[:integrate_bytes])) GB  $(d[:integrate_ms]) ms  ($(pct(d[:integrate_bytes]))%)  $(rate(d[:integrate_bytes], d[:integrate_ms])) GB/s
+      MBR feats + write tail   : $(gb(d[:tail_bytes])) GB  $(d[:tail_ms]) ms  ($(pct(d[:tail_bytes]))%)  $(rate(d[:tail_bytes], d[:tail_ms])) GB/s
+      ------------------------------------------------------------------
+      sum of phases           : $(gb(tot)) GB  $(ms) ms
+      process_file! envelope  : $(gb(d[:file_total_bytes])) GB  $(d[:file_total_ms]) ms
+      finalize envelope       : $(gb(d[:finalize_total_bytes])) GB  $(d[:finalize_total_ms]) ms$(
+        # The step report is emitted once per FILE, but the finalize counters only populate at the very
+        # end -- printing the split before then just showed a row of zeros. Suppress until populated.
+        d[:finalize_total_bytes] == 0 ? "" : """
+        .. mbr rescoring       : $(gb(d[:fin_mbr_bytes])) GB  $(d[:fin_mbr_ms]) ms
+        .. rewrite loop        : $(gb(d[:fin_rw_bytes])) GB  $(d[:fin_rw_ms]) ms  over $(d[:fin_rw_files]) files
+        .. rewrite 1st file    : $(gb(d[:fin_rw1_bytes])) GB  $(d[:fin_rw1_ms]) ms  (incl. first-call JIT)
+        .. rewrite steady/file : $(gb(d[:fin_rw_files] > 1 ? div(d[:fin_rw_bytes] - d[:fin_rw1_bytes], d[:fin_rw_files] - 1) : 0)) GB  $(d[:fin_rw_files] > 1 ? div(d[:fin_rw_ms] - d[:fin_rw1_ms], d[:fin_rw_files] - 1) : 0) ms""")
+      UNACCOUNTED in per-file : $(gb(d[:file_total_bytes] - tot)) GB  $(d[:file_total_ms] - ms) ms  ($(d[:file_total_ms] > 0 ? round(100 * (d[:file_total_ms] - ms) / d[:file_total_ms], digits = 1) : 0.0)% of per-file)
+      STEP TOTAL (file+final) : $(gb(d[:file_total_bytes] + d[:finalize_total_bytes])) GB  $(d[:file_total_ms] + d[:finalize_total_ms]) ms"""
+    return nothing
 end
 
 function process_search_results!(
@@ -346,14 +630,25 @@ function process_search_results!(
 ) where {P<:IntegrateChromatogramSearchParameters}
 
     passing_psms = results.psms[]
+    output_path = getPassingPsms(getMSData(search_context))[ms_file_idx]
 
     # Skip processing if no PSMs (e.g. file had no rt_index or passing PSMs)
     if nrow(passing_psms) == 0 || ncol(passing_psms) == 0
         @debug_l2 "No PSMs to process for file $ms_file_idx in IntegrateChromatogramSearch results"
+        if params.match_between_runs &&
+           !isempty(output_path) &&
+           isfile(output_path * PASS1_SIDECAR_SUFFIX)
+            writeArrow(output_path, passing_psms)
+        end
         return nothing
     end
 
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    if params.match_between_runs &&
+       isfile(output_path * PASS1_SIDECAR_SUFFIX)
+        writeArrow(output_path, passing_psms)
+        return nothing
+    end
     # Process final PSMs
     process_final_psms!(
         passing_psms,
@@ -362,7 +657,7 @@ function process_search_results!(
         ms_file_idx
     )
     # Save results
-    writeArrow(getPassingPsms(getMSData(search_context))[ms_file_idx], passing_psms)
+    writeArrow(output_path, passing_psms)
     return nothing
 end
 
@@ -372,10 +667,150 @@ function reset_results!(results::IntegrateChromatogramSearchResults)
     return nothing
 end
 
+# Function barrier. `df[!, col]` infers as AbstractVector, so comparing it element-wise in the same
+# function costs a dynamic dispatch per row. Note a `::AbstractVector{Float32}` assertion would NOT
+# help -- measured identical to no assertion at all (660 vs 665 ms, same 240 MB, on 5M elements);
+# only a concrete container type or a barrier like this one avoids it.
+function _qval_keep_mask(qcol, threshold::Float32)
+    keep = BitVector(undef, length(qcol))
+    @inbounds for row in eachindex(qcol)
+        keep[row] = qcol[row] <= threshold
+    end
+    return keep
+end
+
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    ::P,
-    ::SearchContext
+    params::P,
+    search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
+    passing_paths = String[
+        path for path in getPassingPsms(getMSData(search_context))
+        if !isempty(path) && isfile(path)
+    ]
+    if params.match_between_runs &&
+       any(
+           path -> isfile(path * PASS1_SIDECAR_SUFFIX),
+           passing_paths,
+       )
+        precursor_results = get_results(
+            search_context,
+            PrecursorScoringSearch,
+        )
+        precursor_results isa PrecursorScoringSearchResults ||
+            error("Post-integration MBR requires precursor-scoring results")
+        _sumdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+        _sumt = time(); _suma = Base.gc_bytes()
+        summary = finalize_postintegration_mbr!(
+            passing_paths,
+            getPrecursors(getSpecLib(search_context));
+            run_similarity_atlas = precursor_results.run_similarity[],
+            q_value_threshold = params.q_value_threshold,
+            donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
+            min_pep_points_per_bin = params.pep_bin_size,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+            merged_path = joinpath(
+                getDataOutDir(search_context),
+                "merged_quant.arrow",
+            ),
+            pre_mbr_qval_spline =
+                precursor_results.precursor_qval_interp[],
+            bitvec_rank_tables_by_file = Dict(
+                UInt32(file_idx) => ranks
+                for (file_idx, ranks) in search_context.bitvec_excess_rank
+            ),
+        )
+        @debug_l1 "Post-integration MBR completed: " *
+                  "candidates=$(summary.n_candidates), " *
+                  "recovered=$(summary.n_recovered)"
+        @debug_l1 "Post-integration MBR combined error: " *
+                  "baseline=$(summary.base_decoys)/$(summary.base_targets), " *
+                  "MBR decoys=$(summary.mbr_decoys), " *
+                  "false transfers=$(summary.mbr_false_transfers), " *
+                  "total=$(summary.total_errors)/$(summary.total_targets) " *
+                  "($(round(100 * summary.combined_error_rate, digits=4))%)"
+
+        # _recalculate_post_mbr_qvalues! now stages :qval/:pep in a row-aligned sidecar instead of
+        # rewriting all 147 columns of every file. This loop already loads and rewrites each table,
+        # so it consolidates the sidecar and applies the deferred q-value filter here. Index the refs
+        # by path: finalize only sees non-empty existing files, so it is not aligned with this
+        # enumeration.
+        if _sumdiag
+            MBR_STEP_DIAG[:fin_mbr_bytes] += Base.gc_bytes() - _suma
+            MBR_STEP_DIAG[:fin_mbr_ms] += round(Int, (time() - _sumt) * 1000)
+        end
+
+        ref_by_path = Dict{String, PSMFileReference}(
+            file_path(r) => r for r in summary.mbr_refs
+        )
+        for (ms_file_idx, path) in enumerate(
+            getPassingPsms(getMSData(search_context)),
+        )
+            (isempty(path) || !isfile(path)) && continue
+            _rwa = _sumdiag ? Base.gc_bytes() : 0
+            _rwt = _sumdiag ? time() : 0.0
+            ref = get(ref_by_path, path, nothing)
+            psms = ref === nothing ?
+                DataFrame(Tables.columntable(Arrow.Table(path))) :
+                load_with_sidecars(ref)
+            if ref !== nothing && summary.qval_deferred &&
+               hasproperty(psms, MBR_QVAL_STAGED_COL)
+                # Bake the staged columns over the originals. They are staged under distinct names
+                # because register_sidecar! rejects a column already present in main.
+                psms[!, :qval] = psms[!, MBR_QVAL_STAGED_COL]
+                psms[!, :pep] = psms[!, MBR_PEP_STAGED_COL]
+                select!(psms, Not([MBR_QVAL_STAGED_COL, MBR_PEP_STAGED_COL]))
+                # Deferred from the recalc pipeline, which applied it between adding :qval and :pep.
+                # Interpolation is pointwise, so filtering after computing both is equivalent for the
+                # surviving rows. `<=` matches filter_by_multiple_thresholds' default comparison.
+                psms = psms[
+                    _qval_keep_mask(psms[!, :qval], summary.qval_threshold),
+                    :,
+                ]
+            end
+            # Fused in from the former standalone _drop_internal_mbr_columns! pass, which read and
+            # rewrote every file just to drop these columns. Same relative order (it ran immediately
+            # before this loop) and same columns.
+            _drop_internal_mbr_columns!(psms)
+            # Same free ride: this loop already materialises and rewrites every per-file table, and MBR
+            # has consumed everything it needs by here. The passing_psms files written below are what
+            # feeds MaxLFQ's chunked merge and therefore precursors_long, so dropping here is the point
+            # that actually reaches the output -- attaching this to PrecursorScoring's initial_filter did
+            # not, because MBR reads `annotated_refs` (full width) rather than `passing_refs`.
+            let drop = Symbol[c for c in PRECSCORE_DROPPABLE_COLUMNS if hasproperty(psms, c)]
+                isempty(drop) || select!(psms, Not(drop))
+            end
+            # Same rewrite, same reasoning: every reader of these has run, so narrow them here.
+            narrow_output_columns!(psms)
+            if nrow(psms) == 0 || ncol(psms) == 0
+                writeArrow(path, psms)
+                ref === nothing || clear_sidecars!(ref; delete_files = true)
+                _fin_rw_record!(_sumdiag, _rwa, _rwt)
+                continue
+            end
+            process_final_psms!(
+                psms,
+                search_context,
+                getFileIdToName(
+                    getMSData(search_context),
+                    ms_file_idx,
+                ),
+                ms_file_idx,
+            )
+            writeArrow(path, psms)
+            # sidecar contents are now baked into main
+            ref === nothing || clear_sidecars!(ref; delete_files = true)
+            _fin_rw_record!(_sumdiag, _rwa, _rwt)
+        end
+        if _sumdiag
+            # Covers finalize_postintegration_mbr! AND the process_final_psms! rewrite loop above,
+            # which is a sixth full materialise-and-rewrite pass over every per-file table.
+            MBR_STEP_DIAG[:finalize_total_bytes] += Base.gc_bytes() - _suma
+            MBR_STEP_DIAG[:finalize_total_ms] += round(Int, (time() - _sumt) * 1000)
+            _mbr_step_diag_report()
+            _mbr_phase_diag_report()
+            _mbr_diag_reset!()          # so a warm driver's next run reports only its own numbers
+        end
+    end
     return nothing
 end
