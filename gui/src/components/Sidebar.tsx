@@ -298,7 +298,11 @@ export function Sidebar({
                         textAlign: 'right',
                       }}
                     >
-                      {idx + 1}
+                      {/* Two different numbers. In the queue, position is the
+                          useful fact, so it renumbers as runs start or are
+                          removed. In history it is an identity: run 1000 stays
+                          1000 however many earlier runs were deleted. */}
+                      {pending ? idx + 1 : j.runNo || ''}
                     </span>
                   )}
                 </div>

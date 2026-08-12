@@ -77,12 +77,53 @@ const PERSIST_KEY = 'pioneerConsole.v2'
  *  empty log, which is why the drawer says so rather than looking broken.
  */
 const HISTORY_KEY = 'pioneerConsole.history.v1'
-const HISTORY_LIMIT = 100
+
+/** The next history number to hand out.
+ *
+ *  History numbers are an identity, not a position: run #1000 stays #1000 when
+ *  earlier runs are deleted, and the counter never resets. It is therefore kept
+ *  on its own rather than derived from the stored history, which would rewind
+ *  the moment anything was removed.
+ */
+const RUN_COUNTER_KEY = 'pioneerConsole.runCounter.v1'
+
+function nextRunNo(): number {
+  let n = 1
+  try {
+    n = Math.max(0, Number(localStorage.getItem(RUN_COUNTER_KEY)) || 0) + 1
+    localStorage.setItem(RUN_COUNTER_KEY, String(n))
+  } catch {
+    /* private mode — numbering restarts, which beats refusing to run */
+  }
+  return n
+}
+
+/** Write the history, giving up entries rather than the whole store.
+ *
+ *  There is deliberately no cap: the thousandth search should still be there.
+ *  But history shares localStorage with the form draft, and an unbounded blob
+ *  will eventually exceed the quota. On failure, drop the oldest half and try
+ *  again — losing old runs is recoverable, losing the store is not. A real
+ *  database (see the plan's F2) removes the need for this entirely.
+ */
+function saveHistory(runs: PersistedRun[]): void {
+  let keep = runs
+  while (keep.length > 0) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(keep))
+      return
+    } catch {
+      keep = keep.slice(Math.ceil(keep.length / 2))
+    }
+  }
+}
 
 /** What survives a restart. A subset of Job: the identity, the outcome, and the
  *  form state needed to put the run back on screen. */
 interface PersistedRun {
   id: string
+  /** Its number in the history. Stable for the life of the run. */
+  runNo: number
   cmd: CommandId
   title: string
   target: string
@@ -101,6 +142,7 @@ function loadHistory(): Job[] {
       .filter((r) => r && r.id && r.snapshot && r.snapshot.cmd)
       .map((r) => ({
         ...r,
+        runNo: r.runNo ?? 0,
         logLines: [],
         failMsg: '',
         paramsJson: '',
@@ -310,10 +352,9 @@ export default function App() {
     const finished = jobs.filter(
       (j) => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled',
     )
-    // Keep the most recent HISTORY_LIMIT. Older entries fall off the front, so a
-    // long-running session cannot grow the stored blob without bound.
-    const keep = finished.slice(-HISTORY_LIMIT).map<PersistedRun>((j) => ({
+    const keep = finished.map<PersistedRun>((j) => ({
       id: j.id,
+      runNo: j.runNo,
       cmd: j.cmd,
       title: j.title,
       target: j.target,
@@ -321,11 +362,7 @@ export default function App() {
       status: j.status,
       snapshot: j.snapshot,
     }))
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(keep))
-    } catch {
-      /* quota — history is a convenience, and the draft lives under its own key */
-    }
+    saveHistory(keep)
   }, [jobs])
 
   useEffect(() => {
@@ -748,8 +785,10 @@ export default function App() {
   const enqueue = () => {
     jobSeq.current += 1
     const id = `${sessionId.current}-job${jobSeq.current}`
+    const runNo = nextRunNo()
     const job: Job = {
       id,
+      runNo,
       cmd: command,
       title: generateRunName(jobs.map((j) => j.title)),
       snapshot: isConvert

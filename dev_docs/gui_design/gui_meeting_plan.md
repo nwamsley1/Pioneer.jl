@@ -13,9 +13,9 @@ Every item below comes from the meeting notes. Each one says what it means,
 Effort is **S** (an hour or two), **M** (half a day to a day), **L** (multi-day,
 or needs a decision first).
 
-Three notes are already partly built, two are bugs with a known cause, one is
-not a GUI change at all, and two need a decision from you before they can be
-costed. Those are called out rather than folded in.
+Decisions from the review are folded in and marked **Decided**. Two items are
+**parked** — C6 and D2 — for reasons given in place. LightGBM has been dropped:
+it is a Pioneer question, not a console one, and this document is GUI only.
 
 \newpage
 
@@ -126,12 +126,16 @@ three forms get it.
 
 ## C6. Pick a subset of files in the MS data folder — L
 
+**Parked — do this last.**
+
 Today the field is a folder and Pioneer takes everything in it. Selecting a
-subset needs a file list in the UI with checkboxes, and — the harder half — a
-way to express the subset to Pioneer. **Open question:** does SearchDIA accept
-an explicit file list, or only a directory? If only a directory, the options
-are a temporary folder of symlinks or a change on the Julia side. That answer
-decides whether this is M or L.
+subset needs a file list with checkboxes in the UI, and — the harder half — a
+way to express that subset to Pioneer. If SearchDIA only accepts a directory,
+the choices are a temporary folder of links or a change on the Julia side.
+
+Because it may require a Pioneer-side change, it goes last: everything else
+here is contained within the console, and none of it should wait behind a
+cross-repo change.
 
 \newpage
 
@@ -147,24 +151,24 @@ The library is a directory with an Arrow table plus config, so this is a Rust
 side read of the library's own `config.json` (the inspector already detects
 `.poin` layout via `PION_MARKERS`) and a small summary panel under the field.
 
-Note the wording in the meeting was "metadata from the library *name*" — if
-what you meant is parsing the filename rather than reading the library, that is
-much cheaper but much less reliable. Reading the config is the version worth
-building.
+**Decided: read the library's config**, not its filename. Filename parsing
+would be cheaper but breaks the moment a library is renamed or built
+elsewhere, and it cannot report anything the name does not already say.
 
 ## D2. DownloadSpecLib as a fourth workflow tab — L
 
 A new command alongside ConvertRAW / BuildSpecLib / SearchDIA for fetching a
 prebuilt library.
 
-This is the largest item in the notes and the only one that needs backend that
-does not exist yet. **Open questions:** what is the source (a Pioneer-hosted
-index, Zenodo, something else), is there an index to list from or only known
-URLs, and does the download need resume and checksum verification. Until those
-are settled it cannot be costed beyond "L".
+**Parked — there is no download location yet.**
 
-The GUI half is well understood — it is the same form-and-run shape as the
-other three tabs — so the risk is entirely in the source and transport.
+The GUI half is well understood; it is the same form-and-run shape as the other
+three tabs. All of the risk is in the source and transport: what is being
+downloaded from, whether there is an index to list, and whether the transfer
+needs resume and checksum verification.
+
+A mock-up can be built against a stub source whenever it is useful for
+reviewing the shape of the tab, but the real work waits for a location.
 
 \newpage
 
@@ -211,15 +215,24 @@ knowing regardless of what the default becomes.
 
 ## F1. Queue and history numbering — S, needs one clarification
 
-The badge renders `{idx + 1}` over each *filtered* list, so queue and history
-number independently and both start at 1. Deleting an entry renumbers
-everything below it.
+**Decided, and the two lists differ:**
 
-**Which behaviour did you want?** The note reads two ways: either the numbers
-should be stable per run (an identity that survives deletion), or they are
-currently failing to renumber. From the code, positional renumbering is what it
-does. If you want stable identity, that is a per-run counter stored with the
-run, which also makes F2 and F3 easier.
+- **Queue** renumbers positionally. This is what `{idx + 1}` already does, so
+  the queue needs no change — position in the queue is the useful fact.
+- **History** takes the next number and keeps it. A monotonically increasing
+  run counter that never resets and never renumbers when an entry is deleted,
+  so the thousandth search is #1000 no matter what has been removed.
+- **No cap on history.** The current `HISTORY_LIMIT = 100` goes.
+
+The counter is stored with each run, which also makes F3 cheaper.
+
+One caution on removing the cap: history lives in `localStorage` today, a
+low-single-digit-megabyte budget shared with the form draft. Parameters run
+1–2 KB per entry, so a thousand runs is survivable, but the failure mode when
+it is not is a quota error that can take the whole store down. Until F2 lands,
+removing the cap needs a quota guard that trims the oldest entries on a write
+failure rather than losing everything. This is the strongest argument for
+doing F2 sooner rather than later.
 
 ## F2. Move history and queue to SQLite — M/L
 
@@ -248,21 +261,6 @@ offer a one-click re-run, which is safe by default and loses nothing.
 
 \newpage
 
-# G. Not a GUI change
-
-## G1. LightGBM slower on Windows than macOS — investigation
-
-This belongs to Pioneer, not the console, but it should be tracked because it
-shapes what users experience.
-
-Worth establishing first whether it is real and by how much — same library,
-same data, wall-clock on both. If it holds up, the usual suspects are the
-threading backend (OpenMP on Windows versus the macOS build), the compiler
-flags the Windows binary ships with, and whether the packaged sysimage's
-`cpu_target` reaches the same instruction set on both. The portable-packaging
-work changed exactly that, so a measurement taken before it will not answer the
-question.
-
 \newpage
 
 # Suggested sequencing
@@ -283,19 +281,27 @@ C5 drag and drop.
 **Third — F2 SQLite**, then F1, F3 and F4 on top of it. Doing F3 or F4 before
 the store means writing them twice.
 
-**Fourth — the two large ones**, once their open questions have answers: D1
-library metadata, C6 file subset, D2 DownloadSpecLib.
+**Fourth — D1 library metadata**, now that reading the config is settled.
 
-**In parallel, whenever** — E3 and G1 are measurements, not features. Both can
-be run by someone else while the above proceeds, and both change decisions
-rather than code.
+**Parked, in this order when they unpark** — D2 DownloadSpecLib when there is a
+location to download from, and C6 file subset last of all, since it is the only
+item that may need a change in Pioneer itself.
+
+**In parallel, whenever** — E3 is a measurement, not a feature. One build at 4
+threads against one at 15 answers it in half an hour, and the answer is worth
+having whatever the default becomes.
 
 # Open questions, collected
 
+Answered in review: **D1** (read the config), **F1** (queue positional,
+history monotonic and uncapped), **C6** and **D2** (parked).
+
+Still open:
+
 1. **B4** — what logging levels does Pioneer accept, and how are they set?
 2. **C3** — what suffix should the derived results folder use?
-3. **C6** — can SearchDIA take an explicit file list, or only a directory?
-4. **D1** — read the library's config, or parse its filename?
-5. **D2** — what is the download source, and is there an index?
-6. **F1** — stable per-run numbers, or positional?
-7. **F4** — re-queue interrupted runs, or record them as interrupted?
+3. **F4** — re-queue interrupted runs, or record them as interrupted? My
+   recommendation is to record them, since re-queuing risks starting a long job
+   the moment the app opens.
+4. **C6** — whether SearchDIA can take an explicit file list. Not needed until
+   C6 unparks, but the answer decides how big it is.

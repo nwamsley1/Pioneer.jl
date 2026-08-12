@@ -208,6 +208,10 @@ export type JobSnapshot =
 
 export interface Job {
   id: string
+  /** Its number in the run history: the next one at creation, kept for life.
+   *  Unlike a queue position this never changes, so deleting run 3 leaves runs
+   *  4 and 5 as 4 and 5. Zero for entries restored from before numbering. */
+  runNo: number
   cmd: CommandId
   /** Generated adjective-noun name, e.g. "brisk-otter". */
   title: string
