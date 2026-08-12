@@ -34,6 +34,7 @@ export const SEARCH_OWNED_PATHS = [
   'optimization.chromatogram_integration.trace_mode',
   'proteinScoring.min_peptides',
   'maxLFQ.run_to_run_normalization',
+  'logging.debug_console_level',
 ]
 
 export function buildSearchJsonBase(s: SearchParams): Json {
@@ -54,6 +55,10 @@ export function buildSearchJsonBase(s: SearchParams): Json {
     optimization: { chromatogram_integration: { trace_mode: s.traceMode } },
     proteinScoring: { min_peptides: num(s.minPeptides, 1) },
     maxLFQ: { run_to_run_normalization: s.runToRunNorm },
+    // Console verbosity only. The debug *file* level is left alone: Pioneer
+    // defaults it to 1 because the log is useful after the fact whether or not
+    // the console was noisy at the time.
+    logging: { debug_console_level: s.debugLogging ? 1 : 0 },
   }
 }
 
@@ -146,6 +151,7 @@ export const BUILD_OWNED_PATHS = [
   'fixed_mods',
   'include_contaminants',
   'predict_fragments',
+  'logging',
 ]
 
 /** Pioneer stores modifications column-wise: three parallel arrays. */
@@ -202,6 +208,7 @@ export function buildLibJsonBase(s: BuildParams): Json {
     fixed_mods: modsToJson(s.fixedMods),
     include_contaminants: s.includeContaminants,
     predict_fragments: s.predictFragments,
+    logging: { debug_console_level: s.debugLogging ? 1 : 0 },
   }
 }
 
@@ -319,6 +326,9 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   }
   if (isObj(obj.proteinScoring) && obj.proteinScoring.min_peptides != null) {
     set.minPeptides = String(obj.proteinScoring.min_peptides)
+  }
+  if (isObj(obj.logging) && 'debug_console_level' in obj.logging) {
+    set.debugLogging = Number(obj.logging.debug_console_level) > 0
   }
   if (isObj(obj.maxLFQ) && 'run_to_run_normalization' in obj.maxLFQ) {
     set.runToRunNorm = !!obj.maxLFQ.run_to_run_normalization

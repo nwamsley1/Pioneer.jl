@@ -17,6 +17,8 @@ export interface SearchParams {
   traceMode: 'combined' | 'separated'
   minPeptides: string
   runToRunNorm: boolean
+  /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
+  debugLogging: boolean
 }
 
 export const SEARCH_DEFAULTS: SearchParams = {
@@ -32,6 +34,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   traceMode: 'combined',
   minPeptides: '1',
   runToRunNorm: false,
+  debugLogging: false,
 }
 
 /** One FASTA input row in the BuildSpecLib form. */
@@ -130,6 +133,8 @@ export interface BuildParams {
   predictFragments: boolean
   variableMods: ModEntry[]
   fixedMods: ModEntry[]
+  /** logging.debug_console_level: 0 off, 1 on. */
+  debugLogging: boolean
 }
 
 /** Defaults match Pioneer's own simplified template from GetBuildLibParams. */
@@ -151,6 +156,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   // would add; hand-written copies drifted (Oxidation was 15.99491).
   variableMods: [modEntry('altimeter', 35)],
   fixedMods: [modEntry('altimeter', 4)],
+  debugLogging: false,
 }
 
 /** ConvertRAW is a .NET program driven entirely by CLI flags — there is no

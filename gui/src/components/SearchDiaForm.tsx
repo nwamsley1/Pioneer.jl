@@ -306,6 +306,13 @@ export function SearchDiaForm({
               fieldKey="runToRunNorm"
               onToggle={onToggle}
             />
+            <ToggleRow
+              title="Debug logging"
+              hint="Verbose console output — the log file keeps its own detail either way"
+              on={params.debugLogging}
+              fieldKey="debugLogging"
+              onToggle={onToggle}
+            />
           </div>
         </div>
       </section>

@@ -864,6 +864,7 @@ export function BuildSpecLibForm({
               ['addDecoys', 'Add decoys', 'Decoy sequences for FDR control'],
               ['includeContaminants', 'Include contaminants', 'Append the common contaminants set'],
               ['predictFragments', 'Predict fragments', 'Deep model for fragment intensities'],
+              ['debugLogging', 'Debug logging', 'Verbose console output'],
             ] as const
           ).map(([key, title, hint]) => (
             <div
