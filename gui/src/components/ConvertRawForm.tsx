@@ -8,6 +8,7 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
+import { LABEL } from '../lib/styles'
 import type { ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
@@ -25,14 +26,6 @@ const H2: React.CSSProperties = {
   letterSpacing: '0.04em',
   textTransform: 'uppercase',
   color: '#1B2A4A',
-}
-
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#344054',
-  marginBottom: 6,
 }
 
 const BROWSE: React.CSSProperties = {

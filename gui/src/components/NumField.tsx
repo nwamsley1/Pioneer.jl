@@ -1,5 +1,6 @@
 /** Port of NumField.dc.html — a labeled numeric input with clamped
  *  up/down steppers and an inline error beside the label. */
+import { LABEL_TIGHT } from '../lib/styles'
 import { numError, NUM_SPECS } from '../lib/validate'
 
 interface Props {
@@ -56,7 +57,7 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           minHeight: 16,
         }}
       >
-        <label style={{ fontSize: 12, color: '#475467' }}>{spec.label}</label>
+        <label style={LABEL_TIGHT}>{spec.label}</label>
         {error && (
           <span
             style={{

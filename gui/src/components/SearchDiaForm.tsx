@@ -7,6 +7,7 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
+import { HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
 import type { SearchParams } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -24,14 +25,6 @@ const H2: React.CSSProperties = {
   letterSpacing: '0.04em',
   textTransform: 'uppercase',
   color: '#1B2A4A',
-}
-
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#344054',
-  marginBottom: 6,
 }
 
 const BROWSE: React.CSSProperties = {
@@ -125,8 +118,8 @@ function ToggleRow({
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>{title}</div>
-        <div style={{ fontSize: 11.5, color: '#98A2B3' }}>{hint}</div>
+        <div style={LABEL_TIGHT}>{title}</div>
+        <div style={HINT}>{hint}</div>
       </div>
       <Toggle on={on} fieldKey={fieldKey} onClick={() => onToggle(fieldKey)} />
     </div>
