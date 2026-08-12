@@ -15,9 +15,12 @@ export function Toggle({ on, onClick, fieldKey }: Props) {
     >
       <span
         style={{
-          width: 38,
-          height: 22,
-          borderRadius: 11,
+          // Trimmed from 38x22. The setting labels are 12px, so at the old size
+          // the switch was the heaviest thing on the card and on/off state read
+          // ahead of the values. Still a comfortable hit target.
+          width: 34,
+          height: 20,
+          borderRadius: 10,
           position: 'relative',
           display: 'inline-block',
           flex: 'none',
@@ -29,9 +32,9 @@ export function Toggle({ on, onClick, fieldKey }: Props) {
           style={{
             position: 'absolute',
             top: 2,
-            left: on ? 18 : 2,
-            width: 18,
-            height: 18,
+            left: on ? 16 : 2,
+            width: 16,
+            height: 16,
             borderRadius: '50%',
             background: '#fff',
             boxShadow: '0 1px 2px rgba(0,0,0,.25)',
