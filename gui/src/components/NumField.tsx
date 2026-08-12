@@ -27,12 +27,18 @@ export function NumField({ fieldKey, value, onChange }: Props) {
     onChange(fieldKey, fmt(clamp(v + dir * spec.step)))
   }
 
+  // The two buttons divide the column rather than asserting a height. A fixed
+  // height (18 each + the 1px divider = 37) fell short of the input's ~41px
+  // row, so the column's unpainted remainder showed as a white sliver under
+  // the down arrow and pushed the divider above the field's centre. Splitting
+  // by flex tracks the input's line-height and padding automatically.
   const stepBtn: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
+    minHeight: 0,
     width: 26,
-    height: 18,
     border: 'none',
     background: '#F5F7F9',
     cursor: 'pointer',
@@ -97,6 +103,9 @@ export function NumField({ fieldKey, value, onChange }: Props) {
             flexDirection: 'column',
             borderLeft: '1px solid #E2E6EA',
             flex: 'none',
+            // Matches the buttons, so a sub-pixel rounding remainder cannot
+            // show through as white.
+            background: '#F5F7F9',
           }}
         >
           <button
