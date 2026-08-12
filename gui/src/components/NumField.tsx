@@ -48,7 +48,9 @@ export function NumField({ fieldKey, value, onChange }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
+    // Full height with the control pushed to the bottom, so a label that wraps
+    // to two lines does not drop its box below the ones beside it.
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -81,6 +83,7 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           borderRadius: 8,
           overflow: 'hidden',
           background: '#fff',
+          marginTop: 'auto',
           // Sized to what a number needs, not to the column it sits in. These
           // hold four or five characters; stretched to a full column they read
           // as unfinished next to the path fields, which are full-width because
