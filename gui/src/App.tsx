@@ -708,7 +708,7 @@ export default function App() {
   }
 
   const browseLibPath = async () => {
-    const picked = await backend.pickFolder('Choose where to write the library')
+    const picked = await backend.pickLibraryTarget('Name the library to build')
     if (picked) onParam('libPath', picked)
   }
 

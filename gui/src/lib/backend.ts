@@ -1,7 +1,7 @@
 /** Thin typed wrappers over the Rust commands and events. */
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 import {
   EMPTY_PATH_INFO,
@@ -106,6 +106,28 @@ export async function pickFolder(title: string): Promise<string | null> {
   if (typeof picked !== 'string') return null
   rememberDir(picked, true)
   return picked
+}
+
+/** Where to write a new library.
+ *
+ *  A save dialog, not a folder picker. `pickFolder` can only return a
+ *  directory that already exists, so naming a new library in the place you
+ *  want it was impossible -- you had to pick the parent and then edit the path
+ *  by hand.
+ *
+ *  Returns the path with `.poin` appended when the user did not type it. The
+ *  extension is not left to the dialog's filter: on macOS the filter is a
+ *  suggestion the user can override, and Pioneer expects the suffix.
+ */
+export async function pickLibraryTarget(title: string): Promise<string | null> {
+  const picked = await save({
+    title,
+    defaultPath: lastDir(),
+    filters: [{ name: 'Pioneer library', extensions: ['poin'] }],
+  })
+  if (typeof picked !== 'string' || !picked) return null
+  rememberDir(picked, false)
+  return picked.toLowerCase().endsWith('.poin') ? picked : `${picked}.poin`
 }
 
 /** FASTA picker. Returns [] when cancelled. */
