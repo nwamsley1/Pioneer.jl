@@ -20,7 +20,14 @@ export interface NumSpec {
 
 export const NUM_SPECS: Record<string, NumSpec> = {
   qValue: { label: 'q-value threshold', min: 0, max: 1, step: 0.005, int: false },
-  nIsotopes: { label: 'Isotopes (n)', min: 1, max: 3, step: 1, int: true },
+  nIsotopes: {
+    label: 'Fragment isotopes',
+    min: 1,
+    max: 3,
+    step: 1,
+    int: true,
+    info: 'How many isotope peaks of each fragment are considered when matching. Fragment, not precursor: the parameter is search.n_isotopes, flattened from search.fragment_settings. More costs time; 2 suits most data.',
+  },
   nce: {
     label: 'Initial NCE',
     min: 0,
