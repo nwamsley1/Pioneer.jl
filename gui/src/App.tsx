@@ -990,7 +990,6 @@ export default function App() {
           setRunError('')
         }}
         onToggleCollapsed={() => setNavCollapsed((c) => !c)}
-        onConfigureDefaultDir={() => void backend.pickDefaultDir()}
         onViewJob={(id) => {
           const job = jobs.find((j) => j.id === id)
           if (job) inspectJob(job)

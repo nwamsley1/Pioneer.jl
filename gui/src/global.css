@@ -230,6 +230,14 @@ body {
   color: #f0a8a8 !important;
 }
 
+/* The sidebar header's gear and collapse buttons. Not .pio-iconbtn: that hovers
+   to a warning red, which is right for the cancel and delete buttons it was
+   written for and wrong for a settings control. */
+.pio-navicon:hover {
+  color: var(--pio-nav-fg) !important;
+  background: var(--pio-nav-veil) !important;
+}
+
 .pio-iconbtn-view:hover {
   color: #cbd8ee !important;
 }

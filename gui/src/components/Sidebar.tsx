@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
+import { defaultDir, pickDefaultDir, setDefaultDir } from '../lib/backend'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
@@ -60,6 +61,129 @@ const barberStyle: React.CSSProperties = {
     'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
   backgroundSize: '28px 100%',
   animation: 'pio-barber .6s linear infinite',
+}
+
+/** The settings popover under the gear: where Browse starts, and the theme.
+ *
+ *  Both were previously loose in the sidebar — the folder behind a bare icon
+ *  with no way to see its current value, the theme as a lone swatch above the
+ *  collapse button. Neither is touched often enough to earn standing space.
+ */
+function SettingsPanel({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
+  const [dir, setDir] = useState(defaultDir())
+  const heading: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase',
+    color: 'var(--pio-nav-fg-faint)',
+    marginBottom: 7,
+  }
+  return (
+    <div
+      role="dialog"
+      aria-label="Settings"
+      style={{
+        position: 'absolute',
+        top: 36,
+        left: 0,
+        zIndex: 40,
+        width: 232,
+        padding: '13px 14px 14px',
+        borderRadius: 11,
+        background: 'var(--pio-nav)',
+        border: '1px solid var(--pio-nav-hair-strong)',
+        boxShadow: '0 12px 32px rgba(8,12,20,0.45)',
+      }}
+    >
+      <div style={heading}>Browse from</div>
+      <div
+        title={dir || 'Your home folder'}
+        style={{
+          fontSize: 11.5,
+          fontFamily: "'IBM Plex Mono'",
+          color: 'var(--pio-nav-fg)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          direction: 'rtl',
+          textAlign: 'left',
+          marginBottom: 8,
+        }}
+      >
+        {/* rtl so a long path truncates at the front, keeping the leaf visible */}
+        {dir || 'Home folder'}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          type="button"
+          className="pio-ghost"
+          onClick={async () => {
+            const picked = await pickDefaultDir()
+            if (picked) setDir(picked)
+          }}
+          style={panelBtn}
+        >
+          Change…
+        </button>
+        {dir && (
+          <button
+            type="button"
+            className="pio-ghost"
+            onClick={() => {
+              setDefaultDir('')
+              setDir('')
+            }}
+            title="Go back to starting at your home folder"
+            style={panelBtn}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
+      <div style={{ ...heading, marginTop: 15 }}>Theme</div>
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+        {THEMES.map((t) => {
+          const active = t.id === theme
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTheme(t.id)}
+              title={t.label}
+              aria-label={`${t.label} theme`}
+              aria-pressed={active}
+              style={{
+                width: 20,
+                height: 20,
+                padding: 0,
+                borderRadius: '50%',
+                cursor: 'pointer',
+                // Half surface, half accent: previews both the sidebar colour
+                // and what the Run button becomes.
+                background: `linear-gradient(135deg, ${t.swatch} 50%, ${t.accent} 50%)`,
+                border: active
+                  ? '2px solid rgba(255,255,255,0.9)'
+                  : '1px solid var(--pio-nav-hair-strong)',
+                boxShadow: active ? '0 0 0 2px rgba(0,0,0,0.4)' : 'none',
+              }}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+const panelBtn: React.CSSProperties = {
+  padding: '5px 10px',
+  borderRadius: 7,
+  border: '1px solid var(--pio-nav-hair-strong)',
+  background: 'none',
+  color: 'var(--pio-nav-fg)',
+  font: "600 11.5px 'IBM Plex Sans'",
+  cursor: 'pointer',
 }
 
 interface NavItemProps {
@@ -159,7 +283,6 @@ interface Props {
   onTheme: (id: ThemeId) => void
   onSelect: (id: CommandId) => void
   onToggleCollapsed: () => void
-  onConfigureDefaultDir: () => void
   onViewJob: (id: string) => void
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
 }
@@ -174,7 +297,6 @@ export function Sidebar({
   onTheme,
   onSelect,
   onToggleCollapsed,
-  onConfigureDefaultDir,
   onViewJob,
   onJobAction,
 }: Props) {
@@ -405,41 +527,59 @@ export function Sidebar({
         }}
       >
         {!collapsed && (
-          <button
-            type="button"
-            className="pio-iconbtn"
-            onClick={onConfigureDefaultDir}
-            title="Set the folder Browse starts from"
-            aria-label="Set the default browse folder"
-            style={iconBtn}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.7" />
-              <path
-                d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+          <div ref={themeRef} style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="pio-navicon"
+              onClick={() => setThemeOpen((o) => !o)}
+              title="Settings"
+              aria-label="Settings"
+              aria-expanded={themeOpen}
+              style={{ ...iconBtn, color: themeOpen ? 'var(--pio-nav-fg)' : 'var(--pio-nav-fg-dim)' }}
+            >
+              {/* A cog: hub, ring, and eight radial teeth. Two earlier
+                  attempts failed as icons -- a circle with spokes reads as a
+                  sun, and an eight-pointed star path reads as an explosion.
+                  Teeth as separate strokes off a plain ring is unambiguous at
+                  16px. */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="6.7" stroke="currentColor" strokeWidth="1.6" />
+                <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+                <path
+                  d="M18.7 12.0L20.9 12.0M16.7 16.7L18.3 18.3M12.0 18.7L12.0 20.9M7.3 16.7L5.7 18.3M5.3 12.0L3.1 12.0M7.3 7.3L5.7 5.7M12.0 5.3L12.0 3.1M16.7 7.3L18.3 5.7"
+                  stroke="currentColor"
+                  strokeWidth="2.1"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            {themeOpen && (
+              <SettingsPanel theme={theme} onTheme={onTheme} />
+            )}
+          </div>
         )}
         <button
           type="button"
-          className="pio-iconbtn"
+          className="pio-navicon"
           onClick={onToggleCollapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           style={iconBtn}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path
-              d={collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}
+          {/* The panel-with-a-rail icon every app uses for this, rather than a
+              bare chevron: it shows what is being toggled, not just a direction.
+              The rail sits on the side the sidebar is on. */}
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+            <rect
+              x="3"
+              y="4.5"
+              width="18"
+              height="15"
+              rx="2.6"
               stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+              strokeWidth="1.7"
             />
+            <path d="M9.2 4.5v15" stroke="currentColor" strokeWidth="1.7" />
           </svg>
         </button>
       </div>
@@ -535,52 +675,6 @@ export function Sidebar({
       </div>
 
 
-      {/* Collapsed to a single swatch by default. Four permanent circles is a lot
-          of standing visual weight for something set once and rarely revisited,
-          so the alternatives only appear once asked for. */}
-      {!collapsed && (
-        <div ref={themeRef} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 14px 4px' }}>
-          {(themeOpen ? THEMES : THEMES.filter((t) => t.id === theme)).map((t) => {
-            const active = t.id === theme
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => {
-                  if (!themeOpen) setThemeOpen(true)
-                  else {
-                    onTheme(t.id)
-                    setThemeOpen(false)
-                  }
-                }}
-                title={themeOpen ? t.label : `Theme: ${t.label} — click to change`}
-                aria-label={themeOpen ? `${t.label} theme` : `Theme: ${t.label}. Click to change.`}
-                aria-pressed={themeOpen ? active : undefined}
-                style={{
-                  width: 18,
-                  height: 18,
-                  padding: 0,
-                  borderRadius: '50%',
-                  cursor: 'pointer',
-                  // Half surface, half accent: previews both the sidebar colour
-                  // and what the Run button becomes.
-                  background: `linear-gradient(135deg, ${t.swatch} 50%, ${t.accent} 50%)`,
-                  border:
-                    themeOpen && active
-                      ? '2px solid rgba(255,255,255,0.85)'
-                      : '1px solid var(--pio-nav-hair-strong)',
-                  boxShadow: themeOpen && active ? '0 0 0 2px rgba(0,0,0,0.35)' : 'none',
-                  transition: 'border-color .12s',
-                }}
-              />
-            )
-          })}
-          {/* Always shown. Closed, the swatch is a lone circle with no hint
-              that it does anything — it read as decoration. The word is what
-              makes it a control; the tooltip only helps once you suspect it. */}
-          <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-faint)', marginLeft: 2 }}>theme</span>
-        </div>
-      )}
 
     </aside>
   )
