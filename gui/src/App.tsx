@@ -1107,6 +1107,11 @@ export default function App() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 11,
+                  // Never intercept a drop. The banner is not interactive, but
+                  // it appears above the fields and would otherwise be what
+                  // elementFromPoint returns for a release aimed at the field
+                  // underneath it.
+                  pointerEvents: 'none',
                 }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>

@@ -59,7 +59,10 @@ function PathRow({
   children?: React.ReactNode
 }) {
   return (
-    <div>
+    // The whole row is the drop zone, not just the input: aiming at "the MS
+    // data field" can plausibly land on the label, the Browse button or the
+    // padding between them.
+    <div data-drop={fieldKey}>
       <label style={LABEL}>{label}</label>
       <div style={{ display: 'flex', gap: 8 }}>
         <input

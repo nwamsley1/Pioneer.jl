@@ -37,9 +37,13 @@ const HILITE = 'pio-droptarget'
 function targetAt(x: number, y: number): HTMLElement | null {
   const r = window.devicePixelRatio || 1
   const el = document.elementFromPoint(x / r, y / r)
-  const hit = el?.closest('[data-key]') as HTMLElement | null
-  if (!hit) return null
-  const key = hit.getAttribute('data-key') ?? ''
+  if (!el) return null
+  // A row first — it covers the label, input, Browse button and padding. Then
+  // data-key, for targets that are a single control (the FASTA add button).
+  const row = el.closest('[data-drop]') as HTMLElement | null
+  if (row) return row
+  const hit = el.closest('[data-key]') as HTMLElement | null
+  const key = hit?.getAttribute('data-key') ?? ''
   return key in DROP_FIELDS ? hit : null
 }
 
@@ -64,7 +68,7 @@ export function listenForDrops(onDrop: DropHandler): Promise<UnlistenFn> {
       const el = targetAt(p.position.x, p.position.y)
       clearHighlight()
       if (!el || !p.paths.length) return
-      const key = el.getAttribute('data-key') as string
+      const key = (el.getAttribute('data-drop') ?? el.getAttribute('data-key')) as string
       onDrop(key, DROP_FIELDS[key], p.paths)
       return
     }

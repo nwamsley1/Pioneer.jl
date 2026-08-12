@@ -116,7 +116,7 @@ export function ConvertRawForm({
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="convertInput" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="convertInput"
@@ -155,7 +155,7 @@ export function ConvertRawForm({
           Output folder{' '}
           <span style={{ fontWeight: 400, color: '#98A2B3' }}>— defaults to the input folder</span>
         </label>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="convertOutput" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="convertOutput"

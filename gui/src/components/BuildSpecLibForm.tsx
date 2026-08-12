@@ -649,7 +649,7 @@ export function BuildSpecLibForm({
         <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
           Optional but recommended — without it Pioneer falls back to fixed m/z bounds.
         </p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="calibrationFile" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="calibrationFile"
@@ -695,7 +695,7 @@ export function BuildSpecLibForm({
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Library output</h2>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="libPath" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="libPath"
