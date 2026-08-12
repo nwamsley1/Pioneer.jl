@@ -93,7 +93,7 @@ export function TopBar({
             style={{
               display: 'flex',
               alignItems: 'center',
-              border: '1px solid #D7DBE0',
+              border: `1px solid ${threads === 0 ? '#E5484D' : '#D7DBE0'}`,
               borderRadius: 8,
               overflow: 'hidden',
               flex: 'none',
@@ -109,10 +109,18 @@ export function TopBar({
               −
             </button>
             <input
-              value={threads}
+              data-key="threads"
+              // Empty is a state the field must be able to hold. Rejecting a
+              // value that does not parse meant backspacing to nothing never
+              // reached onThreads, so the old number came straight back and the
+              // field could not be cleared to retype. 0 already meant "not
+              // determined" and nothing after startup reads it, so empty
+              // reuses it; Run refuses while it is set.
+              value={threads === 0 ? '' : String(threads)}
               onChange={(e) => {
-                const n = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10)
-                if (Number.isFinite(n)) onThreads(Math.max(1, Math.min(maxThreads, n)))
+                const digits = e.target.value.replace(/[^0-9]/g, '')
+                if (!digits) return onThreads(0)
+                onThreads(Math.max(1, Math.min(maxThreads, parseInt(digits, 10))))
               }}
               title={`${maxThreads} available · max ${maxThreads}`}
               style={{
@@ -123,7 +131,7 @@ export function TopBar({
                 borderRight: '1px solid #E5E9ED',
                 padding: '6px 0',
                 font: "600 13px 'IBM Plex Mono'",
-                color: '#1A2230',
+                color: threads === 0 ? '#C0392B' : '#1A2230',
                 outline: 'none',
               }}
             />

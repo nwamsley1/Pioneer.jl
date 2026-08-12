@@ -775,7 +775,10 @@ export default function App() {
   const jsonText = useMemo(
     () =>
       isConvert
-        ? convertCommandLine(convert, threads)
+        ? // Clamped: while the threads field is being cleared it holds 0, and
+          // the preview should not show `--threads-per-file 0` as if that were
+          // the command we would run. Run refuses in that state anyway.
+          convertCommandLine(convert, Math.max(1, threads))
         : JSON.stringify(
             isSearch ? buildSearchJson(search, currentExtras) : buildLibJson(build, currentExtras),
             null,
@@ -838,6 +841,12 @@ export default function App() {
   const run = (skipOverwriteCheck = false) => {
     if (pioneerError) {
       setRunError(pioneerError)
+      return
+    }
+    if (threads < 1) {
+      setRunError(`Enter a thread count between 1 and ${maxThreads}.`)
+      const el = document.querySelector('[data-key="threads"]')
+      if (el) (el as HTMLElement).focus?.()
       return
     }
     const block = isConvert
