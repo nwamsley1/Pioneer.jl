@@ -1,6 +1,7 @@
 /** The BuildSpecLib page: FASTA input, library output, digestion,
  *  modifications and options. Ported from the `isBuild` branch of the design.
  */
+import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
@@ -641,12 +642,12 @@ export function BuildSpecLibForm({
           key as "optional but recommended" and warns on every build without
           it. */}
       <section style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
-          <h2 style={H2}>Calibration file</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <h2 style={H2}>Reference MS file</h2>
+          <InfoDot text="Any one run from the experiment this library is for. Pioneer reads its scan headers to detect the fragment and precursor m/z bounds, instead of assuming defaults that may not match your method. It is not used for calibration in the retention-time sense, and nothing from it ends up in the library." />
         </div>
         <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          One MS data file from the experiment this library is for. Pioneer reads it to detect
-          fragment and precursor m/z bounds instead of assuming defaults.
+          Optional but recommended — without it Pioneer falls back to fixed m/z bounds.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <input

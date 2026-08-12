@@ -176,7 +176,7 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   if (!value.trim()) {
     return {
       level: 'warn',
-      msg: 'No calibration file — fragment m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
+      msg: 'No reference MS file — m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
     }
   }
   if (info.error) return { level: 'error', msg: info.error }

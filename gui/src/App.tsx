@@ -708,7 +708,7 @@ export default function App() {
   }
 
   const browseCalibration = async () => {
-    const picked = await backend.pickFile('Choose one MS data file', 'MS data', [
+    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', [
       'arrow',
       'mzML',
       'mzml',
