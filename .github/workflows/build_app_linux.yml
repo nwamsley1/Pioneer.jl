@@ -105,127 +105,37 @@ jobs:
           key: julia-linux-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
           restore-keys: julia-linux-${{ matrix.identifier }}-
 
-      # --cpu-target=generic on every julia invocation, not just create_app -- see
-      # the long note in build_app_windows.yml. Short version: HostCPUFeatures reads
-      # the BUILD host's CPU features at precompile time and VectorizationBase emits
-      # intrinsics gated on them, so an AVX-512 build machine bakes AVX-512 into an
-      # object compiled for haswell. Passing a non-native target at precompile time
-      # triggers the package's own make_generic() downgrade.
       - name: Install dependencies
         run: |
-          julia --threads auto --cpu-target=generic --project=. -e 'using Pkg; Pkg.instantiate()'
-          julia --threads auto --cpu-target=generic --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=. \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Validate locked application environment
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --startup-file=no --project=. \
+            packaging/check_app_contract.jl
+          julia --threads auto --startup-file=no --project=. \
+            src/build/check_cpu_dependencies.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
           cache-key: precompile-data-v2-yeast
 
-      # Before create_app, because a dead statements file is cheap to detect and expensive to ship.
-      # PackageCompiler skips unresolvable statements silently, so drift would otherwise be invisible.
-      - name: Check precompile statements
-        run: |
-          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          julia --threads auto --cpu-target=generic --project=. src/build/check_statements.jl
-
-      # Nothing has ever measured what the codegen actually needs. Every RSS
-      # figure we have is from the snoop searches (6.8 GB), not the --output-o
-      # child that gets SIGKILLed. macOS x64 completes the identical codegen on
-      # 14 GB while this 62.5 GB host does not, so total RAM is not the
-      # variable -- an effective limit is the likely culprit, and a cgroup cap
-      # would be invisible in `free`.
-      - name: Record memory limits and start a sampler
-        run: |
-          {
-            echo "=== /proc/meminfo (totals) ==="
-            awk '/MemTotal|MemAvailable|SwapTotal|SwapFree/' /proc/meminfo
-            echo "=== cgroup limits for THIS process (the build) ==="
-            cat /proc/self/cgroup || true
-            for f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.high \
-                     /sys/fs/cgroup/memory/memory.limit_in_bytes; do
-              [ -r "$f" ] && echo "$f = $(cat $f)"
-            done
-            echo "=== systemd limits on the runner service, if any ==="
-            systemctl show "$(systemctl list-units --type=service --no-legend \
-              | grep -i actions.runner | awk '{print $1}' | head -1)" \
-              -p MemoryMax -p MemoryHigh -p MemoryCurrent 2>/dev/null || echo "  (not a systemd service)"
-          } > "$RUNNER_TEMP/mem-limits.txt" 2>&1
-          cat "$RUNNER_TEMP/mem-limits.txt"
-
-          cat > "$RUNNER_TEMP/sampler.sh" <<'EOS'
-          #!/bin/bash
-          while true; do
-            avail=$(awk '/MemAvailable/{print $2}' /proc/meminfo)
-            swapf=$(awk '/SwapFree/{print $2}' /proc/meminfo)
-            top=$(ps -eo rss,comm --sort=-rss --no-headers | head -2 | tr '\n' ';')
-            echo "$(date -u +%H:%M:%S) availKB=$avail swapFreeKB=$swapf top=[$top]"
-            sleep 10
-          done
-          EOS
-          chmod +x "$RUNNER_TEMP/sampler.sh"
-          nohup "$RUNNER_TEMP/sampler.sh" > "$RUNNER_TEMP/mem-samples.txt" 2>&1 &
-          echo $! > "$RUNNER_TEMP/sampler.pid"
-
       - name: Compile application
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          unset PIONEER_APP_CPU_TARGET
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
-          julia --threads auto --cpu-target=generic --project=dev -e '
-            using PackageCompiler;
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false, force=true,
-              executables=[
-                "GetSearchParams"=>"main_GetSearchParams",
-                "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl",
-              # Same change as build_app_windows.yml -- see the long note there.
-              # The PackageCompiler default marks sandybridge clone_all, which
-              # duplicates every function (codegen memory) and compiles integer
-              # vector code for an AVX-without-AVX2 target that LLVM could not
-              # legalize (SIGABRT on Windows, run 31418689943).
-              #
-              # This Linux job dies differently -- ProcessSignaled(9), SIGKILL,
-              # ~10 min into codegen, runs 31403512429 and 31419196190 -- and
-              # whether the two share this root cause is UNVERIFIED. The halved
-              # codegen is the reason to expect it might.
-              cpu_target="generic;haswell,-rdrnd"
-            );
-          '
-
-      - name: Collect memory diagnostics
-        if: always()
-        run: |
-          [ -f "$RUNNER_TEMP/sampler.pid" ] && kill "$(cat "$RUNNER_TEMP/sampler.pid")" 2>/dev/null || true
-          {
-            echo "=== peak usage seen by the sampler ==="
-            sort -t= -k2 -n "$RUNNER_TEMP/mem-samples.txt" 2>/dev/null | head -3
-            echo "=== last 40 samples (around the failure) ==="
-            tail -40 "$RUNNER_TEMP/mem-samples.txt" 2>/dev/null
-            echo "=== kernel OOM evidence, if readable ==="
-            (dmesg 2>/dev/null || journalctl -k --no-pager -n 200 2>/dev/null) \
-              | grep -iE "oom|killed process" | tail -20 || echo "  (kernel log not readable by this user)"
-          } > "$RUNNER_TEMP/mem-report.txt" 2>&1
-          cat "$RUNNER_TEMP/mem-report.txt"
-
-      - name: Upload memory diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-memory-diagnostics
-          path: |
-            ${{ runner.temp }}/mem-limits.txt
-            ${{ runner.temp }}/mem-report.txt
-            ${{ runner.temp }}/mem-samples.txt
-          retention-days: 5
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            packaging/build_app.jl \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
 
       - name: Download PioneerConverter
         shell: bash
@@ -277,13 +187,10 @@ jobs:
           rm -rf "$dummy"
           
       # ---- GUI (gui/) -------------------------------------------------
-      # This runner is self-hosted, so the webkit/gtk toolchain may or may not
-      # be present and apt may not be usable. Both steps are therefore
-      # non-fatal: a missing GUI degrades to a CLI-only .deb rather than
-      # failing the job, because `publish` needs all three platforms and a
-      # Linux failure would block the entire release.
+      # The self-hosted runner is provisioned with the native Tauri toolchain.
+      # Verify those host dependencies without attempting privileged package
+      # installation from a non-interactive Actions job.
       - name: Setup Node (GUI)
-        continue-on-error: true
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -291,23 +198,31 @@ jobs:
           cache-dependency-path: gui/package-lock.json
 
       - name: Setup Rust (GUI)
-        continue-on-error: true
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install GUI build dependencies
-        id: gui_deps
-        continue-on-error: true
+      - name: Verify GUI build dependencies
         run: |
-          sudo apt-get update
-          # Tauri v2 on Linux needs webkit2gtk 4.1 (not 4.0).
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf \
+          required_packages=(
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            librsvg2-dev
+            patchelf
             libayatana-appindicator3-dev
+          )
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+            if [[ "$status" != "install ok installed" ]]; then
+              missing_packages+=("$package")
+            fi
+          done
+          if (( ${#missing_packages[@]} > 0 )); then
+            echo "Missing GUI prerequisites on the self-hosted runner:"
+            printf '  %s\n' "${missing_packages[@]}"
+            exit 1
+          fi
 
       - name: Build GUI
-        id: gui_build
-        if: steps.gui_deps.outcome == 'success'
-        continue-on-error: true
         working-directory: gui
         run: |
           npm ci
@@ -326,17 +241,17 @@ jobs:
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
 
-          # The GUI is optional: if its build was skipped or failed above, the
-          # package is still produced, just without it.
-          GUI_DEPENDS=""
           GUI_BIN="gui/src-tauri/target/release/pioneer-console"
-          if [[ -f "$GUI_BIN" ]]; then
-            install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
-            ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
-            install -Dm644 gui/src-tauri/icons/icon.png \
-              deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
-            mkdir -p deb/usr/share/applications
-            cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
+          if [[ ! -f "$GUI_BIN" ]]; then
+            echo "GUI build succeeded without producing $GUI_BIN"
+            exit 1
+          fi
+          install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
+          ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
+          install -Dm644 gui/src-tauri/icons/icon.png \
+            deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
+          mkdir -p deb/usr/share/applications
+          cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
           [Desktop Entry]
           Type=Application
           Name=Pioneer
@@ -346,13 +261,8 @@ jobs:
           Terminal=false
           Categories=Science;Biology;
           DESKTOP
-            # Only declared when the GUI is actually shipped, so a CLI-only
-            # package stays dependency-free as it is today.
-            GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
-            echo "GUI included in .deb"
-          else
-            echo "GUI binary not found at $GUI_BIN - packaging CLI only"
-          fi
+          GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
+          echo "GUI included in .deb"
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)

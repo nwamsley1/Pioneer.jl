@@ -1,5 +1,7 @@
 /** Port of NumField.dc.html — a labeled numeric input with clamped
  *  up/down steppers and an inline error beside the label. */
+import { InfoDot } from './InfoDot'
+import { LABEL_TIGHT } from '../lib/styles'
 import { numError, NUM_SPECS } from '../lib/validate'
 
 interface Props {
@@ -27,12 +29,18 @@ export function NumField({ fieldKey, value, onChange }: Props) {
     onChange(fieldKey, fmt(clamp(v + dir * spec.step)))
   }
 
+  // The two buttons divide the column rather than asserting a height. A fixed
+  // height (18 each + the 1px divider = 37) fell short of the input's ~41px
+  // row, so the column's unpainted remainder showed as a white sliver under
+  // the down arrow and pushed the divider above the field's centre. Splitting
+  // by flex tracks the input's line-height and padding automatically.
   const stepBtn: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
+    minHeight: 0,
     width: 26,
-    height: 18,
     border: 'none',
     background: '#F5F7F9',
     cursor: 'pointer',
@@ -40,7 +48,9 @@ export function NumField({ fieldKey, value, onChange }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
+    // Full height with the control pushed to the bottom, so a label that wraps
+    // to two lines does not drop its box below the ones beside it.
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -50,7 +60,8 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           minHeight: 16,
         }}
       >
-        <label style={{ fontSize: 12, color: '#475467' }}>{spec.label}</label>
+        <label style={LABEL_TIGHT}>{spec.label}</label>
+        {spec.info && <InfoDot text={spec.info} />}
         {error && (
           <span
             style={{
@@ -72,6 +83,12 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           borderRadius: 8,
           overflow: 'hidden',
           background: '#fff',
+          marginTop: 'auto',
+          // Sized to what a number needs, not to the column it sits in. These
+          // hold four or five characters; stretched to a full column they read
+          // as unfinished next to the path fields, which are full-width because
+          // a path genuinely can be any length.
+          maxWidth: 150,
         }}
       >
         <input
@@ -97,6 +114,9 @@ export function NumField({ fieldKey, value, onChange }: Props) {
             flexDirection: 'column',
             borderLeft: '1px solid #E2E6EA',
             flex: 'none',
+            // Matches the buttons, so a sub-pixel rounding remainder cannot
+            // show through as white.
+            background: '#F5F7F9',
           }}
         >
           <button

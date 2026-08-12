@@ -169,7 +169,7 @@ export function LoadConfigModal({ onClose, onApply }: Props) {
                 height: '32vh',
                 resize: 'vertical',
                 boxSizing: 'border-box',
-                background: '#1B2A4A',
+                background: 'var(--pio-nav)',
                 color: '#C8D0DA',
                 border: '1px solid #D7DBE0',
                 borderRadius: 9,
@@ -226,7 +226,7 @@ export function LoadConfigModal({ onClose, onApply }: Props) {
               font: "600 13px 'IBM Plex Sans'",
               ...(error || !draft.trim()
                 ? { background: '#A7D8CF', color: '#fff', cursor: 'not-allowed' }
-                : { background: '#2E4D7E', color: '#FFFFFF', cursor: 'pointer' }),
+                : { background: 'var(--pio-accent)', color: '#FFFFFF', cursor: 'pointer' }),
             }}
           >
             Load parameters

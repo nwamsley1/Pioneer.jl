@@ -21,7 +21,6 @@ FASTX = "c2308a5c-f048-11e8-3e8a-31650f418d12"
 FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
 GR = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
 InlineStrings = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
@@ -31,10 +30,8 @@ LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LightGBM = "7acf609c-83a4-11e9-1ffb-b912bcd3b04a"
 LightXML = "9c8b4983-aa76-5018-a973-4c85ecc9e179"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
-LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 MLJModelInterface = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
 Measures = "442fdcdd-2543-5da2-b0f3-8c86c306513e"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"
@@ -82,10 +79,8 @@ KernelDensity = "0.6"
 LaTeXStrings = "1"
 LightGBM = "2.2"
 LightXML = "0.9"
-LinearSolve = "2.31"
 Logging = "1.11.0"
 LoggingExtras = "1.1.0"
-LoopVectorization = "0.12"
 MLJModelInterface = "1.12.0"
 Measures = "0.3"
 NumericalIntegration = "0.2"
@@ -110,15 +105,3 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test"]
-
-[sources]
-# Pinned to a fork carrying a one-line AArch64 fix. HostCPUFeatures defines vscale() -- an
-# llvm.vscale intrinsic -- unconditionally, and LLVM cannot lower it on non-SVE AArch64 (all Apple
-# Silicon), so PackageCompiler's AOT object emission aborts and the macos-arm64 app build fails:
-#   LLVM ERROR: Cannot select: i64 = vscale ...   In function: julia_vscale_NNNNN
-# The function is dead upstream (its only reference is a commented-out line), so the fork simply
-# guards the definition behind the existing _has_aarch64_sve() predicate. HostCPUFeatures is listed
-# in [deps] only so this override applies -- Pioneer does not use it directly; it arrives via
-# LinearSolve -> RecursiveFactorization/TriangularSolve -> LoopVectorization.
-# Remove this once the fix is upstream (not yet reported to JuliaSIMD/HostCPUFeatures.jl).
-HostCPUFeatures = {url = "https://github.com/nwamsley1/HostCPUFeatures.jl", rev = "f678f3ccc6dbe84a61ffbd6f4f3cebb817bd9ebd"}

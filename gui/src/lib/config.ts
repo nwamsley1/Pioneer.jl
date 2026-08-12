@@ -34,6 +34,7 @@ export const SEARCH_OWNED_PATHS = [
   'optimization.chromatogram_integration.trace_mode',
   'proteinScoring.min_peptides',
   'maxLFQ.run_to_run_normalization',
+  'logging.debug_console_level',
 ]
 
 export function buildSearchJsonBase(s: SearchParams): Json {
@@ -51,9 +52,17 @@ export function buildSearchJsonBase(s: SearchParams): Json {
     global: { q_value_threshold: num(s.qValue, 0.01) },
     search: { n_isotopes: num(s.nIsotopes, 2) },
     acquisition: { nce: num(s.nce, 26) },
-    optimization: { chromatogram_integration: { trace_mode: s.traceMode } },
+    // Always combined. The GUI no longer offers a choice, and the value it
+    // used to send for the other option -- "separated" -- was not one Pioneer
+    // accepts. It expects "combined" or "separate", so choosing it failed the
+    // run at IntegrateChromatogramsSearch.
+    optimization: { chromatogram_integration: { trace_mode: 'combined' } },
     proteinScoring: { min_peptides: num(s.minPeptides, 1) },
     maxLFQ: { run_to_run_normalization: s.runToRunNorm },
+    // Console verbosity only. The debug *file* level is left alone: Pioneer
+    // defaults it to 1 because the log is useful after the fact whether or not
+    // the console was noisy at the time.
+    logging: { debug_console_level: s.debugLogging ? 1 : 0 },
   }
 }
 
@@ -127,6 +136,7 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
  *  keys the form does not surface — is preserved as extras. */
 export const BUILD_OWNED_PATHS = [
   'library_path',
+  'library_params.prediction_model',
   'calibration_raw_file',
   'fasta_paths',
   'fasta_names',
@@ -145,6 +155,7 @@ export const BUILD_OWNED_PATHS = [
   'fixed_mods',
   'include_contaminants',
   'predict_fragments',
+  'logging',
 ]
 
 /** Pioneer stores modifications column-wise: three parallel arrays. */
@@ -176,6 +187,9 @@ export function buildLibJsonBase(s: BuildParams): Json {
   const files = s.fastaFiles.length ? s.fastaFiles : [makeFastaRow('/path/to/fasta/file.fasta')]
   return {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
+    // Only this one key is emitted under library_params; the rest of that block
+    // comes from a loaded config's extras, so deepMerge must not clobber it.
+    library_params: { prediction_model: s.predictionModel },
     // Pioneer's own template carries this key with an empty default, so emit it
     // either way rather than omitting it when unset.
     calibration_raw_file: s.calibrationFile.trim(),
@@ -198,6 +212,7 @@ export function buildLibJsonBase(s: BuildParams): Json {
     fixed_mods: modsToJson(s.fixedMods),
     include_contaminants: s.includeContaminants,
     predict_fragments: s.predictFragments,
+    logging: { debug_console_level: s.debugLogging ? 1 : 0 },
   }
 }
 
@@ -308,13 +323,11 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   if (isObj(obj.acquisition) && obj.acquisition.nce != null) {
     set.nce = String(obj.acquisition.nce)
   }
-  const opt = isObj(obj.optimization) ? obj.optimization : {}
-  const ci = isObj(opt.chromatogram_integration) ? opt.chromatogram_integration : {}
-  if (ci.trace_mode === 'combined' || ci.trace_mode === 'separated') {
-    set.traceMode = ci.trace_mode
-  }
   if (isObj(obj.proteinScoring) && obj.proteinScoring.min_peptides != null) {
     set.minPeptides = String(obj.proteinScoring.min_peptides)
+  }
+  if (isObj(obj.logging) && 'debug_console_level' in obj.logging) {
+    set.debugLogging = Number(obj.logging.debug_console_level) > 0
   }
   if (isObj(obj.maxLFQ) && 'run_to_run_normalization' in obj.maxLFQ) {
     set.runToRunNorm = !!obj.maxLFQ.run_to_run_normalization
@@ -337,19 +350,23 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
  *  Flags equal to the converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
  */
-export function buildConvertArgs(s: ConvertParams): string[] {
+export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
   if (s.skipExisting) args.push('--skip-existing')
-  args.push('--concurrent-files', s.concurrentFiles.trim())
-  args.push('--threads-per-file', s.threadsPerFile.trim())
+  // One file at a time, split across `threads` scan readers. The converter can
+  // work on several files concurrently, but exposing both knobs meant the two
+  // multiplied and it was easy to oversubscribe the machine without noticing.
+  // Pinned to 1 explicitly rather than left to the converter's own default.
+  args.push('--concurrent-files', '1')
+  args.push('--threads-per-file', String(Math.max(1, threads)))
   args.push('--batch-size', s.batchSize.trim())
   args.push('--scan-chunk-size', s.scanChunkSize.trim())
   return args
 }
 
 /** The command line as a user would type it, for the preview panel. */
-export function convertCommandLine(s: ConvertParams): string {
+export function convertCommandLine(s: ConvertParams, threads: number): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  return ['PioneerConverter', ...buildConvertArgs(s).map(quote)].join(' ')
+  return ['PioneerConverter', ...buildConvertArgs(s, threads).map(quote)].join(' ')
 }

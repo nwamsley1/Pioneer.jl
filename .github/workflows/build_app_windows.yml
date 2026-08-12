@@ -91,54 +91,6 @@ jobs:
         with:
           raw: ${{ steps.get_version.outputs.version }}
 
-      # Temporary. The last two Windows runs lost the runner during Compile
-      # application and uploaded NO logs, so nothing is known about the
-      # machine's real limits. Artifacts upload independently of the
-      # end-of-job log push, so writing this to a file at minute two survives
-      # a runner that dies at minute 150.
-      - name: Probe runner limits
-        shell: pwsh
-        run: |
-          $out = "$env:RUNNER_TEMP\runner-probe.txt"
-          "=== physical memory ===" | Out-File $out
-          Get-CimInstance Win32_ComputerSystem |
-            Select-Object @{n='TotalRAM_GB';e={[math]::Round($_.TotalPhysicalMemory/1GB,2)}},
-                          AutomaticManagedPagefile | Format-List | Out-File $out -Append
-          "=== pagefile setting ===" | Out-File $out -Append
-          Get-CimInstance Win32_PageFileSetting |
-            Select-Object Name, InitialSize, MaximumSize | Format-List | Out-File $out -Append
-          "=== pagefile in use ===" | Out-File $out -Append
-          Get-CimInstance Win32_PageFileUsage |
-            Select-Object Name, AllocatedBaseSize, PeakUsage | Format-List | Out-File $out -Append
-          "=== virtual memory totals ===" | Out-File $out -Append
-          Get-CimInstance Win32_OperatingSystem |
-            Select-Object @{n='TotalVisible_GB';e={[math]::Round($_.TotalVisibleMemorySize/1MB,2)}},
-                          @{n='TotalVirtual_GB';e={[math]::Round($_.TotalVirtualMemorySize/1MB,2)}} |
-            Format-List | Out-File $out -Append
-          "=== volumes ===" | Out-File $out -Append
-          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
-            Select-Object DeviceID,
-                          @{n='Size_GB';e={[math]::Round($_.Size/1GB,1)}},
-                          @{n='Free_GB';e={[math]::Round($_.FreeSpace/1GB,1)}} |
-            Format-Table | Out-File $out -Append
-          "TEMP=$env:TEMP"               | Out-File $out -Append
-          "RUNNER_TEMP=$env:RUNNER_TEMP" | Out-File $out -Append
-          Get-Content $out
-
-      # NOTE: an "Enlarge the pagefile" step lived here. It was written for the
-      # disposable 16 GB hosted runner, where the codegen exhausted the 2.9 GB
-      # default pagefile. #449 moves this job to CB-GOLDFARB-01, a physical lab
-      # machine, where that step would disable automatic pagefile management and
-      # force a 32-64 GB pagefile permanently. Removed with the runner change.
-      # It never fixed the build anyway -- see the cpu_target note below.
-
-      - name: Upload the probe
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-runner-probe
-          path: ${{ runner.temp }}/runner-probe.txt
-          retention-days: 3
-
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
         with:
@@ -154,88 +106,83 @@ jobs:
           key: julia-windows-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
           restore-keys: julia-windows-${{ matrix.identifier }}-
 
-      # --cpu-target=generic goes on EVERY julia invocation, not just create_app.
-      #
-      # HostCPUFeatures derives its feature set from LLVMGetHostCPUFeatures -- the
-      # BUILD machine's CPU -- at precompile time, and VectorizationBase emits
-      # intrinsics gated on it. Precompiled under the default "native" target on an
-      # AVX-512 host it bakes in @llvm.x86.avx512.rcp14.pd.128, which LLVM then
-      # cannot select when create_app compiles for haswell:
-      #   LLVM ERROR: Cannot select: v2f64 = X86ISD::RCP14      (run 31432163290)
-      #
-      # The package already guards against exactly this -- build_cpu_target is read
-      # from JLOptions at precompile time, and when it is not "native" make_generic()
-      # downgrades the feature set and freeze_cpu_target pins it. We never triggered
-      # it, because only create_app knew the target. Base.julia_cmd() carries -C to
-      # precompile workers, so setting it here propagates through the whole build.
-      #
-      # It must be `generic`, the LOWEST tier: the package takes split(target,";")[1],
-      # so freezing at haswell would bake AVX2 into the generic clone and reproduce
-      # the same failure one tier down.
       - name: Install dependencies
         shell: bash
         run: |
-          julia --threads auto --cpu-target=generic --project=. -e 'using Pkg; Pkg.instantiate()'
-          julia --threads auto --cpu-target=generic --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=. \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Validate locked application environment
+        shell: bash
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --startup-file=no --project=. \
+            packaging/check_app_contract.jl
+          julia --threads auto --startup-file=no --project=. \
+            src/build/check_cpu_dependencies.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
           cache-key: precompile-data-v2-yeast
 
-      # Before create_app, because a dead statements file is cheap to detect and expensive to ship.
-      # PackageCompiler skips unresolvable statements silently, so drift would otherwise be invisible.
-      - name: Check precompile statements
-        shell: bash
-        run: |
-          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          julia --threads auto --cpu-target=generic --project=. src/build/check_statements.jl
-
       - name: Compile application
         shell: bash
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          unset PIONEER_APP_CPU_TARGET
           fresh_depot="$(mktemp -d)"
           export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
-          julia --threads auto --cpu-target=generic --project=dev -e '
-            using PackageCompiler;
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false,
-              force=true,
-              executables=[
-                "GetSearchParams"=>"main_GetSearchParams",
-                "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl",
-              precompile_statements_file="src/build/precompile_statements.jl",
-              # The PackageCompiler default is
-              #   generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)
-              # which is two problems in one string.
-              #
-              # clone_all emits a complete duplicate of every function for the
-              # sandybridge tier, roughly doubling codegen memory and output.
-              #
-              # Worse, sandybridge is AVX *without* AVX2: it has 256-bit float
-              # registers but no 256-bit integer ops, so integer vector code has
-              # to be split into 128-bit halves for that target. On 2026-08-10
-              # LLVM failed to do that split and aborted the build outright --
-              #   LLVM ERROR: Do not know how to split the result of this operator!
-              #   signal 22: SIGABRT -> ProcessExited(3)
-              # 29 minutes into codegen on CB-GOLDFARB-01, a box with ample RAM
-              # (run 31418689943). Not a capacity failure; a codegen failure.
-              #
-              # Dropping the sandybridge tier removes the duplicate and the
-              # broken target together. Haswell (2013) and newer still get
-              # AVX2/FMA; older CPUs fall back to the generic baseline.
-              cpu_target="generic;haswell,-rdrnd"
-            );
-          '
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            packaging/build_app.jl \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
+
+      - name: Swap in MSVC LightGBM DLL (Windows core-utilization fix)
+        shell: pwsh
+        run: |
+          # The mingw-w64 LightGBM binary Julia bundles barely threads the tree-learner
+          # FIT (~1 core, libgomp-on-winpthreads barrier cost). Replace it with Microsoft's
+          # MSVC build of the SAME version (3.3.5) - it saturates all cores with
+          # bit-identical, seeded/deterministic results. Full write-up + benchmarks:
+          # src/build/windows/LIGHTGBM_MSVC.md.
+          # PIN COUPLING: these hashes match LightGBM = "2.2" (=> C API of LightGBM 3.3.5).
+          # If that compat is bumped, update these hashes AND
+          # src/utils/install/windows_lightgbm.jl to the matching MSVC build.
+          $ErrorActionPreference = 'Stop'
+          $wheelUrl = 'https://files.pythonhosted.org/packages/6a/31/13f80e5abac627c53375c1dc49404d622d929272a231c05b2f4f7bb98b9e/lightgbm-3.3.5-py3-none-win_amd64.whl'
+          $wheelSha = '02a40745c1972cf4a2cde764c7739228f45178c2237af2df40fde7063a58ac6a'
+          $dllSha   = 'a52a9494c894f9987f9be24c97e0dec7c37fd23b1184aa0ac39d3200ffa51699'
+          $app = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+
+          # 1) download + verify the pinned wheel (a zip)
+          Invoke-WebRequest -Uri $wheelUrl -OutFile lgbm.whl -UseBasicParsing
+          $h = (Get-FileHash -Algorithm SHA256 lgbm.whl).Hash.ToLower()
+          if ($h -ne $wheelSha) { throw "wheel SHA256 mismatch: got $h" }
+
+          # 2) extract + verify the MSVC lib_lightgbm.dll
+          Expand-Archive -LiteralPath lgbm.whl -DestinationPath lgbm_whl -Force
+          $msvc = "lgbm_whl\lightgbm\lib_lightgbm.dll"
+          $h2 = (Get-FileHash -Algorithm SHA256 $msvc).Hash.ToLower()
+          if ($h2 -ne $dllSha) { throw "DLL SHA256 mismatch: got $h2" }
+
+          # 3) overwrite the bundled (mingw) DLL in the app depot; fail loudly if the
+          #    create_app layout changed and none was found (so this can never silently no-op)
+          $targets = @(Get-ChildItem $app -Recurse -Filter lib_lightgbm.dll)
+          if ($targets.Count -eq 0) { throw "no bundled lib_lightgbm.dll under $app - create_app layout changed?" }
+          foreach ($t in $targets) { Copy-Item $msvc $t.FullName -Force; Write-Host "swapped: $($t.FullName)" }
+
+          # NOTE: the MSVC DLL's runtime dependencies (vcomp140 = OpenMP, vcruntime140,
+          # vcruntime140_1, msvcp140) are NOT copied app-local. They are installed by the
+          # Visual C++ 2015-2022 redistributable that the installer bundle chains ahead of
+          # the Pioneer MSI (see the "Build installer bundle" step and
+          # src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}). The redist is the licensed,
+          # complete, self-updating source; hand-copying individual DLLs risked omitting
+          # one (vcruntime140_1 is a real dependency here) and the wrong license grant.
+          Write-Host "MSVC LightGBM swap complete."
 
       - name: Download PioneerConverter
         shell: pwsh
@@ -391,8 +338,52 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-us `
+            -sval `
             -out "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
+
+      - name: Download VC++ redistributable
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Microsoft's official, always-latest VC++ 2015-2022 x64 redistributable. The
+          # MSVC lib_lightgbm.dll we ship depends on this runtime (vcomp140 OpenMP +
+          # vcruntime140 / vcruntime140_1 / msvcp140). We intentionally track "latest"
+          # (aka.ms) so security fixes flow through; the SHA-256 is logged for build
+          # provenance rather than pinned (the redist is idempotent + self-detecting).
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile vc_redist.x64.exe -UseBasicParsing
+          Write-Host ("vc_redist.x64.exe SHA-256 = " + (Get-FileHash -Algorithm SHA256 vc_redist.x64.exe).Hash)
+
+      - name: Build installer bundle (VC++ redist + Pioneer MSI)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Wrap the Pioneer MSI in a WiX "Burn" bootstrapper that installs the VC++
+          # redistributable first (skipped if already present), then Pioneer. Output is a
+          # single PioneerSetup-*.exe. See src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}.
+          $msi = "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi"
+          if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
+          if (-not (Test-Path 'vc_redist.x64.exe')) { throw 'vc_redist.x64.exe not downloaded' }
+          $identifier = (Get-Content src\build\package_info.json | ConvertFrom-Json).identifier
+
+          & candle.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -dProductVersion="${{ steps.norm.outputs.msi }}" `
+            -dPackageIdentifier="$identifier" `
+            -dMsiFile="$msi" `
+            -dVcRedistFile="vc_redist.x64.exe" `
+            -dLicenseRtf="src\build\windows\LICENSE.rtf" `
+            -arch x64 `
+            src\build\windows\Bundle.wxs
+
+          & light.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -out "PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe" `
+            Bundle.wixobj
 
       - name: Upload MSI
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
@@ -400,4 +391,12 @@ jobs:
         with:
           name: Pioneer-${{ matrix.identifier }}-msi
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Upload installer bundle
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pioneer-${{ matrix.identifier }}-setup
+          path: PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe
           retention-days: ${{ inputs.artifact_retention_days }}

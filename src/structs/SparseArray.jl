@@ -56,9 +56,7 @@ function initResiduals!(r::Vector{T}, sa::AbstractSparseDesignMatrix{Ti,T}, w::V
         append!(r, zeros(T, sa.m - length(r)))
     end
 
-    @turbo for i in range(1, sa.m)
-        r[i] = zero(T)
-    end
+    fill!(@view(r[1:sa.m]), zero(T))
 
     for n in range(1, sa.n_vals)
         if iszero(r[sa.rowval[n]])

@@ -271,7 +271,7 @@ end
 #     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
 #     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
 #     if isfile(wide_precursors_arrow_path)
-#         safeRm(wide_precursors_arrow_path, nothing)
+#         safeRm(wide_precursors_arrow_path)
 #     end
 #     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
 #         "species",
@@ -386,8 +386,8 @@ end
 #         end
 #     end
 #     if write_csv == false
-#         safeRm(long_precursors_path, nothing, force = true)
-#         safeRm(wide_precursors_path, nothing, force = true)
+#         safeRm(long_precursors_path; force = true)
+#         safeRm(wide_precursors_path; force = true)
 #     end
 #     return wide_precursors_arrow_path
 # end
@@ -491,7 +491,7 @@ function writePrecursorCSV_chunked(
     long_precursors_path = joinpath(out_dir, "precursors_long.tsv")
     wide_precursors_path = joinpath(out_dir, "precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir, "precursors_wide.arrow")
-    isfile(wide_precursors_arrow_path) && safeRm(wide_precursors_arrow_path, nothing)
+    isfile(wide_precursors_arrow_path) && safeRm(wide_precursors_arrow_path)
 
     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
         "species",
@@ -636,8 +636,8 @@ function writePrecursorCSV_chunked(
         end
     end
     if !write_csv
-        safeRm(long_precursors_path, nothing, force=true)
-        safeRm(wide_precursors_path, nothing, force=true)
+        safeRm(long_precursors_path; force=true)
+        safeRm(wide_precursors_path; force=true)
     end
     return wide_precursors_arrow_path
 end
@@ -690,7 +690,7 @@ function writeProteinGroupsCSV(
     wide_protein_groups_path = joinpath(out_dir,"protein_groups_wide.tsv")
     wide_protein_groups_arrow = joinpath(out_dir,"protein_groups_wide.arrow")
     if isfile(wide_protein_groups_arrow)
-        safeRm(wide_protein_groups_arrow, nothing)
+        safeRm(wide_protein_groups_arrow)
     end
 
     accs = getAccession(proteins)
@@ -795,8 +795,8 @@ function writeProteinGroupsCSV(
         write_batches!(nothing, nothing)
     end
     if write_csv == false
-        safeRm(long_protein_groups_path, nothing, force = true)
-        safeRm(wide_protein_groups_path, nothing, force = true)
+        safeRm(long_protein_groups_path; force = true)
+        safeRm(wide_protein_groups_path; force = true)
     end
     return wide_protein_groups_arrow
 end

@@ -5,8 +5,11 @@
  *  reproduced: the Console variant carries that state on its Component class
  *  but never renders it — everything is on one page.
  */
+import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
+import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
+import type { LibraryInfo } from '../lib/backend'
 import type { SearchParams } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -24,25 +27,6 @@ const H2: React.CSSProperties = {
   letterSpacing: '0.04em',
   textTransform: 'uppercase',
   color: '#1B2A4A',
-}
-
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#344054',
-  marginBottom: 6,
-}
-
-const BROWSE: React.CSSProperties = {
-  flex: 'none',
-  padding: '0 14px',
-  border: '1px solid #D7DBE0',
-  borderRadius: 9,
-  background: '#F8FAFB',
-  font: "600 12.5px 'IBM Plex Sans'",
-  color: '#344054',
-  cursor: 'pointer',
 }
 
 const inputStyle = (note: Note): React.CSSProperties => ({
@@ -77,7 +61,10 @@ function PathRow({
   children?: React.ReactNode
 }) {
   return (
-    <div>
+    // The whole row is the drop zone, not just the input: aiming at "the MS
+    // data field" can plausibly land on the label, the Browse button or the
+    // padding between them.
+    <div data-drop={fieldKey}>
       <label style={LABEL}>{label}</label>
       <div style={{ display: 'flex', gap: 8 }}>
         <input
@@ -125,8 +112,8 @@ function ToggleRow({
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>{title}</div>
-        <div style={{ fontSize: 11.5, color: '#98A2B3' }}>{hint}</div>
+        <div style={LABEL_TIGHT}>{title}</div>
+        <div style={HINT}>{hint}</div>
       </div>
       <Toggle on={on} fieldKey={fieldKey} onClick={() => onToggle(fieldKey)} />
     </div>
@@ -166,11 +153,11 @@ const LoadPreviousButton = ({ onClick }: { onClick: () => void }) => (
 interface Props {
   params: SearchParams
   notes: { msData: Note; library: Note; results: Note }
-  advancedOpen: boolean
+  /** What the selected .poin records about itself; null when none is chosen. */
+  libInfo: LibraryInfo | null
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowse: (key: 'msData' | 'library' | 'results') => void
-  onToggleAdvanced: () => void
   onOpenLoad: () => void
   onGoToBuild: () => void
 }
@@ -178,27 +165,13 @@ interface Props {
 export function SearchDiaForm({
   params,
   notes,
-  advancedOpen,
+  libInfo,
   onParam,
   onToggle,
   onBrowse,
-  onToggleAdvanced,
   onOpenLoad,
   onGoToBuild,
 }: Props) {
-  const seg = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '7px 0',
-    border: 'none',
-    borderRadius: 6,
-    font: "600 12.5px 'IBM Plex Sans'",
-    cursor: 'pointer',
-    transition: 'all .12s',
-    ...(active
-      ? { background: '#fff', color: '#1B2A4A', boxShadow: '0 1px 3px rgba(15,20,27,0.12)' }
-      : { background: 'none', color: '#667085' }),
-  })
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
@@ -244,7 +217,7 @@ export function SearchDiaForm({
                 padding: 0,
                 cursor: 'pointer',
                 font: "500 12px 'IBM Plex Sans'",
-                color: '#2E4D7E',
+                color: 'var(--pio-accent)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
@@ -255,6 +228,7 @@ export function SearchDiaForm({
               </svg>
               No library yet? Build one from a FASTA →
             </button>
+            <LibrarySummary info={libInfo} />
           </PathRow>
           <PathRow
             label="Results folder"
@@ -268,7 +242,13 @@ export function SearchDiaForm({
         </div>
       </section>
 
-      <section style={CARD}>
+      {/* Confidence & output and Advanced sit side by side at half width each.
+          Basis 300px, not 340: at the window's 980px minimum the sidebar and
+          padding leave about 670px, so 340 each would exceed it and wrap to a
+          column at the default size. At 300 they fit and then grow to ~330.
+          flex-start so the shorter card does not stretch to match the taller. */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <section style={{ ...CARD, flex: '1 1 300px', minWidth: 0 }}>
         <div
           style={{
             display: 'flex',
@@ -280,15 +260,17 @@ export function SearchDiaForm({
         >
           <h2 style={H2}>Confidence &amp; output</h2>
         </div>
-        <div style={{ display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ width: 190, flex: 'none' }}>
+        {/* Stacked, not side by side. One field beside four toggles left a large
+            empty quadrant under the field, and no amount of alignment fixes a
+            column with nothing else to hold. Full width also lets each toggle
+            sit at the card edge, which reads as deliberate. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
             <NumField fieldKey="qValue" value={params.qValue} onChange={onParam} />
             <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 6 }}>1% FDR = 0.01</div>
           </div>
           <div
             style={{
-              flex: 1,
-              minWidth: 240,
               display: 'flex',
               flexDirection: 'column',
               gap: 11,
@@ -322,6 +304,13 @@ export function SearchDiaForm({
               fieldKey="runToRunNorm"
               onToggle={onToggle}
             />
+            <ToggleRow
+              title="Debug logging"
+              hint="Verbose console output — the log file keeps its own detail either way"
+              on={params.debugLogging}
+              fieldKey="debugLogging"
+              onToggle={onToggle}
+            />
           </div>
         </div>
       </section>
@@ -332,67 +321,26 @@ export function SearchDiaForm({
           border: '1px solid #E7EAEE',
           borderRadius: 13,
           overflow: 'hidden',
+          flex: '1 1 300px',
+          minWidth: 0,
         }}
       >
-        <button
-          type="button"
-          className="pio-adv"
-          onClick={onToggleAdvanced}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '15px 20px',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            font: 'inherit',
-            textAlign: 'left',
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                color: '#1B2A4A',
-              }}
-            >
-              Advanced parameters
-            </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
-              Defaults suit most experiments
-            </div>
+        {/* Always open. Collapsed, this card was a half-width empty box beside
+            Confidence & output, and the four settings inside it are short
+            enough that hiding them saved nothing. */}
+        <div style={{ padding: '15px 20px 0' }}>
+          <h2 style={H2}>Advanced parameters</h2>
+          <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
+            Defaults suit most experiments
           </div>
-          <span
-            style={{
-              display: 'flex',
-              transition: 'transform .18s',
-              transform: advancedOpen ? 'rotate(180deg)' : undefined,
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path
-                d="m6 9 6 6 6-6"
-                stroke="#667085"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        </button>
-        {advancedOpen && (
-          <div style={{ padding: '4px 20px 20px', borderTop: '1px solid #EEF1F4' }}>
+        </div>
+        <div style={{ padding: '4px 20px 20px' }}>
             <div
               style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr 1fr',
                 gap: 14,
-                alignItems: 'start',
+                alignItems: 'stretch',
                 marginTop: 16,
               }}
             >
@@ -400,30 +348,9 @@ export function SearchDiaForm({
               <NumField fieldKey="nce" value={params.nce} onChange={onParam} />
               <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
             </div>
-            <div style={{ marginTop: 14, maxWidth: 280 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#475467', marginBottom: 6 }}>
-                Trace mode
-              </label>
-              <div style={{ display: 'flex', padding: 3, background: '#EEF1F4', borderRadius: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => onParam('traceMode', 'combined')}
-                  style={seg(params.traceMode === 'combined')}
-                >
-                  combined
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onParam('traceMode', 'separated')}
-                  style={seg(params.traceMode === 'separated')}
-                >
-                  separated
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
+        </div>
+        </section>
+      </div>
     </div>
   )
 }

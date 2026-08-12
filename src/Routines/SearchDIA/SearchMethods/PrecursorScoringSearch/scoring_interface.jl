@@ -258,7 +258,7 @@ function build_qvalue_spline_from_refs(
     finally
         GC.gc(false)
         for ref in sidecar_refs
-            safeRm(file_path(ref), nothing; force=true)
+            safeRm(file_path(ref); force=true)
         end
     end
 

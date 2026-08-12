@@ -666,7 +666,7 @@ function summarize_results!(
 
             if n_after == 0
                 # Drop the on-disk file so downstream code skips this fold.
-                safeRm(psm_path, nothing)
+                safeRm(psm_path)
                 continue
             end
 

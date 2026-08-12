@@ -150,7 +150,7 @@ function _merge_pass1_into_main!(
         main[!, :mbr_recovered]      = falses(n)
         pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
         writeArrow(path, main)
-        cleanup && safeRm(pass1_path, nothing; force=true)
+        cleanup && safeRm(pass1_path; force=true)
     end
     return nothing
 end

@@ -3,7 +3,7 @@
  *  Ported from the LOG DRAWER block of the design.
  */
 import { useEffect, useRef } from 'react'
-import type { Job, JobStatus } from '../lib/types'
+import type { Job, JobStatus, PathInfo } from '../lib/types'
 
 const PILL: React.CSSProperties = {
   fontSize: 11.5,
@@ -19,7 +19,7 @@ const drawerPill = (status: JobStatus | 'idle'): React.CSSProperties => {
     done: { background: 'rgba(16,185,129,0.18)', color: '#34D399' },
     queued: { background: 'rgba(245,158,11,0.14)', color: '#FCD9A0' },
   }
-  return { ...PILL, ...(byStatus[status] ?? { background: 'rgba(255,255,255,0.08)', color: '#9AA4B0' }) }
+  return { ...PILL, ...(byStatus[status] ?? { background: 'var(--pio-nav-veil)', color: 'var(--pio-nav-fg-dim)' }) }
 }
 
 const GHOST_BTN: React.CSSProperties = {
@@ -28,15 +28,17 @@ const GHOST_BTN: React.CSSProperties = {
   gap: 6,
   padding: '6px 12px',
   borderRadius: 8,
-  border: '1px solid rgba(255,255,255,0.18)',
+  border: '1px solid var(--pio-nav-hair-strong)',
   background: 'none',
-  color: '#C8D0DA',
+  color: 'var(--pio-nav-fg)',
   font: "600 12px 'IBM Plex Sans'",
   cursor: 'pointer',
 }
 
 interface Props {
   job: Job | null
+  /** Stat of the run's output folder, or null if not checked yet. */
+  targetInfo: PathInfo | null
   height: number
   statusText: string
   confirmCancel: boolean
@@ -44,11 +46,13 @@ interface Props {
   onAskCancel: () => void
   onKeepRunning: () => void
   onConfirmCancel: () => void
+  onOpenTarget: () => void
   onClose: () => void
 }
 
 export function LogDrawer({
   job,
+  targetInfo,
   height,
   statusText,
   confirmCancel,
@@ -56,6 +60,7 @@ export function LogDrawer({
   onAskCancel,
   onKeepRunning,
   onConfirmCancel,
+  onOpenTarget,
   onClose,
 }: Props) {
   const status: JobStatus | 'idle' = job ? job.status : 'idle'
@@ -82,7 +87,7 @@ export function LogDrawer({
       ? {
           position: 'absolute',
           inset: 0,
-          background: 'repeating-linear-gradient(45deg,#6E92D6 0 7px,#9DBDF0 7px 14px)',
+          background: 'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
           backgroundSize: '28px 100%',
           animation: 'pio-barber .6s linear infinite',
         }
@@ -97,13 +102,16 @@ export function LogDrawer({
   return (
     <div
       style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
+        // A flex sibling of the form pane, not an overlay. It used to be
+        // `position: absolute; bottom: 0`, which floated it over the form: the
+        // bottom of the parameter panel became unreachable the moment a run
+        // started, because the pane still believed it had the full height and
+        // its last rows sat underneath the console.
+        flex: 'none',
         height,
-        background: '#1B2A4A',
-        borderTop: '1px solid #131F38',
+        minHeight: 0,
+        background: 'var(--pio-nav)',
+        borderTop: '1px solid var(--pio-nav-border)',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '0 -8px 30px rgba(15,20,27,0.18)',
@@ -120,10 +128,10 @@ export function LogDrawer({
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'ns-resize',
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--pio-nav-veil)',
         }}
       >
-        <div style={{ width: 42, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.24)' }} />
+        <div style={{ width: 42, height: 4, borderRadius: 2, background: 'var(--pio-nav-hair-strong)' }} />
       </div>
 
       <div
@@ -132,7 +140,7 @@ export function LogDrawer({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 18px',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
+          borderBottom: '1px solid var(--pio-nav-veil)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -140,7 +148,7 @@ export function LogDrawer({
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: '#C8D0DA',
+              color: 'var(--pio-nav-fg)',
               maxWidth: 420,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -194,6 +202,38 @@ export function LogDrawer({
               </button>
             </div>
           )}
+          {/* Finished runs only: while one is running the folder is half
+              written, and the drawer already says when the output has been
+              moved or deleted -- so the button is disabled rather than opening
+              nothing. */}
+          {job && job.target && status !== 'running' && status !== 'queued' && (
+            <button
+              type="button"
+              className="pio-ghost"
+              onClick={onOpenTarget}
+              disabled={targetInfo !== null && !targetInfo.exists}
+              title={
+                targetInfo !== null && !targetInfo.exists
+                  ? `${job.target} is no longer there`
+                  : `Show ${job.target} in the file manager`
+              }
+              style={{
+                ...GHOST_BTN,
+                opacity: targetInfo !== null && !targetInfo.exists ? 0.45 : 1,
+                cursor: targetInfo !== null && !targetInfo.exists ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17V7.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Open folder
+            </button>
+          )}
           <button type="button" className="pio-ghost" onClick={onClose} title="Hide" style={GHOST_BTN}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path
@@ -214,7 +254,7 @@ export function LogDrawer({
           position: 'relative',
           overflow: 'hidden',
           height: 5,
-          background: 'rgba(255,255,255,0.14)',
+          background: 'var(--pio-nav-hair)',
           flex: 'none',
         }}
       >
@@ -230,14 +270,40 @@ export function LogDrawer({
           overflowY: 'auto',
           padding: '14px 18px',
           font: "12.5px/1.65 'IBM Plex Mono'",
-          color: '#AEC2E6',
+          color: 'var(--pio-nav-fg)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
       >
-        {job ? job.logLines.map((l) => l.text).join('\n') : ''}
+        {job && job.logLines.length === 0 && status !== 'running' && status !== 'queued' ? (
+          // A run restored from a previous session: history keeps the parameters
+          // so they can be recalled, but not the output, which is far too large
+          // for localStorage. Say so rather than showing an empty pane that looks
+          // like a bug.
+          <span style={{ color: 'var(--pio-nav-fg-faint)', fontStyle: 'italic' }}>
+            {status === 'interrupted' ? (
+              <>
+                This run was still going when Pioneer last closed, so it did not
+                finish. Its parameters were kept — click Run to start it again.
+                {job.target ? ` Anything it had written is in ${job.target}.` : ''}
+              </>
+            ) : (
+              <>
+                Output is not kept between sessions — this run's parameters were
+                restored from history.
+                {targetInfo === null
+                  ? ` Its results were written to ${job.target}.`
+                  : targetInfo.exists
+                    ? ` Its results are still at ${job.target}.`
+                    : ` Its results are no longer at ${job.target} — the folder has been moved or deleted.`}
+              </>
+            )}
+          </span>
+        ) : (
+          job ? job.logLines.map((l) => l.text).join('\n') : ''
+        )}
         {status === 'running' && (
-          <span style={{ color: '#2E4D7E', animation: 'pio-blink 1s step-end infinite' }}>▋</span>
+          <span style={{ color: 'var(--pio-accent)', animation: 'pio-blink 1s step-end infinite' }}>▋</span>
         )}
       </pre>
 

@@ -52,9 +52,7 @@ function _accumulate_residuals!(w::Vector{T},
    ) where {Ti<:Integer,T}
 
     # Zero residual vector
-    @turbo for i in range(1, H.m)
-        r[i] = zero(T)
-    end
+    fill!(@view(r[1:H.m]), zero(T))
 
     for n in range(1, H.n_vals)
         if iszero(r[H.rowval[n]])

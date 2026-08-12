@@ -1,3 +1,5 @@
+import { modEntry } from './koinaMods'
+
 export type CommandId = 'searchdia' | 'buildspeclib' | 'convertraw'
 
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
@@ -12,9 +14,10 @@ export interface SearchParams {
   qValue: string
   nIsotopes: string
   nce: string
-  traceMode: 'combined' | 'separated'
   minPeptides: string
   runToRunNorm: boolean
+  /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
+  debugLogging: boolean
 }
 
 export const SEARCH_DEFAULTS: SearchParams = {
@@ -27,9 +30,9 @@ export const SEARCH_DEFAULTS: SearchParams = {
   qValue: '0.01',
   nIsotopes: '2',
   nce: '26',
-  traceMode: 'combined',
   minPeptides: '1',
   runToRunNorm: false,
+  debugLogging: false,
 }
 
 /** One FASTA input row in the BuildSpecLib form. */
@@ -63,9 +66,57 @@ export interface ModEntry {
   mass: string
 }
 
+/** A fragment-prediction model Pioneer can drive. Mirrors MODEL_CONFIGS in
+ *  src/Pioneer.jl; `peptideLength` is that entry's `peptide_length`, with null
+ *  meaning unconstrained.
+ *
+ *  Pioneer clamps the digest to this range and warns
+ *  (clamp_digest_length_to_model), so a mismatch is never silent — but the
+ *  warning only appears once the build is already running. Surfacing the range
+ *  here lets the user see it while they are still choosing. */
+export interface PredictionModel {
+  id: string
+  label: string
+  note: string
+  peptideLength: { min: number; max: number } | null
+}
+
+export const PREDICTION_MODELS: PredictionModel[] = [
+  {
+    id: 'altimeter',
+    label: 'Altimeter',
+    note: 'Spline coefficients across collision energies; instrument-aware.',
+    peptideLength: null,
+  },
+  {
+    id: 'prosit_2020_hcd',
+    label: 'Prosit 2020 HCD',
+    note: 'Fixed collision energy, no PTM support beyond the defaults.',
+    peptideLength: { min: 7, max: 30 },
+  },
+  {
+    id: 'prosit_2024_ptm',
+    label: 'Prosit 2024 PTM',
+    note: 'Fixed collision energy, HCD, with PTM support.',
+    peptideLength: { min: 7, max: 30 },
+  },
+  {
+    id: 'prosit_2025_40ptm',
+    label: 'Prosit 2025 40-PTM',
+    note: 'As 2024 PTM, with a wider (40) modification vocabulary.',
+    peptideLength: { min: 7, max: 30 },
+  },
+]
+
+export function predictionModelById(id: string): PredictionModel {
+  return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
+}
+
 export interface BuildParams {
   fastaFiles: FastaEntry[]
   libPath: string
+  /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
+  predictionModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -80,12 +131,15 @@ export interface BuildParams {
   predictFragments: boolean
   variableMods: ModEntry[]
   fixedMods: ModEntry[]
+  /** logging.debug_console_level: 0 off, 1 on. */
+  debugLogging: boolean
 }
 
 /** Defaults match Pioneer's own simplified template from GetBuildLibParams. */
 export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
+  predictionModel: 'altimeter',
   calibrationFile: '',
   minLen: '7',
   maxLen: '40',
@@ -96,8 +150,11 @@ export const BUILD_DEFAULTS: BuildParams = {
   addDecoys: true,
   includeContaminants: true,
   predictFragments: true,
-  variableMods: [{ pattern: 'M', label: 'Oxidation', name: 'Unimod:35', mass: '15.99491' }],
-  fixedMods: [{ pattern: 'C', label: 'Carbamidomethyl', name: 'Unimod:4', mass: '57.021464' }],
+  // Built from the catalogue so the starting rows are exactly what the picker
+  // would add; hand-written copies drifted (Oxidation was 15.99491).
+  variableMods: [modEntry('altimeter', 35)],
+  fixedMods: [modEntry('altimeter', 4)],
+  debugLogging: false,
 }
 
 /** ConvertRAW is a .NET program driven entirely by CLI flags — there is no
@@ -109,8 +166,6 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. */
   outputDir: string
   skipExisting: boolean
-  concurrentFiles: string
-  threadsPerFile: string
   batchSize: string
   scanChunkSize: string
 }
@@ -120,8 +175,6 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   outputDir: '',
   skipExisting: false,
-  concurrentFiles: '2',
-  threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
 }
@@ -131,7 +184,16 @@ export type Invocation =
   | { kind: 'paramsFile'; json: string }
   | { kind: 'args'; args: string[] }
 
-export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+/** `interrupted` is not reported by a run — it is inferred at startup for a
+ *  row still marked queued or running, which can only mean the app went away
+ *  before it finished. */
+export type JobStatus =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
 
 /** `app` marks lines the GUI itself wrote (the command line, the params path,
  *  the exit message). Terminal cursor control only ever rewrites the stream it
@@ -145,10 +207,28 @@ export interface LogLine {
   transient: boolean
 }
 
+/** The form state a run was launched from, kept so the queue and history can put
+ *  it back on screen.
+ *
+ *  Stored as the form's own params rather than the serialized params file:
+ *  ConvertRAW's `paramsJson` is a display command line and cannot be parsed back,
+ *  and even for the Julia commands round-tripping through the Pioneer JSON would
+ *  lose anything the form models but the config does not. */
+export type JobSnapshot =
+  | { cmd: 'searchdia'; search: SearchParams }
+  | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'convertraw'; convert: ConvertParams }
+
 export interface Job {
   id: string
+  /** Its number in the run history: the next one at creation, kept for life.
+   *  Unlike a queue position this never changes, so deleting run 3 leaves runs
+   *  4 and 5 as 4 and 5. Zero for entries restored from before numbering. */
+  runNo: number
   cmd: CommandId
+  /** Generated adjective-noun name, e.g. "brisk-otter". */
   title: string
+  snapshot: JobSnapshot
   /** The output path this run writes to — shown next to the title. */
   target: string
   threads: number
@@ -165,6 +245,9 @@ export interface Job {
   viewerPaths: { results: string; msData: string; library: string } | null
   /** Where the params file was written, once the job actually started. */
   paramsPath: string
+  /** Unix seconds when the run reached a final status. 0 while it is still
+   *  going, or for history written before this was recorded. */
+  finishedAt: number
 }
 
 /** What the Rust `inspect_path` command reports. */

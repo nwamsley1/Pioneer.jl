@@ -109,10 +109,12 @@ n_combinations = countVarModCombinations(matches, 2)
 ```
 """
 function countVarModCombinations(var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
-    max_var_mods::Int)
+    max_var_mods::Int, min_var_mods::Int = 0)
     n_var_mods = length(var_mod_matches)
     n_var_mod_combinations = 0
-    for n_mods in 0:min(max_var_mods, n_var_mods)
+    # min_var_mods=0 includes the unmodified form (n_mods=0). min_var_mods>=1 excludes it;
+    # a peptide with fewer than min_var_mods sites yields an empty range -> 0 combinations.
+    for n_mods in min_var_mods:min(max_var_mods, n_var_mods)
         n_var_mod_combinations += binomial(n_var_mods, n_mods)
     end
     return n_var_mod_combinations

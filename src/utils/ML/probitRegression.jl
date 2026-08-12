@@ -40,12 +40,7 @@ end
 
 function fillXWX!(XWX::Matrix{T}, X::DataFrame, W::Vector{T}) where {T<:AbstractFloat}
     @noinline function fillCell(XWX::T, Xi::Vector{R}, Xj::Vector{V}, W::Vector{T}) where {T<:AbstractFloat, R,V<:Real}
-        #N = 8
-        #lane = VecRange{N}(0)
-        #@inbounds for i in 1:N:length(W)
-        #    XWX += Xi[lane + i]*W[lane + i]*Xj[lane + i]
-        #end
-        @turbo for i in 1:length(W)
+        @inbounds @simd for i in eachindex(W, Xi, Xj)
             XWX += Xi[i]*W[i]*Xj[i]
         end
         return XWX
@@ -63,7 +58,7 @@ end
 function fillY!(Y::Vector{T}, X::DataFrame, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat}
 
         @noinline function fillCell(Y::T, X::Vector{R}, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat,R<:Real}
-            @turbo for i in range(1, length(W))
+            @inbounds @simd for i in eachindex(W, X, Z)
                 Y += X[i]*W[i]*Z[i]
             end
             return Y
@@ -85,7 +80,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     function fillColumn!(η::Vector{T}, X::Vector{R}, β::T, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                @turbo for row in row_chunk
+                @inbounds @simd for row in row_chunk
                     η[row] += X[row]*β
                 end
             end
@@ -96,7 +91,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     #Initialize Z-scores to zero
     tasks = map(data_chunks) do row_chunk
         Threads.@spawn begin
-            @turbo for row in row_chunk
+            @inbounds @simd for row in row_chunk
                 η[row] = zero(T)
             end
         end
@@ -124,7 +119,7 @@ function vecSum!(v::Vector{T}, data_chunks) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             vsum = zero(T)
-            @turbo for i in chunk
+            @inbounds @simd for i in chunk
                 vsum += v[i]
             end
             return vsum
@@ -224,8 +219,7 @@ function ModelPredictProbs!(scores::Vector{U},
     function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                #@turbo for row in row_chunk
-                for row in row_chunk
+                @inbounds @simd for row in row_chunk
                     scores[row] += X[row]*β
                 end
             end
@@ -249,4 +243,3 @@ function ModelPredictProbs!(scores::Vector{U},
     fetch.(tasks)
 
 end
-

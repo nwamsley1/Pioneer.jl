@@ -8,6 +8,133 @@
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 
+/* ---------------------------------------------------------------------------
+   Theme palettes.
+
+   Must stay BELOW the @import rules: CSS ignores any @import that is not at the
+   top of a sheet, so putting this above them silently stops the IBM Plex fonts
+   from loading and everything falls back to system fonts.
+
+   Only the chrome is themed -- the sidebar and drawer surfaces, the dark modal
+   panels, and the accent used by the Run button, toggles, links, the active-nav
+   rail and the barber-pole progress bar. The light content area keeps its
+   near-black heading colour in every theme; tinting body text costs legibility
+   for nothing.
+
+   Applied by setting data-theme on <html>. Charcoal is the default and lives in
+   :root, so it needs no attribute and a failed restore lands on it rather than
+   on an unstyled shell. Every other palette overrides from there.
+   --------------------------------------------------------------------------- */
+:root {
+  /* Charcoal. Accent kept slightly blue rather than neutral grey: a pure-grey
+     Run button stops reading as the primary action. */
+  --pio-nav: #23262B;           /* sidebar + drawer surface */
+  --pio-nav-border: #14171A;
+  --pio-accent: #3D4A57;        /* primary action, toggles, links */
+  --pio-accent-lift: #52626F;   /* lighter end of the Run gradient */
+  --pio-accent-soft: #8496A6;   /* running indicator, active-nav rail */
+  --pio-accent-softer: #B8C6D2; /* second stripe of the barber pole */
+  --pio-accent-wash: rgba(132,150,166,0.16);
+  --pio-accent-wash-strong: rgba(132,150,166,0.22);
+  --pio-accent-shadow: rgba(61,74,87,0.34);
+
+  /* Foreground tiers on the nav surface. Shared by every dark palette; only a
+     light theme needs to override them. */
+  --pio-nav-fg: #E7EBF0;        /* primary labels, log body */
+  --pio-nav-fg-dim: #98A6BC;    /* subtitles, secondary status */
+  --pio-nav-fg-faint: #6E7E97;  /* section headings, chips, empty hints */
+  --pio-nav-hair: rgba(255,255,255,0.12);        /* dividers, control borders */
+  --pio-nav-hair-strong: rgba(255,255,255,0.22); /* the resize grip */
+  --pio-nav-veil: rgba(255,255,255,0.05);        /* faint raised surfaces */
+
+  /* The Run button, kept separate from --pio-accent because that one also
+     colours link text on white cards, where the button's colour would be
+     unreadable. Defaults to the accent pair with white text. */
+  --pio-run-from: var(--pio-accent-lift);
+  --pio-run-to: var(--pio-accent);
+  --pio-run-fg: #FFFFFF;
+}
+
+:root[data-theme='navy'] {
+  --pio-nav: #1B2A4A;
+  --pio-nav-border: #131F38;
+  --pio-accent: #2E4D7E;
+  --pio-accent-lift: #3E62A0;
+  --pio-accent-soft: #6E92D6;
+  --pio-accent-softer: #9DBDF0;
+  --pio-accent-wash: rgba(46,77,126,0.18);
+  --pio-accent-wash-strong: rgba(46,77,126,0.22);
+  --pio-accent-shadow: rgba(46,77,126,0.28);
+}
+
+:root[data-theme='burgundy'] {
+  --pio-nav: #2E1A20;
+  --pio-nav-border: #1E1015;
+  --pio-accent: #8C3A4E;
+  --pio-accent-lift: #A8485E;
+  --pio-accent-soft: #C97186;
+  --pio-accent-softer: #E8AEBC;
+  --pio-accent-wash: rgba(140,58,78,0.22);
+  --pio-accent-wash-strong: rgba(140,58,78,0.28);
+  --pio-accent-shadow: rgba(140,58,78,0.32);
+}
+
+:root[data-theme='brown'] {
+  --pio-nav: #2B2019;
+  --pio-nav-border: #1B120D;
+  --pio-accent: #8A5A33;
+  --pio-accent-lift: #A8703F;
+  --pio-accent-soft: #C89364;
+  --pio-accent-softer: #E4BB90;
+  --pio-accent-wash: rgba(138,90,51,0.20);
+  --pio-accent-wash-strong: rgba(138,90,51,0.26);
+  --pio-accent-shadow: rgba(138,90,51,0.32);
+}
+
+:root[data-theme='sand'] {
+  /* The summer-suit one: a genuinely light chrome rather than a warm dark.
+     That inverts the relationship -- the accent has to stay dark enough to carry
+     white Run-button text, so it runs the opposite way from the other palettes,
+     where the accent is the lighter element. */
+  --pio-nav: #CDBE9C;
+  --pio-nav-border: #B3A484;
+  --pio-accent: #7A5B2E;
+  --pio-accent-lift: #96723C;
+  --pio-accent-soft: #6E5326;
+  --pio-accent-softer: #8A6B36;
+  --pio-accent-wash: rgba(122,91,46,0.18);
+  --pio-accent-wash-strong: rgba(122,91,46,0.26);
+  --pio-accent-shadow: rgba(122,91,46,0.30);
+  /* The one light palette, so it is the only one that inverts the foreground
+     and hairline tiers. Everything else inherits them from :root. */
+  --pio-nav-fg: #2A2418;
+  --pio-nav-fg-dim: #5A4F3A;
+  --pio-nav-fg-faint: #7D7059;
+  --pio-nav-hair: rgba(0,0,0,0.16);
+  --pio-nav-hair-strong: rgba(0,0,0,0.28);
+  --pio-nav-veil: rgba(0,0,0,0.05);
+
+  /* Light chrome wants a light button: a rich tan carrying dark text, rather
+     than the dark accent used for links, which would sit heavily on the pale
+     sidebar. */
+  --pio-run-from: #C9A86A;
+  --pio-run-to: #B08F4E;
+  --pio-run-fg: #2A2418;
+}
+
+:root[data-theme='olive'] {
+  --pio-nav: #262B1C;
+  --pio-nav-border: #171B10;
+  --pio-accent: #5C6B33;
+  --pio-accent-lift: #74853F;
+  --pio-accent-soft: #97A85F;
+  --pio-accent-softer: #C0CE94;
+  --pio-accent-wash: rgba(92,107,51,0.22);
+  --pio-accent-wash-strong: rgba(92,107,51,0.28);
+  --pio-accent-shadow: rgba(92,107,51,0.32);
+}
+
+
 * {
   box-sizing: border-box;
 }
@@ -101,6 +228,22 @@ body {
 
 .pio-iconbtn:hover {
   color: #f0a8a8 !important;
+}
+
+/* The sidebar header's gear and collapse buttons. Not .pio-iconbtn: that hovers
+   to a warning red, which is right for the cancel and delete buttons it was
+   written for and wrong for a settings control. */
+/* The field a drag is currently over. Applied imperatively by lib/dragdrop —
+   Tauri's drop event is window-level, so there is no React target to style. */
+.pio-droptarget {
+  outline: 2px dashed var(--pio-accent) !important;
+  outline-offset: 2px;
+  background: var(--pio-accent-wash) !important;
+}
+
+.pio-navicon:hover {
+  color: var(--pio-nav-fg) !important;
+  background: var(--pio-nav-veil) !important;
 }
 
 .pio-iconbtn-view:hover {

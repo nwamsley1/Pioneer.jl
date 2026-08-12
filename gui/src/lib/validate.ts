@@ -13,12 +13,29 @@ export interface NumSpec {
   max: number | null
   step: number
   int: boolean
+  /** Shown on an info dot beside the label, for fields whose name cannot carry
+   *  the whole story. */
+  info?: string
 }
 
 export const NUM_SPECS: Record<string, NumSpec> = {
   qValue: { label: 'q-value threshold', min: 0, max: 1, step: 0.005, int: false },
-  nIsotopes: { label: 'Isotopes (n)', min: 1, max: 3, step: 1, int: true },
-  nce: { label: 'NCE', min: 0, max: 100, step: 1, int: false },
+  nIsotopes: {
+    label: 'Fragment isotopes',
+    min: 1,
+    max: 3,
+    step: 1,
+    int: true,
+    info: 'How many isotope peaks of each fragment are considered when matching. Fragment, not precursor: the parameter is search.n_isotopes, flattened from search.fragment_settings. More costs time; 2 suits most data.',
+  },
+  nce: {
+    label: 'Initial NCE',
+    min: 0,
+    max: 100,
+    step: 1,
+    int: false,
+    info: 'The starting guess for normalized collision energy. Pioneer refines it during the parameter tuning search, so it does not have to be exact — it only has to be close enough for tuning to converge.',
+  },
   minPeptides: { label: 'Min peptides', min: 1, max: null, step: 1, int: true },
   minLen: { label: 'Min length', min: 7, max: 40, step: 1, int: true },
   maxLen: { label: 'Max length', min: 7, max: 40, step: 1, int: true },
@@ -27,15 +44,11 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   missedCleav: { label: 'Missed cleav.', min: 0, max: 9, step: 1, int: true },
   maxVarMods: { label: 'Max var. mods', min: 0, max: 5, step: 1, int: true },
   // PioneerConverter's own defaults are 2 / 3 / 10000 / 128.
-  concurrentFiles: { label: 'Concurrent files', min: 1, max: null, step: 1, int: true },
-  threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
   batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
   scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
 }
 
 export const CONVERT_NUM_KEYS = [
-  'concurrentFiles',
-  'threadsPerFile',
   'batchSize',
   'scanChunkSize',
 ] as const
@@ -153,7 +166,10 @@ export function fastaNote(value: string, info: PathInfo): Note {
   if (info.is_dir) {
     return { level: 'error', msg: 'Choose a FASTA file, not a folder.' }
   }
-  // `.gz` is stripped by the backend, so a `.fasta.gz` reports "fasta".
+  // `extension_of` in paths.rs looks through a trailing `.gz`, so a
+  // `proteins.fasta.gz` reports "fasta" and passes. It did not always: the
+  // backend returned "gz" and every compressed FASTA was rejected here, even
+  // though the picker offered them and Pioneer reads them.
   if (info.extension && !FASTA_EXTENSIONS.includes(info.extension)) {
     return { level: 'error', msg: 'Expected a FASTA file (.fasta, .fa, .faa…).' }
   }
@@ -167,7 +183,7 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   if (!value.trim()) {
     return {
       level: 'warn',
-      msg: 'No calibration file — fragment m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
+      msg: 'No reference MS file — m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
     }
   }
   if (info.error) return { level: 'error', msg: info.error }
@@ -325,29 +341,10 @@ export function convertOutputNote(value: string, info: PathInfo): Note {
 /** The two parallelism knobs multiply, so individually reasonable values can
  *  still ask for more threads than the machine has. The Julia thread picker is
  *  clamped at its control; this product cannot be, so it is enforced here. */
-export function convertThreadsNote(p: ConvertParams, maxThreads: number): Note {
-  const total = convertTotalThreads(p)
-  if (total > maxThreads) {
-    return {
-      level: 'error',
-      msg: `${total} threads requested but only ${maxThreads} are available — lower concurrent files or threads per file.`,
-    }
-  }
-  return NONE
-}
-
-export function convertTotalThreads(p: ConvertParams): number {
-  return (
-    Math.max(1, parseInt(p.concurrentFiles, 10) || 1) *
-    Math.max(1, parseInt(p.threadsPerFile, 10) || 1)
-  )
-}
-
 export function validateConvertRun(
   p: ConvertParams,
   inputNote: Note,
   outputNote: Note,
-  threadsNote: Note,
 ): RunBlock | null {
   if (!p.input.trim()) return { key: 'convertInput', msg: 'Choose the file or folder to convert.' }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
@@ -355,9 +352,6 @@ export function validateConvertRun(
   for (const key of CONVERT_NUM_KEYS) {
     const err = numError(key, p[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
-  }
-  if (threadsNote.level === 'error') {
-    return { key: 'concurrentFiles', msg: threadsNote.msg }
   }
   return null
 }

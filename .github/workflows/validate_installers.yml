@@ -204,24 +204,33 @@ jobs:
       - name: Download Windows installer
         uses: actions/download-artifact@v8
         with:
-          name: Pioneer-windows-x64-msi
+          name: Pioneer-windows-x64-setup
           path: installer
 
-      - name: Install MSI
+      - name: Install bundle
         shell: pwsh
         run: |
-          $msi = Get-ChildItem -Path installer -Filter *.msi | Select-Object -First 1
-          if (-not $msi) {
-            throw "MSI artifact not found"
+          # Install via the WiX Burn bootstrapper (PioneerSetup-*.exe) - the artifact users
+          # actually run. It chains the VC++ redistributable ahead of the Pioneer MSI. This
+          # exercises the bundle end to end (unlike installing the bare MSI directly).
+          # NOTE: this runner already has the VC++ runtime, so the redist's DetectCondition
+          # finds it present and SKIPS installation - i.e. this validates that the bundle
+          # builds/installs/runs, but NOT the bare-machine "install the runtime" path. That
+          # case must be checked manually on a runtime-free VM before a release (see
+          # src/build/windows/LIGHTGBM_MSVC.md).
+          $exe = Get-ChildItem -Path installer -Filter *.exe | Select-Object -First 1
+          if (-not $exe) {
+            throw "Setup bundle artifact not found"
           }
 
-          $process = Start-Process msiexec.exe `
-            -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') `
+          $process = Start-Process $exe.FullName `
+            -ArgumentList @('/install', '/quiet', '/norestart') `
             -Wait `
             -PassThru
 
-          if ($process.ExitCode -ne 0) {
-            throw "MSI installation failed with exit code $($process.ExitCode)"
+          # 0 = success, 3010 = success but reboot required (fine for CI).
+          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+            throw "Bundle installation failed with exit code $($process.ExitCode)"
           }
 
       - name: Cache RAW fixture

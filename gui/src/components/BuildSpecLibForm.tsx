@@ -1,9 +1,13 @@
 /** The BuildSpecLib page: FASTA input, library output, digestion,
  *  modifications and options. Ported from the `isBuild` branch of the design.
  */
+import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { HEADER_PRESETS, MOD_PRESETS } from '../lib/fasta'
+import { HEADER_PRESETS } from '../lib/fasta'
+import { findMod, modsForModel, siteAllowed, siteOptions, unimodId } from '../lib/koinaMods'
+import { BROWSE } from '../lib/styles'
+import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -33,9 +37,24 @@ const SMALL_INPUT: React.CSSProperties = {
   boxSizing: 'border-box',
 }
 
+/** The chevron the form's other selects draw, so the site picker matches them
+ *  rather than falling back to the native control. */
+const CHEVRON =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 8px center"
+
+/** Wide enough for the longest all-sites value the catalogue offers — Methyl's
+ *  ten residues — so the column does not resize as modifications are added. */
+const SITE_CELL: React.CSSProperties = {
+  width: 112,
+  flex: 'none',
+  padding: '8px 10px',
+  font: "12.5px 'IBM Plex Mono'",
+  boxSizing: 'border-box',
+}
+
 const MOD_HEADERS = (
   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-    <span style={{ width: 52, flex: 'none', fontSize: 10.5, fontWeight: 600, color: '#98A2B3', textAlign: 'center' }}>
+    <span style={{ width: 112, flex: 'none', fontSize: 10.5, fontWeight: 600, color: '#98A2B3' }}>
       Site
     </span>
     <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: '#98A2B3' }}>
@@ -77,6 +96,8 @@ const removeBtn = (onClick: () => void, title: string, width?: number): React.Re
 function ModTable({
   kind,
   mods,
+  modelId,
+  modelLabel,
   note,
   onField,
   onRemove,
@@ -84,6 +105,8 @@ function ModTable({
 }: {
   kind: 'fixed' | 'variable'
   mods: ModEntry[]
+  modelId: string
+  modelLabel: string
   note: string
   onField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemove: (kind: 'fixed' | 'variable', idx: number) => void
@@ -97,6 +120,14 @@ function ModTable({
     boxSizing: 'border-box',
     ...extra,
   })
+
+  // Label, accession and mass are all determined by the chosen modification, so
+  // they are shown rather than edited. Only the site is a real choice.
+  const readOnly = (extra: React.CSSProperties): React.CSSProperties =>
+    cell({ background: '#F7F8FA', color: '#667085', ...extra })
+
+  const available = modsForModel(modelId)
+  const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
     <>
@@ -114,39 +145,88 @@ function ModTable({
       </div>
       {MOD_HEADERS}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} data-key={`${kind}Mods`}>
-        {mods.map((m, i) => (
-          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              className="pio-input"
-              value={m.pattern}
-              onChange={(e) => onField(kind, i, 'pattern', e.target.value)}
-              placeholder={kind === 'fixed' ? 'C' : 'M'}
-              style={cell({ width: 52, flex: 'none', padding: '8px 7px', font: "13px 'IBM Plex Mono'", textAlign: 'center' })}
-            />
-            <input
-              className="pio-input"
-              value={m.label}
-              onChange={(e) => onField(kind, i, 'label', e.target.value)}
-              placeholder={kind === 'fixed' ? 'Carbamidomethyl' : 'Oxidation'}
-              style={cell({ flex: 1, minWidth: 0, font: "12.5px 'IBM Plex Sans'" })}
-            />
-            <input
-              className="pio-input"
-              value={m.name}
-              onChange={(e) => onField(kind, i, 'name', e.target.value)}
-              placeholder={kind === 'fixed' ? 'Unimod:4' : 'Unimod:35'}
-              style={cell({ width: 120, flex: 'none', font: "12px 'IBM Plex Mono'" })}
-            />
-            <input
-              className="pio-input"
-              value={m.mass}
-              onChange={(e) => onField(kind, i, 'mass', e.target.value)}
-              placeholder={kind === 'fixed' ? '57.021464' : '15.99491'}
-              style={cell({ width: 96, flex: 'none', padding: '8px 8px', font: "12px 'IBM Plex Mono'", textAlign: 'right' })}
-            />
-            {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
-          </div>
-        ))}
+        {mods.map((m, i) => {
+          // A config loaded from disk can name a modification this model does
+          // not accept. Keep the row and flag it rather than dropping data the
+          // user did not ask us to touch.
+          const def = findMod(modelId, m.name)
+          const bad = def === null || !siteAllowed(def, m.pattern)
+          const warn = bad
+            ? `${modelLabel} does not accept ${m.label || m.name || 'this modification'}${
+                def ? ` on ${m.pattern}` : ''
+              }. Koina will reject the build.`
+            : undefined
+          return (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
+              {def ? (
+                <select
+                  value={m.pattern}
+                  onChange={(e) => onField(kind, i, 'pattern', e.target.value)}
+                  style={{
+                    ...SITE_CELL,
+                    padding: '8px 24px 8px 10px',
+                    border: `1px solid ${bad ? '#B45309' : '#CBD2DA'}`,
+                    borderRadius: 9,
+                    color: bad ? '#B45309' : '#1D2939',
+                    background: `#FFFFFF ${CHEVRON}`,
+                    backgroundSize: '14px 14px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                  }}
+                >
+                  {/* A stored pattern outside the model's sites still needs an
+                      option, or the select would silently show a different one. */}
+                  {!siteAllowed(def, m.pattern) && <option value={m.pattern}>{m.pattern || '—'}</option>}
+                  {siteOptions(def).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div
+                  style={readOnly({
+                    ...SITE_CELL,
+                    borderColor: '#B45309',
+                    color: '#B45309',
+                  })}
+                >
+                  {m.pattern || '—'}
+                </div>
+              )}
+              <div
+                style={readOnly({
+                  flex: 1,
+                  minWidth: 0,
+                  font: "12.5px 'IBM Plex Sans'",
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
+                })}
+              >
+                {def ? def.label : m.label || 'Not supported by this model'}
+              </div>
+              <div style={readOnly({ width: 120, flex: 'none', font: "12px 'IBM Plex Mono'" })}>
+                {m.name || '—'}
+              </div>
+              <div
+                style={readOnly({
+                  width: 96,
+                  flex: 'none',
+                  padding: '8px 8px',
+                  font: "12px 'IBM Plex Mono'",
+                  textAlign: 'right',
+                })}
+              >
+                {m.mass || '—'}
+              </div>
+              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
+            </div>
+          )
+        })}
       </div>
       {mods.length === 0 && (
         <div style={{ fontSize: 12, color: '#98A2B3', padding: '4px 0' }}>
@@ -163,7 +243,7 @@ function ModTable({
           border: '1px dashed #CBD2DA',
           borderRadius: 9,
           font: "600 12.5px 'IBM Plex Sans'",
-          color: '#2E4D7E',
+          color: 'var(--pio-accent)',
           background:
             "#FAFBFC url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 12px center",
           backgroundSize: '16px 16px',
@@ -174,9 +254,10 @@ function ModTable({
         }}
       >
         <option value="">+ Add {kind} modification…</option>
-        {Object.entries(MOD_PRESETS).map(([id, def]) => (
-          <option key={id} value={id}>
-            {def.menuLabel}
+        {available.map((d) => (
+          <option key={d.unimod} value={String(d.unimod)} disabled={inList.has(d.unimod)}>
+            {d.label} ({d.sites.join('')}) · {d.mass >= 0 ? '+' : '−'}
+            {Math.abs(d.mass).toFixed(2)}
           </option>
         ))}
       </select>
@@ -232,6 +313,22 @@ export function BuildSpecLibForm({
   onRemoveMod,
   onAddMod,
 }: Props) {
+  const selectedModel = predictionModelById(params.predictionModel)
+
+  // Mirrors clamp_digest_length_to_model on the Julia side. Shown only when the
+  // requested range actually exceeds the model's, so the note appears exactly
+  // when the build would narrow it. Non-numeric input is left to the field's own
+  // validation rather than second-guessed here.
+  const lengthClamp = (() => {
+    const lim = selectedModel.peptideLength
+    if (!lim) return null
+    const lo = Number(params.minLen)
+    const hi = Number(params.maxLen)
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null
+    if (lo >= lim.min && hi <= lim.max) return null
+    return { min: Math.max(lo, lim.min), max: Math.min(hi, lim.max) }
+  })()
+
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: '7px 4px',
@@ -345,16 +442,7 @@ export function BuildSpecLibForm({
                   type="button"
                   className="pio-browse"
                   onClick={() => onBrowseFasta(i)}
-                  style={{
-                    flex: 'none',
-                    padding: '0 14px',
-                    border: '1px solid #D7DBE0',
-                    borderRadius: 8,
-                    background: '#F8FAFB',
-                    font: "600 12px 'IBM Plex Sans'",
-                    color: '#344054',
-                    cursor: 'pointer',
-                  }}
+                  style={BROWSE}
                 >
                   Browse
                 </button>
@@ -438,7 +526,7 @@ export function BuildSpecLibForm({
                 <span
                   style={{
                     fontSize: 11.5,
-                    color: f.auto && f.presetId !== 'custom' ? '#2E4D7E' : '#98A2B3',
+                    color: f.auto && f.presetId !== 'custom' ? 'var(--pio-accent)' : '#98A2B3',
                   }}
                 >
                   {f.presetId === 'custom'
@@ -454,7 +542,7 @@ export function BuildSpecLibForm({
                     border: 'none',
                     cursor: 'pointer',
                     font: "600 11.5px 'IBM Plex Sans'",
-                    color: '#2E4D7E',
+                    color: 'var(--pio-accent)',
                   }}
                 >
                   {f.showRegex ? 'Hide header regex' : 'Header parsing regex'}
@@ -540,7 +628,7 @@ export function BuildSpecLibForm({
             background: 'none',
             cursor: 'pointer',
             font: "600 13px 'IBM Plex Sans'",
-            color: '#2E4D7E',
+            color: 'var(--pio-accent)',
           }}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
@@ -554,14 +642,14 @@ export function BuildSpecLibForm({
           key as "optional but recommended" and warns on every build without
           it. */}
       <section style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
-          <h2 style={H2}>Calibration file</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <h2 style={H2}>Reference MS file</h2>
+          <InfoDot text="Any one run from the experiment this library is for. Pioneer reads its scan headers to detect the fragment and precursor m/z bounds, instead of assuming defaults that may not match your method. It is not used for calibration in the retention-time sense, and nothing from it ends up in the library." />
         </div>
         <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          One MS data file from the experiment this library is for. Pioneer reads it to detect
-          fragment and precursor m/z bounds instead of assuming defaults.
+          Optional but recommended — without it Pioneer falls back to fixed m/z bounds.
         </p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="calibrationFile" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="calibrationFile"
@@ -584,16 +672,7 @@ export function BuildSpecLibForm({
             type="button"
             className="pio-browse"
             onClick={onBrowseCalibration}
-            style={{
-              flex: 'none',
-              padding: '0 14px',
-              border: '1px solid #D7DBE0',
-              borderRadius: 9,
-              background: '#F8FAFB',
-              font: "600 12.5px 'IBM Plex Sans'",
-              color: '#344054',
-              cursor: 'pointer',
-            }}
+            style={BROWSE}
           >
             Browse
           </button>
@@ -616,7 +695,7 @@ export function BuildSpecLibForm({
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Library output</h2>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div data-drop="libPath" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
             data-key="libPath"
@@ -639,16 +718,7 @@ export function BuildSpecLibForm({
             type="button"
             className="pio-browse"
             onClick={onBrowseLibPath}
-            style={{
-              flex: 'none',
-              padding: '0 14px',
-              border: '1px solid #D7DBE0',
-              borderRadius: 9,
-              background: '#F8FAFB',
-              font: "600 12.5px 'IBM Plex Sans'",
-              color: '#344054',
-              cursor: 'pointer',
-            }}
+            style={BROWSE}
           >
             Browse
           </button>
@@ -674,6 +744,49 @@ export function BuildSpecLibForm({
       </section>
 
       <section style={CARD}>
+        <h2 style={{ ...H2, marginBottom: 5 }}>Fragment prediction</h2>
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
+          Which model predicts fragment intensities. All are served by Koina, so a
+          build needs network access.
+        </p>
+        <select
+          value={params.predictionModel}
+          onChange={(e) => onParam('predictionModel', e.target.value)}
+          style={{
+            width: '100%',
+            padding: '9px 36px 9px 11px',
+            border: '1px solid #CBD2DA',
+            borderRadius: 9,
+            font: "600 12.5px 'IBM Plex Sans'",
+            color: '#1D2939',
+            background:
+              "#FFFFFF url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.5l4 4 4-4' stroke='%232E4D7E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\") no-repeat right 12px center",
+            backgroundSize: '16px 16px',
+            cursor: 'pointer',
+            outline: 'none',
+            appearance: 'none',
+            WebkitAppearance: 'none',
+          }}
+        >
+          {PREDICTION_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <div style={{ marginTop: 9, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+          {selectedModel.note}
+          {selectedModel.peptideLength && (
+            <>
+              {' '}
+              Accepts peptides {selectedModel.peptideLength.min}–
+              {selectedModel.peptideLength.max} residues.
+            </>
+          )}
+        </div>
+      </section>
+
+      <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Digestion</h2>
         </div>
@@ -692,6 +805,25 @@ export function BuildSpecLibForm({
           <NumField fieldKey="maxCharge" value={params.maxCharge} onChange={onParam} />
           <NumField fieldKey="maxVarMods" value={params.maxVarMods} onChange={onParam} />
         </div>
+        {lengthClamp && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FFF7E6',
+              border: '1px solid #FFE0A3',
+              fontSize: 11.5,
+              color: '#7A5A11',
+              lineHeight: 1.5,
+            }}
+          >
+            {selectedModel.label} accepts {selectedModel.peptideLength!.min}–
+            {selectedModel.peptideLength!.max} residues. Pioneer will narrow this
+            digest to {lengthClamp.min}–{lengthClamp.max} and log a warning;
+            peptides outside that range are not built.
+          </div>
+        )}
       </section>
 
       <section style={CARD}>
@@ -703,6 +835,8 @@ export function BuildSpecLibForm({
         <ModTable
           kind="fixed"
           mods={params.fixedMods}
+          modelId={params.predictionModel}
+          modelLabel={selectedModel.label}
           note={modNote.fixed}
           onField={onModField}
           onRemove={onRemoveMod}
@@ -712,6 +846,8 @@ export function BuildSpecLibForm({
         <ModTable
           kind="variable"
           mods={params.variableMods}
+          modelId={params.predictionModel}
+          modelLabel={selectedModel.label}
           note={modNote.variable}
           onField={onModField}
           onRemove={onRemoveMod}
@@ -729,6 +865,7 @@ export function BuildSpecLibForm({
               ['addDecoys', 'Add decoys', 'Decoy sequences for FDR control'],
               ['includeContaminants', 'Include contaminants', 'Append the common contaminants set'],
               ['predictFragments', 'Predict fragments', 'Deep model for fragment intensities'],
+              ['debugLogging', 'Debug logging', 'Verbose console output'],
             ] as const
           ).map(([key, title, hint]) => (
             <div

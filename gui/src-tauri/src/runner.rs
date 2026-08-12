@@ -15,6 +15,26 @@ use tauri::{AppHandle, Emitter};
 
 use crate::pioneer;
 
+/// Keep spawned processes from opening a console window on Windows.
+///
+/// The Pioneer executables are console-subsystem programs. Started from a GUI
+/// process they get a console of their own unless CREATE_NO_WINDOW is set, so
+/// every run flashed up a black window alongside the app — and the cancel path
+/// did it a second time for `taskkill`.
+///
+/// No-op off Windows, so call sites do not need their own cfg.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+pub fn hide_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub fn hide_console(_cmd: &mut Command) {}
+
 /// A line of output from a running job.
 #[derive(Clone, serde::Serialize)]
 pub struct LineEvent {
@@ -136,6 +156,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     let resolved = pioneer::resolve_command(&spec.home, spec.command)?;
 
     let mut cmd = Command::new(&resolved.program);
+    hide_console(&mut cmd);
     for arg in &resolved.leading_args {
         cmd.arg(arg);
     }
@@ -527,8 +548,8 @@ fn kill_tree(pid: u32) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        let mut kill = Command::new("taskkill");
+        hide_console(&mut kill);
+        let _ = kill.args(["/PID", &pid.to_string(), "/T", "/F"]).status();
     }
 }
