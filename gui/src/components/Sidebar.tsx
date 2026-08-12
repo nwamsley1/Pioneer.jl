@@ -516,9 +516,10 @@ export function Sidebar({
               />
             )
           })}
-          {themeOpen && (
-            <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-faint)', marginLeft: 2 }}>theme</span>
-          )}
+          {/* Always shown. Closed, the swatch is a lone circle with no hint
+              that it does anything — it read as decoration. The word is what
+              makes it a control; the tooltip only helps once you suspect it. */}
+          <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-faint)', marginLeft: 2 }}>theme</span>
         </div>
       )}
 
