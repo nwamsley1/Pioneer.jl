@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the Pioneer console window",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "description": "Permissions for the Pioneer console window. start-dragging is required by data-tauri-drag-region: the window uses an overlay title bar, so the webview owns the strip the window would otherwise be dragged by, and core:window:default does not grant it.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:default"
+  ]
 }
