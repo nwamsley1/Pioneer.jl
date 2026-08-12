@@ -28,15 +28,8 @@ export const DROP_FIELDS: Record<string, 'dir' | 'file' | 'either'> = {
 
 const HILITE = 'pio-droptarget'
 
-/** The droppable element under a window position, or null.
- *
- *  The event reports physical pixels; `elementFromPoint` wants CSS pixels, so
- *  the ratio has to be divided out or the hit test lands somewhere else
- *  entirely on a Retina display.
- */
-function targetAt(x: number, y: number): HTMLElement | null {
-  const r = window.devicePixelRatio || 1
-  const el = document.elementFromPoint(x / r, y / r)
+function hitAt(x: number, y: number): HTMLElement | null {
+  const el = document.elementFromPoint(x, y)
   if (!el) return null
   // A row first — it covers the label, input, Browse button and padding. Then
   // data-key, for targets that are a single control (the FASTA add button).
@@ -45,6 +38,25 @@ function targetAt(x: number, y: number): HTMLElement | null {
   const hit = el.closest('[data-key]') as HTMLElement | null
   const key = hit?.getAttribute('data-key') ?? ''
   return key in DROP_FIELDS ? hit : null
+}
+
+/** The droppable element under a drop position, or null.
+ *
+ *  Tauri types the position as `PhysicalPosition`, but on macOS it arrives in
+ *  logical (CSS) pixels — measured: a drop on the MS data input reported
+ *  400,210 in a 980x840 viewport at devicePixelRatio 2. Dividing by the ratio,
+ *  as the type implies, halved every coordinate and put the hit test in the
+ *  sidebar.
+ *
+ *  So the raw value is tried first, and the scaled one only as a fallback, for
+ *  any platform that really does send physical pixels. Whichever lands on a
+ *  drop target wins; if neither does, the drop is ignored.
+ */
+function targetAt(x: number, y: number): HTMLElement | null {
+  const direct = hitAt(x, y)
+  if (direct) return direct
+  const r = window.devicePixelRatio || 1
+  return r === 1 ? null : hitAt(x / r, y / r)
 }
 
 function clearHighlight(): void {
