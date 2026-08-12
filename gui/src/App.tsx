@@ -409,27 +409,41 @@ export default function App() {
         await backend.historyImport(legacy.map(jobToRun), counter)
       }
       const rows = await backend.historyLoad()
-      const restored = rows
-        .map(runToJob)
-        .filter((j): j is Job => j !== null)
-        // A row still pending on disk means the app went away mid-run. Say so
-        // rather than re-queuing it: starting a multi-hour search because
-        // someone opened the app is not a reasonable thing to do unasked.
-        .map((j) =>
-          j.status === 'queued' || j.status === 'running'
-            ? { ...j, status: 'interrupted' as JobStatus }
-            : j,
-        )
-      restored.forEach((j) => savedRuns.current.add(`${j.id}:${j.status}`))
-      // Persist the reinterpretation, so it is not redone on every launch.
-      restored
-        .filter((j) => j.status === 'interrupted')
-        .forEach((j) => void backend.historySave(jobToRun(j)).catch(() => undefined))
-      // Live jobs belong to this session and are not in the store; keep them.
-      setJobs((prev) => [
-        ...restored,
-        ...prev.filter((j) => j.status === 'queued' || j.status === 'running'),
-      ])
+      setJobs((prev) => {
+        // A job this session started is already in memory, and that copy is the
+        // better one: the store has no log output, and for a run still going it
+        // does not yet know the outcome. So the in-memory job always wins, and
+        // rows are only used for runs this session has never seen.
+        //
+        // Every status is written to the store now, so a live run *is* on disk.
+        // Merging by id rather than concatenating is what keeps it from
+        // appearing twice, and from being read back as interrupted while it is
+        // still going.
+        const live = new Map(prev.map((j) => [j.id, j]))
+        const merged = rows
+          .map(runToJob)
+          .filter((j): j is Job => j !== null)
+          .map((j) => {
+            const mine = live.get(j.id)
+            if (mine) return mine
+            // Not this session's, and still pending on disk: the app that
+            // started it went away. Say so rather than re-queuing — starting a
+            // multi-hour search because someone opened the app is not a
+            // reasonable thing to do unasked.
+            return j.status === 'queued' || j.status === 'running'
+              ? { ...j, status: 'interrupted' as JobStatus }
+              : j
+          })
+        merged.forEach((j) => savedRuns.current.add(`${j.id}:${j.status}`))
+        // Persist only the reinterpretations, so they are not redone next launch.
+        const onDisk = new Map(rows.map((r) => [r.id, r.status]))
+        merged
+          .filter((j) => j.status === 'interrupted' && onDisk.get(j.id) !== 'interrupted')
+          .forEach((j) => void backend.historySave(jobToRun(j)).catch(() => undefined))
+        // Anything in memory the store has not caught up with yet.
+        const seen = new Set(rows.map((r) => r.id))
+        return [...merged, ...prev.filter((j) => !seen.has(j.id))]
+      })
     } catch {
       /* store unavailable — leave whatever is on screen alone */
     }
