@@ -3,52 +3,40 @@
 Checklist derived from the meeting plan (`gui_meeting_plan.pdf`) and the design
 notes (`gui_design_notes.pdf`). Tick items as they land.
 
-Last updated 2026-08-12.
+Last updated 2026-08-12 (second pass).
 
 ---
 
 ## Next up
 
-- [ ] **C5 — drag a folder onto the browse bar**
-      Tauri v2 emits file-drop events per window. Build it once as a shared drop
-      target so all three forms get it, with the hover affordance and rejection
-      of the wrong kind (a file where a folder is wanted).
+- [ ] **B3 — "Isotopes (n)"**
+      The last of the naming items. Ambiguous between precursor and fragment
+      isotopes; the parameter is fragment isotopes. One line now that
+      `NumSpec.info` and `InfoDot` exist — the same treatment `Initial NCE` got.
 
-- [ ] **D1 — show the library's metadata**
-      Decided: read the `.poin`'s own config, not its filename. A filename
-      breaks the moment a library is renamed and cannot report anything the
-      name does not already say.
-      Rust-side read (`paths.rs` already detects `.poin` layout via
-      `PION_MARKERS`), then a summary under the field: prediction model, digest
-      parameters, modifications, precursor count. Turns the path from a string
-      into something checkable before a two-hour run.
+- [ ] **Clear the 20 seeded runs** when they have served their purpose.
+      Deleting them in the UI works. The run counter deliberately will not
+      rewind, so real runs continue from 21.
 
-- [ ] **F2 — move history and queue to SQLite**
-      Needs `tauri-plugin-sql` or `rusqlite`, a schema, and a migration that
-      imports whatever is in `localStorage` so existing history survives.
-      Do this **before** F3 and F4 — both are much cheaper on top of a real
-      store, and doing them first means writing them twice.
+- [ ] **Decide on MS file names in search** *(raised, not decided)*
+      Search now covers every path in a run's snapshot, but not the individual
+      files inside the MS data folder — those were never recorded. Capturing
+      them means `PathInfo` returning names as well as counts, a new column for
+      them, and a migration. It only helps runs recorded from then on; existing
+      history stays unsearchable by file name.
 
-- [ ] **F4 — persist the queue across restarts**
-      Decided: **record interrupted runs in the history as "interrupted"**, not
-      re-queue them. Re-queuing risks starting a long job the moment the app
-      opens.
-      Their form state must be preserved so the parameters can be recalled and
-      re-run without filling the forms out again. `JobSnapshot` already carries
-      exactly that for all three commands, and history already restores it — so
-      this is mostly a matter of writing pending runs out on exit with a new
-      status rather than dropping them.
-      Needs an `interrupted` member on `JobStatus`, its own dot colour and
-      label, and a re-run affordance on the row.
+- [ ] **Decide on precursor count in the library panel** *(raised, not decided)*
+      The single most useful number for "is this the big human library or the
+      small ecoli one", but it lives in `precursors_table.arrow` and would mean
+      an Arrow reader in the Rust side. A real dependency decision rather than
+      something to slip in.
 
----
+- [ ] **ConvertRAW's Advanced disclosure** — SearchDIA's is now always open,
+      since collapsed it left a half-width empty box. ConvertRAW is a single
+      column where a collapsed section still reads correctly, so it was left
+      alone. Worth matching if you want the consistency.
 
 ## Small, ready whenever
-
-- [ ] **B3 — "Isotopes (n)"**
-      Ambiguous between precursor and fragment isotopes; the parameter is
-      fragment isotopes. One line: rename, and add `info` to its `NumSpec` the
-      way `Initial NCE` now does.
 
 - [ ] **E3 — threads for BuildSpecLib** *(a measurement, not a feature)*
       Does thread count actually affect a library build? One build at 4 threads
@@ -56,12 +44,13 @@ Last updated 2026-08-12.
       300 s of 431 s in Fragment Prediction, so the answer is probably yes —
       which would mean the default should stay high, not drop.
 
-- [ ] **History diff encoding**
+- [ ] **History diff encoding** *(much less pressing since F2)*
       Store only what differs from the defaults. Measured: SearchDIA 528 B →
       278 B (−47%), BuildSpecLib 959 B → 280 B (−71%); the BuildSpecLib saving
       is mostly the four UniProt header regexes, which `presetId: 'uniprot'`
       already implies. `target` also duplicates `results` and can go.
-      Independent of F2 — worth doing either way.
+      The cap and the quota cliff are both gone now that history is in SQLite,
+      so this is a size optimisation rather than a correctness one.
       **Must** stamp a defaults version alongside, or changing a default later
       silently reinterprets every stored entry.
 
@@ -120,8 +109,18 @@ wrong, all three icons are SVGs at matching stroke weight.
 
 Meeting plan — A1 collapse icon, A2 logo removed, B1 Reference MS file,
 B2 Initial NCE, B4 debug logging, C1 library save dialog, C2 browse-from-home
-and configurable, C4 remember the last library, E1 Windows console window,
-E2 open the output folder, F1 stable history numbers and no cap.
+and configurable, C4 remember the last library, C5 drag and drop onto the
+field, D1 library metadata, E1 Windows console window, E2 open the output
+folder, F1 stable history numbers and no cap, F2 SQLite, F3 history search,
+F4 interrupted runs.
 
 Also landed, not from either document — the Koina modification picker, the
-settings panel behind the gear, and the threads field being clearable.
+settings panel behind the gear, the threads field being clearable, the
+single-instance guard, Confidence & output beside Advanced, and Advanced
+always open on SearchDIA.
+
+Two bugs found by testing rather than by reading: the window could not be
+dragged at all (the overlay title bar needs core:window:allow-start-dragging,
+which core:window:default does not grant), and drops did nothing (Tauri types
+the drop position as physical but reports logical pixels, so dividing by the
+device ratio halved every coordinate).
