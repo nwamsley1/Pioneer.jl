@@ -104,7 +104,10 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "utils", "buildParamDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
-    
+
+    # Windows LightGBM MSVC-override install helper (setup_windows_lightgbm)
+    safe_include!(joinpath(package_root, "src", "utils", "install", "windows_lightgbm.jl"))
+
     # Logging is now handled directly in Pioneer.jl
     
     include_files!(

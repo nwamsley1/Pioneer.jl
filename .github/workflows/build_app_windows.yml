@@ -142,6 +142,51 @@ jobs:
             );
           '
 
+      - name: Swap in MSVC LightGBM DLL (Windows core-utilization fix)
+        shell: pwsh
+        run: |
+          # The mingw-w64 LightGBM binary Julia bundles barely threads the tree-learner
+          # FIT (~1 core, libgomp-on-winpthreads barrier cost). Replace it with Microsoft's
+          # MSVC build of the SAME version (3.3.5) - it saturates all cores with
+          # bit-identical, seeded/deterministic results. Full write-up + benchmarks:
+          # src/build/windows/LIGHTGBM_MSVC.md.
+          # PIN COUPLING: these hashes match LightGBM = "2.2" (=> C API of LightGBM 3.3.5).
+          # If that compat is bumped, update these hashes AND
+          # src/utils/install/windows_lightgbm.jl to the matching MSVC build.
+          $ErrorActionPreference = 'Stop'
+          $wheelUrl = 'https://files.pythonhosted.org/packages/6a/31/13f80e5abac627c53375c1dc49404d622d929272a231c05b2f4f7bb98b9e/lightgbm-3.3.5-py3-none-win_amd64.whl'
+          $wheelSha = '02a40745c1972cf4a2cde764c7739228f45178c2237af2df40fde7063a58ac6a'
+          $dllSha   = 'a52a9494c894f9987f9be24c97e0dec7c37fd23b1184aa0ac39d3200ffa51699'
+          $app = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+
+          # 1) download + verify the pinned wheel (a zip)
+          Invoke-WebRequest -Uri $wheelUrl -OutFile lgbm.whl -UseBasicParsing
+          $h = (Get-FileHash -Algorithm SHA256 lgbm.whl).Hash.ToLower()
+          if ($h -ne $wheelSha) { throw "wheel SHA256 mismatch: got $h" }
+
+          # 2) extract + verify the MSVC lib_lightgbm.dll
+          Expand-Archive -LiteralPath lgbm.whl -DestinationPath lgbm_whl -Force
+          $msvc = "lgbm_whl\lightgbm\lib_lightgbm.dll"
+          $h2 = (Get-FileHash -Algorithm SHA256 $msvc).Hash.ToLower()
+          if ($h2 -ne $dllSha) { throw "DLL SHA256 mismatch: got $h2" }
+
+          # 3) overwrite the bundled (mingw) DLL in the app depot; fail loudly if the
+          #    create_app layout changed and none was found (so this can never silently no-op)
+          $targets = @(Get-ChildItem $app -Recurse -Filter lib_lightgbm.dll)
+          if ($targets.Count -eq 0) { throw "no bundled lib_lightgbm.dll under $app - create_app layout changed?" }
+          foreach ($t in $targets) { Copy-Item $msvc $t.FullName -Force; Write-Host "swapped: $($t.FullName)" }
+
+          # 4) app-local VC++ runtime (vcomp140 = OpenMP) so the MSVC DLL loads with no
+          #    separate redistributable install. Placed next to the executables and the DLL.
+          $bin = Join-Path $app "bin"
+          foreach ($vc in 'vcomp140.dll','vcruntime140.dll','msvcp140.dll') {
+            $src = Join-Path $env:WINDIR "System32\$vc"
+            if (-not (Test-Path $src)) { throw "VC runtime $vc not present on the build runner" }
+            Copy-Item $src $bin -Force
+            foreach ($t in $targets) { Copy-Item $src $t.Directory.FullName -Force }
+          }
+          Write-Host "MSVC LightGBM swap + app-local VC runtime complete."
+
       - name: Download PioneerConverter
         shell: pwsh
         run: |
