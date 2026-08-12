@@ -245,6 +245,9 @@ export interface Job {
   viewerPaths: { results: string; msData: string; library: string } | null
   /** Where the params file was written, once the job actually started. */
   paramsPath: string
+  /** Unix seconds when the run reached a final status. 0 while it is still
+   *  going, or for history written before this was recorded. */
+  finishedAt: number
 }
 
 /** What the Rust `inspect_path` command reports. */

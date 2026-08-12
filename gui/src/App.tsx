@@ -144,6 +144,7 @@ function runToJob(r: backend.StoredRun): Job | null {
           }
         : null,
     paramsPath: '',
+    finishedAt: r.finished_at,
   }
 }
 
@@ -157,7 +158,7 @@ function jobToRun(j: Job): backend.StoredRun {
     threads: j.threads,
     status: j.status,
     snapshot: JSON.stringify(j.snapshot),
-    finished_at: 0,
+    finished_at: j.finishedAt,
   }
 }
 
@@ -173,6 +174,7 @@ function loadHistory(): Job[] {
       .map((r) => ({
         ...r,
         runNo: r.runNo ?? 0,
+        finishedAt: 0,
         logLines: [],
         failMsg: '',
         paramsJson: '',
@@ -645,6 +647,7 @@ export default function App() {
             return {
               ...j,
               status,
+              finishedAt: Math.floor(Date.now() / 1000),
               failMsg: success ? '' : message,
               logLines: message
                 ? [...j.logLines, { text: message, stream: 'app' as const, transient: false }]
@@ -967,6 +970,7 @@ export default function App() {
     const job: Job = {
       id,
       runNo,
+      finishedAt: 0,
       cmd: command,
       title: generateRunName(jobs.map((j) => j.title)),
       snapshot: isConvert

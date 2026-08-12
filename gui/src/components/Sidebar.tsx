@@ -65,6 +65,35 @@ function searchableText(j: Job): string {
   return parts.filter(Boolean).join(' \u0000 ').toLowerCase()
 }
 
+/** "12 Aug 2026, 14:32" in the viewer's locale, or '' when unknown.
+ *
+ *  Runs restored from before completion times were recorded have 0, and so do
+ *  runs still going — both should say nothing rather than 1 Jan 1970. */
+function finishedText(unixSeconds: number): string {
+  if (!unixSeconds) return ''
+  return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** The row's hover text. Free to be verbose — a title costs nothing until it is
+ *  hovered, and collapsed the row is a bare dot with no other explanation. */
+function rowTitle(j: Job): string {
+  const when = finishedText(j.finishedAt)
+  return [
+    `${j.runNo ? `Run ${j.runNo} · ` : ''}${j.title}`,
+    `${CMD_TEXT[j.cmd]} · ${STATUS_TEXT[j.status]}`,
+    when && `Finished ${when}`,
+    j.target,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 const CMD_TEXT: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
   buildspeclib: 'BuildSpecLib',
@@ -433,6 +462,7 @@ export function Sidebar({
             return (
               <div
                 key={j.id}
+                title={rowTitle(j)}
                 className="pio-job pio-row-hover"
                 style={{
                   display: 'flex',
