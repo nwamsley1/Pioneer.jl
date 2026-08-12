@@ -6,10 +6,27 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
-import { PioneerLogo } from './PioneerLogo'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
+
+/** The sidebar's small square icon buttons: config and collapse. Replaces the
+ *  full-width "Collapse" pill, which was the heaviest thing in the sidebar for
+ *  something pressed once a session. */
+const iconBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 30,
+  height: 30,
+  flex: 'none',
+  padding: 0,
+  border: 'none',
+  borderRadius: 8,
+  background: 'none',
+  color: 'var(--pio-nav-fg-dim)',
+  cursor: 'pointer',
+}
 
 const DOT_COLORS: Record<Job['status'], string> = {
   queued: '#F59E0B',
@@ -142,6 +159,7 @@ interface Props {
   onTheme: (id: ThemeId) => void
   onSelect: (id: CommandId) => void
   onToggleCollapsed: () => void
+  onConfigureDefaultDir: () => void
   onViewJob: (id: string) => void
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
 }
@@ -156,6 +174,7 @@ export function Sidebar({
   onTheme,
   onSelect,
   onToggleCollapsed,
+  onConfigureDefaultDir,
   onViewJob,
   onJobAction,
 }: Props) {
@@ -374,19 +393,55 @@ export function Sidebar({
       <div
         data-tauri-drag-region
         style={{
-          // On macOS the title bar is an overlay, so the webview starts at
-          // y=0 and the traffic lights float over this block; TITLEBAR_H is
-          // their clearance. It is 0 elsewhere, where the real title bar
-          // already sits above us.
-          padding: `${22 + TITLEBAR_H}px ${collapsed ? 0 : 20}px 20px`,
+          // On macOS the title bar is an overlay, so the webview starts at y=0
+          // and the traffic lights float over this block; TITLEBAR_H is their
+          // clearance. It is 0 elsewhere, where the real title bar sits above.
+          padding: `${TITLEBAR_H + 8}px 10px 8px`,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: 13,
+          justifyContent: collapsed ? 'center' : 'space-between',
+          gap: 6,
           borderBottom: '1px solid var(--pio-nav-veil)',
         }}
       >
-        <PioneerLogo />
+        {!collapsed && (
+          <button
+            type="button"
+            className="pio-iconbtn"
+            onClick={onConfigureDefaultDir}
+            title="Set the folder Browse starts from"
+            aria-label="Set the default browse folder"
+            style={iconBtn}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+              <path
+                d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        )}
+        <button
+          type="button"
+          className="pio-iconbtn"
+          onClick={onToggleCollapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          style={iconBtn}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path
+              d={collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
       </div>
 
       <div style={sectionStyle}>Workflow</div>
@@ -527,48 +582,6 @@ export function Sidebar({
         </div>
       )}
 
-      <button
-        type="button"
-        className="pio-navtoggle"
-        onClick={onToggleCollapsed}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 9,
-          margin: '8px 12px 16px',
-          padding: 12,
-          border: 'none',
-          borderRadius: 10,
-          background: 'var(--pio-nav-veil)',
-          color: 'var(--pio-nav-fg)',
-          cursor: 'pointer',
-          font: "600 13.5px 'IBM Plex Sans'",
-          letterSpacing: '0.01em',
-        }}
-      >
-        <svg
-          width="17"
-          height="17"
-          viewBox="0 0 24 24"
-          fill="none"
-          style={{
-            flex: 'none',
-            transition: 'transform .16s',
-            transform: collapsed ? 'rotate(180deg)' : undefined,
-          }}
-        >
-          <path
-            d="M14 7l-5 5 5 5"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        {!collapsed && <span>Collapse</span>}
-      </button>
     </aside>
   )
 }

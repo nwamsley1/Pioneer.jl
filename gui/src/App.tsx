@@ -369,6 +369,12 @@ export default function App() {
     applyTheme(theme)
   }, [theme])
 
+  // Resolve home once, so pickers have somewhere sensible to start before the
+  // user has picked anything or configured a default.
+  useEffect(() => {
+    void backend.initHomeDir()
+  }, [])
+
   // ---- live path validation ---------------------------------------------
 
   const inspect = useCallback((key: string, value: string) => {
@@ -617,8 +623,12 @@ export default function App() {
       library: 'Choose the spectral library folder (.poin)',
       results: 'Choose the results folder',
     }
-    // All three are folders — a .poin library is a directory of tables.
-    const picked = await backend.pickFolder(titles[key])
+    // All three are folders — a .poin library is a directory of tables. The
+    // library gets its own picker so it can start at the one used last.
+    const picked =
+      key === 'library'
+        ? await backend.pickLibrary(titles.library)
+        : await backend.pickFolder(titles[key])
     if (picked) onParam(key, picked)
   }
 
@@ -980,6 +990,7 @@ export default function App() {
           setRunError('')
         }}
         onToggleCollapsed={() => setNavCollapsed((c) => !c)}
+        onConfigureDefaultDir={() => void backend.pickDefaultDir()}
         onViewJob={(id) => {
           const job = jobs.find((j) => j.id === id)
           if (job) inspectJob(job)

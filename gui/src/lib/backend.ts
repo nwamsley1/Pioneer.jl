@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { homeDir } from '@tauri-apps/api/path'
 
 import {
   EMPTY_PATH_INFO,
@@ -67,37 +68,111 @@ export const onJobLine = (cb: (e: LineEvent) => void): Promise<UnlistenFn> =>
 export const onJobExit = (cb: (e: ExitEvent) => void): Promise<UnlistenFn> =>
   listen<ExitEvent>('job-exit', (e) => cb(e.payload))
 
-/** Where the last picker landed, so the next one opens there.
+/** Where pickers open.
  *
  *  Without a `defaultPath` the native dialog opens wherever the OS decides,
- *  which in a packaged build is the install directory — never a useful place to
- *  start. Remembering one location across every picker matches how these are
- *  actually used: MS data, library and results for a given experiment normally
- *  live near each other.
+ *  which in a packaged build is the install directory — never a useful place
+ *  to start.
  *
- *  Kept in localStorage rather than component state so it survives a restart,
- *  same as the form parameters.
+ *  Resolution order:
+ *    1. where the last picker landed *this session*
+ *    2. the configured default directory, if one has been set
+ *    3. the home directory
+ *
+ *  The session part is deliberately not persisted: each launch should start
+ *  from the default rather than wherever you happened to finish last time.
+ *  Within a session it still tracks you, because MS data, library and results
+ *  for one experiment normally live near each other.
  */
-const LAST_DIR_KEY = 'pioneerConsole.lastDir'
+const DEFAULT_DIR_KEY = 'pioneerConsole.defaultDir'
+
+/** Session-scoped, so it resets on launch. */
+let sessionDir: string | undefined
+
+let homeDirCache: string | undefined
+
+/** Resolve and cache the home directory. Called once at startup. */
+export async function initHomeDir(): Promise<void> {
+  try {
+    homeDirCache = await homeDir()
+  } catch {
+    /* leave undefined; the dialog falls back to the OS default */
+  }
+}
+
+/** The configured default browse directory, or '' when unset. */
+export function defaultDir(): string {
+  try {
+    return localStorage.getItem(DEFAULT_DIR_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setDefaultDir(dir: string): void {
+  try {
+    if (dir) localStorage.setItem(DEFAULT_DIR_KEY, dir)
+    else localStorage.removeItem(DEFAULT_DIR_KEY)
+  } catch {
+    /* private mode — the setting just will not stick */
+  }
+}
 
 function lastDir(): string | undefined {
-  try {
-    return localStorage.getItem(LAST_DIR_KEY) || undefined
-  } catch {
-    return undefined
-  }
+  return sessionDir || defaultDir() || homeDirCache
+}
+
+/** Let the user choose the directory every picker starts from. */
+export async function pickDefaultDir(): Promise<string | null> {
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    title: 'Choose the folder Pioneer starts browsing from',
+    defaultPath: defaultDir() || homeDirCache,
+  })
+  if (typeof picked !== 'string') return null
+  setDefaultDir(picked)
+  return picked
 }
 
 /** Remember where a pick landed. Files remember their parent folder. */
 function rememberDir(picked: string, isDirectory: boolean): void {
   const sep = picked.includes('\\') && !picked.includes('/') ? '\\' : '/'
   const dir = isDirectory ? picked : picked.slice(0, picked.lastIndexOf(sep))
-  if (!dir) return
+  if (dir) sessionDir = dir
+}
+
+/** The spectral library picked last, remembered across sessions.
+ *
+ *  Unlike the general browse location this one is persisted and field-specific.
+ *  A library is reused across many searches while data and results folders
+ *  change every time, so it is the one path worth defaulting to by name rather
+ *  than by neighbourhood.
+ */
+const LAST_LIBRARY_KEY = 'pioneerConsole.lastLibrary'
+
+export function lastLibrary(): string {
   try {
-    localStorage.setItem(LAST_DIR_KEY, dir)
+    return localStorage.getItem(LAST_LIBRARY_KEY) || ''
   } catch {
-    /* private mode / quota — the dialog just opens at the OS default */
+    return ''
   }
+}
+
+/** Library picker. Starts at the library used last if it is still there, and
+ *  falls back to the ordinary browse location if it has been moved or deleted. */
+export async function pickLibrary(title: string): Promise<string | null> {
+  const previous = lastLibrary()
+  const start = previous && (await inspectPath(previous)).exists ? previous : lastDir()
+  const picked = await open({ directory: true, multiple: false, title, defaultPath: start })
+  if (typeof picked !== 'string') return null
+  rememberDir(picked, true)
+  try {
+    localStorage.setItem(LAST_LIBRARY_KEY, picked)
+  } catch {
+    /* private mode — it just will not be remembered */
+  }
+  return picked
 }
 
 /** Native folder picker. Returns null when the user cancels. */
