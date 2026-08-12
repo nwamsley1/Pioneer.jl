@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v3 "Burn" bootstrapper for Pioneer on Windows.
+
+  It chains, in order:
+    1. Microsoft Visual C++ 2015-2022 x64 Redistributable  (skipped if already installed)
+    2. the Pioneer MSI
+
+  Why this exists: Pioneer's Windows build swaps in Microsoft's MSVC LightGBM DLL so the
+  tree learner uses all cores (see LIGHTGBM_MSVC.md). That MSVC DLL depends on the VC++
+  runtime (vcomp140 = OpenMP, vcruntime140, vcruntime140_1, msvcp140). Rather than copy
+  those DLLs app-local (incomplete + wrong license grant), the installer installs the
+  official redistributable, which is complete by construction and self-updating.
+
+  Build (see .github/workflows/build_app_windows.yml):
+    candle -ext WixBalExtension -ext WixUtilExtension -dProductVersion=.. -dMsiFile=.. \
+           -dVcRedistFile=vc_redist.x64.exe -dLicenseRtf=..\LICENSE.rtf -dPackageIdentifier=.. Bundle.wxs
+    light  -ext WixBalExtension -ext WixUtilExtension -out PioneerSetup-<ver>-<id>.exe Bundle.wixobj
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <Bundle Name="Pioneer CLI Tools"
+          Version="$(var.ProductVersion)"
+          Manufacturer="$(var.PackageIdentifier)"
+          UpgradeCode="0A16E7C7-2B2B-4244-B07B-B4B38ED8C6F3">
+
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.RtfLicense">
+      <bal:WixStandardBootstrapperApplication
+          LicenseFile="$(var.LicenseRtf)"
+          SuppressOptionsUI="yes" />
+    </BootstrapperApplicationRef>
+
+    <!-- Detect an already-installed VC++ 2015-2022 x64 runtime (the redist writes this
+         key on install); the ExePackage below is skipped when it is present. -->
+    <util:RegistrySearch Id="SearchVcRuntimeX64"
+        Root="HKLM"
+        Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+        Value="Installed"
+        Variable="VcRuntimeInstalled"
+        Result="value"
+        Win64="yes" />
+
+    <Chain>
+      <!-- 1) VC++ 2015-2022 x64 redistributable. Permanent: not removed when Pioneer is
+              uninstalled (it may be shared). Handles the 3010 "reboot required" code. -->
+      <ExePackage Id="Vcredist2015_2022_x64"
+          DisplayName="Microsoft Visual C++ 2015-2022 Redistributable (x64)"
+          SourceFile="$(var.VcRedistFile)"
+          Compressed="yes"
+          Permanent="yes"
+          Vital="yes"
+          InstallCommand="/install /quiet /norestart"
+          DetectCondition="VcRuntimeInstalled AND VcRuntimeInstalled &gt;= 1">
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+      </ExePackage>
+
+      <!-- 2) Pioneer itself. -->
+      <MsiPackage Id="PioneerMsi"
+          SourceFile="$(var.MsiFile)"
+          Compressed="yes"
+          Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>
