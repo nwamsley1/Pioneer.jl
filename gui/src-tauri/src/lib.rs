@@ -104,6 +104,20 @@ fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result<(), String> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first, before anything else can take effect: a
+        // second launch hands its arguments to the running instance and exits.
+        //
+        // Without it two processes share one WebKit profile and therefore one
+        // localStorage, where the whole run history is written as a single blob
+        // on every change -- so whichever instance saved last silently discarded
+        // the other's runs. They would also each run a queue with no knowledge
+        // of the other, happily asking for 15 threads apiece on a 16-core box.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { jobs: Arc::new(runner::Jobs::default()) })
         .invoke_handler(tauri::generate_handler![
