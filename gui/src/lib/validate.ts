@@ -13,12 +13,22 @@ export interface NumSpec {
   max: number | null
   step: number
   int: boolean
+  /** Shown on an info dot beside the label, for fields whose name cannot carry
+   *  the whole story. */
+  info?: string
 }
 
 export const NUM_SPECS: Record<string, NumSpec> = {
   qValue: { label: 'q-value threshold', min: 0, max: 1, step: 0.005, int: false },
   nIsotopes: { label: 'Isotopes (n)', min: 1, max: 3, step: 1, int: true },
-  nce: { label: 'NCE', min: 0, max: 100, step: 1, int: false },
+  nce: {
+    label: 'Initial NCE',
+    min: 0,
+    max: 100,
+    step: 1,
+    int: false,
+    info: 'The starting guess for normalized collision energy. Pioneer refines it during the parameter tuning search, so it does not have to be exact — it only has to be close enough for tuning to converge.',
+  },
   minPeptides: { label: 'Min peptides', min: 1, max: null, step: 1, int: true },
   minLen: { label: 'Min length', min: 7, max: 40, step: 1, int: true },
   maxLen: { label: 'Max length', min: 7, max: 40, step: 1, int: true },
