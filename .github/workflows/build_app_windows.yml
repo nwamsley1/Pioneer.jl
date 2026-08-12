@@ -91,54 +91,6 @@ jobs:
         with:
           raw: ${{ steps.get_version.outputs.version }}
 
-      # Temporary. The last two Windows runs lost the runner during Compile
-      # application and uploaded NO logs, so nothing is known about the
-      # machine's real limits. Artifacts upload independently of the
-      # end-of-job log push, so writing this to a file at minute two survives
-      # a runner that dies at minute 150.
-      - name: Probe runner limits
-        shell: pwsh
-        run: |
-          $out = "$env:RUNNER_TEMP\runner-probe.txt"
-          "=== physical memory ===" | Out-File $out
-          Get-CimInstance Win32_ComputerSystem |
-            Select-Object @{n='TotalRAM_GB';e={[math]::Round($_.TotalPhysicalMemory/1GB,2)}},
-                          AutomaticManagedPagefile | Format-List | Out-File $out -Append
-          "=== pagefile setting ===" | Out-File $out -Append
-          Get-CimInstance Win32_PageFileSetting |
-            Select-Object Name, InitialSize, MaximumSize | Format-List | Out-File $out -Append
-          "=== pagefile in use ===" | Out-File $out -Append
-          Get-CimInstance Win32_PageFileUsage |
-            Select-Object Name, AllocatedBaseSize, PeakUsage | Format-List | Out-File $out -Append
-          "=== virtual memory totals ===" | Out-File $out -Append
-          Get-CimInstance Win32_OperatingSystem |
-            Select-Object @{n='TotalVisible_GB';e={[math]::Round($_.TotalVisibleMemorySize/1MB,2)}},
-                          @{n='TotalVirtual_GB';e={[math]::Round($_.TotalVirtualMemorySize/1MB,2)}} |
-            Format-List | Out-File $out -Append
-          "=== volumes ===" | Out-File $out -Append
-          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
-            Select-Object DeviceID,
-                          @{n='Size_GB';e={[math]::Round($_.Size/1GB,1)}},
-                          @{n='Free_GB';e={[math]::Round($_.FreeSpace/1GB,1)}} |
-            Format-Table | Out-File $out -Append
-          "TEMP=$env:TEMP"               | Out-File $out -Append
-          "RUNNER_TEMP=$env:RUNNER_TEMP" | Out-File $out -Append
-          Get-Content $out
-
-      # NOTE: an "Enlarge the pagefile" step lived here. It was written for the
-      # disposable 16 GB hosted runner, where the codegen exhausted the 2.9 GB
-      # default pagefile. #449 moves this job to CB-GOLDFARB-01, a physical lab
-      # machine, where that step would disable automatic pagefile management and
-      # force a 32-64 GB pagefile permanently. Removed with the runner change.
-      # It never fixed the build anyway -- see the cpu_target note below.
-
-      - name: Upload the probe
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-runner-probe
-          path: ${{ runner.temp }}/runner-probe.txt
-          retention-days: 3
-
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
         with:
