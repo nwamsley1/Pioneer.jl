@@ -62,6 +62,26 @@ export const startJob = (
 
 export const cancelJob = (jobId: string): Promise<void> => invoke('cancel_job', { jobId })
 
+/** What a .poin library records about itself, read from its own config. */
+export interface LibraryInfo {
+  is_library: boolean
+  prediction_model: string
+  length_range: string
+  charge_range: string
+  missed_cleavages: string
+  max_var_mods: string
+  fixed_mods: string[]
+  variable_mods: string[]
+  fastas: string[]
+  include_contaminants: boolean
+  has_decoys: boolean
+  nce: string
+  error: string | null
+}
+
+export const libraryInfo = (path: string): Promise<LibraryInfo> =>
+  invoke('library_info', { path })
+
 /** Reveal a finished run's output folder. Rejects if it is no longer there. */
 export const openFolder = (path: string): Promise<void> => invoke('open_folder', { path })
 

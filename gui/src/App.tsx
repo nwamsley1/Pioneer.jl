@@ -234,6 +234,8 @@ export default function App() {
   const [overwriteOpen, setOverwriteOpen] = useState(false)
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
+  /** What the selected .poin records about itself, or null when there is none. */
+  const [libInfo, setLibInfo] = useState<backend.LibraryInfo | null>(null)
   const [theme, setTheme] = useState<ThemeId>(loadTheme)
 
   /** Set while the form is showing a past run's parameters rather than your own
@@ -369,6 +371,28 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+
+  // Read the library's own config whenever the path changes. Debounced with the
+  // same idea as path validation: the field is typed into, and each keystroke
+  // would otherwise be a filesystem read.
+  useEffect(() => {
+    const path = search.library.trim()
+    if (!path) {
+      setLibInfo(null)
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(() => {
+      backend
+        .libraryInfo(path)
+        .then((i) => !cancelled && setLibInfo(i))
+        .catch(() => !cancelled && setLibInfo(null))
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [search.library])
 
   // Resolve home once, so pickers have somewhere sensible to start before the
   // user has picked anything or configured a default.
@@ -1140,6 +1164,7 @@ export default function App() {
               <SearchDiaForm
                 params={search}
                 notes={searchNotes}
+                libInfo={libInfo}
                 advancedOpen={advancedOpen}
                 onParam={onParam}
                 onToggle={onToggle}

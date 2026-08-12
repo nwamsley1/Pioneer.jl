@@ -5,9 +5,11 @@
  *  reproduced: the Console variant carries that state on its Component class
  *  but never renders it — everything is on one page.
  */
+import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
+import type { LibraryInfo } from '../lib/backend'
 import type { SearchParams } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -151,6 +153,8 @@ const LoadPreviousButton = ({ onClick }: { onClick: () => void }) => (
 interface Props {
   params: SearchParams
   notes: { msData: Note; library: Note; results: Note }
+  /** What the selected .poin records about itself; null when none is chosen. */
+  libInfo: LibraryInfo | null
   advancedOpen: boolean
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
@@ -163,6 +167,7 @@ interface Props {
 export function SearchDiaForm({
   params,
   notes,
+  libInfo,
   advancedOpen,
   onParam,
   onToggle,
@@ -240,6 +245,7 @@ export function SearchDiaForm({
               </svg>
               No library yet? Build one from a FASTA →
             </button>
+            <LibrarySummary info={libInfo} />
           </PathRow>
           <PathRow
             label="Results folder"

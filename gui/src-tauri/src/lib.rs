@@ -24,6 +24,12 @@ fn inspect_path(path: String) -> paths::PathInfo {
     paths::inspect(&path)
 }
 
+/// What a `.poin` says about itself, for the panel under the library field.
+#[tauri::command]
+fn library_info(path: String) -> paths::LibraryInfo {
+    paths::library_info(&path)
+}
+
 #[tauri::command]
 fn read_config(path: String) -> Result<String, String> {
     paths::read_config(&path)
@@ -104,6 +110,7 @@ pub fn run() {
             pioneer_info,
             inspect_path,
             read_config,
+            library_info,
             cpu_count,
             open_folder,
             start_job,
