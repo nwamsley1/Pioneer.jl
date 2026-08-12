@@ -274,7 +274,7 @@ export function SearchDiaForm({
           <h2 style={H2}>Confidence &amp; output</h2>
         </div>
         <div style={{ display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ width: 190, flex: 'none' }}>
+          <div style={{ width: 150, flex: 'none' }}>
             <NumField fieldKey="qValue" value={params.qValue} onChange={onParam} />
             <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 6 }}>1% FDR = 0.01</div>
           </div>

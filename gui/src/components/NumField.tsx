@@ -79,6 +79,11 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           borderRadius: 8,
           overflow: 'hidden',
           background: '#fff',
+          // Sized to what a number needs, not to the column it sits in. These
+          // hold four or five characters; stretched to a full column they read
+          // as unfinished next to the path fields, which are full-width because
+          // a path genuinely can be any length.
+          maxWidth: 150,
         }}
       >
         <input
