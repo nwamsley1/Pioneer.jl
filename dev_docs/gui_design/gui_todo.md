@@ -156,16 +156,67 @@ one file at a time is the wanted behaviour. Definitions recovered from
 
 Deliberately deferred: this is a measurement task, not a UI task.
 
-## 3. Enzyme presets, plus custom regex
+## 3. Enzyme presets, plus custom regex — *researched, not built*
 
 - [ ] Presets for the common enzymes, each carrying its cleavage regex.
 - [ ] A custom option letting a regex be typed, validated before it can run.
 
-Today the digestion regex is a single free-text field. Semi-enzymatic is out
-of scope — Dennis is working on it separately.
+### How Pioneer reads a cleavage regex
 
-Validation needs deciding: a regex that compiles is not necessarily one
-Pioneer accepts, so "valid" may mean more than "parses".
+`digest_sequence` (`fasta/fasta_digest.jl`) iterates `eachmatch(regex, sequence,
+overlap = true)` and ends the peptide at `site.offset` — the **start** of the
+match. So the first element of the pattern is the P1 residue, cleaved *after*,
+and anything following it is context that the match consumes. `overlap = true`
+is what stops that consumed context from hiding the next site.
+
+Two things checked rather than assumed:
+
+- **Lookahead and consume-next both work.** `[KR](?!P)` and `[KR][^P|$]` give
+  identical digests. A pattern that can match the final residue does not
+  duplicate the C-terminal peptide, because `add_peptide!` requires
+  `site - previous_site >= min_length` and the explicit C-terminal call then
+  finds a zero-length span. N-terminal enzymes need lookahead regardless, and
+  the file already digests that way at line 155.
+- **`|` and `$` are literal** inside `[^P|$]`, excluding those characters rather
+  than meaning alternation or end-of-string. Kept in the presets below only to
+  match the shipped default's style.
+
+### Proposed presets
+
+Verified against `digest_sequence` on `GGKAARAAKPAARPAADAAEAAFAAWAAYAALAAMAAK`,
+which carries one motif per rule. Each produced exactly its enzyme's expected
+cleavages, and none produced duplicates.
+
+| Preset | Pattern | Cleaves |
+|---|---|---|
+| Trypsin | `[KR][^P|$]` | after K/R, not before P |
+| Trypsin/P | `[KR][^|$]` | after K/R, always |
+| Lys-C | `K[^P|$]` | after K, not before P |
+| Lys-C/P | `K[^|$]` | after K, always |
+| Lys-N | `[^K](?=K)` | before K |
+| Arg-C | `R[^P|$]` | after R, not before P |
+| Asp-N | `[^D](?=[D])` | before D |
+| Asp-N + Glu | `[^DE](?=[DE])` | before D/E |
+| Glu-C (bicarbonate) | `E[^P|$]` | after E, not before P |
+| Glu-C (phosphate) | `[DE][^P|$]` | after D/E, not before P |
+| Chymotrypsin | `[FWY][^P|$]` | after F/W/Y, not before P |
+| Chymotrypsin (broad) | `[FWYLM][^P|$]` | after F/W/Y/L/M, not before P |
+| CNBr | `M[^|$]` | after M |
+
+### Validating a custom regex
+
+"Compiles" is a weak test — `.` compiles and digests every position. The useful
+check is a **dry run**: digest a fixed sample sequence with the typed pattern
+and show the peptides. That catches a rule matching nothing and a rule matching
+everything, and it explains itself, which an accept/reject verdict does not.
+Suggested guards on top: reject if it fails to compile, and warn if it produces
+no cleavage sites in the sample or cleaves at more than, say, half of them.
+
+### Worth knowing
+
+The published `Pioneer_Human_canon_std.poin` was built with `[KR][^_|$]` — the
+excluded set is `_ | $`, **not** P — so that library is Trypsin/P, not Trypsin.
+Whichever preset it is labelled with should match that.
 
 ## 4. Carbamidomethyl (C) must be a required fixed mod — **done**
 
@@ -220,11 +271,23 @@ Depends on 6. One format shared by queue and history, which also settles 5.
 it is known only from `libraries.json`, which is not published yet. So this
 needs either the manifest in place, or a rule inferring the model.
 
-## 9. Delay before hover descriptions appear
+## 9. Delay before hover descriptions appear — **done**
 
-- [ ] Add an open delay so tooltips do not fire while the pointer crosses them.
+- [x] Tooltip drawn in-app, opening after 350 ms.
 
-`InfoDot.tsx` has no timer; descriptions appear immediately.
+Every hover description in the app was the native `title` attribute, whose
+timing belongs to the operating system — about a second on macOS, with no way
+to tune it. `InfoDot` now draws its own tooltip so the delay is ours: long
+enough that a pointer crossing the dot does not summon it, short enough that
+aiming at it feels answered. `aria-label` stays, so the text is still reachable
+without a pointer.
+
+Positioned `fixed` from the dot's rect, so a card or the sidebar's scroll box
+cannot clip it, and it closes on scroll rather than drifting from its anchor.
+The other 22 `title` attributes are untouched — they label controls rather than
+explaining fields.
+
+`OPEN_DELAY_MS` in `InfoDot.tsx` is the single knob.
 
 ## 10. User-defined run name — **done**
 
