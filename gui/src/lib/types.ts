@@ -140,6 +140,18 @@ export const PREDICTION_MODELS: PredictionModel[] = [
   },
 ]
 
+/** True for the Prosit families.
+ *
+ *  Searching a Prosit-predicted library that carries variable modifications is
+ *  experimental: Pioneer does not score site-localization confidence, so a
+ *  modified residue is placed but the placement is not evidenced. Altimeter
+ *  libraries are unaffected -- the caveat is about the combination, which is
+ *  why it is asked of the library rather than of the search.
+ */
+export function isPrositModel(id: string): boolean {
+  return id.startsWith('prosit')
+}
+
 export function predictionModelById(id: string): PredictionModel {
   return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
 }

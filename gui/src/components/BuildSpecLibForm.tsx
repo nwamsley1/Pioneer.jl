@@ -24,7 +24,7 @@ import {
   previewDigest,
 } from '../lib/enzymes'
 import { BROWSE, HINT, LABEL } from '../lib/styles'
-import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
+import { PREDICTION_MODELS, isPrositModel, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -974,6 +974,25 @@ export function BuildSpecLibForm({
           onAdd={onAddMod}
         />
         <div style={{ height: 18 }} />
+        {isPrositModel(params.predictionModel) && params.variableMods.length > 0 && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: '#92400E',
+            }}
+          >
+            <strong style={{ fontWeight: 600 }}>Experimental.</strong> Searching a
+            Prosit-predicted library that carries variable modifications is not yet a
+            supported combination: Pioneer does not report site-localization confidence,
+            so a modified residue is placed but the placement is not scored.
+          </div>
+        )}
         <ModTable
           kind="variable"
           occupied={occupiedResidues(params.fixedMods)}

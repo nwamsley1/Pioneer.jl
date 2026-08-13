@@ -399,3 +399,25 @@ a modification must satisfy both.
 test runner, so nothing stops the table drifting from UNIMOD again — a Julia
 test that parses the `.ts` table and compares against a checked-in UNIMOD
 extract would close that, at the cost of coupling the Julia suite to GUI source.
+
+---
+
+## Prosit + variable modifications is flagged as experimental — **done**
+
+Pioneer does not report site-localization confidence, so a modified residue in a
+Prosit-predicted library is placed but the placement is not scored. The
+combination is warned about in both places it arises:
+
+- [x] **BuildSpecLib**, above the variable-modification table, as soon as a
+      Prosit model and at least one variable modification are both chosen.
+- [x] **SearchDIA**, under the library summary, when the selected library's
+      `config.json` records a Prosit model and any variable modifications.
+
+Altimeter is unaffected, and a library whose config predates the
+`prediction_model` field stays quiet — BuildSpecLib only did Altimeter then, so
+absent means Altimeter rather than unknown.
+
+Worth noting `check_params.jl:190` claims `prediction_model` is "no longer a
+schema field". That comment is stale: `chronologer_prep.jl:79` reads
+`library_params.prediction_model`, and Pioneer carries Koina endpoints for all
+three Prosit models. The field is live.
