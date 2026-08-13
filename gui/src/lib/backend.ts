@@ -92,6 +92,7 @@ export interface LibraryInfo {
   length_range: string
   charge_range: string
   missed_cleavages: string
+  specificity: string
   max_var_mods: string
   fixed_mods: string[]
   variable_mods: string[]

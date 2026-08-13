@@ -284,23 +284,13 @@ function _mixed_reverse_compare(a, b, reverse_vec::Vector{Bool})
     # Compare each sort key according to its reverse setting
     for i in 1:(length(a)-1)  # -1 to skip table_idx (last element)
         val_a, val_b = a[i], b[i]
-        if reverse_vec[i]
-            # Reverse order: larger values come first
-            if val_a > val_b
-                return true
-            elseif val_a < val_b
-                return false
-            end
-            # Equal values continue to next key
-        else
-            # Normal order: smaller values come first
-            if val_a < val_b
-                return true
-            elseif val_a > val_b
-                return false
-            end
-            # Equal values continue to next key
-        end
+        isequal(val_a, val_b) && continue
+
+        # `isless` provides a total order for `missing`, unlike `<`/`>`, which
+        # return `missing`. This keeps mixed-direction merges consistent with
+        # Julia/DataFrames sorting: missing values are last for ascending keys
+        # and first for descending keys.
+        return reverse_vec[i] ? isless(val_b, val_a) : isless(val_a, val_b)
     end
     # All sort keys are equal, use table_idx as tiebreaker (always ascending)
     return a[end] < b[end]

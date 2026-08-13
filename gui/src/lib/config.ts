@@ -149,6 +149,7 @@ export const BUILD_OWNED_PATHS = [
   'fasta_digest_params.min_charge',
   'fasta_digest_params.max_charge',
   'fasta_digest_params.missed_cleavages',
+  'fasta_digest_params.specificity',
   'fasta_digest_params.max_var_mods',
   'fasta_digest_params.add_decoys',
   'variable_mods',
@@ -205,6 +206,7 @@ export function buildLibJsonBase(s: BuildParams): Json {
       min_charge: num(s.minCharge, 2),
       max_charge: num(s.maxCharge, 3),
       missed_cleavages: num(s.missedCleav, 1),
+      specificity: s.digestSpecificity,
       max_var_mods: num(s.maxVarMods, 1),
       add_decoys: s.addDecoys,
     },
@@ -275,6 +277,13 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.min_charge) !== undefined) set.minCharge = str(d.min_charge)
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
+  const specificity = str(d.specificity)
+    ?.trim()
+    .toLowerCase()
+    .replace('_', '-')
+  if (specificity && ['full', 'semi', 'semi-n', 'semi-c'].includes(specificity)) {
+    set.digestSpecificity = specificity as BuildParams['digestSpecificity']
+  }
   if (str(d.max_var_mods) !== undefined) set.maxVarMods = str(d.max_var_mods)
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys
 

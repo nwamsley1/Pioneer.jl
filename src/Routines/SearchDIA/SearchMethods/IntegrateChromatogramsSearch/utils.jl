@@ -2085,6 +2085,7 @@ function process_final_psms!(
     isotopic_mods = Vector{Union{Missing, String}}(undef, n)
     charge = Vector{UInt8}(undef, n)
     sequence = Vector{String}(undef, n)
+    peptide_start_positions = Vector{String}(undef, n)
     file_name = Vector{String}(undef, n)
     psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
 
@@ -2107,6 +2108,7 @@ function process_final_psms!(
     isotopic_mods_col = getIsotopicMods(precursors)
     charge_col = getCharge(precursors)
     sequence_col = getSequence(precursors)
+    start_idx_col = getStartIdx(precursors)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
@@ -2117,6 +2119,7 @@ function process_final_psms!(
         isotopic_mods[i] = isotopic_mods_col[pid]
         charge[i] = charge_col[pid]
         sequence[i] = sequence_col[pid]
+        peptide_start_positions[i] = _format_start_idx(start_idx_col[pid])
         file_name[i] = parsed_fname
     end
 
@@ -2128,6 +2131,7 @@ function process_final_psms!(
     psms[!,:isotopic_mods] = isotopic_mods
     psms[!,:charge] = charge 
     psms[!,:sequence] = sequence
+    psms[!,:peptide_start_positions] = peptide_start_positions
     psms[!,:file_name] = file_name
     
     return nothing

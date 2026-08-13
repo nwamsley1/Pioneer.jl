@@ -503,6 +503,9 @@ function writePrecursorCSV_chunked(
         "structural_mods",
         "isotopic_mods",
         "prec_mz",
+        "peptide_start_positions",
+        "missed_cleavage",
+        "num_enzymatic_termini",
         "global_score",
         "global_qval",
         "use_for_protein_quant",
@@ -524,7 +527,9 @@ function writePrecursorCSV_chunked(
         :structural_mods,
         :isotopic_mods,
         :prec_mz,
+        :peptide_start_positions,
         :missed_cleavage,
+        :num_enzymatic_termini,
         :global_score,
         :score,
         :global_qval,
@@ -569,6 +574,15 @@ function writePrecursorCSV_chunked(
                     precursors_long = DataFrame()
                     for col in _precursor_csv_read_columns(chunk_tbl, requested_cols)
                         precursors_long[!, col] = chunk_tbl[col]
+                    end
+                    if :num_enzymatic_termini in requested_cols &&
+                       !hasproperty(precursors_long, :num_enzymatic_termini)
+                        # Resume/output compatibility for chunks written before
+                        # semi-specific digestion existed. Those searches used
+                        # fully specific libraries by construction.
+                        precursors_long[!, :num_enzymatic_termini] = fill(
+                            UInt8(2), length(chunk_tbl.precursor_idx)
+                        )
                     end
                     n_rows = size(precursors_long, 1)
                     n_rows == 0 && continue

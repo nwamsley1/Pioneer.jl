@@ -798,6 +798,39 @@ export function BuildSpecLibForm({
             alignItems: 'start',
           }}
         >
+          <div>
+            <label
+              htmlFor="digest-specificity"
+              style={{ display: 'block', fontSize: 11, color: '#667085', marginBottom: 5 }}
+            >
+              Specificity
+            </label>
+            <select
+              id="digest-specificity"
+              className="pio-input"
+              value={params.digestSpecificity}
+              onChange={(e) => onParam('digestSpecificity', e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 34px 8px 10px',
+                border: '1px solid #D7DBE0',
+                borderRadius: 8,
+                font: "12.5px 'IBM Plex Sans'",
+                color: '#1A2230',
+                background: `#FFFFFF ${CHEVRON}`,
+                backgroundSize: '16px 16px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+              }}
+            >
+              <option value="full">Full (both termini)</option>
+              <option value="semi">Semi (either terminus)</option>
+              <option value="semi-n">Semi-N (C terminus required)</option>
+              <option value="semi-c">Semi-C (N terminus required)</option>
+            </select>
+          </div>
           <NumField fieldKey="minLen" value={params.minLen} onChange={onParam} />
           <NumField fieldKey="maxLen" value={params.maxLen} onChange={onParam} />
           <NumField fieldKey="missedCleav" value={params.missedCleav} onChange={onParam} />

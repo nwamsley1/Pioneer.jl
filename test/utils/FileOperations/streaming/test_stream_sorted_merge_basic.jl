@@ -29,6 +29,44 @@ using Pioneer: PSMFileReference, stream_sorted_merge, stream_sorted_merge_chunke
     @test length(dfm.score) == 6
 end
 
+@testset "mixed-direction merge keeps missing groups last" begin
+    tmp = mktempdir()
+    refs = PSMFileReference[]
+
+    for (i, df) in enumerate((
+        DataFrame(
+            group = Union{Missing,String}[missing, "B"],
+            target = Bool[false, true],
+            id = Int64[4, 2],
+        ),
+        DataFrame(
+            group = Union{Missing,String}["A", missing],
+            target = Bool[true, true],
+            id = Int64[1, 3],
+        ),
+    ))
+        path = joinpath(tmp, "mixed_$i.arrow")
+        Arrow.write(path, df)
+        ref = PSMFileReference(path)
+        sort_file_by_keys!(ref, :group, :target; reverse=[false, true])
+        push!(refs, ref)
+    end
+
+    chunks = stream_sorted_merge_chunked(
+        refs,
+        joinpath(tmp, "mixed_chunks"),
+        :group,
+        :group,
+        :target;
+        reverse=[false, true],
+    )
+    combined = vcat(load_dataframe.(chunks)...)
+
+    @test collect(skipmissing(combined.group)) == ["A", "B"]
+    @test all(ismissing, combined.group[end-1:end])
+    @test combined.target[end-1:end] == [true, false]
+end
+
 @testset "hierarchical merge with many files" begin
     tmp = mktempdir()
     n_files = 20  # triggers multiple stages with max_fanin=4

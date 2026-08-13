@@ -32,6 +32,7 @@ end
                 0.85, 0.15, 0.25, 0.75,
                 0.88, 0.12, 0.22, 0.78,
             ],
+            num_enzymatic_termini = fill(UInt8(2), 12),
         )
 
         tiny_lgbm_hp = (
@@ -51,7 +52,7 @@ end
 
         scores, infold_scores, _last_classifier, info = train_psm_classifier_with_fallback(
             psms;
-            features = [:discriminant],
+            features = [:discriminant, :num_enzymatic_termini],
             lgbm_hp = tiny_lgbm_hp,
         )
 
@@ -60,6 +61,45 @@ end
         @test info.low_data
         @test haskey(info.candidate_oof, "probit")
         @test all(isfinite, scores)
+        @test :num_enzymatic_termini ∉ info.available_features
+
+        psms.num_enzymatic_termini .= repeat(UInt8[1, 2], 6)
+        _, _, _, varying_info = train_psm_classifier_with_fallback(
+            psms;
+            features = [:discriminant, :num_enzymatic_termini],
+            lgbm_hp = tiny_lgbm_hp,
+        )
+        @test :num_enzymatic_termini in varying_info.available_features
+    end
+
+    @testset "OOM feature selection drops only constant enzymatic termini" begin
+        mktempdir() do temp_dir
+            first_path = joinpath(temp_dir, "first.arrow")
+            second_path = joinpath(temp_dir, "second.arrow")
+            Arrow.write(first_path, (
+                precursor_idx = UInt32[1, 2],
+                discriminant = Float32[0.1, 0.2],
+                num_enzymatic_termini = UInt8[2, 2],
+            ))
+            Arrow.write(second_path, (
+                precursor_idx = UInt32[3, 4],
+                discriminant = Float32[0.3, 0.4],
+                num_enzymatic_termini = UInt8[2, 2],
+            ))
+            requested = [:discriminant, :num_enzymatic_termini]
+            @test Pioneer._resolve_available_features(
+                [first_path, second_path], requested
+            ) == [:discriminant]
+
+            Arrow.write(second_path, (
+                precursor_idx = UInt32[3, 4],
+                discriminant = Float32[0.3, 0.4],
+                num_enzymatic_termini = UInt8[1, 2],
+            ))
+            @test Pioneer._resolve_available_features(
+                [first_path, second_path], requested
+            ) == requested
+        end
     end
 end
 

@@ -365,10 +365,12 @@ function BuildSpecLib(params_path::String)
 
                 # Convert types
                 precursors_table[!, :missed_cleavages] = UInt8.(precursors_table[!, :missed_cleavages])
+                precursors_table[!, :num_enzymatic_termini] = UInt8.(precursors_table[!, :num_enzymatic_termini])
                 precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
-                precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
+                precursors_table[!, :start_idx] =
+                    [UInt32.(collect(starts)) for starts in precursors_table[!, :start_idx]]
 
                 # Save processed precursor table
                 @debug_l1 "  Before add_pair_indices!: $(nrow(precursors_table)) precursors"

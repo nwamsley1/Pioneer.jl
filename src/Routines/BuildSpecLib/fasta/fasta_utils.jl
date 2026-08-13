@@ -220,6 +220,7 @@ function add_entrapment_sequences(
                         adjusted_structural_mods, #structural_mods - now properly adjusted
                         adjusted_isotopic_mods,   #isotopic_mods - now properly adjusted
                         get_charge(target_entry),
+                        get_num_enzymatic_termini(target_entry),
                         get_base_target_id(target_entry), # inherit base_target_id for tracking
                         get_base_pep_id(target_entry),
                         entrapment_group_id,
@@ -397,6 +398,7 @@ function add_entrapment_sequences_grouped(
                     adjusted_structural_mods,
                     adjusted_isotopic_mods,
                     get_charge(target_entry),
+                    get_num_enzymatic_termini(target_entry),
                     get_base_target_id(target_entry),
                     get_base_pep_id(target_entry),
                     UInt8(i),
@@ -801,6 +803,7 @@ function add_decoy_sequences(
                 adjusted_structural_mods,
                 adjusted_isotopic_mods,
                 get_charge(target_entry),
+                get_num_enzymatic_termini(target_entry),
                 get_base_target_id(target_entry), # inherit base_target_id for tracking
                 get_base_pep_id(target_entry),  # inherit base_pep_id for pairing
                 get_entrapment_pair_id(target_entry),
@@ -959,6 +962,7 @@ function add_decoy_sequences_grouped(
                 adjusted_structural_mods,
                 adjusted_isotopic_mods,
                 get_charge(target_entry),
+                get_num_enzymatic_termini(target_entry),
                 get_base_target_id(target_entry),
                 get_base_pep_id(target_entry),
                 get_entrapment_pair_id(target_entry),
@@ -1000,8 +1004,9 @@ This function:
 1. Identifies peptides with identical sequences (considering I/L as equivalent)
 2. For shared peptides, combines their protein accessions with semicolon separators
 3. Also combines proteome identifiers and descriptions if multiple exist
-4. Preserves other metadata from the first encountered instance of each sequence
-5. Returns a vector containing only unique peptide sequences
+4. Preserves all aligned accession/start-position mappings
+5. Preserves other metadata from the first encountered instance of each sequence
+6. Returns a vector containing only unique peptide sequences
 
 # Examples
 ```julia
@@ -1036,6 +1041,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
             a += 1
             fasta_entry = seq_to_fasta_entry[sequence_il_equiv]
             accession = get_id(peptide)*";"*get_id(fasta_entry)
+            start_idxs = vcat(get_start_idx(peptide), get_start_idx(fasta_entry))
             proteome = get_proteome(peptide)*";"*get_proteome(fasta_entry)
             description = get_description(peptide)*";"*get_description(fasta_entry)
             gene = get_gene(peptide)*";"*get_gene(fasta_entry)
@@ -1049,10 +1055,14 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         organism,
                                                         proteome,
                                                         get_sequence(fasta_entry),
-                                                        get_start_idx(fasta_entry),
+                                                        start_idxs,
                                                         get_structural_mods(fasta_entry),
                                                         get_isotopic_mods(fasta_entry),
                                                         get_charge(fasta_entry),
+                                                        max(
+                                                            get_num_enzymatic_termini(peptide),
+                                                            get_num_enzymatic_termini(fasta_entry),
+                                                        ),
                                                         get_base_target_id(fasta_entry), # preserve base_target_id
                                                         base_pep_id,
                                                         get_entrapment_pair_id(fasta_entry), 
@@ -1100,6 +1110,7 @@ function assign_base_pep_ids!(fasta_entries::Vector{FastaEntry})
             get_structural_mods(entry),
             get_isotopic_mods(entry),
             get_charge(entry),
+            get_num_enzymatic_termini(entry),
             get_base_target_id(entry), # preserve base_target_id
             UInt32(i),               # base_pep_id - sequential assignment
             get_entrapment_pair_id(entry),
@@ -1127,6 +1138,7 @@ function assign_base_target_ids!(fasta_entries::Vector{FastaEntry})
             get_structural_mods(entry),
             get_isotopic_mods(entry),
             get_charge(entry),
+            get_num_enzymatic_termini(entry),
             UInt32(i),   # assign grouped base_target_id
             get_base_pep_id(entry),    # preserve existing base_pep_id
             get_entrapment_pair_id(entry),

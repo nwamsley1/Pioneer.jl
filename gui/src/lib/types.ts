@@ -125,6 +125,7 @@ export interface BuildParams {
   minCharge: string
   maxCharge: string
   missedCleav: string
+  digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -146,6 +147,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   minCharge: '2',
   maxCharge: '3',
   missedCleav: '1',
+  digestSpecificity: 'full',
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,

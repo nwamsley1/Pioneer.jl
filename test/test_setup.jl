@@ -22,7 +22,8 @@ using Pioneer: getHigh, Counter, IndexFragment
 using Pioneer: UniformSpline
 using Pioneer: ProteinKey, PeptideKey, InferenceResult
 using Pioneer: PeptideMod, matchVarMods, add_pair_indices!
-using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations
+using Pioneer: digest_sequence, normalize_digest_specificity
+using Pioneer: getFixedMods!, countVarModCombinations
 using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet
 using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary, get_fragment_bounds
 using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins
@@ -30,11 +31,13 @@ using Pioneer: buildPionLib
 using Pioneer: digest_fasta, combine_shared_peptides
 using Pioneer: add_decoy_sequences, add_entrapment_sequences
 using Pioneer: fillVarModStrings!, fragFilter
-using Pioneer: get_base_pep_id, get_charge
+using Pioneer: get_base_pep_id, get_charge, get_num_enzymatic_termini
+using Pioneer: add_charge
 using Pioneer: make_koina_request, prepare_koina_batch, parse_koina_batch
 using Pioneer: KoinaBatchResult
 using Pioneer: get_proteome, get_sequence, get_structural_mods
 using Pioneer: get_isotopic_mods, get_description, get_id
+using Pioneer: get_start_idx
 using Pioneer: get_entrapment_pair_id
 using Pioneer: get_gene, get_protein, get_organism
 using Pioneer: filter_by_threshold, filter_by_multiple_thresholds

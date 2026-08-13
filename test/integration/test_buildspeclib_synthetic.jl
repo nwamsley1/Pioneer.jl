@@ -35,6 +35,13 @@ using Pioneer
         @test isfile(joinpath(lib_path, f))
     end
 
+    precursors = Arrow.Table(joinpath(lib_path, "precursors_table.arrow"))
+    @test hasproperty(precursors, :num_enzymatic_termini)
+    @test all(==(UInt8(2)), precursors.num_enzymatic_termini)
+    @test hasproperty(precursors, :start_idx)
+    @test all(starts -> !isempty(starts), precursors.start_idx)
+    @test all(starts -> eltype(starts) == UInt32, precursors.start_idx)
+
     # Cleanup
     safe_rmdir(lib_path)
 end
