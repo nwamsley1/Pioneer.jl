@@ -300,14 +300,27 @@ folder may have changed by the time the row is drawn.
 
 Depends on 6. One format shared by queue and history, which also settles 5.
 
-## 8. No fixed NCE for Altimeter libraries
+## 8. No fixed NCE for Altimeter libraries — **done** *(library panel)*
 
-- [ ] Suppress the NCE line for Altimeter in the library panel.
+- [x] The library summary shows `splines` instead of a number for Altimeter.
 
-`describe_config` in `Routines/DownloadSpecLib/catalog.jl` emits `NCE` from
-`nce_params`. The catch: `config.json` does not record the prediction model —
-it is known only from `libraries.json`, which is not published yet. So this
-needs either the manifest in place, or a rule inferring the model.
+Altimeter predicts spline coefficients across collision energy rather than at
+one setting, so the number a config records is not the energy the library is
+good for. Printing `26.0` invites matching it to an instrument method that has
+nothing to do with it.
+
+An unrecorded `prediction_model` counts as Altimeter here. It has to: both
+libraries in hand — the ecoli test one and the published human one — record
+`nce: 26.0` with no model, so requiring the key would have left exactly the
+libraries this is for still showing a number. BuildSpecLib produced nothing but
+Altimeter before the key existed. The Model row still says "not recorded in
+this library", which is a question about provenance rather than about what the
+number means.
+
+**Still open for the download catalog.** `describe_config` in
+`Routines/DownloadSpecLib/catalog.jl` emits `NCE` from `nce_params` with no way
+to know the model — `config.json` does not carry it, and `libraries.json` is
+not uploaded yet. Same fix, once the manifest exists.
 
 ## 9. Delay before hover descriptions appear — **done**
 
