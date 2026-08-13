@@ -365,3 +365,37 @@ variable on C is equally impossible, and the PTM models make that reachable.
 Hard error rather than a warning that drops the overlap: a library built from
 a config nobody read is exactly what this protects against.
 \n
+---
+
+## Modification table validated against UNIMOD — 2026-08-13
+
+The masses in `gui/src/lib/koinaMods.ts` are not decorative: `modsToJson`
+writes them into `fixed_mods.mass`, and `chronologer_prep.jl` reads
+`params["fixed_mods"]["mass"][i]` rather than looking the modification up, so a
+wrong number here goes straight into a library.
+
+Checked by parsing UNIMOD's own `unimod.obo` (1561 terms) and comparing
+programmatically, rather than reading values off a page.
+
+- [x] **All 29 monoisotopic masses agree with UNIMOD** to better than 5e-7 —
+      including the pairs that would be easy to transpose, TMTpro 304.207146
+      against iTRAQ8plex 304.205360. Oxidation 15.994915 and Carbamidomethyl
+      57.021464 are both exact, so Altimeter and Prosit-2020 libraries were
+      never affected.
+- [x] **Phospho on P removed.** UNIMOD lists no proline site for UNIMOD:21, and
+      phosphoproline is not a modification that exists. It was reachable: on
+      the PTM models the site could be set to P.
+- [x] **Gly on C removed.** UNIMOD:1263 is K/S/T. The entry was also isobaric
+      with the carbamidomethyl pinned to every cysteine — 57.021464 for both.
+
+Everything else is a strict subset of UNIMOD's residues, which is the expected
+shape: the model's support is narrower than the chemistry, and the rule is that
+a modification must satisfy both.
+
+`Glutarylation` keeps the correct spelling against UNIMOD:1848's own
+`Gluratylation`; only the accession reaches a config.
+
+**Not guarded automatically.** This was a one-off check. The frontend has no
+test runner, so nothing stops the table drifting from UNIMOD again — a Julia
+test that parses the `.ts` table and compares against a checked-in UNIMOD
+extract would close that, at the cost of coupling the Julia suite to GUI source.

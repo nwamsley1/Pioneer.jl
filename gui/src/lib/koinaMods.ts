@@ -33,6 +33,22 @@ export interface KoinaMod {
   sites: string[]
 }
 
+// Every entry is both accepted by the model and a real UNIMOD record: the two
+// are separate constraints and a modification has to satisfy both. Masses and
+// sites were checked against UNIMOD's own unimod.obo (1561 terms) on
+// 2026-08-13 -- all 29 monoisotopic masses agreed to better than 5e-7, which
+// matters because Pioneer takes the mass straight from the config rather than
+// looking it up (`chronologer_prep.jl` reads params["fixed_mods"]["mass"]).
+//
+// Two sites were removed as not being UNIMOD sites at all: Phospho on P, which
+// is not a modification that exists, and Gly on C, which was additionally
+// isobaric with the carbamidomethyl already pinned to every cysteine. Every
+// remaining site is a subset of what UNIMOD lists, as it should be -- the
+// model's support is narrower than the chemistry.
+//
+// `Glutarylation` keeps its correct spelling; UNIMOD:1848's own record name
+// reads "Gluratylation". Only the accession is written to a config, so the
+// label never leaves the GUI.
 const BASE_MODS: KoinaMod[] = [
   { unimod: 4, label: 'Carbamidomethyl', mass: 57.021464, sites: ['C'] },
   { unimod: 35, label: 'Oxidation', mass: 15.994915, sites: ['M'] },
@@ -42,7 +58,7 @@ const PTM_MODS: KoinaMod[] = [
   { unimod: 1, label: 'Acetyl', mass: 42.010565, sites: ['K'] },
   { unimod: 4, label: 'Carbamidomethyl', mass: 57.021464, sites: ['C', 'K'] },
   { unimod: 7, label: 'Deamidated', mass: 0.984016, sites: ['N', 'Q', 'R'] },
-  { unimod: 21, label: 'Phospho', mass: 79.966331, sites: ['S', 'T', 'Y', 'H', 'P'] },
+  { unimod: 21, label: 'Phospho', mass: 79.966331, sites: ['S', 'T', 'Y', 'H'] },
   { unimod: 27, label: 'Glu->pyro-Glu', mass: -18.010565, sites: ['E'] },
   { unimod: 28, label: 'Gln->pyro-Glu', mass: -17.026549, sites: ['Q'] },
   { unimod: 34, label: 'Methyl', mass: 14.01565, sites: ['K', 'R', 'D', 'E', 'C', 'H', 'I', 'L', 'N', 'Q'] },
@@ -59,7 +75,7 @@ const PTM_MODS: KoinaMod[] = [
   { unimod: 535, label: 'LRGG', mass: 383.228103, sites: ['K'] },
   { unimod: 730, label: 'iTRAQ8plex', mass: 304.20536, sites: ['K'] },
   { unimod: 737, label: 'TMT6plex', mass: 229.162932, sites: ['K'] },
-  { unimod: 1263, label: 'Gly', mass: 57.021464, sites: ['C', 'K'] },
+  { unimod: 1263, label: 'Gly', mass: 57.021464, sites: ['K'] },
   { unimod: 1289, label: 'Butyryl', mass: 70.041865, sites: ['K'] },
   { unimod: 1293, label: 'QTGG', mass: 343.149184, sites: ['K'] },
   { unimod: 1848, label: 'Glutarylation', mass: 114.031694, sites: ['K'] },
