@@ -225,46 +225,22 @@ end
         end
     end
 
-    @testset "resumes from a partial file" begin
+    @testset "an existing file is overwritten, never continued" begin
+        # Resume was removed deliberately: a partial of unknown provenance can
+        # be a wrong prefix, and continuing it yields a plausible size with
+        # corrupt contents.
         server, port = _serve(files, :honour)
         try
             mktempdir() do dir
                 path = joinpath(dir, "f.bin")
-                write(path, payload[1:2000])          # simulate an interrupted transfer
-                Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
-                @test read(path) == payload           # continued, not concatenated
-            end
-        finally
-            close(server)
-        end
-    end
-
-    @testset "a complete file is not refetched" begin
-        server, port = _serve(files, :honour)
-        try
-            mktempdir() do dir
-                path = joinpath(dir, "f.bin")
-                write(path, payload)
-                touched = mtime(path)
-                Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
-                @test mtime(path) == touched
-            end
-        finally
-            close(server)
-        end
-    end
-
-    @testset "a server that ignores Range restarts instead of corrupting" begin
-        # This is the failure the retry exists for: appending a 200 body to a
-        # partial file yields a plausible size and garbage contents.
-        server, port = _serve(files, :ignore)
-        try
-            mktempdir() do dir
-                path = joinpath(dir, "f.bin")
-                write(path, payload[1:2000])
+                write(path, payload[1:2000])                  # short partial
                 Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
                 @test read(path) == payload
-                @test filesize(path) == length(payload)   # not 7000
+                @test filesize(path) == length(payload)       # not 7000
+
+                write(path, vcat(payload, rand(UInt8, 100)))  # over-long junk
+                Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
+                @test read(path) == payload
             end
         finally
             close(server)
@@ -289,7 +265,7 @@ end
         end
     end
 
-    @testset "resume works across a redirect" begin
+    @testset "a stale partial is replaced across a redirect too" begin
         server, port = _serve(files, :honour; redirect = true)
         try
             mktempdir() do dir
@@ -297,20 +273,22 @@ end
                 write(path, payload[1:2000])
                 Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
                 @test read(path) == payload
+                @test filesize(path) == length(payload)
             end
         finally
             close(server)
         end
     end
 
-    @testset "an over-long local file is discarded" begin
-        server, port = _serve(files, :honour)
+    @testset "a short body is rejected rather than accepted" begin
+        # Nothing else catches truncation for a file absent from SHA256SUMS.
+        truncated = Dict("f.bin" => payload[1:1000])
+        server, port = _serve(truncated, :honour)
         try
             mktempdir() do dir
                 path = joinpath(dir, "f.bin")
-                write(path, vcat(payload, rand(UInt8, 100)))
-                Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
-                @test read(path) == payload
+                @test_throws ErrorException Pioneer.hf_download_file(
+                    "http://127.0.0.1:$port/f.bin", path, length(payload))
             end
         finally
             close(server)

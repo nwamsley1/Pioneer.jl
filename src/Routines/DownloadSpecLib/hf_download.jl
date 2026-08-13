@@ -23,9 +23,13 @@
 #     `<name>.partial` and is renamed at the end, because `library_info` (and
 #     the search itself) accept a directory by its marker files -- a half-copied
 #     one would pass that check and then fail deep inside a search.
-#   * A resumed transfer never silently concatenates. A server that ignores our
-#     Range header answers 200 with the whole body, and appending that to what
-#     we already had would produce a corrupt file whose size looks plausible.
+#   * A transfer never continues someone else's bytes. Downloads always start
+#     from scratch: any leftover staging directory is removed first. Resuming
+#     was possible and was removed deliberately -- it has to trust a partial
+#     file of unknown provenance, and a partial written by an older, buggier
+#     build resumes into a plausible-looking corrupt result that only the
+#     checksum pass catches, after a full re-transfer. Re-fetching costs
+#     bandwidth; resuming cost correctness.
 
 """
 Most hops any one file may take. huggingface.co uses one (to its CDN); the cap
@@ -36,37 +40,25 @@ const HF_MAX_REDIRECTS = 5
 """
     hf_download_file(url, path, expected_size; on_chunk) -> Int
 
-Fetch one file to `path`, resuming when a partial copy is already there. Returns
-the byte count on disk.
+Fetch one file to `path`, always from byte zero, overwriting whatever is there.
+Returns the byte count written.
 
-Resume is a `Range` request; a 206 continues the file, anything else restarts it
-from scratch rather than appending to a body that starts at byte zero. A local
-file longer than `expected_size` is treated as junk and discarded -- it cannot
-be a prefix of the real thing.
+`expected_size` is checked against what actually arrived: a truncated body is
+otherwise caught only by the checksum pass, and not at all for files absent from
+`SHA256SUMS`.
 """
 function hf_download_file(url::AbstractString, path::AbstractString, expected_size::Integer;
                           on_chunk = nothing)
-    existing = isfile(path) ? filesize(path) : 0
-
-    if expected_size > 0
-        existing == expected_size && return existing          # already complete
-        existing > expected_size && (rm(path; force = true); existing = 0)
-    end
-
     current = String(url)
     for _ in 1:HF_MAX_REDIRECTS
         # Identity encoding is required, not merely preferred. HTTP.jl asks for
         # gzip by default and does not decompress in streaming mode, so the
         # bytes reaching the file would be the compressed ones -- a short file
-        # that starts with 1f 8b. It also keeps the byte offsets below honest:
-        # a Range is relative to the representation the server sends, so
-        # resuming a compressed stream by identity offset is meaningless.
+        # that starts with 1f 8b.
         headers = Pair{String, String}["Accept-Encoding" => "identity"]
-        existing > 0 && push!(headers, "Range" => "bytes=$(existing)-")
 
         next_url = ""
-        restart = false
-        total = existing
+        total = 0
 
         # `redirect = false` is load-bearing. Left to itself HTTP.jl runs this
         # callback once per hop -- including the 307 that huggingface.co answers
@@ -93,18 +85,7 @@ function hf_download_file(url::AbstractString, path::AbstractString, expected_si
                 error("HTTP $(response.status) fetching $current")
             end
 
-            # 206 = our range was honoured. Anything else restarts the file,
-            # since a 200 body begins at byte zero and appending it would
-            # corrupt what is already there.
-            if existing > 0 && response.status != 206
-                restart = true
-                while !eof(stream)
-                    readavailable(stream)
-                end
-                return
-            end
-
-            open(path, existing > 0 ? "a" : "w") do out
+            open(path, "w") do out
                 while !eof(stream)
                     chunk = readavailable(stream)
                     total += write(out, chunk)
@@ -117,10 +98,8 @@ function hf_download_file(url::AbstractString, path::AbstractString, expected_si
             current = next_url
             continue
         end
-        if restart
-            rm(path; force = true)
-            existing = 0
-            continue
+        if expected_size > 0 && total != expected_size
+            error("$(basename(path)): expected $(expected_size) bytes, got $(total)")
         end
         return total
     end
@@ -191,8 +170,13 @@ function download_library(library::HFLibrary, dest::AbstractString,
             "$(final) already exists. Choose another destination or pass --force to replace it."))
     end
 
+    # Cleared, not reused. A leftover staging directory is of unknown
+    # provenance -- an interrupted run, or an older build whose files are
+    # subtly wrong -- and continuing into it trades a re-download for the
+    # chance of a corrupt library.
     staging = final * ".partial"
-    isdir(staging) || mkpath(staging)
+    ispath(staging) && rm(staging; recursive = true)
+    mkpath(staging)
 
     done = 0
     total = library.total_bytes

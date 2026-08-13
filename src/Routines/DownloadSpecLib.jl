@@ -115,8 +115,8 @@ Download the spectral library named `library` from `repo` into the directory
 The transfer stages into `<name>.partial` and is renamed only after every file
 has been fetched and checked against the repository's `SHA256SUMS`, so an
 interrupted download never leaves a directory that looks like a usable library.
-Re-running resumes: files already complete are skipped, and a partial file
-continues from where it stopped.
+Re-running starts over: any leftover staging directory is discarded first,
+rather than resumed into.
 """
 function DownloadSpecLib(library::AbstractString, dest::AbstractString;
                          repo::AbstractString = HF_DEFAULT_REPO,
