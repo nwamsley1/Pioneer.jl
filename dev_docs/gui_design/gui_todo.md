@@ -125,3 +125,106 @@ dragged at all (the overlay title bar needs core:window:allow-start-dragging,
 which core:window:default does not grant), and drops did nothing (Tauri types
 the drop position as physical but reports logical pixels, so dividing by the
 device ratio halved every coordinate).
+
+---
+
+# Review round, 2026-08-13
+
+Raised in Slack after driving the app. Each item records what the code
+actually does today, so the work is scoped before it is started rather than
+rediscovered. Tick as they land.
+
+## 1. ConvertRAW threading — *verify what is still wrong*
+
+**Ask:** always one file at a time, several threads on that file.
+
+- [ ] Confirm what remains broken.
+
+Already true in `lib/config.ts:361`: `--concurrent-files` is pinned to `1`
+with `--threads-per-file` taking the sidebar thread count, and no
+concurrent-files control is exposed. The thread picker is shown on every page
+(`App.tsx:1322` passes `showThreads` unconditionally), so it is settable here.
+
+So the described behaviour appears to be what already ships. **Open question:
+what is the symptom?** Wrong default value, the picker not affecting the run,
+or throughput not scaling? Note `gui/README.md` still claims the picker is
+hidden on this page — that text is stale either way.
+
+## 2. BuildSpecLib thread count — *last, after measurement*
+
+- [ ] Investigate where threading actually helps library building, pick a
+      sensible number, then decide what (if anything) to expose.
+
+Deliberately deferred: this is a measurement task, not a UI task.
+
+## 3. Enzyme presets, plus custom regex
+
+- [ ] Presets for the common enzymes, each carrying its cleavage regex.
+- [ ] A custom option letting a regex be typed, validated before it can run.
+
+Today the digestion regex is a single free-text field. Semi-enzymatic is out
+of scope — Dennis is working on it separately.
+
+Validation needs deciding: a regex that compiles is not necessarily one
+Pioneer accepts, so "valid" may mean more than "parses".
+
+## 4. Carbamidomethyl (C) must be a required fixed mod
+
+- [ ] Prevent its removal.
+
+`BUILD_DEFAULTS` already includes it (`lib/types.ts:187`,
+`fixedMods: [modEntry('altimeter', 4)]`), so this is about making it
+non-removable rather than adding it. Decide whether it is locked outright or
+removable with a warning — the latter matters if anyone builds a library from
+alkylation-free data.
+
+## 5. Queue items need the history items' descriptor
+
+- [ ] Match the descriptor treatment between queue and history rows.
+
+Queue rows do render `CMD_TEXT · STATUS_TEXT` (`Sidebar.tsx:541`), but a
+*running* row replaces that line with the progress bar, so the descriptor is
+missing exactly while the run is most interesting. Likely the real gap; worth
+confirming against what was seen.
+
+## 6. File count in the subtext
+
+- [ ] Show the number of MS files under queue and history rows.
+
+`PathInfo` already carries `entry_count`, but a finished run's count is not
+stored — `StoredRun` would need the number recorded at enqueue time, since the
+folder may have changed by the time the row is drawn.
+
+## 7. Row descriptor format
+
+- [ ] `SearchDIA · N files · Completed/Failed/…`
+
+Depends on 6. One format shared by queue and history, which also settles 5.
+
+## 8. No fixed NCE for Altimeter libraries
+
+- [ ] Suppress the NCE line for Altimeter in the library panel.
+
+`describe_config` in `Routines/DownloadSpecLib/catalog.jl` emits `NCE` from
+`nce_params`. The catch: `config.json` does not record the prediction model —
+it is known only from `libraries.json`, which is not published yet. So this
+needs either the manifest in place, or a rule inferring the model.
+
+## 9. Delay before hover descriptions appear
+
+- [ ] Add an open delay so tooltips do not fire while the pointer crosses them.
+
+`InfoDot.tsx` has no timer; descriptions appear immediately.
+
+## 10. User-defined run name — **done**
+
+- [x] Optional name, generated adjective-noun as the fallback.
+
+Landed in `2b7df871d`. A name already in use gains the next free suffix
+(`analysis` → `analysis-2`), checked against persisted history, with the
+resolved name previewed under the field.
+
+## Noted while reviewing, not raised
+
+- [ ] The thread picker shows on the DownloadSpecLib page, where it does
+      nothing: the transfer is network-bound and the binary ignores it.
