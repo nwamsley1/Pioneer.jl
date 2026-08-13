@@ -29,7 +29,14 @@ import {
   type Json,
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
-import { enforceRequiredMods, findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
+import {
+  enforceRequiredMods,
+  findMod,
+  initialSite,
+  modsForModel,
+  siteAllowed,
+  unimodId,
+} from './lib/koinaMods'
 import { listenForDrops } from './lib/dragdrop'
 import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
@@ -997,6 +1004,10 @@ export default function App() {
     setBuild((p) => {
       const def = modsForModel(p.predictionModel).find((d) => d.unimod === Number(unimod))
       if (!def) return p
+      // C is reserved for the pinned fixed row, so a variable alkylation row
+      // starts on the next site the model allows.
+      const site = initialSite(p.predictionModel, kind, def)
+      if (site === null) return p
       if (p[key].some((m) => unimodId(m.name) === def.unimod)) {
         setModNote((n) => ({ ...n, [kind]: `${def.label} is already in the list.` }))
         return p
@@ -1007,7 +1018,7 @@ export default function App() {
         [key]: [
           ...p[key],
           {
-            pattern: def.sites[0],
+            pattern: site,
             label: def.label,
             name: `Unimod:${def.unimod}`,
             mass: String(def.mass),

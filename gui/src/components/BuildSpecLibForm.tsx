@@ -7,6 +7,8 @@ import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
 import {
   findMod,
+  allowedSiteValues,
+  initialSite,
   isRequiredFixedMod,
   modsForModel,
   siteAllowed,
@@ -133,12 +135,10 @@ function ModTable({
   const readOnly = (extra: React.CSSProperties): React.CSSProperties =>
     cell({ background: '#F7F8FA', color: '#667085', ...extra })
 
-  // Carbamidomethyl is pinned as fixed, so it is not a variable option at all.
-  // Disabling it in the menu would suggest it is available under some
-  // condition; it is not.
-  const available = modsForModel(modelId).filter(
-    (d) => !(kind === 'variable' && isRequiredFixedMod(modelId, `Unimod:${d.unimod}`)),
-  )
+  // Carbamidomethyl is pinned on C only. It stays offerable as a variable
+  // modification wherever the model allows it on another residue -- K on the
+  // PTM models -- and drops out only when C is the single site it has.
+  const available = modsForModel(modelId).filter((d) => initialSite(modelId, kind, d) !== null)
   const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
@@ -191,11 +191,17 @@ function ModTable({
                   {/* A stored pattern outside the model's sites still needs an
                       option, or the select would silently show a different one. */}
                   {!siteAllowed(def, m.pattern) && <option value={m.pattern}>{m.pattern || '—'}</option>}
-                  {siteOptions(def).map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
+                  {/* A fixed alkylation row may not drop C, and a variable one
+                      may not take it, so those choices are not offered. */}
+                  {siteOptions(def)
+                    .filter((o) =>
+                      allowedSiteValues(modelId, kind, m.name, [o.value]).length > 0,
+                    )
+                    .map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <div
@@ -235,7 +241,7 @@ function ModTable({
               >
                 {m.mass || '—'}
               </div>
-              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name) ? (
+              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name, m.pattern) ? (
                 // No control at all rather than a disabled one: there is no
                 // state in which this becomes removable, and a greyed button
                 // invites hunting for the condition that enables it.

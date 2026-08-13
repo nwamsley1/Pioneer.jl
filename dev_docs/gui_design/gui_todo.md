@@ -183,10 +183,10 @@ a model switch, a loaded config — and normalises six cases: absent, present,
 wrongly variable, duplicated, fixed on the wrong site, and variable on a PTM
 model.
 
-**Open:** on `prosit_2024_ptm` and `prosit_2025_40ptm`, UNIMOD 4 is defined on
-`['C','K']`, and K-carbamidomethyl is a real PTM someone might want as
-variable. The rule currently strips it. Narrowing the ban to the C site would
-keep that available — needs a decision.
+The pin is on the **site**, not the modification: `[CK]` is a valid fixed
+pattern, K-carbamidomethyl is freely available as fixed or variable on the PTM
+models, and only C is reserved. A fixed row covering K alone gains C rather
+than being replaced, so a chosen modification is never silently dropped.
 
 ## 5. Queue items need the history items' descriptor — **done**
 

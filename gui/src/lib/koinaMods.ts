@@ -125,17 +125,23 @@ export function siteAllowed(mod: KoinaMod, pattern: string): boolean {
   return residues.length > 0 && [...residues].every((c) => mod.sites.includes(c))
 }
 
-/** UNIMOD 4, Carbamidomethyl.
+/** UNIMOD 4 on C, Carbamidomethyl.
  *
  *  Every Koina model currently supported is trained on alkylated cysteine, so
- *  this is not a choice: it is fixed on C, always present, and never offered as
- *  a variable modification. A library built without it does not match what the
- *  model predicts, and the mismatch is silent -- the search simply finds less.
+ *  the C site is not a choice: always fixed, never variable. A library built
+ *  without it does not match what the model predicts, and the mismatch is
+ *  silent -- the search simply finds less.
  *
- *  Kept here rather than in the form so that a future model which does not want
- *  it opts out in one place.
+ *  The pin is on the *site*, not the modification. Models whose UNIMOD 4 also
+ *  covers K leave K entirely free: fixed, variable or absent, as the user
+ *  likes. Multi-site mods are one row with a combined pattern, so "fixed on C
+ *  and K" is the single fixed row carrying `[CK]` rather than a second row.
+ *
+ *  Kept here rather than in the form so a future model which does not want it
+ *  opts out in one place.
  */
 export const REQUIRED_FIXED_UNIMOD = 4
+export const REQUIRED_FIXED_SITE = 'C'
 
 /** Models that require it. Currently all of them; named explicitly so adding a
  *  model is a decision rather than an inheritance. */
@@ -145,17 +151,64 @@ export function requiresFixedAlkylation(modelId: string): boolean {
   return REQUIRES_FIXED_ALKYLATION.has(modelId)
 }
 
-/** True for a mod entry that the model pins as fixed and must not be edited. */
-export function isRequiredFixedMod(modelId: string, name: string): boolean {
-  return requiresFixedAlkylation(modelId) && unimodId(name) === REQUIRED_FIXED_UNIMOD
+/** The residues a pattern names, `[CK]` -> `['C','K']`. */
+function residuesOf(pattern: string): string[] {
+  return [...pattern.replace(/[[\]]/g, '')]
 }
 
-/** Force the rule onto a pair of mod lists: present exactly once among the
- *  fixed mods on its conventional site, and absent from the variable ones.
+function isAlkylation(name: string): boolean {
+  return unimodId(name) === REQUIRED_FIXED_UNIMOD
+}
+
+/** True for the one fixed row the model pins: UNIMOD 4 covering C. It may also
+ *  cover K -- that is still the pinned row, and still not removable. */
+export function isRequiredFixedMod(modelId: string, name: string, pattern: string): boolean {
+  return (
+    requiresFixedAlkylation(modelId) &&
+    isAlkylation(name) &&
+    residuesOf(pattern).includes(REQUIRED_FIXED_SITE)
+  )
+}
+
+/** Site choices permitted for a UNIMOD 4 row: the fixed row must keep C, and a
+ *  variable row must not have it. Any other modification is unconstrained. */
+export function allowedSiteValues(
+  modelId: string,
+  kind: 'fixed' | 'variable',
+  name: string,
+  values: string[],
+): string[] {
+  if (!requiresFixedAlkylation(modelId) || !isAlkylation(name)) return values
+  return values.filter((v) =>
+    kind === 'fixed'
+      ? residuesOf(v).includes(REQUIRED_FIXED_SITE)
+      : !residuesOf(v).includes(REQUIRED_FIXED_SITE),
+  )
+}
+
+/** The site a newly added row should start on: C for a fixed alkylation row,
+ *  and the first site that is not C for a variable one. */
+export function initialSite(
+  modelId: string,
+  kind: 'fixed' | 'variable',
+  mod: KoinaMod,
+): string | null {
+  if (!requiresFixedAlkylation(modelId) || mod.unimod !== REQUIRED_FIXED_UNIMOD) return mod.sites[0]
+  if (kind === 'fixed') return REQUIRED_FIXED_SITE
+  const free = mod.sites.filter((site) => site !== REQUIRED_FIXED_SITE)
+  // null means "this model offers UNIMOD 4 on C only", so there is no variable
+  // form of it to add.
+  return free.length ? free[0] : null
+}
+
+/** Force the rule onto a pair of mod lists: exactly one fixed row covering C,
+ *  and no variable row that names C.
  *
  *  Applied wherever the lists can change from outside the mod editor -- a model
  *  switch, a loaded config -- so the invariant cannot be dodged by a route that
- *  bypasses the UI.
+ *  bypasses the UI. A fixed row already covering C keeps its pattern, so `[CK]`
+ *  survives; one that covers only K gains C rather than being replaced, since
+ *  dropping it would silently discard a modification the user chose.
  */
 export function enforceRequiredMods(
   modelId: string,
@@ -163,12 +216,25 @@ export function enforceRequiredMods(
   variable: { pattern: string; label: string; name: string; mass: string }[],
 ) {
   if (!requiresFixedAlkylation(modelId)) return { fixed, variable }
-  const isReq = (m: { name: string }) => unimodId(m.name) === REQUIRED_FIXED_UNIMOD
-  const required = modEntry(modelId, REQUIRED_FIXED_UNIMOD)
+
+  const existing = fixed.filter((m) => isAlkylation(m.name))
+  const rest = fixed.filter((m) => !isAlkylation(m.name))
+  let required: { pattern: string; label: string; name: string; mass: string }
+  if (existing.length === 0) {
+    required = modEntry(modelId, REQUIRED_FIXED_UNIMOD)
+  } else {
+    const sites = new Set(existing.flatMap((m) => residuesOf(m.pattern)))
+    sites.add(REQUIRED_FIXED_SITE)
+    required = { ...existing[0], pattern: sitePattern([...sites].sort()) }
+  }
+
   return {
-    // Rebuilt rather than patched in place, so a row carrying the right UNIMOD
-    // on the wrong site is corrected too.
-    fixed: [required, ...fixed.filter((m) => !isReq(m))],
-    variable: variable.filter((m) => !isReq(m)),
+    fixed: [required, ...rest],
+    variable: variable.flatMap((m) => {
+      if (!isAlkylation(m.name)) return [m]
+      const free = residuesOf(m.pattern).filter((r) => r !== REQUIRED_FIXED_SITE)
+      // Only C was named, so nothing is left of the row once C is taken out.
+      return free.length ? [{ ...m, pattern: sitePattern(free) }] : []
+    }),
   }
 }
