@@ -1,8 +1,11 @@
-@testset "single-scan peak integrates at least three points" begin
-    rt = Float32.(1:5)
-    scan_idx = UInt32.(1:5)
+@testset "single-scan peak integrates at least five points" begin
+    # getIntegrationBounds! starts the boundary search at apex +/-2, so even a
+    # one-scan spike integrates over five scans (3bcbe5a0e). Seven points here
+    # so the window is set by that rule, not by clamping to the array ends.
+    rt = Float32.(1:7)
+    scan_idx = UInt32.(1:7)
     fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 0, 10, 0, 0]
+    intensity = Float32[0, 0, 0, 10, 0, 0, 0]
     ws = Pioneer.WHWorkspace(length(rt))
     state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
     debug_plot_data = Ref{Any}(nothing)
@@ -12,7 +15,7 @@
         scan_idx,
         intensity,
         fraction,
-        3,
+        4,
         ws,
         state,
         1.0f0,
@@ -21,10 +24,10 @@
         debug_plot_data = debug_plot_data,
     )
 
-    @test best_scan == UInt32(3)
+    @test best_scan == UInt32(4)
     @test start_scan == UInt32(2)
-    @test stop_scan == UInt32(4)
-    @test debug_plot_data[].scan_range == 2:4
+    @test stop_scan == UInt32(6)
+    @test debug_plot_data[].scan_range == 2:6
 end
 
 @testset "baseline subtraction uses selected boundary endpoints" begin
