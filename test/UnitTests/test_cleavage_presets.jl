@@ -7,6 +7,12 @@
 # `overlap = true`. Enzymes that cut N-terminal to a residue are expressed with
 # a lookahead instead, as `digest_fasta` already does for Asp-N.
 #
+# Specificities follow ExPASy PeptideCutter, cross-checked against Comet's
+# search_enzyme_number definitions. CNBr is deliberately not among them: it
+# converts the C-terminal methionine to homoserine lactone and nothing in
+# Pioneer models that residue change, so the masses would be wrong however
+# right the cleavage rule was.
+#
 # Sequences below are built so every rule has a motif to act on, and the
 # expected peptides are written out rather than derived, so a pattern that
 # changes meaning has to disagree with a human to pass.
@@ -106,7 +112,7 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Chymotrypsin and CNBr
+# Chymotrypsin
 #
 #   A  F  P  G  W  S  Y  L  M  T  F  D
 #   1  2  3  4  5  6  7  8  9 10 11 12
@@ -121,12 +127,20 @@ SEQ_AROM = "AFPGWSYLMTFD"
     @test digest_all(SEQ_AROM, "[FWY][^P_|\$]") == ["AFPGW", "SY", "LMTF", "D"]
 end
 
-@testset "Chymotrypsin, broad — L and M as well" begin
-    @test digest_all(SEQ_AROM, "[FWYLM][^P_|\$]") == ["AFPGW", "SY", "L", "M", "TF", "D"]
+@testset "Chymotrypsin, low specificity — L, M and H as well" begin
+    # PeptideCutter's low-specificity set is F, Y, W, L, M and H. There is no H
+    # in this sequence; the next testset covers it.
+    @test digest_all(SEQ_AROM, "[FWYLMH][^P_|\$]") == ["AFPGW", "SY", "L", "M", "TF", "D"]
 end
 
-@testset "CNBr — after M" begin
-    @test digest_all(SEQ_AROM, "M[^_|\$]") == ["AFPGWSYLM", "TFD"]
+@testset "histidine separates the two chymotrypsin rules" begin
+    #   A  A  H  G  G  F  S  S
+    #   1  2  3  4  5  6  7  8
+    seq_his = "AAHGGFSS"
+    # High specificity ignores H, so only F6 cuts.
+    @test digest_all(seq_his, "[FWY][^P_|\$]") == ["AAHGGF", "SS"]
+    # Low specificity cuts after H3 as well.
+    @test digest_all(seq_his, "[FWYLMH][^P_|\$]") == ["AAH", "GGF", "SS"]
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -11,6 +11,22 @@
  *  `assets/example_config/defaultBuildLibParams.json` ships, so a preset
  *  round-trips through a config unchanged. It never occurs in a protein
  *  sequence.
+ *
+ *  Specificities are taken from ExPASy PeptideCutter's enzyme table
+ *  (https://web.expasy.org/peptide_cutter/peptidecutter_enzymes.html), checked
+ *  against Comet's `search_enzyme_number` definitions for what search engines
+ *  conventionally do. Where the two differ it is noted on the entry.
+ *
+ *  Three simplifications, all in the direction of cleaving more rather than
+ *  less: PeptideCutter blocks tryptic cleavage for a few P2/P1' combinations
+ *  (K-W, R-M, and some involving D, C and H), blocks chymotryptic cleavage
+ *  after W when M follows, and blocks it after H when D, M or W follows. None
+ *  of those are modelled here, and no search engine models them either.
+ *
+ *  CNBr is deliberately absent. It cleaves after M, but converts that
+ *  methionine to homoserine lactone, and nothing in Pioneer models the residue
+ *  change -- every peptide's C-terminal mass would be wrong. Anyone who needs
+ *  it can write the rule by hand and accept that.
  */
 export interface Enzyme {
   id: string
@@ -31,6 +47,9 @@ export const ENZYMES: Enzyme[] = [
     pattern: 'K[^_|$]' },
   { id: 'lysn', label: 'Lys-N', rule: 'before K',
     pattern: '[^K](?=K)' },
+  // PeptideCutter says P1' has minimal effect on Arg-C, i.e. proline does not
+  // block it; Comet blocks proline. The search-engine convention is followed
+  // here, since that is what a library is compared against.
   { id: 'argc', label: 'Arg-C', rule: 'after R, but not before proline',
     pattern: 'R[^P_|$]' },
   { id: 'aspn', label: 'Asp-N', rule: 'before D',
@@ -41,12 +60,15 @@ export const ENZYMES: Enzyme[] = [
     pattern: 'E[^P_|$]' },
   { id: 'gluc_phos', label: 'Glu-C (phosphate)', rule: 'after D or E, but not before proline',
     pattern: '[DE][^P_|$]' },
-  { id: 'chymotrypsin', label: 'Chymotrypsin', rule: 'after F, W or Y, but not before proline',
+  { id: 'chymotrypsin', label: 'Chymotrypsin (high specificity)',
+    rule: 'after F, W or Y, but not before proline',
     pattern: '[FWY][^P_|$]' },
-  { id: 'chymotrypsin_broad', label: 'Chymotrypsin (broad)', rule: 'after F, W, Y, L or M, but not before proline',
-    pattern: '[FWYLM][^P_|$]' },
-  { id: 'cnbr', label: 'CNBr', rule: 'after M',
-    pattern: 'M[^_|$]' },
+  // PeptideCutter's low-specificity set is F, Y, W, L, M *and H*. Comet's
+  // Chymotrypsin is FWYL, omitting both M and H. The fuller set is used, since
+  // the point of this entry is the permissive one.
+  { id: 'chymotrypsin_broad', label: 'Chymotrypsin (low specificity)',
+    rule: 'after F, W, Y, L, M or H, but not before proline',
+    pattern: '[FWYLMH][^P_|$]' },
 ]
 
 /** Selected when nothing matches: the pattern is then edited directly. */

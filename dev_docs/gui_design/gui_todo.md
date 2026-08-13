@@ -158,7 +158,7 @@ Deliberately deferred: this is a measurement task, not a UI task.
 
 ## 3. Enzyme presets, plus custom regex — **done**
 
-- [x] Thirteen presets, each carrying its cleavage regex.
+- [x] Twelve presets, each carrying its cleavage regex.
 - [x] A custom option, with a live digest of a sample sequence beside it.
 
 The GUI previously wrote no `cleavage_regex` at all, leaving Pioneer to fall
@@ -201,19 +201,44 @@ cleavages, and a sequence ending in the P1 residue.
 
 | Preset | Pattern | Cleaves |
 |---|---|---|
-| Trypsin | `[KR][^P|$]` | after K/R, not before P |
-| Trypsin/P | `[KR][^|$]` | after K/R, always |
-| Lys-C | `K[^P|$]` | after K, not before P |
-| Lys-C/P | `K[^|$]` | after K, always |
+| Trypsin/P *(default)* | `[KR][^_|$]` | after K/R, always |
+| Trypsin | `[KR][^P_|$]` | after K/R, not before P |
+| Lys-C | `K[^P_|$]` | after K, not before P |
+| Lys-C/P | `K[^_|$]` | after K, always |
 | Lys-N | `[^K](?=K)` | before K |
-| Arg-C | `R[^P|$]` | after R, not before P |
+| Arg-C | `R[^P_|$]` | after R, not before P |
 | Asp-N | `[^D](?=[D])` | before D |
 | Asp-N + Glu | `[^DE](?=[DE])` | before D/E |
-| Glu-C (bicarbonate) | `E[^P|$]` | after E, not before P |
-| Glu-C (phosphate) | `[DE][^P|$]` | after D/E, not before P |
-| Chymotrypsin | `[FWY][^P|$]` | after F/W/Y, not before P |
-| Chymotrypsin (broad) | `[FWYLM][^P|$]` | after F/W/Y/L/M, not before P |
-| CNBr | `M[^|$]` | after M |
+| Glu-C (bicarbonate) | `E[^P_|$]` | after E, not before P |
+| Glu-C (phosphate) | `[DE][^P_|$]` | after D/E, not before P |
+| Chymotrypsin (high specificity) | `[FWY][^P_|$]` | after F/W/Y, not before P |
+| Chymotrypsin (low specificity) | `[FWYLMH][^P_|$]` | after F/W/Y/L/M/H, not before P |
+
+### Sources, and where they disagree
+
+Specificities are ExPASy PeptideCutter's, cross-checked against Comet's
+`search_enzyme_number` table. Checking them changed three things:
+
+- **Chymotrypsin, low specificity, was missing histidine.** PeptideCutter's set
+  is F, Y, W, L, M *and H*; Comet's Chymotrypsin is FWYL, omitting M and H
+  both. The fuller set is used, since a permissive entry that quietly is not
+  is worse than none.
+- **CNBr was dropped.** It cleaves after M, but converts that methionine to
+  homoserine lactone, and `grep -ri homoserine src/` finds nothing — Pioneer
+  does not model the residue change, so every peptide's C-terminal mass would
+  be wrong however right the cleavage rule was. Available as a custom rule for
+  anyone who understands that.
+- **Arg-C keeps proline blocking, against PeptideCutter.** It says P1' has
+  minimal effect; Comet blocks proline. The search-engine convention wins,
+  since a library is compared against search-engine output.
+
+Not modelled, in the direction of cleaving more rather than less: PeptideCutter
+blocks tryptic cleavage for K-W, R-M and a few combinations involving D, C and
+H; blocks chymotryptic cleavage after W when M follows, and after H when D, M
+or W follows. No search engine models these either.
+
+Each pattern is checked in `test/UnitTests/test_cleavage_presets.jl` against a
+peptide list written out by hand — 30 assertions over four sequences.
 
 ### Validating a custom regex — as built
 
