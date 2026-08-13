@@ -28,7 +28,13 @@
 #     we already had would produce a corrupt file whose size looks plausible.
 
 """
-    hf_download_file(url, path, expected_size; fetch_stream=HTTP.open, on_chunk) -> Int
+Most hops any one file may take. huggingface.co uses one (to its CDN); the cap
+exists so a redirect loop fails rather than spinning.
+"""
+const HF_MAX_REDIRECTS = 5
+
+"""
+    hf_download_file(url, path, expected_size; on_chunk) -> Int
 
 Fetch one file to `path`, resuming when a partial copy is already there. Returns
 the byte count on disk.
@@ -47,33 +53,78 @@ function hf_download_file(url::AbstractString, path::AbstractString, expected_si
         existing > expected_size && (rm(path; force = true); existing = 0)
     end
 
-    headers = Pair{String, String}[]
-    existing > 0 && push!(headers, "Range" => "bytes=$(existing)-")
+    current = String(url)
+    for _ in 1:HF_MAX_REDIRECTS
+        # Identity encoding is required, not merely preferred. HTTP.jl asks for
+        # gzip by default and does not decompress in streaming mode, so the
+        # bytes reaching the file would be the compressed ones -- a short file
+        # that starts with 1f 8b. It also keeps the byte offsets below honest:
+        # a Range is relative to the representation the server sends, so
+        # resuming a compressed stream by identity offset is meaningless.
+        headers = Pair{String, String}["Accept-Encoding" => "identity"]
+        existing > 0 && push!(headers, "Range" => "bytes=$(existing)-")
 
-    restart = Ref(false)
-    total = existing
-    open(path, existing > 0 ? "a" : "w") do out
-        HTTP.open("GET", url, headers) do stream
+        next_url = ""
+        restart = false
+        total = existing
+
+        # `redirect = false` is load-bearing. Left to itself HTTP.jl runs this
+        # callback once per hop -- including the 307 that huggingface.co answers
+        # with -- and the body of that hop is the string "Temporary Redirect.
+        # Redirecting to ...". Streaming every hop into the same file therefore
+        # prepends ~1 KB of prose to a multi-gigabyte binary, producing a file
+        # of plausible size and wrong contents. Following redirects here means
+        # only the final response is ever written.
+        HTTP.open("GET", current, headers; redirect = false, status_exception = false) do stream
             response = HTTP.startread(stream)
-            # 206 = our range was honoured. Anything else restarts the file.
-            if existing > 0 && response.status != 206
-                restart[] = true
+
+            if response.status in (301, 302, 303, 307, 308)
+                location = HTTP.header(response, "Location", "")
+                isempty(location) && error("redirect with no Location from $current")
+                # Relative, in HF's case: /api/resolve-cache/datasets/...
+                next_url = string(HTTP.URIs.resolvereference(HTTP.URI(current), location))
+                while !eof(stream)                       # discard, never write
+                    readavailable(stream)
+                end
                 return
             end
-            while !eof(stream)
-                chunk = readavailable(stream)
-                total += write(out, chunk)
-                on_chunk === nothing || on_chunk(length(chunk))
+
+            if response.status >= 400
+                error("HTTP $(response.status) fetching $current")
+            end
+
+            # 206 = our range was honoured. Anything else restarts the file,
+            # since a 200 body begins at byte zero and appending it would
+            # corrupt what is already there.
+            if existing > 0 && response.status != 206
+                restart = true
+                while !eof(stream)
+                    readavailable(stream)
+                end
+                return
+            end
+
+            open(path, existing > 0 ? "a" : "w") do out
+                while !eof(stream)
+                    chunk = readavailable(stream)
+                    total += write(out, chunk)
+                    on_chunk === nothing || on_chunk(length(chunk))
+                end
             end
         end
-    end
 
-    if restart[]
-        # One clean retry with no Range header, so this cannot recurse twice.
-        rm(path; force = true)
-        return hf_download_file(url, path, expected_size; on_chunk = on_chunk)
+        if !isempty(next_url)
+            current = next_url
+            continue
+        end
+        if restart
+            rm(path; force = true)
+            existing = 0
+            continue
+        end
+        return total
     end
-    return total
+    error("too many redirects fetching $url")
 end
 
 """

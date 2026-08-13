@@ -175,11 +175,24 @@ end
 # testset's data.
 _DL_PORT = Ref(rand(20000:39000))
 
-"""Serve `files` (name => bytes) with Range support, honouring `range_mode`."""
-function _serve(files::Dict{String, Vector{UInt8}}, range_mode::Symbol)
+"""Serve `files` (name => bytes) with Range support, honouring `range_mode`.
+
+`redirect = true` puts every path behind a 307 to /r/<path>, the way
+huggingface.co bounces a resolve URL to its CDN. That hop is why real downloads
+arrived with ~1 KB of "Temporary Redirect. Redirecting to ..." written into
+them while every loopback test passed: HTTP.jl runs the response callback once
+per hop, so the redirect's own body was being streamed into the file.
+"""
+function _serve(files::Dict{String, Vector{UInt8}}, range_mode::Symbol;
+                redirect::Bool = false)
     port = (_DL_PORT[] += 1)
     server = HTTP.serve!("127.0.0.1", port; verbose = false) do request
-        name = lstrip(HTTP.URI(request.target).path, '/')
+        path = HTTP.URI(request.target).path
+        if redirect && !startswith(path, "/r/")
+            return HTTP.Response(307, ["Location" => "/r" * path];
+                                 body = "Temporary Redirect. Redirecting to /r$path")
+        end
+        name = lstrip(startswith(path, "/r/") ? path[3:end] : path, '/')
         haskey(files, name) || return HTTP.Response(404, "no")
         body = files[name]
         range_header = HTTP.header(request, "Range", "")
@@ -252,6 +265,38 @@ end
                 Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
                 @test read(path) == payload
                 @test filesize(path) == length(payload)   # not 7000
+            end
+        finally
+            close(server)
+        end
+    end
+
+    @testset "a redirect body is never written into the file" begin
+        # The bug this exists for: huggingface.co answers a resolve URL with a
+        # 307 whose body is prose. Streaming every hop produced a file of
+        # plausible size whose first ~1 KB was that prose.
+        server, port = _serve(files, :honour; redirect = true)
+        try
+            mktempdir() do dir
+                path = joinpath(dir, "f.bin")
+                n = Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
+                @test n == length(payload)
+                @test filesize(path) == length(payload)
+                @test read(path) == payload
+            end
+        finally
+            close(server)
+        end
+    end
+
+    @testset "resume works across a redirect" begin
+        server, port = _serve(files, :honour; redirect = true)
+        try
+            mktempdir() do dir
+                path = joinpath(dir, "f.bin")
+                write(path, payload[1:2000])
+                Pioneer.hf_download_file("http://127.0.0.1:$port/f.bin", path, length(payload))
+                @test read(path) == payload
             end
         finally
             close(server)
