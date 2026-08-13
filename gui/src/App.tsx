@@ -31,7 +31,7 @@ import {
 import { makeFastaRow, presetRegex } from './lib/fasta'
 import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
 import { listenForDrops } from './lib/dragdrop'
-import { generateRunName } from './lib/names'
+import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
 import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
 import {
@@ -259,6 +259,9 @@ export default function App() {
   const [catalogError, setCatalogError] = useState('')
   /** Keys of a loaded config that the form does not model, per command. */
   const [extras, setExtras] = useState<Record<string, Json | null>>({})
+  /** Optional name for the next run. Empty means "generate one". Shared across
+   *  the command tabs: it names the run you are about to start, not the form. */
+  const [jobName, setJobName] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [runError, setRunError] = useState('')
@@ -346,6 +349,7 @@ export default function App() {
         if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert }))
         if (saved.command) setCommand(saved.command)
         if (typeof saved.threads === 'number') setThreads(saved.threads)
+        if (typeof saved.jobName === 'string') setJobName(saved.jobName)
       }
     } catch {
       /* corrupt or absent — fall back to defaults */
@@ -377,7 +381,7 @@ export default function App() {
     // give back when you click a workflow tab.
     if (inspectingJobId) return
     try {
-      localStorage.setItem(PERSIST_KEY, JSON.stringify({ command, search, build, convert, threads }))
+      localStorage.setItem(PERSIST_KEY, JSON.stringify({ command, search, build, convert, threads, jobName }))
     } catch {
       /* private mode / quota — persistence is a convenience, not a requirement */
     }
@@ -1042,6 +1046,13 @@ export default function App() {
         ? searchNotes.results
         : libNote
 
+  /** Names already spoken for, across this session and persisted history. */
+  const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
+  const trimmedJobName = jobName.trim()
+  /** Only computed for a typed name: for an empty one the answer is random, and
+   *  a preview that reshuffles on every keystroke is noise. */
+  const resolvedJobName = trimmedJobName ? resolveRunName(trimmedJobName, takenTitles) : ''
+
   const enqueue = async () => {
     jobSeq.current += 1
     const id = `${sessionId.current}-job${jobSeq.current}`
@@ -1054,7 +1065,7 @@ export default function App() {
       runNo,
       finishedAt: 0,
       cmd: command,
-      title: generateRunName(jobs.map((j) => j.title)),
+      title: resolveRunName(jobName, jobs.map((j) => j.title)),
       snapshot: isConvert
         ? { cmd: 'convertraw' as const, convert }
         : isDownload
@@ -1351,6 +1362,48 @@ export default function App() {
                 </span>
               </div>
             )}
+
+            <section
+              style={{
+                background: '#fff',
+                border: '1px solid #E7EAEE',
+                borderRadius: 13,
+                padding: '18px 20px',
+                marginBottom: 14,
+              }}
+            >
+              <label
+                htmlFor="pio-job-name"
+                style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#344054', marginBottom: 6 }}
+              >
+                Job name
+              </label>
+              <input
+                id="pio-job-name"
+                data-key="jobName"
+                value={jobName}
+                placeholder="Optional"
+                onChange={(e) => setJobName(e.target.value)}
+                style={{
+                  width: '100%',
+                  height: 36,
+                  padding: '0 11px',
+                  border: '1px solid #D6DAE1',
+                  borderRadius: 9,
+                  fontSize: 13,
+                  color: '#1B2A4A',
+                  background: '#fff',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <p style={{ fontSize: 11.5, color: '#98A2B3', margin: '8px 0 0' }}>
+                {!trimmedJobName
+                  ? 'Left blank, a name is generated for you.'
+                  : resolvedJobName === trimmedJobName
+                    ? `This run will be called ${resolvedJobName}.`
+                    : `${trimmedJobName} is already taken — this run will be called ${resolvedJobName}.`}
+              </p>
+            </section>
 
             {isConvert ? (
               <ConvertRawForm
