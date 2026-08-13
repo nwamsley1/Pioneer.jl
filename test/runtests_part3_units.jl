@@ -26,6 +26,7 @@ include("./UnitTests/test_fast_df_sort.jl")
 # Quantification tests
 include("./UnitTests/test_maxLFQ.jl")
 include("./UnitTests/test_normalizeQuant.jl")
+include("./UnitTests/test_download_speclib.jl")
 
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
