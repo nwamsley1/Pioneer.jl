@@ -124,3 +124,51 @@ export function siteAllowed(mod: KoinaMod, pattern: string): boolean {
   const residues = pattern.replace(/[[\]]/g, '')
   return residues.length > 0 && [...residues].every((c) => mod.sites.includes(c))
 }
+
+/** UNIMOD 4, Carbamidomethyl.
+ *
+ *  Every Koina model currently supported is trained on alkylated cysteine, so
+ *  this is not a choice: it is fixed on C, always present, and never offered as
+ *  a variable modification. A library built without it does not match what the
+ *  model predicts, and the mismatch is silent -- the search simply finds less.
+ *
+ *  Kept here rather than in the form so that a future model which does not want
+ *  it opts out in one place.
+ */
+export const REQUIRED_FIXED_UNIMOD = 4
+
+/** Models that require it. Currently all of them; named explicitly so adding a
+ *  model is a decision rather than an inheritance. */
+const REQUIRES_FIXED_ALKYLATION = new Set(Object.keys(KOINA_MODS))
+
+export function requiresFixedAlkylation(modelId: string): boolean {
+  return REQUIRES_FIXED_ALKYLATION.has(modelId)
+}
+
+/** True for a mod entry that the model pins as fixed and must not be edited. */
+export function isRequiredFixedMod(modelId: string, name: string): boolean {
+  return requiresFixedAlkylation(modelId) && unimodId(name) === REQUIRED_FIXED_UNIMOD
+}
+
+/** Force the rule onto a pair of mod lists: present exactly once among the
+ *  fixed mods on its conventional site, and absent from the variable ones.
+ *
+ *  Applied wherever the lists can change from outside the mod editor -- a model
+ *  switch, a loaded config -- so the invariant cannot be dodged by a route that
+ *  bypasses the UI.
+ */
+export function enforceRequiredMods(
+  modelId: string,
+  fixed: { pattern: string; label: string; name: string; mass: string }[],
+  variable: { pattern: string; label: string; name: string; mass: string }[],
+) {
+  if (!requiresFixedAlkylation(modelId)) return { fixed, variable }
+  const isReq = (m: { name: string }) => unimodId(m.name) === REQUIRED_FIXED_UNIMOD
+  const required = modEntry(modelId, REQUIRED_FIXED_UNIMOD)
+  return {
+    // Rebuilt rather than patched in place, so a row carrying the right UNIMOD
+    // on the wrong site is corrected too.
+    fixed: [required, ...fixed.filter((m) => !isReq(m))],
+    variable: variable.filter((m) => !isReq(m)),
+  }
+}

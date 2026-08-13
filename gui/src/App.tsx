@@ -29,7 +29,7 @@ import {
   type Json,
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
-import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
+import { enforceRequiredMods, findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
 import { listenForDrops } from './lib/dragdrop'
 import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
@@ -811,7 +811,13 @@ export default function App() {
     const f = retarget(build.fixedMods)
     const v = retarget(build.variableMods)
     setModNote({ fixed: f.note, variable: v.note })
-    setBuild((p) => ({ ...p, predictionModel: modelId, fixedMods: f.kept, variableMods: v.kept }))
+    const req = enforceRequiredMods(modelId, f.kept, v.kept)
+    setBuild((p) => ({
+      ...p,
+      predictionModel: modelId,
+      fixedMods: req.fixed,
+      variableMods: req.variable,
+    }))
   }
 
   const onToggle = (key: string) => {
@@ -1166,7 +1172,13 @@ export default function App() {
       const patch = buildConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
       if (!switchCommand && isSearch) return 'That is a BuildSpecLib config, not a SearchDIA one.'
-      setBuild((p) => ({ ...p, ...patch }))
+      // A loaded config is outside the mod editor entirely, and older or
+      // hand-written ones carry carbamidomethyl as variable, or not at all.
+      setBuild((p) => {
+        const next = { ...p, ...patch }
+        const req = enforceRequiredMods(next.predictionModel, next.fixedMods, next.variableMods)
+        return { ...next, fixedMods: req.fixed, variableMods: req.variable }
+      })
       setExtras((e) => ({ ...e, buildspeclib: computeExtras(obj, BUILD_OWNED_PATHS) }))
       if (switchCommand) setCommand('buildspeclib')
       setRunError('')

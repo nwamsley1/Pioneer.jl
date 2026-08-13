@@ -5,7 +5,14 @@ import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
-import { findMod, modsForModel, siteAllowed, siteOptions, unimodId } from '../lib/koinaMods'
+import {
+  findMod,
+  isRequiredFixedMod,
+  modsForModel,
+  siteAllowed,
+  siteOptions,
+  unimodId,
+} from '../lib/koinaMods'
 import { BROWSE } from '../lib/styles'
 import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
@@ -126,7 +133,12 @@ function ModTable({
   const readOnly = (extra: React.CSSProperties): React.CSSProperties =>
     cell({ background: '#F7F8FA', color: '#667085', ...extra })
 
-  const available = modsForModel(modelId)
+  // Carbamidomethyl is pinned as fixed, so it is not a variable option at all.
+  // Disabling it in the menu would suggest it is available under some
+  // condition; it is not.
+  const available = modsForModel(modelId).filter(
+    (d) => !(kind === 'variable' && isRequiredFixedMod(modelId, `Unimod:${d.unimod}`)),
+  )
   const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
@@ -223,7 +235,14 @@ function ModTable({
               >
                 {m.mass || '—'}
               </div>
-              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
+              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name) ? (
+                // No control at all rather than a disabled one: there is no
+                // state in which this becomes removable, and a greyed button
+                // invites hunting for the condition that enables it.
+                <div style={{ width: 21, flex: 'none' }} title="Required by this model" />
+              ) : (
+                removeBtn(() => onRemove(kind, i), 'Remove', 21)
+              )}
             </div>
           )
         })}

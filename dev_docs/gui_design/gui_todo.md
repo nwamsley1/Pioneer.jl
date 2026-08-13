@@ -167,15 +167,26 @@ of scope — Dennis is working on it separately.
 Validation needs deciding: a regex that compiles is not necessarily one
 Pioneer accepts, so "valid" may mean more than "parses".
 
-## 4. Carbamidomethyl (C) must be a required fixed mod
+## 4. Carbamidomethyl (C) must be a required fixed mod — **done**
 
-- [ ] Prevent its removal.
+- [x] Always present as a fixed mod, on C, for every supported Koina model.
+- [x] Not offered as a variable modification at all.
+- [x] Its row carries no remove control.
 
-`BUILD_DEFAULTS` already includes it (`lib/types.ts:187`,
-`fixedMods: [modEntry('altimeter', 4)]`), so this is about making it
-non-removable rather than adding it. Decide whether it is locked outright or
-removable with a warning — the latter matters if anyone builds a library from
-alkylation-free data.
+The rule lives in `lib/koinaMods.ts` (`REQUIRED_FIXED_UNIMOD`,
+`requiresFixedAlkylation`, `enforceRequiredMods`) rather than in the form, so a
+future model that does not want it opts out in one place. The model set is
+listed explicitly, so adding a model is a decision rather than an inheritance.
+
+`enforceRequiredMods` runs wherever the lists change from outside the editor —
+a model switch, a loaded config — and normalises six cases: absent, present,
+wrongly variable, duplicated, fixed on the wrong site, and variable on a PTM
+model.
+
+**Open:** on `prosit_2024_ptm` and `prosit_2025_40ptm`, UNIMOD 4 is defined on
+`['C','K']`, and K-carbamidomethyl is a real PTM someone might want as
+variable. The rule currently strips it. Narrowing the ban to the C site would
+keep that available — needs a decision.
 
 ## 5. Queue items need the history items' descriptor — **done**
 
