@@ -197,6 +197,14 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. */
   outputDir: string
   skipExisting: boolean
+  /** Scan-reader threads within the single file being converted.
+   *
+   *  PioneerConverter parallelises on two levels and the knobs multiply, so
+   *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
+   *  only one exposed. It is deliberately not the sidebar thread count: that
+   *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
+   *  reads it. */
+  threadsPerFile: string
   batchSize: string
   scanChunkSize: string
 }
@@ -206,6 +214,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   outputDir: '',
   skipExisting: false,
+  threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
 }

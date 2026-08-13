@@ -350,7 +350,7 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
  *  Flags equal to the converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
  */
-export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
+export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
   if (s.skipExisting) args.push('--skip-existing')
@@ -359,7 +359,7 @@ export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
   // multiplied and it was easy to oversubscribe the machine without noticing.
   // Pinned to 1 explicitly rather than left to the converter's own default.
   args.push('--concurrent-files', '1')
-  args.push('--threads-per-file', String(Math.max(1, threads)))
+  args.push('--threads-per-file', String(Math.max(1, parseInt(s.threadsPerFile, 10) || 1)))
   args.push('--batch-size', s.batchSize.trim())
   args.push('--scan-chunk-size', s.scanChunkSize.trim())
   return args
@@ -382,7 +382,7 @@ export function downloadCommandLine(s: DownloadParams): string {
 }
 
 /** The command line as a user would type it, for the preview panel. */
-export function convertCommandLine(s: ConvertParams, threads: number): string {
+export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  return ['PioneerConverter', ...buildConvertArgs(s, threads).map(quote)].join(' ')
+  return ['PioneerConverter', ...buildConvertArgs(s).map(quote)].join(' ')
 }

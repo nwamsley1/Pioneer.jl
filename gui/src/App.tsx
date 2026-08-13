@@ -1024,7 +1024,7 @@ export default function App() {
         ? // Clamped: while the threads field is being cleared it holds 0, and
           // the preview should not show `--threads-per-file 0` as if that were
           // the command we would run. Run refuses in that state anyway.
-          convertCommandLine(convert, Math.max(1, threads))
+          convertCommandLine(convert)
         : JSON.stringify(
             isSearch ? buildSearchJson(search, currentExtras) : buildLibJson(build, currentExtras),
             null,
@@ -1087,7 +1087,7 @@ export default function App() {
       failMsg: '',
       paramsJson: jsonText,
       invocation: isConvert
-        ? { kind: 'args' as const, args: buildConvertArgs(convert, threads) }
+        ? { kind: 'args' as const, args: buildConvertArgs(convert) }
         : isDownload
           ? { kind: 'args' as const, args: buildDownloadArgs(download) }
           : { kind: 'paramsFile' as const, json: jsonText },
@@ -1111,7 +1111,9 @@ export default function App() {
       setRunError(pioneerError)
       return
     }
-    if (threads < 1) {
+    // Not on ConvertRAW: the picker is hidden there and the value is unused,
+    // so blocking on it would be an error about an invisible control.
+    if (!isConvert && threads < 1) {
       setRunError(`Enter a thread count between 1 and ${maxThreads}.`)
       const el = document.querySelector('[data-key="threads"]')
       if (el) (el as HTMLElement).focus?.()
@@ -1319,7 +1321,10 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            showThreads
+            // ConvertRAW is a .NET program: it never reads JULIA_NUM_THREADS,
+            // and its own thread count lives in the form. A picker here would
+            // be a control that changes nothing.
+            showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}
             runLabel={runLabel}

@@ -271,6 +271,7 @@ export function ConvertRawForm({
                 marginTop: 16,
               }}
             >
+              <NumField fieldKey="threadsPerFile" value={params.threadsPerFile} onChange={onParam} />
               <NumField fieldKey="batchSize" value={params.batchSize} onChange={onParam} />
               <NumField fieldKey="scanChunkSize" value={params.scanChunkSize} onChange={onParam} />
             </div>

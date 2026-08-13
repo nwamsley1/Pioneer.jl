@@ -44,11 +44,13 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   missedCleav: { label: 'Missed cleav.', min: 0, max: 9, step: 1, int: true },
   maxVarMods: { label: 'Max var. mods', min: 0, max: 5, step: 1, int: true },
   // PioneerConverter's own defaults are 2 / 3 / 10000 / 128.
+  threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
   batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
   scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
 }
 
 export const CONVERT_NUM_KEYS = [
+  'threadsPerFile',
   'batchSize',
   'scanChunkSize',
 ] as const

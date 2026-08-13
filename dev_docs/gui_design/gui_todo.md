@@ -134,21 +134,20 @@ Raised in Slack after driving the app. Each item records what the code
 actually does today, so the work is scoped before it is started rather than
 rediscovered. Tick as they land.
 
-## 1. ConvertRAW threading — *verify what is still wrong*
+## 1. ConvertRAW threading — **done**
 
-**Ask:** always one file at a time, several threads on that file.
+**Ask:** no thread picker in the header here; recover the threads-per-file
+setter that older versions had in the options menu. Files-at-a-time stays at 1.
 
-- [ ] Confirm what remains broken.
+- [x] Header thread picker hidden on ConvertRAW.
+- [x] `threadsPerFile` restored to the Advanced grid, default 3.
+- [x] Args read the form field rather than the sidebar count.
 
-Already true in `lib/config.ts:361`: `--concurrent-files` is pinned to `1`
-with `--threads-per-file` taking the sidebar thread count, and no
-concurrent-files control is exposed. The thread picker is shown on every page
-(`App.tsx:1322` passes `showThreads` unconditionally), so it is settable here.
-
-So the described behaviour appears to be what already ships. **Open question:
-what is the symptom?** Wrong default value, the picker not affecting the run,
-or throughput not scaling? Note `gui/README.md` still claims the picker is
-hidden on this page — that text is stale either way.
+The picker drove `JULIA_NUM_THREADS`, which PioneerConverter never reads — it
+is a .NET program — so on this page it was a control that changed nothing.
+`concurrentFiles` was deliberately *not* restored: the two knobs multiply, and
+one file at a time is the wanted behaviour. Definitions recovered from
+`cb014888f^`, the commit that removed them.
 
 ## 2. BuildSpecLib thread count — *last, after measurement*
 
@@ -178,14 +177,14 @@ non-removable rather than adding it. Decide whether it is locked outright or
 removable with a warning — the latter matters if anyone builds a library from
 alkylation-free data.
 
-## 5. Queue items need the history items' descriptor
+## 5. Queue items need the history items' descriptor — **done**
 
-- [ ] Match the descriptor treatment between queue and history rows.
+- [x] Descriptor shown on running rows too.
 
-Queue rows do render `CMD_TEXT · STATUS_TEXT` (`Sidebar.tsx:541`), but a
-*running* row replaces that line with the progress bar, so the descriptor is
-missing exactly while the run is most interesting. Likely the real gap; worth
-confirming against what was seen.
+Both lists share one `renderRow`; the subtext was the else-branch of
+`running`, so the progress bar replaced it. A running row was therefore the
+one place the command and status were not written down, while being the row
+most worth identifying. The bar now sits beneath the descriptor instead.
 
 ## 6. File count in the subtext
 

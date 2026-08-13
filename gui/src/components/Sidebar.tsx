@@ -521,7 +521,15 @@ export function Sidebar({
                       >
                         {j.title}
                       </span>
-                      {running ? (
+                      {/* The descriptor is unconditional. It used to be the
+                          else-branch of `running`, so the bar replaced it and a
+                          running row was the one place the command and status
+                          were not written down -- while being the row most
+                          worth identifying. The bar now sits under it. */}
+                      <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-dim)' }}>
+                        {CMD_TEXT[j.cmd]} · {STATUS_TEXT[j.status]}
+                      </span>
+                      {running && (
                         <div
                           style={{
                             position: 'relative',
@@ -536,10 +544,6 @@ export function Sidebar({
                         >
                           <div style={barberStyle} />
                         </div>
-                      ) : (
-                        <span style={{ fontSize: 10.5, color: 'var(--pio-nav-fg-dim)' }}>
-                          {CMD_TEXT[j.cmd]} · {STATUS_TEXT[j.status]}
-                        </span>
                       )}
                     </span>
                   )}
