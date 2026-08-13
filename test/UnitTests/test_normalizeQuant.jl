@@ -16,7 +16,10 @@ if !@isdefined(Pioneer)
     using Dictionaries
 end
 
-# Helper: create a synthetic PSM Arrow file with RT-dependent abundance
+# Helper: create a synthetic PSM Arrow file with RT-dependent abundance.
+# Files meant to get a spline need enough PSMs to fill
+# `_min_bins_for_spline(spline_n_knots)` bins of `QUANT_MIN_BIN_OCCUPANCY` each:
+# at spline_n_knots=5 that is 8 bins × 100 = 800 PSMs, hence n=1000 below.
 function _write_quant_arrow(path::String, n::Int, offset::Float64;
                             rt_range::Tuple{Float64,Float64}=(0.0, 100.0))
     rts = Float32.(collect(LinRange(first(rt_range), last(rt_range), n)))
@@ -42,8 +45,8 @@ end
         # Two files with different intensity levels
         path1 = joinpath(dir, "file1.arrow")
         path2 = joinpath(dir, "file2.arrow")
-        _write_quant_arrow(path1, 200, 0.0)
-        _write_quant_arrow(path2, 200, 2.0)  # 4× higher
+        _write_quant_arrow(path1, 1000, 0.0)
+        _write_quant_arrow(path2, 1000, 2.0)  # 4× higher
 
         splines, rt_range = Pioneer.getQuantSplines(
             [path1, path2], :abundance; N=50, spline_n_knots=5)
@@ -76,8 +79,8 @@ end
     mktempdir() do dir
         path1 = joinpath(dir, "file1.arrow")
         path2 = joinpath(dir, "file2.arrow")
-        _write_quant_arrow(path1, 200, 0.0)
-        _write_quant_arrow(path2, 200, 2.0)
+        _write_quant_arrow(path1, 1000, 0.0)
+        _write_quant_arrow(path2, 1000, 2.0)
 
         splines, rt_range = Pioneer.getQuantSplines(
             [path1, path2], :abundance; N=50, spline_n_knots=5)
@@ -113,7 +116,7 @@ end
         offsets = [0.0, 1.5, -1.0]
         for (i, offset) in enumerate(offsets)
             path = joinpath(dir, "file$i.arrow")
-            _write_quant_arrow(path, 200, offset)
+            _write_quant_arrow(path, 1000, offset)
             push!(paths, path)
         end
 
@@ -152,7 +155,7 @@ end
 @testset "single file" begin
     mktempdir() do dir
         path = joinpath(dir, "only.arrow")
-        _write_quant_arrow(path, 200, 0.0)
+        _write_quant_arrow(path, 1000, 0.0)
 
         Pioneer.normalizeQuant(dir, :abundance; N=50, spline_n_knots=5)
 
@@ -161,6 +164,40 @@ end
         # With one file, correction should be ~zero → normalized ≈ raw
         ratio = median(df.abundance_normalized ./ df.abundance)
         @test ratio ≈ 1.0 atol=0.1
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Edge case: too few PSMs to fit any spline — fall back to identity
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "no file supports a spline" begin
+    mktempdir() do dir
+        # 200 PSMs fills only 2 bins at >= 100 each, short of the 8 a
+        # 7-coefficient spline needs, so every file is skipped.
+        paths = String[]
+        for (i, offset) in enumerate([0.0, 2.0])
+            path = joinpath(dir, "file$i.arrow")
+            _write_quant_arrow(path, 200, offset)
+            push!(paths, path)
+        end
+
+        splines, rt_range = Pioneer.getQuantSplines(
+            paths, :abundance; N=50, spline_n_knots=5)
+        @test isempty(splines)
+
+        # No cross-file median exists; corrections must be empty, not an error.
+        corrections = Pioneer.getQuantCorrections(splines, rt_range; N=50)
+        @test isempty(corrections)
+
+        Pioneer.normalizeQuant(dir, :abundance; N=50, spline_n_knots=5)
+
+        for path in paths
+            df = DataFrame(Arrow.Table(path))
+            @test hasproperty(df, :abundance_normalized)
+            # Correction factor 1.0: abundances pass through untouched.
+            @test all(df.abundance_normalized .≈ Float64.(df.abundance))
+        end
     end
 end
 

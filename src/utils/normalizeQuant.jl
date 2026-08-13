@@ -137,11 +137,17 @@ end
 Compute per-file RT-dependent correction offsets. Evaluates each file's spline
 on a grid, computes the cross-file median at each RT point, and returns a
 dictionary of interpolated offset functions (file_spline - global_median).
+
+Returns an empty dictionary when no file got a spline: there is no cross-file
+median to correct toward, and `rt_range` is still the empty-range sentinel
+`(Inf, -Inf)`. `applyNormalization!` reads that as "no correction for this file"
+and copies the abundances through unchanged (correction factor 1.0).
 """
 function getQuantCorrections(
     quant_splines::Dictionary{String, UniformSpline},
     rt_range::Tuple{AbstractFloat, AbstractFloat};
     N = 100)
+    isempty(quant_splines) && return Dictionary{String, Any}()
     median_quant = zeros(Float32, (length(quant_splines), N))
     rt_grid = collect(LinRange(first(rt_range), last(rt_range), N))
     for (i, rt) in enumerate(rt_grid)
