@@ -15,6 +15,11 @@ import { useEffect, useRef, useState } from 'react'
 /** How long the pointer must rest before the description appears. */
 const OPEN_DELAY_MS = 100
 
+/** Fixed rather than max-width, so the box can be clamped to the window before
+ *  it is drawn: the alternative needs a measuring pass. */
+const TOOLTIP_W = 300
+const EDGE_GAP = 10
+
 export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light' | 'dark' }) {
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
   const ref = useRef<HTMLSpanElement | null>(null)
@@ -31,7 +36,15 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
     cancel()
     timer.current = window.setTimeout(() => {
       const r = ref.current?.getBoundingClientRect()
-      if (r) setAt({ left: r.left + r.width / 2, top: r.bottom + 8 })
+      if (!r) return
+      // Centred on the dot, then pulled back inside the window. A dot in the
+      // sidebar sits near the left edge, where centring alone would put half
+      // the text off-screen.
+      const left = Math.min(
+        Math.max(EDGE_GAP, r.left + r.width / 2 - TOOLTIP_W / 2),
+        window.innerWidth - TOOLTIP_W - EDGE_GAP,
+      )
+      setAt({ left, top: r.bottom + 8 })
     }, OPEN_DELAY_MS)
   }
 
@@ -97,16 +110,20 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
             position: 'fixed',
             left: at.left,
             top: at.top,
-            transform: 'translateX(-50%)',
-            // Clamped rather than centred blindly: a dot near the window edge
-            // would otherwise place half the text off-screen.
-            maxWidth: 'min(340px, calc(100vw - 24px))',
+            width: TOOLTIP_W,
             zIndex: 60,
             padding: '8px 10px',
             borderRadius: 8,
             background: '#1B2A4A',
             color: '#F2F5F9',
             font: "12px/1.45 'IBM Plex Sans'",
+            // The `font` shorthand covers neither of these, and the tooltip is
+            // rendered inside whatever it labels -- under the sidebar's section
+            // heading that means inheriting uppercase and wide tracking, which
+            // reads as a different, larger typeface and overflows the box.
+            textTransform: 'none',
+            letterSpacing: 'normal',
+            textAlign: 'left',
             boxShadow: '0 6px 20px rgba(15,20,27,0.28)',
             pointerEvents: 'none',
             whiteSpace: 'normal',

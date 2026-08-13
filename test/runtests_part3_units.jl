@@ -60,6 +60,7 @@ include("./integration/test_buildspeclib_synthetic.jl")
 include("./Routines/BuildSpecLib/test_build_determinism.jl")
 include("./UnitTests/test_buildspeclib_filter_equivalence.jl")
 include("./UnitTests/test_mod_site_conflicts.jl")
+include("./UnitTests/test_cleavage_presets.jl")
 
 # Parallel utilities
 include("./UnitTests/test_parallel_utils.jl")

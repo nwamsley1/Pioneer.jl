@@ -183,9 +183,10 @@ Two things checked rather than assumed:
 
 ### Proposed presets
 
-Verified against `digest_sequence` on `GGKAARAAKPAARPAADAAEAAFAAWAAYAALAAMAAK`,
-which carries one motif per rule. Each produced exactly its enzyme's expected
-cleavages, and none produced duplicates.
+Each pattern is checked in `test/UnitTests/test_cleavage_presets.jl` against a
+peptide list written out by hand — 29 assertions over three sequences built so
+every rule has a motif to act on, plus proline blocking, adjacent sites, missed
+cleavages, and a sequence ending in the P1 residue.
 
 | Preset | Pattern | Cleaves |
 |---|---|---|
