@@ -38,6 +38,7 @@ import {
   siteAllowed,
   unimodId,
 } from './lib/koinaMods'
+import { SAMPLE_SEQUENCE, enzymeById, previewDigest } from './lib/enzymes'
 import { listenForDrops } from './lib/dragdrop'
 import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
@@ -1014,6 +1015,32 @@ export default function App() {
     setRunError('')
   }
 
+  /** Choosing a preset writes its pattern; choosing Custom keeps whatever is
+   *  there, so switching to Custom to make a small edit does not wipe the rule
+   *  you were editing. */
+  const onEnzyme = (id: string) => {
+    const preset = enzymeById(id)
+    if (preset) setBuild((p) => ({ ...p, cleavageRegex: preset.pattern }))
+    setRunError('')
+  }
+
+  /** Whether the typed rule is usable, judged by trying it. A pattern that
+   *  compiles can still be wrong, which is what the preview beside it is for;
+   *  this catches only what can be decided. */
+  const cleavageNote: Note = (() => {
+    const pattern = build.cleavageRegex.trim()
+    if (!pattern) return { level: 'error', msg: 'Enter a cleavage rule, or choose an enzyme.' }
+    const peptides = previewDigest(SAMPLE_SEQUENCE, pattern)
+    if (peptides === null) return { level: 'error', msg: 'Not a valid regular expression.' }
+    if (peptides.length <= 1) {
+      return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
+    }
+    if (peptides.length > SAMPLE_SEQUENCE.length / 2) {
+      return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
+    }
+    return { level: '', msg: '' }
+  })()
+
   const addMod = (kind: 'fixed' | 'variable', unimod: string) => {
     if (!unimod) return
     const key = modKey(kind)
@@ -1507,6 +1534,8 @@ export default function App() {
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
+                onEnzyme={onEnzyme}
+                cleavageNote={cleavageNote}
               />
             )}
 

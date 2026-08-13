@@ -6,6 +6,7 @@
  *  again — and any keys the form does not model must survive that trip. They
  *  are held aside in `extraConfig` and merged back on the way out.
  */
+import { DEFAULT_CLEAVAGE } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
 import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
 
@@ -205,6 +206,9 @@ export function buildLibJsonBase(s: BuildParams): Json {
       min_charge: num(s.minCharge, 2),
       max_charge: num(s.maxCharge, 3),
       missed_cleavages: num(s.missedCleav, 1),
+      // Written explicitly rather than left to Pioneer's default, so the
+      // config records the rule the library was actually built with.
+      cleavage_regex: s.cleavageRegex.trim() || DEFAULT_CLEAVAGE,
       max_var_mods: num(s.maxVarMods, 1),
       add_decoys: s.addDecoys,
     },
@@ -275,6 +279,9 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.min_charge) !== undefined) set.minCharge = str(d.min_charge)
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
+  if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
+    set.cleavageRegex = d.cleavage_regex.trim()
+  }
   if (str(d.max_var_mods) !== undefined) set.maxVarMods = str(d.max_var_mods)
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys
 

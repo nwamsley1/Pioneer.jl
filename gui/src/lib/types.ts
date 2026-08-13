@@ -1,3 +1,4 @@
+import { DEFAULT_CLEAVAGE } from './enzymes'
 import { modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
@@ -156,6 +157,10 @@ export interface BuildParams {
   minCharge: string
   maxCharge: string
   missedCleav: string
+  /** The digestion rule, as the regex Pioneer takes. Presets in `enzymes.ts`
+   *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
+   *  preset id so a config round-trips even when it matches nothing. */
+  cleavageRegex: string
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -177,6 +182,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   minCharge: '2',
   maxCharge: '3',
   missedCleav: '1',
+  cleavageRegex: DEFAULT_CLEAVAGE,
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,

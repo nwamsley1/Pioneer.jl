@@ -156,10 +156,21 @@ one file at a time is the wanted behaviour. Definitions recovered from
 
 Deliberately deferred: this is a measurement task, not a UI task.
 
-## 3. Enzyme presets, plus custom regex — *researched, not built*
+## 3. Enzyme presets, plus custom regex — **done**
 
-- [ ] Presets for the common enzymes, each carrying its cleavage regex.
-- [ ] A custom option letting a regex be typed, validated before it can run.
+- [x] Thirteen presets, each carrying its cleavage regex.
+- [x] A custom option, with a live digest of a sample sequence beside it.
+
+The GUI previously wrote no `cleavage_regex` at all, leaving Pioneer to fall
+back on its default. It now writes the rule explicitly, so a config records what
+the library was actually digested with.
+
+**The shipped default is Trypsin/P, not Trypsin.**
+`assets/example_config/defaultBuildLibParams.json` carries `[KR][^_|$]`, whose
+excluded set is `_ | $` — proline is not among them. The preset list therefore
+opens on Trypsin/P, so a library built without touching the field is the one
+the CLI would have built. `digest_fasta`'s own signature default is
+`[KR][^P|$]`, which is *not* what ships; the two have disagreed all along.
 
 ### How Pioneer reads a cleavage regex
 
@@ -204,14 +215,15 @@ cleavages, and a sequence ending in the P1 residue.
 | Chymotrypsin (broad) | `[FWYLM][^P|$]` | after F/W/Y/L/M, not before P |
 | CNBr | `M[^|$]` | after M |
 
-### Validating a custom regex
+### Validating a custom regex — as built
 
-"Compiles" is a weak test — `.` compiles and digests every position. The useful
-check is a **dry run**: digest a fixed sample sequence with the typed pattern
-and show the peptides. That catches a rule matching nothing and a rule matching
-everything, and it explains itself, which an accept/reject verdict does not.
-Suggested guards on top: reject if it fails to compile, and warn if it produces
-no cleavage sites in the sample or cleaves at more than, say, half of them.
+A dry run rather than a verdict: the card shows the sample sequence digested by
+the current rule, updating as it is typed. A rule that fails to compile is a
+hard error; one that finds no site, or cleaves at more than half of them, is a
+warning. `previewDigest` in `lib/enzymes.ts` reproduces `digest_sequence` —
+peptide ends at the match start, matching resumes one past it rather than past
+the whole match, which is what Julia's `overlap = true` does — and agrees with
+the Julia digest on all sixteen cases checked.
 
 ### Worth knowing
 

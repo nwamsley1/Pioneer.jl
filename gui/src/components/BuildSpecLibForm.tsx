@@ -16,7 +16,14 @@ import {
   siteOptions,
   unimodId,
 } from '../lib/koinaMods'
-import { BROWSE } from '../lib/styles'
+import {
+  CUSTOM_ENZYME,
+  ENZYMES,
+  SAMPLE_SEQUENCE,
+  enzymeByPattern,
+  previewDigest,
+} from '../lib/enzymes'
+import { BROWSE, HINT, LABEL } from '../lib/styles'
 import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
@@ -325,6 +332,8 @@ interface Props {
   onBrowseCalibration: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
+  onEnzyme: (id: string) => void
+  cleavageNote: Note
   onAddMod: (kind: 'fixed' | 'variable', preset: string) => void
 }
 
@@ -348,6 +357,8 @@ export function BuildSpecLibForm({
   onBrowseCalibration,
   onModField,
   onRemoveMod,
+  onEnzyme,
+  cleavageNote,
   onAddMod,
 }: Props) {
   const selectedModel = predictionModelById(params.predictionModel)
@@ -827,6 +838,88 @@ export function BuildSpecLibForm({
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Digestion</h2>
         </div>
+
+        <label style={{ ...LABEL }}>Enzyme</label>
+        <select
+          data-key="enzyme"
+          value={enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME}
+          onChange={(e) => onEnzyme(e.target.value)}
+          style={{
+            width: '100%',
+            height: 36,
+            padding: '0 9px',
+            border: '1px solid #D6DAE1',
+            borderRadius: 9,
+            fontSize: 13,
+            color: '#1B2A4A',
+            background: '#fff',
+            boxSizing: 'border-box',
+          }}
+        >
+          {ENZYMES.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.label} — {e.rule}
+            </option>
+          ))}
+          <option value={CUSTOM_ENZYME}>Custom cleavage rule…</option>
+        </select>
+
+        {!enzymeByPattern(params.cleavageRegex) && (
+          <div style={{ marginTop: 12 }}>
+            <label style={LABEL}>Cleavage regex</label>
+            <input
+              data-key="cleavageRegex"
+              value={params.cleavageRegex}
+              onChange={(e) => onParam('cleavageRegex', e.target.value)}
+              spellCheck={false}
+              style={{
+                width: '100%',
+                height: 36,
+                padding: '0 11px',
+                border: `1px solid ${cleavageNote.level === 'error' ? '#F0B4A8' : '#D6DAE1'}`,
+                borderRadius: 9,
+                font: "12.5px 'IBM Plex Mono'",
+                color: '#1B2A4A',
+                background: '#fff',
+                boxSizing: 'border-box',
+              }}
+            />
+            <p style={{ ...HINT, marginTop: 6 }}>
+              The first element is the residue cleaved after; anything following it is
+              context. Use a lookahead to cut before a residue, as Asp-N does.
+            </p>
+          </div>
+        )}
+
+        {/* What the rule does, rather than a verdict on it: a pattern can be
+            valid and still not be the digest you meant, and a compile check
+            cannot tell you that. */}
+        <div
+          style={{
+            marginTop: 10,
+            padding: '9px 11px',
+            borderRadius: 9,
+            background: cleavageNote.level === 'error' ? '#FEF2F2' : '#F7F8FA',
+            border: `1px solid ${cleavageNote.level === 'error' ? '#FECACA' : '#EDEFF3'}`,
+          }}
+        >
+          <div style={{ fontSize: 11, color: '#98A2B3', marginBottom: 4 }}>
+            {SAMPLE_SEQUENCE}
+          </div>
+          <div
+            style={{
+              font: "12.5px 'IBM Plex Mono'",
+              color: cleavageNote.level === 'error' ? '#C0392B' : '#1B2A4A',
+              wordBreak: 'break-word',
+            }}
+          >
+            {cleavageNote.level === 'error'
+              ? cleavageNote.msg
+              : (previewDigest(SAMPLE_SEQUENCE, params.cleavageRegex) ?? []).join(' · ')}
+          </div>
+        </div>
+
+        <div style={{ height: 14 }} />
         <div
           style={{
             display: 'grid',
