@@ -133,7 +133,29 @@ end
 # holding both layouts. Generated at snoop time rather than checked in, so it cannot drift from the
 # fixtures it is derived from.
 function prepare_mixed_batch_ms_data(raw_dir::String, out_dir::String)
-    rm(out_dir; force = true, recursive = true)
+    # Two snoop targets share this directory: SearchDIA builds it, then
+    # SearchDIA_prosit asks for it again. By then the first target's searches
+    # have memory-mapped the Arrow files inside it, and Windows refuses to
+    # delete a mapped file -- the rm fails with ENOTEMPTY and takes the whole
+    # app build down with it. POSIX unlinks an open file happily, which is why
+    # this only ever failed on Windows.
+    #
+    # The contents are deterministic, so if they are already there, they are
+    # already correct: reuse them rather than deleting and rewriting.
+    expected = sort(filter(f -> endswith(f, ".arrow"), readdir(raw_dir)))
+    if isdir(out_dir)
+        have = Set(readdir(out_dir))
+        if all(in(have), expected) && ("ecoli_multibatch.arrow" in have)
+            return out_dir
+        end
+        # Present but incomplete: a previous build died partway. Rebuilding is
+        # worth attempting, but a mapped leftover must not fail the build.
+        try
+            rm(out_dir; force = true, recursive = true)
+        catch err
+            @warn "could not clear $out_dir; reusing what is there" exception = err
+        end
+    end
     mkpath(out_dir)
     arrows = sort(filter(f -> endswith(f, ".arrow"), readdir(raw_dir)))
     for f in arrows
