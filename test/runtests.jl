@@ -15,168 +15,93 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-using Test
-using Pioneer  # Load the Pioneer module for exported functions
+# Pioneer test suite — driver.
+#
+# Runs each test "part" in its own Julia subprocess so each starts with
+# a clean compiler / heap state. We tried adding hoists individually for
+# the order-dependent crashes (signal-11 in inference passes, GC heap
+# corruption SIGABRT) but it became a treadmill — moving one victim
+# surfaces the next. The actual root cause is upstream in Julia's
+# compiler/GC; subprocess isolation sidesteps it cleanly.
+#
+# Compatibility:
+#   - `Pkg.test`: invokes `runtests.jl` automatically; this driver
+#     spawns subprocesses inside that test process. Standard.
+#   - Code coverage (julia-actions/julia-processcoverage): when CI
+#     passes `--code-coverage=user|all`, we propagate that flag into
+#     each subprocess so each one writes its own .cov files. The action
+#     merges them across PIDs.
+#   - Threads: propagate `--threads=$(Threads.nthreads())`.
 
-# Import specific internal types and functions needed for testing
-# These are NOT exported by Pioneer but we need them for unit tests
-using Pioneer: SparseArray, ArrayDict, FragmentMatch, parseIsoXML
-using Pioneer: UniSpecFragAnnotation, GenericFragAnnotation
-using Pioneer: InstrumentSpecificModel, InstrumentAgnosticModel
-using Pioneer: SplineCoefficientModel, RetentionTimeModel
-using Pioneer: H2O, PROTON, NEUTRON, NCE_MODEL_BREAKPOINT
-using Pioneer: InterpolationTypeAlias
-using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
-using Pioneer: DEBUG_CONSOLE_LEVEL
-using Pioneer: buildDesignMatrix!  # For buildDesignMatrix.jl test
-using Pioneer: IsotopeSplineModel   # For isotopeSplines.jl test
-using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!  # For isotopeSplines.jl test
-using Pioneer: MassErrorModel, matchPeaks!, reset!  # For matchPeaks.jl test
-using Pioneer: FragIndexBin, findFirstFragmentBin  # For queryFragmentIndex.jl test
-using Pioneer: exponentialFragmentBinSearch, searchFragmentBin!  # For queryFragmentIndex.jl test
-using Pioneer: getHigh, Counter, IndexFragment, queryFragment!  # For queryFragmentIndex.jl test
-using Pioneer: UniformSpline  # For uniformBasisCubicSpline.jl test
-using Pioneer: ProteinKey, PeptideKey, InferenceResult  # For test_protein_inference.jl test
-using Pioneer: adjustNCE  # For ChronologerPrepTests.jl
-using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTests.jl
-using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations  # For FastaDigestTests.jl
-using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet  # For FastaDigestTests.jl
-using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary  # For BuildPionLibTest.jl
-using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins  # For RazoQuadModel.jl
-using Pioneer: buildPionLib  # For BuildPionLibTest.jl
-using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  
-using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
-using Pioneer: fillVarModStrings!, fragFilter  # For BuildPionLibTest.jl
-using Pioneer: get_base_pep_id, get_charge  # For FastaDigestTests.jl
-using Pioneer: make_koina_request, prepare_koina_batch, parse_koina_batch  # For Koina API tests
-using Pioneer: KoinaBatchResult  # For Koina API tests
-using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl
-using Pioneer: get_isotopic_mods, get_description, get_id  # For FastaDigestTests.jl
-using Pioneer: get_entrapment_pair_id  # For FastaDigestTests.jl
-using Pioneer: get_gene, get_protein, get_organism  # For FastaEntryConstructorsTests.jl
-using Pioneer: filter_by_threshold, filter_by_multiple_thresholds  # For file operations tests
-using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPionLibTest.jl
-using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
-using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
-using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
-using Pioneer: getFixedMods!
-# Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
+const TEST_PARTS = String[
+    "runtests_part1_heavy.jl",
+    "runtests_part2_units.jl",
+    "runtests_part3_units.jl",
+]
 
-# Package dependencies that tests use directly
-using Arrow, ArrowTypes, ArgParse
-using Base64, Base.Order
-using Base.Iterators: partition
-using CSV, Combinatorics, CodecZlib
-using DataFrames, Dictionaries, Distributions
-import DataStructures  # Import qualified to avoid reset! conflict
-using FASTX, Interpolations, JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
-using Measures, NumericalIntegration, Optim
-using Plots, Polynomials, ProgressBars
-using Tables, StatsPlots, SentinelArrays
-using Random, StaticArrays, StatsBase, SpecialFunctions, Statistics
-using LightGBM
-using MLJModelInterface: fit, predict
-using KernelDensity, FastGaussQuadrature
-using LaTeXStrings, Printf
-using SparseArrays, Dates
-using HTTP
-using Interpolations: Gridded, Linear, Throw, OnGrid, Line
+const PROJECT_ROOT = abspath(joinpath(@__DIR__, ".."))
 
-# Test configuration - suppress debug output during tests
-Pioneer.DEBUG_CONSOLE_LEVEL[] = 0
+"""
+Translate `Base.JLOptions().code_coverage` (an integer enum) back into
+the corresponding command-line flag(s) for a child julia process.
 
-# Test-specific directory paths
-main_dir = joinpath(@__DIR__, "../src")
+  0 = none
+  1 = user            → `--code-coverage=user`
+  2 = all             → `--code-coverage=all`
+  3 = @<tracked_path> → `--code-coverage=@<JLOptions.tracked_path>`
 
-# InterpolationTypeAlias is imported from Pioneer module, no need to redefine
-
-const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
-const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
-
-# H2O, PROTON, NEUTRON, NCE_MODEL_BREAKPOINT are imported from Pioneer module
-
-
-const MODEL_CONFIGS = Dict(
-    "unispec" => (
-        annotation_type = UniSpecFragAnnotation("y1^1"),
-        model_type = InstrumentSpecificModel("unispec"),
-        instruments = Set(["QE","QEHFX","LUMOS","ELITE","VELOS","NONE"])
-    ),
-    "prosit_2020_hcd" => (
-        annotation_type = GenericFragAnnotation("y1+1"), 
-        model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
-        instruments = Set([])
-    ),
-    "AlphaPeptDeep" => (
-        annotation_type = GenericFragAnnotation("y1+1"),
-        model_type = InstrumentSpecificModel("AlphaPeptDeep"),
-        instruments = Set(["QE", "LUMOS", "TIMSTOF", "SCIEXTOF"])
-    )
-)
-
-
-const KOINA_URLS = Dict(
-    "unispec" => "https://koina.wilhelmlab.org:443/v2/models/UniSpec/infer",
-    "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
-    "AlphaPeptDeep" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPeptDeep_ms2_generic/infer",
-    "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
-)
-
-results_dir = joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_results")
-if isdir(results_dir)
-    # Delete all files and subdirectories within the directory
-    #for item in readdir(results_dir, join=true)
-    #    rm(item, force=true, recursive=true)
-    #end
-end
-@testset "Pioneer.jl" begin
-    println("dir ", @__DIR__)
-    
-    #@testset "process_test_speclib" begin 
-    #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
-    #end
-    #include("./UnitTests/empiricalLibTests.jl")
-    
-    
-    @testset "process_test" begin
-        @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+`Pkg.test(coverage=true)` on Julia 1.12 uses form 3 — it pins coverage
+collection to the package's source tree. Without handling 3 we
+silently drop the flag and the subprocesses generate zero `.cov`
+files (= the codecov "0% coverage" failure this branch hit).
+"""
+function _coverage_flags()
+    opts = Base.JLOptions()
+    cov = opts.code_coverage
+    cov == 1 && return String["--code-coverage=user"]
+    cov == 2 && return String["--code-coverage=all"]
+    if cov == 3
+        path_ptr = opts.tracked_path
+        path_ptr == C_NULL && return String[]
+        return String["--code-coverage=@" * unsafe_string(path_ptr)]
     end
-    # #Test FASTA parameter enhancement
-    include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
-    
-    # Test BuildSpecLib functionality
-    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+    return String[]
+end
 
-    # # Unit tests - commented out for faster Koina test development
-    include("./UnitTests/buildDesignMatrix.jl")
-    include("./UnitTests/isotopeSplines.jl")
-    include("./UnitTests/matchPeaks.jl")
-    include("./UnitTests/queryFragmentIndex.jl")
-    include("./UnitTests/testIsotopesJun13.jl")
-    include("./UnitTests/uniformBassisCubicSpline.jl")
-    include("./UnitTests/test_protein_inference.jl")
-    include("./UnitTests/ChronologerPrepTests.jl")
-    include("./UnitTests/FastaDigestTests.jl")
-    include("./UnitTests/FastaEntryConstructorsTests.jl")
-    include("./UnitTests/BuildPionLibTest.jl")
-    # include("./utils/FileOperations/test_file_operations_suite.jl")  # File doesn't exist
-    include("./UnitTests/RazoQuadModel.jl")
-    
-    # Lightweight coverage for MassSpecData + FilteredMassSpecData
-    # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+function _run_part(rel_path::AbstractString)
+    script = joinpath(@__DIR__, rel_path)
+    isfile(script) || error("Test part not found: $script")
 
-    # Active: only run mass-spec data tests for quick iteration
-    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
-    include("./UnitTests/LoggingTests.jl")
-    include("./UnitTests/LogTruncationTests.jl")
-    include("./UnitTests/BuildPreferencesTests.jl")
-    # Add focused FileOperations tests (Arrow IO, core, streaming)
-    include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
-    include("./utils/FileOperations/core/test_core_references_basic.jl")
-    include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
-    # ScoringSearch interface tests
+    cov_flags = _coverage_flags()
+    nthreads_flag = "--threads=$(Threads.nthreads())"
+    cmd = `$(Base.julia_cmd()) --project=$PROJECT_ROOT $nthreads_flag $cov_flags $script`
 
-    #include("./Routines/SearchDIA/SearchMethods/ScoringSearch/test_scoring_interface.jl")
-    
+    println("\n", "="^78)
+    println("[runtests.jl] Running part: ", rel_path)
+    isempty(cov_flags) || println("[runtests.jl]   coverage: $(join(cov_flags, ' '))")
+    println("[runtests.jl]   threads:  $(Threads.nthreads())")
+    println("="^78)
+
+    proc = run(pipeline(cmd; stdout = stdout, stderr = stderr); wait = true)
+    return proc.exitcode
+end
+
+let
+    results = Tuple{String, Int32}[]
+    for part in TEST_PARTS
+        push!(results, (part, _run_part(part)))
+    end
+
+    println("\n", "="^78)
+    println("[runtests.jl] Test part summary")
+    println("="^78)
+    for (part, code) in results
+        status = code == 0 ? "PASS" : "FAIL (exit=$code)"
+        println("  ", rpad(part, 36), status)
+    end
+
+    failed = [p for (p, code) in results if code != 0]
+    if !isempty(failed)
+        error("Test parts failed: ", join(failed, ", "))
+    end
 end

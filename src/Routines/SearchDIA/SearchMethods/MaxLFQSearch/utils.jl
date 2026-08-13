@@ -33,15 +33,8 @@ function create_qc_plots(
     # - CV distributions
     # - Dynamic range
     # Implementation depends on plotting library
-    @user_info "Generating final QC plots"
-    # Get only successful files for QC plots
     all_file_paths = collect(getFilePaths(getMSData(search_context)))
-    valid_file_indices = get_valid_file_indices(search_context)
-
-    # Filter to get only successful files
-    # Note: successful_file_names parameter is actually all_file_names from MaxLFQSearch
-    filtered_file_names = [successful_file_names[i] for i in valid_file_indices]
-    filtered_file_paths = [all_file_paths[i] for i in valid_file_indices]
+    file_indices = collect(1:length(all_file_paths))
 
     qcPlots(
         precursors_path,
@@ -49,12 +42,12 @@ function create_qc_plots(
         proteins_path,
         params.params,
         precursors,
-        filtered_file_names,  # Only successful files
+        successful_file_names,
         joinpath(getDataOutDir(search_context), "qc_plots"),
-        filtered_file_paths,  # Only successful files
+        all_file_paths,
         getIrtRtMap(search_context),
         search_context.mass_error_model,
-        valid_file_indices  # Pass actual file indices to correctly lookup in dicts
+        file_indices
     )
 end
 

@@ -34,8 +34,11 @@ struct SplineRtConversionModel <: RtConversionModel
 end
 (s::SplineRtConversionModel)(x::AbstractFloat) = s.model(x)
 
-struct InterpolationRtConversionModel <: RtConversionModel
-    model::Interpolations.Extrapolation
+# Parametrized on the concrete extrapolation type: an abstract
+# `model::Interpolations.Extrapolation` field made `s.model(x)` type-unstable,
+# boxing a value on every RT->iRT conversion (millions per file).
+struct InterpolationRtConversionModel{M<:Interpolations.Extrapolation} <: RtConversionModel
+    model::M
 end
 (s::InterpolationRtConversionModel)(x::AbstractFloat) = s.model(x)
 
@@ -51,13 +54,9 @@ end
 # Override getModel for LinearRtConversionModel since it doesn't wrap another model
 getModel(m::LinearRtConversionModel) = m
 
-struct IdentityModel <: RtConversionModel
-    model::Function
-    function IdentityModel()
-        new(x::Float32 -> x::Float32)
-    end
-end
+struct IdentityModel <: RtConversionModel end
 
-(i::IdentityModel)(x::AbstractFloat) = i.model(x)
+(::IdentityModel)(x::AbstractFloat) = x
+getModel(::IdentityModel) = identity
 
 RtConversionModel() = IdentityModel()

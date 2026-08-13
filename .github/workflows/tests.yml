@@ -25,17 +25,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.11']
+        version: ['1.12.6']  # pin exact patch — 1.12.5 had inference segfaults
         os:      [ubuntu-latest]
         arch:    [x64]
 
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch:    ${{ matrix.arch }}
@@ -61,7 +61,7 @@ jobs:
         uses: julia-actions/julia-processcoverage@v1
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

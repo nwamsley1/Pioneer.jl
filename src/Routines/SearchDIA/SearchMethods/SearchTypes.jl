@@ -35,7 +35,7 @@ To implement a new search method:
    - process_search_results!(::YourResults, ::YourParameters, ::SearchContext, ::Int64)
    - summarize_results!(::YourResults, ::YourParameters, ::SearchContext)
 
-See ParameterTuningSearch or FirstPassSearch for example implementations.
+See ParameterTuningSearch or MainSearch for example implementations.
 """
 
 #==========================================================
@@ -94,6 +94,29 @@ MS1 chromatogram type for precursor-based searches.
 """
 struct MS1CHROM <: CHROMATOGRAM end
 
+"""
+RT-bin-adaptive chromatographic tolerance.
+
+Stores per-RT-bin tolerance values (in empirical RT space) computed from
+high-confidence precursor peak widths, so that every precursor gets enough
+chromatogram points regardless of gradient steepness.
+"""
+struct RTBinnedTolerance
+    rt_edges::Vector{Float32}   # N+1 bin edges in empirical RT space
+    rt_tols::Vector{Float32}    # N tolerance values (half-width, one per bin)
+end
+
+"""
+    get_rt_tol(tol::RTBinnedTolerance, rt::Float32) -> Float32
+
+Look up the RT tolerance (half-width) for the given empirical RT value.
+Uses binary search on bin edges.
+"""
+function get_rt_tol(tol::RTBinnedTolerance, rt::Float32)::Float32
+    idx = searchsortedlast(tol.rt_edges, rt)
+    return tol.rt_tols[clamp(idx, 1, length(tol.rt_tols))]
+end
+
 #==========================================================
 Concrete Types
 ==========================================================#
@@ -101,15 +124,26 @@ Concrete Types
 """
 Reference to MS data stored in Arrow files.
 """
-struct ArrowTableReference{N} <: MassSpecDataReference
-    file_paths::NTuple{N, String}
-    file_id_to_name::NTuple{N, String}
-    first_pass_psms::Vector{String}
+# No file-count type parameter. `{N}` typed only the first two fields as NTuple{N,String} while the
+# other seven were already Vector{String}, and nothing needed a compile-time length: the only call
+# sites are the per-file iterator below and `n_files = length(msdr.file_paths)`, both of which read
+# the field rather than the parameter.
+#
+# What it cost was a separate specialisation of everything downstream -- SearchContext carries this
+# type, so every closure touching the search context respecialised -- for each distinct number of
+# input files. That is unbounded and user-supplied, so no precompile statements file can cover it:
+# measured at ~50 statements re-JIT'd on a 3-file search by a binary precompiled on 2- and 6-file
+# searches.
+struct ArrowTableReference <: MassSpecDataReference
+    file_paths::Vector{String}
+    file_id_to_name::Vector{String}
+    main_search_psms::Vector{String}
+    fragment_index_matches::Vector{String}
+    filtered_fragment_matches::Vector{String}
     second_pass_psms::Vector{String}
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
     rt_index_paths::Vector{String}
-    failed_search_indicator::Vector{Bool}
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
@@ -122,15 +156,16 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             @user_warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
         end
         n = length(file_paths)
-        new{n}(
-            NTuple{n, String}(file_paths), 
-            NTuple{n, String}(file_id_to_name),
+        new(
+            file_paths,
+            file_id_to_name,
             fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
-            fill(false, n)
+            fill("", n),
+            fill("", n)
         )
     end
 
@@ -141,15 +176,19 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             @user_warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
         n = length(file_paths)
-        new{n}(
-            NTuple{n, String}(file_paths...), 
+        # This constructor was unreachable and broken: it passed `fill("", n)`, a Vector, into the
+        # NTuple{N,String} `file_id_to_name` field, for which no convert method exists. Making both
+        # fields Vector fixes it as a side effect.
+        new(
+            file_paths,
             fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
-            fill(false, n)
+            fill("", n),
+            fill("", n)
         )
     end
 
@@ -162,42 +201,63 @@ Basic search data structure for library searches.
 Contains pre-allocated arrays and intermediate data structures.
 """
 mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
-    # Match data
-    ion_matches::Vector{FragmentMatch{Float32}}
-    ion_misses::Vector{FragmentMatch{Float32}}
-    mass_err_matches::Vector{FragmentMatch{Float32}}
-    
+    # Mass-error sample buffer — output of run_fused_masserr! during
+    # ParameterTuning, consumed by fit_mass_err_model + friends.
+    mass_err_samples::Vector{MassErrSample}
+
     # Indexing and scoring
-    id_to_col::ArrayDict{UInt32, UInt16}
-    prec_count::Counter{UInt32, UInt8}
-    ion_templates::Vector{DetailedFrag{Float32}}
+    id_to_col::SparsePrecMap{UInt16}
     iso_splines::I
     
-    # PSM scoring
-    scored_psms::Vector{SimpleScoredPSM{Float32, Float16}}
-    unscored_psms::Vector{SimpleUnscoredPSM{Float32}}
-    spectral_scores::Vector{SpectralScoresSimple{Float16}}
-    complex_scored_psms::Vector{ComplexScoredPSM{Float32, Float16}}
-    complex_unscored_psms::Vector{ComplexUnscoredPSM{Float32}}
-    complex_spectral_scores::Vector{SpectralScoresComplex{Float16}}
-    ms1_scored_psms::Vector{Ms1ScoredPSM{Float32, Float16}}
-    ms1_unscored_psms::Vector{Ms1UnscoredPSM{Float32}}
-    ms1_spectral_scores::Vector{SpectralScoresMs1{Float16}}
+    # PSM scoring.
+    # MainSearch buffers — `main_unscored_psms` (per-(scan, precursor)
+    # accumulator written by apply_main_scoring!) and `main_search_scored_psms`
+    # (per-scan rows produced by Score!) carry the full MainSearch feature set
+    # including fragment-chromatogram captures.
+    main_unscored_psms::Vector{MainUnscoredPSM{Float32}}
+    main_search_scored_psms::Vector{MainSearchScoredPSM{Float32, Float16}}
+    main_search_spectral_scores::Vector{SpectralScoresMainSearch{Float16, Float32}}
+    # Tuning buffers — slim variants used by ParameterTuning, QuadTuning, and
+    # IntegrateChromatograms paths. Same structural shape minus the
+    # MainSearch-only fragment-chromatogram fields (frag1..8_int,
+    # matched_rank_mask, rank1/top3/top5_matched).
+    tuning_unscored_psms::Vector{TuningUnscoredPSM{Float32}}
+    tuning_scored_psms::Vector{TuningScoredPSM{Float32, Float16}}
 
     # Working arrays
-    Hs::SparseArray
     prec_ids::Vector{UInt32}
-    precursor_weights::Vector{Float32}
+    precursor_weights::SparsePrecMap{Float32}
     temp_weights::Vector{Float32}
+    colnorm2::Vector{Float32}
     residuals::Vector{Float32}
+    mu::Vector{Float32}
+    observed::Vector{Float32}
     isotopes::Vector{Float32}
     precursor_transmission::Vector{Float32}
+
+    # Per-thread scratch for the fused scan path (used when
+    # `MainSearchParameters.use_fused_scan == true`).
+    fused_scratch::FusedScratch
+    Hs_fused::SparseArrayFused{UInt32, Float32}
+    # Per-scan precomputed peak window (SoA — each array SIMD-loadable):
+    # `scan_corrected_mz[j]` = bias-corrected center m/z (used as bsearch anchor
+    # and for ppm_err on matches). `scan_obs_low[j]` / `scan_obs_high[j]` =
+    # intensity-aware Da tolerance bounds for matching (classic semantics:
+    # theoretical_mz must satisfy `obs_low[j] ≤ theoretical ≤ obs_high[j]`).
+    scan_corrected_mz::Vector{Float32}
+    scan_obs_low::Vector{Float32}
+    scan_obs_high::Vector{Float32}
 end
 
 """
 Primary search context holding all data structures and state for search execution.
 """
-mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
+# No thread-count type parameter. It used to carry `N = length(temp_structures)`, which typed
+# nothing -- `temp_structures` is an AbstractVector, not an NTuple{N} -- and was never dispatched on
+# or read. Its only effect was to give every method touching a SearchContext a separate
+# specialisation per thread count, which no precompile statement file can cover because the value
+# comes from the user's machine. See the note on ArrowTableReference below.
+mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # Core components
     spec_lib::L
     temp_structures::AbstractVector{<:SearchDataStructures}
@@ -212,8 +272,8 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
-    mass_error_model::Dict{Int64, MassErrorModel}
-    ms1_mass_error_model::Dict{Int64, MassErrorModel}
+    mass_error_model::Dict{Int64, AbstractMassErrorModel}
+    ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
     huber_delta::Base.Ref{Float32}
@@ -224,6 +284,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
+    rt_tolerances::Dict{Int64, RTBinnedTolerance}
     irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
     pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
@@ -243,9 +304,16 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     n_library_decoys::Int64
     library_fdr_scale_factor::Float32
 
-    # Failed file tracking
-    failed_files::Set{Int64}
-    file_failure_reasons::Dict{Int64, String}
+    # BitVec pre-filter (256-entry Bool table per file, trained by BitVecCalibration)
+    bitvec_filter::Dict{Int64, Vector{Bool}}
+    # Per-file bitmask-pattern rank by target/decoy excess. Index is
+    # Int(mask)+1, lower rank is better.
+    bitvec_excess_rank::Dict{Int64, Vector{UInt16}}
+
+    # Reusable per-thread scratch buffers for searchFragmentIndexPartitionMajorHinted
+    # (see FragIndexScratch in src/structs/Counter.jl). Lifted out of the per-call
+    # path so BitVec's adaptive while loop doesn't re-allocate ~50–100 MB per batch.
+    frag_index_scratch::FragIndexScratch
 
     # Constructor
     function SearchContext(
@@ -256,45 +324,32 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
         n_precursors::Int64,
         buffer_size::Int64
     ) where {L<:SpectralLibrary,M<:MassSpecDataReference}
-        N = length(temp_structures)
-        new{N,L,M}(
+        new{L,M}(
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
-            Dict{Int64, MassErrorModel}(),
-            Dict{Int64, MassErrorModel}(),
-            Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
+            Dict{Int64, AbstractMassErrorModel}(),
+            Dict{Int64, AbstractMassErrorModel}(),
+            Dict{Int64, NceModel}(),
+            Ref(300.0f0),
+            10.0f0,
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
+            Dict{Int64, RTBinnedTolerance}(),
             Dict{UInt32, Float32}(),
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0,  # Initialize library stats with defaults
-            Set{Int64}(),  # Initialize failed_files
-            Dict{Int64, String}()  # Initialize file_failure_reasons
+            Dict{Int64, Vector{Bool}}(),  # Initialize bitvec_filter
+            Dict{Int64, Vector{UInt16}}(), # Initialize bitvec_excess_rank
+            FragIndexScratch(n_threads),  # reusable frag-index scratch buffers
         )
     end
 end
-
-#==========================================================
-Failed File Tracking Functions
-==========================================================#
-
-"""
-    markFileFailed!(ctx::SearchContext, ms_file_idx::Int64, reason::String)
-
-Mark a file as failed with the given reason.
-"""
-function markFileFailed!(ctx::SearchContext, ms_file_idx::Int64, reason::String)
-    push!(ctx.failed_files, ms_file_idx)
-    ctx.file_failure_reasons[ms_file_idx] = reason
-end
-
-
 
 #==========================================================
 Interface Methods for Parameter Access
@@ -305,7 +360,7 @@ getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference
-Base.length(::ArrowTableReference{N}) where N = N
+Base.length(r::ArrowTableReference) = length(r.file_paths)
 
 import Base: enumerate
 function enumerate(msdr::ArrowTableReference)
@@ -314,7 +369,9 @@ end
 
 # Getter methods
 getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
-getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[index]
+getMainSearchPsms(ref::ArrowTableReference, index::Int) = ref.main_search_psms[index]
+getFragmentIndexMatches(ref::ArrowTableReference, index::Int) = ref.fragment_index_matches[index]
+getFilteredFragmentMatches(ref::ArrowTableReference, index::Int) = ref.filtered_fragment_matches[index]
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
 
 """
@@ -340,13 +397,14 @@ end
 getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
 getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
 getRtIndex(ref::ArrowTableReference, index::Int) = ref.rt_index_paths[index]
-getFailedIndicator(ref::ArrowTableReference, index::Int) = ref.failed_search_indicator[index]
 getParsedFileNames(ref::ArrowTableReference) = ref.file_id_to_name
 
 getFilePaths(ref::ArrowTableReference) = ref.file_paths
 
 getFileIdToName(ref::ArrowTableReference) = ref.file_id_to_name
-getFirstPassPsms(ref::ArrowTableReference) = ref.first_pass_psms
+getMainSearchPsms(ref::ArrowTableReference) = ref.main_search_psms
+getFragmentIndexMatches(ref::ArrowTableReference) = ref.fragment_index_matches
+getFilteredFragmentMatches(ref::ArrowTableReference) = ref.filtered_fragment_matches
 getSecondPassPsms(ref::ArrowTableReference) = ref.second_pass_psms
 getPassingPsms(ref::ArrowTableReference) = ref.passing_psms
 getPassingProteins(ref::ArrowTableReference) = ref.passing_proteins
@@ -355,12 +413,13 @@ getRtIndex(ref::ArrowTableReference) = ref.rt_index_paths
 
 # Setter methods
 setFileIdToName!(ref::ArrowTableReference, index::Int, value::String) = ref.file_id_to_name[index] = value
-setFirstPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.first_pass_psms[index] = value
+setMainSearchPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.main_search_psms[index] = value
+setFragmentIndexMatches!(ref::ArrowTableReference, index::Int, value::String) = ref.fragment_index_matches[index] = value
+setFilteredFragmentMatches!(ref::ArrowTableReference, index::Int, value::String) = ref.filtered_fragment_matches[index] = value
 setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
 setRtIndex!(ref::ArrowTableReference, index::Int, value::String) = ref.rt_index_paths[index] = value
-setFailedIndicator!(ref::ArrowTableReference, index::Int, value::Bool) = ref.failed_search_indicator[index] = value
 
 # SearchParameters interface getters
 getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile
@@ -372,8 +431,8 @@ getMaxBestRank(fsp::SearchParameters)           = fsp.max_best_rank
 getMaxFragRank(fsp::SearchParameters)           = fsp.max_frag_rank
 getMaxPresearchIters(fsp::SearchParameters)    = fsp.max_presearch_iters
 getMaxQVal(fsp::SearchParameters)              = fsp.max_q_val
-getMinFragCount(fsp::SearchParameters)          = fsp.min_frag_count
 getMinIndexSearchScore(fsp::SearchParameters)   = fsp.min_index_search_score
+getPrefilterMinScanCount(::FragmentIndexSearchParameters) = 0
 getMinLog2MatchedRatio(fsp::SearchParameters)   = fsp.min_log2_matched_ratio
 getMinPsms(fsp::SearchParameters)              = fsp.min_psms
 getMinSpectralContrast(fsp::SearchParameters)   = fsp.min_spectral_contrast
@@ -388,36 +447,35 @@ getSplineNKnots(fsp::SearchParameters)         = fsp.spline_n_knots
 
 # SearchDataStructures interface getters
 
-getIonMatches(s::SearchDataStructures) = s.ion_matches
-getIonMisses(s::SearchDataStructures) = s.ion_misses
-getMassErrMatches(s::SearchDataStructures) = s.mass_err_matches
+getMassErrSamples(s::SearchDataStructures) = s.mass_err_samples
 getIdToCol(s::SearchDataStructures) = s.id_to_col
-getPrecursorScores(s::SearchDataStructures) = s.prec_count
-getIonTemplates(s::SearchDataStructures) = s.ion_templates
 getIsoSplines(s::SearchDataStructures) = s.iso_splines
 
-getScoredPsms(s::SearchDataStructures) = s.scored_psms
-getUnscoredPsms(s::SearchDataStructures) = s.unscored_psms
-getSpectralScores(s::SearchDataStructures) = s.spectral_scores
+getMainUnscoredPsms(s::SearchDataStructures) = s.main_unscored_psms
 
-getComplexScoredPsms(s::SearchDataStructures) = s.complex_scored_psms
-getComplexUnscoredPsms(s::SearchDataStructures) = s.complex_unscored_psms
-getComplexSpectralScores(s::SearchDataStructures) = s.complex_spectral_scores
+getMainSearchScoredPsms(s::SearchDataStructures) = s.main_search_scored_psms
+getMainSearchSpectralScores(s::SearchDataStructures) = s.main_search_spectral_scores
 
-getMs1ScoredPsms(s::SearchDataStructures) = s.ms1_scored_psms
-getMs1UnscoredPsms(s::SearchDataStructures) = s.ms1_unscored_psms
-getMs1SpectralScores(s::SearchDataStructures) = s.ms1_spectral_scores
+# Tuning-path buffer getters (slim PSM types).
+getTuningUnscoredPsms(s::SearchDataStructures) = s.tuning_unscored_psms
+getTuningScoredPsms(s::SearchDataStructures) = s.tuning_scored_psms
 
-
-getHs(s::SearchDataStructures) = s.Hs
 getPrecIds(s::SearchDataStructures) = s.prec_ids
 getWeights(s::SearchDataStructures) = s.weights
 getResiduals(s::SearchDataStructures) = s.residuals
 getIsotopes(s::SearchDataStructures) = s.isotopes
 getPrecursorTransmission(s::SearchDataStructures) = s.precursor_transmission
+getFusedScratch(s::SearchDataStructures) = s.fused_scratch
+getHsFused(s::SearchDataStructures) = s.Hs_fused
+getScanCorrectedMz(s::SearchDataStructures) = s.scan_corrected_mz
+getScanObsLow(s::SearchDataStructures) = s.scan_obs_low
+getScanObsHigh(s::SearchDataStructures) = s.scan_obs_high
 getTuningResults(s::SearchDataStructures) = s.tuning_results
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
+getColNorm2(s::SimpleLibrarySearch) = s.colnorm2
 getPrecursorWeights(s::SimpleLibrarySearch) = s.precursor_weights
+getMu(s::SimpleLibrarySearch) = s.mu
+getObserved(s::SimpleLibrarySearch) = s.observed
 
 #==========================================================
 SearchContext Getters and Setters
@@ -442,14 +500,21 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
-getPredIrt(s::SearchContext) = s.irt_obs
-getPredIrt(s::SearchContext, prec_idx::Int64) = s.irt_obs[prec_idx]
-getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
+getRtTolerances(s::SearchContext) = s.rt_tolerances
+getRtTolerance(s::SearchContext, ms_file_idx::Int64) = s.rt_tolerances[ms_file_idx]
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
-setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
+# Use library iRT array directly — O(1) indexing, no Dict overhead
+getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
+getPredIrt(s::SearchContext, prec_idx::Int64) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
+getPredIrt(s::SearchContext, prec_idx::UInt32) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
+# irt_obs Dict on SearchContext is now unused; setPredIrt! removed
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
+getBitVecFilter(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_filter, ms_file_idx, nothing)
+getBitVecExcessRanks(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_excess_rank, ms_file_idx, nothing)
+getFragIndexScratch(s::SearchContext) = s.frag_index_scratch
+setBitVecFilter!(s::SearchContext, ms_file_idx::Int64, filter::Vector{Bool}) = (s.bitvec_filter[ms_file_idx] = filter)
+setBitVecExcessRanks!(s::SearchContext, ms_file_idx::Int64, ranks::Vector{UInt16}) = (s.bitvec_excess_rank[ms_file_idx] = ranks)
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
@@ -481,7 +546,7 @@ function getMassErrorModel(s::SearchContext, index::I) where {I<:Integer}
        return MassErrorModel(zero(Float32), (30.0f0, 30.0f0))
    end
 end
-setMassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:Integer} = (s.mass_error_model[index] = model)
+setMassErrorModel!(s::SearchContext, index::I, model::AbstractMassErrorModel) where {I<:Integer} = (s.mass_error_model[index] = model)
 
 """
    getMassErrorModel(s::SearchContext, index::Integer)
@@ -498,7 +563,7 @@ function getMs1MassErrorModel(s::SearchContext, index::I) where {I<:Integer}
 end
 
 
-setMs1MassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:Integer} = (s.ms1_mass_error_model[index] = model)
+setMs1MassErrorModel!(s::SearchContext, index::I, model::AbstractMassErrorModel) where {I<:Integer} = (s.ms1_mass_error_model[index] = model)
 
 """
    getRtIrtModel(s::SearchContext, index::Integer)

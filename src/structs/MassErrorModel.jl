@@ -15,103 +15,160 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+abstract type AbstractMassErrorModel end
 
-struct MassErrorModel{T<:AbstractFloat}
-    mass_offset::T#UniformSpline{N, T}
-    mass_tolerance::Tuple{T, T}#UniformSpline{N, T}
+struct SimpleMassErrorModel{T<:AbstractFloat} <: AbstractMassErrorModel
+    mass_offset::T
+    mass_tolerance::Tuple{T, T}
 end
 
-getRightTol(mem::MassErrorModel) = last(mem.mass_tolerance)
-getLeftTol(mem::MassErrorModel) = first(mem.mass_tolerance)
-getMassOffset(mem::MassErrorModel) = last(mem.mass_offset)
+const MassErrorModel = SimpleMassErrorModel
 
-function getMassCorrection(mem::MassErrorModel)
+getRightTol(mem::SimpleMassErrorModel) = last(mem.mass_tolerance)
+getLeftTol(mem::SimpleMassErrorModel) = first(mem.mass_tolerance)
+getMassOffset(mem::SimpleMassErrorModel) = last(mem.mass_offset)
+
+function getMassCorrection(mem::SimpleMassErrorModel)
     return mem.mass_offset
 end
 
-function getLocation(mem::MassErrorModel)
-    return mem.location
+function getCorrectedMz(mem::SimpleMassErrorModel, mz::Float32)
+    return Float32(mz - getMassOffset(mem)*(mz/1f6))
 end
 
-#Adjust a theoretical mass to be
-#=
-"""
-    (mem::MassErrorModel)(mass::Float32) -> Tuple{Float32, Float32}
-
-Calculate mass tolerance window based on a mass error model.
-
-Given an input observed m/z ratio, this function calculates the lower and upper bounds of a 
-matching theoretical m/z ratio tolerance window.
-
-# Arguments
-- `mass::Float32`: The target m/z value to calculate tolerances for
-
-# Returns
-- `Tuple{Float32, Float32}`: A tuple containing `(lower_bound, upper_bound)` where:
-  - `lower_bound`: The mass minus the left tolerance
-  - `upper_bound`: The mass plus the right tolerance
-
-# Details
-The function:
-1. Converts the mass to ppm scale (dividing by 1e6)
-2. Applies a mass offset correction
-3. Calculates asymmetric tolerance windows using the model's left and right tolerance parameters
-4. Returns the lower and upper bounds as Float32 values
-
-# Examples
-```julia
-mem = MassErrorModel(0.3, 10.0, 10.0)  # offset, left_tol, right_tol
-lower, upper = mem(1000.0f0)  # Calculate window for mass 1000 Da
-```
-"""
-function (mem::MassErrorModel)(mass::Float32)
-    ppm_norm = Float32(1e6)
-    ppm = mass/ppm_norm
-    mass -= getMassOffset(mem)*ppm
-    r_tol = getRightTol(mem)*ppm
-    l_tol = getLeftTol(mem)*ppm
-    return Float32(mass - l_tol), Float32(mass + r_tol)
-end
-=#
-#Correct an empeirical mass. 
-function getCorrectedMz(mem::MassErrorModel, mz::Float32)
-    return Float32(mz - getMassOffset(mem)*(mz/1e6))
-end
-
-"""
-   getMzBounds(mem::MassErrorModel, mass::Float32)
-
-Given a theoretical mass and a `MassErrorModel`, gets the minimum and maximum bounds for an expected empirical mass.
-Critically, assumes the empirical mass has already been corrected using mass offset. See `getCorrectedMz`. 
-
-### Input
-
-- `mem::MassErrorModel`: -- Model for the mass error of an ion 
-- `mass::Float32` -- A theoretical mass/mz to get boundaries for 
-### Output
-Tuple{Float32, Float32}
-A tuple with the lower and upper boundary respectively. 
-### Notes
-
-- Suppose the mass error was 3 ppm. And the tolerance was 10 ppm and 5ppm on the left and right hand sides respectively. 
-A theoretical mass of 1000000.0f0 m/z, would have a tolerance of (999990.0f0, 1000005.0f0). A theoretical mass falling 
-### Algorithm 
-
-### Examples 
-
-"""
-#Bounds for the theoretical mass 
-function getMzBoundsReverse(mem::MassErrorModel, mass::Float32)
-    ppm = mass/(1e6)
+# Bounds for the theoretical mass
+function getMzBoundsReverse(mem::SimpleMassErrorModel, mass::Float32)
+    ppm = mass/1f6
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
     return Float32(mass - r_tol), Float32(mass + l_tol)
 end
 
-#Bounds for the empirical mass 
-function getMzBounds(mem::MassErrorModel, mass::Float32)
-    ppm = mass/(1e6)
+# Bounds for the empirical mass
+function getMzBounds(mem::SimpleMassErrorModel, mass::Float32)
+    ppm = mass/1f6
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
     return Float32(mass - l_tol), Float32(mass + r_tol)
 end
+
+# 3-arg forwarding: SimpleMassErrorModel ignores intensity
+getCorrectedMz(mem::SimpleMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(mem, mz)
+getMzBoundsReverse(mem::SimpleMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(mem, mass)
+getCorrectedMz(mem::SimpleMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(mem, mz, intensity)
+getMzBoundsReverse(mem::SimpleMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(mem, mass, log2I)
+
+@inline function getCorrectedMzAndBounds(mem::SimpleMassErrorModel, mz::Float32, ::Float32)
+    corrected = getCorrectedMz(mem, mz)
+    low, high = getMzBoundsReverse(mem, corrected)
+    return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(mem::SimpleMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(mem, mz, intensity)
+end
+
+#==========================================================
+Linear Da mass error model: bias_da(mz) = a + b × mz, constant Da tolerance.
+Used during parameter tuning after the wide scout discovers the m/z-dependent bias.
+==========================================================#
+
+struct LinearDaMassErrorModel{T<:AbstractFloat} <: AbstractMassErrorModel
+    intercept::T      # Da bias at mz=0
+    slope::T          # Da bias per Da of m/z
+    tolerance_da::T   # symmetric half-width in Da
+end
+
+function getCorrectedMz(m::LinearDaMassErrorModel, mz::Float32)
+    return Float32(mz - (m.intercept + m.slope * mz))
+end
+
+function getMzBoundsReverse(m::LinearDaMassErrorModel, mass::Float32)
+    return Float32(mass - m.tolerance_da), Float32(mass + m.tolerance_da)
+end
+
+function getMzBounds(m::LinearDaMassErrorModel, mass::Float32)
+    return Float32(mass - m.tolerance_da), Float32(mass + m.tolerance_da)
+end
+
+getRightTol(m::LinearDaMassErrorModel) = m.tolerance_da
+getLeftTol(m::LinearDaMassErrorModel) = m.tolerance_da
+getMassOffset(m::LinearDaMassErrorModel) = m.intercept
+getMassCorrection(m::LinearDaMassErrorModel) = m.intercept
+
+# 3-arg forwarding: ignores intensity
+getCorrectedMz(m::LinearDaMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(m, mz)
+getMzBoundsReverse(m::LinearDaMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(m, mass)
+getCorrectedMz(m::LinearDaMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(m, mz, intensity)
+getMzBoundsReverse(m::LinearDaMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
+
+@inline function getCorrectedMzAndBounds(m::LinearDaMassErrorModel, mz::Float32, ::Float32)
+    corrected = getCorrectedMz(m, mz)
+    low, high = getMzBoundsReverse(m, corrected)
+    return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(m::LinearDaMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(m, mz, intensity)
+end
+
+# Scoring fallbacks
+laplace_log_density(::LinearDaMassErrorModel, ::Float32, ::Float32, ::Float32) = Float32(0)
+get_default_top3_ll(::LinearDaMassErrorModel) = Float32(0)
+
+#==========================================================
+Linear Da bias + ppm tolerance: bias_da(mz) = a + b × mz, then ±tol_ppm on corrected.
+Corrects m/z-dependent bias from the wide scout, then uses the initial ppm
+tolerance for the collection window (same width as SimpleMassErrorModel).
+==========================================================#
+
+struct LinearBiasPpmTolMassErrorModel{T<:AbstractFloat} <: AbstractMassErrorModel
+    intercept::T        # Da bias at mz=0
+    slope::T            # Da bias per Da of m/z
+    tolerance_ppm::T    # symmetric ppm half-width on corrected mass
+end
+
+function getCorrectedMz(m::LinearBiasPpmTolMassErrorModel, mz::Float32)
+    return Float32(mz - (m.intercept + m.slope * mz))
+end
+
+function getMzBoundsReverse(m::LinearBiasPpmTolMassErrorModel, mass::Float32)
+    ppm = mass / 1f6
+    hw = m.tolerance_ppm * ppm
+    return Float32(mass - hw), Float32(mass + hw)
+end
+
+function getMzBounds(m::LinearBiasPpmTolMassErrorModel, mass::Float32)
+    ppm = mass / 1f6
+    hw = m.tolerance_ppm * ppm
+    return Float32(mass - hw), Float32(mass + hw)
+end
+
+getRightTol(m::LinearBiasPpmTolMassErrorModel) = m.tolerance_ppm
+getLeftTol(m::LinearBiasPpmTolMassErrorModel) = m.tolerance_ppm
+getMassOffset(m::LinearBiasPpmTolMassErrorModel) = m.intercept
+getMassCorrection(m::LinearBiasPpmTolMassErrorModel) = m.intercept
+
+getCorrectedMz(m::LinearBiasPpmTolMassErrorModel, mz::Float32, ::Float32) = getCorrectedMz(m, mz)
+getMzBoundsReverse(m::LinearBiasPpmTolMassErrorModel, mass::Float32, ::Float32) = getMzBoundsReverse(m, mass)
+getCorrectedMz(m::LinearBiasPpmTolMassErrorModel, mz::Float32, intensity::Float32, ::Float32) =
+    getCorrectedMz(m, mz, intensity)
+getMzBoundsReverse(m::LinearBiasPpmTolMassErrorModel, mass::Float32, log2I::Float32, ::Float32) =
+    getMzBoundsReverse(m, mass, log2I)
+
+@inline function getCorrectedMzAndBounds(m::LinearBiasPpmTolMassErrorModel, mz::Float32, ::Float32)
+    corrected = getCorrectedMz(m, mz)
+    low, high = getMzBoundsReverse(m, corrected)
+    return corrected, low, high
+end
+
+@inline function getCorrectedMzAndBounds(m::LinearBiasPpmTolMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
+    return getCorrectedMzAndBounds(m, mz, intensity)
+end
+
+laplace_log_density(::LinearBiasPpmTolMassErrorModel, ::Float32, ::Float32, ::Float32) = Float32(0)
+get_default_top3_ll(::LinearBiasPpmTolMassErrorModel) = Float32(0)

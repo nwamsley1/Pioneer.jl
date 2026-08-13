@@ -2,17 +2,16 @@
   "calibration_raw_file": "",
   "max_koina_batch": 100,
   "fasta_header_regex_proteins": [
-    "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=",
-    "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=",
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="
   ],
-  "comment_library": "=== Library generation parameters ===",
+  "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
   "variable_mods": {
     "name": [],
     "pattern": [],
     "mass": []
   },
   "predict_fragments": true,
-  "comment_koina": "=== Koina API settings ===",
   "comment_fasta": "=== FASTA files ===",
   "fasta_header_regex_genes": [
     " GN=(\\S+)",
@@ -20,39 +19,14 @@
   ],
   "library_params": {
     "auto_detect_frag_bounds": false,
-    "y_start_index": 4,
-    "include_immonium": false,
-    "frag_mz_min": 150.0,
-    "max_frag_rank": 255,
-    "include_internal": false,
-    "rank_to_score": [
-      8,
-      4,
-      4,
-      2,
-      2,
-      1,
-      1
-    ],
-    "prec_mz_min": 390.0,
-    "min_frag_intensity": 0.0,
-    "frag_bin_tol_ppm": 10.0,
-    "length_to_frag_count_multiple": 2,
-    "y_start": 3,
     "prediction_model": "altimeter",
-    "include_isotope": false,
-    "b_start_index": 3,
-    "frag_mz_max": 2020.0,
-    "include_neutral_diff": true,
-    "max_frag_charge": 3,
-    "rt_bin_tol": 1.0,
-    "b_start": 2,
-    "include_p": false,
-    "include_p_index": false,
+    "prec_mz_min": 390.0,
     "prec_mz_max": 1010.0,
-    "instrument_type": "NONE"
+    "instrument_type": "NONE",
+    "frag_mz_min": 150.0,
+    "frag_mz_max": 2020.0
   },
-  "_lib_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_c_multifile/output/multifile_test.poin",
+  "_lib_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_c_multifile/output/multifile_test.poin",
   "fasta_names": [
     "PROTEINS1",
     "PROTEINS2"
@@ -60,7 +34,7 @@
   "match_lib_build_batch": 100000,
   "comment_processing": "=== Processing settings ===",
   "comment_output": "=== Output library path ===",
-  "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_c_multifile/output/multifile_test",
+  "library_path": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_c_multifile/output/multifile_test",
   "_lib_name": "multifile_test",
   "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
   "nce_params": {
@@ -68,17 +42,16 @@
     "dynamic_nce": true,
     "default_charge": 2
   },
-  "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===",
+  "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
   "fasta_header_regex_organisms": [
     " OS=([^ ]+.*?) [^ ]+=",
     " OS=([^ ]+.*?) [^ ]+="
   ],
   "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
   "comment_digestion": "=== Protein digestion parameters ===",
-  "max_koina_requests": 24,
   "fasta_paths": [
-    "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
-    "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz"
+    "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
+    "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz"
   ],
   "fasta_header_regex_accessions": [
     "^\\w+\\|(\\w+(?:-\\d+)?)\\|",

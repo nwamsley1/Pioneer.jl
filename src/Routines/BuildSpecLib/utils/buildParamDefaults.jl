@@ -29,17 +29,17 @@ function get_build_default_parameters()
 end
 
 """
-    merge_with_build_defaults(user_params::Dict, defaults::Dict)
+    merge_with_build_defaults(user_params::AbstractDict, defaults::AbstractDict)
 
 Recursively merge user parameters over default parameters.
 User values always override defaults at any nesting level.
 """
-function merge_with_build_defaults(user_params::Dict, defaults::Dict)
+function merge_with_build_defaults(user_params::AbstractDict, defaults::AbstractDict)
     result = deepcopy(defaults)
     
-    function recursive_merge!(target::Dict, source::Dict)
+    function recursive_merge!(target::AbstractDict, source::AbstractDict)
         for (key, value) in source
-            if haskey(target, key) && isa(target[key], Dict) && isa(value, Dict)
+            if haskey(target, key) && isa(target[key], AbstractDict) && isa(value, AbstractDict)
                 # Both are dicts, merge recursively
                 recursive_merge!(target[key], value)
             else

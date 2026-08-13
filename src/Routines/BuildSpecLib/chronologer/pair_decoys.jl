@@ -203,7 +203,7 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     # Diagnostic: count targets and decoys
     targets = sum(.!df.decoy)
     decoys = sum(df.decoy)
-    @user_info "Starting pairing by (base_target_id, precursor_charge): $targets targets, $decoys decoys"
+    @debug_l1 "Starting pairing by (base_target_id, precursor_charge): $targets targets, $decoys decoys"
     
     # Create lookup dictionary: (base_target_id, precursor_charge, is_target) -> row_index
     lookup = Dict{Tuple{UInt32, UInt8, Bool}, Int}()
@@ -280,7 +280,7 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     end
     
     successful_pairs = length(processed_pairs)
-    @user_info "Three-tier pairing complete: $successful_pairs target-decoy pairs matched using (base_pep_id, base_prec_id)"
+    @debug_l1 "Three-tier pairing complete: $successful_pairs target-decoy pairs matched using (base_pep_id, base_prec_id)"
     
     # Update the DataFrame with new pair_ids
     result_df.pair_id = new_pair_ids
@@ -322,7 +322,7 @@ function add_entrapment_partner_columns!(df::DataFrame)
 
     # Only show message if there are actual entrapment variants
     if any(df.entrapment_group_id .> 0)
-        @user_info "Found $(length(target_lookup)) original targets for entrapment pairing"
+        @debug_l1 "Found $(length(target_lookup)) original targets for entrapment pairing"
     end
     
     # Track next pair ID
@@ -398,26 +398,30 @@ function add_entrapment_indices!(df)
     4   | missing           | 0                 | true  | missing (decoy)
     """
     n = nrow(df)
-    
-    # Check if decoy column exists (be robust about column names)
-    has_decoy_col = hasproperty(df, :decoy)
+
+    # Check if decoy column exists. The caller renames :decoy → :is_decoy before
+    # invoking us, so accept either name; some upstream paths still use :decoy.
+    decoy_col = hasproperty(df, :is_decoy) ? :is_decoy :
+                hasproperty(df, :decoy)    ? :decoy    : nothing
+    has_decoy_col = decoy_col !== nothing
+    decoy_vec = has_decoy_col ? df[!, decoy_col] : nothing
     if !has_decoy_col
         @debug_l2 "Decoy column not found - proceeding without decoy filtering"
         @debug_l2 "Available columns: $(names(df))"
     end
-    
+
     # Create mapping: entrapment_pair_id -> target row index
     pair_to_target = Dict{UInt32, UInt32}()
-    
+
     # First pass: find all original targets
     for i in 1:n
         # Check if this is a valid original target
-        is_target = !ismissing(df.entrapment_pair_id[i]) && 
+        is_target = !ismissing(df.entrapment_pair_id[i]) &&
                    df.entrapment_group_id[i] == 0
-        
+
         # Additional decoy filtering if column exists
         if has_decoy_col && is_target
-            is_target = is_target && !df.decoy[i]
+            is_target = is_target && !decoy_vec[i]
         end
         
         if is_target
@@ -428,7 +432,7 @@ function add_entrapment_indices!(df)
     
     # Only log if we found entrapment targets (i.e., entrapment is actually enabled)
     if length(pair_to_target) > 0
-        @user_info "Found $(length(pair_to_target)) entrapment targets for index mapping"
+        @debug_l1 "Found $(length(pair_to_target)) entrapment targets for index mapping"
     end
     
     # Create the entrapment_target_idx column
@@ -439,10 +443,10 @@ function add_entrapment_indices!(df)
     for i in 1:n
         # Check if this row should get an entrapment_target_idx
         should_map = !ismissing(df.entrapment_pair_id[i])
-        
+
         # Additional decoy filtering if column exists
         if has_decoy_col && should_map
-            should_map = should_map && !df.decoy[i]
+            should_map = should_map && !decoy_vec[i]
         end
         
         if should_map
@@ -460,11 +464,11 @@ function add_entrapment_indices!(df)
 
     # Only report if we actually mapped entrapment entries
     if n_mapped > 0
-        @user_info "Entrapment pairing Stage 2 complete (entrapment_target_idx created):"
-        @user_info "  Mapped $n_mapped entries to target indices"
-        @user_info "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
-        @user_info "  Table size: $n rows"
-        @user_info "  Decoy column used: $(has_decoy_col ? "✅ YES" : "❌ NO")"
+        @debug_l1 "Entrapment pairing Stage 2 complete (entrapment_target_idx created):"
+        @debug_l1 "  Mapped $n_mapped entries to target indices"
+        @debug_l1 "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
+        @debug_l1 "  Table size: $n rows"
+        @debug_l1 "  Decoy column used: $(has_decoy_col ? "✅ YES" : "❌ NO")"
     end
 
     return nothing

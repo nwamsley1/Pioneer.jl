@@ -24,7 +24,7 @@ end
 
 function check_params_bsp(json_string::String)
     # Parse user parameters
-    user_params = JSON.parse(json_string)
+    user_params = JSON.parse(json_string, dicttype=Dict{String,Any})
     
     # Always use full defaults - user values will be merged over them
     defaults = get_build_default_parameters()
@@ -48,7 +48,7 @@ function check_params_bsp(json_string::String)
     end
 
     # Check required top-level parameters
-    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
     for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
     end
@@ -78,8 +78,8 @@ function check_params_bsp(json_string::String)
         fasta_digest_params["decoy_method"] = "shuffle"
     else
         decoy_method = fasta_digest_params["decoy_method"]
-        if !(decoy_method in ["shuffle", "reverse"])
-            error("decoy_method must be either 'shuffle' or 'reverse', got: $decoy_method")
+        if !(decoy_method in ["shuffle", "reverse", "diann_mutation"])
+            error("decoy_method must be 'shuffle', 'reverse', or 'diann_mutation', got: $decoy_method")
         end
     end
     
@@ -103,20 +103,9 @@ function check_params_bsp(json_string::String)
     # Check nce_params
     nce_params = params["nce_params"]
     check_param(nce_params, "nce", Real)
-    check_param(nce_params, "default_charge", Integer)
-    check_param(nce_params, "dynamic_nce", Bool)
 
     # Check library_params (defaults now come from JSON file)
     library_params = params["library_params"]
-    check_param(library_params, "rt_bin_tol", Real)
-    check_param(library_params, "frag_bin_tol_ppm", Real)
-    check_param(library_params, "rank_to_score", Vector)
-    check_param(library_params, "y_start_index", Integer)
-    check_param(library_params, "b_start_index", Integer)
-    check_param(library_params, "y_start", Integer)
-    check_param(library_params, "b_start", Integer)
-    check_param(library_params, "include_p_index", Bool)
-    check_param(library_params, "include_p", Bool)
     check_param(library_params, "auto_detect_frag_bounds", Bool)
     # calibration_raw_file is optional - only check if it exists
     # check_param(library_params, "calibration_raw_file", String)  # Commented out - optional parameter
@@ -124,16 +113,9 @@ function check_params_bsp(json_string::String)
     check_param(library_params, "frag_mz_max", Real)
     check_param(library_params, "prec_mz_min", Real)
     check_param(library_params, "prec_mz_max", Real)
-    check_param(library_params, "max_frag_charge", Integer)
-    check_param(library_params, "max_frag_rank", Integer)
-    check_param(library_params, "length_to_frag_count_multiple", Real)
-    check_param(library_params, "min_frag_intensity", Real)
-    check_param(library_params, "include_isotope", Bool)
-    check_param(library_params, "include_internal", Bool)
-    check_param(library_params, "include_immonium", Bool)
-    check_param(library_params, "include_neutral_diff", Bool)
-    check_param(library_params, "instrument_type", String)
-    check_param(library_params, "prediction_model", String)
+    # `instrument_type` and `prediction_model` are no longer schema fields:
+    # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
+    # endpoint isn't instrument-parameterized.
 
     # Check variable_mods and fixed_mods
     for mod_type in ["variable_mods", "fixed_mods"]
@@ -199,7 +181,7 @@ function check_params_bsp(json_string::String)
         push!(params["fasta_names"], "CONTAM")
         push!(get!(params, "fasta_header_regex_accessions", String[]), "^\\w+\\|(\\w+(?:-\\d+)?)\\|")
         push!(get!(params, "fasta_header_regex_genes", String[]), " GN=(\\S+)")
-        push!(get!(params, "fasta_header_regex_proteins", String[]), "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=")
+        push!(get!(params, "fasta_header_regex_proteins", String[]), "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=")
         push!(get!(params, "fasta_header_regex_organisms", String[]), " OS=([^ ]+.*?) [^ ]+=")
     end
     
@@ -220,7 +202,7 @@ Returns:
 - Parsed and validated parameters dictionary
 """
 function checkParseSpecLibParams(json_path::String)
-    params = JSON.parsefile(json_path)
+    params = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
@@ -248,23 +230,6 @@ function checkParseSpecLibParams(json_path::String)
     required_lib_params = [
         ("input_lib_path", String),
         ("output_lib_path", String),
-        ("rt_bin_tol", Number),
-        ("frag_bin_tol_ppm", Number),
-        ("rank_to_score", Vector),
-        ("y_start_index", Number),
-        ("b_start_index", Number),
-        ("y_start", Number),
-        ("b_start", Number),
-        ("include_p_index", Bool),
-        ("include_p", Bool),
-        ("include_isotope", Bool),
-        ("include_immonium", Bool),
-        ("include_internal", Bool),
-        ("include_neutral_diff", Bool),
-        ("max_frag_charge", Number),
-        ("max_frag_rank", Number),
-        ("length_to_frag_count_multiple", Number),
-        ("min_frag_intensity", Number),
         ("generate_decoys", Bool),
         ("generate_entrapment", Bool),
         ("entrapment_groups", Number),

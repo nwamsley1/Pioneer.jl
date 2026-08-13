@@ -179,7 +179,7 @@
     end
     
     # Clean up test directory
-    rm(test_dir, recursive=true)
+    safe_rmdir(test_dir)
 end
 
 @testset "BuildPionLib" begin
@@ -187,41 +187,24 @@ end
     Tests for buildPionLib
     ==========================================================================#
     @testset "buildPionLib" begin
-        # Create a temporary directory for testing
+        # buildPionLib only ships with the SplineCoefficientModel (Altimeter) overload
+        # — the standard intensity path was removed when BuildSpecLib was restricted
+        # to Altimeter. Set up a fresh test directory for the spline smoke test.
         test_dir = mktempdir()
-        
-        # Create mock input data
-        fragments_table = (
-            mz = Float32[100.0, 200.0, 300.0, 400.0],
-            intensity = Float16[0.5, 0.8, 0.3, 0.9],
-            is_y = [true, false, true, false],
-            is_b = [false, true, false, true],
-            is_p = [false, false, false, false],
-            fragment_index = UInt8[1, 2, 3, 4],
-            charge = UInt8[1, 1, 2, 2],
-            sulfur_count = UInt8[0, 1, 0, 1],
-            ion_type = UInt16[1, 2, 1, 2],
-            isotope = UInt8[0, 0, 0, 0],
-            is_internal = [false, false, false, false],
-            is_immonium = [false, false, false, false],
-            has_neutral_diff = [false, false, false, false]
-        )
-        
+
+        # Note: :sequence and :accession_numbers are required by
+        # StandardLibraryPrecursors (since the LibraryIon.jl split into
+        # SpectralLibrary/precursors.jl). Provide minimal dummy values.
         precursors_table = (
             mz = Float32[500.0, 600.0],
             prec_length = UInt8[40, 40],
             length = UInt8[50, 50],
             irt = Float32[10.0, 20.0],
-            prec_charge = UInt8[2, 3]
+            prec_charge = UInt8[2, 3],
+            sequence = String["PEPTIDEK", "MNTIDER"],
+            accession_numbers = String["TEST_PROT_A", "TEST_PROT_B"],
         )
-        
-        # Write mock files
-        Arrow.write(joinpath(test_dir, "fragments_table.arrow"), fragments_table)
-        Arrow.write(joinpath(test_dir, "precursors_table.arrow"), precursors_table)
-        # Convert prec_to_frag to a proper table/DataFrame structure
-        prec_to_frag_df = DataFrame(Dict(:start_idx => UInt64[1, 3, 5]))
-        Arrow.write(joinpath(test_dir, "prec_to_frag.arrow"), prec_to_frag_df)
-       
+
         # Set up parameters for buildPionLib
         y_start_index = UInt8(1)
         y_start = UInt8(1)
@@ -237,78 +220,16 @@ end
         max_frag_rank = UInt8(10)
         length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
-        rank_to_score = UInt8[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
-        
+
         # Create a simple fragment bounds model for testing
         frag_bounds = FragBoundModel(
             ImmutablePolynomial([50.0f0, 0.0f0]),  # min_frag_mz = 50
             ImmutablePolynomial([1500.0f0, 0.0f0])  # max_frag_mz = 1500
         )
-        
+
         frag_bin_tol_ppm = Float32(10.0)
         rt_bin_tol_ppm = Float32(30.0)
-        model_type = InstrumentSpecificModel("test_model")
-        
-        # Call the function
-        result = buildPionLib(
-            test_dir,
-            y_start_index,
-            y_start,
-            b_start_index,
-            b_start,
-            include_p_index,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            rank_to_score,
-            frag_bounds,
-            frag_bin_tol_ppm,
-            rt_bin_tol_ppm,
-            model_type
-        )
-        
-        # Check that the function returns nothing
-        @test result === nothing
-        
-        # Check output files existence
-        @test isfile(joinpath(test_dir, "f_index_fragments.arrow"))
-        @test isfile(joinpath(test_dir, "f_index_rt_bins.arrow"))
-        @test isfile(joinpath(test_dir, "f_index_fragment_bins.arrow"))
-        @test isfile(joinpath(test_dir, "presearch_f_index_fragments.arrow"))
-        @test isfile(joinpath(test_dir, "presearch_f_index_rt_bins.arrow"))
-        @test isfile(joinpath(test_dir, "presearch_f_index_fragment_bins.arrow"))
-        @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
-        @test isfile(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
 
-        # Load and verify structure of output files
-        f_index_fragments = Arrow.Table(joinpath(test_dir, "f_index_fragments.arrow"))
-        @test hasproperty(f_index_fragments, :IndexFragment)
-        @test length(f_index_fragments.IndexFragment) > 0
-
-        f_index_rt_bins = Arrow.Table(joinpath(test_dir, "f_index_rt_bins.arrow"))
-        @test hasproperty(f_index_rt_bins, :FragIndexBin)
-        @test length(f_index_rt_bins.FragIndexBin) > 0
-
-        f_index_fragment_bins = Arrow.Table(joinpath(test_dir, "f_index_fragment_bins.arrow"))
-        @test hasproperty(f_index_fragment_bins, :FragIndexBin)
-        @test length(f_index_fragment_bins.FragIndexBin) > 0
-
-        # Verify detailed fragments file contains the expected data
-        detailed_fragments_data = Pioneer.deserialize_from_jls(joinpath(test_dir, "detailed_fragments.jls"))
-        @test detailed_fragments_data isa Vector
-        @test length(detailed_fragments_data) > 0
-
-        # Verify precursor to fragment indices mapping
-        pid_to_fid_data = Pioneer.deserialize_from_jls(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
-        @test pid_to_fid_data isa Vector{UInt64}
-        @test length(pid_to_fid_data) == length(precursors_table.mz) + 1
-        
         # Test with SplineCoefficientModel
         spline_model_type = SplineCoefficientModel("test_spline_model")
         
@@ -340,6 +261,16 @@ end
         Arrow.write(joinpath(spline_test_dir, "precursors_table.arrow"), precursors_table)
         prec_to_frag_df = DataFrame(Dict(:start_idx => UInt64[1, 3, 5]))
         Arrow.write(joinpath(spline_test_dir, "prec_to_frag.arrow"), prec_to_frag_df)
+        # buildPionLib(::SplineCoefficientModel) also expects spline_knots.jls
+        # and proteins_table.arrow alongside the fragment / precursor tables.
+        Pioneer.serialize_to_jls(joinpath(spline_test_dir, "spline_knots.jls"),
+                                 Float32[0.0, 0.25, 0.5, 0.75, 1.0])
+        proteins_table = (
+            accession    = String["TEST_PROT_A", "TEST_PROT_B"],
+            gene_name    = String["GA",          "GB"],
+            protein_name = String["ProtA",       "ProtB"],
+        )
+        Arrow.write(joinpath(spline_test_dir, "proteins_table.arrow"), proteins_table)
 
         # Test the SplineCoefficientModel version
         spline_result = buildPionLib(
@@ -358,7 +289,6 @@ end
             max_frag_rank,
             length_to_frag_count_multiple,
             min_frag_intensity,
-            rank_to_score,
             frag_bounds,
             frag_bin_tol_ppm,
             rt_bin_tol_ppm,
@@ -371,13 +301,15 @@ end
         # Verify spline fragments contain coefficients
         spline_fragments_data = Pioneer.deserialize_from_jls(joinpath(spline_test_dir, "detailed_fragments.jls"))
         @test spline_fragments_data isa Vector
-        @test eltype(spline_fragments_data) <: SplineDetailedFrag{3, Float32}
+        # buildPionLib serializes Compact (not Detailed) spline fragments —
+        # `getDetailedFrags` returns Vector{SplineCompactFrag{N, T}}.
+        @test eltype(spline_fragments_data) <: Pioneer.SplineCompactFrag{3, Float32}
         
 
 
         # Clean up
-        rm(test_dir, recursive=true)
-        rm(spline_test_dir, recursive=true)
+        safe_rmdir(test_dir)
+        safe_rmdir(spline_test_dir)
     end
     
     #==========================================================================
@@ -415,7 +347,7 @@ end
         @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
         
         # Clean up
-        rm(test_dir, recursive=true)
+        safe_rmdir(test_dir)
     end
     
     #==========================================================================
@@ -771,9 +703,6 @@ end
             ImmutablePolynomial([1000.0f0, 0.0f0])  # max_frag_mz = 1000
         )
         
-        # Rank to score mapping
-        rank_to_score = UInt8[10, 9, 8, 7, 6]
-        
         # Call function with parameters that should allow all fragments to pass
         simple_frags = getSimpleFrags(
             frag_mz,
@@ -799,7 +728,6 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
         )
         
         # All fragments should pass our filters
@@ -811,7 +739,8 @@ end
         @test getPrecMZ(simple_frags[1]) ≈ 500.0
         @test getIRT(simple_frags[1]) ≈ 10.0
         @test getPrecCharge(simple_frags[1]) == 2
-        @test getScore(simple_frags[1]) == 10  # First fragment gets highest score
+        # Score is a per-rank bitmask: rank N → UInt8(1) << (N-1), capped at 8.
+        @test getScore(simple_frags[1]) == UInt8(1)  # rank 1 → bit 0
         
         # Check properties of second fragment
         @test getMZ(simple_frags[2]) ≈ 200.0
@@ -819,7 +748,7 @@ end
         @test getPrecMZ(simple_frags[2]) ≈ 500.0
         @test getIRT(simple_frags[2]) ≈ 10.0
         @test getPrecCharge(simple_frags[2]) == 2
-        @test getScore(simple_frags[2]) == 9  # Second fragment gets second highest score
+        @test getScore(simple_frags[2]) == UInt8(2)  # rank 2 → bit 1
         
         # Check properties of third fragment (first fragment of second precursor)
         @test getMZ(simple_frags[3]) ≈ 300.0
@@ -827,7 +756,7 @@ end
         @test getPrecMZ(simple_frags[3]) ≈ 600.0
         @test getIRT(simple_frags[3]) ≈ 20.0
         @test getPrecCharge(simple_frags[3]) == 3
-        @test getScore(simple_frags[3]) == 10  # First fragment of second precursor
+        @test getScore(simple_frags[3]) == UInt8(1)  # rank 1 of second precursor → bit 0
         
         # Test with more restrictive filters
         # Only allow y ions with index >= 3
@@ -855,7 +784,6 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
         )
         
         # Only fragment #3 should pass (y-ion with index 3)
@@ -863,8 +791,9 @@ end
         @test getMZ(restrictive_simple_frags[1]) ≈ 400.0
         @test getPrecID(restrictive_simple_frags[1]) == 2
         
-        # Test with rank limits
-        # Create a large number of identical fragments
+        # Rank cap: getSimpleFrags hardcodes max_rank=8 (UInt8 bitmask).
+        # Feed 10 candidate fragments and confirm only the first 8 are emitted
+        # with bitmask scores 1<<0 .. 1<<7.
         n_test_frags = 10
         large_frag_mz = repeat(Float32[100.0], n_test_frags)
         large_frag_is_y = repeat([true], n_test_frags)
@@ -876,13 +805,10 @@ end
         large_frag_internal = repeat([false], n_test_frags)
         large_frag_immonium = repeat([false], n_test_frags)
         large_frag_neutral_diff = repeat([false], n_test_frags)
-        
+
         # All fragments belong to same precursor
         large_prec_to_frag_idx = UInt64[1, n_test_frags+1]
-        
-        # Small rank_to_score array to test rank limiting
-        small_rank_to_score = UInt8[10, 9, 8]
-        
+
         rank_limited_frags = getSimpleFrags(
             large_frag_mz,
             large_frag_is_y,
@@ -907,16 +833,13 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            small_rank_to_score     # Only allow 3 ranks
         )
-        
-        # Should only return 3 fragments due to rank limit
-        @test length(rank_limited_frags) == 3
-        
-        # Test scores are assigned in decreasing order
-        @test getScore(rank_limited_frags[1]) == 10
-        @test getScore(rank_limited_frags[2]) == 9
-        @test getScore(rank_limited_frags[3]) == 8
+
+        # 8-rank cap (one bit per rank in the UInt8 score)
+        @test length(rank_limited_frags) == 8
+        for r in 1:8
+            @test getScore(rank_limited_frags[r]) == UInt8(1) << UInt8(r - 1)
+        end
     end
     
     #==========================================================================
@@ -1031,419 +954,17 @@ end
         @test length(presearch_rt_bins.FragIndexBin) <= length(standard_rt_bins.FragIndexBin)
         
         # Clean up
-        rm(test_dir, recursive=true)
+        safe_rmdir(test_dir)
     end
-    
-    #==========================================================================
-    Tests for getDetailedFrags
-    ==========================================================================#
-    @testset "getDetailedFrags" begin
-        # Mock data for testing
-        frag_mz = Float32[100.0, 200.0, 300.0, 400.0]
-        frag_intensity = Float16[0.5, 0.8, 0.3, 0.9]
-        frag_is_y = [true, false, true, false]
-        frag_is_b = [false, true, false, true]
-        frag_is_p = [false, false, false, false]
-        frag_index = UInt8[1, 2, 3, 4]
-        frag_charge = UInt8[1, 1, 2, 2]
-        frag_sulfur_count = UInt8[0, 1, 0, 1]
-        frag_ion_type = UInt16[1, 2, 1, 2]
-        frag_isotope = UInt8[0, 0, 0, 0]
-        frag_internal = [false, false, false, false]
-        frag_immonium = [false, false, false, false]
-        frag_neutral_diff = [false, false, false, false]
-        
-        precursor_mz = Float32[500.0, 600.0]
-        precursor_charge = UInt8[2, 3]
-        precursor_length = UInt8[50, 50]
-        # Index mapping precursors to fragments
-        # First precursor has fragments 1-2, second has fragments 3-4
-        prec_to_frag_idx = UInt64[1, 3, 5]
-        
-        # Parameters for filtering
-        y_start = UInt8(1)
-        b_start = UInt8(1)
-        include_p = true
-        include_isotope = true
-        include_immonium = true
-        include_internal = true
-        include_neutral_diff = true
-        max_frag_charge = UInt8(3)
-        
-        # Fragment bounds model
-        frag_bounds = FragBoundModel(
-            ImmutablePolynomial([50.0f0, 0.0f0]),  # min_frag_mz = 50
-            ImmutablePolynomial([1000.0f0, 0.0f0])  # max_frag_mz = 1000
-        )
-        
-        max_frag_rank = UInt8(10)
-        length_to_frag_count_multiple = Float32(10)
-        min_frag_intensity = Float32(0.1)
-        model_type = InstrumentSpecificModel("test_model")
-        
-        # Call function with parameters that should allow all fragments to pass
-        detailed_frags, pid_to_fid = getDetailedFrags(
-            frag_mz,
-            frag_intensity,
-            frag_is_y,
-            frag_is_b,
-            frag_is_p,
-            frag_index,
-            frag_charge,
-            frag_sulfur_count,
-            frag_ion_type,
-            frag_isotope,
-            frag_internal,
-            frag_immonium,
-            frag_neutral_diff,
-            precursor_mz,
-            precursor_charge,
-            precursor_length,
-            prec_to_frag_idx,
-            y_start,
-            b_start,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            model_type
-        )
-        
-        # All fragments should pass our filters
-        @test length(detailed_frags) == 4
-        
-        # Check precursor-to-fragment mapping
-        @test length(pid_to_fid) == 3  # For 2 precursors + end marker
-        @test pid_to_fid[1] == 1  # First precursor starts at index 1
-        @test pid_to_fid[2] == 3  # Second precursor starts at index 3
-        @test pid_to_fid[3] == 5  # End marker
-        
-        # Check first fragment properties
-        @test detailed_frags[1].prec_id == 1
-        @test detailed_frags[1].mz ≈ 100.0
-        @test detailed_frags[1].intensity ≈ 0.5
-        @test detailed_frags[1].ion_type == 1
-        @test detailed_frags[1].is_y == true
-        @test detailed_frags[1].is_b == false
-        @test detailed_frags[1].frag_charge == 1
-        @test detailed_frags[1].ion_position == 1
-        @test detailed_frags[1].prec_charge == 2
-        @test detailed_frags[1].rank == 1  # First fragment gets rank 1
-        @test detailed_frags[1].sulfur_count == 0
-        
-        # Check second fragment properties
-        @test detailed_frags[2].prec_id == 1
-        @test detailed_frags[2].mz ≈ 200.0
-        @test detailed_frags[2].intensity ≈ 0.8
-        @test detailed_frags[2].ion_type == 2
-        @test detailed_frags[2].is_y == false
-        @test detailed_frags[2].is_b == true
-        @test detailed_frags[2].frag_charge == 1
-        @test detailed_frags[2].ion_position == 2
-        @test detailed_frags[2].prec_charge == 2
-        @test detailed_frags[2].rank == 2  # Second fragment gets rank 2
-        @test detailed_frags[2].sulfur_count == 1
-        
-        # Test intensity filtering
-        high_intensity_frags, high_intensity_pid_to_fid = getDetailedFrags(
-            frag_mz,
-            frag_intensity,
-            frag_is_y,
-            frag_is_b,
-            frag_is_p,
-            frag_index,
-            frag_charge,
-            frag_sulfur_count,
-            frag_ion_type,
-            frag_isotope,
-            frag_internal,
-            frag_immonium,
-            frag_neutral_diff,
-            precursor_mz,
-            precursor_charge,
-            precursor_length,
-            prec_to_frag_idx,
-            y_start,
-            b_start,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            Float32(0.7),  # Only fragments with intensity >= 0.7
-            model_type
-        )
-        
-        # Only two fragments should pass (intensity 0.8 and 0.9)
-        @test length(high_intensity_frags) == 2
-        @test high_intensity_frags[1].intensity ≈ 0.8
-        @test high_intensity_frags[2].intensity ≈ 0.9
-        
-        # Test rank limiting with many fragments
-        n_test_frags = 15
-        rank_test_frag_mz = repeat(Float32[100.0], n_test_frags)
-        rank_test_frag_intensity = repeat(Float16[0.9], n_test_frags)
-        rank_test_frag_is_y = repeat([true], n_test_frags)
-        rank_test_frag_is_b = repeat([false], n_test_frags)
-        rank_test_frag_is_p = repeat([false], n_test_frags)
-        rank_test_frag_index = repeat(UInt8[1], n_test_frags)
-        rank_test_frag_charge = repeat(UInt8[1], n_test_frags)
-        rank_test_frag_sulfur_count = repeat(UInt8[0], n_test_frags)
-        rank_test_frag_ion_type = repeat(UInt16[1], n_test_frags)
-        rank_test_frag_isotope = repeat(UInt8[0], n_test_frags)
-        rank_test_frag_internal = repeat([false], n_test_frags)
-        rank_test_frag_immonium = repeat([false], n_test_frags)
-        rank_test_frag_neutral_diff = repeat([false], n_test_frags)
-        
-        # All fragments belong to same precursor
-        rank_test_prec_to_frag_idx = UInt64[1, n_test_frags + 1]
-        
-        # Set a small max rank
-        small_max_rank = UInt8(5)
-        
-        rank_limited_detailed_frags, _ = getDetailedFrags(
-            rank_test_frag_mz,
-            rank_test_frag_intensity,
-            rank_test_frag_is_y,
-            rank_test_frag_is_b,
-            rank_test_frag_is_p,
-            rank_test_frag_index,
-            rank_test_frag_charge,
-            rank_test_frag_sulfur_count,
-            rank_test_frag_ion_type,
-            rank_test_frag_isotope,
-            rank_test_frag_internal,
-            rank_test_frag_immonium,
-            rank_test_frag_neutral_diff,
-            Float32[500.0],        # Single precursor
-            UInt8[2],              # Single charge
-            UInt8[50],             # Single precursor length
-            rank_test_prec_to_frag_idx,
-            y_start,
-            b_start,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            small_max_rank,        # Only keep top 5 fragments
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            model_type
-        )
-        
-        # Should only have max_rank fragments
-        @test length(rank_limited_detailed_frags) == small_max_rank
-        
-        # Ranks should be assigned sequentially
-        for i in 1:length(rank_limited_detailed_frags)
-            @test rank_limited_detailed_frags[i].rank == i
-        end
-    end
-    
-    #==========================================================================
-    Tests for getDetailedFrags with SplineCoefficientModel
-    ==========================================================================#
-    @testset "getDetailedFrags with SplineCoefficientModel" begin
-        # Mock data for testing
-        frag_mz = Float32[100.0, 200.0, 300.0, 400.0]
-        frag_coef = NTuple{3, Float32}[(1.0f0, 0.5f0, 0.1f0), (0.8f0, 0.4f0, 0.2f0), 
-                                     (0.6f0, 0.3f0, 0.1f0), (0.9f0, 0.5f0, 0.2f0)]
-        frag_intensity = Float16[0.5, 0.8, 0.3, 0.9]
-        frag_is_y = [true, false, true, false]
-        frag_is_b = [false, true, false, true]
-        frag_is_p = [false, false, false, false]
-        frag_index = UInt8[1, 2, 3, 4]
-        frag_charge = UInt8[1, 1, 2, 2]
-        frag_sulfur_count = UInt8[0, 1, 0, 1]
-        frag_ion_type = UInt16[1, 2, 1, 2]
-        frag_isotope = UInt8[0, 0, 0, 0]
-        frag_internal = [false, false, false, false]
-        frag_immonium = [false, false, false, false]
-        frag_neutral_diff = [false, false, false, false]
-        
-        precursor_mz = Float32[500.0, 600.0]
-        precursor_charge = UInt8[2, 3]
-        precursor_length = UInt8[50, 50]
-        # Index mapping precursors to fragments
-        # First precursor has fragments 1-2, second has fragments 3-4
-        prec_to_frag_idx = UInt64[1, 3, 5]
-        
-        # Parameters for filtering
-        y_start = UInt8(1)
-        b_start = UInt8(1)
-        include_p = true
-        include_isotope = true
-        include_immonium = true
-        include_internal = true
-        include_neutral_diff = true
-        max_frag_charge = UInt8(3)
-        
-        # Fragment bounds model
-        frag_bounds = FragBoundModel(
-            ImmutablePolynomial([50.0f0, 0.0f0]),  # min_frag_mz = 50
-            ImmutablePolynomial([1000.0f0, 0.0f0])  # max_frag_mz = 1000
-        )
-        
-        max_frag_rank = UInt8(10)
-        length_to_frag_count_multiple = Float32(10)
-        min_frag_intensity = Float32(0.1)
-        model_type = SplineCoefficientModel("test_spline_model")
-        
-        # Call function with parameters that should allow all fragments to pass
-        detailed_frags, pid_to_fid = getDetailedFrags(
-            frag_mz,
-            frag_coef,
-            frag_intensity,
-            frag_is_y,
-            frag_is_b,
-            frag_is_p,
-            frag_index,
-            frag_charge,
-            frag_sulfur_count,
-            frag_ion_type,
-            frag_isotope,
-            frag_internal,
-            frag_immonium,
-            frag_neutral_diff,
-            precursor_mz,
-            precursor_charge,
-            precursor_length,
-            prec_to_frag_idx,
-            y_start,
-            b_start,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            model_type
-        )
-        
-        # All fragments should pass our filters
-        @test length(detailed_frags) == 4
-        
-        # Check type of returned fragments - should be SplineDetailedFrag with 3 coefficients
-        @test eltype(detailed_frags) <: SplineDetailedFrag{3, Float32}
-        
-        # Check precursor-to-fragment mapping
-        @test length(pid_to_fid) == 3  # For 2 precursors + end marker
-        @test pid_to_fid[1] == 1  # First precursor starts at index 1
-        @test pid_to_fid[2] == 3  # Second precursor starts at index 3
-        @test pid_to_fid[3] == 5  # End marker
-        
-        # Check first fragment properties
-        @test detailed_frags[1].prec_id == 1
-        @test detailed_frags[1].mz ≈ 100.0
-        @test detailed_frags[1].intensity == (1.0f0, 0.5f0, 0.1f0)  # Coefficient tuple
-        @test detailed_frags[1].ion_type == 1
-        @test detailed_frags[1].is_y == true
-        @test detailed_frags[1].is_b == false
-        @test detailed_frags[1].is_p == false
-        @test detailed_frags[1].is_isotope == false
-        @test detailed_frags[1].frag_charge == 1
-        @test detailed_frags[1].ion_position == 1  # This is the fragment_index
-        @test detailed_frags[1].prec_charge == 2
-        @test detailed_frags[1].rank == 1  # First fragment gets rank 1
-        @test detailed_frags[1].sulfur_count == 0
-        
-        # Check that filtering works with spline model
-        restricted_detailed_frags, _ = getDetailedFrags(
-            frag_mz,
-            frag_coef,
-            frag_intensity,
-            frag_is_y,
-            frag_is_b,
-            frag_is_p,
-            frag_index,
-            frag_charge,
-            frag_sulfur_count,
-            frag_ion_type,
-            frag_isotope,
-            frag_internal,
-            frag_immonium,
-            frag_neutral_diff,
-            precursor_mz,
-            precursor_charge,
-            precursor_length,
-            prec_to_frag_idx,
-            UInt8(4),  # Higher y-start value
-            UInt8(4),
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            model_type
-        )
-        
-        # Only the y-ion with index 3 should pass
-        @test length(restricted_detailed_frags) == 1
-        @test restricted_detailed_frags[1].is_y == false
-        @test restricted_detailed_frags[1].ion_position == 4
-        
-        # Test with different coefficient dimensions
-        frag_coef5 = NTuple{5, Float32}[(1.0f0, 0.5f0, 0.3f0, 0.2f0, 0.1f0), (0.8f0, 0.6f0, 0.4f0, 0.3f0, 0.2f0), 
-                                      (0.6f0, 0.5f0, 0.4f0, 0.2f0, 0.1f0), (0.9f0, 0.7f0, 0.5f0, 0.3f0, 0.1f0)]
-        
-        detailed_frags5, _ = getDetailedFrags(
-            frag_mz,
-            frag_coef5,
-            frag_intensity,
-            frag_is_y,
-            frag_is_b,
-            frag_is_p,
-            frag_index,
-            frag_charge,
-            frag_sulfur_count,
-            frag_ion_type,
-            frag_isotope,
-            frag_internal,
-            frag_immonium,
-            frag_neutral_diff,
-            precursor_mz,
-            precursor_charge,
-            precursor_length,
-            prec_to_frag_idx,
-            y_start,
-            b_start,
-            include_p,
-            include_isotope,
-            include_immonium,
-            include_internal,
-            include_neutral_diff,
-            max_frag_charge,
-            frag_bounds,
-            max_frag_rank,
-            length_to_frag_count_multiple,
-            min_frag_intensity,
-            model_type
-        )
-        
-        # Check that coefficient dimension is preserved
-        @test eltype(detailed_frags5) <: SplineDetailedFrag{5, Float32}
-        @test detailed_frags5[1].intensity == (1.0f0, 0.5f0, 0.3f0, 0.2f0, 0.1f0)
-    end
+
+    # The "getDetailedFrags with SplineCoefficientModel" @testset (~190 lines)
+    # was deleted alongside the test-staleness cleanup. As of §9 (e605153f),
+    # `getDetailedFrags` no longer filters fragments and produces bit-packed
+    # `SplineCompactFrag` (with `prec_id, mz, intensity, packed_a, packed_b`)
+    # rather than the rich `SplineDetailedFrag` (with `ion_type, is_y, is_b,
+    # frag_charge, rank, sulfur_count, …`) the deleted tests probed.
+    # Filter coverage now lives in:
+    #   test/UnitTests/test_buildpionlib_index_filters.jl
+    #   test/UnitTests/test_build_fragment_index_exact.jl
+    #   test/UnitTests/test_synthetic_koina.jl
 end

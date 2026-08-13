@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -45,13 +44,22 @@ jobs:
   linux:
     needs: validate_release_version
     uses: ./.github/workflows/build_app_linux.yml
+    with:
+      package_installer: true
+      artifact_retention_days: 3
   macos:
     needs: validate_release_version
     uses: ./.github/workflows/build_app_macos.yml
+    with:
+      package_installer: true
+      artifact_retention_days: 3
     secrets: inherit
   windows:
     needs: validate_release_version
     uses: ./.github/workflows/build_app_windows.yml
+    with:
+      package_installer: true
+      artifact_retention_days: 3
 
   publish:
     name: Publish GitHub Release

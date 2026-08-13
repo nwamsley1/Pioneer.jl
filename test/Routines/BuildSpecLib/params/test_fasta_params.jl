@@ -6,6 +6,7 @@ using DataStructures: OrderedDict
 using CodecZlib
 
 @testset "GetBuildLibParams FASTA Input Enhancement" begin
+    default_protein_regex = "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="
     
     # Setup test data directory
     test_data_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_fasta_params")
@@ -14,7 +15,7 @@ using CodecZlib
     if isdir(test_data_dir)
         for item in readdir(test_data_dir, join=true)
             if endswith(item, ".json") || isdir(item)
-                rm(item, force=true, recursive=true)
+                safe_rmdir(item)
             end
         end
     else
@@ -107,6 +108,7 @@ using CodecZlib
         
         # All should have the same default regex
         @test config["fasta_header_regex_accessions"][1] == config["fasta_header_regex_accessions"][2]
+        @test all(regex == default_protein_regex for regex in config["fasta_header_regex_proteins"])
     end
     
     @testset "Single File Input" begin
@@ -124,6 +126,7 @@ using CodecZlib
         
         # Check regex arrays
         @test length(config["fasta_header_regex_accessions"]) == 1
+        @test config["fasta_header_regex_proteins"][1] == default_protein_regex
     end
     
     @testset "Multiple Directory Input" begin

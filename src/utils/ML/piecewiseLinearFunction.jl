@@ -15,114 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#=
-function (f::NceModelContainer)(c::UInt8, x::AbstractFloat)
-    #Suppose the charge-state bounds are 2-4
-    #Then the indices for the 2, 3, and 4 charge state models
-    #are 1, 2, and 3 respectively. To evaluate at a charge outside 
-    #the bound, default to the nearest. So 1 -> 2. 6 -> 4 in this example. 
-    if c < first(f.charge_bounds)
-        first(f.nce_models)(x)
-    elseif c > last(f.charge_bounds)
-        last(f.nce_models)(x)
-    else
-        f.nce_models[c-first(f.charge_bounds)+1](x)
-    end
-end
-=#
-
- 
 function PiecewiseNceModel(x::T) where {T<:AbstractFloat}
     PiecewiseNceModel(zero(T), one(T), zero(T), x, zero(T))
 end
 
- """
-   PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}
-
-A piecewise model for normalized collision energy prediction that includes charge dependence.
-
-# Type Parameters
-- `T`: Floating point precision type
-
-# Fields
-- `breakpoint::T`: x-value where model transitions from linear to constant
-- `left_slope::T`: Slope of linear component for x ≤ breakpoint
-- `left_intercept::T`: Intercept of linear component for x ≤ breakpoint
-- `right_value::T`: Constant value for x > breakpoint
-- `charge_slope::T`: Linear charge dependence coefficient
-
-# Model
-For a given mass-to-charge ratio x and charge state z:
-- When x ≤ breakpoint: f(x,z) = left_slope * x + left_intercept + charge_slope * z
-- When x > breakpoint: f(x,z) = right_value + charge_slope * z
-
-# Methods
-   (f::PiecewiseNceModel)(x::AbstractFloat, charge::Integer)
-   (f::PiecewiseNceModel)(x::AbstractVector, charge::AbstractVector)
-   fit_nce_model(pwlm::PiecewiseNceModel, x, y, charge, breakpoint)
-
-See also: [`fit_nce_model`](@ref)
-"""
-#=
- function fit_nce_model(
-    pwlm::PiecewiseNceModel{T},
-    x::AbstractVector,
-    y::AbstractVector,
-    charge::AbstractVector,
-    breakpoint::Real) where {T<:AbstractFloat}
-    # Define the objective function to minimize sum of squared residuals
-    function objective(params)
-        # params[1] = left_slope
-        # params[2] = left_intercept
-        # params[3] = right_value
-        # params[4] = charge_slope
-        
-        # Calculate residuals for left side
-        left_mask = x .<= breakpoint
-        y_pred_left = params[1] .* x[left_mask] .+
-                     params[4] .* charge[left_mask] .+
-                     params[2]
-        residuals_left = y_pred_left .- y[left_mask]
-        
-        # Calculate residuals for right side
-        right_mask = x .> breakpoint
-        y_pred_right = fill(params[3], sum(right_mask)) .+
-                     params[4] .* charge[right_mask]
-        residuals_right = y_pred_right .- y[right_mask]
-        
-        # Total sum of squared residuals
-        return sum(residuals_left.^2) + sum(residuals_right.^2)
-    end
-    
-    # Initial guess using simple linear regression
-    left_mask = x .<= breakpoint
-    X_left = [ones(sum(left_mask)) x[left_mask] charge[left_mask]]
-    initial_coef = X_left \ y[left_mask]
-    
-    # Initial guess for right value
-    right_mask = x .> breakpoint
-    initial_right = mean(y[right_mask])
-    
-    initial_guess = [
-        initial_coef[2],  # left_slope
-        initial_coef[1],  # left_intercept
-        initial_right,    # right_value
-        initial_coef[3]   # charge_slope
-    ]
-    
-    # Optimize
-    result = optimize(objective, initial_guess, LBFGS())
-    optimal_params = Optim.minimizer(result)
-    
-    return PiecewiseNceModel(
-        T(float(breakpoint)),
-        T(optimal_params[1]), # left_slope
-        T(optimal_params[2]), # left_intercept
-        T(optimal_params[3]), # right_value (now fitted directly)
-        T(optimal_params[4])  # charge_slope
-    )
-end
-=#
 """
    fit_nce_model(pwlm::PiecewiseNceModel{T}, x::AbstractVector, y::AbstractVector, 
                 charge::AbstractVector, breakpoint::Real) where {T<:AbstractFloat}
@@ -237,154 +133,109 @@ end
     return map((x,c) -> f(x,c), x, charge)
  end
 
-
-
- #=
-
-
-function PiecewiseConstantRhsNceModel(x::T) where {T<:AbstractFloat}
-    return PiecewiseConstantRhsNceModel(
-        NCE_MODEL_BREAKPOINT #Global constant
-        , zero(T), x, x
-    )
+# `medians` is a Vector, not an NTuple{N,T}, deliberately. It used to carry the bin count as a type
+# parameter, which specialised every method touching an NCE model per dataset -- the count depends on
+# how many m/z bins had enough PSMs, so a single trace can produce both {1} and {2}.
+#
+# Nothing was gained by it: the access below is a single runtime-indexed load (`medians[offset+idx-1]`),
+# which a tuple cannot do without spilling to the stack; `offsets` and `n_bins` already carry the
+# structure at runtime; the value is built as a Vector and converted at the end; there is one model
+# per file, fetched once per search method rather than per precursor; and it is stored in a
+# `Dict{Int64, NceModel}` whose abstract value type means the call site dispatches dynamically anyway.
+struct BinnedMedianNceModel{T<:AbstractFloat} <: NceModel{T}
+    medians::Vector{T}
+    offsets::NTuple{6, UInt8}
+    n_bins::NTuple{6, UInt8}
+    mz_min::NTuple{6, T}
+    bin_width::NTuple{6, T}
+    default_nce::T
 end
 
-"""
-    fit_nce_model(pwlm::PiecewiseConstantRhsNceModel, x::AbstractVector, y::AbstractVector, breakpoint::Real)
-
-Fit a piecewise linear-constant model to data with fixed breakpoint.
-
-# Arguments
-- `pwlm`: Model template
-- `x`: Input values
-- `y`: Target values
-- `breakpoint`: Fixed x-value for transition point
-
-# Returns
-New `PiecewiseConstantRhsNceModel` with optimized parameters minimizing squared error.
-
-# Implementation
-Uses LBFGS optimization to find left slope and intercept that minimize squared 
-residuals. Right-hand value is determined by continuity at breakpoint.
-"""
-function fit_nce_model(pwlm::PiecewiseConstantRhsNceModel{T}, x::AbstractVector, y::AbstractVector, breakpoint::Real) where {T<:AbstractFloat}
-    # Define the objective function to minimize sum of squared residuals
-    function objective(params)
-        # params[1] = left_slope
-        # params[2] = left_intercept
-        
-        # Calculate residuals for left side
-        left_mask = x .<= breakpoint
-        y_pred_left = params[1] .* x[left_mask] .+ params[2]
-        residuals_left = y_pred_left .- y[left_mask]
-        
-        # Right value is determined by continuity at breakpoint
-        right_value = params[1] * breakpoint + params[2]
-        
-        # Calculate residuals for right side
-        right_mask = x .> breakpoint
-        y_pred_right = fill(right_value, sum(right_mask))
-        residuals_right = y_pred_right .- y[right_mask]
-        
-        # Total sum of squared residuals
-        return sum(residuals_left.^2) + sum(residuals_right.^2)
+function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
+    c = Int(charge)
+    if c < 1 || c > 6 || m.offsets[c] == 0x00
+        best_c = 0
+        best_d = typemax(Int)
+        for k in 1:6
+            m.offsets[k] == 0x00 && continue
+            d = abs(k - c)
+            if d < best_d
+                best_d = d
+                best_c = k
+            end
+        end
+        best_c == 0 && return m.default_nce
+        c = best_c
     end
-    
-    # Initial guess using simple linear regression on left side
-    left_mask = x .<= breakpoint
-    X_left = [ones(sum(left_mask)) x[left_mask]]
-    initial_coef = X_left \ y[left_mask]
-    initial_guess = [initial_coef[2], initial_coef[1]]  # [slope, intercept]
-    
-    # Optimize
-    result = optimize(objective, initial_guess, LBFGS())
-    optimal_params = Optim.minimizer(result)
-    
-    # Calculate right value
-    right_value = optimal_params[1] * breakpoint + optimal_params[2]
-    
-    return PiecewiseConstantRhsNceModel(
-        T(float(breakpoint)),
-        T(optimal_params[1]),  # left_slope
-        T(optimal_params[2]),  # left_intercept
-        T(right_value)
-    )
+    nb = Int(m.n_bins[c])
+    idx = clamp(floor(Int, (T(mz) - m.mz_min[c]) / m.bin_width[c]) + 1, 1, nb)
+    return m.medians[Int(m.offsets[c]) + idx - 1]
 end
 
-# Make the struct callable
-function (f::PiecewiseConstantRhsNceModel)(x::AbstractFloat)
-    if x <= f.breakpoint
-        return f.left_slope * x + f.left_intercept
-    else
-        return f.right_value
-    end
+(m::BinnedMedianNceModel)() = m.default_nce
+
+function (m::BinnedMedianNceModel)(x::AbstractVector, charge::AbstractVector)
+    return map((xi, ci) -> m(xi, ci), x, charge)
 end
 
-function (f::PiecewiseConstantRhsNceModel)()
-    return f.left_intercept
-end
-
-
-# Add method for vectors
-function (f::PiecewiseConstantRhsNceModel)(x::AbstractVector)
-    return map(f, x)
-end
-
-function fit_nce_model(
-    pwlm::PiecewiseConstantRhsNceModel, 
-    x::AbstractVector, 
-    y::AbstractVector,
+function fit_binned_median_nce(
+    mz::AbstractVector{T},
+    nce::AbstractVector{T},
     charge::AbstractVector,
-    breakpoint::Real
-)
-    # Define the objective function to minimize sum of squared residuals
-    function objective(params)
-        # params[1] = left_slope
-        # params[2] = left_intercept
-        # params[3] = charge_slope
-        
-        # Calculate residuals for left side
-        left_mask = x .<= breakpoint
-        y_pred_left = params[1] .* x[left_mask] .+ 
-                     params[3] .* charge[left_mask] .+ 
-                     params[2]
-        residuals_left = y_pred_left .- y[left_mask]
-        
-        # Right value is determined by continuity at breakpoint (excluding charge effect)
-        right_value = params[1] * breakpoint + params[2]
-        
-        # Calculate residuals for right side
-        right_mask = x .> breakpoint
-        y_pred_right = fill(right_value, sum(right_mask)) .+ 
-                      params[3] .* charge[right_mask]
-        residuals_right = y_pred_right .- y[right_mask]
-        
-        # Total sum of squared residuals
-        return sum(residuals_left.^2) + sum(residuals_right.^2)
+    default_nce::T;
+    min_per_bin::Int = 50
+) where {T<:AbstractFloat}
+    all_medians = T[]
+    offsets = zeros(UInt8, 6)
+    n_bins_arr = zeros(UInt8, 6)
+    mz_mins = zeros(T, 6)
+    bin_widths = zeros(T, 6)
+
+    for c in sort(unique(UInt8.(charge)))
+        (c < 0x01 || c > 0x06) && continue
+        ci = Int(c)
+        mask = UInt8.(charge) .== c
+        n_pts = count(mask)
+        n_pts < min_per_bin && continue
+
+        c_mz = mz[mask]
+        c_nce = nce[mask]
+        mz_lo, mz_hi = extrema(c_mz)
+        if mz_hi == mz_lo
+            mz_hi = mz_lo + one(T)
+        end
+
+        for nb in (10, 5, 3, 2, 1)
+            bw = (mz_hi - mz_lo) / T(nb)
+            ok = true
+            meds = Vector{T}(undef, nb)
+            for b in 1:nb
+                lo = mz_lo + T(b - 1) * bw
+                hi = (b == nb) ? mz_hi + one(T) : mz_lo + T(b) * bw
+                in_bin = c_nce[(c_mz .>= lo) .& (c_mz .< hi)]
+                if length(in_bin) < min_per_bin
+                    ok = false
+                    break
+                end
+                meds[b] = median(in_bin)
+            end
+            if ok
+                offsets[ci] = UInt8(length(all_medians) + 1)
+                n_bins_arr[ci] = UInt8(nb)
+                mz_mins[ci] = mz_lo
+                bin_widths[ci] = bw
+                append!(all_medians, meds)
+                break
+            end
+        end
     end
-    
-    # Initial guess using simple linear regression
-    left_mask = x .<= breakpoint
-    X_left = [ones(sum(left_mask)) x[left_mask] charge[left_mask]]
-    initial_coef = X_left \ y[left_mask]
-    initial_guess = [initial_coef[2], initial_coef[1], initial_coef[3]] # [slope, intercept, charge_slope]
-    
-    # Optimize
-    result = optimize(objective, initial_guess, LBFGS())
-    optimal_params = Optim.minimizer(result)
-    
-    # Calculate right value (base value without charge effect)
-    right_value = optimal_params[1] * breakpoint + optimal_params[2]
-    
-    # Need to modify the PiecewiseConstantRhsNceModel struct to include charge_slope
-    return PiecewiseConstantRhsNceModel(
-        float(breakpoint),
-        optimal_params[1],  # left_slope
-        optimal_params[2],  # left_intercept
-        right_value,
-        optimal_params[3]   # charge_slope
+
+    return BinnedMedianNceModel{T}(
+        all_medians,
+        NTuple{6, UInt8}(offsets),
+        NTuple{6, UInt8}(n_bins_arr),
+        NTuple{6, T}(mz_mins),
+        NTuple{6, T}(bin_widths),
+        default_nce
     )
 end
-
-
- =#

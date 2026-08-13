@@ -209,49 +209,54 @@ function calculate_expected_combinations(
     return total_combinations
 end
 
-# Verify fragment counts in library
+# Verify fragment counts in library.
+#
+# Post-§9 (e605153f), BuildSpecLib's filter knobs are pinned as compile-time
+# constants in src/Routines/BuildSpecLib.jl — `library_params.max_frag_rank`
+# and `library_params.length_to_frag_count_multiple` from the JSON are NOT
+# read by the build path. The effective cap is `const_max_frag_rank =
+# UInt8(10)`. So the only meaningful structural invariant left to assert
+# is "no precursor exceeds the hardcoded cap"; the prior
+# `length × multiplier + 1` rule cannot be tested without first making
+# those JSON knobs user-configurable again.
+#
+# `expected_multiplier` is kept in the signature for backward
+# compatibility with existing call sites; it's no longer consulted.
 function verify_fragment_counts(
     lib_dir::String,
     expected_multiplier::Float64,
-    max_frag_rank::Int = 255
+    max_frag_rank::Int = 10
 )
-    # Load precursors to get peptide lengths
+    # Load precursors to get peptide lengths (kept for the warning text)
     precursors_file = joinpath(lib_dir, "precursors_table.arrow")
     precursors = Arrow.Table(precursors_file)
-    
+
     # Load fragments from serialized files
     fragments_file = joinpath(lib_dir, "detailed_fragments.jls")
     indices_file = joinpath(lib_dir, "precursor_to_fragment_indices.jls")
-    
+
     if !isfile(fragments_file) || !isfile(indices_file)
         @warn "Fragment files not found in $lib_dir"
         return false
     end
-    
-    # Load the fragment data
-    fragments = Pioneer.deserialize_from_jls(fragments_file)
+
     pid_to_fid = Pioneer.deserialize_from_jls(indices_file)
-    
     all_valid = true
-    
-    # Verify fragment counts for each precursor
+
     for prec_idx in 1:length(precursors.sequence)
-        # Get fragment range for this precursor
-        # pid_to_fid is 1-indexed array where element i gives start index for precursor i
+        # CSR range: [start, next_start - 1]. Length = next_start - start.
         start_idx = pid_to_fid[prec_idx]
         end_idx = pid_to_fid[prec_idx + 1] - 1
         frag_count = end_idx - start_idx + 1
-        
-        # Check expected fragment count
-        seq_length = length(precursors.sequence[prec_idx])
-        expected_max = min(max_frag_rank, round(Int, seq_length * expected_multiplier) + 1)
-        
-        if frag_count > expected_max
-            @warn "Precursor $prec_idx has $frag_count fragments, expected max $expected_max"
+
+        if frag_count > max_frag_rank
+            seq_length = length(precursors.sequence[prec_idx])
+            @warn "Precursor $prec_idx (length $seq_length) has $frag_count fragments, " *
+                  "exceeds hardcoded cap of $max_frag_rank"
             all_valid = false
         end
     end
-    
+
     return all_valid
 end
 
@@ -358,17 +363,43 @@ function count_peptides_by_sequence(peptides_file::String, target_only::Bool = t
 end
 
 @testset "BuildSpecLib Integration Tests" begin
-    # Check if we have network access for Koina
-    if !has_network_connection()
-        @warn "No network connection available - skipping BuildSpecLib tests that require Koina API"
+    # Replay pre-recorded Koina responses from
+    # test/Routines/BuildSpecLib/koina_fixtures.json so this @testset
+    # works on GitHub Actions / any no-network environment. To refresh
+    # the fixture (after changing scenarios or BuildSpecLib request
+    # shape), run:
+    #
+    #     julia --project=. test/Routines/BuildSpecLib/record_koina_fixtures.jl
+    #
+    # If the fixture is missing we fall back to live Koina (preserves
+    # the previous behavior for developers running tests locally before
+    # they've recorded fixtures).
+    # If a `RecordingKoinaClient` is already installed (i.e. we're running
+    # under record_koina_fixtures.jl), don't wrap — let its captures flow
+    # through. Otherwise pick the offline fixture if it exists, fall back
+    # to live Koina if we have network, or skip if neither is available.
+    fixture_path = joinpath(@__DIR__, "koina_fixtures.json")
+    active_outer = Pioneer.current_koina_client()
+    koina_client = if active_outer isa Pioneer.RecordingKoinaClient
+        active_outer
+    elseif isfile(fixture_path)
+        Pioneer.FixtureKoinaClient(fixture_path)
+    elseif has_network_connection()
+        @warn "No Koina fixture at $fixture_path — falling back to live Koina. " *
+              "Run record_koina_fixtures.jl to capture a fixture for offline use."
+        Pioneer.HttpKoinaClient()
+    else
+        @warn "No Koina fixture and no network — skipping BuildSpecLib tests"
         return
     end
-    
+
+    Pioneer.with_koina_client(koina_client) do
+
     # Base directories
     project_root = joinpath(@__DIR__, "..", "..", "..")
     test_data_dir = joinpath(project_root, "data", "test_build_spec_lib")
     fasta_dir = joinpath(project_root, "data", "test_fasta_files")
-    
+
     @testset "Scenario A - Missed Cleavage Verification" begin
         scenario_dir = joinpath(test_data_dir, "scenario_a_missed_cleavages")
         output_dir = joinpath(scenario_dir, "output")
@@ -666,74 +697,55 @@ end
     
     
     @testset "Fragment Count Rule Tests" begin
+        # Post-§9 BuildSpecLib pins `length_to_frag_count_multiple` and
+        # `max_frag_rank` as compile-time constants
+        # (`const_length_to_frag_count_multiple = 1000`,
+        # `const_max_frag_rank = 10` in src/Routines/BuildSpecLib.jl) — the
+        # JSON values for these knobs are not consulted. Every precursor
+        # therefore ends up capped at 10 fragments regardless of length or
+        # of `length_to_frag_count_multiple`. This testset's only useful
+        # job is verifying that cap holds; the historical multiplier loop
+        # was sweeping a knob that no longer does anything, so we run a
+        # single representative build.
+        HARDCODED_MAX_FRAG_RANK = 10
         scenario_base_dir = joinpath(test_data_dir, "scenario_frag_count")
         minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
-        
-        # Test different fragment count multipliers
-        frag_multiplier_tests = [
-            (multiplier=1.0, desc="1x peptide length"),
-            (multiplier=2.0, desc="2x peptide length (default)"),
-            (multiplier=3.0, desc="3x peptide length"),
-            (multiplier=4.0, desc="4x peptide length"),
-        ]
-        
-        for test_case in frag_multiplier_tests
-            @testset "$(test_case.desc)" begin
-                output_dir = joinpath(scenario_base_dir, "mult_$(Int(test_case.multiplier))", "output")
-                lib_name = "frag_mult_$(Int(test_case.multiplier))"
-                lib_dir = joinpath(output_dir, lib_name * ".poin")
-                
-                # Generate parameters with specific fragment multiplier
-                params = generate_build_params_with_var_mods(
-                    minimal_fasta,
-                    output_dir,
-                    lib_name;
-                    length_to_frag_count_multiple = test_case.multiplier,
-                    max_var_mods = 0,  # No mods to simplify fragment testing
-                    missed_cleavages = 1,
-                    min_length = 7,
-                    max_length = 20,
-                    add_decoys = false,
-                    predict_fragments = true,
-                    max_koina_batch = 50,
-                    prec_mz_min = 0.0,  # Wide range to avoid filtering
-                    prec_mz_max = 5000.0  # Wide range to avoid filtering
-                )
-                
-                # Set max_frag_rank to a reasonable value
-                params["library_params"]["max_frag_rank"] = 100
-                
-                # Save parameters
-                params_file = joinpath(dirname(output_dir), "params_frag_$(Int(test_case.multiplier)).json")
-                mkpath(dirname(params_file))
-                open(params_file, "w") do io
-                    JSON.print(io, params, 4)
-                end
-                
-                # Run BuildSpecLib
-                @test Pioneer.BuildSpecLib(params_file) === nothing
-                
-                # Verify fragment counts
-                if verify_library_structure(lib_dir)
-                    is_valid = verify_fragment_counts(lib_dir, test_case.multiplier, 100)
-                    @test is_valid
-                    
-                    # Additional verification - check specific precursor
-                    precursors_file = joinpath(lib_dir, "precursors_table.arrow")
-                    if isfile(precursors_file)
-                        precursors = Arrow.Table(precursors_file)
-                        if length(precursors) > 0
-                            first_seq = precursors[:sequence][1]
-                            seq_length = length(first_seq)
-                            expected_frags = min(100, round(Int, seq_length * test_case.multiplier) + 1)
-                            println("  First precursor '$(first_seq)' (length $seq_length)")
-                            println("  Expected max fragments: $expected_frags with multiplier $(test_case.multiplier)")
-                        end
-                    end
-                else
-                    @warn "Library structure verification failed for multiplier $(test_case.multiplier)"
-                    @test false
-                end
+
+        @testset "All precursors respect hardcoded $HARDCODED_MAX_FRAG_RANK-fragment cap" begin
+            output_dir = joinpath(scenario_base_dir, "mult_2", "output")
+            lib_name = "frag_mult_2"
+            lib_dir = joinpath(output_dir, lib_name * ".poin")
+
+            params = generate_build_params_with_var_mods(
+                minimal_fasta,
+                output_dir,
+                lib_name;
+                length_to_frag_count_multiple = 2.0,  # ignored by build path
+                max_var_mods = 0,
+                missed_cleavages = 1,
+                min_length = 7,
+                max_length = 20,
+                add_decoys = false,
+                predict_fragments = true,
+                max_koina_batch = 50,
+                prec_mz_min = 0.0,
+                prec_mz_max = 5000.0,
+            )
+            params["library_params"]["max_frag_rank"] = 100  # ignored by build path
+
+            params_file = joinpath(dirname(output_dir), "params_frag_2.json")
+            mkpath(dirname(params_file))
+            open(params_file, "w") do io
+                JSON.print(io, params, 4)
+            end
+
+            @test Pioneer.BuildSpecLib(params_file) === nothing
+
+            if verify_library_structure(lib_dir)
+                @test verify_fragment_counts(lib_dir, 2.0, HARDCODED_MAX_FRAG_RANK)
+            else
+                @warn "Library structure verification failed"
+                @test false
             end
         end
     end
@@ -816,79 +828,8 @@ end
             @test false
         end
     end
-    
-    @testset "Prosit Model Integration Test" begin
-        scenario_dir = joinpath(test_data_dir, "scenario_prosit")
-        output_dir = joinpath(scenario_dir, "output")
-        minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
-        
-        # Verify FASTA file exists
-        @test isfile(minimal_fasta)
-        
-        lib_name = "prosit_test"
-        lib_dir = joinpath(output_dir, lib_name * ".poin")
-        
-        # Generate parameters using Prosit model instead of altimeter
-        params = generate_build_params(
-            minimal_fasta,
-            output_dir,
-            lib_name;
-            missed_cleavages = 1,
-            min_length = 7,
-            max_length = 15,
-            min_charge = 2,
-            max_charge = 3,
-            add_decoys = true,
-            predict_fragments = true,
-            max_koina_batch = 50,
-            prec_mz_min = 390.0,
-            prec_mz_max = 1010.0
-        )
-        
-        # Override to use Prosit instead of altimeter
-        params["library_params"]["prediction_model"] = "prosit_2020_hcd"
-        
-        # Save parameters
-        params_file = joinpath(scenario_dir, "params_prosit.json")
-        mkpath(dirname(params_file))
-        open(params_file, "w") do io
-            JSON.print(io, params, 4)
-        end
-        
-        # Run BuildSpecLib with Prosit
-        @test Pioneer.BuildSpecLib(params_file) === nothing
-        
-        # Verify outputs
-        @test verify_library_structure(lib_dir)
-        
-        # Check precursors table
-        precursors_file = joinpath(lib_dir, "precursors_table.arrow")
-        if isfile(precursors_file)
-            precursors = Arrow.Table(precursors_file)
-            sequences = unique(precursors[:sequence])
-            println("Prosit Integration: Found $(length(sequences)) unique peptide sequences")
-            
-            # Should have peptides from minimal protein
-            @test length(sequences) > 0
-            
-            # Verify charge states
-            charges = unique(precursors[:prec_charge])
-            @test minimum(charges) >= 2
-            @test maximum(charges) <= 3
-            
-            # Should have both targets and decoys
-            n_targets = sum(.!precursors[:is_decoy])  # Targets are non-decoys
-            n_decoys = sum(precursors[:is_decoy])     # Decoys are marked as is_decoy=true
-            @test n_targets > 0
-            @test n_decoys > 0
-        else
-            @warn "Precursors file not created: $precursors_file"
-            @test false
-        end
-        
-        println("✓ Prosit integration test completed successfully")
-    end
-    
+
+    end  # close `with_koina_client(koina_client) do … end`
 end
 
 println("✓ BuildSpecLib integration tests completed")

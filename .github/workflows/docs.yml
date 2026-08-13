@@ -24,11 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12.6'  # match Project.toml's `julia = "1.12.5"` compat lower bound
 
       - name: Cache docs packages
         uses: actions/cache@v5
@@ -36,7 +36,7 @@ jobs:
           path: |
             ~/.julia/registries
             ~/.julia/packages
-          key: docs-${{ runner.os }}-${{ hashFiles('docs/Project.toml','docs/Manifest.toml') }}
+          key: docs-${{ runner.os }}-${{ hashFiles('Project.toml','Manifest.toml','docs/Project.toml','docs/Manifest.toml') }}
 
       - name: Configure doc environment
         shell: julia --threads auto --project=docs --color=yes {0}

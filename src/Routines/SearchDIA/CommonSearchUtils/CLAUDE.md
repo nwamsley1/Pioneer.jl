@@ -1,385 +1,106 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with CommonSearchUtils - the algorithmic core of Pioneer.jl's SearchDIA pipeline.
+This file provides guidance to Claude Code (claude.ai/code) when working with `CommonSearchUtils` — the algorithmic core shared across SearchDIA's search methods.
 
 ## Overview
 
-CommonSearchUtils implements the performance-critical algorithms that power DIA analysis across all search methods. These utilities provide shared functionality for spectral matching, quantification matrix construction, retention time indexing, and efficient data management.
-
-## Core Utilities
-
-### Peak Matching Engine (`matchPeaks.jl`)
-
-**Purpose**: High-performance algorithm for matching theoretical fragments to empirical peaks
-
-**Key Algorithm**: Single-pass O(T+P) algorithm where T=transitions, P=peaks
-- Requires pre-sorted inputs (transitions by m/z, peaks by m/z)
-- Mass-error-aware matching with intensity-dependent tolerances
-- Each fragment gets at most one peak, but peaks can match multiple fragments
-
-**Core Functions**:
-```julia
-matchPeaks!(fragment_matches, precursor_matches, transitions, masses, intensities, ...)
-setNearest!(match, transition, peak_idx, masses, intensities)  # Best peak selection
-setMatch!(match, transition, intensity, mz, peak_idx)          # Create match object
-```
-
-**Performance Features**:
-- `@inbounds @fastmath` optimizations
-- Pre-allocated vectors with block growth
-- Branchless operations for CPU pipeline efficiency
-
-**Usage Pattern**:
-```julia
-# Pre-sort inputs
-sort!(transitions, by=getMZ)
-sort_indices = sortperm(masses)
-
-# Perform matching
-n_fragment_matches, n_precursor_matches = matchPeaks!(
-    fragment_matches, precursor_matches, transitions,
-    masses[sort_indices], intensities[sort_indices], ...)
-```
-
-### Quantification Matrix Construction (`buildDesignMatrix.jl`)
-
-**Purpose**: Constructs sparse design matrices for protein quantification
-
-**Algorithm**: 
-- Rows = unique spectrum peaks, Columns = precursors
-- Uses custom `SparseArray` type for memory efficiency
-- Handles matched fragments (empirical intensities) and missed fragments (predicted)
-
-**Key Functions**:
-```julia
-buildDesignMatrix!(Hs::SparseArray, fragment_matches, ion_templates, ...)
-addToSparseDesignMatrix!(Hs, match, spline_data, weight)
-```
-
-**Memory Management**:
-- Pre-allocated block growth (default 10k elements)
-- Deduplication of peak matches per precursor
-- In-place sparse matrix construction with final column sorting
-
-**Usage in Search Methods**:
-```julia
-# Reset and build design matrix
-reset!(Hs)
-buildDesignMatrix!(Hs, fragment_matches, ion_templates, ...)
-
-# Use for quantification
-weights = solve(Hs, observed_intensities)
-```
-
-### Fragment Index Queries (`queryFragmentIndex.jl`)
-
-**Purpose**: Efficiently searches hierarchical fragment index for precursor identification
-
-**Key Algorithms**:
-- **Exponential Search**: `exponentialFragmentBinSearch()` for rapid bound expansion
-- **Branchless Binary Search**: `findFirstFragmentBin()` for optimal performance
-- **Hierarchical Indexing**: RT bins → Fragment bins → Individual fragments
-
-**Search Strategy**:
-```julia
-function searchFragmentBin!(counter, spec_lib, rt_bin_idx, peak_mz, ...)
-    # 1. Find fragment bins covering m/z tolerance
-    first_bin, last_bin = exponentialFragmentBinSearch(bins, peak_mz, tolerance)
-    
-    # 2. Binary search within bins for precursor matches
-    for bin_idx in first_bin:last_bin
-        for frag_idx in bin_range
-            if precursor_matches_criteria(frag, peak_mz, tolerance)
-                counter[getPrecID(frag)] += 1
-            end
-        end
-    end
-end
-```
-
-**Performance Optimizations**:
-- Counter-based scoring with pre-allocated structures
-- Cached bounds for subsequent searches
-- Branchless operations for CPU efficiency
-
-### Retention Time Indexing (`buildRTIndex.jl`)
-
-**Purpose**: Creates efficient RT-based indexing for chromatographic window searches
-
-**Index Structure**:
-```julia
-struct RetentionTimeIndex
-    rt_bins::Vector{Float32}              # Bin boundaries (0.1 min default)
-    precursor_ranges::Vector{UnitRange}   # Precursor ranges per bin
-    sorted_precursors::Vector{UInt32}     # Precursors sorted by m/z within bins
-end
-```
-
-**Key Functions**:
-```julia
-buildRtIndex(rts, mzs, prec_ids; bin_width=0.1f0)
-makeRTIndices(passing_psms_paths, precursors, rt_conversion_models)
-```
-
-**Imputation Strategy**:
-- Uses library iRT values for low-confidence PSMs
-- RT-to-iRT conversion models applied per MS file
-- Fallback to library values when empirical RT unavailable
-
-### Work Distribution (`partitionThreadTasks.jl`)
-
-**Purpose**: Intelligent task partitioning for multithreaded processing
-
-**Strategies**:
-```julia
-partitionScansToThreads(scan_ranges, n_threads)  # RT-aware distribution
-partitionTasks(total_work, n_threads)            # Generic work splitting
-```
-
-**Load Balancing**:
-- Considers scan density across RT range
-- Maintains data locality for cache efficiency
-- Separate handling for MS1 vs MS2 scans
-
-### Data Merging (`mergeSortedArrowTables.jl`)
-
-**Purpose**: Memory-efficient merging of large sorted Arrow tables
-
-**Algorithm**: Min-heap-based k-way merge
-- Configurable batch sizes to control memory usage
-- Supports single and dual sort keys
-- Streaming write to avoid memory overflow
-
-**Usage Pattern**:
-```julia
-# Merge PSM tables from parallel processing
-merge_sorted_arrow_tables(
-    input_paths,
-    output_path,
-    sort_columns=["scan_idx", "score"],
-    batch_size=100000
-)
-```
-
-### Quantification Normalization (`normalizeQuant.jl`)
-
-**Purpose**: RT-dependent quantification normalization using spline-based median correction
-
-**Process**:
-1. Fits splines to median quantification values across RT
-2. Calculates file-specific offsets from global median  
-3. Applies corrections to normalize between runs
-
-**Implementation**:
-```julia
-function normalizeQuantification!(quant_matrix, rt_values, ...)
-    # Fit splines to median profiles
-    median_splines = fitQuantSplines(quant_matrix, rt_values)
-    
-    # Calculate normalization factors
-    norm_factors = calculateNormFactors(median_splines)
-    
-    # Apply corrections
-    applyNormalization!(quant_matrix, norm_factors)
-end
-```
-
-## Data Flow Integration
-
-**Typical Search Method Flow**:
-1. **RT Indexing** → Fast precursor lookup by retention time
-2. **Transition Selection** → Choose fragments for current window
-3. **Peak Matching** → Match fragments to spectrum peaks  
-4. **Design Matrix** → Construct quantification matrix from matches
-5. **Fragment Index Query** → Score precursor candidates
-6. **Data Merging** → Combine results across batches
-7. **Normalization** → Apply quantification corrections
-
-## Performance Patterns
-
-### Memory Management
-- **Pre-allocation**: Working arrays sized once with block growth
-- **Sparse Structures**: Custom `SparseArray` for memory efficiency
-- **In-place Operations**: Minimize allocations in hot paths
-
-### Threading Optimizations  
-- **Data Locality**: RT-aware task partitioning for cache efficiency
-- **Thread-local Storage**: Avoid contention with per-thread data structures
-- **Batch Processing**: Optimal cache utilization patterns
-
-### Algorithmic Optimizations
-- **Branchless Binary Search**: CPU pipeline efficiency
-- **Single-pass Algorithms**: O(T+P) vs O(T*P) complexity
-- **Exponential Search**: Rapid bound finding for sparse data
-- **Cached Bounds**: Avoid redundant computations
-
-## Key Data Structures
-
-```julia
-# Custom sparse array with metadata
-struct SparseArray{Ti<:Integer, T<:AbstractFloat}
-    colptr::Vector{Ti}      # Column pointers
-    rowval::Vector{Ti}      # Row indices
-    nzval::Vector{T}        # Non-zero values
-    isotope::Vector{UInt8}  # Isotope metadata
-    matched::Vector{Bool}   # Match indicators
-end
-
-# Optimized fragment match representation
-struct FragmentMatch{T<:AbstractFloat}
-    predicted_intensity::T
-    intensity::T
-    theoretical_mz::T
-    match_mz::T
-    # ... compact encoding fields
-end
-
-# High-performance scoring accumulator
-struct Counter{K,V}
-    keys::Vector{K}
-    values::Vector{V}
-    n::Int64
-end
-```
-
-## Development Patterns
-
-### Extending Core Utilities
-
-**Adding New Matching Algorithm**:
-```julia
-function matchPeaksCustom!(fragment_matches, transitions, masses, ...)
-    # Custom matching logic
-    # Maintain pre-sorted input requirement
-    # Use block-based growth for output arrays
-    # Return (n_fragment_matches, n_precursor_matches)
-end
-```
-
-**Custom Scoring Integration**:
-```julia
-function scorePrecursorsCustom!(counter, fragment_matches, ...)
-    # Reset counter
-    reset!(counter)
-    
-    # Accumulate scores
-    for match in fragment_matches
-        prec_id = getPrecID(match)
-        score = calculateCustomScore(match)
-        addCount!(counter, prec_id, score)
-    end
-end
-```
-
-### Performance Optimization Guidelines
-
-**Memory Optimization**:
-- Use `@inbounds @fastmath` in hot loops after validation
-- Pre-allocate working arrays with appropriate block sizes
-- Consider sparse vs dense representations based on data characteristics
-
-**Threading Considerations**:
-- Design algorithms for data locality
-- Use thread-local storage for mutable state
-- Partition work by RT or m/z ranges for cache efficiency
-
-**Algorithm Design**:
-- Leverage sorted data structures for binary search
-- Implement branchless operations where possible
-- Cache frequently computed values
-
-## Testing and Debugging
-
-### Unit Testing Approach
-```julia
-# Test peak matching with synthetic data
-function test_peak_matching()
-    transitions = create_test_transitions()
-    masses = [100.0, 200.0, 300.0]
-    intensities = [1000.0, 2000.0, 1500.0]
-    
-    fragment_matches = Vector{FragmentMatch{Float32}}(undef, 1000)
-    n_matches = matchPeaks!(fragment_matches, transitions, masses, ...)
-    
-    @test n_matches > 0
-    @test all(match -> getMZ(match) > 0, fragment_matches[1:n_matches])
-end
-```
-
-### Debug Entry Points
-- `matchPeaks.jl:306-429` - Main spectral matching loop
-- `buildDesignMatrix.jl:42-91` - Matrix construction algorithm  
-- `queryFragmentIndex.jl:271-327` - Fragment index search
-- Remove `@inbounds @fastmath` for bounds checking during debug
-
-### Performance Profiling
-```julia
-using Profile, PProf
-
-# Profile peak matching
-@profile matchPeaks!(fragment_matches, transitions, masses, ...)
-pprof()
-
-# Monitor memory allocations
-@time @allocated buildDesignMatrix!(Hs, fragment_matches, ...)
-```
-
-### Common Debugging Issues
-1. **Unsorted Inputs**: Algorithms assume sorted data - validate sort order
-2. **Array Bounds**: Check pre-allocated array sizes vs actual data
-3. **Memory Pressure**: Monitor sparse array growth and GC pressure
-4. **Thread Safety**: Ensure thread-local storage for mutable state
-
-## Integration with Search Methods
-
-### Search Method Requirements
-Each search method typically needs:
-1. **Thread Partitioning**: Call `partitionThreadTasks` for work distribution
-2. **Peak Matching**: Use `matchPeaks!` for spectral matching
-3. **Scoring**: Apply `queryFragmentIndex` or custom scoring
-4. **Quantification**: Build design matrix with `buildDesignMatrix!`
-
-### Example Integration Pattern
-```julia
-function processChunk!(method::MySearchMethod, batch_id::Int, thread_id::Int)
-    search_data = getSearchData(method)[thread_id]
-    
-    # Get spectrum data for this chunk
-    spectrum = getSpectrumData(batch_id)
-    
-    # Select transitions for this RT window
-    ion_idx = selectTransitions!(search_data.ion_templates, ...)
-    
-    # Match peaks to transitions
-    n_matches = matchPeaks!(
-        search_data.fragment_matches,
-        search_data.ion_templates[1:ion_idx],
-        spectrum.masses, spectrum.intensities, ...
-    )
-    
-    # Build quantification matrix
-    buildDesignMatrix!(
-        search_data.Hs,
-        search_data.fragment_matches[1:n_matches], ...
-    )
-    
-    # Score precursors (if needed)
-    queryFragmentIndex!(search_data.counter, spec_lib, ...)
-end
-```
-
-## File Organization
-
-- **buildDesignMatrix.jl** - Sparse matrix construction for quantification
-- **buildRTIndex.jl** - Retention time indexing infrastructure  
-- **entrapmentAnalysis.jl** - FDR estimation with entrapment strategies
-- **matchPeaks.jl** - Core spectral matching algorithms
-- **mergeSortedArrowTables.jl** - Memory-efficient data merging
-- **normalizeQuant.jl** - Cross-run quantification normalization
-- **partitionThreadTasks.jl** - Intelligent work distribution
-- **queryFragmentIndex.jl** - Fragment index search and scoring
-- **selectTransitions/** - Modular transition selection framework
-
-## Module-Specific Documentation
-
-- Transition Selection: See `selectTransitions/CLAUDE.md` for detailed guidance on the transition selection framework
+`CommonSearchUtils` houses the per-scan inner loop, RT/work distribution helpers, and isotope/spline helpers that every SearchDIA method invokes. The historical pipeline (`selectTransitions! → matchPeaks! → sort → buildDesignMatrix! → sortSparse! → ScoreFragmentMatches!`) was replaced by a single fused per-precursor scan pass; classic helpers and types (`SparseArray`, `FragmentMatch`, `UnmatchedIon`, `PrecursorMatch`, etc.) are gone.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `fusedMatch.jl` | `run_fused!` — the fused per-precursor match+score+build loop. Replaces the entire classic pipeline (transition selection, peak matching, design-matrix construction, scoring) in one pass that writes `SparseArrayFused` in CSC order. |
+| `fusedScan.jl` | Low-level primitives: `FusedScratch` (per-thread scratch buffers), `SparseArrayFused` accessors, `finalize_column!`, `bsearch_hybrid`, `verify_mz_sorted`. |
+| `getFragIsotopes.jl` | `getFragIsotopes!` for `PartialPrecCapture` / `FullPrecCapture` strategies (originally lived in the deleted `selectTransitions/fillTransitionList.jl`). |
+| `isotope_utils.jl` | Shared isotope helpers (called by `MainSearch` and `IntegrateChromatograms`). |
+| `buildRTIndex.jl` | RT index construction for chromatogram extraction. |
+| `partitionThreadTasks.jl` | Scan-aware thread work distribution. |
+| `deconvolutionArrayUtils.jl` | `initResiduals!`, sparse-matrix solver helpers (`AbstractSparseDesignMatrix` interface). |
+| `rt_alignment_utils.jl` | Spline-based RT alignment helpers. |
+
+## Fused match+score+build (`fusedMatch.jl`)
+
+### Algorithm
+
+`run_fused!(kind, Hs, unscored_psms, id_to_col, scratch, ...)` performs in a single pass per scan:
+
+1. **Per-precursor pre-match filters** (extracted helpers):
+   - `passes_irt_filter(prec_irt, scan_irt, irt_tol)`
+   - `quad_window_with_iso_bounds(qfunc, prec_charge, iso_err_bounds)` → window
+   - `passes_prec_mz_filter(prec_mz, low, high)`
+2. **Iso-pass loop** (1 pass for `FusedStandard`, 3 for `FusedQuadEst`):
+   - `setup_transmission!` populates `prec_trans_buf`
+   - `frag_isotope_scale` applies per-pass scaling
+3. **Per-fragment loop**: rank filter → `getFragIsotopes!` → conservative half-width
+4. **Per-isotope loop**: `iso_mz_for` → `in_frag_mz_window` → `match_window` → `bsearch_hybrid` → `scan_for_nearest_in_window`
+5. **Match recording**: `push_match!` / `push_miss!` into `FusedScratch`; `record_match!` (trait-dispatched) updates `unscored_psms`
+6. **Column finalize**: `finalize_column!` flushes the precursor's scratch into `Hs` in CSC order with per-(col,row) deduplication
+
+### Trait-based dispatch (`FusedSearchKind`)
+
+| Kind | Used by | Iso passes | `do_prec_check` | Match recording |
+|---|---|---|---|---|
+| `FusedStandard` | `MainSearch`, NCE tuning | 1 | true | `apply_main_scoring!` updates `MainUnscoredPSM` |
+| `FusedRTIndexed` | `IntegrateChromatogramsSearch` | 1 | false (filters applied upstream) | no-op (chromatogram points read post-deconv) |
+| `FusedQuadEst` | `QuadTuningSearch` | 3 (one per precursor isotope) | false | no-op |
+
+The compiler emits one specialization of `run_fused!` per concrete `K`, folding the trait-dispatched constants away.
+
+### Pre-condition: m/z-sorted detailed_fragments
+
+`run_fused!` requires per-precursor fragments to be **m/z-sorted within each precursor**. Production libraries built with current `BuildSpecLib` satisfy this automatically (see `sort_detailed_fragments_by_mz!` in `BuildSpecLib/build/build_poin_lib.jl`). Older libraries that fail the precondition must be rebuilt from FASTA — there is no in-place rescue path. `verify_mz_sorted` (in `fusedScan.jl`) is called once at MainSearch setup and throws with a clear message if the precondition fails.
+
+## Reusable per-thread buffers (`FragIndexScratch`)
+
+`searchFragmentIndexPartitionMajorHinted` (the partitioned fragment-index search) used to reallocate `Counter`s + Int32/UInt32 buffers per call (~50–100 MB per call × multiple calls per file). These are now lifted to `SearchContext.frag_index_scratch::FragIndexScratch` (`src/structs/Counter.jl`) — grown lazily via `prepare!` and reused across BitVecCalibration's adaptive batches and per-file MainSearch calls. On 5G heap-size-hint runs this dropped MainSearch GC time from ~12% → ~7% and total runtime ~9%.
+
+## Performance patterns
+
+- **`@inline` helpers** for the run_fused! inner loop (preserves SIMD + folding through trait dispatch)
+- **Pre-allocated buffers** on `SimpleLibrarySearch` reused across scans within a file
+- **`@inbounds @fastmath`** in hot loops after careful validation
+- **Sparse storage** via `SparseArrayFused` (5-array CSC layout with packed UInt8 meta)
+- **Counter-based scoring** in fragment-index search (branchless `inc!` / `or!`)
+- **Counting-sort merges** in `_collect_frag_index_results!`
+
+## Testing
+
+Per-helper unit tests live in `test/UnitTests/`:
+
+- `test_fused_prec_filters.jl` — 179 tests for the 10 extracted helpers
+  (`passes_irt_filter`, `quad_window_with_iso_bounds`, `iso_mz_for`,
+  `in_frag_mz_window`, `conservative_half_width`, `match_window`,
+  `compute_ppm_err`, `push_match!`, `push_miss!`, `passes_prec_mz_filter`)
+- `test_run_fused.jl` — 149 orchestration tests for `run_fused!` itself,
+  built on a `make_fused_fixture` helper that constructs a complete
+  synthetic `SparseArrayFused`/`FusedScratch`/`DensePrecMap`/peaks/fragments
+  call site. Covers: empty range, all-match/all-miss, do_prec_check
+  branches, FusedRTIndexed bypass, FusedQuadEst (3 columns/precursor),
+  rank filter, frag_mz_bounds clipping, scratch growth, multi-iso,
+  iso_anchor advancement, intensity-dependent tolerance stress, M+1/M+0
+  iso overlap, finalize_column! per-(col,row) deduplication, missing
+  peak intensity, empty fragment lists, full unscored_psms field
+  contract (b/y/p ions, longest_y, best_rank, error accumulation)
+- `test_sort_detailed_fragments.jl` — 22 tests for the BuildSpecLib m/z-sort helper
+- `test_counter.jl` — 468 tests for `Counter`, `CountFilter`, `LUTFilter`,
+  `PatternAccumulator`, `filter_counter!`
+
+Total: **818 unit tests** on the fused match pipeline + Counter, all in <2s.
+
+## Common pitfalls
+
+- **Iteration order matters in the partitioned-index builder.** `build_partitioned_index_from_lib` (`src/structs/SpectralLibrary/PartitionedFragmentIndex/build.jl:109-134`) assigns bitmask bits via `rank += 1` based on iteration position, NOT `getRank(frag)`. Sorting `detailed_fragments` by m/z **before** building the index would silently re-bind which fragment owns which bit. `BuildSpecLib` builds the index first, then sorts.
+- **Counter `reset!` vs reuse.** `Counter.reset!` is O(n_active) — only zeros touched IDs. Reused via `FragIndexScratch` across files; `_run_thread` calls `reset!(lc)` between scans within the same call.
+- **`@view` over `SparseArrayFused.rowval[1:n_vals]`** in solver code — the trailing slots are stale from prior scans. Always slice to `n_vals`.
+
+## Files removed (historical reference)
+
+The following classic-pipeline helpers and types are gone — if you see them referenced in older docs/tests, they no longer exist:
+
+- `matchPeaks.jl`, `buildDesignMatrix.jl`, `selectTransitions/`
+- `SparseArray` (replaced by `SparseArrayFused`)
+- `sortSparse!` (no longer needed; `run_fused!` writes CSC directly)
+- `FragmentMatch`, `UnmatchedIon`, `PrecursorMatch` (replaced by direct `SparseArrayFused` writes for matches; `MassErrSample` for ParameterTuning)
+- `ScoreFragmentMatches!`, `ModifyFeatures!` (replaced by `apply_main_scoring!` called inline from `run_fused!`)
+- `ArrayDict` (replaced by `AbstractPrecursorMap{V}` with `DensePrecMap` / `SparsePrecMap`)

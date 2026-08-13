@@ -71,8 +71,9 @@ struct QuadTuningSearchResults <: SearchResults
     }}}
     quad_model::Base.Ref{QuadTransmissionModel}
     quad_plot_dir::String
-    quad_model_plots::Vector{Plots.Plot}
-    quad_data_plots::Vector{Plots.Plot}
+    quad_plot_objects::Vector{Any}
+    # Per-file (file_name, fitted_model, window_width) for the Razo LM overlay.
+    per_file_models::Vector{Tuple{String, QuadTransmissionModel, Float64}}
 end
 
 """
@@ -80,14 +81,10 @@ Parameters for quadrupole tuning search.
 Configures deconvolution and quad model fitting.
 """
 struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    #Fit Quad Model from Data?
-    fit_from_data::Bool
-
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_index_search_score::UInt8
     min_log2_matched_ratio::Float32
-    min_frag_count::Int64
     min_spectral_contrast::Float32
     min_topn_of_m::Tuple{Int64, Int64}
     max_best_rank::UInt8
@@ -97,14 +94,11 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
     
-    # Deconvolution parameters
-    max_iter_newton::Int64
-    max_iter_bisection::Int64
+    # Deconvolution solver
+    deconvolution_solver::DeconvolutionSolver
     max_iter_outer::Int64
-    accuracy_newton::Float32
-    accuracy_bisection::Float32
     max_diff::Float32
-    
+
     # Quad tuning specific parameters
     min_quad_tuning_fragments::Int64
     min_quad_tuning_psms_per_thompson::Int64
@@ -112,74 +106,27 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     prec_estimation::P
 
     function QuadTuningSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        tuning_params = params.parameter_tuning
-        frag_params = tuning_params.fragment_settings
-        search_params = tuning_params.search_settings
-        deconv_params = params.optimization.deconvolution
-        
-        # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
 
-        # Extract Quad tuning parameters with backwards compatibility
-        quad_tuning_params = get(tuning_params, :quad_tuning, nothing)
-
-        min_quad_tuning_fragments = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :min_fragments)
-            Int64(quad_tuning_params.min_fragments)
-        else
-            Int64(get(search_params, :min_quad_tuning_fragments, 3))  # Backwards compatibility
-        end
-
-        min_quad_tuning_psms_per_thompson = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :min_psms_per_thompson)
-            Int64(quad_tuning_params.min_psms_per_thompson)
-        else
-            Int64(get(search_params, :min_quad_tuning_psms_per_thompson, 250))  # Backwards compatibility
-        end
-
-        initial_percent = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :initial_percent)
-            Float32(quad_tuning_params.initial_percent)
-        else
-            Float32(2.5)  # Default value
-        end
-
-
         new{typeof(prec_estimation)}(
-            # Search parameters
-            params.acquisition.quad_transmission.fit_from_data,
-            (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
-            # Handle min_score as either single value or array (use maximum value if array)
-            begin
-                min_score_raw = frag_params.min_score
-                if min_score_raw isa Vector
-                    UInt8(maximum(min_score_raw))  # Use most lenient (highest) score for Quad tuning
-                else
-                    UInt8(min_score_raw)
-                end
-            end,
-            typemin(Float32),  # Minimum possible value for min_log2_matched_ratio
-            Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1),  # Fixed max_best_rank
-            UInt8(frag_params.max_rank),
-            Int64(1),  # Fixed n_frag_isotopes for quad tuning
-            typemax(Float32),  # Maximum possible value for irt_tol
-            Set{Int64}([2]),
-            Float32(frag_params.relative_improvement_threshold),
-            
-            # Deconvolution parameters
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.bisection_iters),
-            Int64(deconv_params.outer_iters),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.max_diff),
-            
-            # Quad tuning specific parameters
-            min_quad_tuning_fragments,
-            min_quad_tuning_psms_per_thompson,
-            initial_percent,
-            prec_estimation
+            (UInt8(0), UInt8(0)),                                          # isotope_err_bounds
+            UInt8(maximum(TUNING_MIN_SCORE)),                              # min_index_search_score (formerly derived from fragment_index_search.min_score=15 → max(TUNING_MIN_SCORE))
+            typemin(Float32),                                              # min_log2_matched_ratio
+            TUNING_MIN_SPECTRAL_CONTRAST,                                  # min_spectral_contrast
+            (Int64(first(TUNING_MIN_TOPN_OF_M)), Int64(last(TUNING_MIN_TOPN_OF_M))), # min_topn_of_m
+            UInt8(1),                                                      # max_best_rank
+            TUNING_MAX_FRAG_RANK,                                          # max_frag_rank
+            Int64(1),                                                      # n_frag_isotopes
+            typemax(Float32),                                              # irt_tol
+            Set{Int64}([2]),                                               # spec_order
+            TUNING_RELATIVE_IMPROVEMENT_THRESHOLD,                         # relative_improvement_threshold
+            PoissonMMSolver(),                                             # deconvolution_solver — hardcoded
+            DECONV_MAX_ITER,                                               # max_iter_outer
+            DECONV_CONVERGENCE_TOL,                                        # max_diff
+            QUAD_TUNING_MIN_FRAGMENTS,                                     # min_quad_tuning_fragments
+            QUAD_TUNING_MIN_PSMS_PER_THOMPSON,                             # min_quad_tuning_psms_per_thompson
+            QUAD_TUNING_INITIAL_PERCENT,                                   # initial_percent
+            prec_estimation                                                # prec_estimation
         )
     end
 end
@@ -205,11 +152,7 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
     !isdir(qc_dir) && mkdir(qc_dir)
 
     qpp = joinpath(qc_dir, "quad_transmission_model")
-    !isdir(qpp) && mkdir(qpp)
-    quad_data = joinpath(qpp, "quad_data")
-    !isdir(quad_data) && mkdir(quad_data)
-    quad_models = joinpath(qpp, "quad_models")
-    !isdir(quad_models) && mkdir(quad_models)
+    mkpath(qpp)
     temp_data = Vector{Vector{@NamedTuple{
             precursor_idx::UInt32,
             scan_idx::UInt32,
@@ -232,8 +175,8 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
         temp_data,
         Ref{QuadTransmissionModel}(),
         qpp,
-        Plots.Plot[],
-        Plots.Plot[]
+        Any[],
+        Tuple{String, QuadTransmissionModel, Float64}[]
     )
 end
 
@@ -251,7 +194,7 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
-    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
+    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.5f0))
 
     # Get file name for debugging
     file_name = try
@@ -260,22 +203,19 @@ function process_file!(
         "file_$ms_file_idx"
     end
 
-    # Check if quad model fitting is enabled BEFORE any expensive operations
-    if params.fit_from_data == false
-        return nothing
-    end
-
     # Log fitted mass error model from ParameterTuningSearch
     fitted_model = getMassErrorModel(search_context, ms_file_idx)
 
-    try
+    # (Removed try/catch — let errors propagate so they can be diagnosed.)
+    begin
+        t_file_start = time()
         # Check if file has any scans
         if length(spectra) == 0
-            @user_warn "\nSkipping quad tuning for $file_name - file contains no scans"
-            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+            @user_warn "Skipping quad tuning for $file_name — file contains no scans"
+            setQuadModel(results, SquareQuadModel(0.0f0))
             return results
         end
-        
+
         # Check for inconsistent array types (data quality issue)
         try
             # Test array access - this will fail if there are type mismatches
@@ -286,8 +226,8 @@ function process_file!(
             end
         catch type_error
             if isa(type_error, MethodError) || contains(string(type_error), "SubArray")
-                @user_warn "\nData type inconsistency detected in $file_name. Array types don't match expected schema. This may be due to dummy/test data with inconsistent typing. Skipping quad tuning."
-                setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+                @user_warn "Data type inconsistency detected in $file_name. Array types don't match expected schema. This may be due to dummy/test data with inconsistent typing. Skipping quad tuning."
+                setQuadModel(results, SquareQuadModel(0.0f0))
                 return results
             else
                 rethrow(type_error)
@@ -296,71 +236,90 @@ function process_file!(
 
         # Adjust arrays for isotope variants
         adjust_precursor_arrays!(search_context)
-        
+
         # Check window widths
         window_widths = check_window_widths(spectra)
         if length(window_widths) != 1
-            @user_warn "\nMultiple window sizes detected: $(join(collect(window_widths), ';'))"
-            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+            @user_warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
+            setQuadModel(results, SquareQuadModel(0.0f0))
             return results
         end
         window_width = first(window_widths)
         # Build scan priority index (metadata only, no peak data)
         scan_index = build_quad_scan_priority_index(spectra)
 
-        # Calculate minimum PSMs required based on window width
-        required_psms = params.min_quad_tuning_psms_per_thompson * parse(Float64, window_width)
-        required_psms_int = round(Int, required_psms)
+        # Two-tier acceptance: try for 2× the per-Thompson rate; fall back to
+        # using whatever we collected as long as it clears the per-Thompson
+        # minimum, else SquareQuadModel.
+        target_psms_int   = round(Int, 2 * params.min_quad_tuning_psms_per_thompson * window_width)
+        min_psms_int      = round(Int,     params.min_quad_tuning_psms_per_thompson * window_width)
 
-        total_psms, _, _ = progressive_quad_psm_collection!(
+        initial_psms, converged, _ = progressive_quad_psm_collection!(
             scan_index,
             spectra,
             search_context,
             params,
             ms_file_idx;
-            min_psms_required=required_psms_int,
-            verbose=false
+            target_psms=target_psms_int,
+            fallback_min_psms=min_psms_int
         )
+        n_collected = nrow(initial_psms)
 
-        # Convert to DataFrame format expected by downstream processing
-        if !isempty(total_psms)
-            # Apply quad-specific processing if we got PSMs
-            total_psms = process_quad_pipeline(total_psms, spectra, search_context, results, params, ms_file_idx, parse(Float64, window_width))
+        # Models used downstream — Razo LM (active) or SquareQuad fallback.
+        active_model::QuadTransmissionModel = SquareQuadModel(0.0f0)
+        razo_initial_model::Union{Nothing, RazoQuadModel} = nothing
+        total_psms = DataFrame()
+        use_fallback = true
+
+        if !converged
+            @user_warn "QuadTuning [$file_name]: only $n_collected PSMs collected (target=$target_psms_int, fallback_min=$min_psms_int); using SquareQuadModel fallback"
         else
-            # Return empty DataFrame with correct schema
-            total_psms = DataFrame(
-                scan_idx = Int64[],
-                precursor_idx = UInt32[],
-                center_mz = Union{Float32, Missing}[],
-                δ = Union{Float32, Missing}[],
-                yt = Union{Float32, Missing}[],
-                x0 = Union{Float32, Missing}[],
-                x1 = Union{Float32, Missing}[],
-                prec_charge = Union{UInt8, Missing}[],
-                half_width_mz = Float32[]
-            )
+            total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
+            if nrow(total_psms) >= 50
+                fitted_params, initial_params = fit_quad_model(total_psms, window_width)
+                fitted_model = RazoQuadModel(fitted_params)
+                razo_initial_model = RazoQuadModel(initial_params)
+                active_model = fitted_model
+                use_fallback = false
+            end
         end
 
-        if nrow(total_psms) < required_psms
-            @user_warn "Too few PSMs found for quad modeling. required_psms $required_psms and total_psms $(nrow(total_psms)) \n"
-            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
-            return results
+        setQuadModel(results, active_model)
+
+        # Per-file QC plots. Fallback files still get the SquareQuad transmission
+        # plot; the scatter/median plots are skipped when there's no data.
+        file_plots = Plots.Plot[]
+        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+        razo_lm_for_plot = use_fallback ? nothing :
+            (@isdefined(fitted_model) ? fitted_model : nothing)
+        if !isempty(total_psms)
+            push!(file_plots, plot_charge_distributions(total_psms, results, fname;
+                                                         quad_model=razo_lm_for_plot,
+                                                         window_width=window_width))
+        end
+        push!(file_plots, plot_quad_model(active_model, window_width, results, fname;
+                                           initial_model=razo_initial_model))
+        if !isempty(total_psms)
+            push!(file_plots, plot_sliding_median_smoother(total_psms, fname;
+                                                           window_width=window_width,
+                                                           quad_model=razo_lm_for_plot,
+                                                           initial_model=razo_initial_model))
         end
 
-        # Plot charge states
-        push!(results.quad_data_plots, plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
-        
-        # Fit quad model
-        window_width = parse(Float64, first(window_widths))
-        fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
-        setQuadModel(results, fitted_model)
-        # Plot quad model
-        push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
+        # Accumulate plot objects for the combined quad-transmission PDF
+        # written by summarize_results!. The per-file PDF was dropped
+        # 2026-06-26 (same rationale as the ParameterTuningSearch mass-error
+        # PDF: the combined PDF paginates per file, so no diagnostic info is
+        # lost, and writing it doubled the QuadTuning plot I/O cost).
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        append!(results.quad_plot_objects, file_plots)
+        push!(results.per_file_models, (parsed_fname, active_model, Float64(window_width)))
 
-
-    catch e
-        @user_warn "\nQuad transmission function fit failed for MS data file: $file_name. Error: $e. Using fallback model: GeneralGaussModel(5.0, 0.0)"
-        setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+        t_wall = time() - t_file_start
+        if !use_fallback
+            p = fitted_model.params
+            @debug_l1 "  QuadTuning [$file_name]: $n_collected PSMs, $(nrow(total_psms)) deconv pts, wall=$(round(t_wall,digits=2))s; Razo LM: al=$(round(p.al,digits=2)) ar=$(round(p.ar,digits=2)) bl=$(round(p.bl,digits=1)) br=$(round(p.br,digits=1))"
+        end
     end
 
     return results
@@ -373,17 +332,8 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
-    
-    # Check if file should be skipped due to previous failure
-    if check_and_skip_failed_file(search_context, ms_file_idx, "QuadTuningSearch results processing")
-        return nothing  # Return early 
-    end
-    
-    if params.fit_from_data==true
-        setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
-    else
-        setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
-    end
+
+    setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
 end
 
 function summarize_results!(
@@ -392,28 +342,38 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:QuadTuningSearchParameters}
     
-    models_path = joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf")
-    data_path = joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf")
-    try
-        if isfile(models_path)
-            safeRm(models_path, nothing)
+    # Cross-file overlay plots: one per model variant so we can see how
+    # consistent each model's fit is across files.
+    if !isempty(results.per_file_models)
+        max_window = maximum(w for (_, _, w) in results.per_file_models)
+        half_width = 2.0 + max_window / 2
+        plot_bins = LinRange(-half_width, half_width, 200)
+
+        # Razo LM overlay — split into pages of 12 files so the legend stays readable.
+        files_per_page = 12
+        n_files = length(results.per_file_models)
+        n_pages = cld(n_files, files_per_page)
+        for page in 1:n_pages
+            lo = (page - 1) * files_per_page + 1
+            hi = min(page * files_per_page, n_files)
+            title_suffix = n_pages > 1 ? " ($(lo)-$(hi) of $n_files)" : ""
+            overlay = plot(title="Per-file quad transmission — Razo LM$title_suffix",
+                           xlabel="m/z offset", ylabel="transmission",
+                           legend=:outertopright, size=(800, 500))
+            for (name, model, _) in results.per_file_models[lo:hi]
+                f = getQuadTransmissionFunction(model, 0.0f0, 2.0f0)
+                plot!(overlay, plot_bins, f.(plot_bins), lw=1.5, alpha=0.6, label=name)
+            end
+            push!(results.quad_plot_objects, overlay)
         end
-        if isfile(data_path)
-            safeRm(data_path, nothing)
-        end
-    catch e
-        @user_warn "\nCould not clear existing file: $e"
     end
 
-    if !isempty(results.quad_model_plots)
-        save_multipage_pdf(results.quad_model_plots, models_path)
-        empty!(results.quad_model_plots)
+    if !isempty(results.quad_plot_objects)
+        combined_path = joinpath(results.quad_plot_dir, "quad_transmission_plots.pdf")
+        save_multipage_pdf(Plots.Plot[p for p in results.quad_plot_objects], combined_path)
+        empty!(results.quad_plot_objects)
     end
-
-    if !isempty(results.quad_data_plots)
-        save_multipage_pdf(results.quad_data_plots, data_path)
-        empty!(results.quad_data_plots)
-    end
+    empty!(results.per_file_models)
 
     reset_precursor_arrays!(search_context)
     return nothing

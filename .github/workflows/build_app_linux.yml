@@ -1,22 +1,50 @@
 name: Build Linux
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   workflow_dispatch:
     inputs:
-      force_installer:
-        description: "Force .deb packaging/upload for manual runs"
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native .deb installer"
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native .deb installer"
         required: false
         type: boolean
         default: false
-  workflow_call:
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: 'Build version'
@@ -47,13 +75,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION
         id: get_version
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+          override: ${{ inputs.version_override }}
 
       - name: Normalize versions
         id: norm
@@ -62,9 +92,9 @@ jobs:
           raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12.6'  # must satisfy Project.toml's julia = "1.12.5" compat
 
       - name: Cache Julia packages
         uses: actions/cache@v5
@@ -77,33 +107,35 @@ jobs:
 
       - name: Install dependencies
         run: |
-          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=. \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Validate locked application environment
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --startup-file=no --project=. \
+            packaging/check_app_contract.jl
+          julia --threads auto --startup-file=no --project=. \
+            src/build/check_cpu_dependencies.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v1
+          cache-key: precompile-data-v2-yeast
 
       - name: Compile application
         run: |
-          julia --threads auto --project=dev -e '
-            using PackageCompiler;
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false, force=true,
-              executables=[
-                "GetSearchParams"=>"main_GetSearchParams",
-                "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl"
-            );
-          '
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          unset PIONEER_APP_CPU_TARGET
+          export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
+          mkdir -p "$RUNNER_TEMP/julia-depot"
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            packaging/build_app.jl \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
 
       - name: Download PioneerConverter
         shell: bash
@@ -154,8 +186,52 @@ jobs:
           "$pioneer_root/pioneer" params-predict "$dummy" "$dummy" --params-path "$dummy/params.json"
           rm -rf "$dummy"
           
-      - name: Package Linux .deb (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+      # ---- GUI (gui/) -------------------------------------------------
+      # The self-hosted runner is provisioned with the native Tauri toolchain.
+      # Verify those host dependencies without attempting privileged package
+      # installation from a non-interactive Actions job.
+      - name: Setup Node (GUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify GUI build dependencies
+        run: |
+          required_packages=(
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            librsvg2-dev
+            patchelf
+            libayatana-appindicator3-dev
+          )
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+            if [[ "$status" != "install ok installed" ]]; then
+              missing_packages+=("$package")
+            fi
+          done
+          if (( ${#missing_packages[@]} > 0 )); then
+            echo "Missing GUI prerequisites on the self-hosted runner:"
+            printf '  %s\n' "${missing_packages[@]}"
+            exit 1
+          fi
+
+      - name: Build GUI
+        working-directory: gui
+        run: |
+          npm ci
+          # --no-bundle: we want the bare binary, not Tauri's own .deb. It is
+          # installed into Pioneer's package below.
+          npm run tauri:build -- --no-bundle
+
+      - name: Package Linux .deb
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
@@ -164,6 +240,29 @@ jobs:
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
+
+          GUI_BIN="gui/src-tauri/target/release/pioneer-console"
+          if [[ ! -f "$GUI_BIN" ]]; then
+            echo "GUI build succeeded without producing $GUI_BIN"
+            exit 1
+          fi
+          install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
+          ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
+          install -Dm644 gui/src-tauri/icons/icon.png \
+            deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
+          mkdir -p deb/usr/share/applications
+          cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Pioneer
+          Comment=Search and quantify DIA proteomics data
+          Exec=/usr/local/Pioneer/bin/pioneer-gui
+          Icon=pioneer
+          Terminal=false
+          Categories=Science;Biology;
+          DESKTOP
+          GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
+          echo "GUI included in .deb"
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)
@@ -192,23 +291,17 @@ jobs:
           Description: $DESCRIPTION
           EOF
 
+          if [[ -n "$GUI_DEPENDS" ]]; then
+            sed -i "/^Description:/i Depends: $GUI_DEPENDS" deb/DEBIAN/control
+          fi
+
           dpkg-deb --build --root-owner-group deb \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
 
-      - name: Package zipped binaries
-        run: |
-          cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
-
-      - name: Upload zipped binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-      - name: Upload .deb (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+      - name: Upload .deb
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}-deb
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
+          retention-days: ${{ inputs.artifact_retention_days }}

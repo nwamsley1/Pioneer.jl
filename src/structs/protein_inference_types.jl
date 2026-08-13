@@ -113,15 +113,38 @@ Result of protein inference for a single file.
 
 # Fields
 - `peptide_to_protein::Dictionary{PeptideKey, ProteinKey}`: Maps unique peptides to inferred proteins.
+- `ambiguous_peptide_to_proteins::Dictionary{PeptideKey, Vector{ProteinKey}}`: Maps peptides
+  shared by multiple retained parsimonious protein groups to those final groups.
 
 # Semantics
 Peptides present in `peptide_to_protein` are unique peptides assigned to the minimal protein set
-and should be used for quantification. Shared peptides are excluded from the result entirely
-(deleted after inference). For PSMs with peptides not in the result, use the original protein
-assignment but mark as `use_for_protein_quant = false`.
+and should be used for quantification. Peptides present in
+`ambiguous_peptide_to_proteins` are retained for protein scoring but remain ineligible for
+quantification. For PSMs with peptides in neither mapping, use the original protein assignment
+but mark as `use_for_protein_quant = false`.
 """
 struct InferenceResult
     peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
+    ambiguous_peptide_to_proteins::Dictionary{PeptideKey, Vector{ProteinKey}}
+end
+
+InferenceResult(peptide_to_protein::Dictionary{PeptideKey, ProteinKey}) = InferenceResult(
+    peptide_to_protein,
+    Dictionary{PeptideKey, Vector{ProteinKey}}()
+)
+
+"""
+    ProteinPeptideOpportunityCounts
+
+Theoretical peptide opportunities for one retained final protein group.
+
+`n_unique_peptides` counts library peptide sequences that map to this group and
+no other retained final group. `n_shared_peptides` counts library peptide
+sequences that map to this group and at least one other retained final group.
+"""
+struct ProteinPeptideOpportunityCounts
+    n_unique_peptides::Int
+    n_shared_peptides::Int
 end
 
 """

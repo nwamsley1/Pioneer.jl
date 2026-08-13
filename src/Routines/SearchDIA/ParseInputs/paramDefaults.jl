@@ -36,18 +36,18 @@ function get_default_parameters(simplified::Bool = false)
 end
 
 """
-    merge_with_defaults(user_params::Dict, defaults::Dict)
+    merge_with_defaults(user_params::AbstractDict, defaults::AbstractDict)
 
 Recursively merges user parameters over default parameters.
 User values override defaults at any nesting level.
 Missing sections or parameters are filled from defaults.
 """
-function merge_with_defaults(user_params::Dict, defaults::Dict)
+function merge_with_defaults(user_params::AbstractDict, defaults::AbstractDict)
     result = deepcopy(defaults)
     
-    function recursive_merge!(target::Dict, source::Dict)
+    function recursive_merge!(target::AbstractDict, source::AbstractDict)
         for (key, value) in source
-            if haskey(target, key) && isa(target[key], Dict) && isa(value, Dict)
+            if haskey(target, key) && isa(target[key], AbstractDict) && isa(value, AbstractDict)
                 # Both are dicts, merge recursively
                 recursive_merge!(target[key], value)
             else

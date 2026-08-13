@@ -15,10 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#y = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\y.jld2")["y"]
-#X = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\X.jld2")["X"]
-#PSMs = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs.jld2")["PSMs"]
-function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::Vector{Bool},data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
+function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::AbstractVector{Bool}, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
     #@inbounds @fastmath begin
     Threads.@spawn begin
@@ -43,12 +40,7 @@ end
 
 function fillXWX!(XWX::Matrix{T}, X::DataFrame, W::Vector{T}) where {T<:AbstractFloat}
     @noinline function fillCell(XWX::T, Xi::Vector{R}, Xj::Vector{V}, W::Vector{T}) where {T<:AbstractFloat, R,V<:Real}
-        #N = 8
-        #lane = VecRange{N}(0)
-        #@inbounds for i in 1:N:length(W)
-        #    XWX += Xi[lane + i]*W[lane + i]*Xj[lane + i]
-        #end
-        @turbo for i in 1:length(W)
+        @inbounds @simd for i in eachindex(W, Xi, Xj)
             XWX += Xi[i]*W[i]*Xj[i]
         end
         return XWX
@@ -66,7 +58,7 @@ end
 function fillY!(Y::Vector{T}, X::DataFrame, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat}
 
         @noinline function fillCell(Y::T, X::Vector{R}, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat,R<:Real}
-            @turbo for i in range(1, length(W))
+            @inbounds @simd for i in eachindex(W, X, Z)
                 Y += X[i]*W[i]*Z[i]
             end
             return Y
@@ -88,7 +80,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     function fillColumn!(η::Vector{T}, X::Vector{R}, β::T, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                @turbo for row in row_chunk
+                @inbounds @simd for row in row_chunk
                     η[row] += X[row]*β
                 end
             end
@@ -99,7 +91,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     #Initialize Z-scores to zero
     tasks = map(data_chunks) do row_chunk
         Threads.@spawn begin
-            @turbo for row in row_chunk
+            @inbounds @simd for row in row_chunk
                 η[row] = zero(T)
             end
         end
@@ -127,7 +119,7 @@ function vecSum!(v::Vector{T}, data_chunks) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             vsum = zero(T)
-            @turbo for i in chunk
+            @inbounds @simd for i in chunk
                 vsum += v[i]
             end
             return vsum
@@ -142,7 +134,7 @@ end
 function loglikelihood!(tmpη::Vector{T},
                         X::DataFrame,
                         β::Vector{T},
-                        y::Vector{Bool},
+                        y::AbstractVector{Bool},
                         bounds::Tuple{T,T},
                         data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
     fillη!(tmpη, X, β, bounds, data_chunks)
@@ -159,8 +151,8 @@ function loglikelihood!(tmpη::Vector{T},
     return sum(fetch.(tasks))
 end
 
-function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
-                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}; 
+function ProbitRegression(β::Vector{T}, X::DataFrame, y::AbstractVector{Bool},
+                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}};
                             max_iter::Int = 30, z_score_bounds::Tuple{Float64, Float64} = (-8.0, 8.0),
                             tol::T = T(1e-2),
                             step_size::T = one(T)
@@ -180,7 +172,15 @@ function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
         loss = vecSum!(η, data_chunks)
         fillXWX!(XWX, X, W)
         fillY!(Y, X, W, Z)
-        
+
+        # Tiny ridge on the diagonal so the IRLS solve stays well-conditioned
+        # when a feature column is constant (e.g. `Mox` for libraries built
+        # with max_var_mods=0) or two columns are co-linear. Without this the
+        # LU factorization throws SingularException on the first iteration.
+        @inbounds for j in 1:size(XWX, 1)
+            XWX[j, j] += T(1e-8)
+        end
+
         β_new = T.(XWX\Y)
 
         Δβ = β_new .- β
@@ -211,30 +211,6 @@ function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
 
 end
 
-function ModelPredict!(scores::Vector{U}, 
-                        psms::DataFrame,
-                        β::Vector{T}, 
-                        data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat}
-    
-    function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
-        tasks = map(data_chunks) do row_chunk
-            Threads.@spawn begin
-                for row in row_chunk
-                #@turbo for row in row_chunk
-                    scores[row] += X[row]*β
-                end
-            end
-        end
-        fetch.(tasks)
-    end
-
-    fill!(scores, zero(U));
-    for col in range(1, size(psms, 2))
-        fillColumn!(scores, psms[!,col], β[col], data_chunks)
-    end
-
-end
-
 function ModelPredictProbs!(scores::Vector{U}, 
                         psms::DataFrame,
                         β::Vector{T}, 
@@ -243,8 +219,7 @@ function ModelPredictProbs!(scores::Vector{U},
     function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                #@turbo for row in row_chunk
-                for row in row_chunk
+                @inbounds @simd for row in row_chunk
                     scores[row] += X[row]*β
                 end
             end
@@ -267,48 +242,4 @@ function ModelPredictProbs!(scores::Vector{U},
     end
     fetch.(tasks)
 
-
 end
-
-function ModelPredictCVFold!(scores::Vector{U}, 
-                        cv_folds::Vector{UInt8},
-                        cv_fold::UInt8,
-                        psms::DataFrame,
-                        β::Vector{T}, 
-                        data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat}
-    
-    function fillColumn!(scores::Vector{T},   
-                            cv_folds::Vector{UInt8},
-                            cv_fold::UInt8,
-                            X::Vector{R}, 
-                            β::U, 
-                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
-        tasks = map(data_chunks) do row_chunk
-            Threads.@spawn begin
-                for row in row_chunk
-                    if cv_folds[row] != cv_fold
-                        scores[row] += X[row]*β
-                    end
-                end
-            end
-        end
-        fetch.(tasks)
-    end
-
-    for col in range(1, size(psms, 2))
-        fillColumn!(scores, cv_folds, cv_fold, psms[!,col], β[col], data_chunks)
-    end
-
-    tasks = map(data_chunks) do row_chunk
-        Threads.@spawn begin
-            for row in row_chunk
-                if cv_folds[row] != cv_fold
-                    scores[row] = (1 + SpecialFunctions.erf(scores[row]/sqrt(2)))/2
-                end
-            end
-        end
-    end
-    fetch.(tasks)
-
-end
-

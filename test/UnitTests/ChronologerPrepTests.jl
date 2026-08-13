@@ -18,25 +18,6 @@
 @testset "chronologer_prep.jl" begin
     
     #==========================================================================
-    Tests for adjustNCE
-    ==========================================================================#
-
-    @testset "adjustNCE" begin
-        charge_facs = Float64[1.0, 0.9, 0.85, 0.8, 0.75]
-        
-        # Test adjusting NCE down for higher charge state
-        @test adjustNCE(30.0, 2, 3, charge_facs) ≈ 30.0 * (charge_facs[2] / charge_facs[3])
-        
-        # Test adjusting NCE up for lower charge state
-        @test adjustNCE(30.0, 3, 2, charge_facs) ≈ 30.0 * (charge_facs[3] / charge_facs[2])
-        
-        # Test no adjustment when default charge equals peptide charge
-        @test adjustNCE(30.0, 2, 2, charge_facs) ≈ 30.0
-        
-        # Test edge case with highest charge state
-        @test adjustNCE(30.0, 3, 5, charge_facs) ≈ 30.0 * (charge_facs[3] / charge_facs[5])
-    end
-    #==========================================================================
     Tests for getFixedMods!
     ==========================================================================#
     @testset "getFixedMods!" begin

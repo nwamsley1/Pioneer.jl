@@ -1,0 +1,69 @@
+{
+  "comment_purpose": "Offline BuildSpecLib smoke test against the small keap1 FASTA. Run via with_koina_client(SyntheticKoinaClient()) — no network needed. Output is synthetic (deterministic but not biologically meaningful); do NOT use this library for a real search.",
+  "fasta_paths": ["./data/fasta/keap1.fasta"],
+  "fasta_names": ["HUMAN"],
+  "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
+  "fasta_header_regex_genes": [" GN=(\\S+)"],
+  "fasta_header_regex_proteins": ["^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="],
+  "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
+  "include_contaminants": false,
+  "fasta_digest_params": {
+    "min_length": 7,
+    "max_length": 30,
+    "min_charge": 2,
+    "max_charge": 3,
+    "cleavage_regex": "[KR][^_|$]",
+    "missed_cleavages": 0,
+    "max_var_mods": 0,
+    "add_decoys": true,
+    "decoy_method": "shuffle",
+    "entrapment_r": 0,
+    "entrapment_method": "shuffle"
+  },
+  "variable_mods": {
+    "name": ["Unimod:35"],
+    "pattern": ["M"],
+    "mass": [15.99491]
+  },
+  "fixed_mods": {
+    "name": ["Unimod:4"],
+    "pattern": ["C"],
+    "mass": [57.021464]
+  },
+  "isotope_mod_groups": [],
+  "nce_params": {
+    "nce": 25.0
+  },
+  "library_params": {
+    "auto_detect_frag_bounds": false,
+    "prec_mz_min": 390.0,
+    "prec_mz_max": 1010.0,
+    "frag_mz_min": 150.0,
+    "frag_mz_max": 2020.0,
+    "frag_bin_tol_ppm": 10.0,
+    "rt_bin_tol": 1.0,
+    "max_frag_charge": 3,
+    "max_frag_rank": 50,
+    "length_to_frag_count_multiple": 10,
+    "min_frag_intensity": 0.0,
+    "include_isotope": false,
+    "include_internal": false,
+    "include_immonium": false,
+    "include_neutral_diff": true,
+    "y_start_index": 4,
+    "b_start_index": 3,
+    "y_start": 3,
+    "b_start": 2,
+    "include_p_index": false,
+    "include_p": false
+  },
+  "max_koina_requests": 4,
+  "max_koina_batch": 1000,
+  "match_lib_build_batch": 100000,
+  "library_path": "./test/integration/keap1_lib",
+  "out_dir": "./test/integration",
+  "lib_name": "keap1_lib",
+  "new_lib_name": "keap1_lib",
+  "out_name": "keap1_lib.tsv",
+  "predict_fragments": true
+}

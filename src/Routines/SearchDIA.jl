@@ -58,20 +58,6 @@ function asset_path(parts...)
     
 end
 
-function clean_search_output_dir(results_dir::String)
-    GC.gc()
-    for fpath in readdir(results_dir, join=true)
-        if endswith(fpath, ".tsv") || endswith(fpath, ".arrow")
-            try
-                safeRm(fpath, nothing; force=true)
-            catch e
-                @user_warn "Failed to remove stale search output $(fpath): $(sprint(showerror, e))"
-            end
-        end
-    end
-    return nothing
-end
-
 """
     Locate the isotope spline XML file bundled with the application.
 """
@@ -141,100 +127,26 @@ function SearchDIA(params_path::String)
    
     # === Initialize logging ===
     checkParams(params_path)
+    params_string = read(params_path, String)
 
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
-    
-    # Set debug console level from parameters (default to 0)
-    if haskey(params.logging, :debug_console_level)
-        DEBUG_CONSOLE_LEVEL[] = params.logging.debug_console_level
-    else
-        DEBUG_CONSOLE_LEVEL[] = 0  # Default: no debug on console
-    end
-    
-    # Configure max log message bytes (clamped with ENV override)
-    local max_bytes_val::Int = 4096
-    if haskey(params.logging, :max_message_bytes)
-        try
-            max_bytes_val = Int(params.logging.max_message_bytes)
-        catch
-            max_bytes_val = 4096
-        end
-    end
-    if haskey(ENV, "PIONEER_MAX_LOG_MSG_BYTES")
-        env_val = tryparse(Int, ENV["PIONEER_MAX_LOG_MSG_BYTES"])
-        if env_val !== nothing
-            max_bytes_val = env_val
-        end
-    end
-    max_bytes_val = clamp(max_bytes_val, 1024, 1048576)
-    Pioneer.MAX_LOG_MSG_BYTES[] = max_bytes_val
-    
-    # Open FOUR log files
-    essential_path = joinpath(params.paths[:results], "pioneer_search_report.txt")
-    console_path = joinpath(params.paths[:results], "pioneer_search_log.log")
-    debug_path = joinpath(params.paths[:results], "pioneer_search_debug.log")
-    warnings_path = joinpath(params.paths[:results], "pioneer_warnings.log")
-    
-    Pioneer.ESSENTIAL_FILE[] = open(essential_path, "w")
-    Pioneer.CONSOLE_FILE[] = open(console_path, "w")
-    Pioneer.DEBUG_FILE[] = open(debug_path, "w")
-    Pioneer.WARNINGS_FILE[] = open(warnings_path, "w")
-    
-    pioneer_version = Pioneer.get_pioneer_version()
-    
-    # Essential file - clean header (like dual_println)
-    essential_header = [
-        "=" ^ 90,
-        "Pioneer Search Log",
-        "Version: $pioneer_version",
-        "Started: $(Dates.now())",
-        "Output Directory: $(params.paths[:results])",
-        "=" ^ 90,
-        ""
-    ]
-    for line in essential_header
-        println(Pioneer.ESSENTIAL_FILE[], line)
-    end
-    
-    # Console file - same header
-    for line in essential_header
-        println(Pioneer.CONSOLE_FILE[], line)
-    end
-    
-    # Debug file - detailed header
-    debug_header = [
-        "=" ^ 90,
-        "Pioneer Debug Log (Full Trace)",
-        "Version: $pioneer_version",
-        "Started: $(Dates.now())",
-        "Output Directory: $(params.paths[:results])",
-        "Julia Version: $(VERSION)",
-        "Threads: $(Threads.nthreads())",
-        "=" ^ 90,
-        ""
-    ]
-    for line in debug_header
-        println(Pioneer.DEBUG_FILE[], line)
-    end
-    
-    # Warnings file - simple header
-    warnings_header = [
-        "=" ^ 90,
-        "Pioneer Warnings Log",
-        "Version: $pioneer_version",
-        "Started: $(Dates.now())",
-        "=" ^ 90,
-        ""
-    ]
-    for line in warnings_header
-        println(Pioneer.WARNINGS_FILE[], line)
-    end
-    
-    # Log initialization message
-    @user_info "Pioneer logging system initialized"
-    previous_tmpdir = get(ENV, "TMPDIR", nothing)
-    
+
+    debug_level = haskey(params.logging, :debug_console_level) ?
+                  params.logging.debug_console_level : 0
+    # Independent of the console: the debug log is useful by default (see DEBUG_FILE_LEVEL).
+    debug_file_level = haskey(params.logging, :debug_file_level) ?
+                       params.logging.debug_file_level : 1
+    max_bytes = haskey(params.logging, :max_message_bytes) ?
+                try Int(params.logging.max_message_bytes) catch; 4096 end : 4096
+    warnings_full_path = init_pioneer_logging(
+        params.paths[:results],
+        "Pioneer Search Log";
+        debug_console_level = debug_level,
+        debug_file_level    = debug_file_level,
+        max_message_bytes   = max_bytes,
+    )
+
     try
         @user_print "\n" * repeat("=", 90)
         @user_print "Starting SearchDIA"
@@ -280,6 +192,7 @@ function SearchDIA(params_path::String)
             nothing
         end
         timings["Parameter Loading"] = params_timing
+        @user_info "Searching $(length(MS_TABLE_PATHS)) MS file$(length(MS_TABLE_PATHS) == 1 ? "" : "s") from $MS_DATA_DIR"
 
         # === Initialize spectral library and search context ===
         @user_info "Loading Spectral Library..."
@@ -312,22 +225,28 @@ function SearchDIA(params_path::String)
             write(joinpath(normpath(params.paths[:results]), "config.json"), merged_json)
             nothing
         end
-        clean_search_output_dir(getDataOutDir(SEARCH_CONTEXT))
+        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".tsv")]
+        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".arrow")]
         timings["Search Context Initialization"] = context_timing
 
         # === Execute search pipeline ===
         # Define search phases in order of execution
         searches = [
             ("Parameter Tuning", ParameterTuningSearch()),
-            ("NCE Tuning", NceTuningSearch()),
             ("Quadrupole Tuning", QuadTuningSearch()),
-            ("First Pass Search", FirstPassSearch()),
-            ("Huber Tuning", HuberTuningSearch()),
-            ("Second Pass Search", SecondPassSearch()),
-            ("Scoring", ScoringSearch()),
-            ("Chromatogram Integration", IntegrateChromatogramSearch()),
-            ("Quantification & Output", MaxLFQSearch())
+            ("BitVec Calibration", BitVecCalibrationSearch()),
+            ("Main Search", MainSearch()),
+            ("Precursor Scoring", PrecursorScoringSearch()),
         ]
+        if get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber"
+            push!(searches, ("Huber Calibration", HuberTuningSearch()))
+        end
+        append!(searches, [
+            ("Chromatogram Integration", IntegrateChromatogramSearch()),
+            ("Protein Inference", ProteinInferenceSearch()),
+            ("Protein Scoring", ProteinScoringSearch()),
+            ("Quantification & Output", MaxLFQSearch())
+        ])
 
         # Execute each search phase and record timing + peak RSS delta
         rss_deltas = Dict{String, Float64}()
@@ -353,71 +272,16 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
-        if previous_tmpdir === nothing
-            haskey(ENV, "TMPDIR") && delete!(ENV, "TMPDIR")
-        else
-            ENV["TMPDIR"] = previous_tmpdir
-        end
-
-        # Count warnings if any exist
-        warning_count = 0
-        warnings_full_path = ""  # Store full path for display
-        if Pioneer.WARNINGS_FILE[] !== nothing
-            # Close and get full path
-            close(Pioneer.WARNINGS_FILE[])
-            warnings_full_path = abspath(warnings_path)  # Get absolute path
-            if isfile(warnings_path)
-                warning_count = max(0, countlines(warnings_path) - 5)  # Subtract header lines
-            end
-            Pioneer.WARNINGS_FILE[] = nothing
-        end
-        
-        # Close all four files with appropriate footers
-        if Pioneer.ESSENTIAL_FILE[] !== nothing
-            footer = ["", "=" ^ 90]
-            if warning_count > 0
-                push!(footer, "⚠️  $warning_count warnings were generated during search")
-            end
-            push!(footer, "Search completed at: $(Dates.now())")
-            push!(footer, "=" ^ 90)
-            for line in footer
-                println(Pioneer.ESSENTIAL_FILE[], line)
-            end
-            close(Pioneer.ESSENTIAL_FILE[])
-            Pioneer.ESSENTIAL_FILE[] = nothing
-        end
-        
-        if Pioneer.CONSOLE_FILE[] !== nothing
-            footer = ["", "=" ^ 90]
-            if warning_count > 0
-                push!(footer, "⚠️  $warning_count warnings were generated during search")
-            end
-            push!(footer, "Search completed at: $(Dates.now())")
-            push!(footer, "=" ^ 90)
-            for line in footer
-                println(Pioneer.CONSOLE_FILE[], line)
-            end
-            close(Pioneer.CONSOLE_FILE[])
-            Pioneer.CONSOLE_FILE[] = nothing
-        end
-        
-        if Pioneer.DEBUG_FILE[] !== nothing
-            footer = ["", "=" ^ 90, "Search completed at: $(Dates.now())", "=" ^ 90]
-            for line in footer
-                println(Pioneer.DEBUG_FILE[], line)
-            end
-            close(Pioneer.DEBUG_FILE[])
-            Pioneer.DEBUG_FILE[] = nothing
-        end
-        
-        # Print warning count to console if there were any
-        if warning_count > 0
-            printstyled("┌ ", color=:yellow)
-            printstyled("Warning:", bold=true, color=:yellow)
-            println(" $warning_count warnings were generated during search - see $warnings_full_path")
-        end
+        finalize_pioneer_logging(warnings_full_path; banner_title = "Search completed")
+        # End-of-search runtime cleanup. Forces a full GC pass + flushes any
+        # buffered C-side stdio (libomp/LightGBM emit warnings via printf).
+        # Cheap (~tens of ms) and gives the runtime a clean state before the
+        # next SearchDIA call in the same REPL — mitigates the libomp
+        # re-entrance assertion that has historically aborted multi-call runs.
+        GC.gc(true)
+        Libc.flush_cstdio()
     end
-    
+
     return nothing
 end
 
@@ -432,14 +296,14 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
     @user_print repeat("=", 102)
 
     # Detailed analysis
-    @user_print "\nDetailed Step Analysis:"
+    @user_print "\nDetailed Step Analysis (in execution order):"
     @user_print repeat("-", 102)
     @user_print rpad("Step", 30) * " " *
             rpad("Time (s)", 12) * " " *
-            rpad("Memory (GB)", 12) * " " *
+            rpad("Mem Alloc (GB)", 16) * " " *
             rpad("GC Time (s)", 12) * " " *
-            rpad("GC %", 12) * " " *
-            rpad("Peak RSS +", 12)
+            rpad("GC %", 8) * " " *
+            rpad("RSS Δ (GB)", 12)
     @user_print repeat("-", 102)
 
     # Calculate totals
@@ -448,8 +312,26 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
     total_memory = 0
     total_gc = 0.0
 
-    # Print step-by-step metrics
-    sorted_steps = sort(collect(keys(timings)), by=x->timings[x][:time])
+    # Print step-by-step metrics in execution order
+    # (insertion-ordered by SearchDIA driver; falls back to sorted keys for any extras).
+    execution_order = [
+        "Parameter Loading", "Spectral Library Loading", "Search Context Initialization",
+        "Parameter Tuning", "Quadrupole Tuning", "BitVec Calibration",
+        "Main Search", "Precursor Scoring", "Huber Calibration", "Chromatogram Integration",
+        "Protein Inference", "Protein Scoring", "Quantification & Output",
+    ]
+    seen = Set{String}()
+    sorted_steps = String[]
+    for s in execution_order
+        if haskey(timings, s)
+            push!(sorted_steps, s)
+            push!(seen, s)
+        end
+    end
+    for s in sort(collect(keys(timings)))
+        s in seen && continue
+        push!(sorted_steps, s)
+    end
     for step in sorted_steps
         timing = timings[step]
         time_s = timing.time
@@ -461,12 +343,12 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
         total_memory += timing.bytes
         total_gc += gc_s
 
-        rss_delta_str = haskey(rss_deltas, step) ? @sprintf("%.2f GB", rss_deltas[step]) : "-"
+        rss_delta_str = haskey(rss_deltas, step) ? @sprintf("%+.2f", rss_deltas[step]) : "-"
         @user_print rpad(step, 30) * " " *
             rpad(@sprintf("%.2f", time_s), 12) * " " *
-            rpad(@sprintf("%.2f", mem_gb), 12) * " " *
+            rpad(@sprintf("%.2f", mem_gb), 16) * " " *
             rpad(@sprintf("%.2f", gc_s), 12) * " " *
-            rpad(@sprintf("%.1f", gc_pct), 12) * " " *
+            rpad(@sprintf("%.1f", gc_pct), 8) * " " *
             rpad(rss_delta_str, 12)
     end
 
@@ -487,28 +369,43 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
     @user_print repeat("-", 102)
     @user_print rpad("TOTAL", 30) * " " *
             rpad(@sprintf("%.2f", total_time), 12) * " " *
-            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12) * " " *
+            rpad(@sprintf("%.2f", total_memory/(1024^3)), 16) * " " *
             rpad(@sprintf("%.2f", total_gc), 12) * " " *
-            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12)
+            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 8)
 
     # Memory summary
+    # - "Allocated" sums GC bytes across stages (cumulative; can exceed system RAM
+    #   because the same buffers get re-allocated and freed).
+    # - "Working set (RSS)" is the OS-level high-water mark from Sys.maxrss().
     @user_print "\nMemory Usage Summary:"
     @user_print repeat("-", 102)
     current_mem = Sys.total_memory() / 1024^3
-    @user_print "Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB"
-    @user_print "Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB"
-    @user_print "Total Available Memory: $(round(current_mem, digits=2)) GB"
+    @user_print "Total alloc (cumulative):   $(round(total_memory/1024^3, digits=2)) GB"
+    @user_print "Working set (peak RSS):     $(round(peak_memory/1024^3, digits=2)) GB"
+    @user_print "System RAM:                 $(round(current_mem, digits=2)) GB"
     if !isempty(rss_deltas)
         peak_step = argmax(rss_deltas)
-        @user_print "Peak RSS Step: $peak_step (+$(@sprintf("%.2f", rss_deltas[peak_step])) GB)"
+        @user_print "Largest RSS jump:           +$(@sprintf("%.2f", rss_deltas[peak_step])) GB during $peak_step"
     end
 
     # Runtime summary
     @user_print "\nRuntime Summary:"
     @user_print repeat("-", 102)
-    @user_print "Total Runtime: $(round(total_time/60, digits=2)) minutes"
-    @user_print "Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds"
-    @user_print "Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds"
+    @user_print "Total Runtime: $(round(total_time/60, digits=2)) min ($(round(total_time, digits=2)) s)"
+    @user_print "Per Raw File:  $(round(total_time/n_files, digits=2)) s"
+
+    # === Final results block — count rows in the headline output files ===
+    out_dir = getDataOutDir(search_context)
+    prec_long = joinpath(out_dir, "precursors_long.arrow")
+    pg_long   = joinpath(out_dir, "protein_groups_long.arrow")
+    n_prec_rows = isfile(prec_long) ? length(Arrow.Table(prec_long)[1]) : nothing
+    n_pg_rows   = isfile(pg_long)   ? length(Arrow.Table(pg_long)[1])   : nothing
+    if n_prec_rows !== nothing || n_pg_rows !== nothing
+        @user_print "\nResults:"
+        @user_print repeat("-", 102)
+        n_prec_rows !== nothing && @user_print rpad("Precursor rows (long):", 28) * "$n_prec_rows"
+        n_pg_rows   !== nothing && @user_print rpad("Protein-group rows (long):", 28) * "$n_pg_rows"
+        @user_print rpad("Output directory:", 28) * "$out_dir"
+    end
     @user_print "\n" * repeat("=", 102)
-    @user_print "Huber δ: " * string(getHuberDelta(search_context))
 end

@@ -24,7 +24,7 @@ This module provides functions for fitting RT conversion models using various me
 - Adaptive knot selection based on data size
 - Outlier removal via MAD threshold
 
-These utilities are shared across ParameterTuningSearch, FirstPassSearch, and potentially
+These utilities are shared across ParameterTuningSearch, MainSearch, and potentially
 other search methods to ensure consistent RT alignment methodology.
 """
 
@@ -98,7 +98,7 @@ function fit_linear_irt_model(
 
     catch e
         # Fallback to OLS if robust regression fails
-        @warn "Robust regression failed: $e. Falling back to OLS."
+        @debug_l1 "Robust regression failed: $e. Falling back to OLS."
 
         # Simple least squares fallback
         sum_rt = sum(rt)
@@ -194,7 +194,7 @@ function make_spline_monotonic(
     # 6. Validate monotonicity (optional diagnostic)
     violations = sum(diff(irt_grid) .< 0)
     if violations > 0
-        @user_info "Monotonic filter had $violations violations (edge corrections applied)"
+        @debug_l1 "Monotonic filter had $violations violations (edge corrections applied)"
     end
 
     return final_interp
@@ -267,14 +267,14 @@ function fit_irt_model(
 
     # Early exit for insufficient data
     if n_psms < min_psms
-        @user_info "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
+        @debug_l1 "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 
     # For small datasets (< 30 PSMs), use simple linear model instead of splines
     # Linear models are more robust and appropriate for sparse data
     if n_psms < 30
-        @user_info "Small dataset ($n_psms PSMs < 30): Using linear model instead of spline"
+        @debug_l1 "Small dataset ($n_psms PSMs < 30): Using linear model instead of spline"
         linear_model, linear_std, _ = fit_linear_irt_model(psms)
 
         # Calculate MAD for consistency with spline path

@@ -40,6 +40,74 @@ function shortenFileNames(parsed_fnames,
     return result
 end
 
+"""
+    _bar_value_label(x) -> String
+
+Format the value annotation drawn inside a QC bar.
+
+Replaces `string(x)[1:min(n, end)]`, which truncated the decimal representation by *character
+count* and so silently corrupted small values: an MS2 mass correction of -2.11e-4 rendered as
+`"-0.00"` (indistinguishable from zero) and 3.06e-5 as `"3.06e"` (malformed). `%.3g` keeps three
+significant figures and switches to exponent notation on its own, so every magnitude stays
+readable and no value is ever misreported.
+"""
+_bar_value_label(x::Integer) = string(x)
+function _bar_value_label(x::Real)
+    xf = float(x)
+    isfinite(xf) || return string(x)
+    return @sprintf("%.3g", xf)
+end
+_bar_value_label(x) = string(x)
+
+"""
+    _bar_value_texts(values)
+
+Build the rotated in-bar value annotations. The anchor sits at the bar's tip and `halign = :right`
+sends the text back down into the bar, so the label stays inside the plot as long as the bar is
+taller than the label is long. Where that does not hold -- the MS2 mass-error plots, whose values
+are ~1e-4 and whose bars can be a few percent of the axis -- put the value in the tick label via
+`_bar_tick_labels` instead, rather than annotating inside the bar.
+"""
+function _bar_value_texts(values)
+    return [text(_bar_value_label(v), valign = :vcenter, halign = :right, rotation = 90) for v in values]
+end
+
+"""
+    _bar_tick_labels(names, values)
+
+`"name\nvalue"` x tick labels, for bar plots where the bars are too short to hold the value
+annotation. Guarantees the value is legible regardless of bar height.
+"""
+function _bar_tick_labels(names, values)
+    return [string(names[i], "\n", _bar_value_label(values[i])) for i in eachindex(names, values)]
+end
+
+"""
+    _bar_bottom_margin(labels)
+
+Bottom margin for a bar plot whose x tick labels are rotated 45 degrees.
+
+Plots.jl does not grow the plot area to fit rotated tick labels, so with the default margin a name
+like "MA5117_Rep1" ran off the bottom edge with its leading characters clipped. A 45-degree label
+occupies `len * cos(45deg)` character widths vertically; at roughly 2mm per character that is
+`1.4 * len` mm, plus a few mm of padding. Capped so a pathological name cannot squeeze the axes
+down to nothing.
+"""
+function _bar_bottom_margin(labels)
+    isempty(labels) && return 3Plots.mm
+    maxline = 0
+    maxlines = 1
+    for l in labels
+        parts = split(string(l), '\n')
+        maxlines = max(maxlines, length(parts))
+        for part in parts
+            maxline = max(maxline, length(part))
+        end
+    end
+    pad = 3 + ceil(Int, 1.4 * maxline) + 4 * (maxlines - 1)
+    return min(pad, 45) * Plots.mm
+end
+
 #Group psms by file of origin
 function qcPlots(
     precursors_wide_path,
@@ -54,8 +122,8 @@ function qcPlots(
     frag_err_dist_dict,
     valid_file_indices
 )
-    # Get conditional q-value column name based on MBR mode
-    qval_col = params_.global_settings.match_between_runs ? :MBR_boosted_qval : :qval
+    # Get q-value column name
+    qval_col = :qval
 
     short_fnames = shortenFileNames(parsed_fnames)
     #grouped_precursors = groupby(best_psms, :file_name)
@@ -63,10 +131,22 @@ function qcPlots(
     #Number of files to parse
     precursors_wide = Arrow.Table(precursors_wide_path)
     precursors_long = Arrow.Table(precursors_long_path)
-    precursors_long_df = DataFrame(Tables.columntable(precursors_long))
+    # Only `getIdCounts` reads this frame, and it touches exactly two columns: the file column and
+    # the q-value column. Materialising the whole table (DataFrame(Tables.columntable(...)) copies
+    # every column, and expands the dict-encoded string columns into millions of String objects)
+    # pulled the entire final output into RAM just to count rows per file -- the one unbounded
+    # allocation in the QC path, growing with the size of the experiment.
+    # copycols = false wraps the Arrow columns in place, so even these two are not copied.
+    precursors_long_df = DataFrame(
+        :file_name => precursors_long[:file_name],
+        qval_col   => precursors_long[qval_col];
+        copycols = false,
+    )
     protein_groups_wide = Arrow.Table(protein_groups_wide_path)
     n_files = length(parsed_fnames)
-    n_files_per_plot = Int64(params_.output[:plots_per_page])
+    # Number of files per QC plot page — hardcoded since no user override
+    # was ever shipped (was global.output.plots_per_page).
+    n_files_per_plot = 12
     #Number of QC plots to build
     n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
     qc_plots = Plots.Plot[]
@@ -81,21 +161,17 @@ function qcPlots(
         q_value_threshold::Real = 0.01f0
         )
 
-        # Filter rows by q-value threshold
-        filtered_df = filter(row -> row[q_value_column] <= q_value_threshold, precursors_long)
-
-        # Count unique precursors per file
+        # Group + count rows passing the q-value threshold in one pass.
+        # Folding the threshold into `combine` skips an intermediate
+        # `filter`-allocated DataFrame copy of the surviving subset.
         file_counts = combine(
-            groupby(filtered_df, file_column),
-            nrow => :precursor_count
+            groupby(precursors_long, file_column),
+            q_value_column => (qvals -> count(<=(q_value_threshold), qvals)) => :precursor_count,
         )
 
-        # Create a mapping from filename to count
-        fname_to_id = Dict(
+        return Dict(
             file_counts[!, file_column] .=> file_counts.precursor_count
         )
-
-        return fname_to_id
     end
 
     # Create abundance ECDF plots using the same approach as other plots
@@ -184,8 +260,8 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
-        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        q_value_column = qval_col,
+        q_value_threshold = _resolve_q_value_threshold(params_.global_settings),
         qc_plot_folder = qc_plot_folder
     )
     append!(qc_plots, abundance_ecdf_plots)
@@ -234,8 +310,10 @@ function qcPlots(
             successful_files,
             successful_ids,
             subplot = 1,
-            texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in successful_ids],
+            texts = _bar_value_texts(successful_ids),
             xrotation = 45,
+            bottom_margin = _bar_bottom_margin(successful_files),
+            left_margin = 5Plots.mm,
         )
 
         return p
@@ -284,8 +362,8 @@ function qcPlots(
                                 parsed_fnames,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
-                                q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
-                                q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+                                q_value_column = qval_col,
+                                q_value_threshold = _resolve_q_value_threshold(params_.global_settings),
                                 qc_plot_folder = qc_plot_folder)
     append!(qc_plots, id_plots)
     ###############
@@ -353,8 +431,10 @@ function qcPlots(
                 chunk_short_names,
                 chunk_ids,
                 subplot = 1,
-                texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in chunk_ids],
+                texts = _bar_value_texts(chunk_ids),
                 xrotation = 45,
+                bottom_margin = _bar_bottom_margin(chunk_fnames),
+                left_margin = 5Plots.mm,
             )
 
             push!(plots, p)
@@ -370,8 +450,8 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
-        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        q_value_column = qval_col,
+        q_value_threshold = _resolve_q_value_threshold(params_.global_settings),
         qc_plot_folder = qc_plot_folder
     )
     append!(qc_plots, protein_id_plots)
@@ -392,9 +472,9 @@ function qcPlots(
         qc_plot_folder::String = "./qc_plots/"
     )
         function getMissedCleavageRate(
-            abundance::AbstractVector{Union{Missing, Float32}},
-            precursor_idx::AbstractVector{Union{UInt32}},
-            missed_cleavages::AbstractVector{UInt8})
+            abundance,
+            precursor_idx,
+            missed_cleavages)
 
             non_missing_count = 0
             missed_cleavage_count = 0
@@ -426,8 +506,9 @@ function qcPlots(
                     precursors_wide[:precursor_idx],
                     getMissedCleavages(precursors)
                 )
-            catch
-                fname_to_cleavage_rate[fname] = 0.0f0  # Use 0 for files that don't have data
+            catch e
+                @user_warn "Failed to compute missed cleavage rate for $(fname): $e"
+                fname_to_cleavage_rate[fname] = 0.0f0
             end
         end
 
@@ -450,8 +531,10 @@ function qcPlots(
                 chunk_short_names,
                 chunk_rates,
                 subplot = 1,
-                texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in chunk_rates],
+                texts = _bar_value_texts(chunk_rates),
                 xrotation = 45,
+                bottom_margin = _bar_bottom_margin(chunk_fnames),
+                left_margin = 5Plots.mm,
             )
 
             push!(plots, p)
@@ -468,8 +551,8 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
-        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        q_value_column = qval_col,
+        q_value_threshold = _resolve_q_value_threshold(params_.global_settings),
         qc_plot_folder = qc_plot_folder
     )
     append!(qc_plots, missed_cleavage_plots)
@@ -489,12 +572,11 @@ function qcPlots(
         for (id, ms_table_path) in enumerate(ms_table_paths)
             short_fname = short_fnames[id]  # Now correctly indexed
             ms_table = BasicMassSpecData(ms_table_path)
-            ms1_scans = getMsOrders(ms_table).==1
+            ms1_indices = findall(getMsOrders(ms_table) .== 1)
+            rts  = [getRetentionTime(ms_table, i) for i in ms1_indices]
+            tics = [getTIC(ms_table, i) for i in ms1_indices]
 
-
-            plot!(p,
-            [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
-            [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
+            plot!(p, rts, tics,
                     subplot = 1,
                     xlabel = "retention time (min)",
                     label = short_fname,
@@ -544,24 +626,12 @@ function qcPlots(
         end
         return p
     end
-#=
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-        plotRTAlign(
-            irt_rt,
-            collect(keys(irt_rt))[start:stop],
-            title = "RT Alignment Plot",
-            f_out = joinpath(qc_plot_folder, "rt_align_plot_"*string(n)*".pdf")
-        )
-    end
-=#
     ###############
     #Plot precursor IDs
     function plotMS2MassErrors(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Any,
-        short_fnames::Any;
+        parsed_fnames::AbstractVector{<:AbstractString},
+        short_fnames::AbstractVector{<:AbstractString};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -586,27 +656,13 @@ function qcPlots(
         return p
     end
 
-    #=
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        plotMS2MassErrors(
-            grouped_precursors,
-            parsed_fnames[start:stop],
-            title = "MS2 Mass Errors Distribution",
-            f_out = joinpath(qc_plot_folder, "mass_err_boxplots_"*string(n)*".pdf")
-        )
-
-    end
-    =#
 
     ###############
     #Plot precursor IDs
     function plotMS2MassErrorCorrection(
-        parsed_fnames::Any,
-        short_fnames::Any,
-        frag_err_dist_dict::Dict{Int64, MassErrorModel},
+        parsed_fnames::AbstractVector{<:AbstractString},
+        short_fnames::AbstractVector{<:AbstractString},
+        frag_err_dist_dict::Dict{Int64, AbstractMassErrorModel},
         file_ids::Vector{Int64};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
@@ -619,13 +675,15 @@ function qcPlots(
         short_fnames = [short_fnames[file_id] for file_id in file_ids]
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
 
+        _mass_corr_labels = _bar_tick_labels(short_fnames, mass_corrections)
         Plots.bar!(p,
-        short_fnames,
+        _mass_corr_labels,
         mass_corrections,
         subplot = 1,
         yflip = true,
-        texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
         xrotation = 45,
+        bottom_margin = _bar_bottom_margin(_mass_corr_labels),
+        left_margin = 5Plots.mm,
         )
 
         return p
@@ -634,7 +692,7 @@ function qcPlots(
     function plotMS2MassErrorCorrectionFixed(
         parsed_fnames::Vector{String},
         short_fnames::Vector{String},
-        frag_err_dist_dict::Dict{Int64, MassErrorModel},
+        frag_err_dist_dict::Dict{Int64, AbstractMassErrorModel},
         actual_file_indices::Vector{Int64};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
@@ -646,13 +704,15 @@ function qcPlots(
         # Use pre-sliced file names and actual file indices for mass error lookup
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in actual_file_indices]
 
+        _mass_corr_labels = _bar_tick_labels(short_fnames, mass_corrections)
         Plots.bar!(p,
-        short_fnames,
+        _mass_corr_labels,
         mass_corrections,
         subplot = 1,
         yflip = true,
-        texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
         xrotation = 45,
+        bottom_margin = _bar_bottom_margin(_mass_corr_labels),
+        left_margin = 5Plots.mm,
         )
 
         return p
@@ -683,8 +743,8 @@ function qcPlots(
     #Plot precursor IDs
     function plotFWHM(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Any,
-        short_fnames::Any;
+        parsed_fnames::AbstractVector{<:AbstractString},
+        short_fnames::AbstractVector{<:AbstractString};
         title::String = "fwhm_qc",
         f_out::String = "./test.pdf"
         )
@@ -712,24 +772,10 @@ function qcPlots(
         return p
     end
 
-    #=
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        plotFWHM(
-            grouped_precursors,
-            parsed_fnames[start:stop],
-            title = "FWHM Distribution",
-            f_out = joinpath(qc_plot_folder, "FWHM_"*string(n)*".pdf")
-        )
-
-    end
-    =#
     output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
     try
         if isfile(output_path)
-            safeRm(output_path, nothing)
+            safeRm(output_path)
         end
     catch e
         @user_warn "Could not clear existing file: $e"

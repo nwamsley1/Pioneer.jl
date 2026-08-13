@@ -1,22 +1,50 @@
 name: Build macOS
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   workflow_dispatch:
     inputs:
-      force_pkg:
-        description: "Force pkg signing/notarization/upload for manual runs"
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build, notarize, and upload the native .pkg installer"
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build, notarize, and upload the native .pkg installer"
         required: false
         type: boolean
         default: false
-  workflow_call:
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: 'Build version'
@@ -52,13 +80,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION
         id: get_version
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+          override: ${{ inputs.version_override }}
 
       - name: Install Rosetta 2 (arm64)
         if: matrix.arch == 'arm64'
@@ -76,9 +106,9 @@ jobs:
           raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12.6'  # must satisfy Project.toml's julia = "1.12.5" compat
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
@@ -150,34 +180,37 @@ jobs:
 
       - name: Install dependencies
         run: |
-          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=. \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Validate locked application environment
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --startup-file=no --project=. \
+            packaging/check_app_contract.jl
+          julia --threads auto --startup-file=no --project=. \
+            src/build/check_cpu_dependencies.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v1
+          cache-key: precompile-data-v2-yeast
 
       - name: Compile application
         run: |
-          julia --threads auto --project=dev -e '
-            using PackageCompiler;
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false,
-              force=true,
-              executables=[
-                "GetSearchParams"=>"main_GetSearchParams",
-                "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl"
-            );
-          '
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export GKSwstype=100
+          export GKS_WSTYPE=100
+          unset PIONEER_APP_CPU_TARGET
+          export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
+          mkdir -p "$RUNNER_TEMP/julia-depot"
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            packaging/build_app.jl \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
 
       - name: Download PioneerConverter
         shell: bash
@@ -216,14 +249,65 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      # Convenience only -- NOT on the release path. The shipped .pkg gets its
+      # data/ from the codesign step below, which the release always reaches
+      # (release.yml passes package_installer: true), and the .pkg is the only
+      # artifact this workflow uploads. But asset_path() falls back to
+      # <exe_dir>/../data, so a locally built app tree without data/ fails every
+      # search that relies on default params -- a footgun that has already cost
+      # two manual workarounds. Additive and guarded, so it cannot affect the
+      # package.
+      - name: Copy assets into the app tree
+        shell: bash
+        run: |
+          DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          mkdir -p "$DIST/data"
+          cp -R assets/* "$DIST/data/" || true
+
       - name: Write bundled version
         shell: bash
         run: |
           echo "${{ steps.get_version.outputs.version }}" > \
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
 
-      - name: Codesign & package macOS app (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      # ---- GUI (gui/) -------------------------------------------------
+      # The desktop front end is a Tauri app built from source in this repo. It
+      # deliberately does NOT bundle a copy of the distribution: at runtime it
+      # resolves /usr/local/Pioneer, which is where this same .pkg installs the
+      # CLI. One payload, no duplication.
+      - name: Setup Node (GUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust (GUI)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Build GUI
+        working-directory: gui
+        env:
+          # Letting the Tauri bundler sign is more reliable than signing the
+          # .app afterwards: it signs nested binaries inside-out, which a flat
+          # find-and-sign loop over files cannot do correctly.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        run: |
+          npm ci
+          # --bundles app: only the .app is wanted, since it is staged into the
+          # .pkg below. The default target set also builds a DMG, whose
+          # bundle_dmg.sh drives Finder via AppleScript and fails on a headless
+          # runner — which would fail the whole release build for an artifact
+          # we then throw away.
+          npm run tauri:build -- --bundles app
+
+      - name: Codesign & package macOS app
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
@@ -270,6 +354,17 @@ jobs:
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
           mkdir -p "$PKGROOT/usr/local/$APP/data"
           cp -R assets/* "$PKGROOT/usr/local/$APP/data/" || true
+
+          # The GUI installs to /Applications and finds the CLI at
+          # /usr/local/Pioneer. It is signed by the Tauri bundler above, so it
+          # is deliberately not walked by the per-file signing loop below.
+          GUI_APP="gui/src-tauri/target/release/bundle/macos/Pioneer.app"
+          if [[ -d "$GUI_APP" ]]; then
+            mkdir -p "$PKGROOT/Applications"
+            cp -R "$GUI_APP" "$PKGROOT/Applications/"
+          else
+            echo "GUI bundle not found at $GUI_APP — packaging CLI only"
+          fi
           chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia" || true
 
           # Sign every file with retry
@@ -300,8 +395,8 @@ jobs:
           rm PioneerUnsigned.pkg
 
 
-      - name: Notarize macOS package (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Notarize macOS package
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         timeout-minutes: 240
         env:
           AC_USERNAME: ${{ secrets.NOTARIZE_APPLE_ID }}
@@ -336,26 +431,21 @@ jobs:
           fi
           echo "Notarization successful at $(date)"
 
-      - name: Staple notarization ticket (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Staple notarization ticket
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         run: |
           xcrun stapler staple \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
 
-      - name: Package zipped binaries
-        run: |
-          cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
-
-      - name: Validate signed pkg (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Validate signed pkg
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         run: |
           PKG="Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
           echo "Validating pkg with spctl: $PKG"
           spctl -a -vv -t install "$PKG"
 
       - name: Clean up temporary signing keychain
-        if: always() && github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
+        if: always() && env.MACOS_CERT_P12 != ''
         run: |
           if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
             security delete-keychain "$KEYCHAIN_PATH" || true
@@ -363,15 +453,10 @@ jobs:
           security default-keychain -d user -s login.keychain
           security list-keychains -d user -s login.keychain
 
-      - name: Upload zipped binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-      - name: Upload signed package (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Upload signed package
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-pkg
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
+          retention-days: ${{ inputs.artifact_retention_days }}

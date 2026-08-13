@@ -1,0 +1,544 @@
+name: Validate Installers
+
+on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to validate instead of the caller SHA"
+        required: false
+        type: string
+        default: ""
+      artifact_retention_days:
+        description: "Retention for uploaded installer and smoke-test artifacts"
+        required: false
+        type: number
+        default: 3
+      smoke_artifact_prefix:
+        description: "Prefix used when uploading smoke-test artifacts"
+        required: false
+        type: string
+        default: "pre-release"
+
+permissions:
+  contents: read
+
+env:
+  RAW_FIXTURE_RELEASE: ci-fixtures-v1
+  RAW_FIXTURE_NAME: pioneer-convert-raw-smoke-v1.raw
+  RAW_FIXTURE_SHA256: 86ace2fadee24439af8e42d872db64b55527fd052a642a8a27f0e6deaa91cb2e
+
+jobs:
+  resolve_version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Read Project.toml version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Project.toml | head -n1)
+          if [[ -z "$VERSION" ]]; then
+            echo "ERROR: Could not parse version from Project.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validation version: $VERSION"
+
+  build_linux:
+    name: Build Linux installer
+    needs: resolve_version
+    uses: ./.github/workflows/build_app_linux.yml
+    with:
+      checkout_ref: ${{ inputs.checkout_ref }}
+      package_installer: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
+      version_override: ${{ needs.resolve_version.outputs.version }}
+
+  build_macos:
+    name: Build macOS installers
+    needs: resolve_version
+    uses: ./.github/workflows/build_app_macos.yml
+    with:
+      checkout_ref: ${{ inputs.checkout_ref }}
+      package_installer: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
+      version_override: ${{ needs.resolve_version.outputs.version }}
+    secrets: inherit
+
+  build_windows:
+    name: Build Windows installer
+    needs: resolve_version
+    uses: ./.github/workflows/build_app_windows.yml
+    with:
+      checkout_ref: ${{ inputs.checkout_ref }}
+      package_installer: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
+      version_override: ${{ needs.resolve_version.outputs.version }}
+
+  validate_linux:
+    name: validate linux
+    needs:
+      - build_linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Download Linux installer
+        uses: actions/download-artifact@v8
+        with:
+          name: Pioneer-${{ needs.build_linux.outputs.version }}-linux-x64-deb
+          path: installer
+
+      - name: Install Linux package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo dpkg -i installer/*.deb
+
+      - name: Cache RAW fixture
+        id: raw_fixture_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/ci-raw-fixture
+          key: raw-fixture-${{ runner.os }}-${{ env.RAW_FIXTURE_RELEASE }}
+
+      - name: Download RAW fixture
+        if: steps.raw_fixture_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          mkdir -p "$FIXTURE_DIR"
+          gh release download "$RAW_FIXTURE_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RAW_FIXTURE_NAME" \
+            --pattern "$RAW_FIXTURE_NAME.sha256" \
+            --dir "$FIXTURE_DIR"
+
+      - name: Verify RAW fixture checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          cd "$FIXTURE_DIR"
+          shasum -a 256 -c "$RAW_FIXTURE_NAME.sha256"
+
+      - name: Run Linux smoke validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/pre-release-smoke"
+          PIONEER="/usr/local/bin/pioneer"
+          RAW_FIXTURE="$RUNNER_TEMP/ci-raw-fixture/$RAW_FIXTURE_NAME"
+
+          python3 scripts/prepare_release_smoke_inputs.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-dir "$SMOKE_DIR"
+
+          "$PIONEER" --help > /dev/null
+          "$PIONEER" convert-raw \
+            "$RAW_FIXTURE" \
+            --output-dir "$SMOKE_DIR/raw_arrow" \
+            --concurrent-files 1 \
+            --threads-per-file 2
+          find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" params-predict \
+            "$SMOKE_DIR/generated_from_cli" \
+            "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
+            --params-path "$SMOKE_DIR/build_template.json"
+          test -f "$SMOKE_DIR/build_template.json"
+
+          "$PIONEER" params-search \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
+            "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
+            "$SMOKE_DIR/search_results_from_cli" \
+            --params-path "$SMOKE_DIR/search_template.json"
+          test -f "$SMOKE_DIR/search_template.json"
+
+          "$PIONEER" convert-mzml \
+            "$GITHUB_WORKSPACE/data/precompile/convert_example.mzML" \
+            --output-dir "$SMOKE_DIR/mzml_arrow"
+          find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          test -f "$SMOKE_DIR/predicted_library.poin/config.json"
+
+          "$PIONEER" search "$SMOKE_DIR/search.json"
+          test -f "$SMOKE_DIR/search_results/config.json"
+
+      - name: Upload Linux smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('{0}-smoke-linux', inputs.smoke_artifact_prefix) }}
+          path: ${{ runner.temp }}/pre-release-smoke
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  validate_windows:
+    name: validate windows
+    needs:
+      - build_windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v8
+        with:
+          name: Pioneer-windows-x64-setup
+          path: installer
+
+      - name: Install bundle
+        shell: pwsh
+        run: |
+          # Install via the WiX Burn bootstrapper (PioneerSetup-*.exe) - the artifact users
+          # actually run. It chains the VC++ redistributable ahead of the Pioneer MSI. This
+          # exercises the bundle end to end (unlike installing the bare MSI directly).
+          # NOTE: this runner already has the VC++ runtime, so the redist's DetectCondition
+          # finds it present and SKIPS installation - i.e. this validates that the bundle
+          # builds/installs/runs, but NOT the bare-machine "install the runtime" path. That
+          # case must be checked manually on a runtime-free VM before a release (see
+          # src/build/windows/LIGHTGBM_MSVC.md).
+          $exe = Get-ChildItem -Path installer -Filter *.exe | Select-Object -First 1
+          if (-not $exe) {
+            throw "Setup bundle artifact not found"
+          }
+
+          $process = Start-Process $exe.FullName `
+            -ArgumentList @('/install', '/quiet', '/norestart') `
+            -Wait `
+            -PassThru
+
+          # 0 = success, 3010 = success but reboot required (fine for CI).
+          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+            throw "Bundle installation failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Cache RAW fixture
+        id: raw_fixture_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}\ci-raw-fixture
+          key: raw-fixture-${{ runner.os }}-${{ env.RAW_FIXTURE_RELEASE }}
+
+      - name: Download RAW fixture
+        if: steps.raw_fixture_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $fixtureDir = Join-Path $env:RUNNER_TEMP 'ci-raw-fixture'
+          New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
+          gh release download $env:RAW_FIXTURE_RELEASE `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern $env:RAW_FIXTURE_NAME `
+            --pattern "$($env:RAW_FIXTURE_NAME).sha256" `
+            --dir $fixtureDir
+
+      - name: Verify RAW fixture checksum
+        shell: pwsh
+        run: |
+          $fixtureDir = Join-Path $env:RUNNER_TEMP 'ci-raw-fixture'
+          $fixturePath = Join-Path $fixtureDir $env:RAW_FIXTURE_NAME
+          $checksumPath = Join-Path $fixtureDir "$($env:RAW_FIXTURE_NAME).sha256"
+          $expected = (((Get-Content $checksumPath -Raw).Trim()) -split '\s+')[0].ToLower()
+          $actual = (Get-FileHash -Algorithm SHA256 $fixturePath).Hash.ToLower()
+          if ($actual -ne $expected) {
+            throw "RAW fixture checksum mismatch: expected $expected but got $actual"
+          }
+
+      - name: Run Windows smoke validation
+        shell: pwsh
+        run: |
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'pre-release-smoke'
+          $pioneer = 'C:\Program Files\Pioneer\pioneer.bat'
+          $rawFixture = Join-Path (Join-Path $env:RUNNER_TEMP 'ci-raw-fixture') $env:RAW_FIXTURE_NAME
+
+          python scripts/prepare_release_smoke_inputs.py `
+            --repo-root $env:GITHUB_WORKSPACE `
+            --output-dir $smokeDir
+
+          & $pioneer --help | Out-Null
+          & $pioneer convert-raw `
+            $rawFixture `
+            --output-dir (Join-Path $smokeDir 'raw_arrow') `
+            --concurrent-files 1 `
+            --threads-per-file 2
+          $rawArrowFiles = Get-ChildItem -Path (Join-Path $smokeDir 'raw_arrow') -Filter *.arrow -Recurse
+          if ($rawArrowFiles.Count -eq 0) {
+            throw 'convert-raw did not produce any .arrow output'
+          }
+
+          & $pioneer params-predict `
+            (Join-Path $smokeDir 'generated_from_cli') `
+            (Join-Path $env:GITHUB_WORKSPACE 'data\precompile\ecoli.fasta') `
+            --params-path (Join-Path $smokeDir 'build_template.json')
+          if (-not (Test-Path (Join-Path $smokeDir 'build_template.json'))) {
+            throw 'build_template.json was not created'
+          }
+
+          & $pioneer params-search `
+            (Join-Path $env:GITHUB_WORKSPACE 'test\integration\ecoli_lib.poin') `
+            (Join-Path $env:GITHUB_WORKSPACE 'data\ecoli_test\raw') `
+            (Join-Path $smokeDir 'search_results_from_cli') `
+            --params-path (Join-Path $smokeDir 'search_template.json')
+          if (-not (Test-Path (Join-Path $smokeDir 'search_template.json'))) {
+            throw 'search_template.json was not created'
+          }
+
+          & $pioneer convert-mzml `
+            (Join-Path $env:GITHUB_WORKSPACE 'data\precompile\convert_example.mzML') `
+            --output-dir (Join-Path $smokeDir 'mzml_arrow')
+          $arrowFiles = Get-ChildItem -Path (Join-Path $smokeDir 'mzml_arrow') -Filter *.arrow -Recurse
+          if ($arrowFiles.Count -eq 0) {
+            throw 'convert-mzml did not produce any .arrow output'
+          }
+
+          & $pioneer predict (Join-Path $smokeDir 'build_predict.json')
+          if (-not (Test-Path (Join-Path $smokeDir 'predicted_library.poin\config.json'))) {
+            throw 'predict did not create the expected library output'
+          }
+
+          & $pioneer search (Join-Path $smokeDir 'search.json')
+          if (-not (Test-Path (Join-Path $smokeDir 'search_results\config.json'))) {
+            throw 'search did not create the expected results output'
+          }
+
+      - name: Upload Windows smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('{0}-smoke-windows', inputs.smoke_artifact_prefix) }}
+          path: ${{ runner.temp }}\pre-release-smoke
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  validate_osx_intel:
+    name: validate osx intel
+    needs:
+      - build_macos
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Download macOS Intel installer
+        uses: actions/download-artifact@v8
+        with:
+          name: Pioneer-macos-x64-pkg
+          path: installer
+
+      - name: Install macOS Intel package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo installer -pkg installer/*.pkg -target /
+
+      - name: Cache RAW fixture
+        id: raw_fixture_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/ci-raw-fixture
+          key: raw-fixture-${{ runner.os }}-${{ env.RAW_FIXTURE_RELEASE }}
+
+      - name: Download RAW fixture
+        if: steps.raw_fixture_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          mkdir -p "$FIXTURE_DIR"
+          gh release download "$RAW_FIXTURE_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RAW_FIXTURE_NAME" \
+            --pattern "$RAW_FIXTURE_NAME.sha256" \
+            --dir "$FIXTURE_DIR"
+
+      - name: Verify RAW fixture checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          cd "$FIXTURE_DIR"
+          shasum -a 256 -c "$RAW_FIXTURE_NAME.sha256"
+
+      - name: Run macOS Intel smoke validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/pre-release-smoke"
+          PIONEER="/usr/local/bin/pioneer"
+          RAW_FIXTURE="$RUNNER_TEMP/ci-raw-fixture/$RAW_FIXTURE_NAME"
+
+          python3 scripts/prepare_release_smoke_inputs.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-dir "$SMOKE_DIR"
+
+          "$PIONEER" --help > /dev/null
+          "$PIONEER" convert-raw \
+            "$RAW_FIXTURE" \
+            --output-dir "$SMOKE_DIR/raw_arrow" \
+            --concurrent-files 1 \
+            --threads-per-file 2
+          find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" params-predict \
+            "$SMOKE_DIR/generated_from_cli" \
+            "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
+            --params-path "$SMOKE_DIR/build_template.json"
+          test -f "$SMOKE_DIR/build_template.json"
+
+          "$PIONEER" params-search \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
+            "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
+            "$SMOKE_DIR/search_results_from_cli" \
+            --params-path "$SMOKE_DIR/search_template.json"
+          test -f "$SMOKE_DIR/search_template.json"
+
+          "$PIONEER" convert-mzml \
+            "$GITHUB_WORKSPACE/data/precompile/convert_example.mzML" \
+            --output-dir "$SMOKE_DIR/mzml_arrow"
+          find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          test -f "$SMOKE_DIR/predicted_library.poin/config.json"
+
+          "$PIONEER" search "$SMOKE_DIR/search.json"
+          test -f "$SMOKE_DIR/search_results/config.json"
+
+      - name: Upload macOS Intel smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('{0}-smoke-macos-intel', inputs.smoke_artifact_prefix) }}
+          path: ${{ runner.temp }}/pre-release-smoke
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+  validate_osx_apple_silicon:
+    name: validate osx apple silicon
+    needs:
+      - build_macos
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Download macOS Apple Silicon installer
+        uses: actions/download-artifact@v8
+        with:
+          name: Pioneer-macos-arm64-pkg
+          path: installer
+
+      - name: Install macOS Apple Silicon package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo installer -pkg installer/*.pkg -target /
+
+      - name: Cache RAW fixture
+        id: raw_fixture_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/ci-raw-fixture
+          key: raw-fixture-${{ runner.os }}-${{ env.RAW_FIXTURE_RELEASE }}
+
+      - name: Download RAW fixture
+        if: steps.raw_fixture_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          mkdir -p "$FIXTURE_DIR"
+          gh release download "$RAW_FIXTURE_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RAW_FIXTURE_NAME" \
+            --pattern "$RAW_FIXTURE_NAME.sha256" \
+            --dir "$FIXTURE_DIR"
+
+      - name: Verify RAW fixture checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURE_DIR="$RUNNER_TEMP/ci-raw-fixture"
+          cd "$FIXTURE_DIR"
+          shasum -a 256 -c "$RAW_FIXTURE_NAME.sha256"
+
+      - name: Run macOS Apple Silicon smoke validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/pre-release-smoke"
+          PIONEER="/usr/local/bin/pioneer"
+          RAW_FIXTURE="$RUNNER_TEMP/ci-raw-fixture/$RAW_FIXTURE_NAME"
+
+          python3 scripts/prepare_release_smoke_inputs.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-dir "$SMOKE_DIR"
+
+          "$PIONEER" --help > /dev/null
+          "$PIONEER" convert-raw \
+            "$RAW_FIXTURE" \
+            --output-dir "$SMOKE_DIR/raw_arrow" \
+            --concurrent-files 1 \
+            --threads-per-file 2
+          find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" params-predict \
+            "$SMOKE_DIR/generated_from_cli" \
+            "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
+            --params-path "$SMOKE_DIR/build_template.json"
+          test -f "$SMOKE_DIR/build_template.json"
+
+          "$PIONEER" params-search \
+            "$GITHUB_WORKSPACE/test/integration/ecoli_lib.poin" \
+            "$GITHUB_WORKSPACE/data/ecoli_test/raw" \
+            "$SMOKE_DIR/search_results_from_cli" \
+            --params-path "$SMOKE_DIR/search_template.json"
+          test -f "$SMOKE_DIR/search_template.json"
+
+          "$PIONEER" convert-mzml \
+            "$GITHUB_WORKSPACE/data/precompile/convert_example.mzML" \
+            --output-dir "$SMOKE_DIR/mzml_arrow"
+          find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
+
+          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          test -f "$SMOKE_DIR/predicted_library.poin/config.json"
+
+          "$PIONEER" search "$SMOKE_DIR/search.json"
+          test -f "$SMOKE_DIR/search_results/config.json"
+
+      - name: Upload macOS Apple Silicon smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('{0}-smoke-macos-apple-silicon', inputs.smoke_artifact_prefix) }}
+          path: ${{ runner.temp }}/pre-release-smoke
+          retention-days: ${{ inputs.artifact_retention_days }}

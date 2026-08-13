@@ -16,15 +16,15 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 abstract type KoinaModelType end
-struct InstrumentSpecificModel <: KoinaModelType
-    name::String 
-end
 
+# Instrument-agnostic scalar-intensity model (Prosit). Returns a fixed vector of
+# raw fragment intensities at a single collision energy — no NCE spline (contrast
+# SplineCoefficientModel) and no instrument_type input. Re-added for Prosit support.
 struct InstrumentAgnosticModel <: KoinaModelType
     name::String
 end
 
-struct SplineCoefficientModel <: KoinaModelType 
+struct SplineCoefficientModel <: KoinaModelType
     name::String
 end
 

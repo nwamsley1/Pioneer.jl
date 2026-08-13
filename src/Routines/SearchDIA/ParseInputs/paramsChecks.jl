@@ -26,7 +26,7 @@ using JSON
 
 function checkParams(json_path::String)
     # Read user params
-    user_params = JSON.parsefile(json_path)
+    user_params = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Apply defaults before validation
     defaults = get_default_parameters()
@@ -42,268 +42,74 @@ function checkParams(json_path::String)
 
     # Check top-level sections
     required_sections = [
-        "global", "parameter_tuning", "first_search", "quant_search",
-        "acquisition", "rt_alignment", "optimization", "output", "paths"
+        "global", "search",
+        "acquisition", "optimization", "proteinScoring", "maxLFQ", "output", "paths"
     ]
-    
+
     for section in required_sections
         check_param(params, section, Dict)
     end
 
-    # Validate global parameters
+    # Validate global parameters. Old configs had scoring.q_value_threshold
+    # nested; the flat global.q_value_threshold form is now canonical, with a
+    # backwards-compat fallback in the consumer (_resolve_q_value_threshold).
     global_params = params["global"]
-    check_param(global_params, "isotope_settings", Dict)
-    check_param(global_params["isotope_settings"], "err_bounds_first_pass", Vector)
-    check_param(global_params["isotope_settings"], "err_bounds_quant_search", Vector)
-    check_param(global_params["isotope_settings"], "combine_traces", Bool)
-    check_param(global_params["isotope_settings"], "partial_capture", Bool)
-    check_param(global_params["isotope_settings"], "min_fraction_transmitted", Real)
-    check_param(global_params, "scoring", Dict)
-    check_param(global_params["scoring"], "q_value_threshold", Real)
-
-    check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
-    check_param(global_params["huber_override"], "huber_delta", Real)
-    check_param(global_params, "ms1_scoring", Bool)
-    check_param(global_params, "ms1_quant", Bool)
-
-    # Validate parameter tuning parameters
-    tuning_params = params["parameter_tuning"]
-    check_param(tuning_params, "fragment_settings", Dict)
-    frag_settings = tuning_params["fragment_settings"]
-    check_param(frag_settings, "min_count", Integer)
-    check_param(frag_settings, "max_rank", Integer)
-    # tol_ppm moved to iteration_settings as init_mass_tol_ppm
-    # min_score can be either Integer or Vector of Integers
-    if !haskey(frag_settings, "min_score")
-        throw(InvalidParametersError("Missing parameter: min_score", frag_settings))
-    elseif !(frag_settings["min_score"] isa Integer || frag_settings["min_score"] isa Vector)
-        throw(InvalidParametersError("Invalid type for parameter min_score: expected Integer or Vector, got $(typeof(frag_settings["min_score"]))", frag_settings))
-    elseif frag_settings["min_score"] isa Vector
-        # If it's a vector, make sure all elements are integers
-        for (i, val) in enumerate(frag_settings["min_score"])
-            if !(val isa Integer)
-                throw(InvalidParametersError("Invalid type for min_score[$i]: expected Integer, got $(typeof(val))", frag_settings))
-            end
-        end
-    end
-    check_param(frag_settings, "min_spectral_contrast", Real)
-    check_param(frag_settings, "relative_improvement_threshold", Real)
-    check_param(frag_settings, "min_log2_ratio", Real)
-    check_param(frag_settings, "min_top_n", Vector)
-    check_param(frag_settings, "n_isotopes", Integer)
-    
-    # Check optional intensity filter quantile
-    if haskey(frag_settings, "intensity_filter_quantile")
-        check_param(frag_settings, "intensity_filter_quantile", Real)
-        # Validate it's between 0 and 1
-        if frag_settings["intensity_filter_quantile"] < 0 || frag_settings["intensity_filter_quantile"] >= 1
-            error("parameter_tuning.fragment_settings.intensity_filter_quantile must be between 0 and 1 (got $(frag_settings["intensity_filter_quantile"]))")
-        end
+    if !haskey(global_params, "q_value_threshold") &&
+       !(haskey(global_params, "scoring") &&
+         haskey(global_params["scoring"], "q_value_threshold"))
+        throw(InvalidParametersError(
+            "Missing parameter: global.q_value_threshold", global_params))
     end
 
-    check_param(tuning_params, "search_settings", Dict)
-    search_settings = tuning_params["search_settings"]
-    check_param(search_settings, "min_samples", Integer)
-    check_param(search_settings, "max_presearch_iters", Integer)
-    check_param(search_settings, "frag_err_quantile", Real)
-    
-    # Check optional parameters if present
-    if haskey(search_settings, "topn_peaks")
-        check_param(search_settings, "topn_peaks", Integer)
-    end
-    # max_tolerance_ppm removed - calculated dynamically from iteration_settings
-    
-    # Check iteration_settings
-    if haskey(tuning_params, "iteration_settings")
-        iter_settings = tuning_params["iteration_settings"]
-
-        # Required fields
-        check_param(iter_settings, "ms1_tol_ppm", Real)
-
-        # init_mass_tol_ppm can be either Real (legacy) or Vector (new format)
-        if !haskey(iter_settings, "init_mass_tol_ppm")
-            throw(InvalidParametersError("Missing parameter: init_mass_tol_ppm", iter_settings))
-        end
-
-        tol_value = iter_settings["init_mass_tol_ppm"]
-        if tol_value isa Real
-            # Legacy format - also require scaling parameters
-            check_param(iter_settings, "mass_tolerance_scale_factor", Real)
-            check_param(iter_settings, "iterations_per_phase", Integer)
-
-            # Validate ranges for legacy format
-            if iter_settings["mass_tolerance_scale_factor"] <= 1.0
-                error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
-            end
-        elseif tol_value isa Vector
-            # New format - validate vector
-            if isempty(tol_value)
-                error("iteration_settings.init_mass_tol_ppm vector must not be empty")
-            end
-            if !all(x -> x isa Real && x > 0, tol_value)
-                error("iteration_settings.init_mass_tol_ppm vector must contain only positive numbers")
-            end
-        else
-            throw(InvalidParametersError("Invalid type for parameter init_mass_tol_ppm: expected Real or Vector{Real}, got $(typeof(tol_value))", iter_settings))
-        end
-
-        # Validate remaining ranges
-        if iter_settings["ms1_tol_ppm"] <= 0.0
-            error("iteration_settings.ms1_tol_ppm must be positive")
-        end
-
-        # Only validate iterations_per_phase if it exists (legacy format)
-        if haskey(iter_settings, "iterations_per_phase") && iter_settings["iterations_per_phase"] <= 0
-            error("iteration_settings.iterations_per_phase must be positive")
-        end
-
-        # Validate scan_counts (optional parameter with validation if present)
-        if haskey(iter_settings, "scan_counts")
-            scan_counts = iter_settings["scan_counts"]
-
-            # Must be a vector/array
-            if !(scan_counts isa Vector)
-                error("iteration_settings.scan_counts must be a vector/array, got $(typeof(scan_counts))")
-            end
-
-            # Must not be empty
-            if isempty(scan_counts)
-                error("iteration_settings.scan_counts must not be empty")
-            end
-
-            # All elements must be positive integers
-            if !all(x -> x isa Integer && x > 0, scan_counts)
-                error("iteration_settings.scan_counts must contain only positive integers")
-            end
-
-            # Must be sorted in ascending order
-            if !issorted(scan_counts)
-                error("iteration_settings.scan_counts must be in ascending order")
-            end
-        end
+    # Validate search parameters
+    search_section = params["search"]
+    # n_isotopes lives at search.n_isotopes (flattened from search.fragment_settings.n_isotopes).
+    # Old configs nested under fragment_settings still parse — see backwards-compat
+    # fallback in MainSearchParameters / IntegrateChromatogramSearchParameters.
+    if haskey(search_section, "n_isotopes")
+        check_param(search_section, "n_isotopes", Integer)
+    elseif haskey(search_section, "fragment_settings") &&
+           haskey(search_section["fragment_settings"], "n_isotopes")
+        check_param(search_section["fragment_settings"], "n_isotopes", Integer)
     else
-        error("parameter_tuning.iteration_settings is required")
+        throw(InvalidParametersError(
+            "Missing parameter: search.n_isotopes", search_section))
     end
-
-    if haskey(search_settings, "max_frags_for_mass_err_estimation")
-        check_param(search_settings, "max_frags_for_mass_err_estimation", Integer)
-    end
-    if haskey(search_settings, "max_q_value")
-        check_param(search_settings, "max_q_value", Real)
-        # Validate it's between 0 and 1
-        if search_settings["max_q_value"] <= 0 || search_settings["max_q_value"] > 1
-            error("parameter_tuning.search_settings.max_q_value must be between 0 and 1 (got $(search_settings["max_q_value"]))")
-        end
-    end
-
-    # Validate first search parameters
-    first_search = params["first_search"]
-    check_param(first_search, "fragment_settings", Dict)
-    first_frag = first_search["fragment_settings"]
-    check_param(first_frag, "min_count", Integer)
-    check_param(first_frag, "max_rank", Integer)
-    check_param(first_frag, "min_score", Integer)
-    check_param(first_frag, "min_spectral_contrast", Real)
-    check_param(first_frag, "relative_improvement_threshold", Real)
-    check_param(first_frag, "min_log2_ratio", Real)
-    check_param(first_frag, "min_top_n", Vector)
-    check_param(first_frag, "n_isotopes", Integer)
-
-    check_param(first_search, "scoring_settings", Dict)
-    score_settings = first_search["scoring_settings"]
-    check_param(score_settings, "n_train_rounds", Integer)
-    check_param(score_settings, "max_iterations", Integer)
-    check_param(score_settings, "max_q_value_probit_rescore", Real)
-    check_param(score_settings, "max_PEP", Real)
-    check_param(score_settings, "global_pep_threshold", Real)
-
-    score_settings = first_search["irt_mapping"]
-    check_param(score_settings, "max_prob_to_impute_irt", Real)
-    check_param(score_settings, "fwhm_nstd", Real)
-    check_param(score_settings, "irt_nstd", Real)
-    # Validate quant search parameters
-    quant_search = params["quant_search"]
-    check_param(quant_search, "fragment_settings", Dict)
-    check_param(quant_search, "chromatogram", Dict)
-    
-    quant_frag = quant_search["fragment_settings"]
-    check_param(quant_frag, "min_count", Integer)
-    check_param(quant_frag, "min_y_count", Integer)
-    check_param(quant_frag, "max_rank", Integer)
-    check_param(quant_frag, "min_spectral_contrast", Real)
-    check_param(quant_frag, "min_log2_ratio", Real)
-    check_param(quant_frag, "min_top_n", Vector)
-    check_param(quant_frag, "n_isotopes", Integer)
-
-    chrom_settings = quant_search["chromatogram"]
-    check_param(chrom_settings, "smoothing_strength", Real)
-    check_param(chrom_settings, "padding", Integer)
-    check_param(chrom_settings, "max_apex_offset", Integer)
 
     # Validate acquisition parameters
     acq_params = params["acquisition"]
     check_param(acq_params, "nce", Integer)
-    check_param(acq_params, "quad_transmission", Dict)
-    quad_trans = acq_params["quad_transmission"]
-    check_param(quad_trans, "fit_from_data", Bool)
-    check_param(quad_trans, "overhang", Real)
-    check_param(quad_trans, "smoothness", Real)
-
-    # Validate RT alignment parameters
-    rt_params = params["rt_alignment"]
-    check_param(rt_params, "n_bins", Integer)
-    check_param(rt_params, "bandwidth", Real)
-    check_param(rt_params, "sigma_tolerance", Integer)
-    check_param(rt_params, "min_probability", Real)
 
     # Validate optimization parameters
     opt_params = params["optimization"]
-    check_param(opt_params, "deconvolution", Dict)
     check_param(opt_params, "machine_learning", Dict)
-
-    deconv = opt_params["deconvolution"]
-
-    # Check MS1 and MS2 specific parameters
-    check_param(deconv, "ms1", Dict)
-    check_param(deconv, "ms2", Dict)
-
-    ms1_params = deconv["ms1"]
-    check_param(ms1_params, "lambda", Real)
-    check_param(ms1_params, "reg_type", String)
-    check_param(ms1_params, "huber_delta", Real)
-
-    ms2_params = deconv["ms2"]
-    check_param(ms2_params, "lambda", Real)
-    check_param(ms2_params, "reg_type", String)
-    check_param(ms2_params, "huber_delta", Real)
-
-    # Check shared parameters
-    check_param(deconv, "huber_exp", Real)
-    check_param(deconv, "huber_iters", Integer)
-    check_param(deconv, "newton_iters", Integer)
-    check_param(deconv, "newton_accuracy", Real)
-    check_param(deconv, "max_diff", Real)
 
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Real)
-    check_param(ml_params, "min_trace_prob", Real)
-    check_param(ml_params, "max_q_value_mbr_itr", Real)
-    check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
-    check_param(ml_params, "spline_points", Integer)
-    check_param(ml_params, "interpolation_points", Integer)
-    check_param(ml_params, "n_quantile_bins", Integer)
+    check_param(ml_params, "pep_bin_size", Integer)
 
-    # Validate n_quantile_bins bounds (UInt16 limit)
-    if ml_params["n_quantile_bins"] > 65535
-        throw(InvalidParametersError("n_quantile_bins must be ≤ 65535 (UInt16 limit), got $(ml_params["n_quantile_bins"])", ml_params))
+    check_param(opt_params, "chromatogram_integration", Dict)
+    chrom_params = opt_params["chromatogram_integration"]
+    check_param(chrom_params, "trace_mode", String)
+    if !(chrom_params["trace_mode"] in ("combined", "separate"))
+        throw(InvalidParametersError(
+            "Invalid parameter optimization.chromatogram_integration.trace_mode: expected \"combined\" or \"separate\"",
+            chrom_params,
+        ))
     end
-    if ml_params["n_quantile_bins"] < 1
-        throw(InvalidParametersError("n_quantile_bins must be ≥ 1, got $(ml_params["n_quantile_bins"])", ml_params))
+    check_param(chrom_params, "deconvolution_solver", String)
+    if !(chrom_params["deconvolution_solver"] in ("huber", "pmm"))
+        throw(InvalidParametersError(
+            "Invalid parameter optimization.chromatogram_integration.deconvolution_solver: expected \"huber\" or \"pmm\"",
+            chrom_params,
+        ))
     end
 
-    # Validate Protein Inference parameters
-    output = params["proteinInference"]
-    check_param(output, "min_peptides", Integer)
+    # Validate protein scoring parameters
+    protein_scoring = params["proteinScoring"]
+    check_param(protein_scoring, "min_peptides", Integer)
+    check_param(protein_scoring, "global_protein_inference", Bool)
+    check_param(protein_scoring, "write_qc_plots", Bool)
 
     # Validate MaxLFQ parameters
     output = params["maxLFQ"]
@@ -314,7 +120,6 @@ function checkParams(json_path::String)
     check_param(output, "write_csv", Bool)
     check_param(output, "delete_temp", Bool)
     check_param(output, "write_decoys", Bool)
-    check_param(output, "plots_per_page", Integer)
 
     # Validate path parameters
     paths = params["paths"]

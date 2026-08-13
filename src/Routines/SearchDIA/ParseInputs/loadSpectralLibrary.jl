@@ -61,42 +61,51 @@ end
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
-    f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
-    f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
-    f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
-
-
-    presearch_f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragments.arrow"))
-    presearch_f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_rt_bins.arrow"))
-    presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
-
-
     # Note: Can't use @user_info here as LoggingSystem is loaded after ParseInputs
     # This message will be captured by the logging system when SearchDIA runs
-    # println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
     spec_lib = Dict{String, Any}()
 
-    # Load detailed fragments (load_detailed_frags handles backwards compatibility)
-    detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR, "detailed_fragments.jls"))
+    # Load detailed fragments and convert to CompactFrag for the search pipeline
+    frag_path = joinpath(SPEC_LIB_DIR, "detailed_fragments")
+    raw_frags = if isfile(frag_path * ".jls")
+        deserialize_from_jls(frag_path * ".jls")
+    elseif isfile(frag_path * ".jld2")
+        @user_warn "Loading legacy JLD2 format for detailed_fragments. Consider rebuilding library."
+        jldopen(frag_path * ".jld2", "r") do file
+            read(file, "data")
+        end
+    else
+        error("Fragment file not found: $(frag_path).jls or $(frag_path).jld2")
+    end
+    # Convert to compact types for the search pipeline.
+    detailed_frags = if eltype(raw_frags) <: DetailedFrag
+        map(CompactFrag, raw_frags)
+    elseif eltype(raw_frags) <: SplineDetailedFrag
+        map(SplineCompactFrag, raw_frags)
+    elseif eltype(raw_frags) <: CompactFrag || eltype(raw_frags) <: SplineCompactFrag
+        raw_frags  # already compact
+    else
+        raw_frags  # unknown type — pass through
+    end
 
     # Load precursor-to-fragment indices with backwards compatibility
     prec_frag_ranges = if isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
         deserialize_from_jls(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
     elseif isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))
-        @warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
+        @user_warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
         load(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     else
         error("precursor_to_fragment_indices file not found in $SPEC_LIB_DIR")
     end
 
     library_fragment_lookup_table = nothing
-    if (eltype(detailed_frags).name == (eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name))
+    if eltype(detailed_frags) <: SplineCompactFrag || eltype(detailed_frags) <: SplineDetailedFrag
         try
             # Load spline knots with backwards compatibility
             spl_knots = if isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
                 deserialize_from_jls(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
             elseif isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))
-                @warn "Loading legacy JLD2 format for spline_knots. Consider rebuilding library."
+                @user_warn "Loading legacy JLD2 format for spline_knots. Consider rebuilding library."
                 load(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))["spl_knots"]
             else
                 error("spline_knots file not found in $SPEC_LIB_DIR")
@@ -124,36 +133,40 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
-    f_index = FragmentIndex(
-        f_index_frag_bins[:FragIndexBin],
-        f_index_rt_bins[:FragIndexBin],
-        f_index_fragments[:IndexFragment],
-    );
-    presearch_f_index = FragmentIndex(
-        presearch_f_index_frag_bins[:FragIndexBin],
-        presearch_f_index_rt_bins[:FragIndexBin],
-        presearch_f_index_fragments[:IndexFragment],
-    );
-    spec_lib["f_index"] = f_index;
-    spec_lib["presearch_f_index"] = presearch_f_index;
-    spec_lib["precursors"] = precursors;
-    spec_lib["proteins"] = proteins;
+    # Load partitioned fragment indexes
+    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "partitioned_fragment_index.jls"))
+    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "presearch_partitioned_fragment_index.jls"))
+
+    # Load the BuildSpecLib config (if present) to derive the output-column
+    # exclusion policy; falls back to an empty policy when absent.
+    build_config_path = joinpath(SPEC_LIB_DIR, "config.json")
+    output_schema_policy = if isfile(build_config_path)
+        try
+            OutputSchemaPolicy(JSON.parsefile(build_config_path, dicttype=Dict{String,Any}))
+        catch
+            OutputSchemaPolicy()
+        end
+    else
+        OutputSchemaPolicy()
+    end
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
         return FragmentIndexLibrary(
-            spec_lib["presearch_f_index"], 
-            spec_lib["f_index"], 
-            SetPrecursors(spec_lib["precursors"]), 
-            SetProteins(spec_lib["proteins"]),
-            spec_lib["f_det"]
+            presearch_partitioned_index,
+            partitioned_index,
+            SetPrecursors(precursors),
+            SetProteins(proteins),
+            spec_lib["f_det"],
+            output_schema_policy
         )
     else
         return SplineFragmentIndexLibrary(
-            spec_lib["presearch_f_index"], 
-            spec_lib["f_index"], 
-            SetPrecursors(spec_lib["precursors"]), 
-            SetProteins(spec_lib["proteins"]),
-            spec_lib["f_det"]
+            presearch_partitioned_index,
+            partitioned_index,
+            SetPrecursors(precursors),
+            SetProteins(proteins),
+            spec_lib["f_det"],
+            output_schema_policy
         )
     end
 end

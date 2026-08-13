@@ -16,25 +16,35 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Make a request to the Koina API with retries.
+Make a real HTTP request to the Koina API with retries. Production path.
+Tests typically don't call this directly — they call `make_koina_request`
+which dispatches through the active `AbstractKoinaClient` (see
+koina_client.jl) and may resolve to a `SyntheticKoinaClient`.
+
+The `poster` kwarg is a dependency-injection seam for unit tests: the
+default is `HTTP.post`, but tests can pass a callable returning a
+mock response object (anything with a `.body::Vector{UInt8}` field
+holding JSON-encoded bytes) to exercise the retry / error-handling
+logic without network access.
 """
-function make_koina_request(json_data::String, 
-                          model_url::String; 
+function make_koina_http_request(json_data::String,
+                          model_url::String;
                           max_attempts::Int = 100,
-                          retry_delay::Float64 = 1.0)
+                          retry_delay::Float64 = 1.0,
+                          poster = HTTP.post)
     attempt = 1
-    
+
 
     while attempt <= max_attempts
         try
-            response = JSON.parse(String(HTTP.post(model_url, body=json_data).body))
+            response = JSON.parse(String(poster(model_url, body=json_data).body), dicttype=Dict{String,Any})
             if !haskey(response, "error")
                 return response
             end
             throw(KoinaRequestError("Error in response", attempt, response))
         catch e
             if attempt == max_attempts
-                @error "Failed after $max_attempts attempts" exception=e
+                @user_error "Failed after $max_attempts attempts: $e"
                 rethrow(e)
             end
             if e isa KoinaRequestError
@@ -48,6 +58,16 @@ function make_koina_request(json_data::String,
     end
     error("Koina API request failed after $max_attempts attempts. This may indicate network issues, API rate limiting, or service unavailability. Check your internet connection and try again later.")
 end
+
+"""
+    make_koina_request(json_data, model_url) -> Dict{String,Any}
+
+Public entry point. Routes through the currently active `AbstractKoinaClient`
+(`HttpKoinaClient` by default, `SyntheticKoinaClient` when installed via
+`with_koina_client(...)` for offline tests).
+"""
+make_koina_request(json_data::String, model_url::String; kwargs...) =
+    koina_request(current_koina_client(), json_data, model_url)
 
 
 
@@ -67,6 +87,13 @@ function make_koina_batch_requests(json_vec::Vector{String},
     results    = Vector{Any}(undef, n)          # output buffer
     job_chan   = Channel{Tuple{Int,String}}(n)  # work queue
 
+    # Capture the active Koina client from the calling task. Each @async
+    # worker starts with a fresh task_local_storage, so without this the
+    # workers fall back to the default HttpKoinaClient — bypassing any
+    # RecordingKoinaClient / FixtureKoinaClient / SyntheticKoinaClient
+    # installed by the caller via `with_koina_client`.
+    parent_client = current_koina_client()
+
     # ───────────────── fill the channel (producer) ────────────────────
     @async begin
         for (idx, js) in pairs(json_vec)
@@ -77,8 +104,10 @@ function make_koina_batch_requests(json_vec::Vector{String},
 
     # ───────────────── worker task definition ─────────────────────────
     function worker()
-        for (idx, js) in job_chan               # blocks until work available
-            results[idx] = make_koina_request(js, model_url)
+        with_koina_client(parent_client) do
+            for (idx, js) in job_chan           # blocks until work available
+                results[idx] = make_koina_request(js, model_url)
+            end
         end
         return nothing
     end

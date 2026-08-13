@@ -23,9 +23,7 @@ target-decoy approach, with support for library target/decoy ratio correction.
 """
 
 """
-    get_qvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}; 
-                 doSort::Bool=true, fdr_scale_factor::Float32=1.0f0) where {T,U<:AbstractFloat}
-    get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool})
+    get_qvalues!(probs, labels, qvals; doSort=true, fdr_scale_factor=1.0f0)
 
 Calculates q-values (false discovery rate estimates) for PSMs.
 
@@ -74,8 +72,6 @@ function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qv
     end
 end
 
-# DataFrame convenience method
-get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = get_qvalues!(PSMs, allowmissing(probs), allowmissing(labels))
 
 """
     get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fdrs::AbstractVector{T};
@@ -102,10 +98,8 @@ function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fd
         return
     end
 
-    # sort by score if requested
     order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : collect(eachindex(scores))
 
-    # prepare labels and weights
     labels = Vector{Float64}(undef, N + 1)
     weights = Vector{Float64}(undef, N + 1)
     labels[1] = 0.0              # pseudo observation
@@ -113,7 +107,6 @@ function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fd
 
     @inbounds for j in 1:N
         idx = order[j]
-        # decoy = 1.0, target = 0.0
         labels[j+1] = is_target[idx] ? 0.0 : 1.0
         weights[j+1] = is_target[idx] ? 1.0 : float(fdr_scale_factor)
     end

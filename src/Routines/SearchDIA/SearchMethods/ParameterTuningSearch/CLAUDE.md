@@ -1,395 +1,132 @@
-# CLAUDE.md - ParameterTuningSearch Implementation Guide
+# CLAUDE.md - ParameterTuningSearch
 
-This file provides comprehensive documentation of the ParameterTuningSearch module in Pioneer.jl, detailing the current robust 3-phase convergence strategy with scan scaling.
+Guidance for Claude Code when working with `ParameterTuningSearch` — the first search method in the SearchDIA pipeline, responsible for fitting per-file fragment mass-error and RT-to-iRT alignment models before the rest of the pipeline runs.
 
-## Purpose
+## Algorithm: scout → collection → MS1 fit
 
-ParameterTuningSearch is the first search method in the Pioneer.jl pipeline, responsible for establishing optimal fragment mass tolerance and retention time alignment models. It serves as the foundation for all subsequent search methods by calibrating critical parameters based on the actual data characteristics.
-
-## Core Algorithm Flow
-
-### High-Level Control Flow Schematic
+The historical "3-phase bias-shift × multi-score × scan-scaling" iteration was replaced by a simpler scout-then-collect flow, followed by an MS1 mass-error fit using the MS2-accepted PSMs:
 
 ```
-╔═══════════════════════════════════════════════════════════════════╗
-║                     PARAMETERTUNINGSEARCH                        ║
-║                  Mass Error & RT Calibration                     ║
-╚═══════════════════════════════════════════════════════════════════╝
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │ Initialize Models   │
-                    │ - Mass Error: ±5ppm │
-                    │ - Quad: Gaussian    │
-                    └─────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │     SCAN SCALING LOOP (Outer Loop)          │
-        │  Initial: 500 scans → Scale by 10x → Max: 80k│
-        └──────────────────────────────────────────────┘
-                               │
-                  ┌────────────┴────────────┐
-                  ▼                          ▼
-        ┌─────────────────┐       ┌──────────────────┐
-        │ Create/Expand   │       │ If Failed:       │
-        │ FilteredSpectra │       │ Scale scans 10x  │
-        └─────────────────┘       └──────────────────┘
-                  │
-                  ▼
-    ┌──────────────────────────────────────────┐
-    │        3-PHASE LOOP (Middle Loop)        │
-    │   Phase 1: Bias = 0 ppm                  │
-    │   Phase 2: Bias = +max_tol ppm           │
-    │   Phase 3: Bias = -max_tol ppm           │
-    └──────────────────────────────────────────┘
-                  │
-         ┌────────┴────────┬────────────┐
-         ▼                 ▼            ▼
-    [Phase 1]         [Phase 2]    [Phase 3]
-    Zero Bias      Positive Bias  Negative Bias
-         │                 │            │
-         └────────┬────────┴────────────┘
-                  ▼
-    ┌──────────────────────────────────────────┐
-    │    SCORE THRESHOLD LOOP (per Phase)      │
-    │    Tries each min_score in sequence      │
-    │    e.g., [22, 17, 15]                    │
-    └──────────────────────────────────────────┘
-                  │
-         ┌────────┼────────┬────────────┐
-         ▼        ▼        ▼            ▼
-    [Score 22] [Score 17] [Score 15] [Score N]
-         │        │        │            │
-         └────────┴────────┴────────────┘
-                  ▼
-    ┌──────────────────────────────────────────┐
-    │   ITERATION LOOP (Inner Loop per Score)  │
-    │      Up to 3 iterations per score        │
-    └──────────────────────────────────────────┘
-                  │
-                  ▼
-         [See Mass Error Estimation 
-          Process Flow Below]
+┌─────────────────────────────────────────────────────────┐
+│ initialize_models!                                      │
+│  - Mass error model: bias=0, tol=±WIDE_SCOUT_TOL_PPM   │
+│    (= 100 ppm; placeholder, overwritten by phase 1)    │
+│  - Quad transmission: SquareQuadModel(0.0)             │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 1: Wide Scout (MS2)                               │
+│  Mass model: ±WIDE_SCOUT_TOL_PPM (100 ppm hardcoded)   │
+│  Target PSMs: WIDE_SCOUT_TARGET_PSMS                    │
+│  Initial scans: WIDE_SCOUT_INITIAL_SCANS                │
+│  Top-N peaks: TUNING_TOPN_PEAKS                         │
+│  → Fit bias + Gaussian σ from wide-scout fragments      │
+│  → Replaces the placeholder mass error model            │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 2: Collection (MS2)                               │
+│  Mass model: from Phase 1 fit                           │
+│  Target PSMs: TUNING_MIN_SAMPLES (1200)                 │
+│  Initial scans: TUNING_MIN_COLLECT_SCANS (5000)         │
+│  → Refine model with PSMs collected at the fitted tol  │
+│  → Fit final RT alignment spline                        │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 3: MS1 Mass-Error Fit                             │
+│  Input: MS2-accepted PSMs from Phase 2                  │
+│  For each PSM: find nearest MS1 scan by RT, match       │
+│  M+0/M+1/M+2 within ±MS1_DIAG_WINDOW_PPM (100 ppm) of   │
+│  the predicted precursor m/z; record ppm residuals.     │
+│  Fit MassErrorModel(median, ±MS1_DIAG_TOL_K_MAD·MAD)    │
+│  (k = 5). Install via setMs1MassErrorModel! and write   │
+│  qc_plots/ms1_mass_error_plots/{file}.pdf.              │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+              Store models in SearchContext
 ```
 
-### Mass Error Estimation Process Flow
+All tolerance/scan/score thresholds are constants in `constants.jl` (`WIDE_SCOUT_TOL_PPM`, `WIDE_SCOUT_TARGET_PSMS`, `WIDE_SCOUT_INITIAL_SCANS`, `TUNING_TOPN_PEAKS`, `TUNING_MIN_SAMPLES`, `TUNING_MIN_COLLECT_SCANS`, `TUNING_SCORE_TIERS`). None are user-tunable — the historical `parameter_tuning.*` JSON section was removed; `init_mass_tol_ppm_guess` was always shadowed by the wide scout's hardcoded 100 ppm anyway.
 
-```
-╔═══════════════════════════════════════════════════════════════════╗
-║              MASS ERROR ESTIMATION WITHIN EACH ITERATION          ║
-╚═══════════════════════════════════════════════════════════════════╝
+## Files
 
-Step 0: Initial PSM Collection (Before Iteration Loop)
-┌──────────────────────────────────────────────────────────────────┐
-│  1. Fragment Index Search with current tolerance + phase bias    │
-│  2. Score PSMs (spectral contrast, matched ratio)                │
-│  3. Filter by FDR (q-value < 0.01)                              │
-│  4. Attempt convergence check                                    │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-                    [If not converged,
-                     enter iteration loop]
-                            │
-                            ▼
-Step 1: Expand Mass Tolerance
-┌──────────────────────────────────────────────────────────────────┐
-│  tolerance *= mass_tolerance_scale_factor (default: 2.0)         │
-│  Apply to both left and right tolerances                         │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 2: Collect PSMs for Bias Detection
-┌──────────────────────────────────────────────────────────────────┐
-│  Library Search Pipeline:                                        │
-│  1. Fragment index search with expanded tolerance                │
-│  2. Match fragments to spectra                                   │
-│  3. Calculate match scores                                       │
-│  4. Return PSM DataFrame                                         │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 3: Fit Mass Error Model for Bias
-┌──────────────────────────────────────────────────────────────────┐
-│  Fragment-Level Mass Error Calculation:                          │
-│  1. Extract matched fragments from PSMs                          │
-│  2. Calculate PPM error for each fragment:                       │
-│     ppm_err = (observed_mz - theoretical_mz) / (theoretical/1e6) │
-│  3. Filter by intensity (remove low-quality matches)             │
-│  4. Calculate median PPM error → systematic bias                 │
-│  5. Subtract bias, calculate MAD for tolerance bounds            │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 4: Adjust Bias in Mass Error Model
-┌──────────────────────────────────────────────────────────────────┐
-│  Update MassErrorModel with detected bias:                       │
-│  - Keep expanded tolerance from Step 1                           │
-│  - Replace bias offset with newly calculated value               │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 5: Collect PSMs with Adjusted Bias
-┌──────────────────────────────────────────────────────────────────┐
-│  Repeat library search with bias-corrected model                 │
-│  Should yield more/better PSMs if bias was significant           │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 6: Fit Final Models
-┌──────────────────────────────────────────────────────────────────┐
-│  1. Mass Error Model:                                            │
-│     - Refit using all fragments from Step 5 PSMs                 │
-│     - Calculate final bias and tolerance bounds                  │
-│  2. RT Alignment Model:                                          │
-│     - Fit spline: empirical_RT → library_iRT                     │
-│     - Remove outliers iteratively                                │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-Step 7: Convergence Check & Optional Expansion
-┌──────────────────────────────────────────────────────────────────┐
-│  Convergence Criteria:                                           │
-│  - PSM count ≥ min_psms (default: 100)                          │
-│  - |mass_offset| < init_tolerance/4                              │
-│  - Fitted tolerance reasonable                                   │
-│                                                                  │
-│  If Converged:                                                   │
-│  - Test 1.5x tolerance expansion                                 │
-│  - If >10% more PSMs, refit with expanded set                    │
-│  - Store final models in SearchContext                           │
-└──────────────────────────────────────────────────────────────────┘
-```
+| File | Purpose |
+|---|---|
+| `ParameterTuningSearch.jl` | Main implementation: `initialize_models!`, scout/collect phases, `store_final_results!`, summarize_results! |
+| `types.jl` | `ParameterTuningSearchParameters` (no JSON-fed fields), `ParameterTuningSearchResults`, `IterationState`, `ParameterTuningDiagnostics`, `ParameterHistory` |
+| `utils.jl` | Per-file helpers: `library_search`, `add_tuning_search_columns!`, `filter_and_score_psms!`, `fit_mass_err_model`, `fit_irt_model`, `fit_intensity_mass_error.jl`. Operates on a `Vector{MassErrSample}` (12-byte struct) rather than the deleted `Vector{FragmentMatch}`. |
+| `constants.jl` | All hardcoded tuning constants (replaces the deleted `parameter_tuning` JSON section). |
+| `fit_intensity_mass_error.jl` | Optional `IntensityMassErrorModel` fitting pipeline. Defines `EMPK_QUANTILE = 0.95` and `EMPK_CLAMP_HI = 4.5f0` for the coverage-k fit. |
+| `ms1_diagnostic.jl` | MS1 mass-error fit: `collect_ms1_residuals` (per-PSM ±100 ppm isotopologue match), `fit_ms1_model_from_residuals` (median + 5·MAD), `generate_ms1_residual_histogram`. Constants `MS1_DIAG_WINDOW_PPM = 100.0f0`, `MS1_DIAG_TOL_K_MAD = 5.0f0`. |
 
-## Current Implementation: 3-Phase Convergence with Multi-Score Search
+## Mass error fitting
 
-### Overview
-
-The module implements a sophisticated convergence strategy that combines:
-1. **3-phase search** with different bias shifts to explore the parameter space
-2. **Multi-score thresholds** within each phase to handle varying data quality
-3. **Scan count scaling** between attempts to gather more data when needed
-4. **Mass tolerance expansion** within iterations to progressively widen the search
-5. **Post-convergence optimization** to capture additional PSMs
-
-### Key Configuration Parameters
-
-```json
-{
-  "parameter_tuning": {
-    "fragment_settings": {
-      "min_score": [22, 17, 15],  // Can be single value or array
-      "min_count": 7,
-      "min_spectral_contrast": 0.5
-    },
-    "iteration_settings": {
-      "init_mass_tol_ppm": [20.0, 30.0],  // Explicit tolerances per iteration
-      "ms1_tol_ppm": 20.0,
-      "scan_counts": [500, 5000, 50000, 80000]  // Explicit scan counts to try
-    }
-  }
-}
-```
-
-### Multi-Score Search Feature (2025-01)
-
-The `min_score` parameter now accepts an array of thresholds to try sequentially:
-- **Single value**: `"min_score": 22` - Backwards compatible
-- **Array**: `"min_score": [22, 17, 15]` - Tries each threshold in order
-
-Each phase independently explores all score thresholds with its specific bias setting:
-- Tries stricter thresholds first (higher scores = better quality)
-- Relaxes to lower thresholds only if needed
-- Returns immediately upon convergence with any score
-- Logs clearly which phase and score achieved convergence
-
-### Phase Strategy
-
-**Phase 1: Zero Bias**
-- Starts with no bias shift
-- Explores the nominal mass range
-- Most likely to succeed for well-calibrated instruments
-
-**Phase 2: Positive Bias Shift**
-- Applies positive bias shift equal to maximum theoretical tolerance
-- Explores systematic positive mass errors
-- Handles instruments with positive calibration drift
-
-**Phase 3: Negative Bias Shift**
-- Applies negative bias shift equal to maximum theoretical tolerance
-- Explores systematic negative mass errors
-- Handles instruments with negative calibration drift
-
-### Post-Convergence Tolerance Expansion
-
-After achieving convergence, the algorithm tests whether expanding the collection tolerance by 50% yields significantly more PSMs:
-
+`fit_mass_err_model` consumes a `Vector{MassErrSample}` written by `run_fused_masserr!` (the ParameterTuning variant of `run_fused!` in `CommonSearchUtils/fusedMatch.jl`). Each sample is 12 bytes:
 ```julia
-function test_tolerance_expansion!(...)
-    expanded_tolerance = collection_tolerance * 1.5
-    expanded_psms = collect_with_expanded_tolerance()
-    
-    if psm_count_increased
-        refit_model_with_expanded_psms()
-        return expanded_results
-    else
-        return original_results
-    end
+struct MassErrSample
+    theoretical_mz::Float32
+    observed_mz::Float32
+    intensity::Float32
 end
 ```
+This replaced the 32-byte `FragmentMatch` per-thread buffer (~2.7× smaller; 320 KB → 120 KB per thread on Olsen Astral).
 
-## Core Components
+## Convergence
 
-### PSM Collection Pipeline
+A phase is considered converged when:
+1. PSM count ≥ `min_psms` (constant)
+2. |fitted bias| < `init_tolerance / 4`
+3. Fitted tolerance is within sane bounds
 
-1. **Library Search** (`library_search`)
-   - Fragment index search for candidate precursors
-   - Detailed PSM generation with spectral matching
-   - Returns DataFrame of PSMs with scores
+If Phase 1 (wide scout) fails to converge after exhausting its scan budget, the run falls back to:
+- A SquareQuad transmission model (already set by `initialize_models!`)
+- Conservative defaults (±50 ppm) for the mass error model
+and emits a `@user_warn` so downstream methods know calibration was approximate. `get_fallback_parameters` can also borrow from earlier successfully-tuned files in a multi-file run.
 
-2. **Column Addition** (`add_tuning_search_columns!`)
-   - Adds RT, iRT, charge, TIC columns
-   - Calculates matched ratios
-   - Prepares for scoring
+## MS1 mass-error fit
 
-3. **Scoring and Filtering** (`filter_and_score_psms!`)
-   - Probit regression scoring
-   - FDR control with q-values
-   - Best PSM per precursor selection
+After the MS2 fit completes per file, `collect_ms1_residuals` reuses the same MS2-accepted PSMs to fit an MS1 model:
 
-### Model Fitting
+1. Build a `scan_id → nearest MS1 scan` map (mirrors `MainSearch/features.jl:add_ms1_lookup_features!`).
+2. For each PSM, look at the precursor's predicted M+0/M+1/M+2 m/z. Search the nearest MS1 spectrum within ±`MS1_DIAG_WINDOW_PPM` (100 ppm) of each target.
+3. Record signed `(observed − theoretical)/theoretical × 1e6` ppm residuals (one per matched isotopologue).
+4. `fit_ms1_model_from_residuals` returns `MassErrorModel(median, (k·MAD, k·MAD))` with `k = MS1_DIAG_TOL_K_MAD = 5`. MAD is normalized so 1·MAD ≈ σ for Gaussian residuals.
+5. Install via `setMs1MassErrorModel!(search_context, ms_file_idx, model)`.
 
-**RT Model** (`fit_irt_model`):
-- Spline fitting with outlier removal
-- Returns SplineRtConversionModel
-- Stores RT/iRT pairs for QC plots
+The MainSearch `add_ms1_lookup_features!` and `IntegrateChromatogramsSearch` MS1 path both read this model: target m/z is shifted by the fitted bias before peak matching, and the tolerance window is ±5·MAD.
 
-**Mass Error Model** (`fit_mass_err_model`):
-- Fragment-based mass error estimation
-- Intensity filtering for robust fitting
-- Returns MassErrorModel with offset and tolerances
+Diagnostic histogram per file saved to `qc_plots/ms1_mass_error_plots/{file}.pdf` (median = red vline; ±k·MAD = black dashed).
 
-### Convergence Criteria
+Fallback: if fewer than 10 residuals are collected the fit returns `nothing` and the per-file model dict is left unset; `getMs1MassErrorModel` then returns the default ±30 ppm placeholder and emits a `@user_warn`.
 
-Convergence is achieved when:
-1. Sufficient PSMs collected (≥ `min_psms`)
-2. Mass offset is reasonable (< init_tolerance/4)
-3. Fitted tolerance is not excessive
-4. Mass error distribution is stable
+## Outputs
 
-## Fallback Strategies
+Per file, ParameterTuningSearch:
+- Updates `SearchContext.mass_error_model[ms_file_idx]` (plot saved to `qc_plots/mass_err_plots/`)
+- Updates `SearchContext.ms1_mass_error_model[ms_file_idx]` (plot saved to `qc_plots/ms1_mass_error_plots/`)
+- Updates `SearchContext.irt_rt_map[ms_file_idx]` and `rt_irt_map` (plot saved to `qc_plots/rt_alignment_plots/`)
+- Updates `SearchContext.irt_errors[ms_file_idx]`
 
-When convergence fails after all attempts:
+These models are consumed by every subsequent search method.
 
-1. **Parameter Borrowing** (`get_fallback_parameters`):
-   - Attempts to borrow from successfully tuned neighboring files
-   - Prefers files processed earlier in the run
-   - Falls back to conservative defaults if no files available
+## Things that have been removed
 
-2. **Conservative Defaults**:
-   - Mass tolerance: ±50 ppm
-   - RT model: Identity transformation
-   - Logs warning for user awareness
+The historical doc described:
+- 3-phase bias-shift loop (zero / +max_tol / −max_tol) — gone; replaced by single wide-scout phase whose 100 ppm window is wide enough to absorb any bias
+- Multi-score iteration (`min_score: [22, 17, 15]`) inside each phase — gone; the scout uses a single threshold
+- `mass_tolerance_scale_factor` expansion within iterations — gone; the wide scout's 100 ppm is the only setting
+- `IterationSettings` struct + `init_mass_tol_ppm_guess` JSON knob — deleted
+- 5 ppm "initial models" — replaced by a 100 ppm placeholder that the wide scout immediately overwrites
 
-## Output and QC
+If you find references to those in older notes/docs/PRs, they describe a previous design.
 
-### Generated Files
-- RT alignment plots per file
-- Mass error distribution plots
-- Combined PDFs for all files
-- Diagnostic summary in logs
+## Common pitfalls
 
-### SearchContext Updates
-- Stores calibrated MassErrorModel
-- Stores RT-to-iRT conversion model
-- Updates IRT error estimates
-- Makes parameters available to downstream methods
-
-## Key Implementation Details
-
-### Thread Safety
-- Each thread has independent SearchDataStructures
-- Results collected in thread-local storage
-- Final merging in single-threaded context
-
-### Memory Management
-- FilteredMassSpecData created once and reused
-- Scans appended incrementally
-- Efficient sparse matrix operations
-
-### Performance Optimizations
-- Binary search in fragment index
-- Exponential bound expansion
-- TopN peak filtering for large tolerances
-- Parallel processing where possible
-
-## Common Issues and Solutions
-
-### Issue: Phase 2/3 Failing with 0 PSMs
-**Cause**: Bias shift calculation was using uninitialized max tolerance
-**Solution**: Calculate bias shift from iteration settings correctly
-
-### Issue: Scan Scaling Within Phases
-**Cause**: Scan count was doubling within phase iterations
-**Solution**: Separated scan scaling (between attempts) from mass tolerance scaling (within phases)
-
-### Issue: Parameter Extraction Errors
-**Cause**: Looking for parameters in wrong JSON hierarchy
-**Solution**: Properly extract from `iteration_settings` under `tuning_params`
-
-### Issue: Convergence with Conservative Tolerances
-**Cause**: Not exploring tolerance boundaries adequately
-**Solution**: Added post-convergence tolerance expansion test
-
-## Integration with Downstream Methods
-
-The calibrated parameters are critical for:
-- **FirstPassSearch**: Uses mass error model and RT conversion
-- **SecondPassSearch**: Refined search with calibrated parameters
-- **All quantification methods**: Rely on RT alignment for XIC extraction
-
-## Recent Changes (2025-01)
-
-1. **Multi-Score Search Enhancement** (Latest):
-   - `min_score` parameter now accepts arrays: `[22, 17, 15]`
-   - Each phase independently tries all score thresholds
-   - Maintains backwards compatibility with single values
-   - Other search methods automatically use first value from array
-   - Clear logging shows which score achieved convergence
-
-2. **Removed deprecated parameters**:
-   - `tol_ppm` → `init_mass_tol_ppm` in iteration_settings
-   - `max_tolerance_ppm` → calculated dynamically
-
-3. **Implemented robust convergence**:
-   - 3-phase approach with bias shifts
-   - Scan scaling with configurable factor
-   - Post-convergence tolerance expansion
-   - Score threshold exploration within phases
-
-4. **Code cleanup**:
-   - Removed unused functions from old implementation
-   - Commented out verbose @info logging
-   - Kept only essential @warn statements
-
-5. **Configuration improvements**:
-   - Centralized iteration settings
-   - Made scan scaling configurable
-   - Better parameter organization
-   - Flexible min_score configuration
-
-## Performance Characteristics
-
-- **Memory Usage**: Moderate - stores PSMs and filtered spectra
-- **CPU Usage**: High during fragment matching and model fitting
-- **I/O**: Minimal - works with in-memory data
-- **Typical Runtime**: 30-120 seconds per file depending on scan count
-- **Scaling**: Linear with scan count, quadratic with tolerance
-
-## Future Improvements
-
-1. **Adaptive strategies**: Dynamic adjustment of scale factors
-2. **Machine learning**: Predict optimal parameters from data characteristics
-3. **Parallel phase execution**: Run phases concurrently when possible
-4. **Better diagnostics**: Track convergence metrics for analysis
+- **`getFragTolPpm(::ParameterTuningSearchParameters)`** no longer exists. The fallback was `getInitMassTolPpm(iteration_settings)`; both removed. If you need a placeholder tolerance, use `WIDE_SCOUT_TOL_PPM` directly.
+- **The mass error model set by `initialize_models!` is a placeholder** that the wide-scout phase overwrites within the same function. Don't rely on it for downstream code.
+- **`MassErrSample` carries no rank/charge/ion-type fields.** Filtering of mass-error samples by rank/charge/y-ion happens **inside** `run_fused_masserr!` before the sample is written; downstream consumers (`fit_mass_err_model`, `fit_intensity_mass_error_model`, `extract_fragment_plot_data`, `generate_wide_scout_plot`) only need theoretical/observed/intensity.

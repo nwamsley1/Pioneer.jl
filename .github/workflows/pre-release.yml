@@ -1,0 +1,85 @@
+name: Pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to validate instead of the selected branch head"
+        required: false
+        type: string
+        default: ""
+  pull_request:
+    types:
+      - closed
+
+concurrency:
+  group: pre-release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve_target:
+    name: Resolve pre-release target
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+      reason: ${{ steps.resolve.outputs.reason }}
+    steps:
+      - name: Resolve target commit
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHOULD_RUN="false"
+          CHECKOUT_REF=""
+          REASON="Pre-release was not requested."
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            CHECKOUT_REF="${{ inputs.checkout_ref }}"
+            if [[ -z "$CHECKOUT_REF" ]]; then
+              CHECKOUT_REF="${GITHUB_SHA}"
+            fi
+            SHOULD_RUN="true"
+            REASON="Manual pre-release validation requested for ${CHECKOUT_REF}."
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            MERGED="${{ github.event.pull_request.merged }}"
+            TITLE="${{ github.event.pull_request.title }}"
+            MERGE_COMMIT_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+
+            if [[ "$MERGED" == "true" && "$TITLE" == release:\ v* && -n "$MERGE_COMMIT_SHA" ]]; then
+              SHOULD_RUN="true"
+              CHECKOUT_REF="$MERGE_COMMIT_SHA"
+              REASON="Auto-running pre-release validation for merged release PR on ${MERGE_COMMIT_SHA}."
+            else
+              REASON="Skipping pre-release because this was not a merged release PR."
+            fi
+          fi
+
+          {
+            echo "should_run=$SHOULD_RUN"
+            echo "checkout_ref=$CHECKOUT_REF"
+            echo "reason=$REASON"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write decision summary
+        shell: bash
+        run: |
+          {
+            echo "## Pre-release decision"
+            echo
+            echo "${{ steps.resolve.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validate:
+    needs: resolve_target
+    if: needs.resolve_target.outputs.should_run == 'true'
+    uses: ./.github/workflows/validate_installers.yml
+    with:
+      checkout_ref: ${{ needs.resolve_target.outputs.checkout_ref }}
+      artifact_retention_days: 3
+      smoke_artifact_prefix: pre-release
+    secrets: inherit

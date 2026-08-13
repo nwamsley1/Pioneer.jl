@@ -56,7 +56,7 @@ end
     temp_dir = mktempdir()
     out_path = joinpath(temp_dir, "missing_float32_batches.arrow")
 
-    open(Arrow.Writer, out_path; file=false) do writer
+    open(Arrow.Writer, out_path; file=true) do writer
         batch1 = DataFrame(
             id = 1:2,
             run_col = Union{Missing, Float32}[1.0f0, missing]
@@ -101,7 +101,7 @@ end
     _ensure_typed_missing_file_columns!(batch1, ["run_col"], Float32)
     _ensure_typed_missing_file_columns!(batch2, ["run_col"], Float32)
 
-    open(Arrow.Writer, out_path; file=false) do writer
+    open(Arrow.Writer, out_path; file=true) do writer
         Arrow.write(writer, batch1)
         Arrow.write(writer, batch2)
     end
@@ -115,3 +115,4 @@ end
     @test ismissing(c[3])
     @test ismissing(c[4])
 end
+

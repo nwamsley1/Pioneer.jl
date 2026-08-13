@@ -133,7 +133,7 @@ rem echo                                                 Default params output p
 echo   convert-raw ^<data_path^> [--output-dir ^<dir^>] [--skip-existing] [--concurrent-files N] [--threads-per-file N]
 echo                                                 Convert Thermo RAW files via PioneerConverter
 echo                                                 For additional converter options, run: pioneer convert-raw --help
-echo   convert-mzml ^<data_path^> [skip_header]
+echo   convert-mzml ^<data_path^> [options]
 echo                                                 Convert mzML files
 echo.
 echo Examples:

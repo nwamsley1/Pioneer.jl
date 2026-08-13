@@ -668,7 +668,6 @@ function adjust_mod_positions(
     return adjusted_mods
 end
 
-
 """
     add_decoy_sequences(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
 
@@ -823,7 +822,7 @@ function add_decoy_sequences(
             @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
             @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
         else
-            @user_info "Successfully reversed all $total_sequences sequences without duplicates"
+            @debug_l1 "Successfully reversed all $total_sequences sequences without duplicates"
         end
     end
     =#
@@ -977,7 +976,7 @@ function add_decoy_sequences_grouped(
             @user_warn "  Reverse duplicates: $fallback_to_shuffle_count"
             @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_groups, digits=1))%"
         else
-            @user_info "Successfully reversed all $total_groups base sequences without duplicates"
+            @debug_l1 "Successfully reversed all $total_groups base sequences without duplicates"
         end
     end
     =#

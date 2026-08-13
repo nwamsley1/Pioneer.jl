@@ -27,9 +27,13 @@
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="EnvironmentPath" />
       <ComponentRef Id="JuliaDirPermissions" />
+      <ComponentRef Id="ApplicationShortcut" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Pioneer" />
+      </Directory>
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="Pioneer">
           <Directory Id="ShareDir" Name="share">
@@ -48,6 +52,26 @@
       </CreateFolder>
     </Component>
     
+    <!-- Start Menu shortcut for the GUI. The exe itself is harvested by
+         heat.exe from the install root, so this component owns only the
+         shortcut and uses a registry value as its KeyPath. -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="7f2a1c64-9e3b-4d21-8a55-1c0f7b6e4a92" Win64="yes">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="Pioneer"
+                  Description="$(var.ProductDescription)"
+                  Target="[INSTALLFOLDER]pioneer-gui.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\WashU\GoldfarbLab\Pioneer"
+                       Name="shortcut"
+                       Type="string"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <!-- Add installation directory to PATH -->
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="EnvironmentPath" Guid="53903eaf-c9de-4d7f-ac6f-9307b1dbec5e" Win64="yes">

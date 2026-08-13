@@ -1,0 +1,95 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  check_develop_changes:
+    name: Check develop for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - name: Decide whether nightly validation should run
+        id: decide
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const branch = context.ref.replace('refs/heads/', '');
+            const currentSha = context.sha;
+            let shouldRun = true;
+            let reason = `Running nightly validation for ${branch} at ${currentSha.slice(0, 7)}.`;
+
+            if (context.eventName === 'schedule') {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'nightly.yml',
+                branch,
+                event: 'schedule',
+                status: 'completed',
+                per_page: 100,
+              });
+
+              const previousSuccess = runs.find((run) => run.conclusion === 'success');
+
+              if (previousSuccess && previousSuccess.head_sha === currentSha) {
+                shouldRun = false;
+                reason = `Skipping nightly validation because ${branch} is still at ${currentSha.slice(0, 7)}, which already passed nightly run #${previousSuccess.run_number}.`;
+              } else if (previousSuccess) {
+                reason = `Running nightly validation because ${branch} advanced from ${previousSuccess.head_sha.slice(0, 7)} to ${currentSha.slice(0, 7)} since the last successful nightly run.`;
+              } else {
+                reason = `Running nightly validation because no previous successful scheduled nightly run was found for ${branch}.`;
+              }
+            } else {
+              reason = `Running nightly validation because this workflow was started manually for ${branch} at ${currentSha.slice(0, 7)}.`;
+            }
+
+            core.info(reason);
+            core.setOutput('should_run', shouldRun ? 'true' : 'false');
+            core.setOutput('reason', reason);
+
+      - name: Write decision summary
+        shell: bash
+        run: |
+          {
+            echo "## Nightly decision"
+            echo
+            echo "${{ steps.decide.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validate:
+    name: Run nightly installer validation
+    needs: check_develop_changes
+    if: needs.check_develop_changes.outputs.should_run == 'true'
+    uses: ./.github/workflows/validate_installers.yml
+    with:
+      artifact_retention_days: 3
+      smoke_artifact_prefix: nightly
+    secrets: inherit
+
+  skipped:
+    name: Skip nightly installer validation
+    needs: check_develop_changes
+    if: needs.check_develop_changes.outputs.should_run != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record skip summary
+        shell: bash
+        run: |
+          {
+            echo "## Nightly skipped"
+            echo
+            echo "${{ needs.check_develop_changes.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"

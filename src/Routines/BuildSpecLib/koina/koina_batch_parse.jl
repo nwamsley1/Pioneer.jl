@@ -15,33 +15,23 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Parse results for standard intensity prediction models.
-"""
-function parse_koina_batch(model::InstrumentSpecificModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
-    df = DataFrame()
-    n_precs, n_frags = first(response["outputs"])["shape"]
-    
-    for col in response["outputs"]
-        col_name = Symbol(col["name"])
-        if col_name ∈ [:intensities, :mz]
-            df[!, col_name] = Float32.(col["data"])
-        else
-            df[!, :annotation] = string.(col["data"])
+# Reshape the flat (n_precs × K × F) coefficient array into one NTuple{K} per
+# fragment. Function barrier specialized on K (Val) so the hot loop is type
+# stable: `flat` is a concrete Vector{Float32} and `ntuple(_, Val(K))` returns a
+# concrete NTuple{K,Float32}, eliminating the per-element boxing that occurs when
+# the loop runs over the `Any`-typed response data directly.
+@inline function _build_coefs(flat::Vector{Float32}, n_precs::Int, n_frags::Int,
+                              ::Val{K}) where {K}
+    coefs = Vector{NTuple{K, Float32}}(undef, n_precs * n_frags)
+    idx = 1
+    @inbounds for i in 1:n_precs
+        base_i = (i - 1) * K * n_frags
+        for j in 1:n_frags
+            coefs[idx] = ntuple(k -> flat[base_i + j + (k - 1) * n_frags], Val(K))
+            idx += 1
         end
     end
-    
-    return KoinaBatchResult(df, Int64(n_frags), nothing)
-end
-
-"""
-Parse results for instrument-agnostic models.
-"""
-function parse_koina_batch(model::InstrumentAgnosticModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
-    # Currently same as InstrumentSpecificModel
-    parse_koina_batch(InstrumentSpecificModel(model.name), response)
+    return coefs
 end
 
 """
@@ -50,36 +40,81 @@ Parse results for spline coefficient models.
 function parse_koina_batch(model::SplineCoefficientModel,
                           response::Dict{String,Any})::KoinaBatchResult{Vector{Float32}}
     df = DataFrame()
-    n_precs, n_coef_per_frag, n_frags = response["outputs"][4]["shape"]
+    # Look up the coefficients output by name rather than relying on a fixed
+    # array index — Koina is free to reorder outputs and synthetic clients
+    # may emit them in a different order than the live service.
+    coefficients_output = nothing
+    for o in response["outputs"]
+        if o["name"] == "coefficients"
+            coefficients_output = o
+            break
+        end
+    end
+    coefficients_output === nothing && throw(ArgumentError(
+        "SplineCoefficientModel response is missing a 'coefficients' output"))
+    # shape comes from a Dict{String,Any}; make the dims concrete Ints so the
+    # loops/typing below are stable.
+    n_precs, n_coef_per_frag, n_frags = Int.(coefficients_output["shape"])
     knot_vector = Float32[]
-    
+
     for col in response["outputs"]
         col_name = Symbol(col["name"])
         if col_name == :coefficients
-            flat_coeffs = Float32.(col["data"])
-            coefs = Vector{NTuple{n_coef_per_frag, Float32}}(undef, n_precs * n_frags)
-            
-            idx = 1
-            for i in 1:n_precs
-                for j in 1:n_frags
-                    coefs[idx] = ntuple(k -> 
-                        flat_coeffs[(i-1)*n_coef_per_frag*n_frags + j + (k-1)*n_frags],
-                        n_coef_per_frag)
-                    idx += 1
-                end
-            end
-            df[!, :coefficients] = coefs
-            
+            # `col["data"]` is Any; assert the converted result is Vector{Float32}
+            # so the reshape loop (in _build_coefs) is allocation-free.
+            flat_coeffs = Float32.(col["data"])::Vector{Float32}
+            df[!, :coefficients] = _build_coefs(flat_coeffs, n_precs, n_frags,
+                                                Val(n_coef_per_frag))
         elseif col_name == :knots
-            knot_vector = Float32.(col["data"])
+            knot_vector = Float32.(col["data"])::Vector{Float32}
         elseif col_name == :mz
-            df[!, col_name] = Float32.(col["data"])
+            df[!, :mz] = Float32.(col["data"])::Vector{Float32}
         elseif col_name == :annotations
-            df[!, :annotation] = Int32.(col["data"])
+            df[!, :annotation] = Int32.(col["data"])::Vector{Int32}
         end
     end
-    
+
     return KoinaBatchResult(df, Int64(n_frags), knot_vector)
+end
+
+"""
+Parse results for instrument-agnostic scalar-intensity models (Prosit).
+
+Prosit returns a fixed-width `(n_precs × n_frags)` block of raw fragment
+`intensities` (base-peak-normalized), `mz`, and string `annotation` (e.g.
+"y7+1"). Outputs are looked up by name — Koina may reorder them and synthetic /
+fixture clients may differ. `n_frags` comes from the `intensities` shape.
+
+Note the singular output name `annotation` (Altimeter uses plural `annotations`);
+we store it in the `:annotation` column for the downstream decode.
+"""
+function parse_koina_batch(model::InstrumentAgnosticModel,
+                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+    df = DataFrame()
+
+    intensities_output = nothing
+    for o in response["outputs"]
+        if o["name"] == "intensities"
+            intensities_output = o
+            break
+        end
+    end
+    intensities_output === nothing && throw(ArgumentError(
+        "InstrumentAgnosticModel response is missing an 'intensities' output"))
+    n_precs, n_frags = Int.(intensities_output["shape"])
+
+    for col in response["outputs"]
+        col_name = Symbol(col["name"])
+        if col_name == :intensities
+            df[!, :intensities] = Float32.(col["data"])::Vector{Float32}
+        elseif col_name == :mz
+            df[!, :mz] = Float32.(col["data"])::Vector{Float32}
+        elseif col_name == :annotation
+            df[!, :annotation] = string.(col["data"])
+        end
+    end
+
+    return KoinaBatchResult(df, Int64(n_frags), nothing)
 end
 
 """
@@ -88,13 +123,13 @@ Parse results for retention time prediction models.
 function parse_koina_batch(model::RetentionTimeModel,
                           response::Dict{String,Any})::KoinaBatchResult{Nothing}
     df = DataFrame()
-    
+
     for col in response["outputs"]
         col_name = Symbol(col["name"])
         if col_name == :rt
             df[!, col_name] = Float32.(col["data"])
         end
     end
-    
+
     return KoinaBatchResult(df, 1, nothing)
 end

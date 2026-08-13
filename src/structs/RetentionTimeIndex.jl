@@ -1,39 +1,43 @@
-# Copyright (C) 2024 Nathan Wamsley
+# Retention time index for chromatogram extraction.
 #
-# This file is part of Pioneer.jl
+# Maps RT ranges to precursors, enabling efficient lookup of which precursors
+# to extract chromatograms for in a given RT window. Used by
+# IntegrateChromatogramsSearch to avoid scanning all precursors for every scan.
 #
-# Pioneer.jl is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Structure: Vector of RT bins, each containing a sorted list of
+# (precursor_id, precursor_mz) tuples covering that RT range.
 
-struct rtIndexBin{T,U<:AbstractFloat}
+"""
+    rtIndexBin{T, U}
+
+A single RT bin containing precursors whose iRT falls within [lb, ub].
+
+# Fields
+- `lb::T`: Lower bound of the RT bin (iRT of first precursor)
+- `ub::T`: Upper bound of the RT bin (iRT of last precursor)
+- `prec::Vector{Tuple{UInt32, U}}`: Precursors in this bin as (precursor_id, precursor_mz),
+   sorted by m/z for efficient isolation window matching
+"""
+struct rtIndexBin{T, U<:AbstractFloat}
     lb::T
     ub::T
     prec::Vector{Tuple{UInt32, U}}
 end
+
 getLow(r::rtIndexBin) = r.lb
 getHigh(r::rtIndexBin) = r.ub
-function compare_lb(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat}
-    return rb.lb
-end
-getLB(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat} = rb.lb
-getMZ(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = last(rb.prec)
-getPrecID(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = first(rb.prec)
 
-struct retentionTimeIndex{T,U<:AbstractFloat}
+"""
+    retentionTimeIndex{T, U}
+
+Collection of RT bins covering the full gradient. Bins are contiguous and
+sorted by RT, with precursors sorted by m/z within each bin.
+
+Used by IntegrateChromatogramsSearch to find precursors near a given scan's
+RT, then filter by m/z against the quadrupole isolation window.
+"""
+struct retentionTimeIndex{T, U<:AbstractFloat}
     rt_bins::Vector{rtIndexBin{T, U}}
 end
-getrtBins(rti::retentionTimeIndex) = rti.rt_bins
-getrtBin(rti::retentionTimeIndex, rt_bin::Int) = rti.rt_bins[rt_bin]
-function retentionTimeIndex(T::DataType, U::DataType) 
-    return retentionTimeIndex(Vector{rtIndexBin{T, U}}())
-end
+
+retentionTimeIndex(T::DataType, U::DataType) = retentionTimeIndex(Vector{rtIndexBin{T, U}}())

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Se
 
 ## SearchMethods Overview
 
-SearchMethods implements a 9-stage sequential pipeline where each method performs a specific aspect of DIA analysis. All methods follow a common interface pattern and share state through SearchContext.
+SearchMethods implements an 8-stage sequential pipeline where each method performs a specific aspect of DIA analysis. All methods follow a common interface pattern and share state through SearchContext.
 
 ## Interface Pattern
 
@@ -12,7 +12,7 @@ Every search method implements this exact interface:
 
 ```julia
 abstract type SearchMethod end
-abstract type SearchParameters end  
+abstract type SearchParameters end
 abstract type SearchResults end
 
 # Required interface methods (exactly 6)
@@ -33,7 +33,7 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Key Output**: Calibrated fragment tolerance for downstream methods
 - **Performance**: Fast, minimal memory usage
 
-**NceTuningSearch** - Collision energy calibration  
+**NceTuningSearch** - Collision energy calibration
 - **Purpose**: Builds instrument-specific collision energy models
 - **Algorithm**: Linear regression on CE vs observed intensity patterns
 - **Key Output**: CE prediction models stored in SearchContext
@@ -51,26 +51,30 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Key Output**: Huber delta parameters for downstream scoring
 - **Performance**: Iterative optimization, moderate memory
 
-### Stage 2: PSM Identification
-**FirstPassSearch** - Initial PSM discovery
-- **Purpose**: First-pass peptide identification with RT calibration
-- **Algorithm**: Fragment matching + RT model building
-- **Key Output**: Initial PSM set + RT conversion models
+### Stage 2: PSM Identification + Global FDR
+**FragmentIndexSearch** - Fragment index construction
+- **Purpose**: Builds fragment-level index for candidate precursor selection
+- **Key Output**: Per-file fragment match tables in `temp_data/fragment_index_matches/`
+- **Memory**: Loads spectral library fragments
+
+**MainSearch** - PSM identification, scoring, and global FDR filtering
+- **Purpose**: Full PSM identification pipeline — spectral deconvolution (`deconvolve_spectra` / `deconvolve_scans!`), per-file LightGBM scoring (15 features), global prescore aggregation, and fold-split output for ScoringSearch
+- **Algorithm**: Fragment matching → spectral deconvolution → per-file LightGBM (2-fold CV) → PEP calibration → log-odds aggregation across files (top-sqrt(n)) → global q-values → filter to passing precursors → write fold-split Arrow files
+- **Key Outputs**:
+  - `temp_data/prescore_scores/{file}.arrow` — unfiltered per-file LightGBM scores
+  - `temp_data/main_search_psms/{file}.arrow` — best-per-precursor PSMs (before global filter)
+  - `temp_data/main_search_psms/{file}_fold{0,1}.arrow` — globally filtered, fold-split PSMs for ScoringSearch
+  - RT calibration models, chromatographic iRT tolerance
+  - Filtered fragment index matches (restricted to passing precursors)
 - **Memory**: Loads full fragment index, high memory usage
 - **Threading**: Parallel chunk processing by scan ranges
+- **Key types**: `MainSearchParameters`, `MainSearchScoredPSM`, `SpectralScoresMainSearch`
 
-**SecondPassSearch** - Comprehensive PSM identification
-- **Purpose**: Exhaustive search with calibrated parameters
-- **Algorithm**: Full library search using optimized tolerances/models
-- **Key Output**: Complete PSM catalog for downstream analysis
-- **Memory**: Highest memory usage - full library + data
-- **Threading**: Most CPU-intensive stage
-
-### Stage 3: Scoring & FDR Control
-**ScoringSearch** - ML training and FDR control
-- **Purpose**: LightGBM training, PSM rescoring, protein grouping
-- **Algorithm**: Cross-validation training + FDR filtering + protein inference
-- **Key Output**: High-confidence PSMs + protein groups
+### Stage 3: Rescoring & FDR Control
+**ScoringSearch** - Rescoring with additional features, FDR control, protein grouping
+- **Purpose**: Trains a second LightGBM (20 features) on globally-filtered PSMs, applies final FDR, protein inference
+- **Algorithm**: Reads fold-split Arrow files from MainSearch → adds features (log2_intensity_explained, prec_mz, irt_pred, longest_y, b_count, charge) via `add_search_columns!` → cross-validation LightGBM training → per-file FDR → protein inference
+- **Key Output**: High-confidence PSMs + protein groups per file
 - **Memory**: Stores all features for ML training
 - **Threading**: Parallel model training per CV fold
 
@@ -167,14 +171,14 @@ function processChunk!(method::MySearchMethod, batch_id::Int, thread_id::Int)
     # Get thread-specific data access
     spec_data = getThreadSpecData(method, thread_id)
     results = Vector{MyResult}()
-    
+
     # Process assigned scans
     for scan_idx in getAssignedScans(batch_id)
         # Perform computation
         result = processOneScan(spec_data, scan_idx)
         push!(results, result)
     end
-    
+
     # Store in thread-local storage (thread-safe)
     setThreadResults!(method, thread_id, results)
 end
@@ -209,11 +213,11 @@ function test_my_search_method()
     # Create minimal SearchContext
     context = createTestSearchContext()
     method = MySearchMethod(context)
-    
+
     # Run method
     performSearch!(method)
     summarizeResults!(method)
-    
+
     # Validate results
     results = getResults(method)
     @test length(results.my_result) > 0
@@ -226,9 +230,9 @@ end
 function test_method_integration()
     # Run pipeline up to your method
     context = SearchDIA("test_params.json", stop_at="MySearch")
-    
+
     # Validate state
-    @test hasResults(context, "FirstPass")
+    @test hasResults(context, "MainSearch")
     @test hasModels(context, "RT")
 end
 ```
@@ -247,7 +251,7 @@ end
 - **State mutations**: Don't modify shared SearchContext in threads
 - **Parameter extraction**: Always validate parameter types/ranges
 
-### Threading Issues  
+### Threading Issues
 - **Race conditions**: Use thread-local storage exclusively
 - **Memory contention**: Minimize shared memory access
 - **Load balancing**: Test with different thread counts
@@ -262,9 +266,9 @@ end
 ### Cross-Method Communication
 ```julia
 # Access results from previous methods
-function getFirstPassResults(method::MySearchMethod)
+function getMainSearchResults(method::MySearchMethod)
     context = getSearchContext(method)
-    return getSearchResults(context, "FirstPass")
+    return getSearchResults(context, "MainSearch")
 end
 
 # Store results for downstream methods
@@ -282,7 +286,7 @@ function processChunk!(method::MySearchMethod, batch_id::Int, thread_id::Int)
     context = getSearchContext(method)
     rt_model = getRTModel(context)
     mass_error_model = getMassErrorModel(context)
-    
+
     # Apply models in processing
     corrected_rt = applyRTModel(rt_model, observed_rt)
     expected_mass_error = predictMassError(mass_error_model, mz)
@@ -294,10 +298,10 @@ end
 function summarizeResults!(method::MySearchMethod)
     # Always generate QC plots
     generateQCPlots(method)
-    
+
     # Export diagnostic data
     exportDiagnostics(method)
-    
+
     # Validate result quality
     validateResults(method)
 end
@@ -311,3 +315,20 @@ end
   - `{MethodName}.jl` - Main implementation
   - `utils.jl` - Method-specific utilities
 - Common utilities in parent `CommonSearchUtils/`
+
+## Recent Changes (2025-03)
+
+### MainSearch Consolidation
+The old FirstPassSearch and SecondPassSearch have been consolidated into MainSearch. MainSearch
+handles the complete flow from spectral deconvolution through global FDR filtering and writes
+fold-split Arrow files directly for ScoringSearch. The prescore aggregation code
+(`prescore_aggregation.jl`, `aggregate_prescore_globally!` in `MainSearch/utils.jl`) lives
+within the MainSearch directory.
+
+### Two-Stage LightGBM Pipeline
+The pipeline now trains two LightGBM models:
+1. **MainSearch LightGBM** (15 features) — per-file, used for global prescore aggregation
+2. **ScoringSearch LightGBM** (20 features) — trained on globally-filtered PSMs with
+   additional features from the library (log2_intensity_explained, prec_mz, irt_pred, etc.)
+
+Whether the second LightGBM adds significant value over the first is an open question.

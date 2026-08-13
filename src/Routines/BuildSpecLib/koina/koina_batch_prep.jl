@@ -16,125 +16,15 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Prepare batch request for instrument-specific models.
+Prepare batch request for Altimeter (spline coefficient) fragment prediction.
 """
-function prepare_koina_batch(model::InstrumentSpecificModel,
-                           data::DataFrame,
-                           instrument_type::String;
-                           batch_size::Int = 1000)::Vector{String}
-    
-    if instrument_type ∉ MODEL_CONFIGS[model.name].instruments
-        throw(ArgumentError("Invalid instrument type '$instrument_type' for model '$(model.name)'"))
-    end
-    
-    n_rows = nrow(data)
-    n_batches = ceil(Int, n_rows/batch_size)
-    json_batches = Vector{String}(undef, n_batches)
-    
-    for i in 1:n_batches
-        start_idx = (i-1) * batch_size + 1
-        end_idx = min(i * batch_size, n_rows)
-        batch_data = data[start_idx:end_idx, :]
-        batch_dict = Dict(
-            "id" => "0",
-            "inputs" => [
-                Dict(
-                    "name" => "peptide_sequences",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "BYTES",
-                    "data" => batch_data.koina_sequence
-                ),
-                Dict(
-                    "name" => "precursor_charges",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "INT32",
-                    "data" => batch_data.precursor_charge
-                ),
-                Dict(
-                    "name" => "collision_energies",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "FP32",
-                    "data" => batch_data.collision_energy
-                ),
-                Dict(
-                    "name" => "instrument_types",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "BYTES",
-                    "data" => fill(instrument_type, nrow(batch_data))
-                )
-            ]
-        )
-        json_batches[i] = JSON.json(batch_dict)
-    end
-    
-    return json_batches
-end
-
-"""
-Prepare batch request for instrument-agnostic models (with ignored instrument parameter).
-"""
-function prepare_koina_batch(model::InstrumentAgnosticModel,
-                           data::DataFrame,
-                           instrument_type::String;  # ignored for agnostic models
-                           batch_size::Int = 1000)::Vector{String}
-    # Call the generic method that doesn't need instrument_type
-    return prepare_koina_batch(model, data; batch_size=batch_size)
-end
-
-"""
-Prepare batch request for instrument-agnostic models.
-"""
-function prepare_koina_batch(model::KoinaModelType,
+function prepare_koina_batch(model::SplineCoefficientModel,
                            data::DataFrame;
                            batch_size::Int = 1000)::Vector{String}
     n_rows = nrow(data)
     n_batches = ceil(Int, n_rows/batch_size)
     json_batches = Vector{String}(undef, n_batches)
-    
-    for i in 1:n_batches
-        start_idx = (i-1) * batch_size + 1
-        end_idx = min(i * batch_size, n_rows)
-        batch_data = data[start_idx:end_idx, :]
-        batch_dict = Dict(
-            "id" => "0",
-            "inputs" => [
-                Dict(
-                    "name" => "peptide_sequences",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "BYTES",
-                    "data" => batch_data.koina_sequence
-                ),
-                Dict(
-                    "name" => "precursor_charges",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "INT32",
-                    "data" => batch_data.precursor_charge
-                ),
-                Dict(
-                    "name" => "collision_energies",
-                    "shape" => [nrow(batch_data), 1],
-                    "datatype" => "FP32",
-                    "data" => batch_data.collision_energy
-                )
-            ]
-        )
-        json_batches[i] = JSON.json(batch_dict)
-    end
-    
-    return json_batches
-end
 
-"""
-Prepare batch request for instrument-agnostic models.
-"""
-function prepare_koina_batch(model::SplineCoefficientModel,
-                           data::DataFrame,
-                           ::String;
-                           batch_size::Int = 1000)::Vector{String}
-    n_rows = nrow(data)
-    n_batches = ceil(Int, n_rows/batch_size)
-    json_batches = Vector{String}(undef, n_batches)
-    
     for i in 1:n_batches
         start_idx = (i-1) * batch_size + 1
         end_idx = min(i * batch_size, n_rows)
@@ -163,14 +53,61 @@ function prepare_koina_batch(model::SplineCoefficientModel,
 end
 
 """
-Prepare batch request for retention time predictions (with ignored instrument parameter).
+Prepare batch request for instrument-agnostic scalar-intensity models (Prosit).
+
+Same three inputs the spline path sends plus `collision_energies` (Prosit takes a
+raw collision energy; there is no NCE spline). No `instrument_types` input — the
+model is instrument-agnostic.
+
+PTM models (Prosit_2024/2025 *PTM*) additionally require a `fragmentation_types`
+input; this is added iff `MODEL_CONFIGS[model.name].fragmentation_type` is set (a
+string like "HCD"). Non-PTM models leave it `nothing` and send three inputs.
 """
-function prepare_koina_batch(model::RetentionTimeModel,
-                           data::DataFrame,
-                           instrument_type::String;  # ignored for RT models
+function prepare_koina_batch(model::InstrumentAgnosticModel,
+                           data::DataFrame;
                            batch_size::Int = 1000)::Vector{String}
-    # Call the generic method that doesn't need instrument_type
-    return prepare_koina_batch(model, data; batch_size=batch_size)
+    n_rows = nrow(data)
+    n_batches = ceil(Int, n_rows/batch_size)
+    json_batches = Vector{String}(undef, n_batches)
+
+    frag_type = MODEL_CONFIGS[model.name].fragmentation_type
+
+    for i in 1:n_batches
+        start_idx = (i-1) * batch_size + 1
+        end_idx = min(i * batch_size, n_rows)
+        batch_data = data[start_idx:end_idx, :]
+        inputs = Any[
+            Dict(
+                "name" => "peptide_sequences",
+                "shape" => [nrow(batch_data), 1],
+                "datatype" => "BYTES",
+                "data" => strip.(batch_data.koina_sequence)
+            ),
+            Dict(
+                "name" => "precursor_charges",
+                "shape" => [nrow(batch_data), 1],
+                "datatype" => "INT32",
+                "data" => batch_data.precursor_charge
+            ),
+            Dict(
+                "name" => "collision_energies",
+                "shape" => [nrow(batch_data), 1],
+                "datatype" => "FP32",
+                "data" => batch_data.collision_energy
+            )
+        ]
+        if frag_type !== nothing
+            push!(inputs, Dict(
+                "name" => "fragmentation_types",
+                "shape" => [nrow(batch_data), 1],
+                "datatype" => "BYTES",
+                "data" => fill(frag_type, nrow(batch_data))
+            ))
+        end
+        json_batches[i] = JSON.json(Dict("id" => "0", "inputs" => inputs))
+    end
+
+    return json_batches
 end
 
 """
@@ -179,11 +116,11 @@ Prepare batch request for retention time predictions.
 function prepare_koina_batch(model::RetentionTimeModel,
                            data::DataFrame;
                            batch_size::Int = 1000)::Vector{String}
-    
+
     n_rows = nrow(data)
     n_batches = ceil(Int, n_rows/batch_size)
     json_batches = Vector{String}(undef, n_batches)
-    
+
     for i in 1:n_batches
         start_idx = (i-1) * batch_size + 1
         end_idx = min(i * batch_size, n_rows)
@@ -201,6 +138,6 @@ function prepare_koina_batch(model::RetentionTimeModel,
         )
         json_batches[i] = JSON.json(batch_dict)
     end
-    
+
     return json_batches
 end

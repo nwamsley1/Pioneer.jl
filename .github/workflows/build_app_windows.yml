@@ -1,22 +1,50 @@
 name: Build Windows
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   workflow_dispatch:
     inputs:
-      force_installer:
-        description: "Force MSI packaging/upload for manual runs"
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native MSI installer"
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native MSI installer"
         required: false
         type: boolean
         default: false
-  workflow_call:
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: 'Build version'
@@ -31,7 +59,7 @@ jobs:
             format('call-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.identifier) ||
             format('{0}-{1}-{2}', github.workflow, github.ref_name, matrix.identifier) }}
       cancel-in-progress: true
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, compile]
     env:
       JULIA_NUM_THREADS: auto
     outputs:
@@ -47,13 +75,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION
         id: get_version
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+          override: ${{ inputs.version_override }}
 
       - name: Normalize versions
         id: norm
@@ -62,9 +92,9 @@ jobs:
           raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12.6'  # must satisfy Project.toml's julia = "1.12.5" compat
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
@@ -79,35 +109,80 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=. \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Validate locked application environment
+        shell: bash
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          julia --threads auto --startup-file=no --project=. \
+            packaging/check_app_contract.jl
+          julia --threads auto --startup-file=no --project=. \
+            src/build/check_cpu_dependencies.jl
+          git diff --exit-code -- \
+            Manifest.toml packaging/compiler/Manifest.toml
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v1
+          cache-key: precompile-data-v2-yeast
 
       - name: Compile application
         shell: bash
         run: |
-          julia --threads auto --project=dev -e '
-            using PackageCompiler;
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false,
-              force=true,
-              executables=[
-                "GetSearchParams"=>"main_GetSearchParams",
-                "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl"
-            );
-          '
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          unset PIONEER_APP_CPU_TARGET
+          fresh_depot="$(mktemp -d)"
+          export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
+          julia --threads auto --startup-file=no --project=packaging/compiler \
+            packaging/build_app.jl \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
+
+      - name: Swap in MSVC LightGBM DLL (Windows core-utilization fix)
+        shell: pwsh
+        run: |
+          # The mingw-w64 LightGBM binary Julia bundles barely threads the tree-learner
+          # FIT (~1 core, libgomp-on-winpthreads barrier cost). Replace it with Microsoft's
+          # MSVC build of the SAME version (3.3.5) - it saturates all cores with
+          # bit-identical, seeded/deterministic results. Full write-up + benchmarks:
+          # src/build/windows/LIGHTGBM_MSVC.md.
+          # PIN COUPLING: these hashes match LightGBM = "2.2" (=> C API of LightGBM 3.3.5).
+          # If that compat is bumped, update these hashes AND
+          # src/utils/install/windows_lightgbm.jl to the matching MSVC build.
+          $ErrorActionPreference = 'Stop'
+          $wheelUrl = 'https://files.pythonhosted.org/packages/6a/31/13f80e5abac627c53375c1dc49404d622d929272a231c05b2f4f7bb98b9e/lightgbm-3.3.5-py3-none-win_amd64.whl'
+          $wheelSha = '02a40745c1972cf4a2cde764c7739228f45178c2237af2df40fde7063a58ac6a'
+          $dllSha   = 'a52a9494c894f9987f9be24c97e0dec7c37fd23b1184aa0ac39d3200ffa51699'
+          $app = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+
+          # 1) download + verify the pinned wheel (a zip)
+          Invoke-WebRequest -Uri $wheelUrl -OutFile lgbm.whl -UseBasicParsing
+          $h = (Get-FileHash -Algorithm SHA256 lgbm.whl).Hash.ToLower()
+          if ($h -ne $wheelSha) { throw "wheel SHA256 mismatch: got $h" }
+
+          # 2) extract + verify the MSVC lib_lightgbm.dll
+          Expand-Archive -LiteralPath lgbm.whl -DestinationPath lgbm_whl -Force
+          $msvc = "lgbm_whl\lightgbm\lib_lightgbm.dll"
+          $h2 = (Get-FileHash -Algorithm SHA256 $msvc).Hash.ToLower()
+          if ($h2 -ne $dllSha) { throw "DLL SHA256 mismatch: got $h2" }
+
+          # 3) overwrite the bundled (mingw) DLL in the app depot; fail loudly if the
+          #    create_app layout changed and none was found (so this can never silently no-op)
+          $targets = @(Get-ChildItem $app -Recurse -Filter lib_lightgbm.dll)
+          if ($targets.Count -eq 0) { throw "no bundled lib_lightgbm.dll under $app - create_app layout changed?" }
+          foreach ($t in $targets) { Copy-Item $msvc $t.FullName -Force; Write-Host "swapped: $($t.FullName)" }
+
+          # NOTE: the MSVC DLL's runtime dependencies (vcomp140 = OpenMP, vcruntime140,
+          # vcruntime140_1, msvcp140) are NOT copied app-local. They are installed by the
+          # Visual C++ 2015-2022 redistributable that the installer bundle chains ahead of
+          # the Pioneer MSI (see the "Build installer bundle" step and
+          # src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}). The redist is the licensed,
+          # complete, self-updating source; hand-copying individual DLLs risked omitting
+          # one (vcruntime140_1 is a real dependency here) and the wrong license grant.
+          Write-Host "MSVC LightGBM swap complete."
 
       - name: Download PioneerConverter
         shell: pwsh
@@ -174,8 +249,35 @@ jobs:
           "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "MSI_VERSION=$clean"
 
-      - name: Package Windows MSI (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+      # ---- GUI (gui/) -------------------------------------------------
+      # windows-latest ships MSVC and the WebView2 runtime, so this needs no
+      # extra system packages. The exe is copied into $pioneerRoot below, where
+      # heat.exe harvests it automatically.
+      - name: Setup Node (GUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Setup Rust (GUI)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust (GUI)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Build GUI
+        working-directory: gui
+        shell: pwsh
+        run: |
+          npm ci
+          # --no-bundle: the bare exe is wanted, not Tauri's own MSI.
+          npm run tauri:build -- --no-bundle
+
+      - name: Package Windows MSI
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         shell: pwsh
         run: |
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
@@ -183,6 +285,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           Copy-Item assets\* $dataDir -Recurse
           Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
+
+          # Placed in the install root (not bin\) so the MSI's PATH entry,
+          # which points at INSTALLFOLDER, also covers the GUI. The Start Menu
+          # shortcut in installer.wxs refers to this same location.
+          $guiExe = "gui\src-tauri\target\release\pioneer-console.exe"
+          if (Test-Path $guiExe) {
+            Copy-Item $guiExe "$pioneerRoot\pioneer-gui.exe"
+            Write-Host "GUI included in MSI"
+          } else {
+            Write-Host "GUI exe not found at $guiExe - packaging CLI only"
+          }
           $artifactDir = "$pioneerRoot\share\julia\artifacts"
           if (Test-Path $artifactDir) {
             Get-ChildItem -Path $artifactDir -Recurse -Directory |
@@ -225,25 +338,65 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-us `
+            -sval `
             -out "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
 
-      - name: Package zipped binaries
+      - name: Download VC++ redistributable
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         shell: pwsh
         run: |
-          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
-          Compress-Archive -Path "$pioneerRoot\*" `
-                           -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
+          $ErrorActionPreference = 'Stop'
+          # Microsoft's official, always-latest VC++ 2015-2022 x64 redistributable. The
+          # MSVC lib_lightgbm.dll we ship depends on this runtime (vcomp140 OpenMP +
+          # vcruntime140 / vcruntime140_1 / msvcp140). We intentionally track "latest"
+          # (aka.ms) so security fixes flow through; the SHA-256 is logged for build
+          # provenance rather than pinned (the redist is idempotent + self-detecting).
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile vc_redist.x64.exe -UseBasicParsing
+          Write-Host ("vc_redist.x64.exe SHA-256 = " + (Get-FileHash -Algorithm SHA256 vc_redist.x64.exe).Hash)
 
-      - name: Upload zipped binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
+      - name: Build installer bundle (VC++ redist + Pioneer MSI)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Wrap the Pioneer MSI in a WiX "Burn" bootstrapper that installs the VC++
+          # redistributable first (skipped if already present), then Pioneer. Output is a
+          # single PioneerSetup-*.exe. See src/build/windows/{Bundle.wxs,LIGHTGBM_MSVC.md}.
+          $msi = "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi"
+          if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
+          if (-not (Test-Path 'vc_redist.x64.exe')) { throw 'vc_redist.x64.exe not downloaded' }
+          $identifier = (Get-Content src\build\package_info.json | ConvertFrom-Json).identifier
 
-      - name: Upload MSI (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+          & candle.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -dProductVersion="${{ steps.norm.outputs.msi }}" `
+            -dPackageIdentifier="$identifier" `
+            -dMsiFile="$msi" `
+            -dVcRedistFile="vc_redist.x64.exe" `
+            -dLicenseRtf="src\build\windows\LICENSE.rtf" `
+            -arch x64 `
+            src\build\windows\Bundle.wxs
+
+          & light.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -out "PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe" `
+            Bundle.wixobj
+
+      - name: Upload MSI
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-msi
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Upload installer bundle
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pioneer-${{ matrix.identifier }}-setup
+          path: PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe
+          retention-days: ${{ inputs.artifact_retention_days }}

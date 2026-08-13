@@ -20,12 +20,12 @@ abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 **1. SimpleUnscoredPSM/SimpleScoredPSM** - Basic fragment statistics
 - **Purpose**: Fast initial screening with minimal features
 - **Features**: Fragment counts (b/y/p/i), basic ranks, intensity, error
-- **Use Cases**: FirstPassSearch, simple filtering
+- **Use Cases**: MainSearch, simple filtering
 
-**2. ComplexUnscoredPSM/ComplexScoredPSM** - Detailed fragmentation analysis  
+**2. MainUnscoredPSM/ComplexScoredPSM** - Detailed fragmentation analysis
 - **Purpose**: Comprehensive scoring with isotope and residual analysis
 - **Features**: Isotope tracking, longest ion series, deconvolution metrics
-- **Use Cases**: SecondPassSearch, ML training, detailed scoring
+- **Use Cases**: MainSearch (deconvolution phase), ML training, detailed scoring
 
 **3. Ms1UnscoredPSM/Ms1ScoredPSM** - Precursor-level features
 - **Purpose**: MS1-based identification and quantification
@@ -35,7 +35,7 @@ abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 ### Precision Stratification
 
 Scored PSMs use dual precision to optimize memory:
-- **H (High Precision)**: Critical values requiring accuracy (errors, weights) 
+- **H (High Precision)**: Critical values requiring accuracy (errors, weights)
 - **L (Low Precision)**: Features for ML training (typically Float16)
 
 Example:
@@ -59,7 +59,7 @@ abstract type MatchIon{T<:AbstractFloat} <: Ion{T} end
 - Contains intensity, mass error, isotope information
 - Includes ranking information for scoring
 
-**PrecursorMatch** - Precursor ion matches  
+**PrecursorMatch** - Precursor ion matches
 - Isotope envelope matching
 - Mass accuracy for MS1 features
 
@@ -77,13 +77,13 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     spec_lib::L                 # Spectral library
     temp_structures::Vector     # Per-thread working data
     mass_spec_data_reference::M # MS data access
-    
+
     # Calibrated models (stored per MS file)
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
     mass_error_model::Dict{Int64, MassErrorModel}
     rt_irt_map::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
-    
+
     # Global parameters
     huber_delta::Ref{Float32}
     n_threads::Int64
@@ -99,12 +99,12 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     # Pre-allocated match arrays
     ion_matches::Vector{FragmentMatch{Float32}}
     ion_misses::Vector{FragmentMatch{Float32}}
-    
+
     # PSM storage for all three types
     scored_psms::Vector{SimpleScoredPSM{Float32, Float16}}
     complex_scored_psms::Vector{ComplexScoredPSM{Float32, Float16}}
     ms1_scored_psms::Vector{Ms1ScoredPSM{Float32, Float16}}
-    
+
     # Working arrays for computations
     Hs::SparseArray                    # Sparse spectral representation
     precursor_weights::Vector{Float32} # Deconvolution weights
@@ -127,8 +127,12 @@ abstract type SpectralScores{T<:AbstractFloat} end
 
 **SpectralScoresComplex** - Advanced deconvolution metrics
 - fitted_spectral_contrast, goodness-of-fit
-- max_matched_residual, fitted_manhattan_distance  
+- max_matched_residual, fitted_manhattan_distance
 - Used with ComplexScoredPSM
+
+**SpectralScoresMainSearch** - Scoring metrics for MainSearch deconvolution
+- Similar to complex but tailored for the MainSearch pipeline
+- Used with MainSearchScoredPSM
 
 **SpectralScoresMs1** - Precursor-level scoring
 - Similar to complex but for MS1 analysis
@@ -148,17 +152,23 @@ abstract type MassSpecDataReference end
 
 struct ArrowTableReference{N} <: MassSpecDataReference
     file_paths::NTuple{N, String}           # MS data files
-    first_pass_psms::Vector{String}         # PSM output paths
-    second_pass_psms::Vector{String}
+    main_search_psms::Vector{String}        # MainSearch PSM output paths
+    main_search_scored_psms::Vector{String} # MainSearch scored PSM paths
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
     rt_index_paths::Vector{String}          # RT indexing
 end
 ```
 
+### Accessor Functions
+```julia
+getMainSearchScoredPsms(ref::ArrowTableReference) -> Vector{String}
+getMainSearchSpectralScores(ref::ArrowTableReference) -> Vector{String}
+```
+
 ### File Organization Pattern
 - **Input**: Raw MS data converted to Arrow format
-- **Intermediate**: PSMs/proteins from each search method  
+- **Intermediate**: PSMs/proteins from each search method
 - **Output**: Final filtered results and protein groups
 
 ## Performance Optimizations
@@ -174,7 +184,7 @@ end
 function processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int)
     # Get thread-specific data structures
     search_data = getSearchData(method.search_context)[thread_id]
-    
+
     # Process assigned scans using pre-allocated arrays
     for scan_idx in getAssignedScans(batch_id)
         # Reuse arrays from search_data
@@ -184,7 +194,7 @@ end
 ```
 
 ### Custom Collections
-- **ArrayDict**: Fast integer key → value mapping
+- **ArrayDict**: Fast integer key -> value mapping
 - **Counter**: Efficient counting with integer overflow protection
 - **SparseArray**: Memory-efficient spectral storage
 
@@ -192,7 +202,7 @@ end
 
 ### Adding New PSM Types
 1. **Define unscored version** inheriting from UnscoredPSM{T}
-2. **Define scored version** inheriting from ScoredPSM{H,L}  
+2. **Define scored version** inheriting from ScoredPSM{H,L}
 3. **Implement ModifyFeatures!** for accumulating features
 4. **Implement Score!** for conversion to scored PSM
 5. **Add to SimpleLibrarySearch** working arrays
@@ -226,7 +236,7 @@ Score!(scored_psms, unscored_psms, spectral_scores, ...)
 # Check for valid precursor indices
 @assert all(psm -> psm.precursor_idx > 0, psms)
 
-# Validate scoring pipeline  
+# Validate scoring pipeline
 @assert length(unscored_psms) == length(spectral_scores)
 
 # Check thread safety
@@ -258,7 +268,7 @@ println("Spectral scores allocated: $(length(search_data.spectral_scores))")
 - Each search method processes PSMs through common interface
 - Results flow between methods via SearchContext state
 
-### With CommonUtils  
+### With CommonUtils
 - matchPeaks.jl generates FragmentMatch/PrecursorMatch objects
 - buildDesignMatrix.jl consumes ScoredPSM data
 - Fragment indexing works with LibraryIon structures

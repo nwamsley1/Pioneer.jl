@@ -41,7 +41,7 @@ function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
 
     # Check if file exists and has data before processing
     if !exists(ref)
-        @debug "Skipping non-existent file: $(file_path(ref))"
+        @debug_l1 "Skipping non-existent file: $(file_path(ref))"
         return ref
     end
 
@@ -49,7 +49,7 @@ function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
     transform_and_write!(ref) do df
         # Check for empty input data
         if nrow(df) == 0
-            @debug "Skipping empty file: $(file_path(ref))"
+            @debug_l1 "Skipping empty file: $(file_path(ref))"
             return df  # Return empty DataFrame unchanged
         end
 
@@ -58,7 +58,7 @@ function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
                 df = op(df)
                 # Check if operation resulted in empty data
                 if nrow(df) == 0
-                    @debug "File became empty after operation '$desc': $(file_path(ref))"
+                    @debug_l1 "File became empty after operation '$desc': $(file_path(ref))"
                     break  # No point in continuing pipeline
                 end
             catch e

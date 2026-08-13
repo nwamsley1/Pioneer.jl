@@ -7,17 +7,26 @@ using Random
 using Pioneer: BasicMassSpecData,
                getScanHeader, getScanNumber, getBasePeakMz, getBasePeakIntensity,
                getRetentionTime, getLowMz, getHighMz, getTIC, getMsOrder,
+               getCycleIdx, getCycleIdxs,
                getMzArray, getIntensityArray, getCenterMz, getIsolationWidthMz,
                getCenterMzs, getIsolationWidthMzs, getRetentionTimes, getTICs, getMsOrders,
                FilteredMassSpecData, IndexedMassSpecData, create_scan_mapping,
                getOriginalScanIndex, getOriginalScanIndices,
-               compute_rt_bins, sort_scans_by_peak_density, create_priority_order
+               compute_rt_bins, sort_scans_by_peak_density, create_priority_order,
+               compute_cycle_idxs, MzMLCycleIndexTracker, get_cycle_idx!
 
 function make_union_vec(xs::Vector{Float32})
     return Vector{Union{Missing, Float32}}(xs)
 end
 
-function write_basic_ms_arrow(path::String; n::Int=5)
+function write_basic_ms_arrow(
+    path::String;
+    n::Int=5,
+    ms_order = UInt8.(fill(2, n)),
+    center_mz = Vector{Union{Missing,Float32}}(Float32.(200 .+ collect(1:n))),
+    isol_width = Vector{Union{Missing,Float32}}(Float32.(fill(1.0, n))),
+    cycle_idx = nothing,
+)
     mz_arrays = Vector{Vector{Union{Missing,Float32}}}(undef, n)
     int_arrays = Vector{Vector{Union{Missing,Float32}}}(undef, n)
     headers = ["scan_$(i)" for i in 1:n]
@@ -28,9 +37,6 @@ function write_basic_ms_arrow(path::String; n::Int=5)
     low_mz = Float32.(fill(100.0, n))
     high_mz = Float32.(fill(1000.0, n))
     tic = Float32.(10000 .+ 100 .* collect(1:n))
-    center_mz = Vector{Union{Missing,Float32}}(Float32.(200 .+ collect(1:n)))
-    isol_width = Vector{Union{Missing,Float32}}(Float32.(fill(1.0, n)))
-    ms_order = UInt8.(fill(2, n))
     packet_type = Int32.(fill(0, n))
 
     for i in 1:n
@@ -54,6 +60,9 @@ function write_basic_ms_arrow(path::String; n::Int=5)
         msOrder = ms_order,
         packetType = packet_type,
     )
+    if cycle_idx !== nothing
+        df[!, :cycle_idx] = cycle_idx
+    end
     Arrow.write(path, df)
     return path
 end
@@ -78,6 +87,7 @@ end
     @test getHighMz(original, 1) ≈ Float32(1000.0)
     @test getTIC(original, 6) ≈ Float32(10600)
     @test getMsOrder(original, 1) == UInt8(2)
+    @test getCycleIdx(original, 1) == UInt32(1)
 
     # Array getters
     mz1 = getMzArray(original, 1)
@@ -97,6 +107,7 @@ end
         @test getScanNumber(filtered, i) == getScanNumber(original, orig_idx)
         @test getRetentionTime(filtered, i) ≈ getRetentionTime(original, orig_idx)
         @test getMsOrder(filtered, i) == getMsOrder(original, orig_idx)
+        @test getCycleIdx(filtered, i) == getCycleIdx(original, orig_idx)
     end
 
     # Append a couple more scans
@@ -124,6 +135,54 @@ end
     scans, starts, ends = sort_scans_by_peak_density(original, UInt8(2), bins, 5)
     prio = create_priority_order(scans, starts, ends)
     @test length(prio) == length(scans)
+end
+
+@testset "cycle_idx semantics and Arrow fallback" begin
+    temp_dir = mktempdir()
+    ms_order = UInt8[1, 1, 2, 2, 1, 2, 2, 1, 2]
+    center_mz = Vector{Union{Missing,Float32}}([
+        missing, missing, 500.0f0, 525.0f0, missing,
+        500.0f0, 525.0f0, missing, 500.0005f0,
+    ])
+    isol_width = Vector{Union{Missing,Float32}}([
+        missing, missing, 24.0f0, 24.0f0, missing,
+        24.0f0, 24.0f0, missing, 24.0005f0,
+    ])
+    expected = UInt32[1, 1, 1, 1, 1, 2, 2, 2, 3]
+
+    @test compute_cycle_idxs(ms_order, center_mz, isol_width) == expected
+
+    tracker = MzMLCycleIndexTracker()
+    streamed = UInt32[
+        get_cycle_idx!(tracker, ms_order[i], center_mz[i], isol_width[i])
+        for i in eachindex(ms_order)
+    ]
+    @test streamed == expected
+
+    legacy_path = joinpath(temp_dir, "legacy.arrow")
+    write_basic_ms_arrow(
+        legacy_path;
+        n = length(ms_order),
+        ms_order = ms_order,
+        center_mz = center_mz,
+        isol_width = isol_width,
+    )
+    legacy = BasicMassSpecData(legacy_path)
+    @test collect(getCycleIdxs(legacy)) == expected
+    @test getCycleIdx(legacy, 8) == UInt32(2)
+
+    stored_path = joinpath(temp_dir, "stored.arrow")
+    stored = Int32.(expected .+ UInt32(10))
+    write_basic_ms_arrow(
+        stored_path;
+        n = length(ms_order),
+        ms_order = ms_order,
+        center_mz = center_mz,
+        isol_width = isol_width,
+        cycle_idx = stored,
+    )
+    stored_ms = BasicMassSpecData(stored_path)
+    @test UInt32.(collect(getCycleIdxs(stored_ms))) == UInt32.(stored)
 end
 
 @testset "IndexedMassSpecData Tests" begin
@@ -167,6 +226,7 @@ end
         @test getHighMz(indexed, i) ≈ getHighMz(original, orig_idx)
         @test getTIC(indexed, i) ≈ getTIC(original, orig_idx)
         @test getMsOrder(indexed, i) == getMsOrder(original, orig_idx)
+        @test getCycleIdx(indexed, i) == getCycleIdx(original, orig_idx)
     end
 
     # Test array getters
@@ -189,12 +249,14 @@ end
     retention_times = getRetentionTimes(indexed)
     tics = getTICs(indexed)
     ms_orders = getMsOrders(indexed)
+    cycle_idxs = getCycleIdxs(indexed)
 
     @test length(center_mzs) == length(indexed)
     @test length(isolation_widths) == length(indexed)
     @test length(retention_times) == length(indexed)
     @test length(tics) == length(indexed)
     @test length(ms_orders) == length(indexed)
+    @test length(cycle_idxs) == length(indexed)
 
     # Verify batch getters match individual getters
     for i in 1:length(indexed)
@@ -203,6 +265,7 @@ end
         @test getRetentionTime(indexed, i) ≈ retention_times[i]
         @test getTIC(indexed, i) ≈ tics[i]
         @test getMsOrder(indexed, i) == ms_orders[i]
+        @test getCycleIdx(indexed, i) == cycle_idxs[i]
     end
 
     # Test create_scan_mapping function

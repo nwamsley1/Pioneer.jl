@@ -92,7 +92,6 @@ function importScripts()
             "generalGaussModel.jl",
             "noQuadModel.jl",
             "RazoQuadModel.jl",
-            "SplineQuadModel.jl",
             "binIsotopeRatioData.jl",
             "SquareQuadModel.jl"
         ]
@@ -105,65 +104,101 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "utils", "buildParamDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
-    
+
+    # Windows LightGBM MSVC-override install helper (setup_windows_lightgbm)
+    safe_include!(joinpath(package_root, "src", "utils", "install", "windows_lightgbm.jl"))
+
     # Logging is now handled directly in Pioneer.jl
     
     include_files!(
         joinpath(package_root, "src","structs"),
         [
-            "MassSpecData.jl",
-            "FilteredMassSpecData.jl",
+            "MassSpecData/types.jl",
+            "MassSpecData/getters.jl",
+            "MassSpecData/FilteredMassSpecData.jl",
+            "MassSpecData/IndexedMassSpecData.jl",
             "ChromObject.jl",
-            "ArrayDict.jl",
             "Counter.jl",
             "Ion.jl",
-            "LibraryIon.jl",
-            "LibraryProteins.jl",
-            "LibraryFragmentIndex.jl",                                                                    
+            "SpectralLibrary/fragment_types.jl",
+            "SpectralLibrary/fragment_lookup.jl",
+            "SpectralLibrary/precursors.jl",
+            "SpectralLibrary/proteins.jl",
+            "SpectralLibrary/PartitionedFragmentIndex/types.jl",
+            "SpectralLibrary/SpectralLibrary.jl",
             "IsotopeTraceType.jl",
             "MatchIon.jl",
             "SparseArray.jl",
+            "SparseArrayFused.jl",
+            "PrecEstimation.jl",
+            "PrecursorMap.jl",
             "FragBoundModel.jl",
             "RetentionTimeIndex.jl",
-            "MassErrorModel.jl",                                                                  
+            "MassErrorModel.jl",
             "RetentionTimeConversionModel.jl",
+            "IntensityMassErrorModel.jl",
             "protein_inference_types.jl"
             ]
     )
 
     
-    # Utilities/ML - core utilities first, then trait-based scoring system
+    # Sort utilities (needed by ML and FileOperations)
+    safe_include!(joinpath(package_root, "src", "utils", "sortUtils.jl"))
+
+    # Parallel utilities (used by threading patterns across SearchDIA)
+    safe_include!(joinpath(package_root, "src", "utils", "parallelUtils.jl"))
+
+    # Utilities/SpectralDeconvolution - OLS and Poisson MM solvers
+    include_files!(
+        joinpath(package_root, "src", "utils", "SpectralDeconvolution"),
+        [
+            "solveOLS.jl",          # Non-negative OLS coordinate descent
+            "solvePoissonMM.jl",    # Poisson MLE coordinate descent + dispatch
+            "solveHuber.jl",        # Robust Huber coordinate descent
+        ]
+    )
+
+    # Utilities/Splines - B-spline fitting and evaluation
+    include_files!(
+        joinpath(package_root, "src", "utils", "Splines"),
+        [
+            "uniformBasisCubicSpline.jl",  # RT alignment, quant normalization
+            "libraryBSpline.jl",           # NCE intensity evaluation (de Boor)
+        ]
+    )
+
+    # Utilities/ML - general ML utilities
     include_files!(
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
             "ftrUtilities.jl",
-            "lightgbm_utils.jl",
             "probitRegression.jl",
             "piecewiseLinearFunction.jl",
-            "spectralLinearRegression.jl",
-            "uniformBasisCubicSpline.jl",
             "wittakerHendersonSmoothing.jl",
-            "libraryBSpline.jl",
-            # Trait-based scoring system (in dependency order)
+        ]
+    )
+
+    # Utilities/ML/PSMScoring - trait-based PSM scoring pipeline (in dependency order)
+    include_files!(
+        joinpath(package_root, "src", "utils", "ML", "PSMScoring"),
+        [
             "psm_container.jl",       # AbstractPSMContainer abstraction
             "arrow_psm_container.jl", # ArrowFilePSMContainer (file-backed OOM)
-            "scoring_traits.jl",      # Abstract types for scoring traits
-            "scoring_config.jl",      # ScoringConfig struct
-            "pairing.jl",             # PairingStrategy implementations
-            "model_training.jl",      # PSMScoringModel train/predict
+            "types.jl",               # Abstract types (PSMScoringModel, etc.)
+            "config.jl",              # ScoringConfig struct
+            "lightgbm_utils.jl",      # LightGBM API wrapper
+            "global_oof_scoring.jl",  # Shared semi-supervised OOF scoring
+            "model_training.jl",      # PSMScoringModel train/predict dispatch
             "training_selection.jl",  # TrainingDataStrategy implementations
             "feature_selection.jl",   # FeatureSelectionStrategy implementations
-            "iteration_scheme.jl",    # IterationScheme implementations
-            "mbr_update.jl",          # MBRUpdateStrategy implementations
-            "scoring_workspace.jl",   # AbstractScoringWorkspace for CV setup + output arrays
-            "percolator_generic.jl",  # Main percolator_scoring! function
-            "percolatorSortOf.jl"     # Legacy sort_of_percolator! function
+            "workspace.jl",           # AbstractScoringWorkspace, CV fold setup
+            "scoring.jl",             # percolator_scoring! entry point
         ]
     )
 
 
-    # Utils (must load writeArrow before FileOperations)
+    # Utils
     include_files!(
         joinpath(package_root, "src", "utils"),
         [
@@ -171,15 +206,15 @@ function importScripts()
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
-            "writeArrow.jl",
-            "safeFileOps.jl",
+            "normalizeQuant.jl",
             "proteinInference.jl",
+            "runSimilarity.jl",
             "profile.jl",
             "pdfUtils.jl"
         ]
     )
 
-    # Include new FileOperations module from utils (after writeArrow is loaded)
+    # FileOperations module (includes writeArrow, safeFileOps, Arrow I/O, streaming, pipeline)
     safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
     # PSMs
@@ -194,14 +229,21 @@ function importScripts()
     )
 
         
-    #Search Method 
+    #Search Method
+    # fusedScan defines FusedScratch, which SearchTypes references as a field
+    # on SimpleLibrarySearch — must load first.
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "fusedScan.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
-
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
 
     # Include remaining files using safe import for directories
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
+
+    # Partitioned fragment index (build + search depend on CommonSearchUtils types)
+    include_files!(
+        joinpath(package_root, "src", "structs", "SpectralLibrary", "PartitionedFragmentIndex"),
+        ["build.jl", "search.jl"]
+    )
     
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
@@ -210,30 +252,95 @@ function importScripts()
     include_files!(
         joinpath(search_methods_dir, "ParameterTuningSearch"),
         [
+            "constants.jl",                # Hardcoded tuning constants (shared by NCE/Quad tuning too)
             "types.jl",                    # All type definitions to avoid circular dependencies
             "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
-            "utils.jl"                     # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
+            "utils.jl",                    # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
+            "fit_intensity_mass_error.jl", # IntensityMassErrorModel fitting pipeline
+            "ms1_diagnostic.jl"            # MS1 ppm-residual diagnostic histogram
         ]
     )
     
-    # Load ScoringSearch files in dependency order
+    # Load PrecursorScoringSearch files in dependency order
     include_files!(
-        joinpath(search_methods_dir, "ScoringSearch"),
+        joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
-            "utils.jl",                        # Contains get_qvalue_spline and other utility functions
+            "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
+            "global_precursor_scoring.jl",     # Experiment-wide precursor scoring model
+            "wide_window_features.jl",          # Raw same-window MS1/MS2 support features
             "scoring_interface.jl",            # Interface functions
-            "protein_inference_pipeline.jl",   # Protein inference pipeline
-            "ScoringSearch.jl"                 # Main implementation - depends on utils.jl
+            "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch
+            "PrecursorScoringSearch.jl"        # Main implementation - depends on utils.jl
+        ]
+    )
+
+    # Post-integration MBR spans precursor scoring and chromatogram integration,
+    # so keep its implementation stage-neutral and load it before either stage
+    # invokes the public orchestration helpers.
+    include_files!(
+        joinpath(search_methods_dir, "MBR"),
+        [
+            "types.jl",
+            "pairing.jl",
+            "clusters.jl",
+            "features.jl",
+            "rescoring.jl",
+            "pipeline.jl",
+        ]
+    )
+
+    # ProteinInferenceSearch (annotates passing PSMs with inferred protein groups)
+    include_files!(
+        joinpath(search_methods_dir, "ProteinInferenceSearch"),
+        [
+            "utils.jl",
+            "ProteinInferenceSearch.jl"
+        ]
+    )
+
+    # ProteinScoringSearch — utils.jl cascades the other 7 sibling files
+    include_files!(
+        joinpath(search_methods_dir, "ProteinScoringSearch"),
+        [
+            "utils.jl",
+            "ProteinScoringSearch.jl"
         ]
     )
     
-    # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    # Skip ParameterTuningSearch and ScoringSearch since we loaded them above
+    # MainSearch (fragment index search + deconvolution + prescore scoring)
+    include_files!(joinpath(search_methods_dir, "MainSearch"), [
+        "prescore_aggregation.jl",       # _logodds_combine (no deps)
+        "types.jl",                      # MainSearchParameters (no deps)
+        "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
+        "features.jl",                   # prepare_psm_features!, add_features! (uses types)
+        "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
+        "scoring.jl",                    # train_lgbm_and_select_best (uses features)
+        "utils.jl",                      # recalibrate_rt!
+        "MainSearch.jl"                  # struct + interface (uses everything above)
+    ])
+
+    # Unified scan loop (needs MainSearchParameters + CommonSearchUtils + PSM scoring)
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "process_scans.jl"))
+    # Fused variant for MainSearch (loaded after process_scans.jl — uses its dispatch helpers)
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "process_scans_fused.jl"))
+
+    # Chromatogram integration (explicit order so new files are precompile-tracked)
+    include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
+        "integrate_chrom.jl",
+        "IntegrateChromatogramsSearch.jl",
+        "utils.jl"
+    ])
+
+    # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
-        # Skip ParameterTuningSearch and ScoringSearch directories
-        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root)
+        root_basename = basename(root)
+        if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" ||
+           root_basename == "HuberTuningSearch" ||
+           root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch" ||
+           occursin("MainSearch", root)
             continue
         end
         for file in files
@@ -242,6 +349,16 @@ function importScripts()
             end
         end
     end
+
+    # Huber calibration depends on the chromatogram-integration fused RT-window
+    # utilities, so load it after the remaining SearchMethods pass above.
+    include_files!(
+        joinpath(search_methods_dir, "HuberTuningSearch"),
+        [
+            "HuberTuningSearch.jl",
+            "utils.jl"
+        ]
+    )
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
@@ -265,43 +382,39 @@ function importScripts()
     safe_include!(joinpath(root_path, "fasta", "fasta_parser.jl"))
     safe_include!(joinpath(root_path, "fasta", "fasta_digest.jl"))
     safe_include!(joinpath(root_path, "fasta", "fasta_utils.jl"))
+    safe_include!(joinpath(root_path, "fasta", "diann_decoys.jl"))
     safe_include!(joinpath(root_path, "fasta", "fasta_protein_table.jl"))
     
     # Fragment handling
     safe_include!(joinpath(root_path, "fragments", "get_frag_bounds.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_parse.jl"))
-    safe_include!(joinpath(root_path, "fragments", "fragment_index.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_annotation.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_predict.jl"))
-    
+
     # Koina integration
+    safe_include!(joinpath(root_path, "koina", "koina_client.jl"))
     safe_include!(joinpath(root_path, "koina", "koina_api.jl"))
     safe_include!(joinpath(root_path, "koina", "koina_batch_prep.jl"))
     safe_include!(joinpath(root_path, "koina", "koina_batch_parse.jl"))
-    
+
     # Utilities
     safe_include!(joinpath(root_path, "utils", "io.jl"))
-    safe_include!(joinpath(root_path, "utils", "estimate_collision_ev.jl"))
     safe_include!(joinpath(root_path, "utils", "math.jl"))
     safe_include!(joinpath(root_path, "utils", "get_mz.jl"))
-    safe_include!(joinpath(root_path, "utils", "parse_isotope_mods.jl"))
     safe_include!(joinpath(root_path, "utils", "check_params.jl"))
+    safe_include!(joinpath(root_path, "utils", "model_limits.jl"))
     safe_include!(joinpath(root_path, "utils", "essential_mods.jl"))
-    
-    # Structs 
-    # COMMENTED OUT: EmpiricalLibrary only used by ParseSpecLib which has loading issues
-    # safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
     safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
-    
+
     # Library building
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
-    
+
     # Chronologer Methods
     safe_include!(joinpath(root_path, "chronologer", "pair_decoys.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_prep.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_parse.jl"))
-    
+
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
@@ -309,59 +422,8 @@ function importScripts()
     # Main routines that use logging macros - load at the end
     # SearchDIA.jl already loaded early to provide asset_path function
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
-    # COMMENTED OUT: ParseSpecLib has loading issues due to EmpiricalLibrary dependencies
-    # safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
 
-    #importSpecLibScripts()
-
     return files_loaded
-end
-
-function importSpecLibScripts()
-    include("types.jl")
-    include("constants.jl")
-    include("../../structs/Ion.jl")
-    include("../../structs/LibraryIon.jl")
-    include("../../structs/LibraryFragmentIndex.jl")
-    # FASTA processing
-    include("fasta/fasta_types.jl")
-    include("fasta/fasta_parser.jl") 
-    include("fasta/fasta_digest.jl")
-    include("fasta/fasta_utils.jl")
-    # Fragment handling
-    include("fragments/fragment_types.jl")
-    include("fragments/get_frag_bounds.jl")
-    include("fragments/fragment_parse.jl")
-    include("fragments/fragment_index.jl")
-    include("fragments/fragment_annotation.jl")
-    include("fragments/fragment_predict.jl")
-
-    # Koina integration
-    include("koina/koina_types.jl")
-    include("koina/koina_api.jl")
-    include("koina/koina_batch_prep.jl")
-    include("koina/koina_batch_parse.jl")
-
-    # Utilities
-    include("utils/io.jl")
-    include("utils/estimate_collision_ev.jl")
-    include("utils/math.jl")
-    include("utils/modifications.jl")
-    include("utils/get_mz.jl")
-    include("utils/parse_isotope_mods.jl")
-    include("utils/check_params.jl")
-
-    # Library building
-    include("build/build_types.jl")
-    include("build/build_lib.jl")
-    include("build/build_index.jl")
-    include("build/build_poin_lib.jl")
-
-
-    include("chronologer/chronologer_types.jl")
-    include("chronologer/chronologer_prep.jl")
-    include("chronologer/chronologer_predict.jl")
-    include("chronologer/chronologer_parse.jl")
 end

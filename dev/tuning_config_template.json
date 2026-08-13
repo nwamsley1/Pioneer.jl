@@ -1,0 +1,56 @@
+{
+    "_comment_paths": "EDIT THESE: ms_data is the directory of .arrow files, library is the .poin path, results is where outputs go.",
+    "paths": {
+        "ms_data": "/Users/nathanwamsley/Data/RegressionTestsLite/Olsen_3P_Exploris_one",
+        "library": "/Users/nathanwamsley/Data/SPEC_LIBS/altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_mzsorted.poin",
+        "results": "/Users/nathanwamsley/Data/RegressionTestsLite/Olsen_3P_Exploris_one/tune_run_01"
+    },
+
+    "_comment_acquisition": "Override per-instrument; nce is collision energy.",
+    "acquisition": {
+        "nce": 26
+    },
+
+    "_comment_global": "match_between_runs toggles MBR features. q_value_threshold is the cutoff for the final FDR.",
+    "global": {
+        "match_between_runs": true,
+        "q_value_threshold": 0.01
+    },
+
+    "_comment_search": "n_isotopes=2 matches typical Olsen Exploris settings.",
+    "search": {
+        "n_isotopes": 2
+    },
+
+    "logging": {
+        "max_message_bytes": 4096,
+        "debug_console_level": 0
+    },
+
+    "_comment_output": "delete_temp=false keeps temp_data/ for post-hoc inspection (precursors_long.arrow, main_search_psms/, etc.). write_csv adds CSV alongside Arrow output.",
+    "output": {
+        "delete_temp": false,
+        "write_csv": false,
+        "write_decoys": true
+    },
+
+    "optimization": {
+        "machine_learning": {
+            "max_psm_memory_mb": 2000,
+            "pep_bin_size": 10
+        }
+    },
+
+    "_comment_proteinScoring": "log_feature_importance dumps gain rankings for the protein-level model. global_protein_inference controls per-file vs experiment-wide.",
+    "proteinScoring": {
+        "global_protein_inference": true,
+        "write_qc_plots": false,
+        "log_feature_importance": false,
+        "min_peptides": 1
+    },
+
+    "maxLFQ": {
+        "run_to_run_normalization": false,
+        "max_chunk_size_mb": 1024
+    }
+}

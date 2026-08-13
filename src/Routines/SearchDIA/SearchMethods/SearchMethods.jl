@@ -46,57 +46,15 @@ function execute_search(
 
     search_parameters = get_parameters(search_type, params)
     Random.seed!(1844)
-    search_results = init_search_results(search_parameters, search_context)
-
-    n_processed = 0
-    n_failed = 0
+    search_results = init_search_results(search_type, search_parameters, search_context)
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
-        # Skip files that have been marked as failed in previous search methods
-        if is_file_failed(search_context, ms_file_idx)
-            file_name = try
-                getMassSpecData(search_context).file_id_to_name[ms_file_idx]
-            catch
-                "file_$ms_file_idx"
-            end
-            @debug_l1 "Skipping file $ms_file_idx ($file_name) - marked as failed in previous step"
-            continue
-        end
-
-        try
-            process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-            process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-            n_processed += 1
-        catch e
-            file_name = try
-                getMassSpecData(search_context).file_id_to_name[ms_file_idx]
-            catch
-                "file_$ms_file_idx"
-            end
-            bt = catch_backtrace()
-            @user_error "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing"
-            @user_error sprint(showerror, e, bt)
-            mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
-            n_failed += 1
-            # Continue with next file instead of crashing entire search
-        end
-
+        process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+        process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
     end
 
-    # Log summary of file processing
-    if n_failed > 0
-        @user_warn "$(typeof(search_type)): $n_processed files processed successfully, $n_failed files failed"
-    else
-        @debug_l1 "$(typeof(search_type)): $n_processed files processed successfully"
-    end
-
-    # Only proceed to summarize if we have some successful files
-    if n_processed > 0
-        summarize_results!(search_results, search_parameters, search_context)
-    else
-        @user_warn "$(typeof(search_type)): No files processed successfully - skipping result summarization"
-    end
+    summarize_results!(search_results, search_parameters, search_context)
 
     return nothing#search_results
 end
@@ -109,6 +67,10 @@ Required Interface Methods
 function get_parameters(search_type::SearchMethod, params::Any)
     error("get_parameters not implemented for search method of type $(typeof(search_type))")
 end
+
+# Default: dispatch on (search_type, params) falls back to (params) for backward compatibility
+init_search_results(::SearchMethod, search_parameters::SearchParameters, search_context::SearchContext) =
+    init_search_results(search_parameters, search_context)
 
 function init_search_results(search_parameters::SearchParameters, search_context::SearchContext, ms_file_idx::Int64)
     error("init_search_results not implemented for params of type $(typeof(search_parameters))")
@@ -127,109 +89,39 @@ end
 Helper Functions
 ==========================================================#
 
-#==========================================================
-Error Handling Helpers
-==========================================================#
-
 """
-    check_and_skip_failed_file(search_context, ms_file_idx, method_name)
+    get_all_indexed_paths(path_accessor_fn, search_context) -> Vector{Tuple{Int64, String}}
 
-Check if a file should be skipped due to previous failure and log appropriate warning.
-Returns true if file should be skipped, false otherwise.
+Iterate every MS file index, returning `(idx, path)` tuples for files whose
+`path_accessor_fn(...)` registered a non-empty path. Replaces the old
+`get_valid_file_paths` helper, which additionally filtered by a per-file
+failure flag — that flag has been removed.
 """
-function check_and_skip_failed_file(search_context::SearchContext, ms_file_idx::Int64, method_name::String)
-    if is_file_failed(search_context, ms_file_idx)
-        file_name = try
-            getFileIdToName(getMSData(search_context), ms_file_idx)
-        catch
-            "file_$ms_file_idx"
-        end
-        @user_warn "Skipping $method_name for previously failed file: $file_name"
-        return true
-    end
-    return false
+function get_all_indexed_paths(path_accessor_fn, search_context::SearchContext)
+    ms_data = getMassSpecData(search_context)
+    all_paths = path_accessor_fn(ms_data)
+    return [(i, all_paths[i]) for i in 1:length(all_paths) if !isempty(all_paths[i])]
 end
 
 """
-    handle_search_error!(search_context, ms_file_idx, method_name, error, fallback_function, results)
+    get_all_fold_file_paths(search_context) -> Vector{String}
 
-Handle search method errors gracefully by marking the file as failed and creating fallback results.
+Collect every existing fold-split second-pass PSM file (fold0/fold1) across
+all MS file indices. Files with no on-disk fold output (e.g. the file had no
+PSMs in that fold) are skipped.
 """
-function handle_search_error!(search_context::SearchContext, ms_file_idx::Int64, method_name::String, 
-                             error::Exception, fallback_function::Function, results)
-    file_name = try
-        getFileIdToName(getMSData(search_context), ms_file_idx)
-    catch
-        "file_$ms_file_idx"
-    end
-    
-    reason = "$method_name failed: $(typeof(error))"
-
-    # Mark failed in both tracking systems (SearchContext set + Arrow reference flag)
-    markFileFailed!(search_context, ms_file_idx, reason)
-    try
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-    catch
-        # Fallback for legacy contexts
-        mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
-    end
-
-    # Log full error with stacktrace for easier debugging
-    bt = catch_backtrace()
-    @user_error "$method_name failed for MS data file: $file_name"
-    @user_error sprint(showerror, error, bt)
-    
-    # Create fallback results
-    fallback_function(results, ms_file_idx)
-end
-
-#==========================================================
-Index-Based Failed File Handling Utilities
-==========================================================#
-
-"""
-    get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
-
-Get paths for valid files, maintaining index association.
-Returns: Vector of (index, path) tuples for files that passed pipeline stages.
-"""
-function get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
-    valid_indices = get_valid_file_indices(search_context)
-    indexed_paths = Tuple{Int64, String}[]
-    
-    for idx in valid_indices
-        if idx <= length(path_array)
-            path = path_array[idx]
-            if !isempty(path) && isfile(path)
-                push!(indexed_paths, (idx, path))
-            end
+function get_all_fold_file_paths(search_context::SearchContext)
+    ms_data = getMassSpecData(search_context)
+    fold_paths = String[]
+    for idx in 1:length(getFilePaths(ms_data))
+        base_path = getSecondPassPsms(ms_data, idx)
+        isempty(base_path) && continue
+        for fold in UInt8[0, 1]
+            fold_path = getSecondPassPsmsFold(ms_data, idx, fold)
+            isfile(fold_path) && push!(fold_paths, fold_path)
         end
     end
-    
-    return indexed_paths
-end
-
-"""
-    get_valid_paths_only(path_array::Vector{String}, search_context::SearchContext)
-
-Get paths for valid files as a simple vector (without index information).
-"""
-function get_valid_paths_only(path_array::Vector{String}, search_context::SearchContext)
-    return [path for (_, path) in get_valid_indexed_paths(path_array, search_context)]
-end
-
-"""
-    get_valid_file_names_by_indices(search_context::SearchContext)
-
-Get file names for valid files, preserving index order.
-Uses the failed file tracking in SearchContext to determine which files are valid.
-"""
-function get_valid_file_names_by_indices(search_context::SearchContext)
-    valid_indices = get_valid_file_indices(search_context)
-    all_names = getFileIdToName(getMSData(search_context))
-    
-    # Return names in index order (indices are already sorted)
-    return [all_names[idx] for idx in valid_indices]
+    return fold_paths
 end
 
 """
@@ -362,7 +254,7 @@ function initSearchContext(
     search_context.n_library_decoys = n_decoys
     search_context.library_fdr_scale_factor = Float32(n_targets / max(n_decoys, 1))
     
-    @debug_l1 "Library contains $n_targets targets and $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=7)))"
+    @user_info "Library: $n_targets target precursors, $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=4)))"
     
     return search_context
 end
@@ -383,148 +275,36 @@ function initSimpleSearchContext(
     )
 
     SimpleLibrarySearch(
-        [FragmentMatch{Float32}() for _ in range(1, M)],
-        [FragmentMatch{Float32}() for _ in range(1, M)],
-        [FragmentMatch{Float32}() for _ in range(1, M)],
-        ArrayDict(UInt32, UInt16, n_precursors),
-        Counter(UInt32, UInt8,n_precursors ),
-        [DetailedFrag{Float32}() for _ in range(1, M)],
+        [MassErrSample() for _ in range(1, M)],            # mass_err_samples
+        # id_to_col: reset per scan, ~5k active. Hint to 8k = 8192 next pow2,
+        # avoids rehash on busy scans.
+        SparsePrecMap{UInt16}(sizehint=8192),
         iso_splines,
-        Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000),
-        [SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)],
-        Vector{SpectralScoresSimple{Float16}}(undef, 5000),
-        Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000),
-        [ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)],
-        Vector{SpectralScoresComplex{Float16}}(undef, 5000),
-        Vector{Ms1ScoredPSM{Float32, Float16}}(undef, 5000),
-        [Ms1UnscoredPSM{Float32}() for _ in range(1, 5000)],
-        Vector{SpectralScoresMs1{Float16}}(undef, 5000),
-        SparseArray(UInt32(5000)),
+        [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),
+        Vector{SpectralScoresMainSearch{Float16, Float32}}(undef, 5000),
+        # Tuning buffers — slim PSM variants for ParameterTuning/QuadTuning/Integrate paths.
+        [TuningUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        Vector{TuningScoredPSM{Float32, Float16}}(undef, 5000),
         zeros(UInt32, 5000),
-        zeros(Float32, n_precursors),
+        # precursor_weights: cumulative matched-precursors over a run.
+        # Hint to 256k — rough upper bound for typical DIA fill; resizes
+        # gracefully if exceeded.
+        SparsePrecMap{Float32}(sizehint=262144),
+        zeros(Float32, 5000),
+        zeros(Float32, 5000),
+        zeros(Float32, 5000),
         zeros(Float32, 5000),
         zeros(Float32, 5000),
         zeros(Float32, 5),
         zeros(Float32, 5),
+        FusedScratch(256),
+        SparseArrayFused(UInt32(5000)),
+        zeros(Float32, 5000),  # scan_corrected_mz
+        zeros(Float32, 5000),  # scan_obs_low
+        zeros(Float32, 5000),  # scan_obs_high
     )
 end
-
-#==========================================================
-Failed File Management Utilities
-==========================================================#
-
-"""
-    is_file_failed(search_context, ms_file_idx) -> Bool
-
-Check if a file has been marked as failed in the ArrowTableReference.
-"""
-function is_file_failed(search_context, ms_file_idx)
-    return getFailedIndicator(getMassSpecData(search_context), ms_file_idx)
-end
-
-"""
-    mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
-
-Mark a file as failed in the ArrowTableReference and log the reason.
-"""
-function mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
-    setFailedIndicator!(getMassSpecData(search_context), ms_file_idx, true)
-    file_name = try
-        getMassSpecData(search_context).file_id_to_name[ms_file_idx]
-    catch
-        "file_$ms_file_idx"
-    end
-    @user_warn "File $ms_file_idx ($file_name) marked as failed: $reason"
-end
-
-"""
-    get_valid_file_indices(search_context) -> Vector{Int}
-
-Get indices of files that have not been marked as failed.
-"""
-function get_valid_file_indices(search_context)
-    ms_data = getMassSpecData(search_context)
-    indices = [i for i in 1:length(ms_data.file_paths) if !getFailedIndicator(ms_data, i)]
-    return sort(indices)  # Ensure consistent ordering across all uses
-end
-
-"""
-    get_valid_file_paths(search_context, path_accessor_fn) -> Vector{Tuple{Int, String}}
-
-Get (index, path) pairs for valid files using the provided path accessor function.
-Returns only non-empty paths from files that haven't failed.
-"""
-function get_valid_file_paths(search_context, path_accessor_fn)
-    valid_indices = get_valid_file_indices(search_context)
-    all_paths = path_accessor_fn(getMassSpecData(search_context))
-    return [(i, all_paths[i]) for i in valid_indices if i <= length(all_paths) && !isempty(all_paths[i])]
-end
-
-"""
-    filter_to_valid_files(file_paths::Vector{String}, search_context) -> Vector{String}
-
-Filter a vector of file paths to only include those from valid (non-failed) files.
-"""
-function filter_to_valid_files(file_paths::Vector{String}, search_context)
-    valid_indices = get_valid_file_indices(search_context)
-    return [file_paths[i] for i in valid_indices if i <= length(file_paths) && !isempty(file_paths[i])]
-end
-
-"""
-    get_valid_fold_file_paths(search_context) -> Vector{String}
-
-Get paths to all fold-split second pass PSM files for valid (non-failed) files.
-
-Returns paths to both fold0 and fold1 files for each valid MS file.
-Files that don't exist are filtered out (e.g., if a file had no PSMs for one fold).
-
-# Returns
-- Vector of paths to fold-specific Arrow files (e.g., ["file1_fold0.arrow", "file1_fold1.arrow", ...])
-"""
-function get_valid_fold_file_paths(search_context)
-    valid_indices = get_valid_file_indices(search_context)
-    ms_data = getMassSpecData(search_context)
-
-    fold_paths = String[]
-    for idx in valid_indices
-        base_path = getSecondPassPsms(ms_data, idx)
-        if !isempty(base_path)
-            # Add paths for both folds if they exist
-            for fold in UInt8[0, 1]
-                fold_path = getSecondPassPsmsFold(ms_data, idx, fold)
-                if isfile(fold_path)
-                    push!(fold_paths, fold_path)
-                end
-            end
-        end
-    end
-    return fold_paths
-end
-
-"""
-    safe_process_file!(search_context, ms_file_idx, processing_fn) -> Bool
-
-Safely process a file with error handling. Returns true if successful, false if failed.
-Marks file as failed if processing produces no data or throws an error.
-"""
-function safe_process_file!(search_context, ms_file_idx, processing_fn)
-    if is_file_failed(search_context, ms_file_idx)
-        return false  # Already failed
-    end
-
-    try
-        result = processing_fn(ms_file_idx)
-        if result === nothing || (isa(result, DataFrame) && nrow(result) == 0)
-            mark_file_as_failed_if_needed!(search_context, ms_file_idx, "No valid data produced")
-            return false
-        end
-        return true
-    catch e
-        mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
-        return false
-    end
-end
-
 
 """
    setDataOutDir!(s::SearchContext, dir::String) -> SearchContext
@@ -571,7 +351,7 @@ function setDataOutDir!(s::SearchContext, dir::String)
     try
         rm(temp_data_dir, recursive=true, force=true)
     catch e
-        @warn "Could not fully remove previous temp_data" exception=e
+        @debug_l1 "Could not fully remove previous temp_data: $e"
     end
     !isdir(temp_data_dir) && mkdir(temp_data_dir)
 

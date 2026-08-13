@@ -179,82 +179,6 @@ end
 #Model Fitting
 
 
-#=
-"""
-    
-    function getRazoQuadJacobian() 
-
-Returns a piecewise function to evaluate the jacobian for the function 
-
-F = log(f(x0)/f(x1)) with respect to the for parameters al, ar, bl, br (see `RazoQuadParams`)
-
-
-### Input
-
-### Output
-
-- Dict{Int64, Any}
-Output is a dictionary with keys -1, 0, 1 for different parts of the domain. 
-
-* -1 Corresponds to x0 < 0 and x1 < 0
-* 0 Corresponds to x0 < 0 and x1 > 0
-* 1 Corresponds to x0 > 0 and x1 > 0
-
-### Notes
-
-- The derivative is very complicated. This function uses the "Symbolics.jl" package to get functions for the derivatives. 
-- The derivatives will be NaN if either x0 or x1 is exactly equal to zero. 
-
-"""
-function getRazoQuadJacobian()
-    #From Symbolics.jl
-    @variables al, ar, bl, br, x0, x1
-    jacobian_dict = Dict{Int64, Any}()
-    #x0 < 0, x1 < 0
-    z = log(1 + abs((x1)/al)^(2*bl)) - log(1 + abs(x0/al)^(2*bl))
-    jacobian_dict[-1] = eval(build_function([simplify(x) for x in Symbolics.jacobian([z], [al, ar, bl, br])],
-        [x0, x1, al, ar, bl, br])[1])
-    #x0 < 0, x1 > 0
-    z = log(1 + abs((x1)/ar)^(2*br)) - log(1 + abs(x0/al)^(2*bl))
-    jacobian_dict[0] = eval(build_function([simplify(x) for x in Symbolics.jacobian([z], [al, ar, bl, br])],
-        [x0, x1, al, ar, bl, br])[1])
-    #x0 > 0, x1 > 0
-    z = log(1 + abs((x1)/ar)^(2*br)) - log(1 + abs(x0/ar)^(2*br))
-    jacobian_dict[1] = eval(build_function([simplify(x) for x in Symbolics.jacobian([z], [al, ar, bl, br])],
-        [x0, x1, al, ar, bl, br])[1])
-    return jacobian_dict
-end
-
-"""
-    function evalJ(Jsymb::Dict{Int64, Any}, params::RazoQuadParams, x0::T, x1::T) where {T<:AbstractFloat} 
-
-Given a piecewise function to evaluate the jacobian of F, evaluates the derivatives given `params`, `x0`, and `x1`
-- f -- Razo Quad Transmission function 
-- F = log(f(x0)/f(x1)) -- with respect to the for parameters al, ar, bl, br (see `RazoQuadParams`)
-
-### Input
-
-- `Jsymb::Dict{Int64, Any}}`: -- See `getRazoQuadJacobian`. Pieciwise function to evaluate the jacobian given parameters and inputs
-- `params::RazoQuadParams` -- parameters for a Razo Quad Transmission function. See `RazoQuadParams`
-- `x0::T` -- point to evaluate F(x0, x1) at. 
-- `x1::T` -- point to evaluate F(x0, x1) at. 
-
-### Output
-
-- SMatrix{1, 4, Float64, 4} -- The parameters of a `RazoQuadParams` model in this order: al, ar, bl, br
-
-"""
-function evalJ(Jsymb::Dict{Int64, Any}, params::RazoQuadParams, x0::T, x1::T)::SMatrix{1, 4, Float64, 4} where {T<:AbstractFloat}
-    params = SA[x0, x1, params.al, params.ar, params.bl, params.br]
-    if (x0 < 0) & (x1 < 0)
-        return Jsymb[-1](params)
-    elseif (x0 < 0) & (x1 > 0)
-        return Jsymb[0](params)
-    else
-        return Jsymb[1](params)
-    end
-end
-=#
 
 """
     
@@ -404,7 +328,8 @@ function fitRazoQuadModel(
     br_bounds::Tuple{T, T},
     x0_dat::Vector{T}, x1_dat::Vector{T}, yt_dat::Vector{T}
     ;
-        λ0 = 1e-2, #Initial L-M damping coeficient 
+        weights::Union{Nothing, Vector{T}} = nothing,
+        λ0 = 1e-2, #Initial L-M damping coeficient
         ϵ1 = 1e-4, #Convergence in the gradient
         ϵ2 = 1e-4, #Convergence in the coeficients
         ϵ3 = 1e-4, #Conergence in squared error
@@ -412,12 +337,14 @@ function fitRazoQuadModel(
         ldown = 11,
         max_iter = 100000, #Maximum iterations
     ) where {T<:AbstractFloat}
-    #Initial values and parameter bounds 
+    #Initial values and parameter bounds
     rqm = RazoQuadParams(al0, ar0, bl0, br0)
     l_bounds = RazoQuadParams(first(al_bounds), first(ar_bounds), first(bl_bounds), first(br_bounds))
     u_bounds = RazoQuadParams(last(al_bounds), last(ar_bounds), last(bl_bounds), last(br_bounds))
     #Initialize JacobianMat
     M, N = length(x0_dat), 4
+    # Precompute √weights for weighted LS (row-scales J and y_diff).
+    sqrt_w = weights === nothing ? nothing : sqrt.(weights)
     J = zeros(T, (M, N));
     Jy = zeros(T, (N, 1))
     Jt = J'
@@ -428,14 +355,24 @@ function fitRazoQuadModel(
     Δ = zeros(T, N)
     λ = λ0
     for n in range(1, max_iter)
-        #Update F and Jacobian 
+        #Update F and Jacobian
         for i in range(1, M)
             F_vec[i] = F(rqm, x0_dat[i], x1_dat[i])
             J[i,:] = razoJ(x0_dat[i], x1_dat[i], rqm)
         end
-        #Get diff 
+        #Get diff
         for i in range(1, M)
             y_diff[i] = yt_dat[i] - F_vec[i]
+        end
+        # Apply √w row-scaling for weighted LS: minimize Σ wᵢ(yᵢ-F(xᵢ))².
+        if sqrt_w !== nothing
+            for i in 1:M
+                sw = sqrt_w[i]
+                for j in 1:N
+                    J[i, j] *= sw
+                end
+                y_diff[i] *= sw
+            end
         end
         SE_old = zero(T)
         for i in range(1, M)
@@ -445,9 +382,16 @@ function fitRazoQuadModel(
         #Jy = Jt*y_diff
         mul!(Jy, Jt, y_diff)
         X .= JtJ
-        𝐼 = (λ)*Diagonal(JtJ)
-        X .+= 𝐼 
-        Δ .= X\Jy
+        # Marquardt's scaled damping λ·diag(JtJ) is singular when any diagonal
+        # element of JtJ is zero (a parameter is momentarily unidentifiable,
+        # e.g. at a bound or with zero gradient). Floor the damping at a small
+        # positive value relative to the largest diagonal so X stays non-singular.
+        max_diag = maximum(abs.(diag(JtJ)))
+        diag_floor = T(1e-6) * (max_diag + T(eps(T)))
+        damped_diag = max.(diag(JtJ), diag_floor)
+        𝐼 = λ * Diagonal(damped_diag)
+        X .+= 𝐼
+        Δ .= X \ Jy
         rqm_Δ = RazoQuadParams(Δ)
         rqm_new = rqm + rqm_Δ
         #If updated guess was out of bounds, increase damping coeficient 
@@ -457,10 +401,14 @@ function fitRazoQuadModel(
         end
         
         SE_new = zero(T)
-        for i in range(1, M) #Compute F_vec with new coefficients 
+        for i in range(1, M) #Compute F_vec with new coefficients
             F_vec[i] = F(rqm_new, x0_dat[i], x1_dat[i])
-            y_diff[i] = yt_dat[i] - F_vec[i]
-            SE_new += y_diff[i]^2
+            r = yt_dat[i] - F_vec[i]
+            if sqrt_w !== nothing
+                r *= sqrt_w[i]
+            end
+            y_diff[i] = r
+            SE_new += r^2
         end
         
         #Whether to raise or lower the damping coefficient 
@@ -491,28 +439,89 @@ function fitRazoQuadModel(
 end
 
 """
-    fitRazoQuadModel(
-    quad_window_width::T,
-    x0_dat::Vector{T}, 
-    x1_dat::Vector{T}, 
-    yt_dat::Vector{T};
-        λ0 = 1e-2, #Initial L-M damping coeficient 
-        ϵ1 = 1e-5, #Convergence in the gradient
-        ϵ2 = 1e-4, #Convergence in the coeficients
-        ϵ3 = 1e-5, #Conergence in squared error
-        lup = 9,
-        ldown = 11,
-        max_iter = 100000, #Maximum iterations
-    )
+    estimate_razo_initial_params(x0_dat, yt_dat, quad_window_width) -> RazoQuadParams
 
-Helper function for `fitRazoQuadModel`. Automatically determins upper and lower bounds and initial guess given the `quad_window_width`. 
+Initial guess for LM. Trusts the stated isolation window — returns the
+half-width as both `al0` and `ar0`, with moderate sharpness `bl0=br0=10`.
+The grid search refines this from data.
+
+(Earlier data-driven half-max heuristic was removed because it could pull
+the init inside the stated window when the data's transition happens before
+the edge, giving an asymmetric starting point that doesn't match user
+expectation.)
 """
+function estimate_razo_initial_params(::Vector{T}, ::Vector{T},
+                                      quad_window_width::Real) where {T<:AbstractFloat}
+    half = T(quad_window_width) / T(2)
+    RazoQuadParams(half, half, T(10.0), T(10.0))
+end
+
+"""
+    grid_search_razo_init(x0_dat, x1_dat, yt_dat, quad_window_width;
+                          a_sweep_half=1.0, a_step=0.025, n_b=60) -> RazoQuadParams
+
+Unweighted L2 grid search providing an LM warm-start for the 4-parameter
+Razo model. Sweeps `al` and `bl` on the left (`x0 < 0` bins) with `ar, br`
+held at center; then sweeps `ar, br` on the right (`x1 ≥ 0` bins) with the
+best `al, bl` fixed. Returns the `(al, ar, bl, br)` RazoQuadParams that
+minimizes total squared residuals in log-ratio space.
+"""
+function grid_search_razo_init(x0_dat::Vector{T}, x1_dat::Vector{T},
+                                yt_dat::Vector{T},
+                                quad_window_width::Real;
+                                a_sweep_half::Float64 = 1.0,
+                                a_step::Float64 = 0.025,
+                                n_b::Int = 60) where {T<:AbstractFloat}
+    center = estimate_razo_initial_params(x0_dat, yt_dat, quad_window_width)
+    lo_a = T(0.2)
+    hi_a = T(quad_window_width)
+
+    a_offsets      = T.(collect(-a_sweep_half:a_step:a_sweep_half))
+    al_candidates  = unique(clamp.(center.al .+ a_offsets, lo_a, hi_a))
+    ar_candidates  = unique(clamp.(center.ar .+ a_offsets, lo_a, hi_a))
+    b_candidates   = T.(exp.(range(log(0.2), log(24.0), length=n_b)))
+
+    n = length(x0_dat)
+    left_idxs  = Int[i for i in 1:n if x0_dat[i] <  zero(T)]
+    right_idxs = Int[i for i in 1:n if x1_dat[i] >= zero(T)]
+
+    @inline function sse(params::RazoQuadParams{T}, idxs::Vector{Int})
+        s = 0.0
+        @inbounds for i in idxs
+            r = Float64(yt_dat[i] - F(params, x0_dat[i], x1_dat[i]))
+            s += r * r
+        end
+        s
+    end
+
+    best_left = (al=center.al, bl=center.bl, val=Inf)
+    if !isempty(left_idxs)
+        for al_c in al_candidates, bl_c in b_candidates
+            test = RazoQuadParams(al_c, center.ar, bl_c, center.br)
+            s = sse(test, left_idxs)
+            s < best_left.val && (best_left = (al=al_c, bl=bl_c, val=s))
+        end
+    end
+
+    best_right = (ar=center.ar, br=center.br, val=Inf)
+    if !isempty(right_idxs)
+        for ar_c in ar_candidates, br_c in b_candidates
+            test = RazoQuadParams(best_left.al, ar_c, best_left.bl, br_c)
+            s = sse(test, right_idxs)
+            s < best_right.val && (best_right = (ar=ar_c, br=br_c, val=s))
+        end
+    end
+
+    RazoQuadParams(best_left.al, best_right.ar, best_left.bl, best_right.br)
+end
+
 function fitRazoQuadModel(
     quad_window_width::R,
-    x0_dat::Vector{T}, 
-    x1_dat::Vector{T}, 
+    x0_dat::Vector{T},
+    x1_dat::Vector{T},
     yt_dat::Vector{T};
-        λ0 = 1e1, #Initial L-M damping coeficient 
+        weights::Union{Nothing, Vector{T}} = nothing,
+        λ0 = 1e1, #Initial L-M damping coeficient
         ϵ1 = 1e-6, #Convergence in the gradient
         ϵ2 = 1e-5, #Convergence in the coeficients
         ϵ3 = 1e-6, #Conergence in squared error
@@ -520,9 +529,8 @@ function fitRazoQuadModel(
         ldown = 11,
         max_iter = 100000, #Maximum iterations
     ) where {T<:AbstractFloat, R<:Real}
-    al0 = T(quad_window_width)/2
-    ar0 = T(quad_window_width)/2
-    bl0, br0 = T(5.0), T(5.0)
+    init = estimate_razo_initial_params(x0_dat, yt_dat, quad_window_width)
+    al0, ar0, bl0, br0 = init.al, init.ar, init.bl, init.br
     al_bounds = (T(0.2), T(quad_window_width))
     ar_bounds = (T(0.2), T(quad_window_width))
     bl_bounds = (T(1e-3), T(100.0))
@@ -532,7 +540,8 @@ function fitRazoQuadModel(
                 al_bounds, ar_bounds,
                 bl_bounds, br_bounds,
                 x0_dat, x1_dat, yt_dat;
-                λ0 =  λ0, #Initial L-M damping coeficient 
+                weights = weights,
+                λ0 =  λ0, #Initial L-M damping coeficient
                 ϵ1 = ϵ1, #Convergence in the gradient
                 ϵ2 = ϵ2, #Convergence in the coeficients
                 ϵ3 = ϵ3, #Conergence in squared error
@@ -565,7 +574,7 @@ function simmulateQuad(
         #Precursor charge state, m0 and m0 m/z, and m0 mass 
         prec_charge_state = rand([2])
         m0_mz = center_mz + offset
-        m1_mz =  m0_mz + NEUTRON/prec_charge_state
+        m1_mz =  m0_mz + C13_C12_MASS_DIFF/prec_charge_state
         mono_mass = Float32(m0_mz*prec_charge_state) #Approximate not accounting for proton 
 
 

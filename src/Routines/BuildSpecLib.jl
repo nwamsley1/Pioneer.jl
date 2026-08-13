@@ -58,54 +58,59 @@ Output:
 function BuildSpecLib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
-    Random.seed!(1844)
-    pioneer_version = Pioneer.get_pioneer_version()
-    # Initialize timing dictionary for performance tracking
-    #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, Any}()
-    
+
     # Read and validate parameters
     params_timing = @timed begin
         params_string = read(params_path, String)
         params = check_params_bsp(params_string)
 
+        # Deterministic RNG for decoy/entrapment shuffling. Configurable via the
+        # `seed` build param (default 1844, backward-compatible): a fixed seed
+        # makes the library fully reproducible; a different seed produces
+        # different shuffled decoy/entrapment sequences.
+        build_seed = Int(get(params, "seed", 1844))
+        Random.seed!(build_seed)
+
         # Get library directory (already has .poin extension added in check_params)
         lib_dir = params["_lib_dir"]
         mkpath(lib_dir)
 
-        # Setup logging
-        log_path = joinpath(lib_dir, "build_log.txt")
-        params_out_path = joinpath(lib_dir, "config.json")
-
         # Write complete merged parameters to config.json (not just user input)
+        params_out_path = joinpath(lib_dir, "config.json")
         params_json = JSON.json(params, 2)  # Pretty-print with 2-space indent
         write(params_out_path, params_json)
         nothing
     end
     timings["Parameter Loading"] = params_timing
 
-    # Open log file for writing
-    open(log_path, "w") do log_file
+    # Initialize the shared Pioneer logging system: same four files
+    # (pioneer_search_report.txt / pioneer_search_log.log /
+    #  pioneer_search_debug.log / pioneer_warnings.log) and the same
+    # @user_info / @user_warn macros that SearchDIA uses.
+    debug_level = haskey(params, "logging") && haskey(params["logging"], "debug_console_level") ?
+                  Int(params["logging"]["debug_console_level"]) : 0
+    # Same knob as SearchDIA: the debug log is populated independently of the console.
+    debug_file_lvl = haskey(params, "logging") && haskey(params["logging"], "debug_file_level") ?
+                     Int(params["logging"]["debug_file_level"]) : 1
+    max_bytes = haskey(params, "logging") && haskey(params["logging"], "max_message_bytes") ?
+                Int(params["logging"]["max_message_bytes"]) : 4096
+    warnings_full_path = init_pioneer_logging(
+        lib_dir,
+        "Pioneer Library Build Log";
+        debug_console_level = debug_level,
+        debug_file_level    = debug_file_lvl,
+        max_message_bytes   = max_bytes,
+    )
 
-        # Utility functions for dual console/file output
-        function dual_println(args...)
-            println(stdout, args...)
-            println(log_file, args...)
-        end
-        
-        function dual_print(args...)
-            print(stdout, args...)
-            print(log_file, args...)
-        end
+    try
+        @user_print "\n" * repeat("=", 90)
+        @user_print "Spectral Library Building Process"
+        @user_print repeat("=", 90)
+        @user_info "\nStarting library build at: $(Dates.now())"
+        @user_info "Output directory: $lib_dir"
+        @user_info "RNG seed: $build_seed"
 
-    
-        dual_println("\n", repeat("=", 90))
-        dual_println("Spectral Library Building Process")
-        dual_println("Version: ", pioneer_version)
-        dual_println(repeat("=", 90))
-        dual_println("\nStarting library build at: ", Dates.now())
-        dual_println("Output directory: ", lib_dir)
-        
         # Create temporary chronologer directory
         setup_timing = @timed begin
             chronologer_dir = joinpath(lib_dir, "chronologer_temp")
@@ -124,7 +129,7 @@ function BuildSpecLib(params_path::String)
         timings["Directory Setup"] = setup_timing
 
         # Get fragment bounds
-        dual_println("\nDetecting fragment bounds...")
+        @user_info "Detecting fragment bounds..."
         bounds_timing = @timed begin
             # calibration_raw_file is optional - use empty string if not provided
             calibration_file = get(params, "calibration_raw_file", "")
@@ -134,8 +139,8 @@ function BuildSpecLib(params_path::String)
                 (Float32(_params.library_params["frag_mz_min"]), Float32(_params.library_params["frag_mz_max"])),
                 (Float32(_params.library_params["prec_mz_min"]), Float32(_params.library_params["prec_mz_max"]))
             )
-            dual_println("Fragment m/z range: ", frag_bounds)
-            dual_println("Precursor m/z range: ", (prec_mz_min, prec_mz_max))
+            @user_info "Fragment m/z range: $frag_bounds"
+            @user_info "Precursor m/z range: ($prec_mz_min, $prec_mz_max)"
             nothing
         end
         timings["Fragment Bound Detection"] = bounds_timing
@@ -144,51 +149,32 @@ function BuildSpecLib(params_path::String)
         N_FRAGMENTS = 0
         N_TARGETS = 0
         N_DECOYS = 0
+        # In-memory handoff for the fused raw->detailed_frags path (set in the
+        # prediction block below). When predict_fragments is false (resume from
+        # existing files) they stay nothing and buildPionLib uses the disk path.
+        detailed_frags = nothing
+        pid_to_fid = nothing
         if params["predict_fragments"]
             # Fragment prediction workflow
-            dual_println("\nStarting fragment prediction workflow...")
-            
-            # Validate prediction model
-            model_timing = @timed begin
-                prediction_model = params["library_params"]["prediction_model"]
-                PREDICTION_MODELS = collect(keys(KOINA_URLS))
-                if !(prediction_model ∈ PREDICTION_MODELS)
-                    error("Invalid prediction model: $prediction_model. Valid options: $(join(PREDICTION_MODELS, ", "))")
-                end
-                dual_println("Using prediction model: $prediction_model")
+            @user_info "Starting fragment prediction workflow..."
 
-                # Get annotation type and model type
+            # Fragment-prediction model: Altimeter (SplineCoefficientModel) by default;
+            # Prosit (prosit_2020_hcd, InstrumentAgnosticModel) selectable via config.
+            model_timing = @timed begin
+                prediction_model = String(get(_params.library_params, "prediction_model", "altimeter"))
+                haskey(MODEL_CONFIGS, prediction_model) || error(
+                    "Unknown prediction_model '$prediction_model'. Valid: $(join(keys(MODEL_CONFIGS), ", "))")
+                @user_info "Using prediction model: $prediction_model"
                 frag_annotation_type = MODEL_CONFIGS[prediction_model].annotation_type
                 koina_model_type = MODEL_CONFIGS[prediction_model].model_type
                 nothing
             end
             timings["Model Validation"] = model_timing
 
-            # Collision energy interpolation
-            ce_timing = @timed begin
-                mz_to_ev_interp = missing
-                if occursin("unispec", prediction_model)
-                    try
-                        mz_to_ev_interp = get_mz_to_ev_interp(
-                            get(params, "calibration_raw_file", ""),
-                            lib_dir
-                        )
-                        dual_println("Successfully created collision energy interpolator")
-                    catch
-                        @user_warn "Could not estimate mz to ev conversion. Using default NCE."
-                        dual_println("Warning: Using default NCE (collision energy interpolation failed)")
-                    end
-                end
-
-                instrument_type = ismissing(mz_to_ev_interp) ? 
-                                _params.library_params["instrument_type"] : 
-                                "NONE"
-                nothing
-            end
-            timings["Collision Energy Setup"] = ce_timing
+            mz_to_ev_interp = missing
 
             # Chronologer prediction workflow
-            dual_println("\nPreparing chronologer workflow...")
+            @user_info "Preparing chronologer workflow..."
             chrono_prep_timing = @timed begin
                 prepare_chronologer_input(params,
                                         mz_to_ev_interp,
@@ -200,7 +186,7 @@ function BuildSpecLib(params_path::String)
             end
             timings["Chronologer Preparation"] = chrono_prep_timing
 
-            dual_println("Predicting retention times...")
+            @user_info "Predicting retention times..."
             rt_timing = @timed begin
                 predict_retention_times(chronologer_in_path, chronologer_out_path)
                 nothing
@@ -215,30 +201,94 @@ function BuildSpecLib(params_path::String)
                     Dict{String,Int8}(),
                     iso_mod_to_mass,
                     params["isotope_mod_groups"],
-                    Float32(_params.library_params["rt_bin_tol"])
+                    3.0f0  # rt_bin_tol for precursor sorting (matches fragment index)
                 )
                 #println("precursors_arrow_path $precursors_arrow_path")
-                # Cleanup temporary files
+                # Cleanup temporary files. Use safeRm (GC + retry + rename
+                # fallback): on Windows the just-read Arrow files are still
+                # mmap-locked, so a plain rm() throws EACCES (GC.gc() alone is
+                # not enough to release the mapping).
                 GC.gc()
-                rm(chronologer_in_path, force=true)
-                rm(chronologer_out_path, force=true)
+                safeRm(chronologer_in_path; force=true)
+                safeRm(chronologer_out_path; force=true)
                 dir, filename = splitdir(precursors_arrow_path)
                 raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
-                rm(raw_fragments_arrow_path, force=true)
+                safeRm(raw_fragments_arrow_path; force=true)
                 nothing
             end
             timings["Chronologer Output Processing"] = parse_timing
 
+            # Fragment-filter knobs. These are hardcoded for the Altimeter
+            # spline path (the JSON's `library_params.max_frag_rank` etc. are
+            # NOT read here — see the buildPionLib call below where the same
+            # constants are passed). They live as locals so the early filter
+            # in `predict_fragments` and the late path in `buildPionLib`
+            # share a single source of truth.
+            const_y_start                       = UInt8(3)
+            const_b_start                       = UInt8(2)
+            const_include_p                     = false
+            const_include_isotope               = false
+            const_include_immonium              = false
+            const_include_internal              = false
+            const_include_neutral_diff          = true
+            const_max_frag_charge               = UInt8(3)
+            const_max_frag_rank                 = UInt8(10)
+            const_length_to_frag_count_multiple = Float32(1000)
+            const_min_frag_intensity            = 0.0f0
+
             # Fragment prediction
-            dual_println("\nPredicting fragment ion intensities...")
+            @user_info "Predicting fragment ion intensities..."
             frag_predict_timing = @timed begin
+                # Build the per-batch filter context that lets predict_fragments
+                # apply the same metadata + rank filters that getDetailedFrags
+                # otherwise applies after raw_fragments.arrow is on disk.
+                precursors_df_for_ctx = DataFrame(Arrow.Table(precursors_arrow_path))
+
+                filter_ctx = if koina_model_type isa InstrumentAgnosticModel
+                    # Prosit: string-annotation + iso-spline mono->total + topN filter.
+                    build_agnostic_frag_filter_ctx(
+                        frag_bounds,
+                        precursors_df_for_ctx,
+                        Dict{String, Int8}();
+                        y_start = const_y_start,
+                        b_start = const_b_start,
+                        include_p = const_include_p,
+                        include_isotope = const_include_isotope,
+                        include_immonium = const_include_immonium,
+                        include_internal = const_include_internal,
+                        include_neutral_diff = const_include_neutral_diff,
+                        max_frag_charge = const_max_frag_charge,
+                        max_frag_rank = const_max_frag_rank,
+                        length_to_frag_count_multiple = const_length_to_frag_count_multiple,
+                        min_frag_intensity = const_min_frag_intensity,
+                    )
+                else
+                    build_spline_frag_filter_ctx(
+                        frag_bounds,
+                        precursors_df_for_ctx,
+                        asset_path("ion_dictionary.txt"),
+                        asset_path("immonium.txt"),
+                        frag_annotation_type;
+                        y_start = const_y_start,
+                        b_start = const_b_start,
+                        include_p = const_include_p,
+                        include_isotope = const_include_isotope,
+                        include_immonium = const_include_immonium,
+                        include_internal = const_include_internal,
+                        include_neutral_diff = const_include_neutral_diff,
+                        max_frag_charge = const_max_frag_charge,
+                        max_frag_rank = const_max_frag_rank,
+                        length_to_frag_count_multiple = const_length_to_frag_count_multiple,
+                        min_frag_intensity = const_min_frag_intensity,
+                    )
+                end
                 predict_fragments(
                     precursors_arrow_path,
                     raw_fragments_arrow_path,
                     koina_model_type,
-                    instrument_type,
-                    params["max_koina_requests"],
-                    params["max_koina_batch"],
+                    filter_ctx,
+                    24,     # max_koina_requests
+                    1000,   # max_koina_batch
                     prediction_model
                 )
                 nothing
@@ -250,8 +300,26 @@ function BuildSpecLib(params_path::String)
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
                 fragments_table = Arrow.Table(raw_fragments_arrow_path)
-                #Record the spline knots (stored as Arrow metadata, not per-row column)
-                try
+                # Fused: decode raw_fragments directly into the final
+                # Vector{SplineCompactFrag or CompactFrag} + CSR, in memory, skipping
+                # the fragments_table.arrow re-encode/re-read. Handed to buildPionLib
+                # below without touching disk.
+                if koina_model_type isa InstrumentAgnosticModel
+                    # Prosit: scalar total-abundance intensities, string annotations,
+                    # NO spline knots (contrast Altimeter below).
+                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        asset_path("immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+                else
+                    # Altimeter: record the spline knots (Arrow metadata) + decode via
+                    # the integer altimeter ion dictionary.
                     meta = Arrow.getmetadata(fragments_table)
                     spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
                     serialize_to_jls(
@@ -259,34 +327,11 @@ function BuildSpecLib(params_path::String)
                         spl_knots
                     )
                     ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
-
-                    parse_altimeter_fragments(
+                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
                         precursors_table,
                         fragments_table,
                         frag_annotation_type,
                         ion_dictionary,
-                        10000,
-                        asset_path("immonium.txt"),
-                        lib_dir,
-                        Dict{String, Int8}(),
-                        iso_mod_to_mass,
-                        koina_model_type
-                    )
-
-                catch
-                    #println("No spline knots. static library")
-
-                    # Process ion annotations
-                    ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
-                    frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
-
-                    ion_annotation_dict = parse_koina_fragments(
-                        precursors_table,
-                        fragments_table,
-                        frag_annotation_type,
-                        ion_annotation_set,
-                        frag_name_to_idx,
-                        10000,
                         asset_path("immonium.txt"),
                         lib_dir,
                         Dict{String, Int8}(),
@@ -294,7 +339,8 @@ function BuildSpecLib(params_path::String)
                         koina_model_type
                     )
                 end
-                
+
+
 
                 # Process precursor table
                 N_FRAGMENTS = length(fragments_table[:mz])
@@ -302,6 +348,13 @@ function BuildSpecLib(params_path::String)
                 N_DECOYS  = sum(precursors_table[:decoy])
                 N_TARGETS = N_PRECURSORS - N_DECOYS
                 fragments_table = nothing
+                # raw_fragments.arrow is fully consumed by parse_altimeter_fragments
+                # (process_spline_batch! decode + rebuild_prec_to_frag_index!); its
+                # mmap handle (fragments_table) is released just above. Delete it now —
+                # before the precursor DataFrame work + precursors_table.arrow write —
+                # so raw no longer coexists with fragments_table.arrow at the peak.
+                GC.gc()
+                safeRm(raw_fragments_arrow_path; force=true)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -318,23 +371,23 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
 
                 # Save processed precursor table
-                println("   Before add_pair_indices!: $(nrow(precursors_table)) precursors")
-                println("   Unique pair_ids available: $(length(unique(precursors_table.pair_id)))")
+                @debug_l1 "  Before add_pair_indices!: $(nrow(precursors_table)) precursors"
+                @debug_l1 "  Unique pair_ids available: $(length(unique(precursors_table.pair_id)))"
                 add_pair_indices!(precursors_table)  # Add partner indices AFTER all sorting is complete
                 partner_col = precursors_table.partner_precursor_idx
                 max_partner = all(ismissing, partner_col) ? 0 : Int64(maximum(skipmissing(partner_col)))
-                println("   After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))")
-                println("   Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
-                
+                @debug_l1 "  After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))"
+                @debug_l1 "  Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")"
+
                 # Add entrapment target indices if entrapment_pair_id column exists AND entrapment is enabled
                 entrapment_r = get(params["fasta_digest_params"], "entrapment_r", 0)
                 if hasproperty(precursors_table, :entrapment_pair_id) && entrapment_r > 0
-                    println("   Adding entrapment target indices...")
+                    @debug_l1 "  Adding entrapment target indices..."
                     add_entrapment_indices!(precursors_table)
                     ent_col = precursors_table.entrapment_target_idx
                     max_entrap_target = all(ismissing, ent_col) ? 0 : Int64(maximum(skipmissing(ent_col)))
-                    println("   After add_entrapment_indices!: max entrapment_target_idx = $max_entrap_target")
-                    println("   Entrapment indices valid: $(max_entrap_target <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
+                    @debug_l1 "  After add_entrapment_indices!: max entrapment_target_idx = $max_entrap_target"
+                    @debug_l1 "  Entrapment indices valid: $(max_entrap_target <= nrow(precursors_table) ? "✅ YES" : "❌ NO")"
                 end
                 Arrow.write(
                     joinpath(lib_dir, "precursors_table.arrow"),
@@ -342,6 +395,12 @@ function BuildSpecLib(params_path::String)
                 )
 
                 GC.gc()
+                # precursors.arrow is now fully materialized into precursors_table
+                # (DataFrame copy + Arrow.write above), so delete it before buildPionLib
+                # + File Verification. (raw_fragments.arrow was deleted earlier, right
+                # after parse_altimeter_fragments.) safeRm = GC + retry for the Windows
+                # mmap lock.
+                safeRm(precursors_arrow_path; force=true)
                 nothing
             end
             timings["Prediction Processing"] = process_timing
@@ -349,7 +408,12 @@ function BuildSpecLib(params_path::String)
 
         # Verify required files
         verify_timing = @timed begin
-            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"]
+            # The fused path hands detailed_frags to buildPionLib in memory, so it
+            # needs only the precursor/protein tables. The disk path (resume with
+            # predict_fragments=false) still requires the fragment intermediates.
+            required_files = detailed_frags === nothing ?
+                ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"] :
+                ["precursors_table.arrow", "proteins_table.arrow"]
             if !all(isfile.(joinpath.(lib_dir, required_files)))
                 error("Missing required files in $lib_dir. Try running with predict_fragments=true")
             end
@@ -358,45 +422,69 @@ function BuildSpecLib(params_path::String)
         timings["File Verification"] = verify_timing
 
         # Build final indices
-        dual_println("\nBuilding final library indices...")
+        @user_info "Building final library indices..."
         index_timing = @timed begin
             buildPionLib(
                 lib_dir,
-                UInt8(_params.library_params["y_start_index"]),
-                UInt8(_params.library_params["y_start"]),
-                UInt8(_params.library_params["b_start_index"]),
-                UInt8(_params.library_params["b_start"]),
-                _params.library_params["include_p_index"],
-                _params.library_params["include_p"],
-                _params.library_params["include_isotope"],
-                _params.library_params["include_immonium"],
-                _params.library_params["include_internal"],
-                _params.library_params["include_neutral_diff"],
-                UInt8(_params.library_params["max_frag_charge"]),
-                UInt8(_params.library_params["max_frag_rank"]),
-                Float32(_params.library_params["length_to_frag_count_multiple"]),
-                Float32(_params.library_params["min_frag_intensity"]),
-                UInt8.(_params.library_params["rank_to_score"]),
+                UInt8(4),       # y_start_index
+                const_y_start,
+                UInt8(3),       # b_start_index
+                const_b_start,
+                false,          # include_p_index
+                const_include_p,
+                const_include_isotope,
+                const_include_immonium,
+                const_include_internal,
+                const_include_neutral_diff,
+                const_max_frag_charge,
+                const_max_frag_rank,
+                const_length_to_frag_count_multiple,
+                const_min_frag_intensity,
                 frag_bounds,
-                Float32(_params.library_params["frag_bin_tol_ppm"]),
-                Float32(_params.library_params["rt_bin_tol"]),
-                koina_model_type
-            )          
+                Float32(get(_params.library_params, "frag_bin_tol_ppm", 0.0)),  # frag_bin_tol_ppm (0 = use mDa mode)
+                3.0f0,          # rt_bin_tol
+                koina_model_type;
+                frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
+                detailed_frags = detailed_frags,
+                pid_to_fid = pid_to_fid
+            )
 
             nothing
         end
         timings["Index Building"] = index_timing
 
+        # Apply DIA-NN-style decoy conversion if requested
+        decoy_method = get(params["fasta_digest_params"], "decoy_method", "shuffle")
+        if decoy_method == "diann_mutation"
+            @user_info "Applying DIA-NN-style decoy conversion..."
+            diann_timing = @timed begin
+                apply_diann_decoy_style!(lib_dir)
+                nothing
+            end
+            timings["DIA-NN Decoy Conversion"] = diann_timing
+        end
+
         # Print performance report
-        print_performance_report(timings, dual_println,
-        N_PRECURSORS = N_PRECURSORS,
-        N_FRAGMENTS = N_FRAGMENTS,
-        N_TARGETS = N_TARGETS,
-        N_DECOYS = N_DECOYS,
-        pioneer_version = pioneer_version)
-        
-        dual_println("\nLibrary building completed at: ", Dates.now())
-        dual_println("\nLibrary location: ", lib_dir)
+        print_performance_report(timings;
+            N_PRECURSORS = N_PRECURSORS,
+            N_FRAGMENTS  = N_FRAGMENTS,
+            N_TARGETS    = N_TARGETS,
+            N_DECOYS     = N_DECOYS,
+        )
+
+        @user_info "\nLibrary building completed at: $(Dates.now())"
+        @user_info "Library location: $lib_dir"
+    catch e
+        error_msg = try
+            "$(typeof(e)): $(e.msg)"
+        catch
+            "$(typeof(e))"
+        end
+        @user_error "BuildSpecLib failed: $error_msg"
+        @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
+        rethrow(e)
+    finally
+        finalize_pioneer_logging(warnings_full_path; banner_title = "Library build completed")
     end
 
     # Clean up temp files after build; on Windows these may still be transiently locked.
@@ -407,95 +495,79 @@ function BuildSpecLib(params_path::String)
 end
 
 """
-Helper function to print formatted performance metrics
+    print_performance_report(timings; N_PRECURSORS, N_FRAGMENTS, N_TARGETS, N_DECOYS)
+
+BuildSpecLib-specific performance report. Writes through `@user_print`,
+so it lands on console, the essential log, the console mirror, and the
+debug log via the Pioneer logging system.
 """
-function print_performance_report(timings, println_func; kwargs...)
-    # Header
-    println_func("\n", repeat("=", 90))
-    println_func("Library Building Performance Report")
-    println_func(repeat("=", 90))
+function print_performance_report(timings; kwargs...)
+    @user_print "\n" * repeat("=", 90)
+    @user_print "Library Building Performance Report"
+    @user_print repeat("=", 90)
 
-    println_func("\nDetailed Step Analysis:")
+    @user_print "\nLibrary Composition:"
+    @user_print repeat("-", 90)
+    @user_print rpad("# Precursors", 14) * " " *
+                rpad("# Fragments", 14) * " " *
+                rpad("# Targets", 14) * " " *
+                rpad("# Decoys", 14)
+    @user_print repeat("-", 90)
+    @user_print lpad(string(kwargs[:N_PRECURSORS]), 14) * " " *
+                lpad(string(kwargs[:N_FRAGMENTS]),  14) * " " *
+                lpad(string(kwargs[:N_TARGETS]),    14) * " " *
+                lpad(string(kwargs[:N_DECOYS]),     14)
 
-    println_func(repeat("-", 90))
-    println_func(rpad("# Precursors", 12), " ",
-                rpad("# Fragments", 12), " ",
-                rpad("# Targets", 12), " ",
-                rpad("# Decoys", 12), " "
-    )
-    println_func(repeat("-", 90))
-    println_func(lpad(@sprintf("%.2f", kwargs[:N_PRECURSORS]), 12), " ",
-                 lpad(@sprintf("%.2f", kwargs[:N_FRAGMENTS]), 12), " ",
-                 lpad(@sprintf("%.2f", kwargs[:N_TARGETS]), 12), " ",
-                 lpad(@sprintf("%.2f", kwargs[:N_DECOYS]), 12), " ",
-    )
-    # Print detailed analysis
-    println_func("\nDetailed Step Analysis:")
-    println_func(repeat("-", 90))
-    println_func(rpad("Step", 40), " ",
-                rpad("Time (s)", 12), " ",
-                rpad("Memory (GB)", 12), " ",
-                rpad("GC Time (s)", 12), " ",
-                rpad("GC %", 12))
-    println_func(repeat("-", 90))
+    @user_print "\nDetailed Step Analysis:"
+    @user_print repeat("-", 90)
+    @user_print rpad("Step", 40) * " " *
+                rpad("Time (s)", 12) * " " *
+                rpad("Mem Alloc (GB)", 16) * " " *
+                rpad("GC Time (s)", 12) * " " *
+                rpad("GC %", 8)
+    @user_print repeat("-", 90)
 
-    # Calculate totals
     peak_memory = peak_rss()
     total_time = 0.0
     total_memory = 0
     total_gc = 0.0
 
-    # Print step-by-step metrics
-    sorted_steps = sort(collect(keys(timings)), by=x->timings[x].time)
+    sorted_steps = sort(collect(keys(timings)), by = x -> timings[x].time)
     for step in sorted_steps
         timing = timings[step]
         time_s = timing.time
         mem_gb = timing.bytes / (1024^3)
-        gc_s = timing.gctime
-        gc_pct = (gc_s / time_s) * 100
+        gc_s   = timing.gctime
+        gc_pct = time_s > 0 ? (gc_s / time_s) * 100 : 0.0
 
         total_time += time_s
         total_memory += timing.bytes
         total_gc += gc_s
 
-        println_func(rpad(step, 40), " ",
-                    rpad(@sprintf("%.2f", time_s), 12), " ",
-                    rpad(@sprintf("%.2f", mem_gb), 12), " ",
-                    rpad(@sprintf("%.2f", gc_s), 12), " ",
-                    rpad(@sprintf("%.1f", gc_pct), 12))
+        @user_print rpad(step, 40) * " " *
+                    rpad(@sprintf("%.2f", time_s), 12) * " " *
+                    rpad(@sprintf("%.2f", mem_gb), 16) * " " *
+                    rpad(@sprintf("%.2f", gc_s), 12) * " " *
+                    rpad(@sprintf("%.1f", gc_pct), 8)
     end
 
-    # Print totals
-    println_func(repeat("-", 90))
-    println_func(rpad("TOTAL", 40), " ",
-                rpad(@sprintf("%.2f", total_time), 12), " ",
-                rpad(@sprintf("%.2f", total_memory/(1024^3)), 12), " ",
-                rpad(@sprintf("%.2f", total_gc), 12), " ",
-                rpad(@sprintf("%.1f", (total_gc/total_time)*100), 12))
+    @user_print repeat("-", 90)
+    @user_print rpad("TOTAL", 40) * " " *
+                rpad(@sprintf("%.2f", total_time), 12) * " " *
+                rpad(@sprintf("%.2f", total_memory/(1024^3)), 16) * " " *
+                rpad(@sprintf("%.2f", total_gc), 12) * " " *
+                rpad(@sprintf("%.1f", total_time > 0 ? (total_gc/total_time)*100 : 0.0), 8)
 
-    # Print summary statistics
-    println_func("\nPerformance Summary:")
-    println_func(repeat("-", 90))
-    println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
-    println_func("Total Garbage Collection Time: $(round(total_gc, digits=2)) seconds")
-    println_func("Number of Steps: $(length(timings))")
-    println_func("Average Step Runtime: $(round(total_time/length(timings), digits=2)) seconds")
-    
-    # Memory statistics
-    println_func("\nMemory Usage Summary:")
-    println_func(repeat("-", 90))
+    @user_print "\nMemory Usage Summary:"
+    @user_print repeat("-", 90)
     current_mem = Sys.total_memory() / 1024^3
-    println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
-    println_func("Peak  Memory Usage: $(round(peak_memory/1024^3, digits=2)) GB")
-    println_func("Total Available System Memory: $(round(current_mem, digits=2)) GB")
-    
-    # Process statistics
-    println_func("\nProcess Information:")
-    println_func(repeat("-", 90))
-    println_func("Pioneer Version: $(get(kwargs, :pioneer_version, "unknown"))")
-    println_func("Number of Threads: $(Threads.nthreads())")
-    println_func("Julia Version: $(VERSION)")
-    println_func("System: $(Sys.MACHINE)")
-    
-    println_func("\n", repeat("=", 90))
+    @user_print "Total alloc (cumulative):   $(round(total_memory/1024^3, digits=2)) GB"
+    @user_print "Working set (peak RSS):     $(round(peak_memory/1024^3, digits=2)) GB"
+    @user_print "System RAM:                 $(round(current_mem, digits=2)) GB"
+
+    @user_print "\nRuntime Summary:"
+    @user_print repeat("-", 90)
+    @user_print "Total Runtime: $(round(total_time/60, digits=2)) min ($(round(total_time, digits=2)) s)"
+    @user_print "Threads: $(Threads.nthreads())"
+    @user_print "\n" * repeat("=", 90)
 end

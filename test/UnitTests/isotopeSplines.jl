@@ -72,7 +72,6 @@ end
         UInt8(2), #precursor charge state
         400.25f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 1) == getPrecursorIsotopeSet(
@@ -80,7 +79,6 @@ end
         UInt8(2), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 0) == getPrecursorIsotopeSet(
@@ -88,7 +86,6 @@ end
         UInt8(2), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.25f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 2) == getPrecursorIsotopeSet(
@@ -96,7 +93,6 @@ end
         UInt8(3), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (3, 3) == getPrecursorIsotopeSet(
@@ -104,7 +100,6 @@ end
         UInt8(3), #precursor charge state
         400.75f0, #minimum quadrupole m/z
         401.25f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     #No isotopes in the range given 
@@ -113,7 +108,6 @@ end
         UInt8(3), #precursor charge state
         400.75f0, #minimum quadrupole m/z
         400.80f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
 end
@@ -135,14 +129,14 @@ function plotIsotopes(
     p = plot(title = title)
     iso_idx = 0
     for i in range(1, length(iso_a))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        mz = test_frag.mz + iso_idx*C13_C12_MASS_DIFF/frag_charge
         plot!(p, [mz, mz], [0.0, iso_a[i]], color = 1, alpha = 0.5, lw = 5, label = nothing)
         iso_idx += 1
     end
     hline!(p,[0.0], lw = 4, color = 1, labels = label_a)
     iso_idx = 0
     for i in range(1, length(iso_b))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        mz = test_frag.mz + iso_idx*C13_C12_MASS_DIFF/frag_charge
         plot!(p, [mz, mz], [0.0, iso_b[i]], color = 2, alpha = 0.5, lw = 5, label = nothing)
         iso_idx += 1
     end
