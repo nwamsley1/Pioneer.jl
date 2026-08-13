@@ -273,14 +273,14 @@ needs either the manifest in place, or a rule inferring the model.
 
 ## 9. Delay before hover descriptions appear — **done**
 
-- [x] Tooltip drawn in-app, opening after 350 ms.
+- [x] Tooltip drawn in-app, opening after 100 ms.
 
 Every hover description in the app was the native `title` attribute, whose
 timing belongs to the operating system — about a second on macOS, with no way
-to tune it. `InfoDot` now draws its own tooltip so the delay is ours: long
-enough that a pointer crossing the dot does not summon it, short enough that
-aiming at it feels answered. `aria-label` stays, so the text is still reachable
-without a pointer.
+to tune it. `InfoDot` now draws its own tooltip so the delay is ours, set to
+100 ms: near-immediate when you aim at the dot, while still not firing on a
+pointer that merely passes over. `aria-label` stays, so the text is still
+reachable without a pointer.
 
 Positioned `fixed` from the dot's rect, so a card or the sidebar's scroll box
 cannot clip it, and it closes on scroll rather than drifting from its anchor.

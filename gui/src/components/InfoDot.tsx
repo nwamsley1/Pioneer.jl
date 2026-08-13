@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 /** How long the pointer must rest before the description appears. */
-const OPEN_DELAY_MS = 350
+const OPEN_DELAY_MS = 100
 
 export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light' | 'dark' }) {
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
