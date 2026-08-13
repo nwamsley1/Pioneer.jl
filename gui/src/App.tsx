@@ -34,6 +34,7 @@ import {
   findMod,
   initialSite,
   modsForModel,
+  occupiedResidues,
   siteAllowed,
   unimodId,
 } from './lib/koinaMods'
@@ -983,11 +984,26 @@ export default function App() {
 
   const onModField = (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => {
     const key = modKey(kind)
-    setBuild((p) => ({
-      ...p,
-      [key]: p[key].map((m, i) => (i === idx ? { ...m, [field]: value } : m)),
+    let displaced: string[] = []
+    setBuild((p) => {
+      const next = { ...p, [key]: p[key].map((m, i) => (i === idx ? { ...m, [field]: value } : m)) }
+      if (kind !== 'fixed') return next
+      // Widening a fixed mod onto a residue a variable one uses is the one way
+      // left to build a conflict, since the variable side only ever offers free
+      // residues. The variable rows yield, and are named rather than vanishing.
+      const req = enforceRequiredMods(next.predictionModel, next.fixedMods, next.variableMods)
+      displaced = next.variableMods
+        .filter((m) => !req.variable.some((k) => k.name === m.name && k.pattern === m.pattern))
+        .map((m) => `${m.label || m.name}${m.pattern ? ` on ${m.pattern}` : ''}`)
+      return { ...next, fixedMods: req.fixed, variableMods: req.variable }
+    })
+    setModNote((n) => ({
+      ...n,
+      [kind]: '',
+      ...(displaced.length
+        ? { variable: `Fixed modifications now cover ${displaced.join(', ')} — removed from variable.` }
+        : null),
     }))
-    setModNote((n) => ({ ...n, [kind]: '' }))
     setRunError('')
   }
 
@@ -1006,7 +1022,7 @@ export default function App() {
       if (!def) return p
       // C is reserved for the pinned fixed row, so a variable alkylation row
       // starts on the next site the model allows.
-      const site = initialSite(p.predictionModel, kind, def)
+      const site = initialSite(p.predictionModel, kind, def, occupiedResidues(p.fixedMods))
       if (site === null) return p
       if (p[key].some((m) => unimodId(m.name) === def.unimod)) {
         setModNote((n) => ({ ...n, [kind]: `${def.label} is already in the list.` }))

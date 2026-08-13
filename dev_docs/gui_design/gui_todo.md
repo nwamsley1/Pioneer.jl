@@ -238,3 +238,29 @@ resolved name previewed under the field.
 
 - [ ] The thread picker shows on the DownloadSpecLib page, where it does
       nothing: the transfer is network-bound and the binary ignores it.
+
+---
+
+## Modification site conflicts — **done** *(raised while doing 4)*
+
+A modification set as both fixed and variable on the same residue produced no
+error. `fillVarModStrings!` copies the fixed mods and pushes the variable ones
+on top without checking positions, so a cysteine carried carbamidomethyl twice
+— +114.04 rather than +57.02 — and the whole combinatorial expansion was
+emitted with impossible masses. Measured on one peptide with two cysteines:
+four variants, three of them doubly modified. The general case is worse than
+the same modification twice: with carbamidomethyl fixed on C, *oxidation*
+variable on C is equally impossible, and the PTM models make that reachable.
+
+- [x] **Pioneer**: `check_mod_site_conflicts` rejects it at the parameter
+      boundary, naming both modifications, the shared residue, the consequence
+      and the remedy. 22 tests in `test/UnitTests/test_mod_site_conflicts.jl`,
+      including that `check_params_bsp` actually calls it.
+- [x] **GUI**: a residue held by a fixed modification is not offered as a
+      variable site, a modification with no free site left drops out of the
+      add menu, and widening a fixed mod onto an occupied residue removes the
+      variable rows it displaces with a note saying so.
+
+Hard error rather than a warning that drops the overlap: a library built from
+a config nobody read is exactly what this protects against.
+\n

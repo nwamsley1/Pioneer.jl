@@ -170,20 +170,37 @@ export function isRequiredFixedMod(modelId: string, name: string, pattern: strin
   )
 }
 
-/** Site choices permitted for a UNIMOD 4 row: the fixed row must keep C, and a
- *  variable row must not have it. Any other modification is unconstrained. */
+/** Residues already taken by the fixed modifications.
+ *
+ *  A fixed modification applies to every matching residue, so nothing variable
+ *  can sit on one: the residue would be modified twice. Pioneer rejects such a
+ *  config outright (`check_mod_site_conflicts`), so the point of computing this
+ *  is to keep the choice from being offered in the first place. */
+export function occupiedResidues(fixed: { name: string; pattern: string }[]): Set<string> {
+  const taken = new Set<string>()
+  for (const m of fixed) for (const r of residuesOf(m.pattern)) taken.add(r)
+  return taken
+}
+
+/** Site choices permitted for one row.
+ *
+ *  A fixed alkylation row must keep C. A variable row may not name any residue
+ *  a fixed modification already holds — which covers C automatically, since the
+ *  alkylation row is always present, so that case needs no rule of its own. */
 export function allowedSiteValues(
   modelId: string,
   kind: 'fixed' | 'variable',
   name: string,
   values: string[],
+  occupied: Set<string> = new Set(),
 ): string[] {
-  if (!requiresFixedAlkylation(modelId) || !isAlkylation(name)) return values
-  return values.filter((v) =>
-    kind === 'fixed'
-      ? residuesOf(v).includes(REQUIRED_FIXED_SITE)
-      : !residuesOf(v).includes(REQUIRED_FIXED_SITE),
-  )
+  if (kind === 'fixed') {
+    if (requiresFixedAlkylation(modelId) && isAlkylation(name)) {
+      return values.filter((v) => residuesOf(v).includes(REQUIRED_FIXED_SITE))
+    }
+    return values
+  }
+  return values.filter((v) => !residuesOf(v).some((r) => occupied.has(r)))
 }
 
 /** The site a newly added row should start on: C for a fixed alkylation row,
@@ -192,12 +209,17 @@ export function initialSite(
   modelId: string,
   kind: 'fixed' | 'variable',
   mod: KoinaMod,
+  occupied: Set<string> = new Set(),
 ): string | null {
-  if (!requiresFixedAlkylation(modelId) || mod.unimod !== REQUIRED_FIXED_UNIMOD) return mod.sites[0]
-  if (kind === 'fixed') return REQUIRED_FIXED_SITE
-  const free = mod.sites.filter((site) => site !== REQUIRED_FIXED_SITE)
-  // null means "this model offers UNIMOD 4 on C only", so there is no variable
-  // form of it to add.
+  if (kind === 'fixed') {
+    if (requiresFixedAlkylation(modelId) && mod.unimod === REQUIRED_FIXED_UNIMOD) {
+      return REQUIRED_FIXED_SITE
+    }
+    return mod.sites[0] ?? null
+  }
+  const free = mod.sites.filter((site) => !occupied.has(site))
+  // null means every site this model allows is already held by a fixed
+  // modification, so there is no variable form of it left to add.
   return free.length ? free[0] : null
 }
 
@@ -228,12 +250,15 @@ export function enforceRequiredMods(
     required = { ...existing[0], pattern: sitePattern([...sites].sort()) }
   }
 
+  const taken = occupiedResidues([required, ...rest])
   return {
     fixed: [required, ...rest],
+    // Every residue held by a fixed modification is stripped, not just C: a
+    // loaded or hand-written config can put oxidation on a cysteine that
+    // carbamidomethyl already occupies, which Pioneer rejects outright.
     variable: variable.flatMap((m) => {
-      if (!isAlkylation(m.name)) return [m]
-      const free = residuesOf(m.pattern).filter((r) => r !== REQUIRED_FIXED_SITE)
-      // Only C was named, so nothing is left of the row once C is taken out.
+      const free = residuesOf(m.pattern).filter((r) => !taken.has(r))
+      // Nothing survives, so the row described only occupied residues.
       return free.length ? [{ ...m, pattern: sitePattern(free) }] : []
     }),
   }

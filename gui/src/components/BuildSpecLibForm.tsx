@@ -11,6 +11,7 @@ import {
   initialSite,
   isRequiredFixedMod,
   modsForModel,
+  occupiedResidues,
   siteAllowed,
   siteOptions,
   unimodId,
@@ -110,6 +111,7 @@ function ModTable({
   note,
   onField,
   onRemove,
+  occupied,
   onAdd,
 }: {
   kind: 'fixed' | 'variable'
@@ -119,6 +121,9 @@ function ModTable({
   note: string
   onField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemove: (kind: 'fixed' | 'variable', idx: number) => void
+  /** Residues the fixed modifications already hold. Empty for the fixed table,
+   *  which is what defines them. */
+  occupied: Set<string>
   onAdd: (kind: 'fixed' | 'variable', preset: string) => void
 }) {
   const cell = (extra: React.CSSProperties): React.CSSProperties => ({
@@ -138,7 +143,12 @@ function ModTable({
   // Carbamidomethyl is pinned on C only. It stays offerable as a variable
   // modification wherever the model allows it on another residue -- K on the
   // PTM models -- and drops out only when C is the single site it has.
-  const available = modsForModel(modelId).filter((d) => initialSite(modelId, kind, d) !== null)
+  // A modification whose every site is already held by a fixed one has no
+  // variable form left to add, so it drops out of the menu rather than being
+  // offered and then rejected.
+  const available = modsForModel(modelId).filter(
+    (d) => initialSite(modelId, kind, d, occupied) !== null,
+  )
   const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
@@ -194,8 +204,10 @@ function ModTable({
                   {/* A fixed alkylation row may not drop C, and a variable one
                       may not take it, so those choices are not offered. */}
                   {siteOptions(def)
-                    .filter((o) =>
-                      allowedSiteValues(modelId, kind, m.name, [o.value]).length > 0,
+                    .filter(
+                      (o) =>
+                        allowedSiteValues(modelId, kind, m.name, [o.value], occupied).length > 0 ||
+                        o.value === m.pattern,
                     )
                     .map((o) => (
                       <option key={o.value} value={o.value}>
@@ -859,6 +871,7 @@ export function BuildSpecLibForm({
         </p>
         <ModTable
           kind="fixed"
+          occupied={new Set<string>()}
           mods={params.fixedMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
@@ -870,6 +883,7 @@ export function BuildSpecLibForm({
         <div style={{ height: 18 }} />
         <ModTable
           kind="variable"
+          occupied={occupiedResidues(params.fixedMods)}
           mods={params.variableMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
