@@ -47,6 +47,11 @@ export async function inspectPath(path: string): Promise<PathInfo> {
 
 export const readConfig = (path: string): Promise<string> => invoke('read_config', { path })
 
+/** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
+ *  Captured rather than streamed: it is data, not run output. */
+export const listSpecLibs = (repo?: string): Promise<string> =>
+  invoke('list_spec_libs', { repo: repo ?? null })
+
 export interface Started {
   params_path: string
   /** The environment the backend actually set, for the log header. */

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildSpecLibForm } from './components/BuildSpecLibForm'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConvertRawForm } from './components/ConvertRawForm'
+import { DownloadSpecLibForm } from './components/DownloadSpecLibForm'
 import { JsonModal } from './components/JsonModal'
 import { LoadConfigModal } from './components/LoadConfigModal'
 import { LogDrawer } from './components/LogDrawer'
@@ -12,6 +13,8 @@ import { Sidebar } from './components/Sidebar'
 import * as backend from './lib/backend'
 import {
   buildConvertArgs,
+  downloadCommandLine,
+  buildDownloadArgs,
   buildLibJson,
   buildSearchJson,
   convertCommandLine,
@@ -36,6 +39,7 @@ import {
   CONVERT_DEFAULTS,
   EMPTY_PATH_INFO,
   SEARCH_DEFAULTS,
+  DOWNLOAD_DEFAULTS,
   type BuildParams,
   type CommandId,
   type ConvertParams,
@@ -47,6 +51,8 @@ import {
   type LogLine,
   type ModEntry,
   type PathInfo,
+  type DownloadParams,
+  type RemoteLibrary,
   type SearchParams,
   predictionModelById,
 } from './lib/types'
@@ -62,6 +68,9 @@ import {
   resultsNote,
   validateBuildRun,
   validateConvertRun,
+  type Note,
+  validateDownloadRun,
+  downloadTargetPath,
   validateSearchRun,
 } from './lib/validate'
 
@@ -199,12 +208,14 @@ function loadHistory(): Job[] {
 const TITLES: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
   buildspeclib: 'BuildSpecLib',
+  downloadspeclib: 'DownloadSpecLib',
   convertraw: 'ConvertRAW',
 }
 
 const SUBTITLES: Record<CommandId, string> = {
   searchdia: 'Find & quantify proteins · all settings on one page',
   buildspeclib: 'Predict a spectral library · all settings on one page',
+  downloadspeclib: 'Download a prebuilt spectral library',
   convertraw: 'Convert .raw files to Arrow',
 }
 
@@ -240,6 +251,12 @@ export default function App() {
   const [search, setSearch] = useState<SearchParams>(SEARCH_DEFAULTS)
   const [build, setBuild] = useState<BuildParams>(BUILD_DEFAULTS)
   const [convert, setConvert] = useState<ConvertParams>(CONVERT_DEFAULTS)
+  const [download, setDownload] = useState<DownloadParams>(DOWNLOAD_DEFAULTS)
+  /** The remote catalog, fetched by DownloadSpecLib rather than by the webview,
+   *  which the CSP forbids from reaching any external origin. */
+  const [libraries, setLibraries] = useState<RemoteLibrary[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
   /** Keys of a loaded config that the form does not model, per command. */
   const [extras, setExtras] = useState<Record<string, Json | null>>({})
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -290,6 +307,32 @@ export default function App() {
 
   const isSearch = command === 'searchdia'
   const isConvert = command === 'convertraw'
+  const isDownload = command === 'downloadspeclib'
+  /** Driven by argv, not a params JSON. These two have no config file to show
+   *  or edit, so the preview panel shows the command line instead. */
+  const isArgv = isConvert || isDownload
+
+  /** Read the catalog. Called when the page is first opened and by Refresh,
+   *  rather than on a timer: the repository changes when a library is
+   *  published, which is rare and not something to poll for. */
+  const refreshCatalog = useCallback(() => {
+    setCatalogLoading(true)
+    setCatalogError('')
+    backend
+      .listSpecLibs()
+      .then((text) => {
+        const parsed = JSON.parse(text) as { libraries: RemoteLibrary[] }
+        setLibraries(parsed.libraries ?? [])
+      })
+      .catch((e) => setCatalogError(String(e)))
+      .finally(() => setCatalogLoading(false))
+  }, [])
+
+  useEffect(() => {
+    if (isDownload && libraries.length === 0 && !catalogLoading && !catalogError) {
+      refreshCatalog()
+    }
+  }, [isDownload, libraries.length, catalogLoading, catalogError, refreshCatalog])
 
   // ---- startup -----------------------------------------------------------
 
@@ -367,6 +410,7 @@ export default function App() {
     setCommand(job.cmd)
     if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
     else if (job.snapshot.cmd === 'buildspeclib') setBuild(job.snapshot.build)
+    else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
     else setConvert(job.snapshot.convert)
     setRunError('')
   }, [command, search, build, convert])
@@ -559,6 +603,7 @@ export default function App() {
       inspect('calibrationFile', build.calibrationFile)
       inspect('convertInput', convert.input)
       inspect('convertOutput', convert.outputDir)
+      inspect('downloadTarget', downloadTargetPath(download.dest, download.selected))
       build.fastaFiles.forEach((f) => inspect(`fasta:${f.path}`, f.path))
     }, 250)
     return () => clearTimeout(t)
@@ -571,6 +616,8 @@ export default function App() {
     build.calibrationFile,
     convert.input,
     convert.outputDir,
+    download.dest,
+    download.selected,
     fastaPaths,
     inspect,
   ])
@@ -782,6 +829,34 @@ export default function App() {
     if (picked) onParam('outputDir', picked)
   }
 
+  const browseDownloadDest = async () => {
+    const picked = await backend.pickFolder('Choose where to save the library')
+    if (picked) setDownload((p) => ({ ...p, dest: picked }))
+  }
+
+  /** What is already at `<dest>/<library>`. Checked before the run rather than
+   *  after: the binary refuses to overwrite, and finding that out only once the
+   *  job has started wastes the trip and reads like a failure. */
+  const downloadTargetExists = info('downloadTarget').exists
+
+  /** The destination note. Deliberately shows the size that is about to land:
+   *  a 3 GiB fetch should say so before it starts, not once it is running. */
+  const downloadDestNote: Note = !download.dest.trim()
+    ? { level: '', msg: 'Required — the library is written into this folder.' }
+    : downloadTargetExists && download.selected
+      ? {
+          level: download.force ? 'warn' : 'error',
+          msg: download.force
+            ? `${download.selected} already exists here and will be replaced.`
+            : `${download.selected} already exists here. Turn on “Replace an existing copy” to overwrite it, or choose another folder.`,
+        }
+      : (() => {
+          const lib = libraries.find((l) => l.name === download.selected)
+          return lib
+            ? { level: '', msg: `${lib.size_human} will be written to ${download.dest}` }
+            : { level: '', msg: `Libraries are written to ${download.dest}` }
+        })()
+
   const onBrowseSearch = async (key: 'msData' | 'library' | 'results') => {
     const titles = {
       msData: 'Choose the MS data folder',
@@ -939,7 +1014,9 @@ export default function App() {
 
   const jsonText = useMemo(
     () =>
-      isConvert
+      isDownload
+        ? downloadCommandLine(download)
+        : isConvert
         ? // Clamped: while the threads field is being cleared it holds 0, and
           // the preview should not show `--threads-per-file 0` as if that were
           // the command we would run. Run refuses in that state anyway.
@@ -951,14 +1028,19 @@ export default function App() {
           ),
     // `threads` belongs here: the ConvertRAW preview renders --threads-per-file
     // from it, so without it the command line goes stale when the stepper moves.
-    [isConvert, isSearch, search, build, convert, currentExtras, threads],
+    [isConvert, isDownload, isSearch, search, build, convert, download, currentExtras, threads],
   )
 
   const overwriteNote = isConvert
     ? convertNotes.output
-    : isSearch
-      ? searchNotes.results
-      : libNote
+    // With force on, replacing an existing library is a warning rather than a
+    // block, so it routes into the same confirm dialog the other commands use.
+    // 3 GiB is too much to overwrite on a single click.
+    : isDownload
+      ? downloadDestNote
+      : isSearch
+        ? searchNotes.results
+        : libNote
 
   const enqueue = async () => {
     jobSeq.current += 1
@@ -975,15 +1057,19 @@ export default function App() {
       title: generateRunName(jobs.map((j) => j.title)),
       snapshot: isConvert
         ? { cmd: 'convertraw' as const, convert }
-        : isSearch
-          ? { cmd: 'searchdia' as const, search }
-          : { cmd: 'buildspeclib' as const, build },
+        : isDownload
+          ? { cmd: 'downloadspeclib' as const, download }
+          : isSearch
+            ? { cmd: 'searchdia' as const, search }
+            : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
           ? convert.outputDir || convert.input
-          : isSearch
-            ? search.results
-            : libraryTargetPath(build.libPath)) || '—',
+          : isDownload
+            ? download.dest
+            : isSearch
+              ? search.results
+              : libraryTargetPath(build.libPath)) || '—',
       threads: Math.max(1, threads),
       status: 'queued',
       logLines: [],
@@ -991,7 +1077,9 @@ export default function App() {
       paramsJson: jsonText,
       invocation: isConvert
         ? { kind: 'args' as const, args: buildConvertArgs(convert, threads) }
-        : { kind: 'paramsFile' as const, json: jsonText },
+        : isDownload
+          ? { kind: 'args' as const, args: buildDownloadArgs(download) }
+          : { kind: 'paramsFile' as const, json: jsonText },
       viewerPaths: isSearch
         ? { results: search.results, msData: search.msData, library: search.library }
         : null,
@@ -1020,9 +1108,11 @@ export default function App() {
     }
     const block = isConvert
       ? validateConvertRun(convert, convertNotes.input, convertNotes.output)
-      : isSearch
-        ? validateSearchRun(search, searchNotes)
-        : validateBuildRun(build, fastaNotes, libNote, calibNote)
+      : isDownload
+        ? validateDownloadRun(download, downloadTargetExists)
+        : isSearch
+          ? validateSearchRun(search, searchNotes)
+          : validateBuildRun(build, fastaNotes, libNote, calibNote)
     if (block) {
       setRunError(block.msg)
       const el = document.querySelector(`[data-key="${block.key}"]`)
@@ -1109,11 +1199,17 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && ['1', '2', '3'].includes(e.key)) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && ['1', '2', '3', '4'].includes(e.key)) {
         if (anyModalOpen) return
         e.preventDefault()
         setCommand(
-          e.key === '1' ? 'convertraw' : e.key === '2' ? 'buildspeclib' : 'searchdia',
+          e.key === '1'
+            ? 'convertraw'
+            : e.key === '2'
+              ? 'buildspeclib'
+              : e.key === '4'
+                ? 'downloadspeclib'
+                : 'searchdia',
         )
         return
       }
@@ -1216,7 +1312,7 @@ export default function App() {
             threads={threads}
             maxThreads={maxThreads}
             runLabel={runLabel}
-            previewLabel={isConvert ? 'View the command line' : 'Edit the .json directly'}
+            previewLabel={isArgv ? 'View the command line' : 'Edit the .json directly'}
             onThreads={setThreads}
             onEditJson={() => setJsonOpen(true)}
             onRun={() => run()}
@@ -1267,6 +1363,19 @@ export default function App() {
                 onBrowseInput={browseConvertInput}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
+              />
+            ) : isDownload ? (
+              <DownloadSpecLibForm
+                params={download}
+                libraries={libraries}
+                loading={catalogLoading}
+                error={catalogError}
+                destNote={downloadDestNote}
+                onParam={(key, value) => setDownload((p) => ({ ...p, [key]: value }))}
+                onToggleForce={() => setDownload((p) => ({ ...p, force: !p.force }))}
+                onSelect={(name) => setDownload((p) => ({ ...p, selected: name }))}
+                onBrowseDest={browseDownloadDest}
+                onRefresh={refreshCatalog}
               />
             ) : isSearch ? (
               <SearchDiaForm
@@ -1334,8 +1443,8 @@ export default function App() {
 
         {jsonOpen && (
           <JsonModal
-            fileName={isConvert ? 'command line' : `${command}.json`}
-            editable={!isConvert}
+            fileName={isArgv ? 'command line' : `${command}.json`}
+            editable={!isArgv}
             text={jsonText}
             hasExtras={!!currentExtras}
             extraKeys={extraKeys}

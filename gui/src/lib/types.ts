@@ -1,6 +1,37 @@
 import { modEntry } from './koinaMods'
 
-export type CommandId = 'searchdia' | 'buildspeclib' | 'convertraw'
+export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
+
+/** One library offered by the Hugging Face repository, as reported by
+ *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
+ *  contract between the two halves of the feature. */
+export interface RemoteLibrary {
+  name: string
+  title: string
+  model: string
+  description: string
+  recommended_for: string
+  total_bytes: number
+  size_human: string
+  n_files: number
+  details: Record<string, string>
+}
+
+/** Everything the DownloadSpecLib page owns. */
+export interface DownloadParams {
+  /** Directory the library is written into. Required; there is no default. */
+  dest: string
+  /** Selected library name, '' when nothing is picked yet. */
+  selected: string
+  /** Replace an existing directory at the destination. */
+  force: boolean
+}
+
+export const DOWNLOAD_DEFAULTS: DownloadParams = {
+  dest: '',
+  selected: '',
+  force: false,
+}
 
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
  *  strings, so a half-typed number ("0.0") survives a re-render intact. */
@@ -217,6 +248,7 @@ export interface LogLine {
 export type JobSnapshot =
   | { cmd: 'searchdia'; search: SearchParams }
   | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'downloadspeclib'; download: DownloadParams }
   | { cmd: 'convertraw'; convert: ConvertParams }
 
 export interface Job {

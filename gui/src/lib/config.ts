@@ -7,7 +7,7 @@
  *  are held aside in `extraConfig` and merged back on the way out.
  */
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
-import type { BuildParams, ConvertParams, ModEntry, SearchParams } from './types'
+import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
 
 export type Json = Record<string, unknown>
 
@@ -363,6 +363,22 @@ export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
   args.push('--batch-size', s.batchSize.trim())
   args.push('--scan-chunk-size', s.scanChunkSize.trim())
   return args
+}
+
+/** Argv for DownloadSpecLib.
+ *
+ *  `--dest` is required by the binary and by validateDownloadRun, so it is
+ *  always present here; there is deliberately no default destination. */
+export function buildDownloadArgs(s: DownloadParams): string[] {
+  const args: string[] = [s.selected.trim(), '--dest', s.dest.trim()]
+  if (s.force) args.push('--force')
+  return args
+}
+
+/** The command line as a user would type it, for the preview panel. */
+export function downloadCommandLine(s: DownloadParams): string {
+  const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
+  return ['DownloadSpecLib', ...buildDownloadArgs(s).map(quote)].join(' ')
 }
 
 /** The command line as a user would type it, for the preview panel. */

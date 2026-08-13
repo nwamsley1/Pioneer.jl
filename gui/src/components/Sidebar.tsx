@@ -59,6 +59,8 @@ function searchableText(j: Job): string {
     parts.push(...s.build.variableMods.map((m) => m.label))
     parts.push(...s.build.fixedMods.map((m) => m.label))
     parts.push(s.build.predictionModel)
+  } else if (s.cmd === 'downloadspeclib') {
+    parts.push(s.download.selected, s.download.dest)
   } else {
     parts.push(s.convert.input, s.convert.outputDir)
   }
@@ -97,6 +99,7 @@ function rowTitle(j: Job): string {
 const CMD_TEXT: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
   buildspeclib: 'BuildSpecLib',
+  downloadspeclib: 'DownloadSpecLib',
   convertraw: 'ConvertRAW',
 }
 
@@ -116,8 +119,8 @@ const barberStyle: React.CSSProperties = {
   inset: 0,
   borderRadius: 2,
   background:
-    'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
-  backgroundSize: '28px 100%',
+    'linear-gradient(45deg,var(--pio-accent-soft) 25%,var(--pio-accent-softer) 25%,var(--pio-accent-softer) 50%,var(--pio-accent-soft) 50%,var(--pio-accent-soft) 75%,var(--pio-accent-softer) 75%)',
+  backgroundSize: '20px 20px',
   animation: 'pio-barber .6s linear infinite',
 }
 
@@ -712,11 +715,22 @@ export function Sidebar({
           collapsed={collapsed}
           onClick={onSelect}
           icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+            // A bare arrow said "something moves right", not "a file becomes
+            // another file". Two sheets with the second overlapping the first,
+            // and the arrow between them, is the conventional convert glyph.
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+              <path d="M13.4 3.6H5.6v10.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               <path
-                d="M4 12h12M13 7l5 5-5 5"
+                d="M9.4 8.8h5.4l3.3 3.3v8.3H9.4z"
                 stroke="currentColor"
-                strokeWidth="1.7"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+              />
+              <path d="M14.8 8.8v3.3h3.3" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+              <path
+                d="M5.2 16.2h6.4M9.4 14l2.2 2.2-2.2 2.2"
+                stroke="currentColor"
+                strokeWidth="1.6"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -732,7 +746,7 @@ export function Sidebar({
           collapsed={collapsed}
           onClick={onSelect}
           icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
               <ellipse cx="12" cy="5.5" rx="7" ry="2.8" stroke="currentColor" strokeWidth="1.6" />
               <path
                 d="M5 5.5v13c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8v-13"
@@ -740,6 +754,27 @@ export function Sidebar({
                 strokeWidth="1.6"
               />
               <path d="M5 12c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          }
+        />
+        <NavItem
+          id="downloadspeclib"
+          title="DownloadSpecLib"
+          subtitle="fetch a prebuilt library"
+          chip={`${modKey}4`}
+          active={selected === 'downloadspeclib'}
+          collapsed={collapsed}
+          onClick={onSelect}
+          icon={
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+              <path
+                d="M12 3v12M7.5 10.5 12 15l4.5-4.5"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path d="M4 19h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
           }
         />
@@ -752,7 +787,7 @@ export function Sidebar({
           collapsed={collapsed}
           onClick={onSelect}
           icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
               <circle cx="11" cy="11" r="6.2" stroke="currentColor" strokeWidth="1.7" />
               <path d="m20 20-3.7-3.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>

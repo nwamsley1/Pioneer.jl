@@ -5,7 +5,7 @@
  *  contained a slash and compared against a hard-coded list of three folders.
  *  These consult the real filesystem through the `inspect_path` command.
  */
-import type { BuildParams, ConvertParams, PathInfo } from './types'
+import type { BuildParams, ConvertParams, DownloadParams, PathInfo } from './types'
 
 export interface NumSpec {
   label: string
@@ -203,6 +203,17 @@ export function libraryTargetPath(libPath: string): string {
   return v.endsWith('.poin') ? v : `${v}.poin`
 }
 
+/** Where a downloaded library will land.
+ *
+ *  DownloadSpecLib writes `<dest>/<library name>`, and the name already carries
+ *  its .poin/.pion extension, so nothing is appended here. */
+export function downloadTargetPath(dest: string, library: string): string {
+  const d = dest.trim()
+  const l = library.trim()
+  if (!d || !l) return ''
+  return d.endsWith('/') ? `${d}${l}` : `${d}/${l}`
+}
+
 export function libPathNote(value: string, targetInfo: PathInfo): Note {
   if (!value.trim()) return NONE
   if (!/[\\/]/.test(value)) return { level: 'error', msg: 'Enter a full path.' }
@@ -341,6 +352,24 @@ export function convertOutputNote(value: string, info: PathInfo): Note {
 /** The two parallelism knobs multiply, so individually reasonable values can
  *  still ask for more threads than the machine has. The Julia thread picker is
  *  clamped at its control; this product cannot be, so it is enforced here. */
+/** Blocks a download that cannot be started.
+ *
+ *  A destination is required rather than defaulted: a 3 GiB download landing
+ *  somewhere the user did not choose is worse than being asked. */
+export function validateDownloadRun(p: DownloadParams, targetExists: boolean): RunBlock | null {
+  if (!p.selected.trim()) return { key: 'downloadSelected', msg: 'Choose a library to download.' }
+  if (!p.dest.trim()) return { key: 'downloadDest', msg: 'Choose where the library should be saved.' }
+  // Caught here rather than by the binary: it refuses to overwrite, and that
+  // refusal otherwise arrives only after the job has been queued and started.
+  if (targetExists && !p.force) {
+    return {
+      key: 'downloadDest',
+      msg: `${p.selected} already exists in that folder. Turn on “Replace an existing copy”, or choose another folder.`,
+    }
+  }
+  return null
+}
+
 export function validateConvertRun(
   p: ConvertParams,
   inputNote: Note,

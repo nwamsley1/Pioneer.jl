@@ -81,6 +81,48 @@ fn library_info(path: String) -> paths::LibraryInfo {
     paths::library_info(&path)
 }
 
+/// The catalog of downloadable libraries, as JSON.
+///
+/// Runs `bin/DownloadSpecLib --list --json` and returns its stdout verbatim for
+/// the frontend to parse. Unlike a search this is a short, quiet call whose
+/// output is *data*, so it is captured rather than streamed through the job
+/// runner -- the log drawer would otherwise fill with a JSON blob.
+/// `async` and off-thread deliberately. Listing costs ~2.5s -- about half the
+/// binary's own start-up, the rest two HTTPS round trips -- and a synchronous
+/// command runs on the main thread, which froze the window for the duration and
+/// meant the button's own "Loading…" state never got painted.
+#[tauri::command]
+async fn list_spec_libs(app: AppHandle, repo: Option<String>) -> Result<String, String> {
+    let resource_dir = app.path().resource_dir().ok();
+    let info = pioneer::resolve_home(resource_dir.as_deref())?;
+    let resolved = pioneer::resolve_command(
+        std::path::Path::new(&info.home), pioneer::Command::DownloadSpecLib)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut command = std::process::Command::new(&resolved.program);
+        runner::hide_console(&mut command);
+        command.args(&resolved.leading_args).arg("--list").arg("--json");
+        if let Some(repo) = repo.as_deref() {
+            if !repo.trim().is_empty() {
+                command.arg("--repo").arg(repo.trim());
+            }
+        }
+
+        let output = command.output().map_err(|e| format!(
+            "could not run {}: {e}", resolved.program.display()))?;
+        if !output.status.success() {
+            // Pioneer writes its diagnostics to stderr; surfacing them beats a
+            // bare exit code when the failure is "no network" or "repo not
+            // found".
+            return Err(format!("DownloadSpecLib --list failed: {}",
+                               String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    })
+    .await
+    .map_err(|e| format!("listing task failed: {e}"))?
+}
+
 #[tauri::command]
 fn read_config(path: String) -> Result<String, String> {
     paths::read_config(&path)
@@ -189,6 +231,7 @@ pub fn run() {
             inspect_path,
             read_config,
             library_info,
+            list_spec_libs,
             cpu_count,
             open_folder,
             start_job,
