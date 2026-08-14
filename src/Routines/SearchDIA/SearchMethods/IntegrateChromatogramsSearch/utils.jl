@@ -396,7 +396,9 @@ For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
-scan indices.
+scan indices, along with `peak_area_unsubtracted` -- the area over the same
+window before baseline subtraction, which is what the not-quantifiable rule in
+`integrate_chrom` tests against.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -407,7 +409,8 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
-                             integration_stop_scan::AbstractVector{UInt32};
+                             integration_stop_scan::AbstractVector{UInt32},
+                             peak_area_unsubtracted::AbstractVector{Float32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -465,7 +468,8 @@ function integrate_precursors(chromatograms::DataFrame,
                 )
 
                 peak_area[i], new_best_scan[i], points_integrated[i],
-                    integration_start_scan[i], integration_stop_scan[i] =
+                    integration_start_scan[i], integration_stop_scan[i],
+                    _, _, peak_area_unsubtracted[i], _ =
                     integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -508,7 +512,8 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
-                             integration_stop_scan::AbstractVector{UInt32};
+                             integration_stop_scan::AbstractVector{UInt32},
+                             peak_area_unsubtracted::AbstractVector{Float32};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -521,7 +526,8 @@ function integrate_precursors(chromatograms::DataFrame,
         new_best_scan,
         points_integrated,
         integration_start_scan,
-        integration_stop_scan;
+        integration_stop_scan,
+        peak_area_unsubtracted;
         λ = λ,
     )
 end
@@ -2070,9 +2076,23 @@ function process_final_psms!(
     parsed_fname::String,
     ms_file_idx::Int64
 )
-    # Remove invalid peak areas
+    # Drop only genuinely unusable areas. A zero area is an identification that
+    # passed FDR but could not be quantified -- either no peak survived baseline
+    # subtraction or integration rejected the window (see
+    # QUANT_MIN_AREA_SURVIVING_RATIO). Those rows are kept so the identification
+    # reaches protein inference and the output tables; downstream treats a zero
+    # area as "not quantified in this run" rather than as an abundance of zero.
+    n_before = nrow(psms)
     filter!(row -> !isnan(row.peak_area::Float32), psms)
-    filter!(row -> row.peak_area::Float32 > 0.0, psms)
+    n_nan = n_before - nrow(psms)
+    n_unquantified = count(row -> row.peak_area::Float32 <= 0.0f0, eachrow(psms))
+    if n_nan > 0
+        @debug_l1 "[$parsed_fname] dropped $n_nan / $n_before PSMs with NaN peak_area"
+    end
+    if n_unquantified > 0
+        @debug_l1 "[$parsed_fname] $n_unquantified / $(nrow(psms)) PSMs identified " *
+                  "but not quantified (peak_area == 0)"
+    end
     # Add columns
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)

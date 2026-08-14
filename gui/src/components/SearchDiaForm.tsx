@@ -1,13 +1,20 @@
-/** The SearchDIA page: Essentials, Confidence & output, and a collapsible
- *  Advanced section. Ported from the `isSearch` branch of the design template.
+/** The SearchDIA page: Files and name, then Common parameters beside Output,
+ *  then Advanced parameters across the full width.
+ *
+ *  The first card holds what is particular to this run — the two inputs, the
+ *  destination, and what to call it. The three below it hold settings that
+ *  mostly stay put between runs, split by how often you touch them.
  *
  *  Note the design's stepper (currentStep / buildSteps / next / back) is not
  *  reproduced: the Console variant carries that state on its Component class
  *  but never renders it — everything is on one page.
  */
+import { JobNameField } from './JobNameField'
 import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
+import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
+import { unimodDisplay } from '../lib/fasta'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel } from '../lib/types'
@@ -50,6 +57,7 @@ function PathRow({
   note,
   onChange,
   onBrowse,
+  action,
   children,
 }: {
   label: React.ReactNode
@@ -59,6 +67,8 @@ function PathRow({
   note: Note
   onChange: (key: string, value: string) => void
   onBrowse: () => void
+  /** An extra control beside Browse, e.g. a recent-paths picker. */
+  action?: React.ReactNode
   children?: React.ReactNode
 }) {
   return (
@@ -79,6 +89,7 @@ function PathRow({
         <button type="button" className="pio-browse" onClick={onBrowse} style={BROWSE}>
           Browse
         </button>
+        {action}
       </div>
       {note.msg && (
         <div
@@ -156,9 +167,15 @@ interface Props {
   notes: { msData: Note; library: Note; results: Note }
   /** What the selected .poin records about itself; null when none is chosen. */
   libInfo: LibraryInfo | null
+  /** Libraries used by earlier SearchDIA runs, most recent first. */
+  recentLibraries: string[]
+  jobName: string
+  /** The name the run will get once collisions are resolved; empty when unset. */
+  resolvedJobName: string
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowse: (key: 'msData' | 'library' | 'results') => void
+  onJobName: (value: string) => void
   onOpenLoad: () => void
   onGoToBuild: () => void
 }
@@ -167,9 +184,13 @@ export function SearchDiaForm({
   params,
   notes,
   libInfo,
+  recentLibraries,
+  jobName,
+  resolvedJobName,
   onParam,
   onToggle,
   onBrowse,
+  onJobName,
   onOpenLoad,
   onGoToBuild,
 }: Props) {
@@ -185,7 +206,7 @@ export function SearchDiaForm({
             marginBottom: 14,
           }}
         >
-          <h2 style={H2}>Essentials</h2>
+          <h2 style={H2}>Files and name</h2>
           <LoadPreviousButton onClick={onOpenLoad} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -206,6 +227,12 @@ export function SearchDiaForm({
             note={notes.library}
             onChange={onParam}
             onBrowse={() => onBrowse('library')}
+            action={
+              <RecentLibraries
+                paths={recentLibraries}
+                onPick={(p) => onParam('library', p)}
+              />
+            }
           >
             <button
               type="button"
@@ -248,7 +275,7 @@ export function SearchDiaForm({
                 >
                   <strong style={{ fontWeight: 600 }}>Experimental.</strong> This library
                   is Prosit-predicted and carries variable modifications
-                  ({libInfo.variable_mods.join(', ')}). Pioneer does not report
+                  ({libInfo.variable_mods.map(unimodDisplay).join(', ')}). Pioneer does not report
                   site-localization confidence, so a modified residue is placed but the
                   placement is not scored.
                 </div>
@@ -263,43 +290,61 @@ export function SearchDiaForm({
             onChange={onParam}
             onBrowse={() => onBrowse('results')}
           />
+          <JobNameField value={jobName} resolved={resolvedJobName} onChange={onJobName} />
         </div>
       </section>
 
-      {/* Confidence & output and Advanced sit side by side at half width each.
+      {/* Common and Output share a row; Advanced spans the full width beneath.
+          The two in the row are near enough the same height -- the q-value field
+          and its hint against four toggle rows -- that neither leaves the other
+          with a long empty tail. Advanced is one row of three fields, so full
+          width suits it better than half, and it is the section you open least.
+
           Basis 300px, not 340: at the window's 980px minimum the sidebar and
           padding leave about 670px, so 340 each would exceed it and wrap to a
-          column at the default size. At 300 they fit and then grow to ~330.
-          flex-start so the shorter card does not stretch to match the taller. */}
-      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          single column at the default size. At 300 they fit and then grow to
+          ~330.
+
+          `stretch` so both cards take the height of the taller one. Their
+          contents differ by only a row or so, and a pair of boxes that end at
+          slightly different heights reads as a mistake rather than as a
+          consequence of what is in them. When the row wraps at narrow widths
+          each card is alone on its line, so stretch has nothing to match and
+          they return to their natural heights. */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <section style={{ ...CARD, flex: '1 1 300px', minWidth: 0 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            gap: 12,
-            marginBottom: 14,
-          }}
-        >
-          <h2 style={H2}>Confidence &amp; output</h2>
-        </div>
-        {/* Stacked, not side by side. One field beside four toggles left a large
-            empty quadrant under the field, and no amount of alignment fixes a
-            column with nothing else to hold. Full width also lets each toggle
-            sit at the card edge, which reads as deliberate. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <NumField fieldKey="qValue" value={params.qValue} onChange={onParam} />
-            <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 6 }}>1% FDR = 0.01</div>
+          <h2 style={{ ...H2, marginBottom: 14 }}>Common parameters</h2>
+          {/* Stacked, not side by side. One field beside the toggles left a large
+              empty quadrant under the field, and no amount of alignment fixes a
+              column with nothing else to hold. Full width also lets each toggle
+              sit at the card edge, which reads as deliberate. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <NumField fieldKey="qValue" value={params.qValue} onChange={onParam} />
+              <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 6 }}>1% FDR = 0.01</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+              <ToggleRow
+                title="Run-to-run normalization"
+                hint="Retention-time dependent cross-run intensity scaling"
+                on={params.runToRunNorm}
+                fieldKey="runToRunNorm"
+                onToggle={onToggle}
+              />
+              <ToggleRow
+                title="MBR"
+                hint="Match between runs"
+                on={params.matchBetweenRuns}
+                fieldKey="matchBetweenRuns"
+                onToggle={onToggle}
+              />
+            </div>
           </div>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 11,
-            }}
-          >
+        </section>
+
+        <section style={{ ...CARD, flex: '1 1 300px', minWidth: 0 }}>
+          <h2 style={{ ...H2, marginBottom: 14 }}>Output</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
             <ToggleRow
               title="Write CSV report"
               hint="Human-readable tables"
@@ -322,59 +367,31 @@ export function SearchDiaForm({
               onToggle={onToggle}
             />
             <ToggleRow
-              title="Run-to-run normalization"
-              hint="Retention-time dependent cross-run scaling"
-              on={params.runToRunNorm}
-              fieldKey="runToRunNorm"
-              onToggle={onToggle}
-            />
-            <ToggleRow
               title="Debug logging"
-              hint="Verbose console output — the log file keeps its own detail either way"
+              hint="Verbose console output"
               on={params.debugLogging}
               fieldKey="debugLogging"
               onToggle={onToggle}
             />
           </div>
-        </div>
-      </section>
-
-      <section
-        style={{
-          background: '#fff',
-          border: '1px solid #E7EAEE',
-          borderRadius: 13,
-          overflow: 'hidden',
-          flex: '1 1 300px',
-          minWidth: 0,
-        }}
-      >
-        {/* Always open. Collapsed, this card was a half-width empty box beside
-            Confidence & output, and the four settings inside it are short
-            enough that hiding them saved nothing. */}
-        <div style={{ padding: '15px 20px 0' }}>
-          <h2 style={H2}>Advanced parameters</h2>
-          <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
-            Defaults suit most experiments
-          </div>
-        </div>
-        <div style={{ padding: '4px 20px 20px' }}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr',
-                gap: 14,
-                alignItems: 'stretch',
-                marginTop: 16,
-              }}
-            >
-              <NumField fieldKey="nIsotopes" value={params.nIsotopes} onChange={onParam} />
-              <NumField fieldKey="nce" value={params.nce} onChange={onParam} />
-              <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
-            </div>
-        </div>
         </section>
       </div>
+
+      <section style={CARD}>
+        <h2 style={{ ...H2, marginBottom: 16 }}>Advanced parameters</h2>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            gap: 14,
+            alignItems: 'stretch',
+          }}
+        >
+          <NumField fieldKey="nIsotopes" value={params.nIsotopes} onChange={onParam} />
+          <NumField fieldKey="nce" value={params.nce} onChange={onParam} />
+          <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
+        </div>
+      </section>
     </div>
   )
 }

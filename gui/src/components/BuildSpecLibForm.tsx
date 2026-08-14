@@ -1,6 +1,8 @@
 /** The BuildSpecLib page: FASTA input, library output, digestion,
  *  modifications and options. Ported from the `isBuild` branch of the design.
  */
+import { useState } from 'react'
+
 import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
@@ -26,6 +28,7 @@ import {
 import { BROWSE, HINT, LABEL } from '../lib/styles'
 import { PREDICTION_MODELS, isPrositModel, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
+import { conflictingResidues, modPatternResidues } from '../lib/validate'
 import type { Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -119,6 +122,7 @@ function ModTable({
   onField,
   onRemove,
   occupied,
+  conflicts,
   onAdd,
 }: {
   kind: 'fixed' | 'variable'
@@ -131,6 +135,10 @@ function ModTable({
   /** Residues the fixed modifications already hold. Empty for the fixed table,
    *  which is what defines them. */
   occupied: Set<string>
+  /** Residues a fixed and a variable modification both claim. Both tables get
+   *  the same set: the conflict is between two rows and either can resolve it,
+   *  so marking only one would point at the wrong half as often as not. */
+  conflicts: Set<string>
   onAdd: (kind: 'fixed' | 'variable', preset: string) => void
 }) {
   const cell = (extra: React.CSSProperties): React.CSSProperties => ({
@@ -180,11 +188,23 @@ function ModTable({
           // user did not ask us to touch.
           const def = findMod(modelId, m.name)
           const bad = def === null || !siteAllowed(def, m.pattern)
+          // A residue cannot be fixed and variable at once: the fixed mod takes
+          // every one of them, so the variable one lands on top. Pioneer rejects
+          // the config, so this has to be visible while it is being made.
+          const clash = [...modPatternResidues(m.pattern)].filter((r) => conflicts.has(r))
           const warn = bad
             ? `${modelLabel} does not accept ${m.label || m.name || 'this modification'}${
                 def ? ` on ${m.pattern}` : ''
               }. Koina will reject the build.`
-            : undefined
+            : clash.length
+              ? `${clash.sort().join(', ')} is claimed by both a fixed and a variable ` +
+                `modification. A fixed one takes every matching residue, so the variable ` +
+                `one would land on top of it. Remove one, or narrow a site.`
+              : undefined
+          // Red for the conflict, which stops the build; the existing amber
+          // stays for a modification this model merely does not accept.
+          const line = clash.length ? '#E5484D' : bad ? '#B45309' : null
+          const ink = clash.length ? '#C0392B' : bad ? '#B45309' : null
           return (
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
               {def ? (
@@ -194,9 +214,9 @@ function ModTable({
                   style={{
                     ...SITE_CELL,
                     padding: '8px 24px 8px 10px',
-                    border: `1px solid ${bad ? '#B45309' : '#CBD2DA'}`,
+                    border: `1px solid ${line ?? '#CBD2DA'}`,
                     borderRadius: 9,
-                    color: bad ? '#B45309' : '#1D2939',
+                    color: ink ?? '#1D2939',
                     background: `#FFFFFF ${CHEVRON}`,
                     backgroundSize: '14px 14px',
                     cursor: 'pointer',
@@ -226,8 +246,8 @@ function ModTable({
                 <div
                   style={readOnly({
                     ...SITE_CELL,
-                    borderColor: '#B45309',
-                    color: '#B45309',
+                    borderColor: line ?? '#B45309',
+                    color: ink ?? '#B45309',
                   })}
                 >
                   {m.pattern || '—'}
@@ -241,7 +261,7 @@ function ModTable({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
+                  ...(line ? { borderColor: line, color: ink ?? undefined } : null),
                 })}
               >
                 {def ? def.label : m.label || 'Not supported by this model'}
@@ -375,6 +395,75 @@ export function BuildSpecLibForm({
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null
     if (lo >= lim.min && hi <= lim.max) return null
     return { min: Math.max(lo, lim.min), max: Math.min(hi, lim.max) }
+  })()
+
+  /** The peptides the current digestion settings yield from the sample
+   *  sequence, or null when the cleavage rule will not compile.
+   *
+   *  A half-typed length reads as its default rather than blanking the
+   *  preview. */
+  const previewPeptides = (() => {
+    const int = (raw: string, fallback: number) => {
+      const v = Number(raw)
+      return Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
+    }
+    return previewDigest(SAMPLE_SEQUENCE, {
+      pattern: params.cleavageRegex,
+      specificity: params.digestSpecificity,
+      minLength: int(params.minLen, 7),
+      maxLength: int(params.maxLen, 40),
+      missedCleavages: int(params.missedCleav, 1),
+    })
+  })()
+
+  // Four peptides is enough to see the shape of the digest; the rest are one
+  // click away. Semi specificity runs to dozens even on a 32-residue sequence,
+  // and reading them is a fair thing to want -- "+50 more" is a claim the user
+  // should be able to check.
+  const [peptidesExpanded, setPeptidesExpanded] = useState(false)
+  const PREVIEW_SHOWN = 4
+  const previewHidden = Math.max((previewPeptides?.length ?? 0) - PREVIEW_SHOWN, 0)
+
+  // Recomputed on every keystroke, so the pair of rows turns red the moment the
+  // clash is created rather than when Run is pressed.
+  const modConflicts = conflictingResidues(params.fixedMods, params.variableMods)
+
+  /** The fragment ceiling in words: what a precursor at each end of the range
+   *  actually gets, and where the clamp starts.
+   *
+   *  Mirrors frag_bound_polynomials + FragBoundModel's clamp. A slope and an
+   *  intercept do not tell you what window a precursor gets, and the clamp is
+   *  the part people are surprised by -- 2.00 x 1250 + 10 is 2510 m/z, which no
+   *  Orbitrap records. */
+  const fragCeilingSummary = (() => {
+    const n = (raw: string, fallback: number) => {
+      const v = Number(raw)
+      return Number.isFinite(v) ? v : fallback
+    }
+    const fragMax = n(params.fragMzMax, 2020)
+    const precMin = n(params.precMzMin, 390)
+    const precMax = n(params.precMzMax, 1010)
+    const rule = params.fragBoundsRule
+    if (rule === 'constant') {
+      return `Every precursor gets fragments up to ${fragMax} m/z.`
+    }
+    const [slope, intercept] =
+      rule === 'thermo_auto'
+        ? [2.04, 24.1]
+        : rule === 'thermo_auto_documented'
+          ? [2.0, 10.0]
+          : [n(params.fragCeilingSlope, 2), n(params.fragCeilingIntercept, 10)]
+    const at = (p: number) => Math.min(slope * p + intercept, fragMax)
+    const round = (v: number) => Math.round(v * 10) / 10
+    const crossing = slope > 0 ? (fragMax - intercept) / slope : Infinity
+    const clamped =
+      crossing < precMax
+        ? ` Held at ${fragMax} above precursor ${round(Math.max(crossing, precMin))}.`
+        : ''
+    return (
+      `Ceiling ${round(at(precMin))} m/z at precursor ${round(precMin)}, ` +
+      `${round(at(precMax))} at ${round(precMax)}.${clamped}`
+    )
   })()
 
   const pill = (active: boolean): React.CSSProperties => ({
@@ -694,9 +783,29 @@ export function BuildSpecLibForm({
           <h2 style={H2}>Reference MS file</h2>
           <InfoDot text="Any one run from the experiment this library is for. Pioneer reads its scan headers to detect the fragment and precursor m/z bounds, instead of assuming defaults that may not match your method. It is not used for calibration in the retention-time sense, and nothing from it ends up in the library." />
         </div>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          Optional but recommended — without it Pioneer falls back to fixed m/z bounds.
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
+          Recommended. Without one, set the m/z bounds yourself below.
         </p>
+        {/* The choice comes first: everything under it depends on it, and
+            leaving the file field live while it is ignored invites filling it
+            in and wondering why nothing changed. */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => !params.autoDetectFragBounds && onToggle('autoDetectFragBounds')}
+            style={pill(params.autoDetectFragBounds)}
+          >
+            Detect from a file
+          </button>
+          <button
+            type="button"
+            onClick={() => params.autoDetectFragBounds && onToggle('autoDetectFragBounds')}
+            style={pill(!params.autoDetectFragBounds)}
+          >
+            Set m/z bounds manually
+          </button>
+        </div>
+        {params.autoDetectFragBounds && (
         <div data-drop="calibrationFile" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
@@ -725,7 +834,8 @@ export function BuildSpecLibForm({
             Browse
           </button>
         </div>
-        {calibNote.msg && (
+        )}
+        {params.autoDetectFragBounds && calibNote.msg && (
           <div
             style={{
               marginTop: 9,
@@ -736,6 +846,102 @@ export function BuildSpecLibForm({
           >
             ⚠&nbsp; {calibNote.msg}
           </div>
+        )}
+
+        {!params.autoDetectFragBounds && (
+          <>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                gap: 14,
+                alignItems: 'start',
+              }}
+            >
+              <NumField fieldKey="fragMzMin" value={params.fragMzMin} onChange={onParam} />
+              <NumField fieldKey="fragMzMax" value={params.fragMzMax} onChange={onParam} />
+              <NumField fieldKey="precMzMin" value={params.precMzMin} onChange={onParam} />
+              <NumField fieldKey="precMzMax" value={params.precMzMax} onChange={onParam} />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 5px' }}>
+              <label
+                htmlFor="frag-bounds-rule"
+                style={{ fontSize: 11, color: '#667085' }}
+              >
+                Fragment ceiling
+              </label>
+              <InfoDot text="Thermo instruments in Scan Range Mode = Auto move the MS2 ceiling with the isolation window, so a flat ceiling keeps fragments the instrument never recorded. SCIEX and Bruker hold one fixed range, which is what Constant does. The gain is small — about 0.4% of intensity, and nothing at all at charge 2 — so this is a correctness fix rather than a way to find more peptides." />
+            </div>
+            <select
+              id="frag-bounds-rule"
+              className="pio-input"
+              value={params.fragBoundsRule}
+              onChange={(e) => onParam('fragBoundsRule', e.target.value)}
+              style={{
+                width: '100%',
+                maxWidth: 340,
+                padding: '8px 34px 8px 10px',
+                border: '1px solid #D7DBE0',
+                borderRadius: 8,
+                font: "12.5px 'IBM Plex Sans'",
+                color: '#1A2230',
+                background: `#FFFFFF ${CHEVRON}`,
+                backgroundSize: '16px 16px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+              }}
+            >
+              <option value="constant">Constant — the max above, at every precursor</option>
+              <option value="thermo_auto_documented">Thermo Auto — 2.00 × precursor + 10</option>
+              {/* Neither the measured variant nor explicit coefficients are
+                  offered. Two Thermo rules differing by 2% invites a choice
+                  nobody has grounds to make, and the config key still takes
+                  both for a method that needs one. They are rendered only when
+                  a loaded config already selected them, so opening and
+                  re-saving it does not quietly rewrite the rule. */}
+              {params.fragBoundsRule === 'thermo_auto' && (
+                <option value="thermo_auto">
+                  Thermo Auto measured — 2.04 × precursor + 24.1
+                </option>
+              )}
+              {params.fragBoundsRule === 'custom' && (
+                <option value="custom">Custom (from the loaded config)</option>
+              )}
+            </select>
+
+            {params.fragBoundsRule === 'custom' && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 2fr',
+                  gap: 14,
+                  alignItems: 'start',
+                  marginTop: 12,
+                }}
+              >
+                <NumField
+                  fieldKey="fragCeilingSlope"
+                  value={params.fragCeilingSlope}
+                  onChange={onParam}
+                />
+                <NumField
+                  fieldKey="fragCeilingIntercept"
+                  value={params.fragCeilingIntercept}
+                  onChange={onParam}
+                />
+              </div>
+            )}
+
+            {/* The resolved rule, spelled out. A slope and intercept do not say
+                what window a precursor actually gets, and the clamp is the part
+                people are surprised by. */}
+            <div style={{ marginTop: 10, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+              {fragCeilingSummary}
+            </div>
+          </>
         )}
       </section>
 
@@ -839,10 +1045,19 @@ export function BuildSpecLibForm({
           <h2 style={H2}>Digestion</h2>
         </div>
 
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)',
+            gap: 14,
+            alignItems: 'end',
+          }}
+        >
+          <div>
         <label style={{ ...LABEL }}>Enzyme</label>
         <select
           data-key="enzyme"
-          value={enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME}
+          value={params.customEnzyme ? CUSTOM_ENZYME : (enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME)}
           onChange={(e) => onEnzyme(e.target.value)}
           style={{
             width: '100%',
@@ -863,8 +1078,43 @@ export function BuildSpecLibForm({
           ))}
           <option value={CUSTOM_ENZYME}>Custom cleavage rule…</option>
         </select>
+          </div>
+          <div>
+            <label
+              htmlFor="digest-specificity"
+              style={{ display: 'block', fontSize: 11, color: '#667085', marginBottom: 5 }}
+            >
+              Specificity
+            </label>
+            <select
+              id="digest-specificity"
+              className="pio-input"
+              value={params.digestSpecificity}
+              onChange={(e) => onParam('digestSpecificity', e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 34px 8px 10px',
+                border: '1px solid #D7DBE0',
+                borderRadius: 8,
+                font: "12.5px 'IBM Plex Sans'",
+                color: '#1A2230',
+                background: `#FFFFFF ${CHEVRON}`,
+                backgroundSize: '16px 16px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+              }}
+            >
+              <option value="full">Full (both termini)</option>
+              <option value="semi">Semi (either terminus)</option>
+              <option value="semi-n">Semi-N (C terminus required)</option>
+              <option value="semi-c">Semi-C (N terminus required)</option>
+            </select>
+          </div>
+        </div>
 
-        {!enzymeByPattern(params.cleavageRegex) && (
+        {(params.customEnzyme || !enzymeByPattern(params.cleavageRegex)) && (
           <div style={{ marginTop: 12 }}>
             <label style={LABEL}>Cleavage regex</label>
             <input
@@ -911,11 +1161,44 @@ export function BuildSpecLibForm({
               font: "12.5px 'IBM Plex Mono'",
               color: cleavageNote.level === 'error' ? '#C0392B' : '#1B2A4A',
               wordBreak: 'break-word',
+              // Expanded, a semi digest is dozens of peptides. Scroll them
+              // rather than pushing the rest of the form down the page.
+              ...(peptidesExpanded ? { maxHeight: 132, overflowY: 'auto' as const } : {}),
             }}
           >
-            {cleavageNote.level === 'error'
-              ? cleavageNote.msg
-              : (previewDigest(SAMPLE_SEQUENCE, params.cleavageRegex) ?? []).join(' · ')}
+            {cleavageNote.level === 'error' ? (
+              cleavageNote.msg
+            ) : !previewPeptides ? null : previewPeptides.length === 0 ? (
+              'No peptides — nothing survives these length limits.'
+            ) : (
+              <>
+                {previewPeptides.length} peptide{previewPeptides.length === 1 ? '' : 's'} ·{' '}
+                {(peptidesExpanded
+                  ? previewPeptides
+                  : previewPeptides.slice(0, PREVIEW_SHOWN)
+                ).join(' · ')}
+                {previewHidden > 0 && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="pio-link-underline"
+                      onClick={() => setPeptidesExpanded((v) => !v)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        cursor: 'pointer',
+                        font: "12.5px 'IBM Plex Mono'",
+                        color: 'var(--pio-accent)',
+                      }}
+                    >
+                      {peptidesExpanded ? 'show fewer' : `+${previewHidden} more`}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -928,39 +1211,6 @@ export function BuildSpecLibForm({
             alignItems: 'start',
           }}
         >
-          <div>
-            <label
-              htmlFor="digest-specificity"
-              style={{ display: 'block', fontSize: 11, color: '#667085', marginBottom: 5 }}
-            >
-              Specificity
-            </label>
-            <select
-              id="digest-specificity"
-              className="pio-input"
-              value={params.digestSpecificity}
-              onChange={(e) => onParam('digestSpecificity', e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 34px 8px 10px',
-                border: '1px solid #D7DBE0',
-                borderRadius: 8,
-                font: "12.5px 'IBM Plex Sans'",
-                color: '#1A2230',
-                background: `#FFFFFF ${CHEVRON}`,
-                backgroundSize: '16px 16px',
-                cursor: 'pointer',
-                outline: 'none',
-                appearance: 'none',
-                WebkitAppearance: 'none',
-              }}
-            >
-              <option value="full">Full (both termini)</option>
-              <option value="semi">Semi (either terminus)</option>
-              <option value="semi-n">Semi-N (C terminus required)</option>
-              <option value="semi-c">Semi-C (N terminus required)</option>
-            </select>
-          </div>
           <NumField fieldKey="minLen" value={params.minLen} onChange={onParam} />
           <NumField fieldKey="maxLen" value={params.maxLen} onChange={onParam} />
           <NumField fieldKey="missedCleav" value={params.missedCleav} onChange={onParam} />
@@ -998,6 +1248,7 @@ export function BuildSpecLibForm({
         <ModTable
           kind="fixed"
           occupied={new Set<string>()}
+          conflicts={modConflicts}
           mods={params.fixedMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
@@ -1029,6 +1280,7 @@ export function BuildSpecLibForm({
         <ModTable
           kind="variable"
           occupied={occupiedResidues(params.fixedMods)}
+          conflicts={modConflicts}
           mods={params.variableMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}

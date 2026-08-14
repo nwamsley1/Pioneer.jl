@@ -128,6 +128,24 @@ struct InferenceResult
     ambiguous_peptide_to_proteins::Dictionary{PeptideKey, Vector{ProteinKey}}
 end
 
+"""
+    _is_common_peptide(missed_cleavages, num_enzymatic_termini,
+                       num_variable_modifications)
+
+Return whether a peptide belongs to the stable, commonly observable coverage
+class: fully enzymatic, no missed cleavages, and no variable modifications.
+Fixed and isotopic modifications do not affect this classification.
+"""
+@inline function _is_common_peptide(
+    missed_cleavages::Integer,
+    num_enzymatic_termini::Integer,
+    num_variable_modifications::Integer
+)::Bool
+    return missed_cleavages == 0 &&
+        num_enzymatic_termini == 2 &&
+        num_variable_modifications == 0
+end
+
 InferenceResult(peptide_to_protein::Dictionary{PeptideKey, ProteinKey}) = InferenceResult(
     peptide_to_protein,
     Dictionary{PeptideKey, Vector{ProteinKey}}()
@@ -138,14 +156,26 @@ InferenceResult(peptide_to_protein::Dictionary{PeptideKey, ProteinKey}) = Infere
 
 Theoretical peptide opportunities for one retained final protein group.
 
-`n_unique_peptides` counts library peptide sequences that map to this group and
-no other retained final group. `n_shared_peptides` counts library peptide
-sequences that map to this group and at least one other retained final group.
+`n_unique_peptides` counts all library peptide sequences that map to this group
+and no other retained final group. `n_shared_peptides` counts all library
+peptide sequences that map to this group and at least one other retained final
+group. `n_common_unique_peptides` is the subset of unique opportunities with at
+least one fully enzymatic, zero-missed-cleavage, variable-unmodified precursor.
 """
 struct ProteinPeptideOpportunityCounts
     n_unique_peptides::Int
     n_shared_peptides::Int
+    n_common_unique_peptides::Int
 end
+
+ProteinPeptideOpportunityCounts(
+    n_unique_peptides::Int,
+    n_shared_peptides::Int
+) = ProteinPeptideOpportunityCounts(
+    n_unique_peptides,
+    n_shared_peptides,
+    n_unique_peptides
+)
 
 """
     ProteinGroupBuilder

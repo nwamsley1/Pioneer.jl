@@ -180,6 +180,54 @@ end
         @test opportunities[entrap_e] == ProteinPeptideOpportunityCounts(1, 0)
     end
 
+    @testset "common coverage is invariant to uncommon library expansion" begin
+        protein = ProteinKey("A", true, UInt8(0))
+        final_groups = Set([protein])
+        accessions = ["A", "A", "A", "A"]
+        sequences = ["COMMON", "SEMI", "VARIABLE", "SEMI_EXTRA"]
+        is_decoys = falses(4)
+        entrap_ids = zeros(UInt8, 4)
+
+        base_opportunities = count_protein_peptide_opportunities(
+            accessions[1:3],
+            sequences[1:3],
+            is_decoys[1:3],
+            entrap_ids[1:3],
+            final_groups;
+            common_precursor_mask = Bool[true, false, false]
+        )
+        expanded_opportunities = count_protein_peptide_opportunities(
+            accessions,
+            sequences,
+            is_decoys,
+            entrap_ids,
+            final_groups;
+            common_precursor_mask = Bool[true, false, false, false]
+        )
+
+        @test base_opportunities[protein] ==
+            ProteinPeptideOpportunityCounts(3, 0, 1)
+        @test expanded_opportunities[protein] ==
+            ProteinPeptideOpportunityCounts(4, 0, 1)
+
+        protein_groups = DataFrame(
+            protein_name = ["A"],
+            target = Bool[true],
+            entrap_id = UInt8[0],
+            n_peptides = Int64[3],
+            n_common_peptides = Int64[1],
+        )
+        add_protein_features(Dict(
+            protein => expanded_opportunities[protein]
+        )).second(protein_groups)
+
+        @test protein_groups.n_possible_common_unique_peptides == Int64[1]
+        @test protein_groups.peptide_coverage == Float32[1.0]
+        @test protein_groups.all_peptide_coverage == Float32[0.75]
+        @test protein_groups.peptide_coverage_logit[1] ≈ log(3.0f0)
+        @test protein_groups.all_peptide_coverage_logit[1] ≈ log(7.0f0 / 3.0f0)
+    end
+
     @testset "shared coverage logit distinguishes absent opportunities" begin
         protein_groups = DataFrame(
             protein_name = ["A", "B"],

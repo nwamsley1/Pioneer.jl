@@ -333,6 +333,7 @@ function add_mods(
                     get_start_idx(fasta_peptide),
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
+                    UInt8(length(var_mod) - length(fixed_mods_vector)),
                     get_charge(fasta_peptide),
                     get_num_enzymatic_termini(fasta_peptide),
                     get_base_target_id(fasta_peptide), # preserve base_target_id
@@ -387,6 +388,7 @@ function add_charge(
                     get_start_idx(fasta_peptide),
                     get_structural_mods(fasta_peptide),
                     get_isotopic_mods(fasta_peptide),
+                    get_num_variable_modifications(fasta_peptide),
                     charge,
                     get_num_enzymatic_termini(fasta_peptide),
                     get_base_target_id(fasta_peptide), # preserve base_target_id
@@ -532,6 +534,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _sequence = Vector{String}(undef, prec_alloc_size)
     _structural_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
     _isotopic_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
+    _num_variable_modifications = Vector{UInt8}(undef, prec_alloc_size)
     _start_idx = Vector{Vector{UInt32}}(undef, prec_alloc_size)
     _precursor_charge = Vector{UInt8}(undef, prec_alloc_size)
     _num_enzymatic_termini = Vector{UInt8}(undef, prec_alloc_size)
@@ -559,6 +562,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _start_idx[n] = get_start_idx(peptide)
         _structural_mods[n] = getModString(get_structural_mods(peptide))
         _isotopic_mods[n] = getModString(get_isotopic_mods(peptide))
+        _num_variable_modifications[n] =
+            get_num_variable_modifications(peptide)
         _precursor_charge[n] = get_charge(peptide)
         _num_enzymatic_termini[n] = get_num_enzymatic_termini(peptide)
         _collision_energy[n] = NCE
@@ -577,6 +582,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          start_idx = _start_idx[1:n],
          mods = _structural_mods[1:n],
          isotopic_mods = _isotopic_mods[1:n],
+         num_variable_modifications =
+            _num_variable_modifications[1:n],
          precursor_charge = _precursor_charge[1:n],
          num_enzymatic_termini = _num_enzymatic_termini[1:n],
          collision_energy = _collision_energy[1:n],

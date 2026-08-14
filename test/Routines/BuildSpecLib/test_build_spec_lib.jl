@@ -93,7 +93,6 @@ function generate_build_params_with_var_mods(
     lib_name::String;
     max_var_mods::Int = 1,
     include_oxidation::Bool = true,
-    include_phospho::Bool = false,
     length_to_frag_count_multiple::Float64 = 2.0,
     missed_cleavages::Int = 1,
     min_length::Int = 7,
@@ -140,12 +139,29 @@ function generate_build_params_with_var_mods(
         push!(var_mods["name"], "Unimod:35")
     end
     
-    if include_phospho && max_var_mods > 0
-        push!(var_mods["pattern"], "C")
-        push!(var_mods["mass"], 57.021464)
-        push!(var_mods["name"], "Unimod:4")
-    end
-    
+    # There is deliberately no second variable modification, because an Altimeter
+    # library cannot have one. Koina's Altimeter_2024_preprocess_sequence
+    # enforces both halves of that:
+    #
+    #   "Only methionine oxidation '[UNIMOD:35]' and cysteine
+    #    carbamidomethylation '[UNIMOD:4]' are allowed."
+    #   "Only carbamidomethylated cysteines are supported. Expected [UNIMOD:4]
+    #    after C"
+    #
+    # The vocabulary is exactly two mods, and Unimod:4 on C is *mandatory* -- so
+    # it must stay fixed and cannot be offered as a variable site. Oxidation on M
+    # is the only variable modification available.
+    #
+    # This is what the fixture had wrong: it passed Unimod:4 on C as a variable
+    # mod while it was also fixed, which `1285bb6c5` now rejects outright. Neither
+    # phospho nor any other PTM is an alternative here; those need one of the
+    # Prosit PTM models.
+    #
+    # max_var_mods > 1 is still exercised. minimal_protein.fasta is
+    # MCMKALYKMSRPKMCER, whose MCMK and MCMKALYK peptides carry two M apiece, so
+    # a cap of 2 or more admits doubly-oxidised precursors that a cap of 1
+    # forbids -- which is what the assertions below check.
+
     params["variable_mods"] = var_mods
     
     return params
@@ -617,11 +633,11 @@ end
         
         # Test different max_var_mods values
         var_mod_tests = [
-            (max_var_mods=0, include_oxidation=true, include_phospho=true, desc="No mods allowed"),
-            (max_var_mods=1, include_oxidation=true, include_phospho=false, desc="Max 1 mod - M oxidation only"),
-            (max_var_mods=2, include_oxidation=true, include_phospho=true, desc="Max 2 mods - M ox and C carbamidomethyl"),
-            (max_var_mods=3, include_oxidation=true, include_phospho=true, desc="Max 3 mods"),
-            (max_var_mods=4, include_oxidation=true, include_phospho=true, desc="Max 4 mods"),
+            (max_var_mods=0, include_oxidation=true, desc="No variable mods"),
+            (max_var_mods=1, include_oxidation=true, desc="Max 1 - at most one M oxidation"),
+            (max_var_mods=2, include_oxidation=true, desc="Max 2 - up to two M oxidations"),
+            (max_var_mods=3, include_oxidation=true, desc="Max 3 - cap above the available sites"),
+            (max_var_mods=4, include_oxidation=true, desc="Max 4 - cap above the available sites"),
         ]
         
         for test_case in var_mod_tests
@@ -637,7 +653,6 @@ end
                     lib_name;
                     max_var_mods = test_case.max_var_mods,
                     include_oxidation = test_case.include_oxidation,
-                    include_phospho = test_case.include_phospho,
                     missed_cleavages = 1,
                     min_length = 1,  # Lower to catch all peptides
                     max_length = 20,
@@ -663,29 +678,66 @@ end
                 @info "precursors_file: $precursors_file"
                 if isfile(precursors_file)
                     precursors = Arrow.Table(precursors_file)
+                    @test hasproperty(
+                        precursors,
+                        :num_variable_modifications
+                    )
+                    variable_mod_names = params["variable_mods"]["name"]
+                    expected_variable_modifications = UInt8[
+                        max(0, sum(
+                            count(mod_name, coalesce(mods, ""))
+                            for mod_name in variable_mod_names;
+                            init = 0
+                        ) - sum(
+                            fixed_name in variable_mod_names ?
+                                count(Regex(fixed_pattern), sequence) : 0
+                            for (fixed_name, fixed_pattern) in zip(
+                                params["fixed_mods"]["name"],
+                                params["fixed_mods"]["pattern"]
+                            );
+                            init = 0
+                        ))
+                        for (mods, sequence) in zip(
+                            precursors[:structural_mods],
+                            precursors[:sequence]
+                        )
+                    ]
+                    @test collect(precursors[:num_variable_modifications]) ==
+                        expected_variable_modifications
                     
                     # Count unique sequences and modifications
                     unique_seqs = unique(precursors[:sequence])
                     println("Max var mods = $(test_case.max_var_mods): Found $(length(unique_seqs)) unique sequences")
                     
-                    # Verify modification combinations
-                    # For sequence MCMKALYKMSRPKMCER with 4 M's and 3 C's
+                    # minimal_protein.fasta is MCMKALYKMSRPKMCER: four M, and its
+                    # MCMK / MCMKALYK peptides carry two M apiece, so the cap is
+                    # observable as the largest number of oxidations that appear
+                    # together on one precursor.
+                    mods = String.(precursors[:structural_mods])
+                    n_ox = [count("Unimod:35", m) for m in mods]
+                    max_ox = isempty(n_ox) ? 0 : maximum(n_ox)
+                    println("  max oxidations on a single precursor: $max_ox " *
+                            "(cap $(test_case.max_var_mods))")
+
+                    # Never more than the cap allows, whatever the cap is. The
+                    # old assertions only ever checked that *some* modification
+                    # existed, so a cap that silently did nothing would pass.
+                    @test max_ox <= test_case.max_var_mods
+
                     if test_case.max_var_mods == 0
-                        # Should have no modifications
-                        @test !any(contains.(String.(precursors[:structural_mods]), "["))
-                    elseif test_case.max_var_mods == 1 && test_case.include_oxidation && !test_case.include_phospho
-                        # Should have unmodified + 4 positions for M oxidation
-                        # Each peptide can have 0 or 1 oxidation
-                        # Count precursors with oxidation marker (Unimod:35)
-                        has_ox = sum(contains.(String.(precursors[:structural_mods]), "Unimod:35"))
-                        println("  Found $has_ox precursors with oxidation")
-                        @test has_ox > 0
-                    elseif test_case.max_var_mods >= 2 && test_case.include_oxidation && test_case.include_phospho
-                        # Should have combinations of M oxidation and C carbamidomethylation
-                        has_ox = sum(contains.(String.(precursors[:structural_mods]), "Unimod:35"))
-                        has_carbamid = sum(contains.(String.(precursors[:structural_mods]), "Unimod:4"))
-                        println("  Found $has_ox with oxidation, $has_carbamid with carbamidomethylation")
-                        @test has_ox > 0 || has_carbamid > 0
+                        # No *variable* mods. Asserted against Unimod:35 rather
+                        # than a bracket: structural_mods is written as
+                        # "(6,C,Unimod:4)", so the previous `contains("[")` check
+                        # looked for a character the format never emits and
+                        # passed regardless of content. The fixed Unimod:4
+                        # legitimately appears here, so only the variable mod's
+                        # absence can be asserted.
+                        @test !any(contains.(mods, "Unimod:35"))
+                    else
+                        # The cap is reached, not merely respected -- so a cap
+                        # that admitted nothing would fail. Two sites is the most
+                        # this FASTA offers on one peptide, hence the min().
+                        @test max_ox == min(test_case.max_var_mods, 2)
                     end
                 else
                     @warn "Precursors file not created: $precursors_file"

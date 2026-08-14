@@ -4,6 +4,7 @@ import { BuildSpecLibForm } from './components/BuildSpecLibForm'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConvertRawForm } from './components/ConvertRawForm'
 import { DownloadSpecLibForm } from './components/DownloadSpecLibForm'
+import { JobNameField } from './components/JobNameField'
 import { JsonModal } from './components/JsonModal'
 import { LoadConfigModal } from './components/LoadConfigModal'
 import { LogDrawer } from './components/LogDrawer'
@@ -29,6 +30,8 @@ import {
   type Json,
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
+import { moveQueuedJob } from './lib/queue'
+import { recentLibraries } from './lib/recent'
 import {
   enforceRequiredMods,
   findMod,
@@ -38,7 +41,7 @@ import {
   siteAllowed,
   unimodId,
 } from './lib/koinaMods'
-import { SAMPLE_SEQUENCE, enzymeById, previewDigest } from './lib/enzymes'
+import { SAMPLE_SEQUENCE, cleavageSites, enzymeById } from './lib/enzymes'
 import { listenForDrops } from './lib/dragdrop'
 import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
@@ -222,8 +225,8 @@ const TITLES: Record<CommandId, string> = {
 }
 
 const SUBTITLES: Record<CommandId, string> = {
-  searchdia: 'Find & quantify proteins · all settings on one page',
-  buildspeclib: 'Predict a spectral library · all settings on one page',
+  searchdia: 'Find & quantify proteins',
+  buildspeclib: 'Predict a spectral library',
   downloadspeclib: 'Download a prebuilt spectral library',
   convertraw: 'Convert .raw files to Arrow',
 }
@@ -290,7 +293,13 @@ export default function App() {
 
   const [jsonOpen, setJsonOpen] = useState(false)
   const [loadOpen, setLoadOpen] = useState(false)
-  const [jobConfirm, setJobConfirm] = useState<{ id: string; kind: 'cancel' | 'delete'; title: string } | null>(null)
+  const [jobConfirm, setJobConfirm] = useState<{
+    id: string
+    kind: 'cancel' | 'delete'
+    title: string
+    /** Queued but never started, so there is no process to stop. */
+    queued: boolean
+  } | null>(null)
   const [overwriteOpen, setOverwriteOpen] = useState(false)
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
@@ -454,7 +463,9 @@ export default function App() {
       // is how interruption is detected: if the app goes away, the row stays
       // pending on disk and startup can see it never finished. Waiting for a
       // close event would miss a crash or a force quit.
-      const key = `${j.id}:${j.status}`
+      // runNo is part of the key because reordering the queue reassigns it,
+      // and a status that has not changed would otherwise suppress the write.
+      const key = `${j.id}:${j.status}:${j.runNo}`
       if (savedRuns.current.has(key)) continue
       savedRuns.current.add(key)
       backend.historySave(jobToRun(j)).catch(() => {
@@ -602,6 +613,11 @@ export default function App() {
 
   // ---- live path validation ---------------------------------------------
 
+  /** How many runs have reached a terminal state. Only its changing matters. */
+  const finishedCount = jobs.filter(
+    (j) => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled',
+  ).length
+
   const inspect = useCallback((key: string, value: string) => {
     backend.inspectPath(value).then((info) => {
       setPathInfos((prev) => ({ ...prev, [key]: info }))
@@ -637,6 +653,10 @@ export default function App() {
     download.selected,
     fastaPaths,
     inspect,
+    // Not a path, but a reason to re-stat them all: a run that has just
+    // finished may have created the folder one of these fields points at, and
+    // nothing else would prompt another look.
+    finishedCount,
   ])
 
   const info = (k: string): PathInfo => pathInfos[k] ?? EMPTY_PATH_INFO
@@ -1021,10 +1041,19 @@ export default function App() {
 
   /** Choosing a preset writes its pattern; choosing Custom keeps whatever is
    *  there, so switching to Custom to make a small edit does not wipe the rule
-   *  you were editing. */
+   *  you were editing.
+   *
+   *  That second half used to be the whole handler, and did nothing visible:
+   *  the picker reads its value back from the pattern, so keeping a preset's
+   *  pattern meant the picker snapped straight back to that preset and the text
+   *  field never appeared. The choice is now recorded rather than inferred. */
   const onEnzyme = (id: string) => {
     const preset = enzymeById(id)
-    if (preset) setBuild((p) => ({ ...p, cleavageRegex: preset.pattern }))
+    setBuild((p) =>
+      preset
+        ? { ...p, cleavageRegex: preset.pattern, customEnzyme: false }
+        : { ...p, customEnzyme: true },
+    )
     setRunError('')
   }
 
@@ -1034,12 +1063,15 @@ export default function App() {
   const cleavageNote: Note = (() => {
     const pattern = build.cleavageRegex.trim()
     if (!pattern) return { level: 'error', msg: 'Enter a cleavage rule, or choose an enzyme.' }
-    const peptides = previewDigest(SAMPLE_SEQUENCE, pattern)
-    if (peptides === null) return { level: 'error', msg: 'Not a valid regular expression.' }
-    if (peptides.length <= 1) {
+    // Cut sites, not peptides: whether the rule is sound is a separate question
+    // from whether the length limits leave anything, and the preview beside it
+    // now answers the second one.
+    const sites = cleavageSites(SAMPLE_SEQUENCE, pattern)
+    if (sites === null) return { level: 'error', msg: 'Not a valid regular expression.' }
+    if (sites.length === 0) {
       return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
     }
-    if (peptides.length > SAMPLE_SEQUENCE.length / 2) {
+    if (sites.length > SAMPLE_SEQUENCE.length / 2) {
       return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
     }
     return { level: '', msg: '' }
@@ -1112,6 +1144,9 @@ export default function App() {
 
   /** Names already spoken for, across this session and persisted history. */
   const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
+  // Straight off the run history, which already records each run's parameters.
+  const recentLibraryPaths = useMemo(() => recentLibraries(jobs), [jobs])
+
   const trimmedJobName = jobName.trim()
   /** Only computed for a typed name: for an empty one the answer is random, and
    *  a preview that reshuffles on every keystroke is noise. */
@@ -1203,6 +1238,22 @@ export default function App() {
       setOverwriteOpen(true)
       return
     }
+    // Point SearchDIA at what this run is about to produce. Done here rather
+    // than on success so the fields are ready while the job runs -- the usual
+    // shape of a session is convert, then build or download, then search, and
+    // filling them in afterwards means going back to look. The path does not
+    // exist yet, so the field will show "does not exist" until the job lands;
+    // the effect below re-checks every path when one finishes, which clears it
+    // without the user touching anything.
+    if (isConvert) {
+      setSearch((p) => ({ ...p, msData: convert.outputDir || convert.input }))
+    } else if (isDownload) {
+      const produced = downloadTargetPath(download.dest, download.selected)
+      if (produced) setSearch((p) => ({ ...p, library: produced }))
+    } else if (!isSearch) {
+      const produced = libraryTargetPath(build.libPath)
+      if (produced) setSearch((p) => ({ ...p, library: produced }))
+    }
     void enqueue()
   }
 
@@ -1290,7 +1341,7 @@ export default function App() {
             ? 'convertraw'
             : e.key === '2'
               ? 'buildspeclib'
-              : e.key === '4'
+              : e.key === '3'
                 ? 'downloadspeclib'
                 : 'searchdia',
         )
@@ -1365,7 +1416,33 @@ export default function App() {
         }}
         onJobAction={(id, kind) => {
           const job = jobs.find((j) => j.id === id)
-          setJobConfirm({ id, kind, title: job ? job.title : '' })
+          setJobConfirm({
+            id,
+            kind,
+            title: job ? job.title : '',
+            queued: job?.status === 'queued',
+          })
+        }}
+        onReorderQueued={(dragId, dropId) =>
+          setJobs((prev) => moveQueuedJob(prev, dragId, dropId))
+        }
+        onRenameJob={(id, title) => {
+          const wanted = title.trim()
+          if (!wanted) return
+          setJobs((prev) =>
+            prev.map((j) => {
+              if (j.id !== id) return j
+              // Resolved against every other run, this one excluded -- keeping
+              // its own name in `taken` would turn a no-op edit into "name-2".
+              // Same rule as naming a new run, so the two cannot disagree about
+              // what counts as taken.
+              const resolved = resolveRunName(
+                wanted,
+                prev.filter((o) => o.id !== id).map((o) => o.title),
+              )
+              return resolved === j.title ? j : { ...j, title: resolved }
+            }),
+          )
         }}
       />
 
@@ -1438,47 +1515,27 @@ export default function App() {
               </div>
             )}
 
-            <section
-              style={{
-                background: '#fff',
-                border: '1px solid #E7EAEE',
-                borderRadius: 13,
-                padding: '18px 20px',
-                marginBottom: 14,
-              }}
-            >
-              <label
-                htmlFor="pio-job-name"
-                style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#344054', marginBottom: 6 }}
-              >
-                Job name
-              </label>
-              <input
-                id="pio-job-name"
-                data-key="jobName"
-                value={jobName}
-                placeholder="Optional"
-                onChange={(e) => setJobName(e.target.value)}
+            {/* SearchDIA carries this inside its Essentials card, beside the
+                paths the run will be remembered alongside. The other commands
+                have no equivalent card to host it, so for them it keeps one of
+                its own. */}
+            {!isSearch && (
+              <section
                 style={{
-                  width: '100%',
-                  height: 36,
-                  padding: '0 11px',
-                  border: '1px solid #D6DAE1',
-                  borderRadius: 9,
-                  fontSize: 13,
-                  color: '#1B2A4A',
                   background: '#fff',
-                  boxSizing: 'border-box',
+                  border: '1px solid #E7EAEE',
+                  borderRadius: 13,
+                  padding: '18px 20px',
+                  marginBottom: 14,
                 }}
-              />
-              <p style={{ fontSize: 11.5, color: '#98A2B3', margin: '8px 0 0' }}>
-                {!trimmedJobName
-                  ? 'Left blank, a name is generated for you.'
-                  : resolvedJobName === trimmedJobName
-                    ? `This run will be called ${resolvedJobName}.`
-                    : `${trimmedJobName} is already taken — this run will be called ${resolvedJobName}.`}
-              </p>
-            </section>
+              >
+                <JobNameField
+                  value={jobName}
+                  resolved={resolvedJobName}
+                  onChange={setJobName}
+                />
+              </section>
+            )}
 
             {isConvert ? (
               <ConvertRawForm
@@ -1510,9 +1567,13 @@ export default function App() {
                 params={search}
                 notes={searchNotes}
                 libInfo={libInfo}
+                recentLibraries={recentLibraryPaths}
+                jobName={jobName}
+                resolvedJobName={resolvedJobName}
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
+                onJobName={setJobName}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
               />
@@ -1589,15 +1650,29 @@ export default function App() {
         {jobConfirm && (
           <ConfirmDialog
             tone="danger"
-            title={jobConfirm.kind === 'delete' ? 'Delete this run?' : 'Stop this run?'}
+            title={
+              jobConfirm.kind === 'delete'
+                ? 'Delete this run?'
+                : jobConfirm.queued
+                  ? 'Take this run out of the queue?'
+                  : 'Stop this run?'
+            }
             body={
               jobConfirm.kind === 'delete'
                 ? 'This removes the run and its log from the history. This can’t be undone.'
-                : 'This stops the Pioneer process and lets the next queued job start.'
+                : jobConfirm.queued
+                  ? 'It has not started, so nothing is interrupted. It leaves the queue and will not run.'
+                  : 'This stops the Pioneer process and lets the next queued job start.'
             }
             detail={jobConfirm.title}
-            dismissLabel="Keep"
-            confirmLabel={jobConfirm.kind === 'delete' ? 'Delete' : 'Stop run'}
+            dismissLabel={jobConfirm.queued ? 'Leave in queue' : 'Keep'}
+            confirmLabel={
+              jobConfirm.kind === 'delete'
+                ? 'Delete'
+                : jobConfirm.queued
+                  ? 'Remove'
+                  : 'Stop run'
+            }
             onDismiss={() => setJobConfirm(null)}
             onConfirm={() => {
               const { id, kind } = jobConfirm
@@ -1612,6 +1687,18 @@ export default function App() {
                   }
                   return rest
                 })
+              } else if (jobConfirm.queued) {
+                // No process to cancel -- cancelJob would find nothing to kill,
+                // which is why this used to leave the row sitting in the queue.
+                // Marking it cancelled takes it out of the queue the scheduler
+                // reads and moves it into the history, keeping its run number:
+                // "cancelled before it starts" is a state the numbering already
+                // accounts for.
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === id ? { ...j, status: 'cancelled' as JobStatus } : j,
+                  ),
+                )
               } else {
                 backend.cancelJob(id).catch(() => undefined)
               }

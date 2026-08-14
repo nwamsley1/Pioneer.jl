@@ -83,6 +83,7 @@ function run_level_protein_feature_names()
         :shared_peptide_coverage_logit,
         :shared_coverage_log_ratio,
         :peptide_coverage_logit,
+        :all_peptide_coverage_logit,
         :any_common_peps,
         :coverage_log_ratio,
         :precursor_consensus_prefix_shape,

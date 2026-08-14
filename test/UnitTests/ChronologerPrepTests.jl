@@ -248,6 +248,26 @@
         @test any(mod -> mod.position == 6 && mod.aa == 'M' && mod.mod_name == "Oxidation", all_mods[both_mods])
         @test any(mod -> mod.position == 7 && mod.aa == 'S' && mod.mod_name == "Phospho", all_mods[both_mods])
     end
+
+    @testset "variable modification counts exclude fixed modifications" begin
+        peptide = FastaEntry(
+            "P1", "", "", "", "", "YEAST", "MCK",
+            UInt32(1), missing, missing, UInt8(0), UInt32(1),
+            UInt32(1), UInt8(0), false
+        )
+        variants = Pioneer.add_mods(
+            [peptide],
+            [(p = r"C", r = "Unimod:4")],
+            [(p = r"M", r = "Unimod:35")],
+            1
+        )
+        @test sort(Pioneer.get_num_variable_modifications.(variants)) ==
+            UInt8[0, 1]
+
+        charged = Pioneer.add_charge(variants, 2, 3)
+        @test sort(Pioneer.get_num_variable_modifications.(charged)) ==
+            UInt8[0, 0, 1, 1]
+    end
     
     #==========================================================================
     Tests for add_pair_indices!
@@ -286,4 +306,3 @@
         @test df[6, :partner_precursor_idx] == 5
     end
 end
-

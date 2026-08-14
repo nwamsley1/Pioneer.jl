@@ -11,9 +11,19 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
     n::Int64
     accession_numbers_to_pid::Dictionary{String, UInt32}
     pid_to_cv_fold::Vector{UInt8}
-    function StandardLibraryPrecursors(precursor_table::Arrow.Table)
+    inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}}
+    function StandardLibraryPrecursors(
+        precursor_table::Arrow.Table,
+        inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}} = nothing
+    )
         try
             n = length(precursor_table[:sequence])
+            if inferred_num_variable_modifications !== nothing
+                length(inferred_num_variable_modifications) == n ||
+                    throw(ArgumentError(
+                        "inferred_num_variable_modifications must match the precursor table length"
+                    ))
+            end
             accession_numbers = precursor_table[:accession_numbers]
             accession_keys = String[_accession_key(accs) for accs in accession_numbers]
 
@@ -43,7 +53,13 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                     pid_to_cv_fold[pid] = rand(cv_folds)
                 end
             end
-            new(precursor_table, n, accession_number_to_pgid, pid_to_cv_fold)
+            new(
+                precursor_table,
+                n,
+                accession_number_to_pgid,
+                pid_to_cv_fold,
+                inferred_num_variable_modifications
+            )
         catch e
             @user_warn "Failed to load precursor table"
             throw(e)
@@ -54,8 +70,71 @@ end
 _accession_key(accs::AbstractString) = String(accs)
 _accession_key(accs) = join(string.(collect(accs)), ";")
 
-function SetPrecursors(precursor_table::Arrow.Table)
-    return StandardLibraryPrecursors(precursor_table)
+@inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
+@inline _count_mox(::Missing) = zero(UInt8)
+
+function _count_variable_modifications(
+    structural_mods::Union{Missing, AbstractString},
+    variable_mod_names::AbstractSet{String}
+)::UInt8
+    (ismissing(structural_mods) || isempty(structural_mods) ||
+     isempty(variable_mod_names)) && return zero(UInt8)
+
+    n_variable = 0
+    for mod_match in eachmatch(r"(?<=\().*?(?=\))", structural_mods)
+        mod_name_match = match(r"[^,]+(?=$)", mod_match.match)
+        mod_name_match === nothing && continue
+        String(mod_name_match.match) in variable_mod_names || continue
+        n_variable += 1
+    end
+    n_variable <= typemax(UInt8) ||
+        throw(ArgumentError("A precursor cannot have more than 255 variable modifications"))
+    return UInt8(n_variable)
+end
+
+_count_variable_modifications(::Any, ::Nothing) = nothing
+
+function _configured_variable_mod_names(config)::Union{Nothing, Set{String}}
+    config isa AbstractDict || return nothing
+    variable_mods = get(config, "variable_mods", nothing)
+    variable_mods isa AbstractDict || return nothing
+    names = get(variable_mods, "name", nothing)
+    names isa AbstractVector || return nothing
+    variable_names = Set(String.(names))
+    fixed_mods = get(config, "fixed_mods", nothing)
+    fixed_names = if fixed_mods isa AbstractDict
+        configured_fixed_names = get(fixed_mods, "name", nothing)
+        configured_fixed_names isa AbstractVector ?
+            Set(String.(configured_fixed_names)) : Set{String}()
+    else
+        Set{String}()
+    end
+    # An old table cannot distinguish fixed and variable instances when a
+    # name appears in both lists. Treat that configuration as unavailable and
+    # use the silent M-oxidation fallback instead of misclassifying fixed mods.
+    isempty(intersect(variable_names, fixed_names)) || return nothing
+    return variable_names
+end
+
+function SetPrecursors(
+    precursor_table::Arrow.Table;
+    variable_mod_names::Union{Nothing, AbstractSet{String}} = nothing
+)
+    inferred_num_variable_modifications = if !hasproperty(
+        precursor_table,
+        :num_variable_modifications
+    ) && variable_mod_names !== nothing
+        UInt8[
+            _count_variable_modifications(mods, variable_mod_names)
+            for mods in precursor_table[:structural_mods]
+        ]
+    else
+        nothing
+    end
+    return StandardLibraryPrecursors(
+        precursor_table,
+        inferred_num_variable_modifications
+    )
 end
 
 Base.length(lp::LibraryPrecursors) = lp.n
@@ -90,6 +169,24 @@ function getNumEnzymaticTermini(lp::LibraryPrecursors)
     # specific, so both termini are enzymatic by construction.
     return fill(UInt8(2), length(lp))
 end
+
+"""
+    getNumVariableModifications(lp::LibraryPrecursors)
+
+Return exact variable-modification counts stored in the library or inferred
+from its build configuration. Returns `nothing` for legacy libraries without
+either source of metadata; callers silently retain the historical
+M-oxidation-only behavior for those libraries.
+"""
+getNumVariableModifications(lp::LibraryPrecursors) =
+    hasproperty(lp.data, :num_variable_modifications) ?
+        lp.data[:num_variable_modifications] :
+        lp.inferred_num_variable_modifications
+
+@inline _num_variable_modifications_at(::Nothing, structural_mods, precursor_idx::Integer) =
+    _count_mox(structural_mods[precursor_idx])
+@inline _num_variable_modifications_at(values, structural_mods, precursor_idx::Integer) =
+    UInt8(values[precursor_idx])
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]

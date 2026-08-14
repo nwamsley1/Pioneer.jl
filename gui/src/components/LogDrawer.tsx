@@ -26,6 +26,13 @@ const GHOST_BTN: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,
+  // Neither shrink nor wrap. The header packs a truncating path against these
+  // buttons, and without this the buttons gave way first -- "Open folder" broke
+  // onto two lines and pushed the row taller. The path is the elastic element:
+  // it already ellipsises, and losing a few characters of a path that is shown
+  // in full on hover costs nothing.
+  flex: 'none',
+  whiteSpace: 'nowrap',
   padding: '6px 12px',
   borderRadius: 8,
   border: '1px solid var(--pio-nav-hair-strong)',
