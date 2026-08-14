@@ -140,10 +140,20 @@ function generate_build_params_with_var_mods(
         push!(var_mods["name"], "Unimod:35")
     end
     
+    # Phospho, as the flag name says. This previously pushed carbamidomethyl
+    # (Unimod:4, 57.021464) on C -- byte-identical to the *fixed* modification
+    # generate_build_params already sets. A fixed mod occupies every matching
+    # residue, so a variable mod on the same residue would modify it twice and
+    # the library would carry impossible masses; check_params now rejects that
+    # outright, which is what surfaced the mistake.
+    #
+    # minimal_protein.fasta is MCMKALYKMSRPKMCER: one S and one Y, no T, so STY
+    # gives two phospho sites alongside the four M's -- enough to exercise the
+    # max_var_mods cap at 2, 3 and 4.
     if include_phospho && max_var_mods > 0
-        push!(var_mods["pattern"], "C")
-        push!(var_mods["mass"], 57.021464)
-        push!(var_mods["name"], "Unimod:4")
+        push!(var_mods["pattern"], "STY")
+        push!(var_mods["mass"], 79.96633)
+        push!(var_mods["name"], "Unimod:21")
     end
     
     params["variable_mods"] = var_mods
@@ -619,7 +629,7 @@ end
         var_mod_tests = [
             (max_var_mods=0, include_oxidation=true, include_phospho=true, desc="No mods allowed"),
             (max_var_mods=1, include_oxidation=true, include_phospho=false, desc="Max 1 mod - M oxidation only"),
-            (max_var_mods=2, include_oxidation=true, include_phospho=true, desc="Max 2 mods - M ox and C carbamidomethyl"),
+            (max_var_mods=2, include_oxidation=true, include_phospho=true, desc="Max 2 mods - M ox and S/Y phospho"),
             (max_var_mods=3, include_oxidation=true, include_phospho=true, desc="Max 3 mods"),
             (max_var_mods=4, include_oxidation=true, include_phospho=true, desc="Max 4 mods"),
         ]
@@ -681,11 +691,18 @@ end
                         println("  Found $has_ox precursors with oxidation")
                         @test has_ox > 0
                     elseif test_case.max_var_mods >= 2 && test_case.include_oxidation && test_case.include_phospho
-                        # Should have combinations of M oxidation and C carbamidomethylation
+                        # Combinations of M oxidation and S/Y phosphorylation.
+                        #
+                        # Both are asserted, and neither may be Unimod:4: that is
+                        # the *fixed* carbamidomethyl, present on every C
+                        # regardless of the variable-mod settings, so looking for
+                        # it here would pass without proving a second variable
+                        # mod was ever applied.
                         has_ox = sum(contains.(String.(precursors[:structural_mods]), "Unimod:35"))
-                        has_carbamid = sum(contains.(String.(precursors[:structural_mods]), "Unimod:4"))
-                        println("  Found $has_ox with oxidation, $has_carbamid with carbamidomethylation")
-                        @test has_ox > 0 || has_carbamid > 0
+                        has_phospho = sum(contains.(String.(precursors[:structural_mods]), "Unimod:21"))
+                        println("  Found $has_ox with oxidation, $has_phospho with phosphorylation")
+                        @test has_ox > 0
+                        @test has_phospho > 0
                     end
                 else
                     @warn "Precursors file not created: $precursors_file"
