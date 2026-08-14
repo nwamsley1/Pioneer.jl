@@ -39,6 +39,7 @@ export function LibrarySummary({ info }: { info: LibraryInfo | null }) {
   }
 
   const digest = [
+    info.specificity && `${info.specificity} specificity`,
     info.length_range && `${info.length_range} residues`,
     info.charge_range && `charge ${info.charge_range}`,
     info.missed_cleavages && `${info.missed_cleavages} missed cleavage${info.missed_cleavages === '1' ? '' : 's'}`,

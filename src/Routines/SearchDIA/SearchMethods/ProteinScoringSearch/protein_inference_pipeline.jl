@@ -1508,9 +1508,13 @@ function group_psms_by_protein(
             precursor_consensus_prefix_shape = prefix_features.prefix_shape
         end
 
+        fully_enzymatic = hasproperty(gdf, :num_enzymatic_termini) ?
+            (gdf.num_enzymatic_termini .== 2) :
+            trues(nrow(gdf))
         has_common = any(
             quant_mask .&
             (gdf.missed_cleavage .== 0) .&
+            fully_enzymatic .&
             (gdf.Mox .== 0)
         )
 

@@ -129,6 +129,7 @@ Header-parsing regex patterns can be configured three ways:
 | `fasta_digest_params.max_charge` | Int | `4` | Maximum charge state. |
 | `fasta_digest_params.cleavage_regex` | String | `[KR][^_\|$]` | Cleavage rule. To exclude cleavage before proline use `[KR][^P\|$]`. |
 | `fasta_digest_params.missed_cleavages` | Int | `1` | Maximum missed cleavages. |
+| `fasta_digest_params.specificity` | String | `"full"` | Digestion specificity: `"full"`, `"semi"` (either terminus), `"semi-n"` (C terminus required), or `"semi-c"` (N terminus required). Protein termini count as enzymatic. |
 | `fasta_digest_params.max_var_mods` | Int | `1` | Maximum variable modifications per peptide. |
 | `fasta_digest_params.add_decoys` | Bool | `true` | Generate decoy sequences. |
 | `fasta_digest_params.entrapment_r` | Float | `0` | Entrapment-sequence ratio. |

@@ -173,6 +173,10 @@ export interface BuildParams {
    *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
    *  preset id so a config round-trips even when it matches nothing. */
   cleavageRegex: string
+  /** How many termini must obey that rule. Orthogonal to it: the enzyme says
+   *  where cleavage may occur, this says how much of the peptide has to
+   *  respect it. */
+  digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -195,6 +199,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   maxCharge: '3',
   missedCleav: '1',
   cleavageRegex: DEFAULT_CLEAVAGE,
+  digestSpecificity: 'full',
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,

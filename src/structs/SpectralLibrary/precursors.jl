@@ -77,6 +77,19 @@ getEntrapmentGroupId(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8
 getMz(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:mz]
 getLength(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:length]
 getMissedCleavages(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:missed_cleavages]
+getStartIdx(lp::LibraryPrecursors) = lp.data[:start_idx]
+
+@inline _format_start_idx(start::Integer) = string(start)
+@inline _format_start_idx(starts) = join(starts, ';')
+
+function getNumEnzymaticTermini(lp::LibraryPrecursors)
+    hasproperty(lp.data, :num_enzymatic_termini) &&
+        return lp.data[:num_enzymatic_termini]
+
+    # Libraries built before enzymatic specificity was recorded were fully
+    # specific, so both termini are enzymatic by construction.
+    return fill(UInt8(2), length(lp))
+end
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]

@@ -422,8 +422,12 @@ export default function App() {
     })
     setCommand(job.cmd)
     if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
-    else if (job.snapshot.cmd === 'buildspeclib') setBuild(job.snapshot.build)
-    else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
+    else if (job.snapshot.cmd === 'buildspeclib') {
+      // Stored runs from before digestion specificity was added do not carry
+      // the field. Merge defaults so recalling one still renders and emits a
+      // full-specific build. The same applies to the cleavage rule.
+      setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
+    } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
     else setConvert(job.snapshot.convert)
     setRunError('')
   }, [command, search, build, convert])

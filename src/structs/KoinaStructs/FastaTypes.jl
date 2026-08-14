@@ -26,10 +26,12 @@ struct FastaEntry
     organism::String
     proteome::String
     sequence::String
-    start_idx::UInt32
+    # Protein starts aligned with the semicolon-delimited accession mappings.
+    start_idx::Vector{UInt32}
     structural_mods::Union{Missing,Vector{PeptideMod}}
     isotopic_mods::Union{Missing,Vector{PeptideMod}}
     charge::UInt8
+    num_enzymatic_termini::UInt8
     base_target_id::UInt32
     base_pep_id::UInt32
     entrapment_pair_id::UInt32
@@ -52,6 +54,34 @@ is_decoy(entry::FastaEntry) = entry.is_decoy
 get_isotopic_mods(entry::FastaEntry) = entry.isotopic_mods
 get_structural_mods(entry::FastaEntry) = entry.structural_mods
 get_charge(entry::FastaEntry) = entry.charge
+get_num_enzymatic_termini(entry::FastaEntry) = entry.num_enzymatic_termini
+
+"""Construct a FASTA entry with one protein-position mapping."""
+function FastaEntry(
+    accession::String,
+    description::String,
+    gene::String,
+    protein::String,
+    organism::String,
+    proteome::String,
+    sequence::String,
+    start_idx::Integer,
+    struct_mods::Union{Missing,Vector{PeptideMod}},
+    iso_mods::Union{Missing,Vector{PeptideMod}},
+    charge::UInt8,
+    num_enzymatic_termini::UInt8,
+    base_target_id::UInt32,
+    base_pep_id::UInt32,
+    entrapment_pair_id::UInt32,
+    is_decoy::Bool,
+)
+    return FastaEntry(
+        accession, description, gene, protein, organism, proteome, sequence,
+        UInt32[UInt32(start_idx)], struct_mods, iso_mods, charge,
+        num_enzymatic_termini, base_target_id, base_pep_id,
+        entrapment_pair_id, is_decoy,
+    )
+end
 
 # ---------------------------------------------------------------------------
 # Backward-compatible outer constructors
@@ -85,8 +115,8 @@ function FastaEntry(
 )
     return FastaEntry(
         String(accession), String(description), String(gene), String(protein), String(organism), String(proteome), String(sequence),
-        start_idx, struct_mods, iso_mods, charge,
-        base_target_id, base_pep_id, UInt32(entrapment_pair_id), is_decoy,
+        UInt32[start_idx], struct_mods, iso_mods, charge,
+        UInt8(2), base_target_id, base_pep_id, UInt32(entrapment_pair_id), is_decoy,
     )
 end
 
@@ -119,7 +149,7 @@ function FastaEntry(
 )
     return FastaEntry(
         String(accession), String(description), String(gene), String(protein), String(organism), String(proteome), String(sequence),
-        start_idx, struct_mods, iso_mods, charge,
-        base_target_id, base_pep_id, UInt32(entrapment_pair_id), is_decoy,
+        UInt32[start_idx], struct_mods, iso_mods, charge,
+        UInt8(2), base_target_id, base_pep_id, UInt32(entrapment_pair_id), is_decoy,
     )
 end

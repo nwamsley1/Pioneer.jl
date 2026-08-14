@@ -31,9 +31,14 @@ if !@isdefined(Pioneer)
     using Pioneer
 end
 
-"""Every fully cleaved peptide: no length filtering, no missed cleavages."""
-digest_all(sequence, pattern; missed = 0) =
-    first(Pioneer.digest_sequence(sequence, Regex(pattern), 100, 1, missed))
+"""Every fully cleaved peptide: no length filtering, no missed cleavages.
+
+`specificity` is "full" throughout — these tests are about what the cleavage
+rule identifies as a site, which is the same question whichever specificity is
+applied on top. The semi modes have their own coverage.
+"""
+digest_all(sequence, pattern; missed = 0, specificity = "full") =
+    first(Pioneer.digest_sequence(sequence, Regex(pattern), 100, 1, missed, specificity))
 
 @testset "cleavage presets" begin
 

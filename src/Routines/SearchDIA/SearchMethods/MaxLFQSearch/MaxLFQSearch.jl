@@ -200,17 +200,20 @@ function summarize_results!(
         )
     end
 
-    # Ensure all PSM files are sorted correctly for MaxLFQ
+    # Keep inferred protein groups contiguous for MaxLFQ. Ascending group order
+    # places `missing` (non-inferred peptides) after all inferred groups; the
+    # remaining tie-breakers retain their historical descending order.
     sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
     sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
-                       reverse=[true, true, true, true], parallel=true )
+                       reverse=[false, true, true, true], parallel=true )
 
     # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
     chunk_dir = joinpath(temp_folder, "merge_chunks")
     max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
     chunk_refs = stream_sorted_merge_chunked(
         psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
-        batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
+        batch_size=1_000_000, reverse=[false, true, true, true],
+        max_chunk_bytes=max_chunk_bytes
     )
 
     # Validate first chunk has required columns for MaxLFQ

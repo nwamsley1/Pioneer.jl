@@ -146,6 +146,10 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "max_var_mods", Integer)
     check_param(fasta_digest_params, "add_decoys", Bool)
     check_param(fasta_digest_params, "entrapment_r", Real)
+
+    check_param(fasta_digest_params, "specificity", String)
+    specificity = normalize_digest_specificity(fasta_digest_params["specificity"])
+    fasta_digest_params["specificity"] = specificity
     
     # Check decoy_method with default value
     if !haskey(fasta_digest_params, "decoy_method")

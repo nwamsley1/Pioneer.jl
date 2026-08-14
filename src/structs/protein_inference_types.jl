@@ -72,18 +72,18 @@ Base.hash(k::PeptideKey, h::UInt) = hash((k.sequence, k.is_target, k.entrap_id),
 Statistical features of a protein group used for scoring and FDR control.
 
 # Fields
-- `n_peptides::UInt16`: Number of unique peptides observed
-- `n_possible_peptides::UInt16`: Total possible peptides from in silico digestion
+- `n_peptides::UInt32`: Number of unique peptides observed
+- `n_possible_peptides::UInt32`: Total possible peptides from in silico digestion
 - `peptide_coverage::Float32`: Fraction of possible peptides observed
-- `total_peptide_length::UInt16`: Sum of lengths of all observed peptides
+- `total_peptide_length::UInt32`: Sum of lengths of all observed peptides
 - `log_n_possible_peptides::Float32`: Log of n_possible_peptides for regression
 - `log_binom_coeff::Float32`: Log binomial coefficient for peptide sampling
 """
 struct ProteinFeatures
-    n_peptides::UInt16
-    n_possible_peptides::UInt16
+    n_peptides::UInt32
+    n_possible_peptides::UInt32
     peptide_coverage::Float32
-    total_peptide_length::UInt16
+    total_peptide_length::UInt32
     log_n_possible_peptides::Float32
     log_binom_coeff::Float32
 end

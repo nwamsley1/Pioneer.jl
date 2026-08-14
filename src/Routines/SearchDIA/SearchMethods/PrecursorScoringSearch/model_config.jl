@@ -76,7 +76,8 @@ const ADVANCED_FEATURE_SET = [
     # Kept close to PRESCORE_FEATURES (MainSearch/features.jl), with
     # cross-run-only substitutions where the selected best PSM is known.
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :total_ions, :missed_cleavage, :num_enzymatic_termini,
+    :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
