@@ -126,12 +126,19 @@ it unmoved. `previewDigest` is now a faithful port of `digest_sequence`
 (`fasta_digest.jl`) and lists the peptides a library would actually carry.
 
 It leads with the count, because that is the part that moves. On the sample
-sequence at the default 7–40 residues and one missed cleavage:
+sequence at the form's own defaults — Trypsin/P (`[KR][^_|$]`), 7–40 residues,
+one missed cleavage:
 
-    full    3 peptides
-    semi    54
-    semi-n  22
-    semi-c  35
+    full    2 peptides
+    semi-n  16
+    semi-c  29
+    semi    43
+
+(An earlier version of this note quoted 3/22/35/54. Those came from Julia's
+default trypsin regex `[KR][^P|$]`, which is *not* what the form defaults to —
+`ENZYMES[0]` is Trypsin/P, which also cleaves before proline. The equivalence
+check against Julia used the same pattern on both sides, so it was unaffected;
+only the illustrative figures were wrong.)
 
 The order-of-magnitude jump on switching to semi is the most consequential
 thing about that choice and was otherwise invisible until a build took all
