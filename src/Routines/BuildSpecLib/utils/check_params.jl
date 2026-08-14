@@ -191,6 +191,9 @@ function check_params_bsp(json_string::String)
     check_param(library_params, "frag_mz_max", Real)
     check_param(library_params, "prec_mz_min", Real)
     check_param(library_params, "prec_mz_max", Real)
+    # Optional. Absent means flat bounds, which is what every params file
+    # written before this key existed expects.
+    parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
     # `instrument_type` and `prediction_model` are no longer schema fields:
     # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
     # endpoint isn't instrument-parameterized.

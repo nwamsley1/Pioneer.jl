@@ -228,4 +228,83 @@
             @test frag_bounds.high_mass(5000.0) ≈ 100.0 + 2.0 * 5000.0
         end
     end
+
+    @testset "manual frag_bounds spec" begin
+        manual(spec, fmin = 150.0f0, fmax = 2000.0f0) = get_fragment_bounds(
+            false, "", (fmin, fmax), (340.0f0, 1250.0f0), spec,
+        ).frag_bounds
+
+        @testset "absent key is the old constant behaviour" begin
+            # The test that protects every params file written before this key
+            # existed: no spec must give flat bounds at the configured values.
+            m = manual(nothing)
+            for prec in (340.0f0, 700.0f0, 1250.0f0)
+                @test m(prec) == (150.0f0, 2000.0f0)
+            end
+            @test m.low_mass == ImmutablePolynomial(150.0f0)
+            @test m.high_mass == ImmutablePolynomial(2000.0f0)
+        end
+
+        @testset "preset names resolve to the documented coefficients" begin
+            @test parse_frag_bounds_spec("thermo_auto_documented") ==
+                (low_slope = 0.0f0, low_intercept = 0.0f0,
+                 high_slope = 2.0f0, high_intercept = 10.0f0)
+            @test parse_frag_bounds_spec("thermo_auto") ==
+                (low_slope = 0.0f0, low_intercept = 0.0f0,
+                 high_slope = 2.04f0, high_intercept = 24.1f0)
+            # Case and surrounding space are forgiven; the rule is not.
+            @test parse_frag_bounds_spec("  Thermo_Auto  ") ==
+                parse_frag_bounds_spec("thermo_auto")
+            # "constant" is flat, so it must agree with an absent key.
+            @test manual(parse_frag_bounds_spec("constant"))(700.0f0) ==
+                manual(nothing)(700.0f0)
+        end
+
+        @testset "the ceiling slopes, and the low bound does not" begin
+            m = manual(parse_frag_bounds_spec("thermo_auto_documented"))
+            # 2.00 * 340 + 10
+            @test m(340.0f0) == (150.0f0, 690.0f0)
+            @test m(900.0f0) == (150.0f0, 1810.0f0)
+            # Every Thermo method measured held the low bound fixed, so the
+            # preset leaves it at frag_mz_min rather than sloping it too.
+            @test first(m(340.0f0)) == first(m(1250.0f0)) == 150.0f0
+        end
+
+        @testset "a sloped ceiling is clamped to frag_mz_max" begin
+            # Unclamped this reaches 2.0 * 1250 + 10 = 2510 m/z, which no
+            # Orbitrap records -- the failure the feature exists to prevent,
+            # reintroduced at the top of the range.
+            m = manual(parse_frag_bounds_spec("thermo_auto_documented"))
+            @test last(m(1250.0f0)) == 2000.0f0
+            # The clamp starts exactly where the line crosses the ceiling.
+            @test last(m(995.0f0)) == 2000.0f0
+            @test last(m(994.0f0)) < 2000.0f0
+            # thermo_auto crosses at (2000 - 24.1) / 2.04.
+            ma = manual(parse_frag_bounds_spec("thermo_auto"))
+            @test last(ma(969.0f0)) == 2000.0f0
+            @test last(ma(968.0f0)) < 2000.0f0
+        end
+
+        @testset "explicit coefficients" begin
+            spec = parse_frag_bounds_spec(Dict{String, Any}(
+                "low" => Dict{String, Any}("slope" => 0.0, "intercept" => 150.0),
+                "high" => Dict{String, Any}("slope" => 1.5, "intercept" => 5.0),
+            ))
+            @test manual(spec)(400.0f0) == (150.0f0, 605.0f0)
+        end
+
+        @testset "bad specs are rejected, not guessed at" begin
+            # A misspelled preset must not quietly build the wrong ceiling.
+            @test_throws InvalidParametersError parse_frag_bounds_spec("thermo-auto")
+            @test_throws InvalidParametersError parse_frag_bounds_spec(42)
+            @test_throws InvalidParametersError parse_frag_bounds_spec(
+                Dict{String, Any}("high" => Dict{String, Any}("slope" => "fast")))
+            # A preset and coefficients together is ambiguous.
+            @test_throws InvalidParametersError parse_frag_bounds_spec(
+                Dict{String, Any}("preset" => "thermo_auto",
+                                  "low" => Dict{String, Any}(),
+                                  "high" => Dict{String, Any}()))
+        end
+    end
+
 end

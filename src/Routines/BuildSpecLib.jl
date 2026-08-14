@@ -137,9 +137,19 @@ function BuildSpecLib(params_path::String)
                 _params.library_params["auto_detect_frag_bounds"],
                 calibration_file,
                 (Float32(_params.library_params["frag_mz_min"]), Float32(_params.library_params["frag_mz_max"])),
-                (Float32(_params.library_params["prec_mz_min"]), Float32(_params.library_params["prec_mz_max"]))
+                (Float32(_params.library_params["prec_mz_min"]), Float32(_params.library_params["prec_mz_max"])),
+                parse_frag_bounds_spec(get(_params.library_params, "frag_bounds", nothing))
             )
-            @user_info "Fragment m/z range: $frag_bounds"
+            # Evaluated at both ends of the precursor range rather than printed
+            # raw. A constant model renders readably either way, but a sloped one
+            # prints as ImmutablePolynomial coefficients, which says nothing about
+            # the window a precursor actually gets -- and nothing about where the
+            # clamp starts biting.
+            let (lo_at_min, hi_at_min) = frag_bounds(prec_mz_min),
+                (lo_at_max, hi_at_max) = frag_bounds(prec_mz_max)
+                @user_info "Fragment m/z range: $lo_at_min-$hi_at_min at precursor " *
+                           "$prec_mz_min, $lo_at_max-$hi_at_max at precursor $prec_mz_max"
+            end
             @user_info "Precursor m/z range: ($prec_mz_min, $prec_mz_max)"
             nothing
         end
