@@ -116,6 +116,36 @@ Verified against the real formats:
     "Unimod:9999 on X"   -> unchanged             (unknown accession)
     "Acetyl on K"        -> unchanged             (already a name)
 
+## Digest preview responds to the digestion settings — [x] done
+
+Not from Dennis's list; raised by Nathan while working through it.
+
+The preview under the enzyme picker showed raw cut fragments and ignored
+specificity, length limits and missed cleavages, so changing any of them left
+it unmoved. `previewDigest` is now a faithful port of `digest_sequence`
+(`fasta_digest.jl`) and lists the peptides a library would actually carry.
+
+It leads with the count, because that is the part that moves. On the sample
+sequence at the default 7–40 residues and one missed cleavage:
+
+    full    3 peptides
+    semi    54
+    semi-n  22
+    semi-c  35
+
+The order-of-magnitude jump on switching to semi is the most consequential
+thing about that choice and was otherwise invisible until a build took all
+night. Only the first four peptides are listed, then "+N more".
+
+`cleavageNote` used to judge the rule by counting what `previewDigest`
+returned. That no longer works — a sound rule can yield zero peptides under
+tight length limits, which is a different complaint — so cut sites are now
+exposed separately as `cleavageSites` and the validation uses those.
+
+Verified against Julia: 12 cases (4 specificities x 3 length/missed-cleavage
+settings) match peptide-for-peptide, via `Pioneer.digest_sequence` on the same
+sample sequence.
+
 ## Group 5 — Manual m/z range — [ ] todo
 
 - [ ] **#9** Let the user set fragment/precursor m/z bounds instead of supplying

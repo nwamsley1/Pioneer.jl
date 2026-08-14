@@ -377,6 +377,33 @@ export function BuildSpecLibForm({
     return { min: Math.max(lo, lim.min), max: Math.min(hi, lim.max) }
   })()
 
+  /** The digest preview line: how many peptides the current settings yield from
+   *  the sample sequence, then as many as fit.
+   *
+   *  The count leads because it is the part that moves: switching from full to
+   *  semi specificity multiplies it, and nothing else in the form says so. A
+   *  half-typed length reads as its default rather than blanking the preview. */
+  const previewText = (() => {
+    const int = (raw: string, fallback: number) => {
+      const v = Number(raw)
+      return Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
+    }
+    const peptides = previewDigest(SAMPLE_SEQUENCE, {
+      pattern: params.cleavageRegex,
+      specificity: params.digestSpecificity,
+      minLength: int(params.minLen, 7),
+      maxLength: int(params.maxLen, 40),
+      missedCleavages: int(params.missedCleav, 1),
+    })
+    if (!peptides) return ''
+    if (!peptides.length) return 'No peptides — nothing survives these length limits.'
+    const SHOWN = 4
+    const head = peptides.slice(0, SHOWN).join(' · ')
+    const rest = peptides.length - SHOWN
+    const count = `${peptides.length} peptide${peptides.length === 1 ? '' : 's'}`
+    return rest > 0 ? `${count} · ${head} · +${rest} more` : `${count} · ${head}`
+  })()
+
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: '7px 4px',
@@ -913,9 +940,7 @@ export function BuildSpecLibForm({
               wordBreak: 'break-word',
             }}
           >
-            {cleavageNote.level === 'error'
-              ? cleavageNote.msg
-              : (previewDigest(SAMPLE_SEQUENCE, params.cleavageRegex) ?? []).join(' · ')}
+            {cleavageNote.level === 'error' ? cleavageNote.msg : previewText}
           </div>
         </div>
 

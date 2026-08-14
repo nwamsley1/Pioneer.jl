@@ -89,38 +89,132 @@ export function enzymeById(id: string): Enzyme | null {
 /** A sequence carrying one motif for every rule above, used for the preview. */
 export const SAMPLE_SEQUENCE = 'AKGRSTKDEKPARQGGSEAADFPGWSYLMTFD'
 
+export type DigestSpecificity = 'full' | 'semi' | 'semi-n' | 'semi-c'
+
+/** The digestion settings the preview depends on. */
+export interface DigestSettings {
+  pattern: string
+  specificity: DigestSpecificity
+  minLength: number
+  maxLength: number
+  missedCleavages: number
+}
+
 /**
- * Digest `sequence` the way `digest_sequence` does, for previewing a rule.
+ * The cleavage sites a rule finds: index `i` is true when a peptide may end at
+ * residue `i`.
  *
- * A peptide ends at the *start* of each match, and matching continues from one
- * past that start rather than past the whole match, which is the effect of
- * Julia's `overlap = true` — without it the context a match consumes would hide
- * the site immediately after it.
- *
- * This is a preview, not the digest: Pioneer has the last word, and the point
- * here is to show what a hand-written rule does before a library is built on
- * it.
+ * A site sits at the *start* of each match, and matching continues from one past
+ * that start rather than past the whole match, which is the effect of Julia's
+ * `overlap = true` — without it the context a match consumes would hide the site
+ * immediately after it. Returns null when the pattern will not compile.
  */
-export function previewDigest(sequence: string, pattern: string): string[] | null {
+function cleavageMask(sequence: string, pattern: string): boolean[] | null {
   let re: RegExp
   try {
     re = new RegExp(pattern, 'g')
   } catch {
     return null
   }
-
-  const peptides: string[] = []
-  let previous = 0
+  const mask = new Array<boolean>(sequence.length).fill(false)
   for (let i = 0; i < sequence.length; i++) {
     re.lastIndex = i
     const m = re.exec(sequence)
-    if (!m || m.index !== i) continue
     // Zero-width matches would otherwise cut at every position.
-    if (m[0].length === 0) continue
-    const end = i + 1
-    if (end > previous) peptides.push(sequence.slice(previous, end))
-    previous = end
+    if (m && m.index === i && m[0].length > 0) mask[i] = true
   }
-  if (previous < sequence.length) peptides.push(sequence.slice(previous))
+  return mask
+}
+
+/**
+ * The positions where `pattern` finds a cleavage site, or null when it will not
+ * compile.
+ *
+ * Separate from the digest because judging the *rule* must not depend on the
+ * length and specificity filters: a sound rule can still yield no peptides once
+ * a narrow length range is applied, and that is a different complaint.
+ */
+export function cleavageSites(sequence: string, pattern: string): number[] | null {
+  const mask = cleavageMask(sequence, pattern)
+  if (!mask) return null
+  const sites: number[] = []
+  for (let i = 0; i < mask.length; i++) if (mask[i]) sites.push(i)
+  return sites
+}
+
+/**
+ * Digest `sequence` the way `digest_sequence` does, for previewing the settings.
+ *
+ * A port of `fasta_digest.jl`, including the length and missed-cleavage filters,
+ * so the preview lists the peptides a library would actually carry rather than
+ * the fragments the enzyme cuts out of the sequence. That distinction matters
+ * most under semi specificity, where the peptide count runs an order of
+ * magnitude above the fully-specific one and is otherwise invisible until a
+ * build takes all night.
+ *
+ * Protein termini count as enzymatic, as they do in Pioneer. Still a preview:
+ * Pioneer has the last word, and the point is to show what a rule does before a
+ * library is built on it.
+ */
+export function previewDigest(
+  sequence: string,
+  settings: DigestSettings,
+): string[] | null {
+  const mask = cleavageMask(sequence, settings.pattern)
+  if (!mask) return null
+
+  const n = sequence.length
+  const { specificity, minLength, maxLength, missedCleavages } = settings
+  if (n === 0 || minLength < 1) return []
+
+  // Prefix counts make the missed-cleavage test O(1) per candidate.
+  const prefix = new Array<number>(n).fill(0)
+  let running = 0
+  for (let i = 0; i < n; i++) {
+    if (mask[i]) running++
+    prefix[i] = running
+  }
+
+  // Every position a peptide may end at. The final residue always qualifies:
+  // a protein's C terminus counts as enzymatic.
+  const specificEnds: number[] = []
+  for (let i = 0; i < n; i++) if (mask[i]) specificEnds.push(i)
+  if (specificEnds[specificEnds.length - 1] !== n - 1) specificEnds.push(n - 1)
+
+  const startEnzymatic = (start: number) => start === 0 || mask[start - 1]
+  const internalCleavages = (start: number, end: number) =>
+    end <= start ? 0 : prefix[end - 1] - (start > 0 ? prefix[start - 1] : 0)
+
+  const peptides: string[] = []
+  for (let start = 0; start < n; start++) {
+    const minEnd = start + minLength - 1
+    if (minEnd > n - 1) continue
+    const maxEnd = Math.min(start + maxLength - 1, n - 1)
+    const startIsEnzymatic = startEnzymatic(start)
+
+    // semi-c allows an arbitrary C terminus but requires an enzymatic N
+    // terminus; general semi does the same for enzymatic starts.
+    if (specificity === 'semi-c' || (specificity === 'semi' && startIsEnzymatic)) {
+      if (!startIsEnzymatic) continue
+      for (let end = minEnd; end <= maxEnd; end++) {
+        if (internalCleavages(start, end) <= missedCleavages) {
+          peptides.push(sequence.slice(start, end + 1))
+        }
+      }
+      continue
+    }
+
+    // full requires both termini enzymatic; semi-n and semi with a
+    // non-enzymatic start require an enzymatic C terminus. All three therefore
+    // end only at a cleavage site.
+    if (specificity === 'full' && !startIsEnzymatic) continue
+    for (const end of specificEnds) {
+      if (end < minEnd) continue
+      if (end > maxEnd) break
+      if (internalCleavages(start, end) <= missedCleavages) {
+        peptides.push(sequence.slice(start, end + 1))
+      }
+    }
+  }
   return peptides
 }

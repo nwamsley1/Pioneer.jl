@@ -39,7 +39,7 @@ import {
   siteAllowed,
   unimodId,
 } from './lib/koinaMods'
-import { SAMPLE_SEQUENCE, enzymeById, previewDigest } from './lib/enzymes'
+import { SAMPLE_SEQUENCE, cleavageSites, enzymeById } from './lib/enzymes'
 import { listenForDrops } from './lib/dragdrop'
 import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
@@ -1035,12 +1035,15 @@ export default function App() {
   const cleavageNote: Note = (() => {
     const pattern = build.cleavageRegex.trim()
     if (!pattern) return { level: 'error', msg: 'Enter a cleavage rule, or choose an enzyme.' }
-    const peptides = previewDigest(SAMPLE_SEQUENCE, pattern)
-    if (peptides === null) return { level: 'error', msg: 'Not a valid regular expression.' }
-    if (peptides.length <= 1) {
+    // Cut sites, not peptides: whether the rule is sound is a separate question
+    // from whether the length limits leave anything, and the preview beside it
+    // now answers the second one.
+    const sites = cleavageSites(SAMPLE_SEQUENCE, pattern)
+    if (sites === null) return { level: 'error', msg: 'Not a valid regular expression.' }
+    if (sites.length === 0) {
       return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
     }
-    if (peptides.length > SAMPLE_SEQUENCE.length / 2) {
+    if (sites.length > SAMPLE_SEQUENCE.length / 2) {
       return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
     }
     return { level: '', msg: '' }
