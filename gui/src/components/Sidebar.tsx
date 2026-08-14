@@ -366,9 +366,12 @@ export function Sidebar({
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
-  /** The queued job being dragged, and the one it is currently over. Held here
-   *  rather than in App: nothing outside the sidebar needs to know a drag is in
-   *  progress, and it ends when the pointer is released either way. */
+  /** The queued job being dragged, and the one it is currently over.
+   *
+   *  Pointer events rather than HTML5 drag-and-drop: Tauri handles the OS drop
+   *  natively (`dragDropEnabled`, which the file-drop-onto-fields support
+   *  depends on), so `dragstart`/`drop` never reach the webview. See
+   *  `lib/dragdrop.ts`. */
   const [dragJobId, setDragJobId] = useState<string | null>(null)
   const [dropJobId, setDropJobId] = useState<string | null>(null)
 
@@ -486,25 +489,8 @@ export function Sidebar({
                 key={j.id}
                 title={rowTitle(j)}
                 className="pio-job pio-row-hover"
-                onDragOver={
-                  movable
-                    ? (e) => {
-                        // Without preventDefault the browser refuses the drop.
-                        e.preventDefault()
-                        setDropJobId(j.id)
-                      }
-                    : undefined
-                }
-                onDrop={
-                  movable
-                    ? (e) => {
-                        e.preventDefault()
-                        if (dragJobId && dragJobId !== j.id) onReorderQueued(dragJobId, j.id)
-                        setDragJobId(null)
-                        setDropJobId(null)
-                      }
-                    : undefined
-                }
+                data-job-id={j.id}
+                data-job-movable={movable ? '1' : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -522,18 +508,45 @@ export function Sidebar({
               >
                 {reorderable && (
                   <span
-                    draggable={movable}
-                    onDragStart={
+                    onPointerDown={
                       movable
                         ? (e) => {
+                            // preventDefault stops the press from starting a
+                            // text selection that would follow the pointer.
+                            e.preventDefault()
+                            e.currentTarget.setPointerCapture(e.pointerId)
                             setDragJobId(j.id)
-                            e.dataTransfer.effectAllowed = 'move'
-                            // Firefox ignores a drag that carries no payload.
-                            e.dataTransfer.setData('text/plain', j.id)
+                            setDropJobId(j.id)
                           }
                         : undefined
                     }
-                    onDragEnd={() => {
+                    onPointerMove={
+                      movable
+                        ? (e) => {
+                            if (dragJobId !== j.id) return
+                            // Capture routes every move here regardless of what
+                            // is under the pointer, so the row being hovered has
+                            // to be hit-tested rather than read from the event.
+                            const under = document
+                              .elementFromPoint(e.clientX, e.clientY)
+                              ?.closest('[data-job-id]') as HTMLElement | null
+                            const id = under?.dataset.jobId
+                            if (id && under?.dataset.jobMovable === '1') setDropJobId(id)
+                          }
+                        : undefined
+                    }
+                    onPointerUp={
+                      movable
+                        ? () => {
+                            if (dragJobId && dropJobId && dragJobId !== dropJobId) {
+                              onReorderQueued(dragJobId, dropJobId)
+                            }
+                            setDragJobId(null)
+                            setDropJobId(null)
+                          }
+                        : undefined
+                    }
+                    onPointerCancel={() => {
                       setDragJobId(null)
                       setDropJobId(null)
                     }}
@@ -641,13 +654,18 @@ export function Sidebar({
                         textAlign: 'right',
                       }}
                     >
-                      {/* One number per run, for its whole life. It is handed
-                          out when the run is queued, so a queued job already
-                          shows the number it will keep in the history -- queue
-                          three after run 41 and they are 42, 43, 44, including
-                          if one is cancelled before it starts. A separate
-                          queue-position count would have meant the same run
-                          wearing two different numbers. */}
+                      {/* Handed out when the run is queued, so a queued job
+                          already shows the number it will carry into the
+                          history -- queue three after run 41 and they are 42,
+                          43, 44, including if one is cancelled before it
+                          starts.
+
+                          While a run is still waiting the number is its place
+                          in line: reordering the queue redistributes the
+                          numbers so they keep ascending down it, rather than
+                          leaving the column reading 44, 42, 43. Once a run
+                          starts, its number is fixed for life -- that is what
+                          the history is sorted and searched by. */}
                       {j.runNo || ''}
                     </span>
                   )}
@@ -657,7 +675,7 @@ export function Sidebar({
                     type="button"
                     className="pio-jobact pio-iconbtn"
                     onClick={() => onJobAction(j.id, 'cancel')}
-                    title="Cancel run"
+                    title={running ? 'Cancel run' : 'Remove from queue'}
                     style={{
                       flex: 'none',
                       border: 'none',

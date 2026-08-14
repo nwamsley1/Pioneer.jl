@@ -292,7 +292,13 @@ export default function App() {
 
   const [jsonOpen, setJsonOpen] = useState(false)
   const [loadOpen, setLoadOpen] = useState(false)
-  const [jobConfirm, setJobConfirm] = useState<{ id: string; kind: 'cancel' | 'delete'; title: string } | null>(null)
+  const [jobConfirm, setJobConfirm] = useState<{
+    id: string
+    kind: 'cancel' | 'delete'
+    title: string
+    /** Queued but never started, so there is no process to stop. */
+    queued: boolean
+  } | null>(null)
   const [overwriteOpen, setOverwriteOpen] = useState(false)
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
@@ -456,7 +462,9 @@ export default function App() {
       // is how interruption is detected: if the app goes away, the row stays
       // pending on disk and startup can see it never finished. Waiting for a
       // close event would miss a crash or a force quit.
-      const key = `${j.id}:${j.status}`
+      // runNo is part of the key because reordering the queue reassigns it,
+      // and a status that has not changed would otherwise suppress the write.
+      const key = `${j.id}:${j.status}:${j.runNo}`
       if (savedRuns.current.has(key)) continue
       savedRuns.current.add(key)
       backend.historySave(jobToRun(j)).catch(() => {
@@ -1370,7 +1378,12 @@ export default function App() {
         }}
         onJobAction={(id, kind) => {
           const job = jobs.find((j) => j.id === id)
-          setJobConfirm({ id, kind, title: job ? job.title : '' })
+          setJobConfirm({
+            id,
+            kind,
+            title: job ? job.title : '',
+            queued: job?.status === 'queued',
+          })
         }}
         onReorderQueued={(dragId, dropId) =>
           setJobs((prev) => moveQueuedJob(prev, dragId, dropId))
@@ -1580,15 +1593,29 @@ export default function App() {
         {jobConfirm && (
           <ConfirmDialog
             tone="danger"
-            title={jobConfirm.kind === 'delete' ? 'Delete this run?' : 'Stop this run?'}
+            title={
+              jobConfirm.kind === 'delete'
+                ? 'Delete this run?'
+                : jobConfirm.queued
+                  ? 'Take this run out of the queue?'
+                  : 'Stop this run?'
+            }
             body={
               jobConfirm.kind === 'delete'
                 ? 'This removes the run and its log from the history. This can’t be undone.'
-                : 'This stops the Pioneer process and lets the next queued job start.'
+                : jobConfirm.queued
+                  ? 'It has not started, so nothing is interrupted. It leaves the queue and will not run.'
+                  : 'This stops the Pioneer process and lets the next queued job start.'
             }
             detail={jobConfirm.title}
-            dismissLabel="Keep"
-            confirmLabel={jobConfirm.kind === 'delete' ? 'Delete' : 'Stop run'}
+            dismissLabel={jobConfirm.queued ? 'Leave in queue' : 'Keep'}
+            confirmLabel={
+              jobConfirm.kind === 'delete'
+                ? 'Delete'
+                : jobConfirm.queued
+                  ? 'Remove'
+                  : 'Stop run'
+            }
             onDismiss={() => setJobConfirm(null)}
             onConfirm={() => {
               const { id, kind } = jobConfirm
@@ -1603,6 +1630,18 @@ export default function App() {
                   }
                   return rest
                 })
+              } else if (jobConfirm.queued) {
+                // No process to cancel -- cancelJob would find nothing to kill,
+                // which is why this used to leave the row sitting in the queue.
+                // Marking it cancelled takes it out of the queue the scheduler
+                // reads and moves it into the history, keeping its run number:
+                // "cancelled before it starts" is a state the numbering already
+                // accounts for.
+                setJobs((prev) =>
+                  prev.map((j) =>
+                    j.id === id ? { ...j, status: 'cancelled' as JobStatus } : j,
+                  ),
+                )
               } else {
                 backend.cancelJob(id).catch(() => undefined)
               }

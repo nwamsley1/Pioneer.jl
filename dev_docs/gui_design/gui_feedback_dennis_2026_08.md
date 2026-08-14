@@ -209,8 +209,39 @@ queued. A dedicated handle rather than a draggable row, because the row already
 opens the job on click and a handle separates the two without a press-and-hold
 heuristic.
 
-**Not done:** HTML5 drag-and-drop is not keyboard accessible. `alt+up/down` on a
-focused queue row would give parity, roughly ten lines.
+Built on HTML5 drag events first, which silently did nothing: Tauri handles the
+OS drop natively (`dragDropEnabled`, which the file-drop-onto-fields support
+relies on) so `dragstart`/`drop` never reach the webview — a fact `lib/dragdrop.ts`
+already documents. Rewritten on pointer events, which Tauri does not intercept:
+`pointerdown` captures on the handle, `pointermove` hit-tests the row under the
+cursor with `elementFromPoint`, `pointerup` commits.
+
+Run numbers travel with the position. Dragging the last of 42, 43, 44 to the
+front leaves the queue reading 42, 43, 44 rather than 44, 42, 43. This reverses
+a deliberate decision — the column used to be one number per run for life — so
+the rule is now: while a run waits its number is its place in line; from the
+moment it starts it is fixed, which is what the history sorts and searches by.
+The numbers are redistributed rather than reallocated, so the counter never
+advances and no duplicates appear. The persistence key gained `runNo`, or a
+renumber with an unchanged status would never have been written.
+
+**Not done:** pointer-driven reordering is not keyboard accessible. `alt+up/down`
+on a focused queue row would give parity, roughly ten lines.
+
+## Stopping a queued run — [x] done
+
+Not from Dennis's list; found by Nathan.
+
+The red square on a *queued* row opened a dialog reading "Stop this run?" /
+"Stop run" / "This stops the Pioneer process", none of which is true before a
+run starts — and it called `backend.cancelJob`, which had no process to kill, so
+the row stayed in the queue.
+
+It now reads "Take this run out of the queue?" / "Remove" / "Leave in queue",
+and marks the job `cancelled`, which takes it out of the queue the scheduler
+reads and moves it into the history. That is the state the run numbering already
+anticipated ("including if one is cancelled before it starts"). Status changes
+persist through the existing effect.
 
 ## Group 5 — Manual m/z range — [ ] todo
 
