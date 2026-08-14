@@ -32,17 +32,19 @@ Calculate statistical features for a protein group.
 - `ProteinFeatures`: Statistical features for the protein group
 """
 function calculate_protein_features(builder::ProteinGroupBuilder, catalog::Dictionary{ProteinKey, Set{String}})::ProteinFeatures
-    n_peptides = UInt16(length(builder.peptides))
+    n_peptides = UInt32(length(builder.peptides))
     
     # Get possible peptides for this protein
     possible_peptides = get(catalog, builder.key, Set{String}())
-    n_possible_peptides = UInt16(length(possible_peptides))
+    # Semi-specific libraries can contain more than typemax(UInt16) possible
+    # peptides for a single long protein.
+    n_possible_peptides = UInt32(length(possible_peptides))
     
     # Calculate coverage
     peptide_coverage = n_possible_peptides > 0 ? Float32(n_peptides) / Float32(n_possible_peptides) : 0.0f0
     
     # Calculate total peptide length
-    total_peptide_length = UInt16(sum(length(peptide) for peptide in builder.peptides))
+    total_peptide_length = UInt32(sum(length(peptide) for peptide in builder.peptides))
     
     # Calculate log features for regression
     log_n_possible_peptides = n_possible_peptides > 0 ? log(Float32(n_possible_peptides)) : 0.0f0
@@ -93,11 +95,11 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     targets = Vector{Bool}(undef, n_groups)
     entrap_ids = Vector{UInt8}(undef, n_groups)
     pg_scores = Vector{Float32}(undef, n_groups)
-    n_peptides = Vector{UInt16}(undef, n_groups)
-    n_possible_peptides = Vector{UInt16}(undef, n_groups)
+    n_peptides = Vector{UInt32}(undef, n_groups)
+    n_possible_peptides = Vector{UInt32}(undef, n_groups)
     peptide_coverages = Vector{Float32}(undef, n_groups)
     peptide_coverage_logits = Vector{Float32}(undef, n_groups)
-    total_peptide_lengths = Vector{UInt16}(undef, n_groups)
+    total_peptide_lengths = Vector{UInt32}(undef, n_groups)
     log_n_possible_peptides = Vector{Float32}(undef, n_groups)
     log_binom_coeffs = Vector{Float32}(undef, n_groups)
     

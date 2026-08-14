@@ -707,7 +707,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     # Main processing logic (inlined from original LFQ function)
     nfiles = length(unique(prot[!, :ms_file_idx]))
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
-    @assert issorted(prot[!, :inferred_protein_group], rev=true) "LFQ input must be sorted by :inferred_protein_group (descending)"
+    @assert issorted(prot[!, :inferred_protein_group]) "LFQ input must be sorted by :inferred_protein_group (ascending)"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]

@@ -46,3 +46,24 @@ export function generateRunName(taken: Iterable<string> = []): string {
   while (used.has(`${base}-${n}`)) n++
   return `${base}-${n}`
 }
+
+/** The name a run should carry.
+ *
+ *  Empty input keeps the generated adjective-noun name. A supplied name is used
+ *  as typed unless it is already taken, in which case it gains the next free
+ *  suffix -- the bare name counts as the first, so a second `analysis` becomes
+ *  `analysis-2`. The suffix style is deliberately the one `generateRunName`
+ *  already falls back to, rather than a second convention.
+ *
+ *  `taken` spans persisted history, not just this session, because the run list
+ *  does.
+ */
+export function resolveRunName(desired: string, taken: Iterable<string> = []): string {
+  const name = desired.trim()
+  if (!name) return generateRunName(taken)
+  const used = new Set(taken)
+  if (!used.has(name)) return name
+  let n = 2
+  while (used.has(`${name}-${n}`)) n++
+  return `${name}-${n}`
+}

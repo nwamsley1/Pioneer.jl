@@ -4,7 +4,8 @@
 # streaming passes over the per-file Arrow tables:
 #
 #   Pass 1 (metadata): Count rows per cv_fold; pick the feature list. Reads
-#                      only Arrow metadata, no column data.
+#                      Arrow metadata plus the optional UInt8 digestion column
+#                      to remove it when it is constant.
 #   Pass 2 (sample):   Reservoir-sample up to K rows per fold into a fixed-
 #                      size feature matrix. Train one LightGBM booster per
 #                      fold on its sampled matrix.
@@ -70,14 +71,44 @@ end
 
 # Determine which features in `requested` are actually present in the per-file
 # Arrow tables. We trust the first non-empty file's schema (all per-file
-# arrows produced by MainSearch share the same columns).
+# arrows produced by MainSearch share the same columns). The optional digestion
+# feature gets one lightweight UInt8 scan so full-specific libraries retain the
+# same model matrix they used before the feature existed.
 function _resolve_available_features(file_paths::Vector{String}, requested::Vector{Symbol})
+    available = Symbol[]
     for fpath in file_paths
         tbl = Arrow.Table(fpath)
         length(tbl.precursor_idx) == 0 && continue
-        return filter(f -> hasproperty(tbl, f), requested)
+        available = filter(f -> hasproperty(tbl, f), requested)
+        break
     end
-    return Symbol[]
+
+    if :num_enzymatic_termini in available
+        first_value = nothing
+        found_value = false
+        varies = false
+        for fpath in file_paths
+            tbl = Arrow.Table(fpath)
+            hasproperty(tbl, :num_enzymatic_termini) || continue
+            for value in tbl.num_enzymatic_termini
+                if !found_value
+                    first_value = value
+                    found_value = true
+                elseif !isequal(value, first_value)
+                    varies = true
+                    break
+                end
+            end
+            varies && break
+        end
+        if !varies
+            deleteat!(
+                available,
+                findfirst(==(:num_enzymatic_termini), available),
+            )
+        end
+    end
+    return available
 end
 
 # Pass 2: single-pass reservoir-sample both folds simultaneously.

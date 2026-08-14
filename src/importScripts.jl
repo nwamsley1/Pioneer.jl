@@ -391,6 +391,14 @@ function importScripts()
     safe_include!(joinpath(root_path, "fragments", "fragment_annotation.jl"))
     safe_include!(joinpath(root_path, "fragments", "fragment_predict.jl"))
 
+    # DownloadSpecLib: reading the Hugging Face library repository. Independent
+    # of BuildSpecLib, but loaded here so the entrypoint sees it.
+    download_root = joinpath(package_root, "src", "Routines", "DownloadSpecLib")
+    safe_include!(joinpath(download_root, "hf_api.jl"))
+    safe_include!(joinpath(download_root, "catalog.jl"))
+    safe_include!(joinpath(download_root, "hf_download.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "DownloadSpecLib.jl"))
+
     # Koina integration
     safe_include!(joinpath(root_path, "koina", "koina_client.jl"))
     safe_include!(joinpath(root_path, "koina", "koina_api.jl"))

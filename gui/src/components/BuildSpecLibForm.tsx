@@ -5,9 +5,26 @@ import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
-import { findMod, modsForModel, siteAllowed, siteOptions, unimodId } from '../lib/koinaMods'
-import { BROWSE } from '../lib/styles'
-import { PREDICTION_MODELS, predictionModelById } from '../lib/types'
+import {
+  findMod,
+  allowedSiteValues,
+  initialSite,
+  isRequiredFixedMod,
+  modsForModel,
+  occupiedResidues,
+  siteAllowed,
+  siteOptions,
+  unimodId,
+} from '../lib/koinaMods'
+import {
+  CUSTOM_ENZYME,
+  ENZYMES,
+  SAMPLE_SEQUENCE,
+  enzymeByPattern,
+  previewDigest,
+} from '../lib/enzymes'
+import { BROWSE, HINT, LABEL } from '../lib/styles'
+import { PREDICTION_MODELS, isPrositModel, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -101,6 +118,7 @@ function ModTable({
   note,
   onField,
   onRemove,
+  occupied,
   onAdd,
 }: {
   kind: 'fixed' | 'variable'
@@ -110,6 +128,9 @@ function ModTable({
   note: string
   onField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemove: (kind: 'fixed' | 'variable', idx: number) => void
+  /** Residues the fixed modifications already hold. Empty for the fixed table,
+   *  which is what defines them. */
+  occupied: Set<string>
   onAdd: (kind: 'fixed' | 'variable', preset: string) => void
 }) {
   const cell = (extra: React.CSSProperties): React.CSSProperties => ({
@@ -126,7 +147,15 @@ function ModTable({
   const readOnly = (extra: React.CSSProperties): React.CSSProperties =>
     cell({ background: '#F7F8FA', color: '#667085', ...extra })
 
-  const available = modsForModel(modelId)
+  // Carbamidomethyl is pinned on C only. It stays offerable as a variable
+  // modification wherever the model allows it on another residue -- K on the
+  // PTM models -- and drops out only when C is the single site it has.
+  // A modification whose every site is already held by a fixed one has no
+  // variable form left to add, so it drops out of the menu rather than being
+  // offered and then rejected.
+  const available = modsForModel(modelId).filter(
+    (d) => initialSite(modelId, kind, d, occupied) !== null,
+  )
   const inList = new Set(mods.map((m) => unimodId(m.name)).filter((v) => v !== null))
 
   return (
@@ -179,11 +208,19 @@ function ModTable({
                   {/* A stored pattern outside the model's sites still needs an
                       option, or the select would silently show a different one. */}
                   {!siteAllowed(def, m.pattern) && <option value={m.pattern}>{m.pattern || '—'}</option>}
-                  {siteOptions(def).map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
+                  {/* A fixed alkylation row may not drop C, and a variable one
+                      may not take it, so those choices are not offered. */}
+                  {siteOptions(def)
+                    .filter(
+                      (o) =>
+                        allowedSiteValues(modelId, kind, m.name, [o.value], occupied).length > 0 ||
+                        o.value === m.pattern,
+                    )
+                    .map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <div
@@ -223,7 +260,14 @@ function ModTable({
               >
                 {m.mass || '—'}
               </div>
-              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
+              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name, m.pattern) ? (
+                // No control at all rather than a disabled one: there is no
+                // state in which this becomes removable, and a greyed button
+                // invites hunting for the condition that enables it.
+                <div style={{ width: 21, flex: 'none' }} title="Required by this model" />
+              ) : (
+                removeBtn(() => onRemove(kind, i), 'Remove', 21)
+              )}
             </div>
           )
         })}
@@ -288,6 +332,8 @@ interface Props {
   onBrowseCalibration: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
+  onEnzyme: (id: string) => void
+  cleavageNote: Note
   onAddMod: (kind: 'fixed' | 'variable', preset: string) => void
 }
 
@@ -311,6 +357,8 @@ export function BuildSpecLibForm({
   onBrowseCalibration,
   onModField,
   onRemoveMod,
+  onEnzyme,
+  cleavageNote,
   onAddMod,
 }: Props) {
   const selectedModel = predictionModelById(params.predictionModel)
@@ -790,6 +838,88 @@ export function BuildSpecLibForm({
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>Digestion</h2>
         </div>
+
+        <label style={{ ...LABEL }}>Enzyme</label>
+        <select
+          data-key="enzyme"
+          value={enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME}
+          onChange={(e) => onEnzyme(e.target.value)}
+          style={{
+            width: '100%',
+            height: 36,
+            padding: '0 9px',
+            border: '1px solid #D6DAE1',
+            borderRadius: 9,
+            fontSize: 13,
+            color: '#1B2A4A',
+            background: '#fff',
+            boxSizing: 'border-box',
+          }}
+        >
+          {ENZYMES.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.label} — {e.rule}
+            </option>
+          ))}
+          <option value={CUSTOM_ENZYME}>Custom cleavage rule…</option>
+        </select>
+
+        {!enzymeByPattern(params.cleavageRegex) && (
+          <div style={{ marginTop: 12 }}>
+            <label style={LABEL}>Cleavage regex</label>
+            <input
+              data-key="cleavageRegex"
+              value={params.cleavageRegex}
+              onChange={(e) => onParam('cleavageRegex', e.target.value)}
+              spellCheck={false}
+              style={{
+                width: '100%',
+                height: 36,
+                padding: '0 11px',
+                border: `1px solid ${cleavageNote.level === 'error' ? '#F0B4A8' : '#D6DAE1'}`,
+                borderRadius: 9,
+                font: "12.5px 'IBM Plex Mono'",
+                color: '#1B2A4A',
+                background: '#fff',
+                boxSizing: 'border-box',
+              }}
+            />
+            <p style={{ ...HINT, marginTop: 6 }}>
+              The first element is the residue cleaved after; anything following it is
+              context. Use a lookahead to cut before a residue, as Asp-N does.
+            </p>
+          </div>
+        )}
+
+        {/* What the rule does, rather than a verdict on it: a pattern can be
+            valid and still not be the digest you meant, and a compile check
+            cannot tell you that. */}
+        <div
+          style={{
+            marginTop: 10,
+            padding: '9px 11px',
+            borderRadius: 9,
+            background: cleavageNote.level === 'error' ? '#FEF2F2' : '#F7F8FA',
+            border: `1px solid ${cleavageNote.level === 'error' ? '#FECACA' : '#EDEFF3'}`,
+          }}
+        >
+          <div style={{ fontSize: 11, color: '#98A2B3', marginBottom: 4 }}>
+            {SAMPLE_SEQUENCE}
+          </div>
+          <div
+            style={{
+              font: "12.5px 'IBM Plex Mono'",
+              color: cleavageNote.level === 'error' ? '#C0392B' : '#1B2A4A',
+              wordBreak: 'break-word',
+            }}
+          >
+            {cleavageNote.level === 'error'
+              ? cleavageNote.msg
+              : (previewDigest(SAMPLE_SEQUENCE, params.cleavageRegex) ?? []).join(' · ')}
+          </div>
+        </div>
+
+        <div style={{ height: 14 }} />
         <div
           style={{
             display: 'grid',
@@ -798,6 +928,39 @@ export function BuildSpecLibForm({
             alignItems: 'start',
           }}
         >
+          <div>
+            <label
+              htmlFor="digest-specificity"
+              style={{ display: 'block', fontSize: 11, color: '#667085', marginBottom: 5 }}
+            >
+              Specificity
+            </label>
+            <select
+              id="digest-specificity"
+              className="pio-input"
+              value={params.digestSpecificity}
+              onChange={(e) => onParam('digestSpecificity', e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 34px 8px 10px',
+                border: '1px solid #D7DBE0',
+                borderRadius: 8,
+                font: "12.5px 'IBM Plex Sans'",
+                color: '#1A2230',
+                background: `#FFFFFF ${CHEVRON}`,
+                backgroundSize: '16px 16px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+              }}
+            >
+              <option value="full">Full (both termini)</option>
+              <option value="semi">Semi (either terminus)</option>
+              <option value="semi-n">Semi-N (C terminus required)</option>
+              <option value="semi-c">Semi-C (N terminus required)</option>
+            </select>
+          </div>
           <NumField fieldKey="minLen" value={params.minLen} onChange={onParam} />
           <NumField fieldKey="maxLen" value={params.maxLen} onChange={onParam} />
           <NumField fieldKey="missedCleav" value={params.missedCleav} onChange={onParam} />
@@ -834,6 +997,7 @@ export function BuildSpecLibForm({
         </p>
         <ModTable
           kind="fixed"
+          occupied={new Set<string>()}
           mods={params.fixedMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
@@ -843,8 +1007,28 @@ export function BuildSpecLibForm({
           onAdd={onAddMod}
         />
         <div style={{ height: 18 }} />
+        {isPrositModel(params.predictionModel) && params.variableMods.length > 0 && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: '#92400E',
+            }}
+          >
+            <strong style={{ fontWeight: 600 }}>Experimental.</strong> Searching a
+            Prosit-predicted library that carries variable modifications is not yet a
+            supported combination: Pioneer does not report site-localization confidence,
+            so a modified residue is placed but the placement is not scored.
+          </div>
+        )}
         <ModTable
           kind="variable"
+          occupied={occupiedResidues(params.fixedMods)}
           mods={params.variableMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}

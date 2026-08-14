@@ -49,7 +49,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict params-search params-predict convert-raw convert-mzml"
+VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml"
 # empirical params-empirical 
 
 show_help() {
@@ -67,6 +67,7 @@ show_help() {
     echo "Subcommands:"
     echo "  search <params.json>                        Perform DIA search analysis"
     echo "  predict <params.json>                       Predict spectral library"
+    echo "  download [<library>] --dest <dir> [--list]  Download a prebuilt spectral library"
     #echo "  empirical <params.json>                     Parse spectral library"
     echo "  params-search <library_path> <ms_data_path> <results_path> [--params-path <params_out_path>]"
     echo "                                              Generate search parameter template."
@@ -199,6 +200,9 @@ case "$SUBCOMMAND" in
         ;;
     predict)
         SUBCOMMAND="BuildSpecLib"
+        ;;
+    download)
+        SUBCOMMAND="DownloadSpecLib"
         ;;
     params-search)
         SUBCOMMAND="GetSearchParams"

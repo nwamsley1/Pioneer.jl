@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 pub enum Command {
     SearchDia,
     BuildSpecLib,
+    DownloadSpecLib,
     ConvertRaw,
 }
 
@@ -37,6 +38,7 @@ impl Command {
         match self {
             Command::SearchDia => "SearchDIA",
             Command::BuildSpecLib => "BuildSpecLib",
+            Command::DownloadSpecLib => "DownloadSpecLib",
             Command::ConvertRaw => "PioneerConverter",
         }
     }
@@ -46,6 +48,7 @@ impl Command {
         match self {
             Command::SearchDia => "search",
             Command::BuildSpecLib => "predict",
+            Command::DownloadSpecLib => "download",
             Command::ConvertRaw => "convert-raw",
         }
     }
@@ -137,7 +140,8 @@ fn inspect(home: &Path, source: &str) -> Option<PioneerInfo> {
     }
     let bin = home.join("bin");
     let mut executables = Vec::new();
-    for cmd in [Command::SearchDia, Command::BuildSpecLib, Command::ConvertRaw] {
+    for cmd in [Command::SearchDia, Command::BuildSpecLib, Command::DownloadSpecLib,
+                Command::ConvertRaw] {
         if exe_path(&bin, cmd.exe_name()).is_some() {
             executables.push(cmd.exe_name().to_string());
         }

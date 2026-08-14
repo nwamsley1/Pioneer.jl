@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "23bb632dd40692180d4e87865c0234a350a6c5ed"
+project_hash = "714a757fd48c91983942dcefa678369174283e8d"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -1319,7 +1319,7 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.4"
 
 [[deps.Pioneer]]
-deps = ["ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables"]
+deps = ["ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables"]
 path = "."
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 version = "0.7.5-dev"

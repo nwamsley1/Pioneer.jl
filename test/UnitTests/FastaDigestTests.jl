@@ -22,51 +22,90 @@
     @testset "digest_sequence" begin
         # Test basic tryptic digest with no missed cleavages
         sequence = "MKVGPKAFRVLTEDEMAKR"
-        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 1)
+        peptides, starts, termini = digest_sequence(
+            sequence, r"[KR][^P]", 20, 5, 1, "full"
+        )
         @test Set(peptides) == Set(["MKVGPK", "VGPKAFR", "VLTEDEMAK", "VLTEDEMAKR", "AFRVLTEDEMAK"])
         @test Set(starts) == Set([1, 3, 7, 10])
+        @test all(==(UInt8(2)), termini)
         
-        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 0)
+        peptides, starts, _ = digest_sequence(
+            sequence, r"[KR][^P]", 20, 5, 0, "full"
+        )
         @test Set(peptides) == Set(["VLTEDEMAK"])
         @test Set(starts) == Set([10])
 
         sequence = "MAKRTGKR"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0, "full")
         @test Set(peptides) == Set(["MAK", "R", "TGK", "R"])
         @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with missed cleavages
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 1)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 1, "full")
         @test Set(peptides) == Set(["MAK", "MAKR", "R", "RTGK", "TGK", "TGKR", "R"])
         @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with length constraints
-        peptides, starts = digest_sequence(sequence, r"[KR]", 5, 3, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 5, 3, 0, "full")
         @test Set(peptides) == Set(["MAK", "TGK"])
         @test Set(starts) == Set([1, 5])
         
         # Test with regex that has overlap=true
         sequence = "MAKRRMAK"
-        peptides, starts = digest_sequence(sequence, r"R", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"R", 10, 1, 0, "full")
         @test Set(peptides) == Set(["MAKR","R","MAK"])
         @test Set(starts) == Set([1, 5, 6])
         
         # Test with no matches
         sequence = "ACDEFGHIJ"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0, "full")
         @test Set(peptides) == Set(["ACDEFGHIJ"])
         @test Set(starts) == Set([1])
         
         # Test with empty sequence
         sequence = ""
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, termini = digest_sequence(sequence, r"[KR]", 10, 1, 0, "full")
         @test isempty(peptides)
         @test isempty(starts)
+        @test isempty(termini)
         
         # Test returned type is Vector{String}, not Vector{SubString}
         sequence = "MAKRTGKR"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, _, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0, "full")
         @test eltype(peptides) === String
+    end
+
+    @testset "digest_sequence specificity" begin
+        sequence = "MAKRTGKR"
+        full, full_starts, full_ntt = digest_sequence(
+            sequence, r"[KR]", 4, 2, 0, "full"
+        )
+        semi_n, _, semi_n_ntt = digest_sequence(
+            sequence, r"[KR]", 4, 2, 0, "semi-n"
+        )
+        semi_c, _, semi_c_ntt = digest_sequence(
+            sequence, r"[KR]", 4, 2, 0, "semi-c"
+        )
+        semi, semi_starts, semi_ntt = digest_sequence(
+            sequence, r"[KR]", 4, 2, 0, "semi"
+        )
+
+        @test all(==(UInt8(2)), full_ntt)
+
+        @test !("AK" in full)
+        @test "AK" in semi_n
+        @test "MA" in semi_c
+        @test "AK" in semi
+        @test "MA" in semi
+        @test all(>=(UInt8(1)), semi_n_ntt)
+        @test all(>=(UInt8(1)), semi_c_ntt)
+        @test any(==(UInt8(1)), semi_ntt)
+        @test length(semi) == length(semi_starts) == length(semi_ntt)
+
+        @test normalize_digest_specificity(" Semi_N ") == "semi-n"
+        @test_throws ArgumentError digest_sequence(
+            sequence, r"[KR]", 4, 2, 0, "none"
+        )
     end
     
     
@@ -129,6 +168,8 @@
         @test get_charge(first_peptide) == 0
         @test get_base_pep_id(first_peptide) == 1
         @test get_entrapment_pair_id(first_peptide) == 0
+        @test get_num_enzymatic_termini(first_peptide) == 2
+        @test get_start_idx(first_peptide) == UInt32[1]
         @test is_decoy(first_peptide) == false
         
         # Test base_pep_id increments
@@ -143,6 +184,65 @@
         # Check some combined peptides exist
         peptide_seqs = [get_sequence(p) for p in peptides]
         @test Set(["MAK", "MAKR", "TGK", "RTGK", "TGKR", "PEPT", "RPEPT"]) == Set(peptide_seqs)
+
+        semi_peptides = digest_fasta(
+            fasta_entries,
+            "human";
+            regex=r"[KR]",
+            max_length=4,
+            min_length=2,
+            missed_cleavages=0,
+            specificity="semi",
+        )
+        @test "AK" in get_sequence.(semi_peptides)
+        @test any(==(UInt8(1)), get_num_enzymatic_termini.(semi_peptides))
+    end
+
+    @testset "enzymatic termini survive precursor expansion" begin
+        entry = FastaEntry(
+            "P1", "", "", "", "human", "test", "PEPTIDEK",
+            UInt32(1), missing, missing, UInt8(0), UInt8(1),
+            UInt32(1), UInt32(1), UInt32(0), false,
+        )
+        charged = add_charge([entry], 2, 3)
+        @test length(charged) == 2
+        @test all(==(UInt8(1)), get_num_enzymatic_termini.(charged))
+        @test all(e -> get_start_idx(e) === get_start_idx(entry), charged)
+
+        decoys = add_decoy_sequences([entry])
+        @test all(==(UInt8(1)), get_num_enzymatic_termini.(decoys))
+        @test get_start_idx(only(filter(is_decoy, decoys))) === get_start_idx(entry)
+
+        entrapments = add_entrapment_sequences([entry], UInt8(1))
+        @test all(==(UInt8(1)), get_num_enzymatic_termini.(entrapments))
+        entrapment = only(filter(e -> get_entrapment_pair_id(e) > 0, entrapments))
+        @test get_start_idx(entrapment) === get_start_idx(entry)
+
+        fully_specific = FastaEntry(
+            "P2", "", "", "", "human", "test", "PEPTIDEK",
+            UInt32(1), missing, missing, UInt8(0), UInt8(2),
+            UInt32(2), UInt32(2), UInt32(0), false,
+        )
+        shared = combine_shared_peptides([entry, fully_specific])
+        @test length(shared) == 1
+        @test get_num_enzymatic_termini(only(shared)) == 2
+        @test get_start_idx(only(shared)) == UInt32[1, 1]
+    end
+
+    @testset "digestion specificity parameter validation" begin
+        template_path = joinpath(
+            @__DIR__, "..", "..", "assets", "example_config",
+            "defaultBuildLibParams.json",
+        )
+        params = JSON.parsefile(template_path, dicttype=Dict{String,Any})
+        digest_params = params["fasta_digest_params"]
+        digest_params["specificity"] = " Semi_N "
+
+        validated = Pioneer.check_params_bsp(JSON.json(params))
+        @test validated["fasta_digest_params"]["specificity"] == "semi-n"
+
+        digest_params["specificity"] = "none"
+        @test_throws ArgumentError Pioneer.check_params_bsp(JSON.json(params))
     end
 
     #==========================================================================
@@ -376,10 +476,10 @@
     @testset "combine_shared_peptides" begin
         # Create test entries with shared sequences
         entries = [
-            FastaEntry("P1", "desc1", "", "", "human", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "desc2", "", "", "human", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
+            FastaEntry("P1", "desc1", "", "", "human", "human", "PEPTIDE", UInt32(11), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "desc2", "", "", "human", "human", "PEPTIDE", UInt32(22), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
             FastaEntry("P3", "desc3", "", "", "mouse", "mouse", "UNIQUE", UInt32(1), missing, missing, UInt8(0), UInt32(3), UInt32(3), UInt8(0), false),
-            FastaEntry("P4", "desc4", "", "", "human", "human", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
+            FastaEntry("P4", "desc4", "", "", "human", "human", "PEPTLDE", UInt32(44), missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
         ]
         
         # Test combination
@@ -395,6 +495,8 @@
         # Check combined properties
         combined_entry = result[combined]
         @test Set(split(get_id(combined_entry), ';')) == Set(["P1", "P2", "P4"])
+        @test split(get_id(combined_entry), ';') == ["P4", "P2", "P1"]
+        @test get_start_idx(combined_entry) == UInt32[44, 22, 11]
         @test any(desc -> occursin(desc, get_description(combined_entry)), ["desc1", "desc2", "desc4"])
         
         # Find unique entry
@@ -402,6 +504,13 @@
         @test get_id(unique_entry) == "P3"
         @test get_description(unique_entry) == "desc3"
         @test get_proteome(unique_entry) == "mouse"
+
+        repeated = combine_shared_peptides([
+            FastaEntry("P5", "", "", "", "human", "human", "SAMEPEP", UInt32(3), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P5", "", "", "", "human", "human", "SAMEPEP", UInt32(19), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
+        ])
+        @test get_id(only(repeated)) == "P5;P5"
+        @test get_start_idx(only(repeated)) == UInt32[19, 3]
     end
     
 end

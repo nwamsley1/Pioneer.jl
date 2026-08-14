@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildSpecLibForm } from './components/BuildSpecLibForm'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConvertRawForm } from './components/ConvertRawForm'
+import { DownloadSpecLibForm } from './components/DownloadSpecLibForm'
 import { JsonModal } from './components/JsonModal'
 import { LoadConfigModal } from './components/LoadConfigModal'
 import { LogDrawer } from './components/LogDrawer'
@@ -12,6 +13,8 @@ import { Sidebar } from './components/Sidebar'
 import * as backend from './lib/backend'
 import {
   buildConvertArgs,
+  downloadCommandLine,
+  buildDownloadArgs,
   buildLibJson,
   buildSearchJson,
   convertCommandLine,
@@ -26,9 +29,18 @@ import {
   type Json,
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
-import { findMod, modsForModel, siteAllowed, unimodId } from './lib/koinaMods'
+import {
+  enforceRequiredMods,
+  findMod,
+  initialSite,
+  modsForModel,
+  occupiedResidues,
+  siteAllowed,
+  unimodId,
+} from './lib/koinaMods'
+import { SAMPLE_SEQUENCE, enzymeById, previewDigest } from './lib/enzymes'
 import { listenForDrops } from './lib/dragdrop'
-import { generateRunName } from './lib/names'
+import { resolveRunName } from './lib/names'
 import { TITLEBAR_H } from './lib/styles'
 import { applyTheme, loadTheme, type ThemeId } from './lib/theme'
 import {
@@ -36,6 +48,7 @@ import {
   CONVERT_DEFAULTS,
   EMPTY_PATH_INFO,
   SEARCH_DEFAULTS,
+  DOWNLOAD_DEFAULTS,
   type BuildParams,
   type CommandId,
   type ConvertParams,
@@ -47,6 +60,8 @@ import {
   type LogLine,
   type ModEntry,
   type PathInfo,
+  type DownloadParams,
+  type RemoteLibrary,
   type SearchParams,
   predictionModelById,
 } from './lib/types'
@@ -62,6 +77,9 @@ import {
   resultsNote,
   validateBuildRun,
   validateConvertRun,
+  type Note,
+  validateDownloadRun,
+  downloadTargetPath,
   validateSearchRun,
 } from './lib/validate'
 
@@ -199,12 +217,14 @@ function loadHistory(): Job[] {
 const TITLES: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
   buildspeclib: 'BuildSpecLib',
+  downloadspeclib: 'DownloadSpecLib',
   convertraw: 'ConvertRAW',
 }
 
 const SUBTITLES: Record<CommandId, string> = {
   searchdia: 'Find & quantify proteins · all settings on one page',
   buildspeclib: 'Predict a spectral library · all settings on one page',
+  downloadspeclib: 'Download a prebuilt spectral library',
   convertraw: 'Convert .raw files to Arrow',
 }
 
@@ -240,8 +260,17 @@ export default function App() {
   const [search, setSearch] = useState<SearchParams>(SEARCH_DEFAULTS)
   const [build, setBuild] = useState<BuildParams>(BUILD_DEFAULTS)
   const [convert, setConvert] = useState<ConvertParams>(CONVERT_DEFAULTS)
+  const [download, setDownload] = useState<DownloadParams>(DOWNLOAD_DEFAULTS)
+  /** The remote catalog, fetched by DownloadSpecLib rather than by the webview,
+   *  which the CSP forbids from reaching any external origin. */
+  const [libraries, setLibraries] = useState<RemoteLibrary[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
   /** Keys of a loaded config that the form does not model, per command. */
   const [extras, setExtras] = useState<Record<string, Json | null>>({})
+  /** Optional name for the next run. Empty means "generate one". Shared across
+   *  the command tabs: it names the run you are about to start, not the form. */
+  const [jobName, setJobName] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [runError, setRunError] = useState('')
@@ -290,6 +319,32 @@ export default function App() {
 
   const isSearch = command === 'searchdia'
   const isConvert = command === 'convertraw'
+  const isDownload = command === 'downloadspeclib'
+  /** Driven by argv, not a params JSON. These two have no config file to show
+   *  or edit, so the preview panel shows the command line instead. */
+  const isArgv = isConvert || isDownload
+
+  /** Read the catalog. Called when the page is first opened and by Refresh,
+   *  rather than on a timer: the repository changes when a library is
+   *  published, which is rare and not something to poll for. */
+  const refreshCatalog = useCallback(() => {
+    setCatalogLoading(true)
+    setCatalogError('')
+    backend
+      .listSpecLibs()
+      .then((text) => {
+        const parsed = JSON.parse(text) as { libraries: RemoteLibrary[] }
+        setLibraries(parsed.libraries ?? [])
+      })
+      .catch((e) => setCatalogError(String(e)))
+      .finally(() => setCatalogLoading(false))
+  }, [])
+
+  useEffect(() => {
+    if (isDownload && libraries.length === 0 && !catalogLoading && !catalogError) {
+      refreshCatalog()
+    }
+  }, [isDownload, libraries.length, catalogLoading, catalogError, refreshCatalog])
 
   // ---- startup -----------------------------------------------------------
 
@@ -303,6 +358,7 @@ export default function App() {
         if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert }))
         if (saved.command) setCommand(saved.command)
         if (typeof saved.threads === 'number') setThreads(saved.threads)
+        if (typeof saved.jobName === 'string') setJobName(saved.jobName)
       }
     } catch {
       /* corrupt or absent — fall back to defaults */
@@ -334,7 +390,7 @@ export default function App() {
     // give back when you click a workflow tab.
     if (inspectingJobId) return
     try {
-      localStorage.setItem(PERSIST_KEY, JSON.stringify({ command, search, build, convert, threads }))
+      localStorage.setItem(PERSIST_KEY, JSON.stringify({ command, search, build, convert, threads, jobName }))
     } catch {
       /* private mode / quota — persistence is a convenience, not a requirement */
     }
@@ -366,7 +422,12 @@ export default function App() {
     })
     setCommand(job.cmd)
     if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
-    else if (job.snapshot.cmd === 'buildspeclib') setBuild(job.snapshot.build)
+    else if (job.snapshot.cmd === 'buildspeclib') {
+      // Stored runs from before digestion specificity was added do not carry
+      // the field. Merge defaults so recalling one still renders and emits a
+      // full-specific build. The same applies to the cleavage rule.
+      setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
+    } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
     else setConvert(job.snapshot.convert)
     setRunError('')
   }, [command, search, build, convert])
@@ -559,6 +620,7 @@ export default function App() {
       inspect('calibrationFile', build.calibrationFile)
       inspect('convertInput', convert.input)
       inspect('convertOutput', convert.outputDir)
+      inspect('downloadTarget', downloadTargetPath(download.dest, download.selected))
       build.fastaFiles.forEach((f) => inspect(`fasta:${f.path}`, f.path))
     }, 250)
     return () => clearTimeout(t)
@@ -571,6 +633,8 @@ export default function App() {
     build.calibrationFile,
     convert.input,
     convert.outputDir,
+    download.dest,
+    download.selected,
     fastaPaths,
     inspect,
   ])
@@ -760,7 +824,13 @@ export default function App() {
     const f = retarget(build.fixedMods)
     const v = retarget(build.variableMods)
     setModNote({ fixed: f.note, variable: v.note })
-    setBuild((p) => ({ ...p, predictionModel: modelId, fixedMods: f.kept, variableMods: v.kept }))
+    const req = enforceRequiredMods(modelId, f.kept, v.kept)
+    setBuild((p) => ({
+      ...p,
+      predictionModel: modelId,
+      fixedMods: req.fixed,
+      variableMods: req.variable,
+    }))
   }
 
   const onToggle = (key: string) => {
@@ -781,6 +851,34 @@ export default function App() {
     const picked = await backend.pickFolder('Choose the output folder')
     if (picked) onParam('outputDir', picked)
   }
+
+  const browseDownloadDest = async () => {
+    const picked = await backend.pickFolder('Choose where to save the library')
+    if (picked) setDownload((p) => ({ ...p, dest: picked }))
+  }
+
+  /** What is already at `<dest>/<library>`. Checked before the run rather than
+   *  after: the binary refuses to overwrite, and finding that out only once the
+   *  job has started wastes the trip and reads like a failure. */
+  const downloadTargetExists = info('downloadTarget').exists
+
+  /** The destination note. Deliberately shows the size that is about to land:
+   *  a 3 GiB fetch should say so before it starts, not once it is running. */
+  const downloadDestNote: Note = !download.dest.trim()
+    ? { level: '', msg: 'Required — the library is written into this folder.' }
+    : downloadTargetExists && download.selected
+      ? {
+          level: download.force ? 'warn' : 'error',
+          msg: download.force
+            ? `${download.selected} already exists here and will be replaced.`
+            : `${download.selected} already exists here. Turn on “Replace an existing copy” to overwrite it, or choose another folder.`,
+        }
+      : (() => {
+          const lib = libraries.find((l) => l.name === download.selected)
+          return lib
+            ? { level: '', msg: `${lib.size_human} will be written to ${download.dest}` }
+            : { level: '', msg: `Libraries are written to ${download.dest}` }
+        })()
 
   const onBrowseSearch = async (key: 'msData' | 'library' | 'results') => {
     const titles = {
@@ -891,11 +989,26 @@ export default function App() {
 
   const onModField = (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => {
     const key = modKey(kind)
-    setBuild((p) => ({
-      ...p,
-      [key]: p[key].map((m, i) => (i === idx ? { ...m, [field]: value } : m)),
+    let displaced: string[] = []
+    setBuild((p) => {
+      const next = { ...p, [key]: p[key].map((m, i) => (i === idx ? { ...m, [field]: value } : m)) }
+      if (kind !== 'fixed') return next
+      // Widening a fixed mod onto a residue a variable one uses is the one way
+      // left to build a conflict, since the variable side only ever offers free
+      // residues. The variable rows yield, and are named rather than vanishing.
+      const req = enforceRequiredMods(next.predictionModel, next.fixedMods, next.variableMods)
+      displaced = next.variableMods
+        .filter((m) => !req.variable.some((k) => k.name === m.name && k.pattern === m.pattern))
+        .map((m) => `${m.label || m.name}${m.pattern ? ` on ${m.pattern}` : ''}`)
+      return { ...next, fixedMods: req.fixed, variableMods: req.variable }
+    })
+    setModNote((n) => ({
+      ...n,
+      [kind]: '',
+      ...(displaced.length
+        ? { variable: `Fixed modifications now cover ${displaced.join(', ')} — removed from variable.` }
+        : null),
     }))
-    setModNote((n) => ({ ...n, [kind]: '' }))
     setRunError('')
   }
 
@@ -906,12 +1019,42 @@ export default function App() {
     setRunError('')
   }
 
+  /** Choosing a preset writes its pattern; choosing Custom keeps whatever is
+   *  there, so switching to Custom to make a small edit does not wipe the rule
+   *  you were editing. */
+  const onEnzyme = (id: string) => {
+    const preset = enzymeById(id)
+    if (preset) setBuild((p) => ({ ...p, cleavageRegex: preset.pattern }))
+    setRunError('')
+  }
+
+  /** Whether the typed rule is usable, judged by trying it. A pattern that
+   *  compiles can still be wrong, which is what the preview beside it is for;
+   *  this catches only what can be decided. */
+  const cleavageNote: Note = (() => {
+    const pattern = build.cleavageRegex.trim()
+    if (!pattern) return { level: 'error', msg: 'Enter a cleavage rule, or choose an enzyme.' }
+    const peptides = previewDigest(SAMPLE_SEQUENCE, pattern)
+    if (peptides === null) return { level: 'error', msg: 'Not a valid regular expression.' }
+    if (peptides.length <= 1) {
+      return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
+    }
+    if (peptides.length > SAMPLE_SEQUENCE.length / 2) {
+      return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
+    }
+    return { level: '', msg: '' }
+  })()
+
   const addMod = (kind: 'fixed' | 'variable', unimod: string) => {
     if (!unimod) return
     const key = modKey(kind)
     setBuild((p) => {
       const def = modsForModel(p.predictionModel).find((d) => d.unimod === Number(unimod))
       if (!def) return p
+      // C is reserved for the pinned fixed row, so a variable alkylation row
+      // starts on the next site the model allows.
+      const site = initialSite(p.predictionModel, kind, def, occupiedResidues(p.fixedMods))
+      if (site === null) return p
       if (p[key].some((m) => unimodId(m.name) === def.unimod)) {
         setModNote((n) => ({ ...n, [kind]: `${def.label} is already in the list.` }))
         return p
@@ -922,7 +1065,7 @@ export default function App() {
         [key]: [
           ...p[key],
           {
-            pattern: def.sites[0],
+            pattern: site,
             label: def.label,
             name: `Unimod:${def.unimod}`,
             mass: String(def.mass),
@@ -939,11 +1082,13 @@ export default function App() {
 
   const jsonText = useMemo(
     () =>
-      isConvert
+      isDownload
+        ? downloadCommandLine(download)
+        : isConvert
         ? // Clamped: while the threads field is being cleared it holds 0, and
           // the preview should not show `--threads-per-file 0` as if that were
           // the command we would run. Run refuses in that state anyway.
-          convertCommandLine(convert, Math.max(1, threads))
+          convertCommandLine(convert)
         : JSON.stringify(
             isSearch ? buildSearchJson(search, currentExtras) : buildLibJson(build, currentExtras),
             null,
@@ -951,14 +1096,26 @@ export default function App() {
           ),
     // `threads` belongs here: the ConvertRAW preview renders --threads-per-file
     // from it, so without it the command line goes stale when the stepper moves.
-    [isConvert, isSearch, search, build, convert, currentExtras, threads],
+    [isConvert, isDownload, isSearch, search, build, convert, download, currentExtras, threads],
   )
 
   const overwriteNote = isConvert
     ? convertNotes.output
-    : isSearch
-      ? searchNotes.results
-      : libNote
+    // With force on, replacing an existing library is a warning rather than a
+    // block, so it routes into the same confirm dialog the other commands use.
+    // 3 GiB is too much to overwrite on a single click.
+    : isDownload
+      ? downloadDestNote
+      : isSearch
+        ? searchNotes.results
+        : libNote
+
+  /** Names already spoken for, across this session and persisted history. */
+  const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
+  const trimmedJobName = jobName.trim()
+  /** Only computed for a typed name: for an empty one the answer is random, and
+   *  a preview that reshuffles on every keystroke is noise. */
+  const resolvedJobName = trimmedJobName ? resolveRunName(trimmedJobName, takenTitles) : ''
 
   const enqueue = async () => {
     jobSeq.current += 1
@@ -972,26 +1129,32 @@ export default function App() {
       runNo,
       finishedAt: 0,
       cmd: command,
-      title: generateRunName(jobs.map((j) => j.title)),
+      title: resolveRunName(jobName, jobs.map((j) => j.title)),
       snapshot: isConvert
         ? { cmd: 'convertraw' as const, convert }
-        : isSearch
-          ? { cmd: 'searchdia' as const, search }
-          : { cmd: 'buildspeclib' as const, build },
+        : isDownload
+          ? { cmd: 'downloadspeclib' as const, download }
+          : isSearch
+            ? { cmd: 'searchdia' as const, search }
+            : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
           ? convert.outputDir || convert.input
-          : isSearch
-            ? search.results
-            : libraryTargetPath(build.libPath)) || '—',
+          : isDownload
+            ? download.dest
+            : isSearch
+              ? search.results
+              : libraryTargetPath(build.libPath)) || '—',
       threads: Math.max(1, threads),
       status: 'queued',
       logLines: [],
       failMsg: '',
       paramsJson: jsonText,
       invocation: isConvert
-        ? { kind: 'args' as const, args: buildConvertArgs(convert, threads) }
-        : { kind: 'paramsFile' as const, json: jsonText },
+        ? { kind: 'args' as const, args: buildConvertArgs(convert) }
+        : isDownload
+          ? { kind: 'args' as const, args: buildDownloadArgs(download) }
+          : { kind: 'paramsFile' as const, json: jsonText },
       viewerPaths: isSearch
         ? { results: search.results, msData: search.msData, library: search.library }
         : null,
@@ -1012,7 +1175,9 @@ export default function App() {
       setRunError(pioneerError)
       return
     }
-    if (threads < 1) {
+    // Not on ConvertRAW: the picker is hidden there and the value is unused,
+    // so blocking on it would be an error about an invisible control.
+    if (!isConvert && threads < 1) {
       setRunError(`Enter a thread count between 1 and ${maxThreads}.`)
       const el = document.querySelector('[data-key="threads"]')
       if (el) (el as HTMLElement).focus?.()
@@ -1020,9 +1185,11 @@ export default function App() {
     }
     const block = isConvert
       ? validateConvertRun(convert, convertNotes.input, convertNotes.output)
-      : isSearch
-        ? validateSearchRun(search, searchNotes)
-        : validateBuildRun(build, fastaNotes, libNote, calibNote)
+      : isDownload
+        ? validateDownloadRun(download, downloadTargetExists)
+        : isSearch
+          ? validateSearchRun(search, searchNotes)
+          : validateBuildRun(build, fastaNotes, libNote, calibNote)
     if (block) {
       setRunError(block.msg)
       const el = document.querySelector(`[data-key="${block.key}"]`)
@@ -1063,7 +1230,13 @@ export default function App() {
       const patch = buildConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
       if (!switchCommand && isSearch) return 'That is a BuildSpecLib config, not a SearchDIA one.'
-      setBuild((p) => ({ ...p, ...patch }))
+      // A loaded config is outside the mod editor entirely, and older or
+      // hand-written ones carry carbamidomethyl as variable, or not at all.
+      setBuild((p) => {
+        const next = { ...p, ...patch }
+        const req = enforceRequiredMods(next.predictionModel, next.fixedMods, next.variableMods)
+        return { ...next, fixedMods: req.fixed, variableMods: req.variable }
+      })
       setExtras((e) => ({ ...e, buildspeclib: computeExtras(obj, BUILD_OWNED_PATHS) }))
       if (switchCommand) setCommand('buildspeclib')
       setRunError('')
@@ -1109,11 +1282,17 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && ['1', '2', '3'].includes(e.key)) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && ['1', '2', '3', '4'].includes(e.key)) {
         if (anyModalOpen) return
         e.preventDefault()
         setCommand(
-          e.key === '1' ? 'convertraw' : e.key === '2' ? 'buildspeclib' : 'searchdia',
+          e.key === '1'
+            ? 'convertraw'
+            : e.key === '2'
+              ? 'buildspeclib'
+              : e.key === '4'
+                ? 'downloadspeclib'
+                : 'searchdia',
         )
         return
       }
@@ -1212,11 +1391,14 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            showThreads
+            // ConvertRAW is a .NET program: it never reads JULIA_NUM_THREADS,
+            // and its own thread count lives in the form. A picker here would
+            // be a control that changes nothing.
+            showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}
             runLabel={runLabel}
-            previewLabel={isConvert ? 'View the command line' : 'Edit the .json directly'}
+            previewLabel={isArgv ? 'View the command line' : 'Edit the .json directly'}
             onThreads={setThreads}
             onEditJson={() => setJsonOpen(true)}
             onRun={() => run()}
@@ -1256,6 +1438,48 @@ export default function App() {
               </div>
             )}
 
+            <section
+              style={{
+                background: '#fff',
+                border: '1px solid #E7EAEE',
+                borderRadius: 13,
+                padding: '18px 20px',
+                marginBottom: 14,
+              }}
+            >
+              <label
+                htmlFor="pio-job-name"
+                style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#344054', marginBottom: 6 }}
+              >
+                Job name
+              </label>
+              <input
+                id="pio-job-name"
+                data-key="jobName"
+                value={jobName}
+                placeholder="Optional"
+                onChange={(e) => setJobName(e.target.value)}
+                style={{
+                  width: '100%',
+                  height: 36,
+                  padding: '0 11px',
+                  border: '1px solid #D6DAE1',
+                  borderRadius: 9,
+                  fontSize: 13,
+                  color: '#1B2A4A',
+                  background: '#fff',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <p style={{ fontSize: 11.5, color: '#98A2B3', margin: '8px 0 0' }}>
+                {!trimmedJobName
+                  ? 'Left blank, a name is generated for you.'
+                  : resolvedJobName === trimmedJobName
+                    ? `This run will be called ${resolvedJobName}.`
+                    : `${trimmedJobName} is already taken — this run will be called ${resolvedJobName}.`}
+              </p>
+            </section>
+
             {isConvert ? (
               <ConvertRawForm
                 params={convert}
@@ -1267,6 +1491,19 @@ export default function App() {
                 onBrowseInput={browseConvertInput}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
+              />
+            ) : isDownload ? (
+              <DownloadSpecLibForm
+                params={download}
+                libraries={libraries}
+                loading={catalogLoading}
+                error={catalogError}
+                destNote={downloadDestNote}
+                onParam={(key, value) => setDownload((p) => ({ ...p, [key]: value }))}
+                onToggleForce={() => setDownload((p) => ({ ...p, force: !p.force }))}
+                onSelect={(name) => setDownload((p) => ({ ...p, selected: name }))}
+                onBrowseDest={browseDownloadDest}
+                onRefresh={refreshCatalog}
               />
             ) : isSearch ? (
               <SearchDiaForm
@@ -1301,6 +1538,8 @@ export default function App() {
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
+                onEnzyme={onEnzyme}
+                cleavageNote={cleavageNote}
               />
             )}
 
@@ -1334,8 +1573,8 @@ export default function App() {
 
         {jsonOpen && (
           <JsonModal
-            fileName={isConvert ? 'command line' : `${command}.json`}
-            editable={!isConvert}
+            fileName={isArgv ? 'command line' : `${command}.json`}
+            editable={!isArgv}
             text={jsonText}
             hasExtras={!!currentExtras}
             extraKeys={extraKeys}

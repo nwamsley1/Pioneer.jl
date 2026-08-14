@@ -87,8 +87,8 @@ export function LogDrawer({
       ? {
           position: 'absolute',
           inset: 0,
-          background: 'repeating-linear-gradient(45deg,var(--pio-accent-soft) 0 7px,var(--pio-accent-softer) 7px 14px)',
-          backgroundSize: '28px 100%',
+          background: 'linear-gradient(45deg,var(--pio-accent-soft) 25%,var(--pio-accent-softer) 25%,var(--pio-accent-softer) 50%,var(--pio-accent-soft) 50%,var(--pio-accent-soft) 75%,var(--pio-accent-softer) 75%)',
+          backgroundSize: '20px 20px',
           animation: 'pio-barber .6s linear infinite',
         }
       : status === 'done'

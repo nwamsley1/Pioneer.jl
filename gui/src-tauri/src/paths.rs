@@ -258,8 +258,9 @@ mod missing_path_tests {
 /// the name does not already say.
 ///
 /// Every field is optional in practice: libraries built before a key existed
-/// simply lack it, so each is reported as empty rather than guessed at. The
-/// oldest libraries have no `prediction_model` at all.
+/// simply lack it, so each is reported as empty rather than guessed at. The one
+/// safe exception is digestion specificity: older libraries were necessarily
+/// fully specific. The oldest libraries have no `prediction_model` at all.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct LibraryInfo {
     /// False when the path is not a library, or has no readable config.
@@ -269,6 +270,7 @@ pub struct LibraryInfo {
     pub length_range: String,
     pub charge_range: String,
     pub missed_cleavages: String,
+    pub specificity: String,
     pub max_var_mods: String,
     /// "Unimod:35 on M" per entry.
     pub fixed_mods: Vec<String>,
@@ -351,6 +353,12 @@ pub fn library_info(path: &str) -> LibraryInfo {
             out.charge_range = format!("{clo}\u{2013}{chi}");
         }
         out.missed_cleavages = num(d.get("missed_cleavages"));
+        out.specificity = d
+            .get("specificity")
+            .and_then(|x| x.as_str())
+            // Libraries built before this key existed were fully specific.
+            .unwrap_or("full")
+            .to_string();
         out.max_var_mods = num(d.get("max_var_mods"));
         out.has_decoys = d.get("add_decoys").and_then(|x| x.as_bool()).unwrap_or(false);
     }
@@ -415,6 +423,7 @@ mod library_info_tests {
               "fasta_digest_params": {"min_length": 7, "max_length": 30,
                                       "min_charge": 2, "max_charge": 4,
                                       "missed_cleavages": 1, "max_var_mods": 1,
+                                      "specificity": "semi",
                                       "add_decoys": true},
               "nce_params": {"nce": 26.0},
               "variable_mods": {"pattern": ["M"], "name": ["Unimod:35"], "mass": [15.99491]},
@@ -431,6 +440,7 @@ mod library_info_tests {
         assert_eq!(i.length_range, "7\u{2013}30");
         assert_eq!(i.charge_range, "2\u{2013}4");
         assert_eq!(i.missed_cleavages, "1");
+        assert_eq!(i.specificity, "semi");
         assert_eq!(i.variable_mods, vec!["Unimod:35 on M"]);
         assert_eq!(i.fixed_mods, vec!["Unimod:4 on C"]);
         assert_eq!(i.fastas, vec!["ECOLI", "CONTAM"]);

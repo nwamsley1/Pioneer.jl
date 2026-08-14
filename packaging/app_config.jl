@@ -7,6 +7,7 @@ const PIONEER_APP_EXECUTABLES = Pair{String,String}[
     "GetBuildLibParams" => "main_GetBuildLibParams",
     "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
     "BuildSpecLib" => "main_BuildSpecLib",
+    "DownloadSpecLib" => "main_DownloadSpecLib",
     "SearchDIA" => "main_SearchDIA",
     "convertMzML" => "main_convertMzML",
 ]
