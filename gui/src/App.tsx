@@ -30,6 +30,7 @@ import {
   type Json,
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
+import { moveQueuedJob } from './lib/queue'
 import {
   enforceRequiredMods,
   findMod,
@@ -1371,6 +1372,9 @@ export default function App() {
           const job = jobs.find((j) => j.id === id)
           setJobConfirm({ id, kind, title: job ? job.title : '' })
         }}
+        onReorderQueued={(dragId, dropId) =>
+          setJobs((prev) => moveQueuedJob(prev, dragId, dropId))
+        }
       />
 
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>

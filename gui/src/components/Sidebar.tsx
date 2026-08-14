@@ -346,6 +346,8 @@ interface Props {
   onToggleCollapsed: () => void
   onViewJob: (id: string) => void
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
+  /** Move the queued job `dragId` into the position currently held by `dropId`. */
+  onReorderQueued: (dragId: string, dropId: string) => void
 }
 
 export function Sidebar({
@@ -360,9 +362,15 @@ export function Sidebar({
   onToggleCollapsed,
   onViewJob,
   onJobAction,
+  onReorderQueued,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
+  /** The queued job being dragged, and the one it is currently over. Held here
+   *  rather than in App: nothing outside the sidebar needs to know a drag is in
+   *  progress, and it ends when the pointer is released either way. */
+  const [dragJobId, setDragJobId] = useState<string | null>(null)
+  const [dropJobId, setDropJobId] = useState<string | null>(null)
 
   /** Runs that were pending at some point since the sidebar was last open.
    *
@@ -459,14 +467,44 @@ export function Sidebar({
     color: 'var(--pio-nav-fg-faint)',
   }
 
+  /** Whether the queue is worth reordering: more than one job waiting, and room
+   *  to show a handle. Collapsed, the strip is status dots and there is nothing
+   *  to grab. */
+  const reorderable = !collapsed && jobs.filter((j) => j.status === 'queued').length > 1
+
   const renderRow = (j: Job) => {
             const running = j.status === 'running'
             const pending = running || j.status === 'queued'
+            // Only a queued job can move. A running one has already started and
+            // a finished one has no position left to change, so neither is a
+            // drag source nor a drop target.
+            const movable = reorderable && j.status === 'queued'
+            const dragging = dragJobId === j.id
+            const dropBefore = dropJobId === j.id && dragJobId !== null && dragJobId !== j.id
             return (
               <div
                 key={j.id}
                 title={rowTitle(j)}
                 className="pio-job pio-row-hover"
+                onDragOver={
+                  movable
+                    ? (e) => {
+                        // Without preventDefault the browser refuses the drop.
+                        e.preventDefault()
+                        setDropJobId(j.id)
+                      }
+                    : undefined
+                }
+                onDrop={
+                  movable
+                    ? (e) => {
+                        e.preventDefault()
+                        if (dragJobId && dragJobId !== j.id) onReorderQueued(dragJobId, j.id)
+                        setDragJobId(null)
+                        setDropJobId(null)
+                      }
+                    : undefined
+                }
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -476,8 +514,51 @@ export function Sidebar({
                   border: 'none',
                   borderRadius: 9,
                   background: j.id === viewJobId ? 'var(--pio-accent-wash-strong)' : 'none',
+                  // The row being carried fades; the one under the pointer grows
+                  // a line along the edge the drop will land on.
+                  opacity: dragging ? 0.4 : 1,
+                  boxShadow: dropBefore ? 'inset 0 2px 0 0 var(--pio-accent-soft)' : undefined,
                 }}
               >
+                {reorderable && (
+                  <span
+                    draggable={movable}
+                    onDragStart={
+                      movable
+                        ? (e) => {
+                            setDragJobId(j.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                            // Firefox ignores a drag that carries no payload.
+                            e.dataTransfer.setData('text/plain', j.id)
+                          }
+                        : undefined
+                    }
+                    onDragEnd={() => {
+                      setDragJobId(null)
+                      setDropJobId(null)
+                    }}
+                    title={movable ? 'Drag to reorder' : undefined}
+                    aria-label={movable ? `Reorder ${j.title}` : undefined}
+                    style={{
+                      flex: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      // Held at low opacity rather than revealed on hover: a
+                      // handle nobody can see is a feature nobody finds.
+                      opacity: movable ? 0.45 : 0,
+                      cursor: movable ? (dragging ? 'grabbing' : 'grab') : 'default',
+                      color: 'var(--pio-nav-fg-dim)',
+                    }}
+                  >
+                    <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true">
+                      {[2, 7, 12].map((cy) =>
+                        [2, 8].map((cx) => (
+                          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.2" fill="currentColor" />
+                        )),
+                      )}
+                    </svg>
+                  </span>
+                )}
                 <div
                   onClick={() => onViewJob(j.id)}
                   style={{

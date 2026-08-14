@@ -183,6 +183,35 @@ gets `occupied` from the fixed mods, so a variable mod cannot take a fixed
 residue, but the fixed table gets an empty set — which is how a fixed mod could
 be added onto a variable residue.
 
+## Drag to reorder the queue — [x] done
+
+Not from Dennis's list; raised by Nathan.
+
+The scheduler takes the first `queued` job in the `jobs` array and the sidebar
+renders the queue in that same order, so reordering the array reorders
+execution — no separate ordering to store. Queued jobs do not survive a restart
+(they are re-read as `interrupted`, deliberately), so this is session state
+only and needs nothing from `history.rs`.
+
+`moveQueuedJob` in `lib/queue.ts` holds the running and finished jobs' slots
+fixed and rewrites only the queued entries into the remaining ones, so a
+running job keeps the row it is displayed at. Six cases checked, including a
+running job sitting between two queued ones and a drop aimed at a running row.
+
+Affordance: a six-dot grip handle at the row's leading edge, the convention in
+Notion, Linear, Jira and Trello. Held at 45% opacity rather than revealed on
+hover — a handle nobody can see is a feature nobody finds. `cursor: grab` /
+`grabbing`, the carried row fades to 40%, and the row under the pointer takes
+an accent line along the edge the drop will land on.
+
+Handles appear only when the sidebar is expanded and more than one job is
+queued. A dedicated handle rather than a draggable row, because the row already
+opens the job on click and a handle separates the two without a press-and-hold
+heuristic.
+
+**Not done:** HTML5 drag-and-drop is not keyboard accessible. `alt+up/down` on a
+focused queue row would give parity, roughly ten lines.
+
 ## Group 5 — Manual m/z range — [ ] todo
 
 - [ ] **#9** Let the user set fragment/precursor m/z bounds instead of supplying
