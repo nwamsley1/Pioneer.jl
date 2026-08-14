@@ -4,6 +4,7 @@ import { BuildSpecLibForm } from './components/BuildSpecLibForm'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConvertRawForm } from './components/ConvertRawForm'
 import { DownloadSpecLibForm } from './components/DownloadSpecLibForm'
+import { JobNameField } from './components/JobNameField'
 import { JsonModal } from './components/JsonModal'
 import { LoadConfigModal } from './components/LoadConfigModal'
 import { LogDrawer } from './components/LogDrawer'
@@ -222,8 +223,8 @@ const TITLES: Record<CommandId, string> = {
 }
 
 const SUBTITLES: Record<CommandId, string> = {
-  searchdia: 'Find & quantify proteins · all settings on one page',
-  buildspeclib: 'Predict a spectral library · all settings on one page',
+  searchdia: 'Find & quantify proteins',
+  buildspeclib: 'Predict a spectral library',
   downloadspeclib: 'Download a prebuilt spectral library',
   convertraw: 'Convert .raw files to Arrow',
 }
@@ -1438,47 +1439,27 @@ export default function App() {
               </div>
             )}
 
-            <section
-              style={{
-                background: '#fff',
-                border: '1px solid #E7EAEE',
-                borderRadius: 13,
-                padding: '18px 20px',
-                marginBottom: 14,
-              }}
-            >
-              <label
-                htmlFor="pio-job-name"
-                style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#344054', marginBottom: 6 }}
-              >
-                Job name
-              </label>
-              <input
-                id="pio-job-name"
-                data-key="jobName"
-                value={jobName}
-                placeholder="Optional"
-                onChange={(e) => setJobName(e.target.value)}
+            {/* SearchDIA carries this inside its Essentials card, beside the
+                paths the run will be remembered alongside. The other commands
+                have no equivalent card to host it, so for them it keeps one of
+                its own. */}
+            {!isSearch && (
+              <section
                 style={{
-                  width: '100%',
-                  height: 36,
-                  padding: '0 11px',
-                  border: '1px solid #D6DAE1',
-                  borderRadius: 9,
-                  fontSize: 13,
-                  color: '#1B2A4A',
                   background: '#fff',
-                  boxSizing: 'border-box',
+                  border: '1px solid #E7EAEE',
+                  borderRadius: 13,
+                  padding: '18px 20px',
+                  marginBottom: 14,
                 }}
-              />
-              <p style={{ fontSize: 11.5, color: '#98A2B3', margin: '8px 0 0' }}>
-                {!trimmedJobName
-                  ? 'Left blank, a name is generated for you.'
-                  : resolvedJobName === trimmedJobName
-                    ? `This run will be called ${resolvedJobName}.`
-                    : `${trimmedJobName} is already taken — this run will be called ${resolvedJobName}.`}
-              </p>
-            </section>
+              >
+                <JobNameField
+                  value={jobName}
+                  resolved={resolvedJobName}
+                  onChange={setJobName}
+                />
+              </section>
+            )}
 
             {isConvert ? (
               <ConvertRawForm
@@ -1510,9 +1491,12 @@ export default function App() {
                 params={search}
                 notes={searchNotes}
                 libInfo={libInfo}
+                jobName={jobName}
+                resolvedJobName={resolvedJobName}
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
+                onJobName={setJobName}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
               />

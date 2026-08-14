@@ -44,22 +44,47 @@ fallback: the config is the record of what a run was told to do, and MBR moves
 the result enough that "it was left unset" is not a useful answer later. On
 load, an absent key leaves the toggle as it stands rather than reading as off.
 
-## Group 3 — Section reorganization — [ ] todo
+## Group 3 — Section reorganization — [x] done
 
-- [ ] **#5** Rename and regroup: COMMON PARAMETERS / ADVANCED PARAMETERS / OUTPUT.
-- [ ] **#6** Contents:
+- [x] **#5** Rename and regroup: COMMON PARAMETERS / ADVANCED PARAMETERS / OUTPUT.
+- [x] **#6** Contents:
       - Common: q-value threshold, run-to-run normalization, MBR
       - Advanced: fragment isotopes, initial NCE, min peptides
       - Output: write CSV, write decoys, delete temp, debug logging
 
-Layout (Nathan): the tallest card takes the left half; the other two stack in the
-right column. Build it, then critique from the screenshot.
+Final layout, after two rounds of review at the running app:
 
-Constraint to respect: the current two cards use `flex: 1 1 300px`, chosen so
-they fit at the 980px minimum window width (see the comment above the row in
-`SearchDiaForm.tsx`). A two-column split with a stacked right column keeps that
-budget. Advanced's three `NumField`s currently sit in a `1fr 1fr 1fr` grid and
-will need checking at half width.
+    Files and name        (full width)
+    Common parameters  |  Output        (equal heights, side by side)
+    Advanced parameters   (full width, beneath both)
+
+The first tried arrangement — tallest card left, other two stacked right — left
+about 150px of dead space under the left card, since one card cannot balance
+two. Putting Output beside Common and dropping Advanced full-width fixes it:
+the two in the row differ by only a row or so, and Advanced's three fields get
+the full width instead of ~87px per column, so their labels stop wrapping.
+`alignItems: stretch` makes the pair equal height; when the row wraps at narrow
+widths each card is alone on its line and returns to its natural height.
+
+Also folded in:
+
+- Dropped "Defaults suit most experiments" from Advanced.
+- Dropped "Left blank, a name is generated for you." from Job name. The whole
+  line is now conditional, so there is no empty paragraph holding space — the
+  "Optional" placeholder already carries the meaning.
+- Moved Job name into the first card. It is shared with Convert, Download and
+  BuildSpecLib, which have no equivalent card, so it became `JobNameField`:
+  inline for SearchDIA, in a card of its own for the rest.
+- Renamed "Essentials" to "Files and name" — the old name said nothing about
+  what was in the card.
+- Dropped "· all settings on one page" from the SearchDIA and BuildSpecLib
+  page subtitles. It described the layout rather than the command, and the
+  other two subtitles carry no such suffix.
+
+**Still open:** the Results folder lives in "Files and name" while a card called
+"Output" holds write-CSV / decoys / temp, so someone looking for where results
+are written may check "Output" first. Suggested fix is renaming that card to
+"Output options"; not applied.
 
 ## Group 4 — Real modification names — [ ] todo
 
