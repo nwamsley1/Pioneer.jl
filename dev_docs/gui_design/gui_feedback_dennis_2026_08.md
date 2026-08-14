@@ -312,3 +312,37 @@ on restart. Added `title = excluded.title`, and `run_no = excluded.run_no` while
 there — the same latent bug for queue renumbering, which the TypeScript side was
 working around by putting `runNo` in the save key. The row was being written;
 the column was never updated.
+
+## Recent libraries, and carrying outputs forward — [x] done
+
+Two ideas from Nathan, after Dennis's list was finished.
+
+**Recent spectral libraries.** The ask was to keep used library paths in the
+SQLite store. They were already there: every submitted run persists its whole
+parameter set in the `snapshot` column, so a SearchDIA row already carries its
+library, and `history_load` returns every row. No new table, no schema change,
+no Rust — `recentLibraries` derives the list from the jobs already in memory,
+which also means it works retroactively over existing history.
+
+Distinct paths, most recent first, from runs of any outcome — a search that died
+in scoring still used a real library. A reused library appears once, at its
+newest use. Whether a path still exists is checked when the menu opens rather
+than up front: statting every path at startup for a menu usually not opened
+would be wasted, and the answer would go stale the moment a library moved. A
+path that has been deleted *or* is no longer a library (`is_pion_library`) drops
+out.
+
+**Carrying outputs forward.** Running ConvertRAW, BuildSpecLib or
+DownloadSpecLib now fills the matching SearchDIA field with what that run will
+produce — MS data folder for the first, spectral library for the other two.
+
+Done at submission rather than on success, per Nathan: the fields are ready
+while the job runs. The consequence is that the path does not exist yet, so the
+field reads "does not exist" until the job lands. The path-inspection effect
+keys on the path values, so that error would have stuck there forever; it now
+also depends on how many runs have finished, so any completion re-stats every
+path and the error clears itself.
+
+DownloadSpecLib uses `downloadTargetPath(dest, selected)` rather than the job's
+`target`, which is the destination folder — the library lands in a subfolder
+named after itself.

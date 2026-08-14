@@ -12,6 +12,7 @@
 import { JobNameField } from './JobNameField'
 import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
+import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
 import { unimodDisplay } from '../lib/fasta'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
@@ -56,6 +57,7 @@ function PathRow({
   note,
   onChange,
   onBrowse,
+  action,
   children,
 }: {
   label: React.ReactNode
@@ -65,6 +67,8 @@ function PathRow({
   note: Note
   onChange: (key: string, value: string) => void
   onBrowse: () => void
+  /** An extra control beside Browse, e.g. a recent-paths picker. */
+  action?: React.ReactNode
   children?: React.ReactNode
 }) {
   return (
@@ -85,6 +89,7 @@ function PathRow({
         <button type="button" className="pio-browse" onClick={onBrowse} style={BROWSE}>
           Browse
         </button>
+        {action}
       </div>
       {note.msg && (
         <div
@@ -162,6 +167,8 @@ interface Props {
   notes: { msData: Note; library: Note; results: Note }
   /** What the selected .poin records about itself; null when none is chosen. */
   libInfo: LibraryInfo | null
+  /** Libraries used by earlier SearchDIA runs, most recent first. */
+  recentLibraries: string[]
   jobName: string
   /** The name the run will get once collisions are resolved; empty when unset. */
   resolvedJobName: string
@@ -177,6 +184,7 @@ export function SearchDiaForm({
   params,
   notes,
   libInfo,
+  recentLibraries,
   jobName,
   resolvedJobName,
   onParam,
@@ -219,6 +227,12 @@ export function SearchDiaForm({
             note={notes.library}
             onChange={onParam}
             onBrowse={() => onBrowse('library')}
+            action={
+              <RecentLibraries
+                paths={recentLibraries}
+                onPick={(p) => onParam('library', p)}
+              />
+            }
           >
             <button
               type="button"

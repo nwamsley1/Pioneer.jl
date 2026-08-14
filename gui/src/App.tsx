@@ -31,6 +31,7 @@ import {
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
 import { moveQueuedJob } from './lib/queue'
+import { recentLibraries } from './lib/recent'
 import {
   enforceRequiredMods,
   findMod,
@@ -612,6 +613,11 @@ export default function App() {
 
   // ---- live path validation ---------------------------------------------
 
+  /** How many runs have reached a terminal state. Only its changing matters. */
+  const finishedCount = jobs.filter(
+    (j) => j.status === 'done' || j.status === 'failed' || j.status === 'cancelled',
+  ).length
+
   const inspect = useCallback((key: string, value: string) => {
     backend.inspectPath(value).then((info) => {
       setPathInfos((prev) => ({ ...prev, [key]: info }))
@@ -647,6 +653,10 @@ export default function App() {
     download.selected,
     fastaPaths,
     inspect,
+    // Not a path, but a reason to re-stat them all: a run that has just
+    // finished may have created the folder one of these fields points at, and
+    // nothing else would prompt another look.
+    finishedCount,
   ])
 
   const info = (k: string): PathInfo => pathInfos[k] ?? EMPTY_PATH_INFO
@@ -1125,6 +1135,9 @@ export default function App() {
 
   /** Names already spoken for, across this session and persisted history. */
   const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
+  // Straight off the run history, which already records each run's parameters.
+  const recentLibraryPaths = useMemo(() => recentLibraries(jobs), [jobs])
+
   const trimmedJobName = jobName.trim()
   /** Only computed for a typed name: for an empty one the answer is random, and
    *  a preview that reshuffles on every keystroke is noise. */
@@ -1215,6 +1228,22 @@ export default function App() {
     if (!skipOverwriteCheck && overwriteNote.level === 'warn') {
       setOverwriteOpen(true)
       return
+    }
+    // Point SearchDIA at what this run is about to produce. Done here rather
+    // than on success so the fields are ready while the job runs -- the usual
+    // shape of a session is convert, then build or download, then search, and
+    // filling them in afterwards means going back to look. The path does not
+    // exist yet, so the field will show "does not exist" until the job lands;
+    // the effect below re-checks every path when one finishes, which clears it
+    // without the user touching anything.
+    if (isConvert) {
+      setSearch((p) => ({ ...p, msData: convert.outputDir || convert.input }))
+    } else if (isDownload) {
+      const produced = downloadTargetPath(download.dest, download.selected)
+      if (produced) setSearch((p) => ({ ...p, library: produced }))
+    } else if (!isSearch) {
+      const produced = libraryTargetPath(build.libPath)
+      if (produced) setSearch((p) => ({ ...p, library: produced }))
     }
     void enqueue()
   }
@@ -1529,6 +1558,7 @@ export default function App() {
                 params={search}
                 notes={searchNotes}
                 libInfo={libInfo}
+                recentLibraries={recentLibraryPaths}
                 jobName={jobName}
                 resolvedJobName={resolvedJobName}
                 onParam={onParam}
