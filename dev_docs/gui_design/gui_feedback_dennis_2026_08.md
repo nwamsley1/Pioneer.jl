@@ -86,22 +86,35 @@ Also folded in:
 are written may check "Output" first. Suggested fix is renaming that card to
 "Output options"; not applied.
 
-## Group 4 — Real modification names — [ ] todo
+## Group 4 — Real modification names — [x] done
 
-- [ ] **#1** Show UNIMOD names rather than `Unimod:NN` in the library summary.
+- [x] **#1** Show UNIMOD names rather than `Unimod:NN` in the library summary.
 
-`unimodLabel()` already exists (`fasta.ts`) and maps an id to a name via the
-`KOINA_MODS` tables. Rust builds display strings like `"Unimod:35 on M"`
-(`paths.rs`, `mod_list`), which `LibrarySummary.tsx` prints verbatim.
+`unimodDisplay()` in `fasta.ts` rewrites one `library_info` entry, swapping the
+accession for the name and leaving the site suffix alone. Used by
+`LibrarySummary` for both fixed and variable mods, and by the Prosit
+variable-mods warning banner in `SearchDiaForm`, which printed the same raw
+accessions in prose.
 
-Plan: rewrite `Unimod:NN` → name at the display layer, falling back to the
-accession when the id is unknown — never guess a name. The same helper applies to
-the Prosit variable-mods warning banner in `SearchDiaForm.tsx`.
+Done at the display layer rather than by restructuring the Rust return type:
+the string is a display artifact either way, and changing it would have touched
+the command's serde struct and the four `paths.rs` tests asserting on those
+exact strings, for nothing a user sees.
 
-Open: coverage. `KOINA_MODS` has ~29 entries; an Altimeter library can carry any
-accession and there is no UNIMOD table elsewhere in the repo. Either (i) ship the
-~29 and leave accessions for the rest, or (ii) generate a fuller id→name table
-from `unimod.obo`. Leaning (i), revisit if Dennis hits unnamed mods.
+Coverage is the existing `KOINA_MODS` catalogue, which `unimodLabel` already
+scans across every model. That covers Altimeter's only two modifications —
+Carbamidomethyl (4) and Oxidation (35) — plus the Prosit PTM set. An accession
+outside it is left exactly as it came: opaque beats wrong, and the number is
+still something the reader can look up.
+
+Verified against the real formats:
+
+    "Unimod:4 on C"      -> "Carbamidomethyl on C"
+    "Unimod:35 on M"     -> "Oxidation on M"
+    "Unimod:21 on [ST]"  -> "Phospho on [ST]"     (regex site preserved)
+    "Unimod:4"           -> "Carbamidomethyl"     (no site recorded)
+    "Unimod:9999 on X"   -> unchanged             (unknown accession)
+    "Acetyl on K"        -> unchanged             (already a name)
 
 ## Group 5 — Manual m/z range — [ ] todo
 

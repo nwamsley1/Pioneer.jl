@@ -13,6 +13,7 @@ import { JobNameField } from './JobNameField'
 import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
+import { unimodDisplay } from '../lib/fasta'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel } from '../lib/types'
@@ -260,7 +261,7 @@ export function SearchDiaForm({
                 >
                   <strong style={{ fontWeight: 600 }}>Experimental.</strong> This library
                   is Prosit-predicted and carries variable modifications
-                  ({libInfo.variable_mods.join(', ')}). Pioneer does not report
+                  ({libInfo.variable_mods.map(unimodDisplay).join(', ')}). Pioneer does not report
                   site-localization confidence, so a modified residue is placed but the
                   placement is not scored.
                 </div>
