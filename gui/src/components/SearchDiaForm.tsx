@@ -323,14 +323,14 @@ export function SearchDiaForm({
             />
             <ToggleRow
               title="Run-to-run normalization"
-              hint="Retention-time dependent cross-run scaling"
+              hint="Retention-time dependent cross-run intensity scaling"
               on={params.runToRunNorm}
               fieldKey="runToRunNorm"
               onToggle={onToggle}
             />
             <ToggleRow
               title="Debug logging"
-              hint="Verbose console output — the log file keeps its own detail either way"
+              hint="Verbose console output"
               on={params.debugLogging}
               fieldKey="debugLogging"
               onToggle={onToggle}
