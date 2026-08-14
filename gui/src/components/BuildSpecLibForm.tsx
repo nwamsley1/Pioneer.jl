@@ -1,6 +1,8 @@
 /** The BuildSpecLib page: FASTA input, library output, digestion,
  *  modifications and options. Ported from the `isBuild` branch of the design.
  */
+import { useState } from 'react'
+
 import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
@@ -377,32 +379,32 @@ export function BuildSpecLibForm({
     return { min: Math.max(lo, lim.min), max: Math.min(hi, lim.max) }
   })()
 
-  /** The digest preview line: how many peptides the current settings yield from
-   *  the sample sequence, then as many as fit.
+  /** The peptides the current digestion settings yield from the sample
+   *  sequence, or null when the cleavage rule will not compile.
    *
-   *  The count leads because it is the part that moves: switching from full to
-   *  semi specificity multiplies it, and nothing else in the form says so. A
-   *  half-typed length reads as its default rather than blanking the preview. */
-  const previewText = (() => {
+   *  A half-typed length reads as its default rather than blanking the
+   *  preview. */
+  const previewPeptides = (() => {
     const int = (raw: string, fallback: number) => {
       const v = Number(raw)
       return Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
     }
-    const peptides = previewDigest(SAMPLE_SEQUENCE, {
+    return previewDigest(SAMPLE_SEQUENCE, {
       pattern: params.cleavageRegex,
       specificity: params.digestSpecificity,
       minLength: int(params.minLen, 7),
       maxLength: int(params.maxLen, 40),
       missedCleavages: int(params.missedCleav, 1),
     })
-    if (!peptides) return ''
-    if (!peptides.length) return 'No peptides — nothing survives these length limits.'
-    const SHOWN = 4
-    const head = peptides.slice(0, SHOWN).join(' · ')
-    const rest = peptides.length - SHOWN
-    const count = `${peptides.length} peptide${peptides.length === 1 ? '' : 's'}`
-    return rest > 0 ? `${count} · ${head} · +${rest} more` : `${count} · ${head}`
   })()
+
+  // Four peptides is enough to see the shape of the digest; the rest are one
+  // click away. Semi specificity runs to dozens even on a 32-residue sequence,
+  // and reading them is a fair thing to want -- "+50 more" is a claim the user
+  // should be able to check.
+  const [peptidesExpanded, setPeptidesExpanded] = useState(false)
+  const PREVIEW_SHOWN = 4
+  const previewHidden = Math.max((previewPeptides?.length ?? 0) - PREVIEW_SHOWN, 0)
 
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
@@ -938,9 +940,44 @@ export function BuildSpecLibForm({
               font: "12.5px 'IBM Plex Mono'",
               color: cleavageNote.level === 'error' ? '#C0392B' : '#1B2A4A',
               wordBreak: 'break-word',
+              // Expanded, a semi digest is dozens of peptides. Scroll them
+              // rather than pushing the rest of the form down the page.
+              ...(peptidesExpanded ? { maxHeight: 132, overflowY: 'auto' as const } : {}),
             }}
           >
-            {cleavageNote.level === 'error' ? cleavageNote.msg : previewText}
+            {cleavageNote.level === 'error' ? (
+              cleavageNote.msg
+            ) : !previewPeptides ? null : previewPeptides.length === 0 ? (
+              'No peptides — nothing survives these length limits.'
+            ) : (
+              <>
+                {previewPeptides.length} peptide{previewPeptides.length === 1 ? '' : 's'} ·{' '}
+                {(peptidesExpanded
+                  ? previewPeptides
+                  : previewPeptides.slice(0, PREVIEW_SHOWN)
+                ).join(' · ')}
+                {previewHidden > 0 && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="pio-link-underline"
+                      onClick={() => setPeptidesExpanded((v) => !v)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        cursor: 'pointer',
+                        font: "12.5px 'IBM Plex Mono'",
+                        color: 'var(--pio-accent)',
+                      }}
+                    >
+                      {peptidesExpanded ? 'show fewer' : `+${previewHidden} more`}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
 

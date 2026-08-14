@@ -146,6 +146,34 @@ Verified against Julia: 12 cases (4 specificities x 3 length/missed-cleavage
 settings) match peptide-for-peptide, via `Pioneer.digest_sequence` on the same
 sample sequence.
 
+## Reject fixed/variable modifications on the same residue — [x] done
+
+Not from Dennis's list; found by Nathan while clicking around.
+
+The form let you set Oxidation as fixed on M while it was already variable on M.
+Pioneer rejects that config outright (`check_mod_site_conflicts`), so the build
+failed only after being launched. `modSiteConflict` in `validate.ts` ports that
+rule and blocks the run inline, scrolling to the modification table the way the
+other mod validations do.
+
+The rule is about the *residue*, not the modification: a fixed carbamidomethyl
+on C conflicts with a variable oxidation on C, because a fixed modification
+occupies every matching residue and the variable one would stack on top of it.
+`modPatternResidues` ports `mod_pattern_residues`, so a class like `[ST]`
+resolves and a multi-residue rule like `K[^P]` matches no single residue and is
+left to another check.
+
+Checked, including the cases that must stay allowed:
+
+    fixed Ox/M        + variable Ox/M          BLOCK  (the reported case)
+    fixed Carbam/C    + variable Ox/M          allow  (the default setup)
+    fixed Carbam/C    + variable Ox/C          BLOCK  (different mod, same site)
+    fixed Phospho/[ST]+ variable Ox/[TY]       BLOCK  (reports only T)
+    fixed K[^P]       + variable Ox/K          allow  (matches no single residue)
+
+**Possible follow-up:** the conflict surfaces when Run is pressed. An inline
+marker on the offending row would catch it at the moment it is created.
+
 ## Group 5 — Manual m/z range — [ ] todo
 
 - [ ] **#9** Let the user set fragment/precursor m/z bounds instead of supplying
