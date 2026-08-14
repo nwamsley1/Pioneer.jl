@@ -1,6 +1,18 @@
 @testset "Model peptide-length limits" begin
-    # A model whose entry declares no range must not alter the user's request.
+    # Altimeter's ceiling is 40, probed against Koina: a 40-mer is accepted and
+    # a 41-mer is rejected outright. The catalog builds at exactly 7-40, so this
+    # request must pass through untouched.
     @test Pioneer.clamp_digest_length_to_model("altimeter", 7, 40) == (7, 40)
+
+    # ...and one residue past it must be narrowed here rather than surviving to
+    # Koina, where a single over-long peptide fails its entire batch and the
+    # retry loop then misreports it as a network fault.
+    @test Pioneer.clamp_digest_length_to_model("altimeter", 7, 41) == (7, 40)
+    @test Pioneer.clamp_digest_length_to_model("altimeter", 7, 50) == (7, 40)
+
+    # No lower bound: a 1-mer is accepted by the model, so a short digest is the
+    # user's business.
+    @test Pioneer.clamp_digest_length_to_model("altimeter", 5, 30) == (5, 30)
 
     # An unrecognised name is a pass-through, not an error: prediction_model is
     # validated where it is read, and this function must not become a second

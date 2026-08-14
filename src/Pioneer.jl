@@ -746,12 +746,24 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
     fragmentation_type::Union{Nothing, String},
     peptide_length::ModelPeptideLength,
 }}(
+    # peptide_length probed directly against Koina's
+    # Altimeter_2024_splines_index: a 40-mer is accepted and a 41-mer is
+    # rejected with `ValueError: Peptide too long`; a 1-mer is accepted, so
+    # there is no lower bound to declare.
+    #
+    # Declaring it matters because the failure is otherwise late and
+    # misdiagnosed rather than loud. One over-long peptide fails its whole
+    # 1000-peptide Koina batch; make_koina_http_request treats any "error" in
+    # the response as retryable and burns all 100 attempts on a deterministic
+    # failure; the build then dies blaming the network. With the bound
+    # declared, clamp_digest_length_to_model narrows the digest and warns
+    # before any peptide is predicted.
     "altimeter" => (
         annotation_type = UniSpecFragAnnotation("y1^1"),
         model_type = SplineCoefficientModel("altimeter"),
         instruments = Set([]),
         fragmentation_type = nothing,
-        peptide_length = nothing,
+        peptide_length = (min = 1, max = 40),
     ),
     # Prosit models. All three are instrument-agnostic scalar-intensity models:
     # fixed fragment intensities at one collision energy, no NCE spline.
