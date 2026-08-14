@@ -1444,10 +1444,12 @@ function group_psms_by_protein(
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
+            n_common_peptides = Int64[],
             n_non_mbr_peptides = Int64[],
             single_non_mbr_peptide = Bool[],
             single_non_mbr_prefix_shape = Float32[],
             peptide_list = String[],
+            common_peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
@@ -1465,10 +1467,12 @@ function group_psms_by_protein(
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
+            n_common_peptides = Int64[],
             n_non_mbr_peptides = Int64[],
             single_non_mbr_peptide = Bool[],
             single_non_mbr_prefix_shape = Float32[],
             peptide_list = String[],
+            common_peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
@@ -1517,19 +1521,30 @@ function group_psms_by_protein(
             precursor_consensus_prefix_shape = prefix_features.prefix_shape
         end
 
-        fully_enzymatic = hasproperty(gdf, :num_enzymatic_termini) ?
-            (gdf.num_enzymatic_termini .== 2) :
-            trues(nrow(gdf))
-        has_common = any(
-            quant_mask .&
-            (gdf.missed_cleavage .== 0) .&
-            fully_enzymatic .&
-            (gdf.Mox .== 0)
-        )
+        common_mask = BitVector(undef, nrow(gdf))
+        has_enzymatic_termini = hasproperty(gdf, :num_enzymatic_termini)
+        has_variable_modifications =
+            hasproperty(gdf, :num_variable_modifications)
+        @inbounds for row in eachindex(common_mask)
+            num_enzymatic_termini = has_enzymatic_termini ?
+                Int(gdf.num_enzymatic_termini[row]) : 2
+            # Legacy intermediate PSMs only recorded M oxidation. Preserve
+            # that historical fallback silently when exact metadata is absent.
+            num_variable_modifications = has_variable_modifications ?
+                Int(gdf.num_variable_modifications[row]) : Int(gdf.Mox[row])
+            common_mask[row] = quant_mask[row] && _is_common_peptide(
+                Int(gdf.missed_cleavage[row]),
+                num_enzymatic_termini,
+                num_variable_modifications
+            )
+        end
+        common_peptides = sort!(unique!(String.(gdf.sequence[common_mask])))
+        n_common_peptides = length(common_peptides)
 
         DataFrame(
             species = species,
             n_peptides = n_peptides,
+            n_common_peptides = n_common_peptides,
             n_non_mbr_peptides = mbr_summary.non_mbr_peptides,
             single_non_mbr_peptide = mbr_summary.non_mbr_peptides == 1,
             single_non_mbr_prefix_shape =
@@ -1537,8 +1552,9 @@ function group_psms_by_protein(
                 precursor_consensus_prefix_shape :
                 0.0f0,
             peptide_list = join(rollup.peptide_list, ";"),
+            common_peptide_list = join(common_peptides, ";"),
             pg_score = pg_score,
-            any_common_peps = has_common,
+            any_common_peps = n_common_peptides > 0,
             top_pep_peak_area = top_pep_peak_area,
             precursor_consensus_prefix_shape = precursor_consensus_prefix_shape,
             mbr_recovered_peptides = mbr_summary.recovered_peptides,
@@ -1746,10 +1762,9 @@ end
 """
     add_protein_features(protein_peptide_opportunities)
 
-Add unique and shared peptide coverage features using their corresponding
-experiment-wide theoretical opportunity denominators. The shared features
-include a smoothed logit and its smoothed detection-rate ratio to unique
-peptide coverage.
+Add common-only and all-peptide unique coverage features using their
+corresponding experiment-wide theoretical opportunity denominators. Shared
+coverage and its detection-rate ratio remain all-peptide features.
 """
 function add_protein_features(
     protein_peptide_opportunities::Dict{
@@ -1762,12 +1777,16 @@ function add_protein_features(
     op = function(df)
         n_rows = nrow(df)
         n_possible_unique = Vector{Int64}(undef, n_rows)
+        n_possible_common_unique = Vector{Int64}(undef, n_rows)
         n_possible_shared = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
         peptide_coverage_logit = Vector{Float32}(undef, n_rows)
+        all_peptide_coverage = Vector{Float32}(undef, n_rows)
+        all_peptide_coverage_logit = Vector{Float32}(undef, n_rows)
         shared_peptide_coverage_logit = Vector{Float32}(undef, n_rows)
         shared_coverage_log_ratios = Vector{Float32}(undef, n_rows)
         has_ambiguous_peptide_count = hasproperty(df, :_ambiguous_peptide_count)
+        has_common_peptide_count = hasproperty(df, :n_common_peptides)
 
         for i in 1:n_rows
             key = ProteinKey(
@@ -1781,9 +1800,13 @@ function add_protein_features(
                 "$(repr(key.name)), target=$(key.is_target), entrap_id=$(key.entrap_id)"
             )
             n_possible_unique[i] = opportunities.n_unique_peptides
+            n_possible_common_unique[i] =
+                opportunities.n_common_unique_peptides
             n_possible_shared[i] = opportunities.n_shared_peptides
 
             observed_unique = Int(df.n_peptides[i])
+            observed_common_unique = has_common_peptide_count ?
+                Int(df.n_common_peptides[i]) : observed_unique
             observed_shared = has_ambiguous_peptide_count ?
                 Int(df._ambiguous_peptide_count[i]) : 0
             if observed_unique > n_possible_unique[i]
@@ -1794,6 +1817,16 @@ function add_protein_features(
                     "entrap_id=$(key.entrap_id) " *
                     "n_peptides=$(observed_unique) " *
                     "n_possible_unique_peptides=$(n_possible_unique[i])"
+                )
+            end
+            if observed_common_unique > n_possible_common_unique[i]
+                error(
+                    "Common unique protein feature count inconsistency: " *
+                    "protein_name=$(repr(key.name)) " *
+                    "target=$(key.is_target) " *
+                    "entrap_id=$(key.entrap_id) " *
+                    "n_common_peptides=$(observed_common_unique) " *
+                    "n_possible_common_unique_peptides=$(n_possible_common_unique[i])"
                 )
             end
             if observed_shared > n_possible_shared[i]
@@ -1807,14 +1840,27 @@ function add_protein_features(
                 )
             end
 
-            if n_possible_unique[i] > 0
+            if n_possible_common_unique[i] > 0
                 peptide_coverage[i] =
-                    Float32(observed_unique) / Float32(n_possible_unique[i])
+                    Float32(observed_common_unique) /
+                    Float32(n_possible_common_unique[i])
                 peptide_coverage_logit[i] =
-                    smoothed_coverage_logit(observed_unique, n_possible_unique[i])
+                    smoothed_coverage_logit(
+                        observed_common_unique,
+                        n_possible_common_unique[i]
+                    )
             else
                 peptide_coverage[i] = 0.0f0
                 peptide_coverage_logit[i] = 0.0f0
+            end
+            if n_possible_unique[i] > 0
+                all_peptide_coverage[i] =
+                    Float32(observed_unique) / Float32(n_possible_unique[i])
+                all_peptide_coverage_logit[i] =
+                    smoothed_coverage_logit(observed_unique, n_possible_unique[i])
+            else
+                all_peptide_coverage[i] = 0.0f0
+                all_peptide_coverage_logit[i] = 0.0f0
             end
             shared_peptide_coverage_logit[i] =
                 smoothed_coverage_logit(observed_shared, n_possible_shared[i])
@@ -1827,9 +1873,12 @@ function add_protein_features(
         end
 
         df.n_possible_unique_peptides = n_possible_unique
+        df.n_possible_common_unique_peptides = n_possible_common_unique
         df.n_possible_shared_peptides = n_possible_shared
         df.peptide_coverage = peptide_coverage
         df.peptide_coverage_logit = peptide_coverage_logit
+        df.all_peptide_coverage = all_peptide_coverage
+        df.all_peptide_coverage_logit = all_peptide_coverage_logit
         df.shared_peptide_coverage_logit = shared_peptide_coverage_logit
         df.shared_coverage_log_ratio = shared_coverage_log_ratios
 

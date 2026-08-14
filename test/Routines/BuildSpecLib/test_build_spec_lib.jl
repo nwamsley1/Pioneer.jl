@@ -678,6 +678,32 @@ end
                 @info "precursors_file: $precursors_file"
                 if isfile(precursors_file)
                     precursors = Arrow.Table(precursors_file)
+                    @test hasproperty(
+                        precursors,
+                        :num_variable_modifications
+                    )
+                    variable_mod_names = params["variable_mods"]["name"]
+                    expected_variable_modifications = UInt8[
+                        max(0, sum(
+                            count(mod_name, coalesce(mods, ""))
+                            for mod_name in variable_mod_names;
+                            init = 0
+                        ) - sum(
+                            fixed_name in variable_mod_names ?
+                                count(Regex(fixed_pattern), sequence) : 0
+                            for (fixed_name, fixed_pattern) in zip(
+                                params["fixed_mods"]["name"],
+                                params["fixed_mods"]["pattern"]
+                            );
+                            init = 0
+                        ))
+                        for (mods, sequence) in zip(
+                            precursors[:structural_mods],
+                            precursors[:sequence]
+                        )
+                    ]
+                    @test collect(precursors[:num_variable_modifications]) ==
+                        expected_variable_modifications
                     
                     # Count unique sequences and modifications
                     unique_seqs = unique(precursors[:sequence])

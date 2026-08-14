@@ -8,6 +8,7 @@
 
 using Test
 using Pioneer
+using Arrow
 
 @testset "BuildSpecLib offline (SyntheticKoinaClient) — keap1.fasta" begin
     repo_root    = abspath(joinpath(@__DIR__, "..", ".."))
@@ -41,6 +42,11 @@ using Pioneer
     @test hasproperty(precursors, :start_idx)
     @test all(starts -> !isempty(starts), precursors.start_idx)
     @test all(starts -> eltype(starts) == UInt32, precursors.start_idx)
+    @test hasproperty(precursors, :num_variable_modifications)
+    @test collect(precursors.num_variable_modifications) == UInt8[
+        count("Unimod:35", coalesce(mods, ""))
+        for mods in precursors.structural_mods
+    ]
 
     # Cleanup
     safe_rmdir(lib_path)

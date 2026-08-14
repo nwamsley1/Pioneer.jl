@@ -137,24 +137,26 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "partitioned_fragment_index.jls"))
     presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "presearch_partitioned_fragment_index.jls"))
 
-    # Load the BuildSpecLib config (if present) to derive the output-column
-    # exclusion policy; falls back to an empty policy when absent.
+    # Load the BuildSpecLib config (if present) for output policy and for
+    # reconstructing variable-modification counts in older precursor tables.
     build_config_path = joinpath(SPEC_LIB_DIR, "config.json")
-    output_schema_policy = if isfile(build_config_path)
+    build_config = if isfile(build_config_path)
         try
-            OutputSchemaPolicy(JSON.parsefile(build_config_path, dicttype=Dict{String,Any}))
+            JSON.parsefile(build_config_path, dicttype=Dict{String,Any})
         catch
-            OutputSchemaPolicy()
+            nothing
         end
     else
-        OutputSchemaPolicy()
+        nothing
     end
+    output_schema_policy = OutputSchemaPolicy(build_config)
+    variable_mod_names = _configured_variable_mod_names(build_config)
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
         return FragmentIndexLibrary(
             presearch_partitioned_index,
             partitioned_index,
-            SetPrecursors(precursors),
+            SetPrecursors(precursors; variable_mod_names = variable_mod_names),
             SetProteins(proteins),
             spec_lib["f_det"],
             output_schema_policy
@@ -163,7 +165,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
         return SplineFragmentIndexLibrary(
             presearch_partitioned_index,
             partitioned_index,
-            SetPrecursors(precursors),
+            SetPrecursors(precursors; variable_mod_names = variable_mod_names),
             SetProteins(proteins),
             spec_lib["f_det"],
             output_schema_policy

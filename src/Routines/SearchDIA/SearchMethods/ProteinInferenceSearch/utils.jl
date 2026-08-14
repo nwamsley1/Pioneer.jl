@@ -74,7 +74,8 @@ function count_protein_peptide_opportunities(
     sequences::AbstractVector{<:AbstractString},
     is_decoys::AbstractVector{Bool},
     entrap_ids::AbstractVector{UInt8},
-    final_groups::Set{ProteinKey}
+    final_groups::Set{ProteinKey};
+    common_precursor_mask::Union{Nothing, AbstractVector{Bool}} = nothing
 )
     n_rows = length(accession_numbers)
     length(sequences) == n_rows ||
@@ -83,6 +84,11 @@ function count_protein_peptide_opportunities(
         throw(ArgumentError("is_decoys must match accession_numbers length"))
     length(entrap_ids) == n_rows ||
         throw(ArgumentError("entrap_ids must match accession_numbers length"))
+    common_precursor_mask === nothing ||
+        length(common_precursor_mask) == n_rows ||
+        throw(ArgumentError(
+            "common_precursor_mask must match accession_numbers length"
+        ))
 
     accession_to_groups =
         Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
@@ -99,6 +105,8 @@ function count_protein_peptide_opportunities(
     group_cache =
         Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
     peptide_to_groups =
+        Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
+    common_peptide_to_groups =
         Dict{Tuple{String, Bool, UInt8}, Vector{ProteinKey}}()
 
     @inbounds for i in eachindex(accession_numbers, sequences, is_decoys, entrap_ids)
@@ -128,21 +136,42 @@ function count_protein_peptide_opportunities(
             peptide_to_groups[peptide_key] =
                 sort!(unique!(vcat(peptide_to_groups[peptide_key], groups)))
         end
+        is_common = common_precursor_mask === nothing || common_precursor_mask[i]
+        if is_common
+            if !haskey(common_peptide_to_groups, peptide_key)
+                common_peptide_to_groups[peptide_key] = groups
+            elseif common_peptide_to_groups[peptide_key] != groups
+                common_peptide_to_groups[peptide_key] = sort!(unique!(vcat(
+                    common_peptide_to_groups[peptide_key],
+                    groups
+                )))
+            end
+        end
     end
 
     unique_counts = Dict(group => 0 for group in final_groups)
     shared_counts = Dict(group => 0 for group in final_groups)
-    for groups in values(peptide_to_groups)
+    common_unique_counts = Dict(group => 0 for group in final_groups)
+    for (peptide_key, groups) in pairs(peptide_to_groups)
         counts = length(groups) == 1 ? unique_counts : shared_counts
         for group in groups
             counts[group] += 1
+        end
+        if length(groups) == 1
+            common_groups = get(
+                common_peptide_to_groups,
+                peptide_key,
+                ProteinKey[]
+            )
+            groups[1] in common_groups && (common_unique_counts[groups[1]] += 1)
         end
     end
 
     opportunities = Dict(
         group => ProteinPeptideOpportunityCounts(
             unique_counts[group],
-            shared_counts[group]
+            shared_counts[group],
+            common_unique_counts[group]
         )
         for group in final_groups
     )
@@ -153,12 +182,29 @@ function count_protein_peptide_opportunities(
     precursors::LibraryPrecursors,
     final_groups::Set{ProteinKey}
 )
+    missed_cleavages = getMissedCleavages(precursors)
+    num_enzymatic_termini = getNumEnzymaticTermini(precursors)
+    num_variable_modifications = getNumVariableModifications(precursors)
+    structural_mods = getStructuralMods(precursors)
+    common_precursor_mask = BitVector(undef, length(precursors))
+    @inbounds for precursor_idx in eachindex(common_precursor_mask)
+        common_precursor_mask[precursor_idx] = _is_common_peptide(
+            missed_cleavages[precursor_idx],
+            num_enzymatic_termini[precursor_idx],
+            _num_variable_modifications_at(
+                num_variable_modifications,
+                structural_mods,
+                precursor_idx
+            )
+        )
+    end
     return count_protein_peptide_opportunities(
         getAccessionNumbers(precursors),
         getSequence(precursors),
         getIsDecoy(precursors),
         getEntrapmentGroupId(precursors),
-        final_groups
+        final_groups;
+        common_precursor_mask = common_precursor_mask
     )
 end
 
@@ -179,6 +225,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
         all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
         all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
+        all_num_variable_modifications = getNumVariableModifications(precursors)
 
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
         n_rows = length(precursor_idx)
@@ -230,6 +277,16 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
             isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
         end
         df.isotopic_mods = isotopic_mods
+
+        num_variable_modifications = Vector{UInt8}(undef, n_rows)
+        for i in 1:n_rows
+            num_variable_modifications[i] = _num_variable_modifications_at(
+                all_num_variable_modifications,
+                all_structural_mods,
+                precursor_idx[i]
+            )
+        end
+        df.num_variable_modifications = num_variable_modifications
 
         return df
     end

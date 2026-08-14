@@ -142,6 +142,8 @@
         @test table.max_n_peptides_observed[1] == 2.0f0
         @test table.global_peptide_coverage[1] == 0.5f0
         @test table.max_peptide_coverage[1] ≈ 1.0f0 / 3.0f0
+        @test table.global_all_peptide_coverage[1] == 0.5f0
+        @test table.max_all_peptide_coverage[1] ≈ 1.0f0 / 3.0f0
         @test table.n_passing_runs[1] == 1.0f0
         @test !hasproperty(table, :n_runs_observed)
         @test table.n_score_gt_0_5[1] == 2.0f0
@@ -157,10 +159,41 @@
         @test table.max_n_peptides_observed[2] == 1.0f0
         @test table.global_peptide_coverage[2] == 0.25f0
         @test table.max_peptide_coverage[2] == 0.25f0
+        @test table.global_all_peptide_coverage[2] == 0.25f0
+        @test table.max_all_peptide_coverage[2] == 0.25f0
         @test table.n_passing_runs[2] == 0.0f0
         @test table.observed_run_centrality_mean[2] == 0.0f0
         @test table.observed_run_centrality_max[2] == 0.0f0
         @test table.missing_run_similarity_mass_approx[2] == 0.0f0
+    end
+
+    @testset "global coverage separates common and all peptides" begin
+        key = ("P1", true, UInt8(0))
+        inputs = Pioneer.GlobalProteinInputs(
+            Dict(
+                key => Pioneer.GlobalProteinRunScore[
+                    Pioneer.GlobalProteinRunScore(UInt32(1), 0.9f0),
+                    Pioneer.GlobalProteinRunScore(UInt32(2), 0.8f0),
+                ],
+            ),
+            Dict(key => Set(["COMMON", "SEMI1", "SEMI2"])),
+            Dict(key => Set(["COMMON"])),
+            Dict(key => 2),
+            Dict(key => 1),
+            Dict(key => 6),
+            Dict(key => 2),
+            Dict(key => UInt8(0)),
+        )
+        table = Pioneer._build_global_protein_feature_table(inputs, 2, 0.5f0)
+
+        @test table.global_peptide_coverage[1] == 0.5f0
+        @test table.max_peptide_coverage[1] == 0.5f0
+        @test table.global_all_peptide_coverage[1] == 0.5f0
+        @test table.max_all_peptide_coverage[1] ≈ 1.0f0 / 3.0f0
+        @test :global_all_peptide_coverage in
+            Pioneer.GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES
+        @test :max_all_peptide_coverage in
+            Pioneer.GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES
     end
 
     @testset "run-level input collection" begin
@@ -174,8 +207,11 @@
                 file_idx = UInt32[2, 2],
                 pg_score = Float32[0.9, 0.4],
                 n_peptides = Int[2, 1],
+                n_common_peptides = Int[1, 0],
                 n_possible_unique_peptides = Int[4, 2],
+                n_possible_common_unique_peptides = Int[2, 1],
                 peptide_list = ["PEPA;PEPB", "PEPX"],
+                common_peptide_list = ["PEPA", ""],
             ))
             Arrow.write(run2_path, DataFrame(
                 protein_name = ["P1", "P3"],
@@ -184,8 +220,11 @@
                 file_idx = UInt32[4, 4],
                 pg_score = Float32[0.8, 0.3],
                 n_peptides = Int[2, 1],
+                n_common_peptides = Int[1, 1],
                 n_possible_unique_peptides = Int[4, 3],
+                n_possible_common_unique_peptides = Int[2, 2],
                 peptide_list = ["PEPB;PEPC", "PEPY"],
+                common_peptide_list = ["PEPC", "PEPY"],
             ))
             refs = Pioneer.ProteinGroupFileReference[
                 Pioneer.ProteinGroupFileReference(run1_path),
@@ -222,6 +261,11 @@
                   Set(["PEPA", "PEPB", "PEPC"])
             @test inputs.observed_peptides[("P2", false, UInt8(0))] == Set(["PEPX"])
             @test inputs.observed_peptides[("P3", false, UInt8(1))] == Set(["PEPY"])
+            @test inputs.observed_common_peptides[("P1", true, UInt8(0))] ==
+                Set(["PEPA", "PEPC"])
+            @test isempty(inputs.observed_common_peptides[("P2", false, UInt8(0))])
+            @test inputs.observed_common_peptides[("P3", false, UInt8(1))] ==
+                Set(["PEPY"])
             @test inputs.max_n_peptides == Dict(
                 ("P1", true, UInt8(0)) => 2,
                 ("P2", false, UInt8(0)) => 1,
@@ -231,6 +275,16 @@
                 ("P1", true, UInt8(0)) => 4,
                 ("P2", false, UInt8(0)) => 2,
                 ("P3", false, UInt8(1)) => 3,
+            )
+            @test inputs.max_n_common_peptides == Dict(
+                ("P1", true, UInt8(0)) => 1,
+                ("P2", false, UInt8(0)) => 0,
+                ("P3", false, UInt8(1)) => 1,
+            )
+            @test inputs.n_possible_common_unique_peptides == Dict(
+                ("P1", true, UInt8(0)) => 2,
+                ("P2", false, UInt8(0)) => 1,
+                ("P3", false, UInt8(1)) => 2,
             )
             @test inputs.folds == Dict(
                 ("P1", true, UInt8(0)) => UInt8(0),
