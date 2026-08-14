@@ -329,6 +329,13 @@ export function SearchDiaForm({
               onToggle={onToggle}
             />
             <ToggleRow
+              title="MBR"
+              hint="Match between runs"
+              on={params.matchBetweenRuns}
+              fieldKey="matchBetweenRuns"
+              onToggle={onToggle}
+            />
+            <ToggleRow
               title="Debug logging"
               hint="Verbose console output"
               on={params.debugLogging}

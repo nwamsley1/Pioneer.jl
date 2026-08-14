@@ -23,18 +23,26 @@ No schema change, no new state.
       loop (`protein_inference_pipeline.jl:1929`), so the count is peptides **in
       that run**, not across the experiment.
 
-## Group 2 — MBR parameter — [ ] todo
+## Group 2 — MBR parameter — [x] done
 
-- [ ] **#4** Surface `global.match_between_runs` as a toggle.
+- [x] **#4** Surface `global.match_between_runs` as a toggle.
 
-Touch points: `types.ts` (field + default), `config.ts` (`SEARCH_OWNED_PATHS`,
+Labelled `MBR` with `Match between runs` beneath, defaulting to on, in
+Confidence & output for now — it moves to Common with the rest in Group 3.
+
+Touched: `types.ts` (field + default), `config.ts` (`SEARCH_OWNED_PATHS`,
 `buildSearchJsonBase`, `searchConfigToState`), one `ToggleRow` in
 `SearchDiaForm.tsx`. `onToggle` in `App.tsx` is generic, so no handler work.
 
-**Default must be `true`.** `IntegrateChromatogramsSearch.jl:169-171` falls back
-to `true` when the key is absent, and the GUI never emits it today — so every
-GUI run currently has MBR on. Defaulting the toggle to `false` would silently
-change behaviour for existing users.
+**Default is `true`.** `IntegrateChromatogramsSearch.jl:169-171` falls back to
+`true` when the key is absent, and the GUI never emitted it before — so every
+GUI run to date has had MBR on. Defaulting the toggle to `false` would have
+silently changed behaviour for existing users.
+
+The key is now emitted on every run even though the value matches Pioneer's
+fallback: the config is the record of what a run was told to do, and MBR moves
+the result enough that "it was left unset" is not a useful answer later. On
+load, an absent key leaves the toggle as it stands rather than reading as off.
 
 ## Group 3 — Section reorganization — [ ] todo
 

@@ -30,6 +30,7 @@ export const SEARCH_OWNED_PATHS = [
   'output.write_decoys',
   'output.delete_temp',
   'global.q_value_threshold',
+  'global.match_between_runs',
   'search.n_isotopes',
   'acquisition.nce',
   'optimization.chromatogram_integration.trace_mode',
@@ -50,7 +51,13 @@ export function buildSearchJsonBase(s: SearchParams): Json {
       write_decoys: s.writeDecoys,
       delete_temp: s.deleteTemp,
     },
-    global: { q_value_threshold: num(s.qValue, 0.01) },
+    global: {
+      q_value_threshold: num(s.qValue, 0.01),
+      // Emitted explicitly even though Pioneer's fallback matches the default.
+      // The config is the record of what a run was told to do, and MBR changes
+      // the result enough that "it was left unset" is not a useful answer later.
+      match_between_runs: s.matchBetweenRuns,
+    },
     search: { n_isotopes: num(s.nIsotopes, 2) },
     acquisition: { nce: num(s.nce, 26) },
     // Always combined. The GUI no longer offers a choice, and the value it
@@ -332,6 +339,12 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 
   if (isObj(obj.global) && obj.global.q_value_threshold != null) {
     set.qValue = String(obj.global.q_value_threshold)
+  }
+  // Guarded on presence, like every other optional key here: a config written
+  // before this field existed leaves the toggle as it stands rather than being
+  // read as off, which would be the wrong reading — Pioneer's fallback is on.
+  if (isObj(obj.global) && 'match_between_runs' in obj.global) {
+    set.matchBetweenRuns = !!obj.global.match_between_runs
   }
   if (isObj(obj.search) && obj.search.n_isotopes != null) {
     set.nIsotopes = String(obj.search.n_isotopes)

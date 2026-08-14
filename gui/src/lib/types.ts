@@ -48,6 +48,10 @@ export interface SearchParams {
   nce: string
   minPeptides: string
   runToRunNorm: boolean
+  /** global.match_between_runs. Pioneer falls back to true when the key is
+   *  absent, and the GUI did not emit it before this field existed — so on is
+   *  what every GUI run has done to date, and is the default here. */
+  matchBetweenRuns: boolean
   /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
   debugLogging: boolean
 }
@@ -64,6 +68,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   nce: '26',
   minPeptides: '1',
   runToRunNorm: false,
+  matchBetweenRuns: true,
   debugLogging: false,
 }
 
