@@ -145,6 +145,12 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
 export const BUILD_OWNED_PATHS = [
   'library_path',
   'library_params.prediction_model',
+  'library_params.auto_detect_frag_bounds',
+  'library_params.frag_mz_min',
+  'library_params.frag_mz_max',
+  'library_params.prec_mz_min',
+  'library_params.prec_mz_max',
+  'library_params.frag_bounds',
   'calibration_raw_file',
   'fasta_paths',
   'fasta_names',
@@ -191,14 +197,47 @@ function modsFromJson(mm: unknown): ModEntry[] | null {
   })
 }
 
+/** The optional `library_params.frag_bounds` key, or nothing at all.
+ *
+ *  Only a sloped ceiling produces a key. 'constant' is the absence of one,
+ *  which is exactly how Pioneer reads a config written before the key existed.
+ */
+function fragBoundsJson(s: BuildParams): Json {
+  if (s.fragBoundsRule === 'constant') return {}
+  if (s.fragBoundsRule === 'custom') {
+    return {
+      frag_bounds: {
+        // The floor is flat on every Thermo method measured, so only the
+        // ceiling is offered; low is emitted explicitly so the config records
+        // the whole rule rather than half of it.
+        low: { slope: 0, intercept: 0 },
+        high: {
+          slope: num(s.fragCeilingSlope, 2),
+          intercept: num(s.fragCeilingIntercept, 10),
+        },
+      },
+    }
+  }
+  return { frag_bounds: s.fragBoundsRule }
+}
+
 export function buildLibJsonBase(s: BuildParams): Json {
   // Keep the JSON preview meaningful before any FASTA has been added.
   const files = s.fastaFiles.length ? s.fastaFiles : [makeFastaRow('/path/to/fasta/file.fasta')]
   return {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
-    // Only this one key is emitted under library_params; the rest of that block
-    // comes from a loaded config's extras, so deepMerge must not clobber it.
-    library_params: { prediction_model: s.predictionModel },
+    library_params: {
+      prediction_model: s.predictionModel,
+      auto_detect_frag_bounds: s.autoDetectFragBounds,
+      frag_mz_min: num(s.fragMzMin, 150),
+      frag_mz_max: num(s.fragMzMax, 2020),
+      prec_mz_min: num(s.precMzMin, 390),
+      prec_mz_max: num(s.precMzMax, 1010),
+      // Omitted for 'constant': absence is what Pioneer reads as flat bounds,
+      // and emitting the name would put a key into every config that did not
+      // have one for no change in behaviour.
+      ...fragBoundsJson(s),
+    },
     // Pioneer's own template carries this key with an empty default, so emit it
     // either way rather than omitting it when unset.
     calibration_raw_file: s.calibrationFile.trim(),
@@ -251,6 +290,30 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(obj.library_path) !== undefined) set.libPath = str(obj.library_path)
   if (str(obj.calibration_raw_file) !== undefined) {
     set.calibrationFile = str(obj.calibration_raw_file)
+  }
+
+  const lp = isObj(obj.library_params) ? obj.library_params : {}
+  if ('auto_detect_frag_bounds' in lp) {
+    set.autoDetectFragBounds = !!lp.auto_detect_frag_bounds
+  }
+  if (lp.frag_mz_min != null) set.fragMzMin = String(lp.frag_mz_min)
+  if (lp.frag_mz_max != null) set.fragMzMax = String(lp.frag_mz_max)
+  if (lp.prec_mz_min != null) set.precMzMin = String(lp.prec_mz_min)
+  if (lp.prec_mz_max != null) set.precMzMax = String(lp.prec_mz_max)
+  // Absent means flat bounds, which is what 'constant' represents here.
+  const fb = lp.frag_bounds
+  if (fb === undefined || fb === null) {
+    set.fragBoundsRule = 'constant'
+  } else if (typeof fb === 'string') {
+    const name = fb.trim().toLowerCase()
+    set.fragBoundsRule =
+      name === 'thermo_auto' || name === 'thermo_auto_documented' ? name : 'constant'
+  } else if (isObj(fb) && isObj(fb.high)) {
+    // Explicit coefficients round-trip as Custom, even when they happen to
+    // match a preset: the config said coefficients, so the form should too.
+    set.fragBoundsRule = 'custom'
+    if (fb.high.slope != null) set.fragCeilingSlope = String(fb.high.slope)
+    if (fb.high.intercept != null) set.fragCeilingIntercept = String(fb.high.intercept)
   }
 
   const paths = Array.isArray(obj.fasta_paths) ? obj.fasta_paths : []

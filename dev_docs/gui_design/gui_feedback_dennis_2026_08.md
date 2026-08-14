@@ -243,20 +243,40 @@ reads and moves it into the history. That is the state the run numbering already
 anticipated ("including if one is cancelled before it starts"). Status changes
 persist through the existing effect.
 
-## Group 5 — Manual m/z range — [ ] todo
+## Group 5 — Manual m/z range — [x] done
 
-- [ ] **#9** Let the user set fragment/precursor m/z bounds instead of supplying
-      a reference file.
+- [x] **#9** Set fragment/precursor m/z bounds instead of supplying a reference file.
 
-Server-side defaults are in `defaultBuildLibParams.json`:
-`auto_detect_frag_bounds: true`, `frag_mz 150–2020`, `prec_mz 390–1010`.
-`get_frag_bounds.jl` uses the reference file only when auto-detect is on *and*
-the file exists; otherwise it warns and falls back to those numbers.
+Scoped from `DESIGN_manual_fragment_bounds.md` on the RIS share, which reframes
+the ask: a manual *constant* range was already supported, so four number fields
+would have shipped the part that already worked. What was missing is a manual
+*non-constant* one — on Thermo, Scan Range Mode = Auto makes the MS2 ceiling
+track the isolation window, and a flat ceiling is the wrong shape.
 
-Work: auto/manual control on the existing "Reference MS file" card, four
-`NumField`s behind the manual choice, new `BuildParams` fields, `NUM_SPECS`
-entries, and the five keys through `BUILD_OWNED_PATHS` / `buildLibJsonBase` /
-the loader. Manual sets `auto_detect_frag_bounds: false` and emits the numbers.
+**Julia** (`81fa2d322`). Optional `library_params.frag_bounds`: absent means
+constant, byte-identical to before; otherwise a preset name or explicit
+low/high slope+intercept. Presets are expressed against the window's low edge,
+matching the auto path's regression — a rule written against the centre is wider
+by slope x width/2, about 14 m/z on a 14 Th window. `FragBoundModel` gained
+lo/hi limits defaulting to (-Inf, Inf) so a sloped ceiling is clamped to
+`frag_mz_max`; without it, 2.00 x 1250 + 10 = 2510 m/z reintroduces at the top
+of the range exactly the failure the feature prevents.
+
+**GUI.** The Reference MS file card now leads with a two-way choice. "Detect
+from a file" is unchanged; "Set m/z bounds manually" reveals the four bounds and
+a fragment-ceiling dropdown (Constant / Thermo Auto / Thermo Auto measured /
+Custom), with a line spelling out the resolved rule — the ceiling at each end of
+the precursor range, and where the clamp starts. Constant emits no key at all.
+
+Nathan's calls: slope expressed against the low edge, and Thermo's documented
+2.00 as the offered default rather than the measured 2.04 (both ship).
+
+Expectations: against a flat ceiling this recovers 0.36% of intensity and
+nothing at all at charge 2 — 2 x centre is very nearly the largest fragment a 2+
+precursor can produce, which is why Thermo chose it. Correctness, not yield.
+
+**Not done:** `DownloadSpecLib`'s catalog could surface whether a library's
+ceiling is flat or sloped, which the design doc suggests doing in the same PR.
 
 ## Group 6 — Rename a run in the queue — [ ] todo
 

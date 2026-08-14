@@ -428,6 +428,44 @@ export function BuildSpecLibForm({
   // clash is created rather than when Run is pressed.
   const modConflicts = conflictingResidues(params.fixedMods, params.variableMods)
 
+  /** The fragment ceiling in words: what a precursor at each end of the range
+   *  actually gets, and where the clamp starts.
+   *
+   *  Mirrors frag_bound_polynomials + FragBoundModel's clamp. A slope and an
+   *  intercept do not tell you what window a precursor gets, and the clamp is
+   *  the part people are surprised by -- 2.00 x 1250 + 10 is 2510 m/z, which no
+   *  Orbitrap records. */
+  const fragCeilingSummary = (() => {
+    const n = (raw: string, fallback: number) => {
+      const v = Number(raw)
+      return Number.isFinite(v) ? v : fallback
+    }
+    const fragMax = n(params.fragMzMax, 2020)
+    const precMin = n(params.precMzMin, 390)
+    const precMax = n(params.precMzMax, 1010)
+    const rule = params.fragBoundsRule
+    if (rule === 'constant') {
+      return `Every precursor gets fragments up to ${fragMax} m/z.`
+    }
+    const [slope, intercept] =
+      rule === 'thermo_auto'
+        ? [2.04, 24.1]
+        : rule === 'thermo_auto_documented'
+          ? [2.0, 10.0]
+          : [n(params.fragCeilingSlope, 2), n(params.fragCeilingIntercept, 10)]
+    const at = (p: number) => Math.min(slope * p + intercept, fragMax)
+    const round = (v: number) => Math.round(v * 10) / 10
+    const crossing = slope > 0 ? (fragMax - intercept) / slope : Infinity
+    const clamped =
+      crossing < precMax
+        ? ` Held at ${fragMax} above precursor ${round(Math.max(crossing, precMin))}.`
+        : ''
+    return (
+      `Ceiling ${round(at(precMin))} m/z at precursor ${round(precMin)}, ` +
+      `${round(at(precMax))} at ${round(precMax)}.${clamped}`
+    )
+  })()
+
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: '7px 4px',
@@ -745,9 +783,29 @@ export function BuildSpecLibForm({
           <h2 style={H2}>Reference MS file</h2>
           <InfoDot text="Any one run from the experiment this library is for. Pioneer reads its scan headers to detect the fragment and precursor m/z bounds, instead of assuming defaults that may not match your method. It is not used for calibration in the retention-time sense, and nothing from it ends up in the library." />
         </div>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          Optional but recommended — without it Pioneer falls back to fixed m/z bounds.
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
+          Recommended. Without one, set the m/z bounds yourself below.
         </p>
+        {/* The choice comes first: everything under it depends on it, and
+            leaving the file field live while it is ignored invites filling it
+            in and wondering why nothing changed. */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => !params.autoDetectFragBounds && onToggle('autoDetectFragBounds')}
+            style={pill(params.autoDetectFragBounds)}
+          >
+            Detect from a file
+          </button>
+          <button
+            type="button"
+            onClick={() => params.autoDetectFragBounds && onToggle('autoDetectFragBounds')}
+            style={pill(!params.autoDetectFragBounds)}
+          >
+            Set m/z bounds manually
+          </button>
+        </div>
+        {params.autoDetectFragBounds && (
         <div data-drop="calibrationFile" style={{ display: 'flex', gap: 8 }}>
           <input
             className="pio-input"
@@ -776,7 +834,8 @@ export function BuildSpecLibForm({
             Browse
           </button>
         </div>
-        {calibNote.msg && (
+        )}
+        {params.autoDetectFragBounds && calibNote.msg && (
           <div
             style={{
               marginTop: 9,
@@ -787,6 +846,90 @@ export function BuildSpecLibForm({
           >
             ⚠&nbsp; {calibNote.msg}
           </div>
+        )}
+
+        {!params.autoDetectFragBounds && (
+          <>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                gap: 14,
+                alignItems: 'start',
+              }}
+            >
+              <NumField fieldKey="fragMzMin" value={params.fragMzMin} onChange={onParam} />
+              <NumField fieldKey="fragMzMax" value={params.fragMzMax} onChange={onParam} />
+              <NumField fieldKey="precMzMin" value={params.precMzMin} onChange={onParam} />
+              <NumField fieldKey="precMzMax" value={params.precMzMax} onChange={onParam} />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 5px' }}>
+              <label
+                htmlFor="frag-bounds-rule"
+                style={{ fontSize: 11, color: '#667085' }}
+              >
+                Fragment ceiling
+              </label>
+              <InfoDot text="Thermo instruments in Scan Range Mode = Auto move the MS2 ceiling with the isolation window, so a flat ceiling keeps fragments the instrument never recorded. SCIEX and Bruker hold one fixed range, which is what Constant does. The gain is small — about 0.4% of intensity, and nothing at all at charge 2 — so this is a correctness fix rather than a way to find more peptides." />
+            </div>
+            <select
+              id="frag-bounds-rule"
+              className="pio-input"
+              value={params.fragBoundsRule}
+              onChange={(e) => onParam('fragBoundsRule', e.target.value)}
+              style={{
+                width: '100%',
+                maxWidth: 340,
+                padding: '8px 34px 8px 10px',
+                border: '1px solid #D7DBE0',
+                borderRadius: 8,
+                font: "12.5px 'IBM Plex Sans'",
+                color: '#1A2230',
+                background: `#FFFFFF ${CHEVRON}`,
+                backgroundSize: '16px 16px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+              }}
+            >
+              <option value="constant">Constant — the max above, at every precursor</option>
+              <option value="thermo_auto_documented">Thermo Auto — 2.00 × precursor + 10</option>
+              <option value="thermo_auto">Thermo Auto (measured) — 2.04 × precursor + 24.1</option>
+              <option value="custom">Custom…</option>
+            </select>
+
+            {params.fragBoundsRule === 'custom' && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 2fr',
+                  gap: 14,
+                  alignItems: 'start',
+                  marginTop: 12,
+                }}
+              >
+                <NumField
+                  fieldKey="fragCeilingSlope"
+                  value={params.fragCeilingSlope}
+                  onChange={onParam}
+                />
+                <NumField
+                  fieldKey="fragCeilingIntercept"
+                  value={params.fragCeilingIntercept}
+                  onChange={onParam}
+                />
+              </div>
+            )}
+
+            {/* The resolved rule, spelled out. A slope and intercept do not say
+                what window a precursor actually gets, and the clamp is the part
+                people are surprised by. */}
+            <div style={{ marginTop: 10, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+              {fragCeilingSummary}
+            </div>
+          </>
         )}
       </section>
 

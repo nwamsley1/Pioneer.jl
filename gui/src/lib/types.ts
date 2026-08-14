@@ -169,6 +169,19 @@ export interface BuildParams {
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
+  /** library_params.auto_detect_frag_bounds. Off means the four m/z bounds
+   *  below are used as given, rather than read from the reference file. */
+  autoDetectFragBounds: boolean
+  fragMzMin: string
+  fragMzMax: string
+  precMzMin: string
+  precMzMax: string
+  /** library_params.frag_bounds. 'constant' emits no key at all, which is the
+   *  behaviour of every config written before the key existed. */
+  fragBoundsRule: 'constant' | 'thermo_auto_documented' | 'thermo_auto' | 'custom'
+  /** Only read when fragBoundsRule is 'custom'. */
+  fragCeilingSlope: string
+  fragCeilingIntercept: string
   minLen: string
   maxLen: string
   minCharge: string
@@ -198,6 +211,18 @@ export const BUILD_DEFAULTS: BuildParams = {
   libPath: '',
   predictionModel: 'altimeter',
   calibrationFile: '',
+  // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
+  // form emits what Pioneer would have defaulted to anyway.
+  autoDetectFragBounds: true,
+  fragMzMin: '150',
+  fragMzMax: '2020',
+  precMzMin: '390',
+  precMzMax: '1010',
+  fragBoundsRule: 'constant',
+  // Thermo's documented rule, shown when Custom is first chosen so the fields
+  // start somewhere real rather than at zero.
+  fragCeilingSlope: '2.0',
+  fragCeilingIntercept: '10',
   minLen: '7',
   maxLen: '40',
   minCharge: '2',

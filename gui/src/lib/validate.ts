@@ -50,6 +50,12 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     int: true,
     info: 'How many distinct peptides a protein group needs before it is reported. Counted per run, not across the experiment: a protein seen by two peptides in one file and one in another is kept for the first and dropped from the second at a threshold of 2.',
   },
+  fragMzMin: { label: 'Fragment m/z min', min: 0, max: null, step: 10, int: false },
+  fragMzMax: { label: 'Fragment m/z max', min: 0, max: null, step: 10, int: false },
+  precMzMin: { label: 'Precursor m/z min', min: 0, max: null, step: 10, int: false },
+  precMzMax: { label: 'Precursor m/z max', min: 0, max: null, step: 10, int: false },
+  fragCeilingSlope: { label: 'Slope', min: 0, max: null, step: 0.01, int: false },
+  fragCeilingIntercept: { label: 'Intercept', min: -1000, max: null, step: 1, int: false },
   minLen: { label: 'Min length', min: 7, max: 40, step: 1, int: true },
   maxLen: { label: 'Max length', min: 7, max: 40, step: 1, int: true },
   minCharge: { label: 'Min charge', min: 1, max: 4, step: 1, int: true },
@@ -325,6 +331,26 @@ export function validateBuildRun(
   }
   const conflict = modSiteConflict(p.fixedMods, p.variableMods)
   if (conflict) return { key: 'variableMods', msg: conflict }
+  // Only when they are actually used: with auto-detection on these come from
+  // the reference file and whatever is in the fields is ignored.
+  if (!p.autoDetectFragBounds) {
+    for (const key of ['fragMzMin', 'fragMzMax', 'precMzMin', 'precMzMax'] as const) {
+      const err = numError(key, p[key])
+      if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
+    }
+    if (Number(p.fragMzMin) >= Number(p.fragMzMax)) {
+      return { key: 'fragMzMin', msg: 'Fragment m/z min must be below max.' }
+    }
+    if (Number(p.precMzMin) >= Number(p.precMzMax)) {
+      return { key: 'precMzMin', msg: 'Precursor m/z min must be below max.' }
+    }
+    if (p.fragBoundsRule === 'custom') {
+      for (const key of ['fragCeilingSlope', 'fragCeilingIntercept'] as const) {
+        const err = numError(key, p[key])
+        if (err) return { key, msg: `Fragment ceiling ${NUM_SPECS[key].label}: ${err}.` }
+      }
+    }
+  }
   return null
 }
 
