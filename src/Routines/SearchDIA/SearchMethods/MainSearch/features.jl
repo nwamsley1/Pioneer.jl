@@ -6,9 +6,6 @@
 # work, but one parallel_foreach! task spawn / join instead of two and one
 # cache-warm read of `precursor_idx` / `scan_idx` per row instead of two.
 
-@inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
-@inline _count_mox(::Missing)            = zero(UInt8)
-
 """
     add_psm_features!(psms, search_context, spectra, ms_file_idx)
 
@@ -19,7 +16,8 @@ needed by the per-file LightGBM. Reads the deconv-emit columns
 - `:decoy`, `:target`, `:cv_fold`, `:charge`, `:charge2`
 - `:rt`, `:err_norm`
 - `:irt_obs`, `:irt_pred`, `:irt_error`
-- `:missed_cleavage`, `:num_enzymatic_termini`, `:Mox`, `:sequence_length`, `:prec_mz`
+- `:missed_cleavage`, `:num_enzymatic_termini`, `:num_variable_modifications`
+- `:Mox`, `:sequence_length`, `:prec_mz`
 - `:spectrum_peak_count`
 
 Mox is computed lazily once per precursor via a length-`n_library` cache;
@@ -51,6 +49,7 @@ function _add_psm_features!(psms::DataFrame,
     structural_mods  = getStructuralMods(precursors_lib)
     prec_missed_clv  = getMissedCleavages(precursors_lib)
     prec_enzymatic_termini = getNumEnzymaticTermini(precursors_lib)
+    prec_num_var_mods = getNumVariableModifications(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
     masses           = getMzArrays(spectra)
 
@@ -74,6 +73,7 @@ function _add_psm_features!(psms::DataFrame,
     irt_error           = zeros(Float32, N)
     missed_cleavage     = zeros(UInt8,   N)
     num_enzymatic_termini = zeros(UInt8, N)
+    num_variable_modifications = zeros(UInt8, N)
     Mox                 = zeros(UInt8,   N)
     spectrum_peak_count = zeros(Float16, N)
     sequence_length     = zeros(UInt8,   N)
@@ -117,6 +117,11 @@ function _add_psm_features!(psms::DataFrame,
                 _mox_computed[prec_idx] = true
             end
             Mox[i] = _mox_vals[prec_idx]
+            num_variable_modifications[i] = _num_variable_modifications_at(
+                prec_num_var_mods,
+                structural_mods,
+                prec_idx
+            )
         end
     end
 
@@ -132,6 +137,7 @@ function _add_psm_features!(psms::DataFrame,
     psms[!, :irt_error]           = irt_error
     psms[!, :missed_cleavage]     = missed_cleavage
     psms[!, :num_enzymatic_termini] = num_enzymatic_termini
+    psms[!, :num_variable_modifications] = num_variable_modifications
     psms[!, :Mox]                 = Mox
     psms[!, :spectrum_peak_count] = spectrum_peak_count
     psms[!, :sequence_length]     = sequence_length

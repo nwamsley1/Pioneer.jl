@@ -45,6 +45,7 @@ end
         @test !protein_groups.single_non_mbr_peptide[1]
         @test protein_groups.single_non_mbr_prefix_shape[1] == 0.0f0
         @test protein_groups.mbr_only_protein[1]
+        @test protein_groups.any_common_peps[1]
     end
 
     @testset "Mixed support tracks retained MBR evidence without changing pg_score input" begin
@@ -139,5 +140,68 @@ end
         @test !in(:mbr_best_transfer_confidence, features)
         @test !in(:mbr_sum_transfer_evidence, features)
         @test !in(:mbr_best_pair_prob, features)
+    end
+
+    @testset "common peptide evidence uses specificity, cleavage, and variable modifications" begin
+        psms = DataFrame(
+            inferred_protein_group =
+                ["P_SEMI", "P_FULL", "P_MISSED", "P_VARIABLE"],
+            species = fill("YEAST", 4),
+            target = trues(4),
+            entrap_id = zeros(UInt8, 4),
+            use_for_protein_quant = trues(4),
+            qval = zeros(Float32, 4),
+            global_qval = fill(0.001f0, 4),
+            precursor_idx = UInt32[40, 41, 42, 43],
+            prec_prob = fill(0.9f0, 4),
+            peak_area = fill(1000.0f0, 4),
+            base_pep_id = UInt32[401, 402, 403, 404],
+            sequence = ["SEMIPEP", "FULLPEP", "MISSEDPEP", "PHOSPEP"],
+            missed_cleavage = Int64[0, 0, 1, 0],
+            num_enzymatic_termini = UInt8[1, 2, 2, 2],
+            num_variable_modifications = UInt8[0, 0, 0, 1],
+            Mox = zeros(Int64, 4),
+            mbr_recovered = falses(4),
+        )
+
+        protein_groups = group_psms_by_protein(
+            psms;
+            precursor_consensus =
+                _empty_precursor_consensus_for_mbr_feature_tests(),
+            q_value_threshold = 0.01f0,
+        )
+        common_by_protein = Dict(
+            String(row.protein_name) => Bool(row.any_common_peps)
+            for row in eachrow(protein_groups)
+        )
+
+        @test !common_by_protein["P_SEMI"]
+        @test common_by_protein["P_FULL"]
+        @test !common_by_protein["P_MISSED"]
+        @test !common_by_protein["P_VARIABLE"]
+
+        full_row = only(eachrow(protein_groups[protein_groups.protein_name .== "P_FULL", :]))
+        @test full_row.n_common_peptides == 1
+        @test full_row.common_peptide_list == "FULLPEP"
+        for protein_name in ("P_SEMI", "P_MISSED", "P_VARIABLE")
+            row = only(eachrow(
+                protein_groups[protein_groups.protein_name .== protein_name, :]
+            ))
+            @test row.n_common_peptides == 0
+            @test isempty(row.common_peptide_list)
+        end
+    end
+
+    @testset "PSM models include enzymatic specificity" begin
+        @test :num_enzymatic_termini in Pioneer.PRESCORE_FEATURES
+        @test :num_enzymatic_termini in Pioneer.ADVANCED_FEATURE_SET
+    end
+
+    @testset "Run-level model separates common and all-peptide coverage" begin
+        features = run_level_protein_feature_names()
+        @test :peptide_coverage_logit in features
+        @test :all_peptide_coverage_logit in features
+        @test :all_peptide_coverage_logit in
+            Pioneer.PROTEIN_MONOTONE_INCREASING_FEATURES
     end
 end

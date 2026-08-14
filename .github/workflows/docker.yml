@@ -1,0 +1,59 @@
+name: Docker image
+
+# The release workflow is the only other place this image is built, and it runs
+# after the GitHub Release has already been published -- so a Dockerfile defect
+# is discovered at the worst possible moment and cannot be fixed without either
+# a manual push or a new release. That is exactly what happened for v0.8.0.
+#
+# This builds the same image on any change to the Dockerfile, without pushing.
+# It pulls the .deb from the latest published release, so it validates the
+# Dockerfile against a real package rather than a synthetic one.
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/docker.yml
+  push:
+    branches: [main, develop]
+    paths:
+      - Dockerfile
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+    inputs:
+      pioneer_version:
+        description: "Release tag to build against; defaults to latest"
+        type: string
+        default: latest
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build image (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg PIONEER_VERSION=${{ inputs.pioneer_version || 'latest' }} \
+            -t pioneer:ci .
+
+      # The Dockerfile's own `RUN pioneer search --help` proves the CLI starts
+      # during the build. This proves it still works in the finished image, and
+      # reports the size, since the .deb pulls GUI libraries a CLI-only
+      # container cannot use (libwebkit2gtk-4.1-0 alone is ~91 MB installed).
+      - name: Smoke test
+        run: |
+          docker run --rm pioneer:ci pioneer --version
+          docker run --rm pioneer:ci pioneer search --help > /dev/null
+          echo "image size: $(docker image inspect pioneer:ci --format '{{.Size}}' | numfmt --to=iec)"

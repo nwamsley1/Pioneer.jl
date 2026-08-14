@@ -32,6 +32,8 @@ const GLOBAL_PROTEIN_SCORE_FEATURES = Symbol[
     :max_n_peptides_observed,
     :global_peptide_coverage,
     :max_peptide_coverage,
+    :global_all_peptide_coverage,
+    :max_all_peptide_coverage,
     :n_passing_runs,
     :n_score_gt_0_5,
     :n_score_gt_0_9,
@@ -55,6 +57,8 @@ const GLOBAL_PROTEIN_MONOTONE_INCREASING_FEATURES = (
     :max_n_peptides_observed,
     :global_peptide_coverage,
     :max_peptide_coverage,
+    :global_all_peptide_coverage,
+    :max_all_peptide_coverage,
     :n_passing_runs,
     :n_score_gt_0_5,
     :n_score_gt_0_9,
@@ -90,9 +94,33 @@ end
 struct GlobalProteinInputs
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
     observed_peptides::Dict{GlobalProteinKey, Set{String}}
+    observed_common_peptides::Dict{GlobalProteinKey, Set{String}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
+    max_n_common_peptides::Dict{GlobalProteinKey, Int}
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
+    n_possible_common_unique_peptides::Dict{GlobalProteinKey, Int}
     folds::Dict{GlobalProteinKey, UInt8}
+end
+
+# Compatibility constructor for callers that predate the common/all split.
+# Their input is necessarily interpreted as all-common.
+function GlobalProteinInputs(
+    run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}},
+    observed_peptides::Dict{GlobalProteinKey, Set{String}},
+    max_n_peptides::Dict{GlobalProteinKey, Int},
+    n_possible_unique_peptides::Dict{GlobalProteinKey, Int},
+    folds::Dict{GlobalProteinKey, UInt8}
+)
+    return GlobalProteinInputs(
+        run_scores,
+        observed_peptides,
+        copy(observed_peptides),
+        max_n_peptides,
+        copy(max_n_peptides),
+        n_possible_unique_peptides,
+        copy(n_possible_unique_peptides),
+        folds
+    )
 end
 
 function _collect_global_protein_inputs(
@@ -105,13 +133,19 @@ function _collect_global_protein_inputs(
 )
     run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
     observed_peptides = Dict{GlobalProteinKey, Set{String}}()
+    observed_common_peptides = Dict{GlobalProteinKey, Set{String}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
+    max_n_common_peptides = Dict{GlobalProteinKey, Int}()
     n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
+    n_possible_common_unique_peptides = Dict{GlobalProteinKey, Int}()
     folds = Dict{GlobalProteinKey, UInt8}()
     sizehint!(run_scores, n_proteins)
     sizehint!(observed_peptides, n_proteins)
+    sizehint!(observed_common_peptides, n_proteins)
     sizehint!(max_n_peptides, n_proteins)
+    sizehint!(max_n_common_peptides, n_proteins)
     sizehint!(n_possible_unique_peptides, n_proteins)
+    sizehint!(n_possible_common_unique_peptides, n_proteins)
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
@@ -138,12 +172,32 @@ function _collect_global_protein_inputs(
                 Set{String}()
             end
             for peptide in split(table.peptide_list[row], ';')
-                push!(protein_peptides, String(peptide))
+                isempty(peptide) || push!(protein_peptides, String(peptide))
+            end
+
+            protein_common_peptides = get!(observed_common_peptides, key) do
+                Set{String}()
+            end
+            common_peptide_list = hasproperty(table, :common_peptide_list) ?
+                table.common_peptide_list[row] : table.peptide_list[row]
+            for peptide in split(common_peptide_list, ';')
+                isempty(peptide) ||
+                    push!(protein_common_peptides, String(peptide))
             end
 
             n_peptides = Int(table.n_peptides[row])
+            n_common_peptides = hasproperty(table, :n_common_peptides) ?
+                Int(table.n_common_peptides[row]) : n_peptides
             max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
+            max_n_common_peptides[key] = max(
+                get(max_n_common_peptides, key, 0),
+                n_common_peptides
+            )
             n_possible_unique_peptides[key] =
+                Int(table.n_possible_unique_peptides[row])
+            n_possible_common_unique_peptides[key] =
+                hasproperty(table, :n_possible_common_unique_peptides) ?
+                Int(table.n_possible_common_unique_peptides[row]) :
                 Int(table.n_possible_unique_peptides[row])
             folds[key] = protein_to_cv_fold[protein_name].cv_fold
         end
@@ -154,8 +208,11 @@ function _collect_global_protein_inputs(
     return GlobalProteinInputs(
         run_scores,
         observed_peptides,
+        observed_common_peptides,
         max_n_peptides,
+        max_n_common_peptides,
         n_possible_unique_peptides,
+        n_possible_common_unique_peptides,
         folds,
     )
 end
@@ -188,9 +245,14 @@ function _build_global_protein_feature_table(
         top2 = n_observed >= 2 ? sorted_scores[2] : 0.0f0
         top3 = n_observed >= 3 ? sorted_scores[3] : 0.0f0
         n_unique_peptides = length(inputs.observed_peptides[key])
+        n_common_unique_peptides =
+            length(inputs.observed_common_peptides[key])
         max_n_peptides = inputs.max_n_peptides[key]
+        max_n_common_peptides = inputs.max_n_common_peptides[key]
         n_possible_unique_peptides =
             inputs.n_possible_unique_peptides[key]
+        n_possible_common_unique_peptides =
+            inputs.n_possible_common_unique_peptides[key]
 
         feature_columns[:empirical_global_score][row] =
             _logodds_from_sorted(sorted_scores, top_run_count)
@@ -213,9 +275,21 @@ function _build_global_protein_feature_table(
         feature_columns[:n_unique_peptides_observed][row] = Float32(n_unique_peptides)
         feature_columns[:max_n_peptides_observed][row] = Float32(max_n_peptides)
         feature_columns[:global_peptide_coverage][row] =
-            Float32(n_unique_peptides) / Float32(n_possible_unique_peptides)
+            n_possible_common_unique_peptides > 0 ?
+            Float32(n_common_unique_peptides) /
+            Float32(n_possible_common_unique_peptides) : 0.0f0
         feature_columns[:max_peptide_coverage][row] =
-            Float32(max_n_peptides) / Float32(n_possible_unique_peptides)
+            n_possible_common_unique_peptides > 0 ?
+            Float32(max_n_common_peptides) /
+            Float32(n_possible_common_unique_peptides) : 0.0f0
+        feature_columns[:global_all_peptide_coverage][row] =
+            n_possible_unique_peptides > 0 ?
+            Float32(n_unique_peptides) / Float32(n_possible_unique_peptides) :
+            0.0f0
+        feature_columns[:max_all_peptide_coverage][row] =
+            n_possible_unique_peptides > 0 ?
+            Float32(max_n_peptides) / Float32(n_possible_unique_peptides) :
+            0.0f0
         feature_columns[:n_score_gt_0_5][row] = Float32(count(>(0.5f0), scores))
         feature_columns[:n_score_gt_0_9][row] = Float32(count(>(0.9f0), scores))
         feature_columns[:n_score_gt_0_99][row] = Float32(count(>(0.99f0), scores))
