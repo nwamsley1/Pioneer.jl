@@ -171,8 +171,17 @@ Checked, including the cases that must stay allowed:
     fixed Phospho/[ST]+ variable Ox/[TY]       BLOCK  (reports only T)
     fixed K[^P]       + variable Ox/K          allow  (matches no single residue)
 
-**Possible follow-up:** the conflict surfaces when Run is pressed. An inline
-marker on the offending row would catch it at the moment it is created.
+Both rows involved turn red as the clash is created, not on Run:
+`conflictingResidues` is recomputed each keystroke and both tables receive the
+same set, since either row can resolve it and marking one would point at the
+wrong half as often as not. Red is reserved for this; the existing amber still
+means "this model does not accept that modification". The run-block stays as
+the backstop.
+
+Note the guard the form already had was one-directional: the variable table
+gets `occupied` from the fixed mods, so a variable mod cannot take a fixed
+residue, but the fixed table gets an empty set — which is how a fixed mod could
+be added onto a variable residue.
 
 ## Group 5 — Manual m/z range — [ ] todo
 

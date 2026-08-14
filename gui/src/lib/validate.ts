@@ -335,7 +335,7 @@ export function validateBuildRun(
  *  resolve, while a multi-residue rule matches nothing and is left to another
  *  check. An unparseable pattern yields no residues, likewise.
  */
-function modPatternResidues(pattern: string): Set<string> {
+export function modPatternResidues(pattern: string): Set<string> {
   const residues = new Set<string>()
   let re: RegExp
   try {
@@ -360,6 +360,22 @@ function modPatternResidues(pattern: string): Set<string> {
  *  Any shared residue counts, not just the same modification twice: a fixed
  *  carbamidomethyl on C conflicts with a variable oxidation on C.
  */
+/** Residues claimed by a fixed modification and a variable one at once.
+ *
+ *  The same rule `modSiteConflict` reports, as a set, so a table can mark the
+ *  rows involved while they are being edited rather than waiting for Run. Both
+ *  sides are implicated: removing either resolves it.
+ */
+export function conflictingResidues(fixed: ModEntry[], variable: ModEntry[]): Set<string> {
+  const shared = new Set<string>()
+  const fixedResidues = fixed.flatMap((f) => [...modPatternResidues(f.pattern)])
+  for (const v of variable) {
+    const vres = modPatternResidues(v.pattern)
+    for (const r of fixedResidues) if (vres.has(r)) shared.add(r)
+  }
+  return shared
+}
+
 export function modSiteConflict(fixed: ModEntry[], variable: ModEntry[]): string | null {
   for (const v of variable) {
     const vres = modPatternResidues(v.pattern)

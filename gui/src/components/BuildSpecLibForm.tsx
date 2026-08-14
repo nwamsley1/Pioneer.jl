@@ -28,6 +28,7 @@ import {
 import { BROWSE, HINT, LABEL } from '../lib/styles'
 import { PREDICTION_MODELS, isPrositModel, predictionModelById } from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
+import { conflictingResidues, modPatternResidues } from '../lib/validate'
 import type { Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -121,6 +122,7 @@ function ModTable({
   onField,
   onRemove,
   occupied,
+  conflicts,
   onAdd,
 }: {
   kind: 'fixed' | 'variable'
@@ -133,6 +135,10 @@ function ModTable({
   /** Residues the fixed modifications already hold. Empty for the fixed table,
    *  which is what defines them. */
   occupied: Set<string>
+  /** Residues a fixed and a variable modification both claim. Both tables get
+   *  the same set: the conflict is between two rows and either can resolve it,
+   *  so marking only one would point at the wrong half as often as not. */
+  conflicts: Set<string>
   onAdd: (kind: 'fixed' | 'variable', preset: string) => void
 }) {
   const cell = (extra: React.CSSProperties): React.CSSProperties => ({
@@ -182,11 +188,23 @@ function ModTable({
           // user did not ask us to touch.
           const def = findMod(modelId, m.name)
           const bad = def === null || !siteAllowed(def, m.pattern)
+          // A residue cannot be fixed and variable at once: the fixed mod takes
+          // every one of them, so the variable one lands on top. Pioneer rejects
+          // the config, so this has to be visible while it is being made.
+          const clash = [...modPatternResidues(m.pattern)].filter((r) => conflicts.has(r))
           const warn = bad
             ? `${modelLabel} does not accept ${m.label || m.name || 'this modification'}${
                 def ? ` on ${m.pattern}` : ''
               }. Koina will reject the build.`
-            : undefined
+            : clash.length
+              ? `${clash.sort().join(', ')} is claimed by both a fixed and a variable ` +
+                `modification. A fixed one takes every matching residue, so the variable ` +
+                `one would land on top of it. Remove one, or narrow a site.`
+              : undefined
+          // Red for the conflict, which stops the build; the existing amber
+          // stays for a modification this model merely does not accept.
+          const line = clash.length ? '#E5484D' : bad ? '#B45309' : null
+          const ink = clash.length ? '#C0392B' : bad ? '#B45309' : null
           return (
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
               {def ? (
@@ -196,9 +214,9 @@ function ModTable({
                   style={{
                     ...SITE_CELL,
                     padding: '8px 24px 8px 10px',
-                    border: `1px solid ${bad ? '#B45309' : '#CBD2DA'}`,
+                    border: `1px solid ${line ?? '#CBD2DA'}`,
                     borderRadius: 9,
-                    color: bad ? '#B45309' : '#1D2939',
+                    color: ink ?? '#1D2939',
                     background: `#FFFFFF ${CHEVRON}`,
                     backgroundSize: '14px 14px',
                     cursor: 'pointer',
@@ -228,8 +246,8 @@ function ModTable({
                 <div
                   style={readOnly({
                     ...SITE_CELL,
-                    borderColor: '#B45309',
-                    color: '#B45309',
+                    borderColor: line ?? '#B45309',
+                    color: ink ?? '#B45309',
                   })}
                 >
                   {m.pattern || '—'}
@@ -243,7 +261,7 @@ function ModTable({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  ...(bad ? { borderColor: '#B45309', color: '#B45309' } : null),
+                  ...(line ? { borderColor: line, color: ink ?? undefined } : null),
                 })}
               >
                 {def ? def.label : m.label || 'Not supported by this model'}
@@ -405,6 +423,10 @@ export function BuildSpecLibForm({
   const [peptidesExpanded, setPeptidesExpanded] = useState(false)
   const PREVIEW_SHOWN = 4
   const previewHidden = Math.max((previewPeptides?.length ?? 0) - PREVIEW_SHOWN, 0)
+
+  // Recomputed on every keystroke, so the pair of rows turns red the moment the
+  // clash is created rather than when Run is pressed.
+  const modConflicts = conflictingResidues(params.fixedMods, params.variableMods)
 
   const pill = (active: boolean): React.CSSProperties => ({
     flex: 1,
@@ -1060,6 +1082,7 @@ export function BuildSpecLibForm({
         <ModTable
           kind="fixed"
           occupied={new Set<string>()}
+          conflicts={modConflicts}
           mods={params.fixedMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
@@ -1091,6 +1114,7 @@ export function BuildSpecLibForm({
         <ModTable
           kind="variable"
           occupied={occupiedResidues(params.fixedMods)}
+          conflicts={modConflicts}
           mods={params.variableMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
