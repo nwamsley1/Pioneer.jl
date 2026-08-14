@@ -348,6 +348,8 @@ interface Props {
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
   /** Move the queued job `dragId` into the position currently held by `dropId`. */
   onReorderQueued: (dragId: string, dropId: string) => void
+  /** Give a run a different name. Collisions are resolved by the caller. */
+  onRenameJob: (id: string, title: string) => void
 }
 
 export function Sidebar({
@@ -363,6 +365,7 @@ export function Sidebar({
   onViewJob,
   onJobAction,
   onReorderQueued,
+  onRenameJob,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -374,6 +377,10 @@ export function Sidebar({
    *  `lib/dragdrop.ts`. */
   const [dragJobId, setDragJobId] = useState<string | null>(null)
   const [dropJobId, setDropJobId] = useState<string | null>(null)
+  /** The run whose name is being edited, and the text so far. Held apart from
+   *  `jobs` so abandoning an edit leaves the name alone. */
+  const [editingJobId, setEditingJobId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
 
   /** Runs that were pending at some point since the sidebar was last open.
    *
@@ -602,19 +609,57 @@ export function Sidebar({
                         lineHeight: 1.25,
                       }}
                     >
-                      <span
-                        style={{
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          color: 'var(--pio-nav-fg)',
-                          maxWidth: 120,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {j.title}
-                      </span>
+                      {editingJobId === j.id ? (
+                        <input
+                          autoFocus
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          // The row opens the run on click; typing in the field
+                          // must not also do that.
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter') {
+                              onRenameJob(j.id, editingTitle)
+                              setEditingJobId(null)
+                            } else if (e.key === 'Escape') {
+                              setEditingJobId(null)
+                            }
+                          }}
+                          // Commit on blur as well as Enter: clicking away is a
+                          // reasonable way to mean "done", and losing the edit
+                          // there would be the more surprising outcome. Escape
+                          // clears the id first, so it does not commit.
+                          onBlur={() => {
+                            if (editingJobId === j.id) onRenameJob(j.id, editingTitle)
+                            setEditingJobId(null)
+                          }}
+                          style={{
+                            width: 120,
+                            padding: '1px 5px',
+                            border: '1px solid var(--pio-nav-hair-strong)',
+                            borderRadius: 5,
+                            background: 'rgba(0,0,0,0.25)',
+                            color: 'var(--pio-nav-fg)',
+                            font: "600 12.5px 'IBM Plex Sans'",
+                            outline: 'none',
+                          }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            color: 'var(--pio-nav-fg)',
+                            maxWidth: 120,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {j.title}
+                        </span>
+                      )}
                       {/* The descriptor is unconditional. It used to be the
                           else-branch of `running`, so the bar replaced it and a
                           running row was the one place the command and status
@@ -670,6 +715,39 @@ export function Sidebar({
                     </span>
                   )}
                 </div>
+                {/* Queued, running or finished alike: the name is a label, and
+                    the run worth renaming is often the one that already
+                    finished. Hidden until the row is hovered, like the other
+                    row actions. */}
+                {!collapsed && editingJobId !== j.id && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => {
+                      setEditingJobId(j.id)
+                      setEditingTitle(j.title)
+                    }}
+                    title="Rename"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: 'var(--pio-nav-fg-dim)',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                )}
                 {pending && (
                   <button
                     type="button"

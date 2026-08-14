@@ -124,7 +124,12 @@ impl Store {
              ON CONFLICT(id) DO UPDATE SET
                  status = excluded.status,
                  target = excluded.target,
-                 snapshot = excluded.snapshot",
+                 snapshot = excluded.snapshot,
+                 -- Renameable from the sidebar, so it has to survive a restart.
+                 title = excluded.title,
+                 -- Reassigned when the queue is reordered, and a renumber that
+                 -- leaves the status alone would otherwise never be written.
+                 run_no = excluded.run_no",
             params![
                 run.id, run.run_no, run.cmd, run.title, run.target, run.threads, run.status,
                 run.snapshot,

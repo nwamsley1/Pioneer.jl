@@ -1388,6 +1388,24 @@ export default function App() {
         onReorderQueued={(dragId, dropId) =>
           setJobs((prev) => moveQueuedJob(prev, dragId, dropId))
         }
+        onRenameJob={(id, title) => {
+          const wanted = title.trim()
+          if (!wanted) return
+          setJobs((prev) =>
+            prev.map((j) => {
+              if (j.id !== id) return j
+              // Resolved against every other run, this one excluded -- keeping
+              // its own name in `taken` would turn a no-op edit into "name-2".
+              // Same rule as naming a new run, so the two cannot disagree about
+              // what counts as taken.
+              const resolved = resolveRunName(
+                wanted,
+                prev.filter((o) => o.id !== id).map((o) => o.title),
+              )
+              return resolved === j.title ? j : { ...j, title: resolved }
+            }),
+          )
+        }}
       />
 
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>

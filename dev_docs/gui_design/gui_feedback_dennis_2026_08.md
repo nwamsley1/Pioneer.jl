@@ -290,13 +290,25 @@ precursor can produce, which is why Thermo chose it. Correctness, not yield.
 **Not done:** `DownloadSpecLib`'s catalog could surface whether a library's
 ceiling is flat or sloped, which the design doc suggests doing in the same PR.
 
-## Group 6 — Rename a run in the queue — [ ] todo
+## Group 6 — Rename a run — [x] done
 
-- [ ] **#10** Edit icon beside the run name; clicking makes the text editable.
+- [x] **#10** Edit icon beside the name; clicking makes the text editable.
 
-`Sidebar.tsx` renders `{j.title}` in `renderRow`. Needs an inline input plus a
-`renameJob(id, title)` in `App.tsx`, reusing `resolveRunName` for collisions.
+Allowed on every row — queued, running and finished — rather than the queue
+only: the run worth renaming is often the one that already finished.
 
-**Catch:** `history.rs` upserts with `ON CONFLICT(id) DO UPDATE SET status,
-target, snapshot` — `title` is not in the update list, so a rename would vanish
-on restart. Add `title = excluded.title` there.
+The pencil is hover-revealed like the cancel and delete buttons beside it
+(`pio-jobact`). Enter or blur commits, Escape abandons; blur commits because
+clicking away is a reasonable way to mean "done" and discarding the edit there
+would be the more surprising outcome.
+
+Collisions go through `resolveRunName`, the same rule that names a new run, with
+the job's own title excluded from the taken set — otherwise a no-op edit would
+turn `brisk-otter` into `brisk-otter-2`.
+
+**The persistence catch, as predicted.** `history.rs` upserted `status`,
+`target` and `snapshot` only, so a rename would have looked right and vanished
+on restart. Added `title = excluded.title`, and `run_no = excluded.run_no` while
+there — the same latent bug for queue renumbering, which the TypeScript side was
+working around by putting `runNo` in the save key. The row was being written;
+the column was never updated.
