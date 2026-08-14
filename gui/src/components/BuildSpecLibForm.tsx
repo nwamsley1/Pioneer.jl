@@ -897,7 +897,12 @@ export function BuildSpecLibForm({
               <option value="constant">Constant — the max above, at every precursor</option>
               <option value="thermo_auto_documented">Thermo Auto — 2.00 × precursor + 10</option>
               <option value="thermo_auto">Thermo Auto (measured) — 2.04 × precursor + 24.1</option>
-              <option value="custom">Custom…</option>
+              {/* Not offered, only kept: a hand-written config can carry
+                  explicit coefficients, and dropping the option outright would
+                  silently rewrite it to a preset on the next save. */}
+              {params.fragBoundsRule === 'custom' && (
+                <option value="custom">Custom (from the loaded config)</option>
+              )}
             </select>
 
             {params.fragBoundsRule === 'custom' && (

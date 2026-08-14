@@ -264,9 +264,21 @@ of the range exactly the failure the feature prevents.
 
 **GUI.** The Reference MS file card now leads with a two-way choice. "Detect
 from a file" is unchanged; "Set m/z bounds manually" reveals the four bounds and
-a fragment-ceiling dropdown (Constant / Thermo Auto / Thermo Auto measured /
-Custom), with a line spelling out the resolved rule — the ceiling at each end of
-the precursor range, and where the clamp starts. Constant emits no key at all.
+a fragment-ceiling dropdown (Constant / Thermo Auto / Thermo Auto measured),
+with a line spelling out the resolved rule — the ceiling at each end of the
+precursor range, and where the clamp starts. Constant emits no key at all.
+
+Custom coefficients are not offered. The option is still rendered when a loaded
+config carries explicit `low`/`high` coefficients, so opening and re-saving such
+a config does not silently rewrite it to a preset.
+
+The four m/z fields stay visible under a preset, having checked what they still
+control: `frag_mz_min` is the floor (the preset slopes only the ceiling, and
+every Thermo method measured had a fixed low bound), `frag_mz_max` becomes the
+absolute clamp, and the precursor pair never interacts with the fragment rule at
+all — it is the range the digest is filtered to. Hiding them would fall back to
+150 / 2020 / 390 / 1010, and a method running 350–1250 would get a silently
+truncated library.
 
 Nathan's calls: slope expressed against the low edge, and Thermo's documented
 2.00 as the offered default rather than the measured 2.04 (both ship).
