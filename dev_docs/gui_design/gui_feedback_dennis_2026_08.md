@@ -324,9 +324,17 @@ library, and `history_load` returns every row. No new table, no schema change,
 no Rust — `recentLibraries` derives the list from the jobs already in memory,
 which also means it works retroactively over existing history.
 
+Libraries **built** and **downloaded** count as well as searched: having just
+made one, the next thing anyone does is search with it, and it would otherwise
+be absent from the list precisely when it is most wanted. BuildSpecLib
+contributes `libraryTargetPath(libPath)` (so a path without the extension
+surfaces as `.poin`), DownloadSpecLib `downloadTargetPath(dest, selected)`.
+
 Distinct paths, most recent first, from runs of any outcome — a search that died
 in scoring still used a real library. A reused library appears once, at its
-newest use. Whether a path still exists is checked when the menu opens rather
+newest use, so building one and then searching with it gives a single entry.
+A failed build may never have written its library; the existence check covers
+that without needing a rule for it. Whether a path still exists is checked when the menu opens rather
 than up front: statting every path at startup for a menu usually not opened
 would be wasted, and the answer would go stale the moment a library moved. A
 path that has been deleted *or* is no longer a library (`is_pion_library`) drops
