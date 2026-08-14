@@ -538,6 +538,10 @@ function writePrecursorCSV_chunked(
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
+        # Area over the same window before baseline subtraction. Retained so the
+        # QUANT_MIN_AREA_SURVIVING_RATIO cut can be re-evaluated against an
+        # existing search rather than requiring a re-run.
+        :peak_area_unsubtracted,
         :precursor_fraction_transmitted,
         :isotopes_captured,
         :rt,

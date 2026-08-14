@@ -326,6 +326,10 @@ function process_file!(
         zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :integration_stop_scan] =
         zeros(UInt32, nrow(passing_psms))
+    # peak_area is the area of the baseline-subtracted trace; this is the same
+    # window before subtraction. Their ratio is what the not-quantifiable rule
+    # tests, and keeping it lets that cut be re-evaluated without a re-search.
+    passing_psms[!, :peak_area_unsubtracted] = zeros(Float32, nrow(passing_psms))
 
     # If there are no PSMs to integrate (e.g. sparse / empty file), skip
     # chromatogram extraction entirely. Downstream steps treat an empty
@@ -440,6 +444,7 @@ function process_file!(
             passing_psms[!, :points_integrated],
             passing_psms[!, :integration_start_scan],
             passing_psms[!, :integration_stop_scan],
+            passing_psms[!, :peak_area_unsubtracted],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )
