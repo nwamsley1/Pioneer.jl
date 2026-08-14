@@ -941,8 +941,8 @@ export function Sidebar({
         <NavItem
           id="downloadspeclib"
           title="DownloadSpecLib"
-          subtitle="fetch a prebuilt library"
-          chip={`${modKey}4`}
+          subtitle="Fetch a prebuilt library"
+          chip={`${modKey}3`}
           active={selected === 'downloadspeclib'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -963,7 +963,7 @@ export function Sidebar({
           id="searchdia"
           title="SearchDIA"
           subtitle="Find & Quantify Proteins"
-          chip={`${modKey}3`}
+          chip={`${modKey}4`}
           active={selected === 'searchdia'}
           collapsed={collapsed}
           onClick={onSelect}

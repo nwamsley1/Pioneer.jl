@@ -6,7 +6,7 @@
  *  again — and any keys the form does not model must survive that trip. They
  *  are held aside in `extraConfig` and merged back on the way out.
  */
-import { DEFAULT_CLEAVAGE } from './enzymes'
+import { DEFAULT_CLEAVAGE, enzymeByPattern } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
 import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
 
@@ -352,7 +352,11 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
   if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
-    set.cleavageRegex = d.cleavage_regex.trim()
+    const rule = d.cleavage_regex.trim()
+    set.cleavageRegex = rule
+    // A rule matching no preset was written by hand, so the picker should open
+    // on Custom with the rule visible rather than on a preset it is not.
+    set.customEnzyme = enzymeByPattern(rule) === null
   }
   const specificity = str(d.specificity)
     ?.trim()

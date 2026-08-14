@@ -120,8 +120,13 @@ function cleavageMask(sequence: string, pattern: string): boolean[] | null {
   for (let i = 0; i < sequence.length; i++) {
     re.lastIndex = i
     const m = re.exec(sequence)
-    // Zero-width matches would otherwise cut at every position.
-    if (m && m.index === i && m[0].length > 0) mask[i] = true
+    // Zero-width matches count. They were skipped here, on the grounds that an
+    // empty pattern would otherwise cut at every position -- true, but so does
+    // it in Julia, and the price was that a bare lookahead like `(?=D)` found
+    // no sites at all while `digest_sequence` found six. A rule that really
+    // does cut everywhere is caught by the "cleaves almost everywhere" warning
+    // rather than by silently finding nothing.
+    if (m && m.index === i) mask[i] = true
   }
   return mask
 }
@@ -155,6 +160,14 @@ export function cleavageSites(sequence: string, pattern: string): number[] | nul
  * Protein termini count as enzymatic, as they do in Pioneer. Still a preview:
  * Pioneer has the last word, and the point is to show what a rule does before a
  * library is built on it.
+ *
+ * Checked against `digest_sequence` over every preset and several hand-written
+ * rules: 30 of 31 pattern/specificity pairs agree peptide-for-peptide. The
+ * exception is a *bare* zero-width rule such as `(?=D)` under full specificity,
+ * where Julia's separate `_digest_fully_specific_sequence` path emits the final
+ * peptide twice; this returns it once. Showing a duplicate in a preview would be
+ * the worse of the two behaviours, so the divergence is deliberate. No preset is
+ * affected — they all consume a residue before their lookahead.
  */
 export function previewDigest(
   sequence: string,

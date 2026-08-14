@@ -1041,10 +1041,19 @@ export default function App() {
 
   /** Choosing a preset writes its pattern; choosing Custom keeps whatever is
    *  there, so switching to Custom to make a small edit does not wipe the rule
-   *  you were editing. */
+   *  you were editing.
+   *
+   *  That second half used to be the whole handler, and did nothing visible:
+   *  the picker reads its value back from the pattern, so keeping a preset's
+   *  pattern meant the picker snapped straight back to that preset and the text
+   *  field never appeared. The choice is now recorded rather than inferred. */
   const onEnzyme = (id: string) => {
     const preset = enzymeById(id)
-    if (preset) setBuild((p) => ({ ...p, cleavageRegex: preset.pattern }))
+    setBuild((p) =>
+      preset
+        ? { ...p, cleavageRegex: preset.pattern, customEnzyme: false }
+        : { ...p, customEnzyme: true },
+    )
     setRunError('')
   }
 
@@ -1332,7 +1341,7 @@ export default function App() {
             ? 'convertraw'
             : e.key === '2'
               ? 'buildspeclib'
-              : e.key === '4'
+              : e.key === '3'
                 ? 'downloadspeclib'
                 : 'searchdia',
         )

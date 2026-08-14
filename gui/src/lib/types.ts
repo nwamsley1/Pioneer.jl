@@ -191,6 +191,13 @@ export interface BuildParams {
    *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
    *  preset id so a config round-trips even when it matches nothing. */
   cleavageRegex: string
+  /** Whether the rule is being written by hand.
+   *
+   *  Cannot be derived from `cleavageRegex` alone: a hand-written rule that
+   *  happens to equal a preset's would otherwise snap the picker back to that
+   *  preset mid-edit, and choosing Custom while the field still holds a
+   *  preset's pattern would appear to do nothing at all. */
+  customEnzyme: boolean
   /** How many termini must obey that rule. Orthogonal to it: the enzyme says
    *  where cleavage may occur, this says how much of the peptide has to
    *  respect it. */
@@ -229,6 +236,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   maxCharge: '3',
   missedCleav: '1',
   cleavageRegex: DEFAULT_CLEAVAGE,
+  customEnzyme: false,
   digestSpecificity: 'full',
   maxVarMods: '1',
   addDecoys: true,
