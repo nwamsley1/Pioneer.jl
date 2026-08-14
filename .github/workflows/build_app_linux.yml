@@ -97,7 +97,7 @@ jobs:
           version: '1.12.6'  # must satisfy Project.toml's julia = "1.12.5" compat
 
       - name: Cache Julia packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.julia/registries
