@@ -326,6 +326,13 @@ function process_file!(
         zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :integration_stop_scan] =
         zeros(UInt32, nrow(passing_psms))
+    # Integration diagnostics. peak_area is the area of the baseline-subtracted
+    # trace; these record the same window before subtraction, so the share of the
+    # smoothed signal that survived is recoverable downstream.
+    passing_psms[!, :apex_smoothed] = zeros(Float32, nrow(passing_psms))
+    passing_psms[!, :apex_baseline_subtracted] = zeros(Float32, nrow(passing_psms))
+    passing_psms[!, :peak_area_unsubtracted] = zeros(Float32, nrow(passing_psms))
+    passing_psms[!, :integration_width_scans] = zeros(UInt32, nrow(passing_psms))
 
     # If there are no PSMs to integrate (e.g. sparse / empty file), skip
     # chromatogram extraction entirely. Downstream steps treat an empty
@@ -440,6 +447,10 @@ function process_file!(
             passing_psms[!, :points_integrated],
             passing_psms[!, :integration_start_scan],
             passing_psms[!, :integration_stop_scan],
+            passing_psms[!, :apex_smoothed],
+            passing_psms[!, :apex_baseline_subtracted],
+            passing_psms[!, :peak_area_unsubtracted],
+            passing_psms[!, :integration_width_scans],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
         )

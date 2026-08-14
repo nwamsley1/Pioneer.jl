@@ -396,7 +396,9 @@ For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
-scan indices.
+scan indices, along with the integration diagnostics (`apex_smoothed`,
+`apex_baseline_subtracted`, `peak_area_unsubtracted`, `integration_width_scans`)
+that record what the window looked like before baseline subtraction.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -407,7 +409,11 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
-                             integration_stop_scan::AbstractVector{UInt32};
+                             integration_stop_scan::AbstractVector{UInt32},
+                             apex_smoothed::AbstractVector{Float32},
+                             apex_baseline_subtracted::AbstractVector{Float32},
+                             peak_area_unsubtracted::AbstractVector{Float32},
+                             integration_width_scans::AbstractVector{UInt32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -465,7 +471,9 @@ function integrate_precursors(chromatograms::DataFrame,
                 )
 
                 peak_area[i], new_best_scan[i], points_integrated[i],
-                    integration_start_scan[i], integration_stop_scan[i] =
+                    integration_start_scan[i], integration_stop_scan[i],
+                    apex_smoothed[i], apex_baseline_subtracted[i],
+                    peak_area_unsubtracted[i], integration_width_scans[i] =
                     integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -508,7 +516,11 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
-                             integration_stop_scan::AbstractVector{UInt32};
+                             integration_stop_scan::AbstractVector{UInt32},
+                             apex_smoothed::AbstractVector{Float32},
+                             apex_baseline_subtracted::AbstractVector{Float32},
+                             peak_area_unsubtracted::AbstractVector{Float32},
+                             integration_width_scans::AbstractVector{UInt32};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -521,7 +533,11 @@ function integrate_precursors(chromatograms::DataFrame,
         new_best_scan,
         points_integrated,
         integration_start_scan,
-        integration_stop_scan;
+        integration_stop_scan,
+        apex_smoothed,
+        apex_baseline_subtracted,
+        peak_area_unsubtracted,
+        integration_width_scans;
         λ = λ,
     )
 end
@@ -2070,9 +2086,19 @@ function process_final_psms!(
     parsed_fname::String,
     ms_file_idx::Int64
 )
-    # Remove invalid peak areas
+    # Remove invalid peak areas. These rows are identifications that survived
+    # FDR control but produced no integrable peak, so dropping them here also
+    # discards the identification; log how many so the size of that population
+    # is visible.
+    n_before = nrow(psms)
     filter!(row -> !isnan(row.peak_area::Float32), psms)
+    n_nan = n_before - nrow(psms)
     filter!(row -> row.peak_area::Float32 > 0.0, psms)
+    n_zero = n_before - n_nan - nrow(psms)
+    if n_nan + n_zero > 0
+        @debug_l1 "[$parsed_fname] dropped $(n_nan + n_zero) / $n_before PSMs with " *
+                  "unusable peak_area ($n_nan NaN, $n_zero <= 0)"
+    end
     # Add columns
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)

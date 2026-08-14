@@ -538,6 +538,11 @@ function writePrecursorCSV_chunked(
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
+        # Integration diagnostics: the same window before baseline subtraction.
+        :peak_area_unsubtracted,
+        :apex_smoothed,
+        :apex_baseline_subtracted,
+        :integration_width_scans,
         :precursor_fraction_transmitted,
         :isotopes_captured,
         :rt,

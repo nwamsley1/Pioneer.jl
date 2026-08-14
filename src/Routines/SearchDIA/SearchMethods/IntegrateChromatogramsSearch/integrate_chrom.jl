@@ -473,6 +473,35 @@ function subtractBaseline!(
 end
 
 
+"""
+    window_trapezoid_area(u, rt, start, stop, n_pad, avg_cycle_time) -> Float32
+
+Trapezoidal area of `u` over the unpadded scan range `start:stop`, in the units
+the `fillState!` + `integrateTrapezoidal` path produces (i.e. already multiplied
+through by `rt_width` and the apex normalization). Expanding that path's
+normalize-then-rescale arithmetic lets the *unsubtracted* smoothed trace be
+integrated over the same window without disturbing the quantified result, so the
+two areas are directly comparable.
+"""
+@inline function window_trapezoid_area(u::Vector{Float32},
+                                       rt::AbstractVector{<:AbstractFloat},
+                                       start::Int,
+                                       stop::Int,
+                                       n_pad::Int,
+                                       avg_cycle_time::Float32)
+    stop < start && return 0.0f0
+    rt_width = Float32(rt[stop] - rt[start])
+    start == stop && return rt_width * avg_cycle_time * u[start + n_pad]
+
+    # Half-triangle at each end plus the interior trapezoids, matching
+    # integrateTrapezoidal term for term.
+    acc = rt_width * avg_cycle_time * (u[start + n_pad] + u[stop + n_pad])
+    @inbounds @fastmath for i in start:(stop - 1)
+        acc += Float32(rt[i + 1] - rt[i]) * (u[i + n_pad] + u[i + 1 + n_pad])
+    end
+    return 0.5f0 * acc
+end
+
 function integrateTrapezoidal(state::Chromatogram, avg_cycle_time::Float32)
     if state.max_index == 1
         # Special case: 1 point only, treat like a triangle on each side
@@ -521,6 +550,13 @@ on concrete `Vector{Float32}` fields of `ws`, eliminating GC-root / view-lifetim
 - Number of points integrated
 - Integration start scan index
 - Integration stop scan index
+- Smoothed apex intensity *before* baseline subtraction
+- Apex intensity *after* baseline subtraction (the integration normalization factor)
+- Area over the same window *before* baseline subtraction
+- Width of the integration window in scans
+
+The last four are diagnostics; they do not affect the quantified area. Callers
+that only need the quantified result can destructure the leading elements.
 
 # Internal Chromatogram Processing Functions
 
@@ -599,6 +635,22 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     debug_enabled = debug_plot_path !== nothing || debug_plot_data !== nothing
     wh_smoothed_debug = debug_enabled ? copy(@view z[(n_pad + 1):(n_pad + m)]) : Float32[]
 
+    # Integration diagnostics: capture the smoothed apex and the area over the
+    # selected window *before* subtractBaseline! overwrites z. Comparing these
+    # against their post-subtraction counterparts separates a window holding a
+    # real peak from one sitting on a slope, where the endpoint-anchored
+    # baseline is nearly the signal itself and subtraction leaves almost nothing.
+    apex_smoothed = z[apex_scan + n_pad]
+    area_unsubtracted = window_trapezoid_area(
+        z,
+        rt_col,
+        first(scan_range),
+        last(scan_range),
+        n_pad,
+        avg_cycle_time,
+    )
+    width_points = UInt32(length(scan_range))
+
     subtractBaseline!(
         x,
         z,
@@ -649,6 +701,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             Int(0),
             UInt32(0),
             UInt32(0),
+            apex_smoothed,
+            _apex_val,
+            area_unsubtracted,
+            width_points,
         )
     end
 
@@ -732,6 +788,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         num_points_integrated,
         UInt32(scan_idx_col[first(scan_range)]),
         UInt32(scan_idx_col[last(scan_range)]),
+        apex_smoothed,
+        norm_factor,
+        area_unsubtracted,
+        width_points,
     )
 end
 
