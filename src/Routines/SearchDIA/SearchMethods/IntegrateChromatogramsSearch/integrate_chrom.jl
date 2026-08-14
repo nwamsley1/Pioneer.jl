@@ -16,6 +16,22 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
+Withhold a peak area when the unsubtracted area over the integration window is
+at least this many times the baseline-subtracted one — i.e. when less than a
+fifth of the smoothed signal survived baseline subtraction.
+
+Calibrated against replicate disagreement (a run whose area falls far below the
+median of its own replicates is wrong, since abundance is constant within a
+replicate group). F1/F2 against that ground truth peak at 5-7x on Astral and
+3.5-4.5x on Exploris, so 5x is at Astral's optimum and within 2% of Exploris's.
+At 5x it withholds 0.07-0.10% of observations and removes 48-70% of the errors
+that exceed 10x. On single-cell data (250-500 pg) it almost never fires —
+there is little background under those peaks to subtract — but every
+observation it does flag there is genuinely bad, so it costs nothing.
+"""
+const QUANT_MIN_AREA_SURVIVING_RATIO = 5.0f0
+
+"""
     mutable struct Chromatogram{T<:Real, J<:Integer}
         t::Vector{T}
         data::Vector{T}
@@ -741,6 +757,17 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         z_has_nan = any(isnan, @view z[1:n_active])
         z_all_zero = all(==(0f0), @view z[1:n_active])
         @debug_l2 "[NaN area] norm_factor=$norm_factor rt_norm=$rt_norm raw_trap=$raw_trap max_idx=$(state.max_index) m=$m n_pad=$n_pad z_all_zero=$z_all_zero z_has_nan=$z_has_nan scan_range=$scan_range"
+    end
+
+    # Identified but not quantifiable. When the window sits on a chromatographic
+    # shoulder rather than over a peak, the endpoint-anchored baseline is nearly
+    # the signal itself, so almost nothing survives subtraction and the area is
+    # meaningless -- typically 10-100x below what the same precursor gives in a
+    # replicate. Report no quantity rather than a wrong one; downstream reads a
+    # zero area as "not quantified in this run" (see getS in maxLFQ.jl).
+    if trapezoid_area > 0f0 && area_unsubtracted > 0f0 &&
+       area_unsubtracted >= QUANT_MIN_AREA_SURVIVING_RATIO * trapezoid_area
+        trapezoid_area = 0.0f0
     end
 
     # Count points within the full width at 20% maximum of the smoothed signal

@@ -396,9 +396,9 @@ For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
-scan indices, along with the integration diagnostics (`apex_smoothed`,
-`apex_baseline_subtracted`, `peak_area_unsubtracted`, `integration_width_scans`)
-that record what the window looked like before baseline subtraction.
+scan indices, along with `peak_area_unsubtracted` -- the area over the same
+window before baseline subtraction, which is what the not-quantifiable rule in
+`integrate_chrom` tests against.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -410,10 +410,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             apex_smoothed::AbstractVector{Float32},
-                             apex_baseline_subtracted::AbstractVector{Float32},
-                             peak_area_unsubtracted::AbstractVector{Float32},
-                             integration_width_scans::AbstractVector{UInt32};
+                             peak_area_unsubtracted::AbstractVector{Float32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -472,8 +469,7 @@ function integrate_precursors(chromatograms::DataFrame,
 
                 peak_area[i], new_best_scan[i], points_integrated[i],
                     integration_start_scan[i], integration_stop_scan[i],
-                    apex_smoothed[i], apex_baseline_subtracted[i],
-                    peak_area_unsubtracted[i], integration_width_scans[i] =
+                    _, _, peak_area_unsubtracted[i], _ =
                     integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -517,10 +513,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             apex_smoothed::AbstractVector{Float32},
-                             apex_baseline_subtracted::AbstractVector{Float32},
-                             peak_area_unsubtracted::AbstractVector{Float32},
-                             integration_width_scans::AbstractVector{UInt32};
+                             peak_area_unsubtracted::AbstractVector{Float32};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -534,10 +527,7 @@ function integrate_precursors(chromatograms::DataFrame,
         points_integrated,
         integration_start_scan,
         integration_stop_scan,
-        apex_smoothed,
-        apex_baseline_subtracted,
-        peak_area_unsubtracted,
-        integration_width_scans;
+        peak_area_unsubtracted;
         λ = λ,
     )
 end
@@ -2086,18 +2076,22 @@ function process_final_psms!(
     parsed_fname::String,
     ms_file_idx::Int64
 )
-    # Remove invalid peak areas. These rows are identifications that survived
-    # FDR control but produced no integrable peak, so dropping them here also
-    # discards the identification; log how many so the size of that population
-    # is visible.
+    # Drop only genuinely unusable areas. A zero area is an identification that
+    # passed FDR but could not be quantified -- either no peak survived baseline
+    # subtraction or integration rejected the window (see
+    # QUANT_MIN_AREA_SURVIVING_RATIO). Those rows are kept so the identification
+    # reaches protein inference and the output tables; downstream treats a zero
+    # area as "not quantified in this run" rather than as an abundance of zero.
     n_before = nrow(psms)
     filter!(row -> !isnan(row.peak_area::Float32), psms)
     n_nan = n_before - nrow(psms)
-    filter!(row -> row.peak_area::Float32 > 0.0, psms)
-    n_zero = n_before - n_nan - nrow(psms)
-    if n_nan + n_zero > 0
-        @debug_l1 "[$parsed_fname] dropped $(n_nan + n_zero) / $n_before PSMs with " *
-                  "unusable peak_area ($n_nan NaN, $n_zero <= 0)"
+    n_unquantified = count(row -> row.peak_area::Float32 <= 0.0f0, eachrow(psms))
+    if n_nan > 0
+        @debug_l1 "[$parsed_fname] dropped $n_nan / $n_before PSMs with NaN peak_area"
+    end
+    if n_unquantified > 0
+        @debug_l1 "[$parsed_fname] $n_unquantified / $(nrow(psms)) PSMs identified " *
+                  "but not quantified (peak_area == 0)"
     end
     # Add columns
     precursors = getPrecursors(getSpecLib(search_context))

@@ -49,6 +49,44 @@ end
     @test points_integrated < width
 end
 
+@testset "not-quantifiable rule withholds a window that is mostly baseline" begin
+    # A monotone slope is entirely baseline, so essentially nothing survives
+    # subtraction and the area must be withheld rather than reported.
+    rt = Float32.(1:9)
+    scan_idx = UInt32.(1:9)
+    fraction = fill(1.0f0, length(rt))
+    ws = Pioneer.WHWorkspace(length(rt))
+    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
+
+    run_trace(trace) = begin
+        Pioneer.reset!(state)
+        Pioneer.integrate_chrom(
+            rt, scan_idx, trace, fraction, 5, ws, state, 1.0f0, 0.0f0;
+            min_fraction_transmitted = 0.25f0,
+            forced_boundary_start_scan = UInt32(2),
+            forced_boundary_stop_scan = UInt32(8),
+        )
+    end
+
+    slope = Float32[900, 800, 700, 600, 500, 400, 300, 200, 100]
+    area, _, _, _, _, _, _, unsub, _ = run_trace(slope)
+    @test unsub > 0.0f0
+    @test area == 0.0f0                     # withheld, not merely small
+
+    # A clean peak keeps most of its area and must be unaffected.
+    peak = Float32[100, 120, 300, 900, 1600, 900, 300, 120, 100]
+    peak_area, _, _, _, _, _, _, peak_unsub, _ = run_trace(peak)
+    @test peak_area > 0.0f0
+    @test peak_unsub / peak_area < Pioneer.QUANT_MIN_AREA_SURVIVING_RATIO
+
+    # The cut is on the ratio, so a window losing some but not most of its area
+    # still quantifies. This peak sits on a raised pedestal.
+    pedestal = Float32[700, 720, 900, 1500, 2200, 1500, 900, 720, 700]
+    ped_area, _, _, _, _, _, _, ped_unsub, _ = run_trace(pedestal)
+    @test ped_unsub / ped_area < Pioneer.QUANT_MIN_AREA_SURVIVING_RATIO
+    @test ped_area > 0.0f0
+end
+
 @testset "baseline subtraction on a slope leaves almost nothing" begin
     # The failure mode seen in the survey: the window sits on a monotone shoulder
     # rather than over a peak, so the endpoint-anchored baseline is nearly the

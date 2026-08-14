@@ -538,11 +538,10 @@ function writePrecursorCSV_chunked(
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
-        # Integration diagnostics: the same window before baseline subtraction.
+        # Area over the same window before baseline subtraction. Retained so the
+        # QUANT_MIN_AREA_SURVIVING_RATIO cut can be re-evaluated against an
+        # existing search rather than requiring a re-run.
         :peak_area_unsubtracted,
-        :apex_smoothed,
-        :apex_baseline_subtracted,
-        :integration_width_scans,
         :precursor_fraction_transmitted,
         :isotopes_captured,
         :rt,

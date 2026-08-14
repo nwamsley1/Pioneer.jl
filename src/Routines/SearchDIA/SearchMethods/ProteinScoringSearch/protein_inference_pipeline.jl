@@ -83,6 +83,12 @@ end
 
 Estimate per-file peak-area calibration for protein coverage surprise features.
 Uses unique inferred peptides with valid positive integrated peak areas.
+
+Non-positive areas are excluded rather than floored. They mark peptides that
+were identified but not quantified, not peptides observed at low abundance, so
+admitting them would bias `log_threshold` (a detection-limit proxy) downward and
+steepen `rank_drop_profile`. These are shared calibration constants, so a single
+`log(0)` would corrupt the feature for every protein in the run.
 """
 function estimate_peak_area_detection_model(df::DataFrame)
     max_rank = 12
@@ -112,6 +118,9 @@ function estimate_peak_area_detection_model(df::DataFrame)
         end
 
         peak_area_val = Float64(df.peak_area[i])
+        if !(peak_area_val > 0.0) || !isfinite(peak_area_val)
+            continue
+        end
 
         target_val = Bool(df.target[i])
         entrap_val = UInt8(df.entrap_id[i])
