@@ -5,7 +5,13 @@
  *  contained a slash and compared against a hard-coded list of three folders.
  *  These consult the real filesystem through the `inspect_path` command.
  */
-import type { BuildParams, ConvertParams, DownloadParams, PathInfo } from './types'
+import type {
+  BuildParams,
+  ConvertParams,
+  DownloadParams,
+  ModEntry,
+  PathInfo,
+} from './types'
 
 export interface NumSpec {
   label: string
@@ -36,7 +42,20 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     int: false,
     info: 'The starting guess for normalized collision energy. Pioneer refines it during the parameter tuning search, so it does not have to be exact — it only has to be close enough for tuning to converge.',
   },
-  minPeptides: { label: 'Min peptides', min: 1, max: null, step: 1, int: true },
+  minPeptides: {
+    label: 'Min peptides',
+    min: 1,
+    max: null,
+    step: 1,
+    int: true,
+    info: 'How many distinct peptides a protein group needs before it is reported. Counted per run, not across the experiment: a protein seen by two peptides in one file and one in another is kept for the first and dropped from the second at a threshold of 2.',
+  },
+  fragMzMin: { label: 'Fragment m/z min', min: 0, max: null, step: 10, int: false },
+  fragMzMax: { label: 'Fragment m/z max', min: 0, max: null, step: 10, int: false },
+  precMzMin: { label: 'Precursor m/z min', min: 0, max: null, step: 10, int: false },
+  precMzMax: { label: 'Precursor m/z max', min: 0, max: null, step: 10, int: false },
+  fragCeilingSlope: { label: 'Slope', min: 0, max: null, step: 0.01, int: false },
+  fragCeilingIntercept: { label: 'Intercept', min: -1000, max: null, step: 1, int: false },
   minLen: { label: 'Min length', min: 7, max: 40, step: 1, int: true },
   maxLen: { label: 'Max length', min: 7, max: 40, step: 1, int: true },
   minCharge: { label: 'Min charge', min: 1, max: 4, step: 1, int: true },
@@ -308,6 +327,95 @@ export function validateBuildRun(
       if (!Number.isFinite(Number(m.mass))) {
         return { key: `${kind}Mods`, msg: `"${m.mass}" is not a valid ${kind} modification mass.` }
       }
+    }
+  }
+  const conflict = modSiteConflict(p.fixedMods, p.variableMods)
+  if (conflict) return { key: 'variableMods', msg: conflict }
+  // Only when they are actually used: with auto-detection on these come from
+  // the reference file and whatever is in the fields is ignored.
+  if (!p.autoDetectFragBounds) {
+    for (const key of ['fragMzMin', 'fragMzMax', 'precMzMin', 'precMzMax'] as const) {
+      const err = numError(key, p[key])
+      if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
+    }
+    if (Number(p.fragMzMin) >= Number(p.fragMzMax)) {
+      return { key: 'fragMzMin', msg: 'Fragment m/z min must be below max.' }
+    }
+    if (Number(p.precMzMin) >= Number(p.precMzMax)) {
+      return { key: 'precMzMin', msg: 'Precursor m/z min must be below max.' }
+    }
+    if (p.fragBoundsRule === 'custom') {
+      for (const key of ['fragCeilingSlope', 'fragCeilingIntercept'] as const) {
+        const err = numError(key, p[key])
+        if (err) return { key, msg: `Fragment ceiling ${NUM_SPECS[key].label}: ${err}.` }
+      }
+    }
+  }
+  return null
+}
+
+/** The residues a modification pattern applies to.
+ *
+ *  Port of `mod_pattern_residues` (check_params.jl): test the pattern against
+ *  each amino acid on its own, so a plain `"C"` and a class `"[ST]"` both
+ *  resolve, while a multi-residue rule matches nothing and is left to another
+ *  check. An unparseable pattern yields no residues, likewise.
+ */
+export function modPatternResidues(pattern: string): Set<string> {
+  const residues = new Set<string>()
+  let re: RegExp
+  try {
+    re = new RegExp(pattern)
+  } catch {
+    return residues
+  }
+  for (const aa of 'ACDEFGHIKLMNPQRSTVWY') {
+    if (re.test(aa)) residues.add(aa)
+  }
+  return residues
+}
+
+/** Whether a variable modification shares a residue with a fixed one.
+ *
+ *  Port of `check_mod_site_conflicts`. A fixed modification occupies *every*
+ *  matching residue, so a variable one on the same residue describes a peptide
+ *  that cannot exist — `fillVarModStrings!` stacks them and the library carries
+ *  impossible masses without erroring. Pioneer rejects the config outright, so
+ *  catching it here turns a failed build into an inline message.
+ *
+ *  Any shared residue counts, not just the same modification twice: a fixed
+ *  carbamidomethyl on C conflicts with a variable oxidation on C.
+ */
+/** Residues claimed by a fixed modification and a variable one at once.
+ *
+ *  The same rule `modSiteConflict` reports, as a set, so a table can mark the
+ *  rows involved while they are being edited rather than waiting for Run. Both
+ *  sides are implicated: removing either resolves it.
+ */
+export function conflictingResidues(fixed: ModEntry[], variable: ModEntry[]): Set<string> {
+  const shared = new Set<string>()
+  const fixedResidues = fixed.flatMap((f) => [...modPatternResidues(f.pattern)])
+  for (const v of variable) {
+    const vres = modPatternResidues(v.pattern)
+    for (const r of fixedResidues) if (vres.has(r)) shared.add(r)
+  }
+  return shared
+}
+
+export function modSiteConflict(fixed: ModEntry[], variable: ModEntry[]): string | null {
+  for (const v of variable) {
+    const vres = modPatternResidues(v.pattern)
+    if (!vres.size) continue
+    for (const f of fixed) {
+      const shared = [...modPatternResidues(f.pattern)].filter((r) => vres.has(r))
+      if (!shared.length) continue
+      const vname = v.label || v.name || 'that modification'
+      const fname = f.label || f.name || 'a fixed modification'
+      return (
+        `${vname} is variable on ${shared.sort().join(', ')}, but ${fname} is already ` +
+        `fixed there. A fixed modification takes every matching residue, so the ` +
+        `variable one would land on top of it. Remove one, or narrow a site.`
+      )
     }
   }
   return null

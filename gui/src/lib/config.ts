@@ -6,7 +6,7 @@
  *  again — and any keys the form does not model must survive that trip. They
  *  are held aside in `extraConfig` and merged back on the way out.
  */
-import { DEFAULT_CLEAVAGE } from './enzymes'
+import { DEFAULT_CLEAVAGE, enzymeByPattern } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
 import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
 
@@ -30,6 +30,7 @@ export const SEARCH_OWNED_PATHS = [
   'output.write_decoys',
   'output.delete_temp',
   'global.q_value_threshold',
+  'global.match_between_runs',
   'search.n_isotopes',
   'acquisition.nce',
   'optimization.chromatogram_integration.trace_mode',
@@ -50,7 +51,13 @@ export function buildSearchJsonBase(s: SearchParams): Json {
       write_decoys: s.writeDecoys,
       delete_temp: s.deleteTemp,
     },
-    global: { q_value_threshold: num(s.qValue, 0.01) },
+    global: {
+      q_value_threshold: num(s.qValue, 0.01),
+      // Emitted explicitly even though Pioneer's fallback matches the default.
+      // The config is the record of what a run was told to do, and MBR changes
+      // the result enough that "it was left unset" is not a useful answer later.
+      match_between_runs: s.matchBetweenRuns,
+    },
     search: { n_isotopes: num(s.nIsotopes, 2) },
     acquisition: { nce: num(s.nce, 26) },
     // Always combined. The GUI no longer offers a choice, and the value it
@@ -138,6 +145,12 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
 export const BUILD_OWNED_PATHS = [
   'library_path',
   'library_params.prediction_model',
+  'library_params.auto_detect_frag_bounds',
+  'library_params.frag_mz_min',
+  'library_params.frag_mz_max',
+  'library_params.prec_mz_min',
+  'library_params.prec_mz_max',
+  'library_params.frag_bounds',
   'calibration_raw_file',
   'fasta_paths',
   'fasta_names',
@@ -184,14 +197,47 @@ function modsFromJson(mm: unknown): ModEntry[] | null {
   })
 }
 
+/** The optional `library_params.frag_bounds` key, or nothing at all.
+ *
+ *  Only a sloped ceiling produces a key. 'constant' is the absence of one,
+ *  which is exactly how Pioneer reads a config written before the key existed.
+ */
+function fragBoundsJson(s: BuildParams): Json {
+  if (s.fragBoundsRule === 'constant') return {}
+  if (s.fragBoundsRule === 'custom') {
+    return {
+      frag_bounds: {
+        // The floor is flat on every Thermo method measured, so only the
+        // ceiling is offered; low is emitted explicitly so the config records
+        // the whole rule rather than half of it.
+        low: { slope: 0, intercept: 0 },
+        high: {
+          slope: num(s.fragCeilingSlope, 2),
+          intercept: num(s.fragCeilingIntercept, 10),
+        },
+      },
+    }
+  }
+  return { frag_bounds: s.fragBoundsRule }
+}
+
 export function buildLibJsonBase(s: BuildParams): Json {
   // Keep the JSON preview meaningful before any FASTA has been added.
   const files = s.fastaFiles.length ? s.fastaFiles : [makeFastaRow('/path/to/fasta/file.fasta')]
   return {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
-    // Only this one key is emitted under library_params; the rest of that block
-    // comes from a loaded config's extras, so deepMerge must not clobber it.
-    library_params: { prediction_model: s.predictionModel },
+    library_params: {
+      prediction_model: s.predictionModel,
+      auto_detect_frag_bounds: s.autoDetectFragBounds,
+      frag_mz_min: num(s.fragMzMin, 150),
+      frag_mz_max: num(s.fragMzMax, 2020),
+      prec_mz_min: num(s.precMzMin, 390),
+      prec_mz_max: num(s.precMzMax, 1010),
+      // Omitted for 'constant': absence is what Pioneer reads as flat bounds,
+      // and emitting the name would put a key into every config that did not
+      // have one for no change in behaviour.
+      ...fragBoundsJson(s),
+    },
     // Pioneer's own template carries this key with an empty default, so emit it
     // either way rather than omitting it when unset.
     calibration_raw_file: s.calibrationFile.trim(),
@@ -246,6 +292,30 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
     set.calibrationFile = str(obj.calibration_raw_file)
   }
 
+  const lp = isObj(obj.library_params) ? obj.library_params : {}
+  if ('auto_detect_frag_bounds' in lp) {
+    set.autoDetectFragBounds = !!lp.auto_detect_frag_bounds
+  }
+  if (lp.frag_mz_min != null) set.fragMzMin = String(lp.frag_mz_min)
+  if (lp.frag_mz_max != null) set.fragMzMax = String(lp.frag_mz_max)
+  if (lp.prec_mz_min != null) set.precMzMin = String(lp.prec_mz_min)
+  if (lp.prec_mz_max != null) set.precMzMax = String(lp.prec_mz_max)
+  // Absent means flat bounds, which is what 'constant' represents here.
+  const fb = lp.frag_bounds
+  if (fb === undefined || fb === null) {
+    set.fragBoundsRule = 'constant'
+  } else if (typeof fb === 'string') {
+    const name = fb.trim().toLowerCase()
+    set.fragBoundsRule =
+      name === 'thermo_auto' || name === 'thermo_auto_documented' ? name : 'constant'
+  } else if (isObj(fb) && isObj(fb.high)) {
+    // Explicit coefficients round-trip as Custom, even when they happen to
+    // match a preset: the config said coefficients, so the form should too.
+    set.fragBoundsRule = 'custom'
+    if (fb.high.slope != null) set.fragCeilingSlope = String(fb.high.slope)
+    if (fb.high.intercept != null) set.fragCeilingIntercept = String(fb.high.intercept)
+  }
+
   const paths = Array.isArray(obj.fasta_paths) ? obj.fasta_paths : []
   const names = Array.isArray(obj.fasta_names) ? obj.fasta_names : []
   const ra = Array.isArray(obj.fasta_header_regex_accessions) ? obj.fasta_header_regex_accessions : []
@@ -282,7 +352,11 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
   if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
-    set.cleavageRegex = d.cleavage_regex.trim()
+    const rule = d.cleavage_regex.trim()
+    set.cleavageRegex = rule
+    // A rule matching no preset was written by hand, so the picker should open
+    // on Custom with the rule visible rather than on a preset it is not.
+    set.customEnzyme = enzymeByPattern(rule) === null
   }
   const specificity = str(d.specificity)
     ?.trim()
@@ -332,6 +406,12 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 
   if (isObj(obj.global) && obj.global.q_value_threshold != null) {
     set.qValue = String(obj.global.q_value_threshold)
+  }
+  // Guarded on presence, like every other optional key here: a config written
+  // before this field existed leaves the toggle as it stands rather than being
+  // read as off, which would be the wrong reading — Pioneer's fallback is on.
+  if (isObj(obj.global) && 'match_between_runs' in obj.global) {
+    set.matchBetweenRuns = !!obj.global.match_between_runs
   }
   if (isObj(obj.search) && obj.search.n_isotopes != null) {
     set.nIsotopes = String(obj.search.n_isotopes)

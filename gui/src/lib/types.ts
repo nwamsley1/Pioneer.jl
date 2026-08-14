@@ -48,6 +48,10 @@ export interface SearchParams {
   nce: string
   minPeptides: string
   runToRunNorm: boolean
+  /** global.match_between_runs. Pioneer falls back to true when the key is
+   *  absent, and the GUI did not emit it before this field existed — so on is
+   *  what every GUI run has done to date, and is the default here. */
+  matchBetweenRuns: boolean
   /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
   debugLogging: boolean
 }
@@ -64,6 +68,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   nce: '26',
   minPeptides: '1',
   runToRunNorm: false,
+  matchBetweenRuns: true,
   debugLogging: false,
 }
 
@@ -164,6 +169,19 @@ export interface BuildParams {
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
+  /** library_params.auto_detect_frag_bounds. Off means the four m/z bounds
+   *  below are used as given, rather than read from the reference file. */
+  autoDetectFragBounds: boolean
+  fragMzMin: string
+  fragMzMax: string
+  precMzMin: string
+  precMzMax: string
+  /** library_params.frag_bounds. 'constant' emits no key at all, which is the
+   *  behaviour of every config written before the key existed. */
+  fragBoundsRule: 'constant' | 'thermo_auto_documented' | 'thermo_auto' | 'custom'
+  /** Only read when fragBoundsRule is 'custom'. */
+  fragCeilingSlope: string
+  fragCeilingIntercept: string
   minLen: string
   maxLen: string
   minCharge: string
@@ -173,6 +191,13 @@ export interface BuildParams {
    *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
    *  preset id so a config round-trips even when it matches nothing. */
   cleavageRegex: string
+  /** Whether the rule is being written by hand.
+   *
+   *  Cannot be derived from `cleavageRegex` alone: a hand-written rule that
+   *  happens to equal a preset's would otherwise snap the picker back to that
+   *  preset mid-edit, and choosing Custom while the field still holds a
+   *  preset's pattern would appear to do nothing at all. */
+  customEnzyme: boolean
   /** How many termini must obey that rule. Orthogonal to it: the enzyme says
    *  where cleavage may occur, this says how much of the peptide has to
    *  respect it. */
@@ -193,12 +218,25 @@ export const BUILD_DEFAULTS: BuildParams = {
   libPath: '',
   predictionModel: 'altimeter',
   calibrationFile: '',
+  // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
+  // form emits what Pioneer would have defaulted to anyway.
+  autoDetectFragBounds: true,
+  fragMzMin: '150',
+  fragMzMax: '2020',
+  precMzMin: '390',
+  precMzMax: '1010',
+  fragBoundsRule: 'constant',
+  // Thermo's documented rule, shown when Custom is first chosen so the fields
+  // start somewhere real rather than at zero.
+  fragCeilingSlope: '2.0',
+  fragCeilingIntercept: '10',
   minLen: '7',
   maxLen: '40',
   minCharge: '2',
   maxCharge: '3',
   missedCleav: '1',
   cleavageRegex: DEFAULT_CLEAVAGE,
+  customEnzyme: false,
   digestSpecificity: 'full',
   maxVarMods: '1',
   addDecoys: true,

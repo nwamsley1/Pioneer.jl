@@ -26,6 +26,7 @@ using Pioneer: digest_sequence, normalize_digest_specificity
 using Pioneer: getFixedMods!, countVarModCombinations
 using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet
 using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary, get_fragment_bounds
+using Pioneer: parse_frag_bounds_spec, InvalidParametersError
 using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins
 using Pioneer: buildPionLib
 using Pioneer: digest_fasta, combine_shared_peptides

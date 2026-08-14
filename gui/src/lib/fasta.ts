@@ -114,3 +114,21 @@ export function unimodLabel(name: string): string {
   }
   return ''
 }
+
+/** One of `library_info`'s modification entries, with the accession replaced by
+ *  the modification's name.
+ *
+ *  The Rust side formats these as `"<name> on <pattern>"`, where `<name>` is
+ *  whatever the library's config recorded — in practice `"Unimod:4"`. That is
+ *  what the config stores but not what anyone calls the modification, so
+ *  `"Unimod:4 on C"` reads as `"Carbamidomethyl on C"`.
+ *
+ *  An accession we do not recognise is left exactly as it came: opaque beats
+ *  wrong, and the number is still something the reader can look up.
+ */
+export function unimodDisplay(entry: string): string {
+  const sep = entry.indexOf(' on ')
+  const label = unimodLabel(sep === -1 ? entry : entry.slice(0, sep))
+  if (!label) return entry
+  return sep === -1 ? label : label + entry.slice(sep)
+}

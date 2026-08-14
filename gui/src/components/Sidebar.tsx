@@ -346,6 +346,10 @@ interface Props {
   onToggleCollapsed: () => void
   onViewJob: (id: string) => void
   onJobAction: (id: string, kind: 'cancel' | 'delete') => void
+  /** Move the queued job `dragId` into the position currently held by `dropId`. */
+  onReorderQueued: (dragId: string, dropId: string) => void
+  /** Give a run a different name. Collisions are resolved by the caller. */
+  onRenameJob: (id: string, title: string) => void
 }
 
 export function Sidebar({
@@ -360,9 +364,23 @@ export function Sidebar({
   onToggleCollapsed,
   onViewJob,
   onJobAction,
+  onReorderQueued,
+  onRenameJob,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
+  /** The queued job being dragged, and the one it is currently over.
+   *
+   *  Pointer events rather than HTML5 drag-and-drop: Tauri handles the OS drop
+   *  natively (`dragDropEnabled`, which the file-drop-onto-fields support
+   *  depends on), so `dragstart`/`drop` never reach the webview. See
+   *  `lib/dragdrop.ts`. */
+  const [dragJobId, setDragJobId] = useState<string | null>(null)
+  const [dropJobId, setDropJobId] = useState<string | null>(null)
+  /** The run whose name is being edited, and the text so far. Held apart from
+   *  `jobs` so abandoning an edit leaves the name alone. */
+  const [editingJobId, setEditingJobId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
 
   /** Runs that were pending at some point since the sidebar was last open.
    *
@@ -459,14 +477,27 @@ export function Sidebar({
     color: 'var(--pio-nav-fg-faint)',
   }
 
+  /** Whether the queue is worth reordering: more than one job waiting, and room
+   *  to show a handle. Collapsed, the strip is status dots and there is nothing
+   *  to grab. */
+  const reorderable = !collapsed && jobs.filter((j) => j.status === 'queued').length > 1
+
   const renderRow = (j: Job) => {
             const running = j.status === 'running'
             const pending = running || j.status === 'queued'
+            // Only a queued job can move. A running one has already started and
+            // a finished one has no position left to change, so neither is a
+            // drag source nor a drop target.
+            const movable = reorderable && j.status === 'queued'
+            const dragging = dragJobId === j.id
+            const dropBefore = dropJobId === j.id && dragJobId !== null && dragJobId !== j.id
             return (
               <div
                 key={j.id}
                 title={rowTitle(j)}
                 className="pio-job pio-row-hover"
+                data-job-id={j.id}
+                data-job-movable={movable ? '1' : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -476,8 +507,78 @@ export function Sidebar({
                   border: 'none',
                   borderRadius: 9,
                   background: j.id === viewJobId ? 'var(--pio-accent-wash-strong)' : 'none',
+                  // The row being carried fades; the one under the pointer grows
+                  // a line along the edge the drop will land on.
+                  opacity: dragging ? 0.4 : 1,
+                  boxShadow: dropBefore ? 'inset 0 2px 0 0 var(--pio-accent-soft)' : undefined,
                 }}
               >
+                {reorderable && (
+                  <span
+                    onPointerDown={
+                      movable
+                        ? (e) => {
+                            // preventDefault stops the press from starting a
+                            // text selection that would follow the pointer.
+                            e.preventDefault()
+                            e.currentTarget.setPointerCapture(e.pointerId)
+                            setDragJobId(j.id)
+                            setDropJobId(j.id)
+                          }
+                        : undefined
+                    }
+                    onPointerMove={
+                      movable
+                        ? (e) => {
+                            if (dragJobId !== j.id) return
+                            // Capture routes every move here regardless of what
+                            // is under the pointer, so the row being hovered has
+                            // to be hit-tested rather than read from the event.
+                            const under = document
+                              .elementFromPoint(e.clientX, e.clientY)
+                              ?.closest('[data-job-id]') as HTMLElement | null
+                            const id = under?.dataset.jobId
+                            if (id && under?.dataset.jobMovable === '1') setDropJobId(id)
+                          }
+                        : undefined
+                    }
+                    onPointerUp={
+                      movable
+                        ? () => {
+                            if (dragJobId && dropJobId && dragJobId !== dropJobId) {
+                              onReorderQueued(dragJobId, dropJobId)
+                            }
+                            setDragJobId(null)
+                            setDropJobId(null)
+                          }
+                        : undefined
+                    }
+                    onPointerCancel={() => {
+                      setDragJobId(null)
+                      setDropJobId(null)
+                    }}
+                    title={movable ? 'Drag to reorder' : undefined}
+                    aria-label={movable ? `Reorder ${j.title}` : undefined}
+                    style={{
+                      flex: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      // Held at low opacity rather than revealed on hover: a
+                      // handle nobody can see is a feature nobody finds.
+                      opacity: movable ? 0.45 : 0,
+                      cursor: movable ? (dragging ? 'grabbing' : 'grab') : 'default',
+                      color: 'var(--pio-nav-fg-dim)',
+                    }}
+                  >
+                    <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true">
+                      {[2, 7, 12].map((cy) =>
+                        [2, 8].map((cx) => (
+                          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.2" fill="currentColor" />
+                        )),
+                      )}
+                    </svg>
+                  </span>
+                )}
                 <div
                   onClick={() => onViewJob(j.id)}
                   style={{
@@ -508,19 +609,57 @@ export function Sidebar({
                         lineHeight: 1.25,
                       }}
                     >
-                      <span
-                        style={{
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          color: 'var(--pio-nav-fg)',
-                          maxWidth: 120,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {j.title}
-                      </span>
+                      {editingJobId === j.id ? (
+                        <input
+                          autoFocus
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          // The row opens the run on click; typing in the field
+                          // must not also do that.
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter') {
+                              onRenameJob(j.id, editingTitle)
+                              setEditingJobId(null)
+                            } else if (e.key === 'Escape') {
+                              setEditingJobId(null)
+                            }
+                          }}
+                          // Commit on blur as well as Enter: clicking away is a
+                          // reasonable way to mean "done", and losing the edit
+                          // there would be the more surprising outcome. Escape
+                          // clears the id first, so it does not commit.
+                          onBlur={() => {
+                            if (editingJobId === j.id) onRenameJob(j.id, editingTitle)
+                            setEditingJobId(null)
+                          }}
+                          style={{
+                            width: 120,
+                            padding: '1px 5px',
+                            border: '1px solid var(--pio-nav-hair-strong)',
+                            borderRadius: 5,
+                            background: 'rgba(0,0,0,0.25)',
+                            color: 'var(--pio-nav-fg)',
+                            font: "600 12.5px 'IBM Plex Sans'",
+                            outline: 'none',
+                          }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            color: 'var(--pio-nav-fg)',
+                            maxWidth: 120,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {j.title}
+                        </span>
+                      )}
                       {/* The descriptor is unconditional. It used to be the
                           else-branch of `running`, so the bar replaced it and a
                           running row was the one place the command and status
@@ -560,23 +699,61 @@ export function Sidebar({
                         textAlign: 'right',
                       }}
                     >
-                      {/* One number per run, for its whole life. It is handed
-                          out when the run is queued, so a queued job already
-                          shows the number it will keep in the history -- queue
-                          three after run 41 and they are 42, 43, 44, including
-                          if one is cancelled before it starts. A separate
-                          queue-position count would have meant the same run
-                          wearing two different numbers. */}
+                      {/* Handed out when the run is queued, so a queued job
+                          already shows the number it will carry into the
+                          history -- queue three after run 41 and they are 42,
+                          43, 44, including if one is cancelled before it
+                          starts.
+
+                          While a run is still waiting the number is its place
+                          in line: reordering the queue redistributes the
+                          numbers so they keep ascending down it, rather than
+                          leaving the column reading 44, 42, 43. Once a run
+                          starts, its number is fixed for life -- that is what
+                          the history is sorted and searched by. */}
                       {j.runNo || ''}
                     </span>
                   )}
                 </div>
+                {/* Queued, running or finished alike: the name is a label, and
+                    the run worth renaming is often the one that already
+                    finished. Hidden until the row is hovered, like the other
+                    row actions. */}
+                {!collapsed && editingJobId !== j.id && (
+                  <button
+                    type="button"
+                    className="pio-jobact pio-iconbtn"
+                    onClick={() => {
+                      setEditingJobId(j.id)
+                      setEditingTitle(j.title)
+                    }}
+                    title="Rename"
+                    style={{
+                      flex: 'none',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: 3,
+                      color: 'var(--pio-nav-fg-dim)',
+                      display: 'flex',
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                )}
                 {pending && (
                   <button
                     type="button"
                     className="pio-jobact pio-iconbtn"
                     onClick={() => onJobAction(j.id, 'cancel')}
-                    title="Cancel run"
+                    title={running ? 'Cancel run' : 'Remove from queue'}
                     style={{
                       flex: 'none',
                       border: 'none',
@@ -764,8 +941,8 @@ export function Sidebar({
         <NavItem
           id="downloadspeclib"
           title="DownloadSpecLib"
-          subtitle="fetch a prebuilt library"
-          chip={`${modKey}4`}
+          subtitle="Fetch a prebuilt library"
+          chip={`${modKey}3`}
           active={selected === 'downloadspeclib'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -786,7 +963,7 @@ export function Sidebar({
           id="searchdia"
           title="SearchDIA"
           subtitle="Find & Quantify Proteins"
-          chip={`${modKey}3`}
+          chip={`${modKey}4`}
           active={selected === 'searchdia'}
           collapsed={collapsed}
           onClick={onSelect}

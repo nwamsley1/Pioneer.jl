@@ -10,6 +10,7 @@
  *  omitted rather than guessed at.
  */
 import type { LibraryInfo } from '../lib/backend'
+import { unimodDisplay } from '../lib/fasta'
 
 const MODEL_LABELS: Record<string, string> = {
   altimeter: 'Altimeter',
@@ -45,7 +46,12 @@ export function LibrarySummary({ info }: { info: LibraryInfo | null }) {
     info.missed_cleavages && `${info.missed_cleavages} missed cleavage${info.missed_cleavages === '1' ? '' : 's'}`,
   ].filter(Boolean)
 
-  const mods = [...info.fixed_mods.map((m) => `${m} (fixed)`), ...info.variable_mods]
+  // Named rather than left as accessions: "Carbamidomethyl on C" is what a
+  // reader is checking for, "Unimod:4 on C" makes them look it up.
+  const mods = [
+    ...info.fixed_mods.map((m) => `${unimodDisplay(m)} (fixed)`),
+    ...info.variable_mods.map(unimodDisplay),
+  ]
   // Unrecorded counts as Altimeter: BuildSpecLib produced nothing else before
   // the key existed, and both libraries in hand -- the ecoli test one and the
   // published human one -- have no prediction_model while recording nce 26.0.
