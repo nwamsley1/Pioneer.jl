@@ -35,6 +35,7 @@ using Test
     @test get_charge(e1) == 0
     @test get_num_enzymatic_termini(e1) == 2
     @test get_start_idx(e1) == UInt32[1]
+    @test Pioneer.get_num_variable_modifications(e1) == 0
 
     # 16-arg compatibility constructor (base_prec_id ignored)
     e2 = FastaEntry(acc, desc, gene, prot, org, protm, seq,
@@ -43,12 +44,16 @@ using Test
     @test get_base_pep_id(e2) == 2
     @test get_entrapment_pair_id(e2) == 1
     @test get_num_enzymatic_termini(e2) == 2
+    @test Pioneer.get_num_variable_modifications(e2) == 0
 
-    # Explicit enzymatic-termini metadata uses the canonical field order.
+    # Exact variable-modification and enzymatic-termini metadata use the
+    # canonical field order.
     e3 = FastaEntry(String(acc), String(desc), String(gene), String(prot),
                     String(org), String(protm), String(seq), UInt32(1),
-                    missing, missing, UInt8(0), UInt8(1), UInt32(1),
-                    UInt32(2), UInt32(0), false)
+                    missing, missing, UInt8(2), UInt8(3), UInt8(1),
+                    UInt32(1), UInt32(2), UInt32(0), false)
+    @test Pioneer.get_num_variable_modifications(e3) == 2
+    @test get_charge(e3) == 3
     @test get_num_enzymatic_termini(e3) == 1
     @test get_start_idx(e3) == UInt32[1]
 end

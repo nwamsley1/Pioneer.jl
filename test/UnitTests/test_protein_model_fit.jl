@@ -69,6 +69,7 @@ import Pioneer: DEBUG_CONSOLE_LEVEL
             :shared_peptide_coverage_logit,
             :shared_coverage_log_ratio,
             :peptide_coverage_logit,
+            :all_peptide_coverage_logit,
             :any_common_peps,
             :coverage_log_ratio,
             :precursor_consensus_prefix_shape,
@@ -80,7 +81,7 @@ import Pioneer: DEBUG_CONSOLE_LEVEL
         ]
         constraints =
             _protein_lightgbm_monotone_constraints(feature_names)
-        @test constraints == Int[0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, -1]
+        @test constraints == Int[0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, -1]
 
         classifier = build_lightgbm_classifier(
             ;

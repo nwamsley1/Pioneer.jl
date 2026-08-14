@@ -371,6 +371,9 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
                 precursors_table[!, :start_idx] =
                     [UInt32.(collect(starts)) for starts in precursors_table[!, :start_idx]]
+                precursors_table[!, :num_variable_modifications] = UInt8.(
+                    precursors_table.num_variable_modifications
+                )
 
                 # Save processed precursor table
                 @debug_l1 "  Before add_pair_indices!: $(nrow(precursors_table)) precursors"
