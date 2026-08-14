@@ -23,6 +23,7 @@ using Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
 using Serialization
+using SHA
 using DataFrames, DataStructures, Dictionaries, Distributions
 using EzXML
 using FASTX
@@ -805,7 +806,7 @@ function __init__()
     get!(ENV, "GKS_WSTYPE", "100")
 end
 
-export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML,
+export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML,
        get_pioneer_version, setup_windows_lightgbm,
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

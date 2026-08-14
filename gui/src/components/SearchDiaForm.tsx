@@ -10,6 +10,7 @@ import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
+import { isPrositModel } from '../lib/types'
 import type { SearchParams } from '../lib/types'
 import type { Note } from '../lib/validate'
 
@@ -229,6 +230,29 @@ export function SearchDiaForm({
               No library yet? Build one from a FASTA →
             </button>
             <LibrarySummary info={libInfo} />
+            {libInfo &&
+              libInfo.is_library &&
+              isPrositModel(libInfo.prediction_model) &&
+              libInfo.variable_mods.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: '10px 12px',
+                    borderRadius: 9,
+                    background: '#FFFBEB',
+                    border: '1px solid #FDE68A',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: '#92400E',
+                  }}
+                >
+                  <strong style={{ fontWeight: 600 }}>Experimental.</strong> This library
+                  is Prosit-predicted and carries variable modifications
+                  ({libInfo.variable_mods.join(', ')}). Pioneer does not report
+                  site-localization confidence, so a modified residue is placed but the
+                  placement is not scored.
+                </div>
+              )}
           </PathRow>
           <PathRow
             label="Results folder"

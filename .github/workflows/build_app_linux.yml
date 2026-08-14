@@ -248,16 +248,18 @@ jobs:
           fi
           install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
           ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
-          install -Dm644 gui/src-tauri/icons/icon.png \
-            deb/usr/share/icons/hicolor/512x512/apps/pioneer.png
+          install -Dm644 gui/src-tauri/icons/icon.svg \
+            deb/usr/share/icons/hicolor/scalable/apps/org.pioneer.console.svg
+          install -Dm644 gui/src-tauri/icons/128x128@2x.png \
+            deb/usr/share/icons/hicolor/256x256/apps/org.pioneer.console.png
           mkdir -p deb/usr/share/applications
-          cat <<'DESKTOP' > deb/usr/share/applications/pioneer.desktop
+          cat <<'DESKTOP' > deb/usr/share/applications/org.pioneer.console.desktop
           [Desktop Entry]
           Type=Application
           Name=Pioneer
           Comment=Search and quantify DIA proteomics data
           Exec=/usr/local/Pioneer/bin/pioneer-gui
-          Icon=pioneer
+          Icon=org.pioneer.console
           Terminal=false
           Categories=Science;Biology;
           DESKTOP

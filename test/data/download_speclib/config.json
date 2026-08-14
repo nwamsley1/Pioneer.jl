@@ -1,0 +1,94 @@
+{
+  "_lib_dir": "C:/Users/n.t.wamsley/Documents/PIONEER_PAPER/SPEC_LIB/PIONEER_LIBS_2026-06-26/Pioneer_Human_canon_std.poin",
+  "_lib_name": "Pioneer_Human_canon_std",
+  "calibration_raw_file": "",
+  "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
+  "comment_collision_energy": "=== Collision energy settings ===",
+  "comment_digestion": "=== Protein digestion parameters ===",
+  "comment_fasta": "=== FASTA files ===",
+  "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
+  "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
+  "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
+  "comment_output": "=== Output library path ===",
+  "comment_processing": "=== Processing settings ===",
+  "comment_seed": "=== RNG seed for decoy/entrapment shuffling. Fixed seed => fully reproducible library; different seed => different shuffled decoy/entrapment sequences. ===",
+  "fasta_digest_params": {
+    "add_decoys": true,
+    "cleavage_regex": "[KR][^_|$]",
+    "decoy_method": "shuffle",
+    "entrapment_method": "shuffle",
+    "entrapment_r": 0,
+    "max_charge": 4,
+    "max_length": 30,
+    "max_var_mods": 1,
+    "min_charge": 1,
+    "min_length": 7,
+    "missed_cleavages": 1
+  },
+  "fasta_header_regex_accessions": [
+    "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
+    "^\\w+\\|(\\w+(?:-\\d+)?)\\|"
+  ],
+  "fasta_header_regex_genes": [
+    " GN=(\\S+)",
+    " GN=(\\S+)"
+  ],
+  "fasta_header_regex_organisms": [
+    " OS=([^ ]+.*?) [^ ]+=",
+    " OS=([^ ]+.*?) [^ ]+="
+  ],
+  "fasta_header_regex_proteins": [
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=",
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="
+  ],
+  "fasta_names": [
+    "HUMAN",
+    "CONTAM"
+  ],
+  "fasta_paths": [
+    "C:/Users/n.t.wamsley/Documents/PIONEER_PAPER/SPEC_LIB/UNIPROT_2026-06-26/human_UP000005640_9606_canonical_up2026_02_dl2026-06-26.fasta.gz",
+    "C:\\Users\\n.t.wamsley\\Pioneer.jl\\src\\Routines\\..\\..\\assets\\contaminants.fasta.gz"
+  ],
+  "fixed_mods": {
+    "mass": [
+      57.021464
+    ],
+    "name": [
+      "Unimod:4"
+    ],
+    "pattern": [
+      "C"
+    ]
+  },
+  "include_contaminants": true,
+  "isotope_mod_groups": [],
+  "lib_name": "Pioneer_Human_canon_std",
+  "library_params": {
+    "auto_detect_frag_bounds": false,
+    "frag_mz_max": 2000.0,
+    "frag_mz_min": 150.0,
+    "prec_mz_max": 1034.0,
+    "prec_mz_min": 359.0
+  },
+  "library_path": "C:/Users/n.t.wamsley/Documents/PIONEER_PAPER/SPEC_LIB/PIONEER_LIBS_2026-06-26/Pioneer_Human_canon_std",
+  "match_lib_build_batch": 100000,
+  "nce_params": {
+    "nce": 26.0
+  },
+  "new_lib_name": "Pioneer_Human_canon_std",
+  "out_dir": "C:/Users/n.t.wamsley/Documents/PIONEER_PAPER/SPEC_LIB/PIONEER_LIBS_2026-06-26",
+  "out_name": "Pioneer_Human_canon_std.tsv",
+  "predict_fragments": true,
+  "seed": 1844,
+  "variable_mods": {
+    "mass": [
+      15.99491
+    ],
+    "name": [
+      "Unimod:35"
+    ],
+    "pattern": [
+      "M"
+    ]
+  }
+}

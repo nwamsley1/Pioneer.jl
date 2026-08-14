@@ -19,7 +19,7 @@ needed by the per-file LightGBM. Reads the deconv-emit columns
 - `:decoy`, `:target`, `:cv_fold`, `:charge`, `:charge2`
 - `:rt`, `:err_norm`
 - `:irt_obs`, `:irt_pred`, `:irt_error`
-- `:missed_cleavage`, `:Mox`, `:sequence_length`, `:prec_mz`
+- `:missed_cleavage`, `:num_enzymatic_termini`, `:Mox`, `:sequence_length`, `:prec_mz`
 - `:spectrum_peak_count`
 
 Mox is computed lazily once per precursor via a length-`n_library` cache;
@@ -50,6 +50,7 @@ function _add_psm_features!(psms::DataFrame,
     prec_length      = getLength(precursors_lib)
     structural_mods  = getStructuralMods(precursors_lib)
     prec_missed_clv  = getMissedCleavages(precursors_lib)
+    prec_enzymatic_termini = getNumEnzymaticTermini(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
     masses           = getMzArrays(spectra)
 
@@ -72,6 +73,7 @@ function _add_psm_features!(psms::DataFrame,
     irt_pred            = zeros(Float32, N)
     irt_error           = zeros(Float32, N)
     missed_cleavage     = zeros(UInt8,   N)
+    num_enzymatic_termini = zeros(UInt8, N)
     Mox                 = zeros(UInt8,   N)
     spectrum_peak_count = zeros(Float16, N)
     sequence_length     = zeros(UInt8,   N)
@@ -104,6 +106,7 @@ function _add_psm_features!(psms::DataFrame,
             irt_pred[i]      = irt_pred_i
             irt_error[i]     = abs(irt_obs_i - irt_pred_i)
             missed_cleavage[i]     = prec_missed_clv[prec_idx]
+            num_enzymatic_termini[i] = prec_enzymatic_termini[prec_idx]
             sequence_length[i]     = prec_length[prec_idx]
             prec_mzs[i]            = prec_mz[prec_idx]
             spectrum_peak_count[i] = length(masses[scan_idx])
@@ -128,6 +131,7 @@ function _add_psm_features!(psms::DataFrame,
     psms[!, :irt_pred]            = irt_pred
     psms[!, :irt_error]           = irt_error
     psms[!, :missed_cleavage]     = missed_cleavage
+    psms[!, :num_enzymatic_termini] = num_enzymatic_termini
     psms[!, :Mox]                 = Mox
     psms[!, :spectrum_peak_count] = spectrum_peak_count
     psms[!, :sequence_length]     = sequence_length
@@ -154,7 +158,8 @@ const PRESCORE_FEATURES = [
 
     # Core PSM / sequence metrics
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :total_ions, :missed_cleavage, :num_enzymatic_termini,
+    :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
 

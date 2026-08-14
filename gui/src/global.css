@@ -180,12 +180,18 @@ body {
   }
 }
 
+/* One full tile per cycle. The tile is square and the stripes are drawn by a
+   single 45deg gradient with stops at the quarter points, so the pattern meets
+   itself exactly at every tile edge. The previous version tiled a
+   repeating-linear-gradient into a 28px box, but a 45deg stripe of 14px repeats
+   every 14*sqrt(2) = 19.8px horizontally -- so each tile boundary cut a stripe
+   mid-run and showed as a notch. */
 @keyframes pio-barber {
   from {
     background-position: 0 0;
   }
   to {
-    background-position: 28px 0;
+    background-position: 20px 0;
   }
 }
 

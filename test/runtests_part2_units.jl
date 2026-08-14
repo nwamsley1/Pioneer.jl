@@ -37,6 +37,7 @@ include("./UnitTests/test_global_protein_inference.jl")
 include("./UnitTests/ChronologerPrepTests.jl")
 include("./UnitTests/FastaDigestTests.jl")
 include("./UnitTests/FastaEntryConstructorsTests.jl")
+include("./UnitTests/PrecursorPositionOutputTests.jl")
 include("./UnitTests/BuildPionLibTest.jl")
 include("./UnitTests/RazoQuadModel.jl")
 

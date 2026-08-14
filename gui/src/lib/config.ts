@@ -6,8 +6,9 @@
  *  again — and any keys the form does not model must survive that trip. They
  *  are held aside in `extraConfig` and merged back on the way out.
  */
+import { DEFAULT_CLEAVAGE } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
-import type { BuildParams, ConvertParams, ModEntry, SearchParams } from './types'
+import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
 
 export type Json = Record<string, unknown>
 
@@ -149,6 +150,7 @@ export const BUILD_OWNED_PATHS = [
   'fasta_digest_params.min_charge',
   'fasta_digest_params.max_charge',
   'fasta_digest_params.missed_cleavages',
+  'fasta_digest_params.specificity',
   'fasta_digest_params.max_var_mods',
   'fasta_digest_params.add_decoys',
   'variable_mods',
@@ -205,6 +207,10 @@ export function buildLibJsonBase(s: BuildParams): Json {
       min_charge: num(s.minCharge, 2),
       max_charge: num(s.maxCharge, 3),
       missed_cleavages: num(s.missedCleav, 1),
+      // Written explicitly rather than left to Pioneer's default, so the
+      // config records the rule the library was actually built with.
+      cleavage_regex: s.cleavageRegex.trim() || DEFAULT_CLEAVAGE,
+      specificity: s.digestSpecificity,
       max_var_mods: num(s.maxVarMods, 1),
       add_decoys: s.addDecoys,
     },
@@ -275,6 +281,16 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.min_charge) !== undefined) set.minCharge = str(d.min_charge)
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
+  if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
+    set.cleavageRegex = d.cleavage_regex.trim()
+  }
+  const specificity = str(d.specificity)
+    ?.trim()
+    .toLowerCase()
+    .replace('_', '-')
+  if (specificity && ['full', 'semi', 'semi-n', 'semi-c'].includes(specificity)) {
+    set.digestSpecificity = specificity as BuildParams['digestSpecificity']
+  }
   if (str(d.max_var_mods) !== undefined) set.maxVarMods = str(d.max_var_mods)
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys
 
@@ -350,7 +366,7 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
  *  Flags equal to the converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
  */
-export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
+export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
   if (s.skipExisting) args.push('--skip-existing')
@@ -359,14 +375,30 @@ export function buildConvertArgs(s: ConvertParams, threads: number): string[] {
   // multiplied and it was easy to oversubscribe the machine without noticing.
   // Pinned to 1 explicitly rather than left to the converter's own default.
   args.push('--concurrent-files', '1')
-  args.push('--threads-per-file', String(Math.max(1, threads)))
+  args.push('--threads-per-file', String(Math.max(1, parseInt(s.threadsPerFile, 10) || 1)))
   args.push('--batch-size', s.batchSize.trim())
   args.push('--scan-chunk-size', s.scanChunkSize.trim())
   return args
 }
 
+/** Argv for DownloadSpecLib.
+ *
+ *  `--dest` is required by the binary and by validateDownloadRun, so it is
+ *  always present here; there is deliberately no default destination. */
+export function buildDownloadArgs(s: DownloadParams): string[] {
+  const args: string[] = [s.selected.trim(), '--dest', s.dest.trim()]
+  if (s.force) args.push('--force')
+  return args
+}
+
 /** The command line as a user would type it, for the preview panel. */
-export function convertCommandLine(s: ConvertParams, threads: number): string {
+export function downloadCommandLine(s: DownloadParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  return ['PioneerConverter', ...buildConvertArgs(s, threads).map(quote)].join(' ')
+  return ['DownloadSpecLib', ...buildDownloadArgs(s).map(quote)].join(' ')
+}
+
+/** The command line as a user would type it, for the preview panel. */
+export function convertCommandLine(s: ConvertParams): string {
+  const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
+  return ['PioneerConverter', ...buildConvertArgs(s).map(quote)].join(' ')
 }

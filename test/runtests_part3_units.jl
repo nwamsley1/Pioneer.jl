@@ -26,6 +26,7 @@ include("./UnitTests/test_fast_df_sort.jl")
 # Quantification tests
 include("./UnitTests/test_maxLFQ.jl")
 include("./UnitTests/test_normalizeQuant.jl")
+include("./UnitTests/test_download_speclib.jl")
 
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
@@ -58,6 +59,8 @@ include("./Routines/BuildSpecLib/fragments/test_get_frag_bounds.jl")
 include("./integration/test_buildspeclib_synthetic.jl")
 include("./Routines/BuildSpecLib/test_build_determinism.jl")
 include("./UnitTests/test_buildspeclib_filter_equivalence.jl")
+include("./UnitTests/test_mod_site_conflicts.jl")
+include("./UnitTests/test_cleavage_presets.jl")
 
 # Parallel utilities
 include("./UnitTests/test_parallel_utils.jl")

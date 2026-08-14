@@ -125,3 +125,312 @@ dragged at all (the overlay title bar needs core:window:allow-start-dragging,
 which core:window:default does not grant), and drops did nothing (Tauri types
 the drop position as physical but reports logical pixels, so dividing by the
 device ratio halved every coordinate).
+
+---
+
+# Review round, 2026-08-13
+
+Raised in Slack after driving the app. Each item records what the code
+actually does today, so the work is scoped before it is started rather than
+rediscovered. Tick as they land.
+
+## 1. ConvertRAW threading — **done**
+
+**Ask:** no thread picker in the header here; recover the threads-per-file
+setter that older versions had in the options menu. Files-at-a-time stays at 1.
+
+- [x] Header thread picker hidden on ConvertRAW.
+- [x] `threadsPerFile` restored to the Advanced grid, default 3.
+- [x] Args read the form field rather than the sidebar count.
+
+The picker drove `JULIA_NUM_THREADS`, which PioneerConverter never reads — it
+is a .NET program — so on this page it was a control that changed nothing.
+`concurrentFiles` was deliberately *not* restored: the two knobs multiply, and
+one file at a time is the wanted behaviour. Definitions recovered from
+`cb014888f^`, the commit that removed them.
+
+## 2. BuildSpecLib thread count — *last, after measurement*
+
+- [ ] Investigate where threading actually helps library building, pick a
+      sensible number, then decide what (if anything) to expose.
+
+Deliberately deferred: this is a measurement task, not a UI task.
+
+## 3. Enzyme presets, plus custom regex — **done**
+
+- [x] Twelve presets, each carrying its cleavage regex.
+- [x] A custom option, with a live digest of a sample sequence beside it.
+
+The GUI previously wrote no `cleavage_regex` at all, leaving Pioneer to fall
+back on its default. It now writes the rule explicitly, so a config records what
+the library was actually digested with.
+
+**The shipped default is Trypsin/P, not Trypsin.**
+`assets/example_config/defaultBuildLibParams.json` carries `[KR][^_|$]`, whose
+excluded set is `_ | $` — proline is not among them. The preset list therefore
+opens on Trypsin/P, so a library built without touching the field is the one
+the CLI would have built. `digest_fasta`'s own signature default is
+`[KR][^P|$]`, which is *not* what ships; the two have disagreed all along.
+
+### How Pioneer reads a cleavage regex
+
+`digest_sequence` (`fasta/fasta_digest.jl`) iterates `eachmatch(regex, sequence,
+overlap = true)` and ends the peptide at `site.offset` — the **start** of the
+match. So the first element of the pattern is the P1 residue, cleaved *after*,
+and anything following it is context that the match consumes. `overlap = true`
+is what stops that consumed context from hiding the next site.
+
+Two things checked rather than assumed:
+
+- **Lookahead and consume-next both work.** `[KR](?!P)` and `[KR][^P|$]` give
+  identical digests. A pattern that can match the final residue does not
+  duplicate the C-terminal peptide, because `add_peptide!` requires
+  `site - previous_site >= min_length` and the explicit C-terminal call then
+  finds a zero-length span. N-terminal enzymes need lookahead regardless, and
+  the file already digests that way at line 155.
+- **`|` and `$` are literal** inside `[^P|$]`, excluding those characters rather
+  than meaning alternation or end-of-string. Kept in the presets below only to
+  match the shipped default's style.
+
+### Proposed presets
+
+Each pattern is checked in `test/UnitTests/test_cleavage_presets.jl` against a
+peptide list written out by hand — 29 assertions over three sequences built so
+every rule has a motif to act on, plus proline blocking, adjacent sites, missed
+cleavages, and a sequence ending in the P1 residue.
+
+| Preset | Pattern | Cleaves |
+|---|---|---|
+| Trypsin/P *(default)* | `[KR][^_|$]` | after K/R, always |
+| Trypsin | `[KR][^P_|$]` | after K/R, not before P |
+| Lys-C | `K[^P_|$]` | after K, not before P |
+| Lys-C/P | `K[^_|$]` | after K, always |
+| Lys-N | `[^K](?=K)` | before K |
+| Arg-C | `R[^P_|$]` | after R, not before P |
+| Asp-N | `[^D](?=[D])` | before D |
+| Asp-N + Glu | `[^DE](?=[DE])` | before D/E |
+| Glu-C (bicarbonate) | `E[^P_|$]` | after E, not before P |
+| Glu-C (phosphate) | `[DE][^P_|$]` | after D/E, not before P |
+| Chymotrypsin (high specificity) | `[FWY][^P_|$]` | after F/W/Y, not before P |
+| Chymotrypsin (low specificity) | `[FWYLMH][^P_|$]` | after F/W/Y/L/M/H, not before P |
+
+### Sources, and where they disagree
+
+Specificities are ExPASy PeptideCutter's, cross-checked against Comet's
+`search_enzyme_number` table. Checking them changed three things:
+
+- **Chymotrypsin, low specificity, was missing histidine.** PeptideCutter's set
+  is F, Y, W, L, M *and H*; Comet's Chymotrypsin is FWYL, omitting M and H
+  both. The fuller set is used, since a permissive entry that quietly is not
+  is worse than none.
+- **CNBr was dropped.** It cleaves after M, but converts that methionine to
+  homoserine lactone, and `grep -ri homoserine src/` finds nothing — Pioneer
+  does not model the residue change, so every peptide's C-terminal mass would
+  be wrong however right the cleavage rule was. Available as a custom rule for
+  anyone who understands that.
+- **Arg-C keeps proline blocking, against PeptideCutter.** It says P1' has
+  minimal effect; Comet blocks proline. The search-engine convention wins,
+  since a library is compared against search-engine output.
+
+Not modelled, in the direction of cleaving more rather than less: PeptideCutter
+blocks tryptic cleavage for K-W, R-M and a few combinations involving D, C and
+H; blocks chymotryptic cleavage after W when M follows, and after H when D, M
+or W follows. No search engine models these either.
+
+Each pattern is checked in `test/UnitTests/test_cleavage_presets.jl` against a
+peptide list written out by hand — 30 assertions over four sequences.
+
+### Validating a custom regex — as built
+
+A dry run rather than a verdict: the card shows the sample sequence digested by
+the current rule, updating as it is typed. A rule that fails to compile is a
+hard error; one that finds no site, or cleaves at more than half of them, is a
+warning. `previewDigest` in `lib/enzymes.ts` reproduces `digest_sequence` —
+peptide ends at the match start, matching resumes one past it rather than past
+the whole match, which is what Julia's `overlap = true` does — and agrees with
+the Julia digest on all sixteen cases checked.
+
+### Worth knowing
+
+The published `Pioneer_Human_canon_std.poin` was built with `[KR][^_|$]` — the
+excluded set is `_ | $`, **not** P — so that library is Trypsin/P, not Trypsin.
+Whichever preset it is labelled with should match that.
+
+## 4. Carbamidomethyl (C) must be a required fixed mod — **done**
+
+- [x] Always present as a fixed mod, on C, for every supported Koina model.
+- [x] Not offered as a variable modification at all.
+- [x] Its row carries no remove control.
+
+The rule lives in `lib/koinaMods.ts` (`REQUIRED_FIXED_UNIMOD`,
+`requiresFixedAlkylation`, `enforceRequiredMods`) rather than in the form, so a
+future model that does not want it opts out in one place. The model set is
+listed explicitly, so adding a model is a decision rather than an inheritance.
+
+`enforceRequiredMods` runs wherever the lists change from outside the editor —
+a model switch, a loaded config — and normalises six cases: absent, present,
+wrongly variable, duplicated, fixed on the wrong site, and variable on a PTM
+model.
+
+The pin is on the **site**, not the modification: `[CK]` is a valid fixed
+pattern, K-carbamidomethyl is freely available as fixed or variable on the PTM
+models, and only C is reserved. A fixed row covering K alone gains C rather
+than being replaced, so a chosen modification is never silently dropped.
+
+## 5. Queue items need the history items' descriptor — **done**
+
+- [x] Descriptor shown on running rows too.
+
+Both lists share one `renderRow`; the subtext was the else-branch of
+`running`, so the progress bar replaced it. A running row was therefore the
+one place the command and status were not written down, while being the row
+most worth identifying. The bar now sits beneath the descriptor instead.
+
+## 6. File count in the subtext
+
+- [ ] Show the number of MS files under queue and history rows.
+
+`PathInfo` already carries `entry_count`, but a finished run's count is not
+stored — `StoredRun` would need the number recorded at enqueue time, since the
+folder may have changed by the time the row is drawn.
+
+## 7. Row descriptor format
+
+- [ ] `SearchDIA · N files · Completed/Failed/…`
+
+Depends on 6. One format shared by queue and history, which also settles 5.
+
+## 8. No fixed NCE for Altimeter libraries — **done** *(library panel)*
+
+- [x] The library summary shows `splines` instead of a number for Altimeter.
+
+Altimeter predicts spline coefficients across collision energy rather than at
+one setting, so the number a config records is not the energy the library is
+good for. Printing `26.0` invites matching it to an instrument method that has
+nothing to do with it.
+
+An unrecorded `prediction_model` counts as Altimeter here. It has to: both
+libraries in hand — the ecoli test one and the published human one — record
+`nce: 26.0` with no model, so requiring the key would have left exactly the
+libraries this is for still showing a number. BuildSpecLib produced nothing but
+Altimeter before the key existed. The Model row still says "not recorded in
+this library", which is a question about provenance rather than about what the
+number means.
+
+**Still open for the download catalog.** `describe_config` in
+`Routines/DownloadSpecLib/catalog.jl` emits `NCE` from `nce_params` with no way
+to know the model — `config.json` does not carry it, and `libraries.json` is
+not uploaded yet. Same fix, once the manifest exists.
+
+## 9. Delay before hover descriptions appear — **done**
+
+- [x] Tooltip drawn in-app, opening after 100 ms.
+
+Every hover description in the app was the native `title` attribute, whose
+timing belongs to the operating system — about a second on macOS, with no way
+to tune it. `InfoDot` now draws its own tooltip so the delay is ours, set to
+100 ms: near-immediate when you aim at the dot, while still not firing on a
+pointer that merely passes over. `aria-label` stays, so the text is still
+reachable without a pointer.
+
+Positioned `fixed` from the dot's rect, so a card or the sidebar's scroll box
+cannot clip it, and it closes on scroll rather than drifting from its anchor.
+The other 22 `title` attributes are untouched — they label controls rather than
+explaining fields.
+
+`OPEN_DELAY_MS` in `InfoDot.tsx` is the single knob.
+
+## 10. User-defined run name — **done**
+
+- [x] Optional name, generated adjective-noun as the fallback.
+
+Landed in `2b7df871d`. A name already in use gains the next free suffix
+(`analysis` → `analysis-2`), checked against persisted history, with the
+resolved name previewed under the field.
+
+## Noted while reviewing, not raised
+
+- [ ] The thread picker shows on the DownloadSpecLib page, where it does
+      nothing: the transfer is network-bound and the binary ignores it.
+
+---
+
+## Modification site conflicts — **done** *(raised while doing 4)*
+
+A modification set as both fixed and variable on the same residue produced no
+error. `fillVarModStrings!` copies the fixed mods and pushes the variable ones
+on top without checking positions, so a cysteine carried carbamidomethyl twice
+— +114.04 rather than +57.02 — and the whole combinatorial expansion was
+emitted with impossible masses. Measured on one peptide with two cysteines:
+four variants, three of them doubly modified. The general case is worse than
+the same modification twice: with carbamidomethyl fixed on C, *oxidation*
+variable on C is equally impossible, and the PTM models make that reachable.
+
+- [x] **Pioneer**: `check_mod_site_conflicts` rejects it at the parameter
+      boundary, naming both modifications, the shared residue, the consequence
+      and the remedy. 22 tests in `test/UnitTests/test_mod_site_conflicts.jl`,
+      including that `check_params_bsp` actually calls it.
+- [x] **GUI**: a residue held by a fixed modification is not offered as a
+      variable site, a modification with no free site left drops out of the
+      add menu, and widening a fixed mod onto an occupied residue removes the
+      variable rows it displaces with a note saying so.
+
+Hard error rather than a warning that drops the overlap: a library built from
+a config nobody read is exactly what this protects against.
+\n
+---
+
+## Modification table validated against UNIMOD — 2026-08-13
+
+The masses in `gui/src/lib/koinaMods.ts` are not decorative: `modsToJson`
+writes them into `fixed_mods.mass`, and `chronologer_prep.jl` reads
+`params["fixed_mods"]["mass"][i]` rather than looking the modification up, so a
+wrong number here goes straight into a library.
+
+Checked by parsing UNIMOD's own `unimod.obo` (1561 terms) and comparing
+programmatically, rather than reading values off a page.
+
+- [x] **All 29 monoisotopic masses agree with UNIMOD** to better than 5e-7 —
+      including the pairs that would be easy to transpose, TMTpro 304.207146
+      against iTRAQ8plex 304.205360. Oxidation 15.994915 and Carbamidomethyl
+      57.021464 are both exact, so Altimeter and Prosit-2020 libraries were
+      never affected.
+- [x] **Phospho on P removed.** UNIMOD lists no proline site for UNIMOD:21, and
+      phosphoproline is not a modification that exists. It was reachable: on
+      the PTM models the site could be set to P.
+- [x] **Gly on C removed.** UNIMOD:1263 is K/S/T. The entry was also isobaric
+      with the carbamidomethyl pinned to every cysteine — 57.021464 for both.
+
+Everything else is a strict subset of UNIMOD's residues, which is the expected
+shape: the model's support is narrower than the chemistry, and the rule is that
+a modification must satisfy both.
+
+`Glutarylation` keeps the correct spelling against UNIMOD:1848's own
+`Gluratylation`; only the accession reaches a config.
+
+**Not guarded automatically.** This was a one-off check. The frontend has no
+test runner, so nothing stops the table drifting from UNIMOD again — a Julia
+test that parses the `.ts` table and compares against a checked-in UNIMOD
+extract would close that, at the cost of coupling the Julia suite to GUI source.
+
+---
+
+## Prosit + variable modifications is flagged as experimental — **done**
+
+Pioneer does not report site-localization confidence, so a modified residue in a
+Prosit-predicted library is placed but the placement is not scored. The
+combination is warned about in both places it arises:
+
+- [x] **BuildSpecLib**, above the variable-modification table, as soon as a
+      Prosit model and at least one variable modification are both chosen.
+- [x] **SearchDIA**, under the library summary, when the selected library's
+      `config.json` records a Prosit model and any variable modifications.
+
+Altimeter is unaffected, and a library whose config predates the
+`prediction_model` field stays quiet — BuildSpecLib only did Altimeter then, so
+absent means Altimeter rather than unknown.
+
+Worth noting `check_params.jl:190` claims `prediction_model` is "no longer a
+schema field". That comment is stale: `chronologer_prep.jl:79` reads
+`library_params.prediction_model`, and Pioneer carries Koina endpoints for all
+three Prosit models. The field is live.

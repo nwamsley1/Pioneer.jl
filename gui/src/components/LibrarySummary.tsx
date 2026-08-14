@@ -39,12 +39,20 @@ export function LibrarySummary({ info }: { info: LibraryInfo | null }) {
   }
 
   const digest = [
+    info.specificity && `${info.specificity} specificity`,
     info.length_range && `${info.length_range} residues`,
     info.charge_range && `charge ${info.charge_range}`,
     info.missed_cleavages && `${info.missed_cleavages} missed cleavage${info.missed_cleavages === '1' ? '' : 's'}`,
   ].filter(Boolean)
 
   const mods = [...info.fixed_mods.map((m) => `${m} (fixed)`), ...info.variable_mods]
+  // Unrecorded counts as Altimeter: BuildSpecLib produced nothing else before
+  // the key existed, and both libraries in hand -- the ecoli test one and the
+  // published human one -- have no prediction_model while recording nce 26.0.
+  // Requiring the key would leave precisely the libraries this row is for still
+  // showing a number. The Model row above stays honest about not knowing, which
+  // is a question about provenance rather than about what the number means.
+  const isAltimeter = info.prediction_model === 'altimeter' || info.prediction_model === ''
 
   return (
     <div
@@ -74,7 +82,18 @@ export function LibrarySummary({ info }: { info: LibraryInfo | null }) {
         </Row>
       )}
       {mods.length > 0 && <Row label="Mods">{mods.join(', ')}</Row>}
-      {info.nce && <Row label="NCE">{info.nce}</Row>}
+      {/* Altimeter predicts spline coefficients across collision energy rather
+          than at one setting, so the number a config happens to record is not
+          the energy the library is good for. Saying "splines" states what the
+          library actually is; printing 26.0 invites matching it to an
+          instrument method that has nothing to do with it.
+
+          Only when the model is recorded as Altimeter: an unrecorded model is
+          left as the number the config gives, since the row above declines to
+          guess at the model and this one should not either. */}
+      {(isAltimeter || info.nce) && (
+        <Row label="NCE">{isAltimeter ? 'splines' : info.nce}</Row>
+      )}
       <Row label="Decoys">{info.has_decoys ? 'included' : 'none'}</Row>
     </div>
   )

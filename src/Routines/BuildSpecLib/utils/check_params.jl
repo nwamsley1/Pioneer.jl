@@ -22,6 +22,80 @@ struct InvalidParametersError <: Exception
     params::Dict{String, Any}
 end
 
+"""
+The residues a modification pattern applies to.
+
+Patterns are regexes (`"C"`, `"[KR]"`), so membership is decided by matching
+each amino acid rather than by reading the string -- `"[KR]"` covers two
+residues and `"C"` one, and nothing has to parse bracket syntax. A
+context-dependent pattern that cannot match a bare residue simply reports no
+residues, which makes the conflict check below conservative: it never invents a
+clash it cannot demonstrate.
+"""
+function mod_pattern_residues(pattern::AbstractString)
+    residues = Set{Char}()
+    regex = try
+        Regex(pattern)
+    catch
+        return residues          # unparseable patterns are another check's problem
+    end
+    for aa in "ACDEFGHIKLMNPQRSTVWY"
+        occursin(regex, string(aa)) && push!(residues, aa)
+    end
+    return residues
+end
+
+"""
+    check_mod_site_conflicts(params)
+
+Reject a variable modification that shares a residue with a fixed one.
+
+A fixed modification occupies *every* matching residue, so any variable
+modification on the same residue describes a peptide that cannot exist. Pioneer
+does not notice on its own: `fillVarModStrings!` copies the fixed mods and
+pushes the variable ones on top without checking positions, so a cysteine ends
+up carrying carbamidomethyl twice (+114.04 rather than +57.02) and the whole
+combinatorial expansion is emitted with wrong masses. Nothing downstream
+errors -- the library is simply wrong, and quietly finds less.
+
+Hence a hard error rather than a warning that drops the overlap: a library
+built from a config nobody read is exactly the case this protects.
+"""
+function check_mod_site_conflicts(params::Dict{String, Any})
+    fixed = get(params, "fixed_mods", nothing)
+    variable = get(params, "variable_mods", nothing)
+    (fixed isa Dict && variable isa Dict) || return nothing
+
+    fixed_patterns = get(fixed, "pattern", nothing)
+    fixed_names = get(fixed, "name", nothing)
+    var_patterns = get(variable, "pattern", nothing)
+    var_names = get(variable, "name", nothing)
+    all(x -> x isa Vector, (fixed_patterns, fixed_names, var_patterns, var_names)) || return nothing
+
+    for (vi, vpattern) in enumerate(var_patterns)
+        vpattern isa AbstractString || continue
+        vres = mod_pattern_residues(vpattern)
+        isempty(vres) && continue
+        for (fi, fpattern) in enumerate(fixed_patterns)
+            fpattern isa AbstractString || continue
+            shared = intersect(vres, mod_pattern_residues(fpattern))
+            isempty(shared) && continue
+            vname = vi <= length(var_names) ? string(var_names[vi]) : "?"
+            fname = fi <= length(fixed_names) ? string(fixed_names[fi]) : "?"
+            throw(InvalidParametersError(
+                "Modification site conflict: variable mod $(vname) on \"$(vpattern)\" and " *
+                "fixed mod $(fname) on \"$(fpattern)\" both apply to " *
+                join(sort(collect(shared)), ", ") * ". " *
+                "A fixed modification already occupies every matching residue, so the " *
+                "variable one would modify it a second time and the library would carry " *
+                "impossible masses. Remove the variable modification, or narrow one of the " *
+                "patterns so they do not share a residue.",
+                params))
+        end
+    end
+    return nothing
+end
+
 function check_params_bsp(json_string::String)
     # Parse user parameters
     user_params = JSON.parse(json_string, dicttype=Dict{String,Any})
@@ -72,6 +146,10 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "max_var_mods", Integer)
     check_param(fasta_digest_params, "add_decoys", Bool)
     check_param(fasta_digest_params, "entrapment_r", Real)
+
+    check_param(fasta_digest_params, "specificity", String)
+    specificity = normalize_digest_specificity(fasta_digest_params["specificity"])
+    fasta_digest_params["specificity"] = specificity
     
     # Check decoy_method with default value
     if !haskey(fasta_digest_params, "decoy_method")
@@ -124,6 +202,8 @@ function check_params_bsp(json_string::String)
         check_param(mods, "mass", Vector)
         check_param(mods, "name", Vector)
     end
+
+    check_mod_site_conflicts(params)
 
     # Check isotope_mod_groups
     isotope_mod_groups = params["isotope_mod_groups"]

@@ -1,6 +1,38 @@
+import { DEFAULT_CLEAVAGE } from './enzymes'
 import { modEntry } from './koinaMods'
 
-export type CommandId = 'searchdia' | 'buildspeclib' | 'convertraw'
+export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
+
+/** One library offered by the Hugging Face repository, as reported by
+ *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
+ *  contract between the two halves of the feature. */
+export interface RemoteLibrary {
+  name: string
+  title: string
+  model: string
+  description: string
+  recommended_for: string
+  total_bytes: number
+  size_human: string
+  n_files: number
+  details: Record<string, string>
+}
+
+/** Everything the DownloadSpecLib page owns. */
+export interface DownloadParams {
+  /** Directory the library is written into. Required; there is no default. */
+  dest: string
+  /** Selected library name, '' when nothing is picked yet. */
+  selected: string
+  /** Replace an existing directory at the destination. */
+  force: boolean
+}
+
+export const DOWNLOAD_DEFAULTS: DownloadParams = {
+  dest: '',
+  selected: '',
+  force: false,
+}
 
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
  *  strings, so a half-typed number ("0.0") survives a re-render intact. */
@@ -108,6 +140,18 @@ export const PREDICTION_MODELS: PredictionModel[] = [
   },
 ]
 
+/** True for the Prosit families.
+ *
+ *  Searching a Prosit-predicted library that carries variable modifications is
+ *  experimental: Pioneer does not score site-localization confidence, so a
+ *  modified residue is placed but the placement is not evidenced. Altimeter
+ *  libraries are unaffected -- the caveat is about the combination, which is
+ *  why it is asked of the library rather than of the search.
+ */
+export function isPrositModel(id: string): boolean {
+  return id.startsWith('prosit')
+}
+
 export function predictionModelById(id: string): PredictionModel {
   return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
 }
@@ -125,6 +169,14 @@ export interface BuildParams {
   minCharge: string
   maxCharge: string
   missedCleav: string
+  /** The digestion rule, as the regex Pioneer takes. Presets in `enzymes.ts`
+   *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
+   *  preset id so a config round-trips even when it matches nothing. */
+  cleavageRegex: string
+  /** How many termini must obey that rule. Orthogonal to it: the enzyme says
+   *  where cleavage may occur, this says how much of the peptide has to
+   *  respect it. */
+  digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -146,6 +198,8 @@ export const BUILD_DEFAULTS: BuildParams = {
   minCharge: '2',
   maxCharge: '3',
   missedCleav: '1',
+  cleavageRegex: DEFAULT_CLEAVAGE,
+  digestSpecificity: 'full',
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,
@@ -166,6 +220,14 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. */
   outputDir: string
   skipExisting: boolean
+  /** Scan-reader threads within the single file being converted.
+   *
+   *  PioneerConverter parallelises on two levels and the knobs multiply, so
+   *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
+   *  only one exposed. It is deliberately not the sidebar thread count: that
+   *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
+   *  reads it. */
+  threadsPerFile: string
   batchSize: string
   scanChunkSize: string
 }
@@ -175,6 +237,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   outputDir: '',
   skipExisting: false,
+  threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
 }
@@ -217,6 +280,7 @@ export interface LogLine {
 export type JobSnapshot =
   | { cmd: 'searchdia'; search: SearchParams }
   | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'downloadspeclib'; download: DownloadParams }
   | { cmd: 'convertraw'; convert: ConvertParams }
 
 export interface Job {

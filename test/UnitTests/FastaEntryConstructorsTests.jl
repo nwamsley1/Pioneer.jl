@@ -33,6 +33,8 @@ using Test
     @test get_entrapment_pair_id(e1) == 0
     @test get_base_pep_id(e1) == 0
     @test get_charge(e1) == 0
+    @test get_num_enzymatic_termini(e1) == 2
+    @test get_start_idx(e1) == UInt32[1]
 
     # 16-arg compatibility constructor (base_prec_id ignored)
     e2 = FastaEntry(acc, desc, gene, prot, org, protm, seq,
@@ -40,5 +42,40 @@ using Test
                     UInt32(1), UInt32(2), UInt32(999), 1, false)
     @test get_base_pep_id(e2) == 2
     @test get_entrapment_pair_id(e2) == 1
+    @test get_num_enzymatic_termini(e2) == 2
+
+    # Explicit enzymatic-termini metadata uses the canonical field order.
+    e3 = FastaEntry(String(acc), String(desc), String(gene), String(prot),
+                    String(org), String(protm), String(seq), UInt32(1),
+                    missing, missing, UInt8(0), UInt8(1), UInt32(1),
+                    UInt32(2), UInt32(0), false)
+    @test get_num_enzymatic_termini(e3) == 1
+    @test get_start_idx(e3) == UInt32[1]
 end
 
+@testset "spectral-library precursor metadata" begin
+    mktempdir() do temp_dir
+        legacy_path = joinpath(temp_dir, "legacy.arrow")
+        Arrow.write(legacy_path, (
+            sequence = ["PEPTIDEK"],
+            accession_numbers = ["P1"],
+            start_idx = UInt32[17],
+        ))
+        legacy = Pioneer.SetPrecursors(Arrow.Table(legacy_path))
+        @test Pioneer.getNumEnzymaticTermini(legacy) == UInt8[2]
+        @test Pioneer.getStartIdx(legacy)[1] == UInt32(17)
+        @test Pioneer._format_start_idx(Pioneer.getStartIdx(legacy)[1]) == "17"
+
+        current_path = joinpath(temp_dir, "current.arrow")
+        Arrow.write(current_path, (
+            sequence = ["PEPTIDEK"],
+            accession_numbers = ["P1"],
+            start_idx = [UInt32[17, 42]],
+            num_enzymatic_termini = UInt8[1],
+        ))
+        current = Pioneer.SetPrecursors(Arrow.Table(current_path))
+        @test collect(Pioneer.getNumEnzymaticTermini(current)) == UInt8[1]
+        @test collect(Pioneer.getStartIdx(current)[1]) == UInt32[17, 42]
+        @test Pioneer._format_start_idx(Pioneer.getStartIdx(current)[1]) == "17;42"
+    end
+end

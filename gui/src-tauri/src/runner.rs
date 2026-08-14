@@ -137,6 +137,8 @@ fn params_path(job_id: &str, command: pioneer::Command) -> PathBuf {
     let name = match command {
         pioneer::Command::SearchDia => "search.json",
         pioneer::Command::BuildSpecLib => "buildspeclib.json",
+        // Argv-driven, so it never writes one; named for completeness.
+        pioneer::Command::DownloadSpecLib => "download.json",
         pioneer::Command::ConvertRaw => "convert.json",
     };
     dir.join(name)
