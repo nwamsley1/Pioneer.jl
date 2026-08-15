@@ -105,7 +105,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo dpkg -i installer/*.deb
+          # apt-get, not dpkg -i. dpkg installs one file and refuses to resolve
+          # anything it depends on, so the GUI's libwebkit2gtk-4.1-0 -- correctly
+          # declared by the .deb, and present in the archive -- came back as
+          # "not installed" and the whole Linux validation stopped before the
+          # smoke test ran. Same failure the Dockerfile hit, fixed there in
+          # 47384dda1; this is the path that was left behind.
+          #
+          # apt needs a current index to resolve against, and the runner image
+          # ships without one.
+          sudo apt-get update
+          sudo apt-get install -y ./installer/*.deb
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
