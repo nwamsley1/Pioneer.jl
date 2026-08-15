@@ -1,9 +1,7 @@
 name: Regression Tests (LSF)
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  # LSF regressions are manual-only. Automated releases use the SLURM workflow.
   workflow_dispatch:
     inputs:
       regression_set:
