@@ -29,8 +29,8 @@ https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
 - **GUI:** The latest release (v0.8.0 and later) ships with a fully functioning graphical user interface.
 - **Fast:** Pioneer searches data much faster than it can be acquired and several faster than state-of-the-art search tools.
-- **High-Performance:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets
-- **Scalability:** Memory consumption and speed remain constant as the number of raw files in an analysis grows. Pioneer scales to very large experiments with hundreds to thousands of raw files
+- **High-Performance:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters. 
+- **Scalability:** Memory consumption and speed remain constant as the number of raw files in an analysis grows. Pioneer scales to very large experiments with hundreds to thousands of raw files.
 
 
 ## Installation
