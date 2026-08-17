@@ -228,9 +228,15 @@ jobs:
           PIONEER_INSTALL_KEY: ${{ steps.norm.outputs.install_key }}
         run: |
           npm ci
+          PACKAGE_SUFFIX='${{ steps.norm.outputs.package_suffix }}'
+          APP_ID="org.pioneer.console.v$PACKAGE_SUFFIX"
+          jq -n --arg identifier "$APP_ID" '{identifier: $identifier}' \
+            > tauri.installer.conf.json
           # --no-bundle: we want the bare binary, not Tauri's own .deb. It is
-          # installed into Pioneer's package below.
-          npm run tauri:build -- --no-bundle
+          # installed into Pioneer's package below. The versioned GTK app ID
+          # must match the desktop filename and icon name so Linux shells can
+          # associate the running window with its Pioneer icon.
+          npm run tauri:build -- --no-bundle --config tauri.installer.conf.json
 
       - name: Package Linux .deb
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
@@ -261,19 +267,23 @@ jobs:
           ln -s "$INSTALL_ROOT/pioneer" "deb/usr/bin/pioneer-$INSTALL_KEY"
           ln -s "$INSTALL_ROOT/bin/pioneer-gui" "deb/usr/bin/pioneer-gui-$INSTALL_KEY"
 
-          ICON_ID="org.pioneer.console.$PACKAGE_SUFFIX"
+          APP_ID="org.pioneer.console.v$PACKAGE_SUFFIX"
+          if [[ "$(jq -r '.identifier' gui/tauri.installer.conf.json)" != "$APP_ID" ]]; then
+            echo "GUI application ID does not match the packaged desktop entry: $APP_ID"
+            exit 1
+          fi
           install -Dm644 gui/src-tauri/icons/icon.svg \
-            "deb/usr/share/icons/hicolor/scalable/apps/$ICON_ID.svg"
+            "deb/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
           install -Dm644 gui/src-tauri/icons/128x128@2x.png \
-            "deb/usr/share/icons/hicolor/256x256/apps/$ICON_ID.png"
+            "deb/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
           mkdir -p deb/usr/share/applications
-          cat <<DESKTOP > "deb/usr/share/applications/$ICON_ID.desktop"
+          cat <<DESKTOP > "deb/usr/share/applications/$APP_ID.desktop"
           [Desktop Entry]
           Type=Application
           Name=Pioneer $RAW_VERSION
           Comment=Search and quantify DIA proteomics data
           Exec=$INSTALL_ROOT/bin/pioneer-gui
-          Icon=$ICON_ID
+          Icon=$APP_ID
           Terminal=false
           Categories=Science;Biology;
           DESKTOP

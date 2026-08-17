@@ -124,8 +124,14 @@ jobs:
           VERSION='${{ needs.build_linux.outputs.version }}'
           INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
             | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=${INSTALL_KEY//./-}
+          APP_ID="org.pioneer.console.v$PACKAGE_SUFFIX"
           test -x "/opt/pioneer/$INSTALL_KEY/pioneer"
           test "$(readlink -f /usr/bin/pioneer)" = "/opt/pioneer/$INSTALL_KEY/pioneer"
+          test -f "/usr/share/applications/$APP_ID.desktop"
+          test -f "/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
+          test -f "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
+          grep -Fxq "Icon=$APP_ID" "/usr/share/applications/$APP_ID.desktop"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
