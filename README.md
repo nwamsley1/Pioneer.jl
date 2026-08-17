@@ -26,7 +26,7 @@ https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2
 ## Features
 
 - **Open-Source:** Pioneer is completely open source.
-- **Cross-Platform:** Pioneer and the .raw file conversion tool run on Linux, macOS, and Windows
+- **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
 - **GUI:** The latest release (v0.8.0 and later) ships with a fully functioning graphical user interface.
 - **Fast:** Pioneer searches data much faster than it can be acquired and several faster than state-of-the-art search tools.
 - **High-Performance:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets
