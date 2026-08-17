@@ -609,6 +609,11 @@ export function Sidebar({
                         lineHeight: 1.25,
                       }}
                     >
+                      {/* The name and its rename button share a line. The
+                          parent is a column -- name, descriptor, progress bar --
+                          so without this row the pencil stacks underneath the
+                          name instead of sitting after it. */}
+                      <span style={{ display: 'flex', alignItems: 'center', maxWidth: '100%' }}>
                       {editingJobId === j.id ? (
                         <input
                           autoFocus
@@ -660,6 +665,40 @@ export function Sidebar({
                           {j.title}
                         </span>
                       )}
+                      {editingJobId !== j.id && (
+                        <button
+                          type="button"
+                          className="pio-jobact pio-iconbtn"
+                          title="Rename"
+                          onClick={(e) => {
+                            // The name sits inside the row's open-this-run
+                            // click target, so the rename must not also open it.
+                            e.stopPropagation()
+                            setEditingJobId(j.id)
+                            setEditingTitle(j.title)
+                          }}
+                          style={{
+                            flex: 'none',
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            padding: 0,
+                            marginLeft: 5,
+                            color: 'var(--pio-nav-fg-dim)',
+                            display: 'flex',
+                          }}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                            <path
+                              d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                              stroke="currentColor"
+                              strokeWidth="1.9"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      )}
+                      </span>
                       {/* The descriptor is unconditional. It used to be the
                           else-branch of `running`, so the bar replaced it and a
                           running row was the one place the command and status
@@ -715,39 +754,6 @@ export function Sidebar({
                     </span>
                   )}
                 </div>
-                {/* Queued, running or finished alike: the name is a label, and
-                    the run worth renaming is often the one that already
-                    finished. Hidden until the row is hovered, like the other
-                    row actions. */}
-                {!collapsed && editingJobId !== j.id && (
-                  <button
-                    type="button"
-                    className="pio-jobact pio-iconbtn"
-                    onClick={() => {
-                      setEditingJobId(j.id)
-                      setEditingTitle(j.title)
-                    }}
-                    title="Rename"
-                    style={{
-                      flex: 'none',
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      padding: 3,
-                      color: 'var(--pio-nav-fg-dim)',
-                      display: 'flex',
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                )}
                 {pending && (
                   <button
                     type="button"
