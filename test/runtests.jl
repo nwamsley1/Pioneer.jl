@@ -82,7 +82,9 @@ function _run_part(rel_path::AbstractString)
     println("[runtests.jl]   threads:  $(Threads.nthreads())")
     println("="^78)
 
-    proc = run(pipeline(cmd; stdout = stdout, stderr = stderr); wait = true)
+    # `ignorestatus` so a failing part does not abort the remaining parts —
+    # the summary below reports every part and errors at the end.
+    proc = run(pipeline(ignorestatus(cmd); stdout = stdout, stderr = stderr); wait = true)
     return proc.exitcode
 end
 
