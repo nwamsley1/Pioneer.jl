@@ -481,7 +481,7 @@ export function BuildSpecLibForm({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <section style={CARD}>
+      <section style={CARD} data-drop="fastaAdd">
         <div
           style={{
             display: 'flex',

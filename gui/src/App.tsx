@@ -597,7 +597,13 @@ export default function App() {
           setConvert((c) => ({ ...c, input: path, inputMode: isDir ? 'folder' : 'file' }))
           return
         }
-        onParam(key, path)
+        // `data-key` doubles as the scroll target for validation errors, and
+        // ConvertRAW's output field is keyed `convertOutput` while the state it
+        // writes is `outputDir`. Every other droppable field happens to use the
+        // same name for both, so a plain onParam(key, ...) silently wrote a
+        // field nothing reads and the drop appeared to do nothing at all.
+        const DROP_KEY_TO_FIELD: Record<string, string> = { convertOutput: 'outputDir' }
+        onParam(DROP_KEY_TO_FIELD[key] ?? key, path)
       })()
     }).then((un) => {
       if (cancelled) un()
