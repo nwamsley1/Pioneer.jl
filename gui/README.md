@@ -11,21 +11,22 @@ Tauri v2 (Rust) + React 18 + TypeScript.
 The GUI lives in `gui/` inside Pioneer.jl so that one tag builds both halves and
 the front end can never drift from the binaries it drives.
 
-It does **not** bundle a copy of the Pioneer distribution. The installers put the
-CLI at a fixed system location, and the GUI resolves that:
+It does **not** bundle a copy of the Pioneer distribution. Installer builds
+embed a stable version key in the GUI, so each GUI resolves its matching CLI
+even when multiple versions are installed:
 
 | platform | CLI installed to | GUI installed to |
 |---|---|---|
-| macOS `.pkg` | `/usr/local/Pioneer` (+ symlink `/usr/local/bin/pioneer`) | `/Applications/Pioneer.app` |
-| Linux `.deb` | `/usr/local/Pioneer` (+ symlink `/usr/local/bin/pioneer`) | *(not wired up yet)* |
-| Windows MSI | `%ProgramFiles%\Pioneer` | *(not wired up yet)* |
+| macOS `.pkg` | `/usr/local/Pioneer/<version>` | `/Applications/Pioneer <version>.app` |
+| Linux `.deb` | `/opt/pioneer/<version>` | version-labelled desktop entry |
+| Windows setup | `%ProgramFiles%\Pioneer\<version>` | version-labelled Start Menu shortcut |
 
 Bundling would have duplicated ~600 MB inside a payload that already contains it.
 
 `resolve_home` in `src-tauri/src/pioneer.rs` tries, in order: `PIONEER_HOME`, the
-platform install location, then `<resources>/pioneer` (only present if someone
-deliberately builds a self-contained bundle). If none match, the error names
-every path it tried.
+versioned platform install location compiled into installer builds, then
+`<resources>/pioneer` (only present if someone deliberately builds a
+self-contained bundle). If none match, the error names every path it tried.
 
 ### Coverage
 

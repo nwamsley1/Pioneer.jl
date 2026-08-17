@@ -76,22 +76,33 @@ pub struct PioneerInfo {
     pub version: Option<String>,
 }
 
-/// Where the platform installers put the CLI.
+/// Where the platform installer puts the CLI that belongs to this GUI build.
 ///
-/// The macOS `.pkg` and Linux `.deb` both install to `/usr/local/Pioneer` (and
-/// symlink `/usr/local/bin/pioneer`); the Windows MSI installs to
-/// `%ProgramFiles%\\Pioneer`. The GUI ships alongside that one install rather
-/// than carrying its own copy of the ~600 MB distribution.
+/// Release builds set `PIONEER_INSTALL_KEY` while compiling the GUI. Keeping
+/// the key in the binary means `Pioneer 2.1.0.app` always launches Pioneer
+/// 2.1.0 even when several versions are installed and another version owns the
+/// unqualified `pioneer` command.
 fn installed_home() -> Option<PathBuf> {
+    let install_key = option_env!("PIONEER_INSTALL_KEY")
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
     #[cfg(windows)]
     {
         let pf = std::env::var_os("ProgramFiles")
             .unwrap_or_else(|| std::ffi::OsString::from("C:\\Program Files"));
-        Some(PathBuf::from(pf).join("Pioneer"))
+        let root = PathBuf::from(pf).join("Pioneer");
+        Some(install_key.map_or(root.clone(), |key| root.join(key)))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        Some(PathBuf::from("/usr/local/Pioneer"))
+        let root = PathBuf::from("/usr/local/Pioneer");
+        Some(install_key.map_or(root.clone(), |key| root.join(key)))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let root = PathBuf::from("/opt/pioneer");
+        Some(install_key.map_or(root.clone(), |key| root.join(key)))
     }
 }
 
@@ -105,6 +116,13 @@ fn installed_home() -> Option<PathBuf> {
 ///
 /// Returns the first candidate that looks like a real distribution.
 pub fn resolve_home(resource_dir: Option<&Path>) -> Result<PioneerInfo, String> {
+    resolve_home_with_installed(resource_dir, installed_home())
+}
+
+fn resolve_home_with_installed(
+    resource_dir: Option<&Path>,
+    installed: Option<PathBuf>,
+) -> Result<PioneerInfo, String> {
     let mut tried: Vec<String> = Vec::new();
 
     if let Some(env_home) = std::env::var_os("PIONEER_HOME") {
@@ -115,7 +133,7 @@ pub fn resolve_home(resource_dir: Option<&Path>) -> Result<PioneerInfo, String> 
         }
     }
 
-    if let Some(p) = installed_home() {
+    if let Some(p) = installed {
         match inspect(&p, "installed with Pioneer") {
             Some(info) => return Ok(info),
             None => tried.push(format!("installed: {}", p.display())),
@@ -218,15 +236,20 @@ pub fn resolve_command(home: &Path, cmd: Command) -> Result<Resolved, String> {
 mod tests {
     use super::*;
 
-    /// The installer writes to a fixed system location on every platform; the
-    /// GUI has to look there, since it no longer carries its own copy.
+    /// A development test build has no embedded install key and therefore uses
+    /// the platform root. Installer builds append their compile-time key.
     #[test]
     fn installed_home_matches_the_installer_layout() {
         let home = installed_home().expect("a platform default");
-        #[cfg(not(windows))]
-        assert_eq!(home, PathBuf::from("/usr/local/Pioneer"));
+        #[cfg(target_os = "macos")]
+        assert!(home.starts_with("/usr/local/Pioneer"));
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert!(home.starts_with("/opt/pioneer"));
         #[cfg(windows)]
-        assert!(home.ends_with("Pioneer"));
+        assert!(home.to_string_lossy().contains("Pioneer"));
+        if let Some(key) = option_env!("PIONEER_INSTALL_KEY") {
+            assert!(home.ends_with(key), "installer key missing from {home:?}");
+        }
     }
 
     /// With nothing configured, the error must name every place we looked —
@@ -235,7 +258,8 @@ mod tests {
     fn error_lists_every_candidate() {
         // SAFETY: single-threaded test, restored immediately.
         unsafe { std::env::remove_var("PIONEER_HOME") };
-        let err = resolve_home(None).unwrap_err();
+        let missing = std::env::temp_dir().join("pioneer-gui-missing-install-for-test");
+        let err = resolve_home_with_installed(None, Some(missing)).unwrap_err();
         assert!(err.contains("installed:"), "should report the install path: {err}");
         assert!(err.contains("PIONEER_HOME"), "should mention the override: {err}");
     }

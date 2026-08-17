@@ -10,7 +10,7 @@
 
 ### End-User Installation
 1. Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases):
-   * **Windows** – `.msi` installer
+   * **Windows** – `PioneerSetup-*.exe` installer
    * **macOS** – `.pkg` installer (signed and notarized); separate builds for Intel and Apple Silicon
    * **Linux** – `.deb` package
 2. Run the installer. It places a `pioneer` executable on your `PATH`.
@@ -24,6 +24,31 @@
    ```bash
    pioneer search --threads 8 ...
    ```
+
+### Installing Multiple Versions
+
+Installer releases are versioned independently. Reinstalling the same Pioneer
+version replaces that version, while installing another version keeps both:
+
+| Platform | Versioned installation | Unqualified `pioneer` command |
+|---|---|---|
+| Windows | `C:\Program Files\Pioneer\<version>` | Most recently installed version; takes effect in new terminals |
+| macOS | `/usr/local/Pioneer/<version>` | Most recently installed version via `/usr/local/Pioneer/current` |
+| Linux | `/opt/pioneer/<version>` | Highest installed release selected by `update-alternatives` |
+
+Windows lists each version separately in Installed Apps and creates a
+version-labelled Start Menu shortcut. macOS installs version-labelled apps in
+`/Applications`. Linux installs version-labelled desktop entries and also
+provides commands such as `pioneer-2.1.0` for selecting an exact version.
+
+On Linux, inspect or override the active version with:
+
+```bash
+sudo update-alternatives --config pioneer
+```
+
+On macOS, exact versions are available as `/usr/local/bin/pioneer-<version>`.
+On Windows, invoke an exact version using its full installation path.
 
 ### Docker
 Run Pioneer in a container without installing dependencies.

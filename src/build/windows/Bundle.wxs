@@ -13,22 +13,25 @@
   official redistributable, which is complete by construction and self-updating.
 
   Build (see .github/workflows/build_app_windows.yml):
-    candle -ext WixBalExtension -ext WixUtilExtension -dProductVersion=.. -dMsiFile=.. \
-           -dVcRedistFile=vc_redist.x64.exe -dLicenseRtf=..\LICENSE.rtf -dPackageIdentifier=.. Bundle.wxs
+    candle -ext WixBalExtension -ext WixUtilExtension -dBundleVersion=.. -dMsiFile=.. \
+           -dVcRedistFile=vc_redist.x64.exe -dLicenseRtf=..\LICENSE.rtf \
+           -dBundleUpgradeCode=.. -dPackageIdentifier=.. Bundle.wxs
     light  -ext WixBalExtension -ext WixUtilExtension -out PioneerSetup-<ver>-<id>.exe Bundle.wixobj
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
-  <Bundle Name="Pioneer CLI Tools"
-          Version="$(var.ProductVersion)"
+  <Bundle Name="Pioneer $(var.DisplayVersion)"
+          Version="$(var.BundleVersion)"
           Manufacturer="$(var.PackageIdentifier)"
-          UpgradeCode="0A16E7C7-2B2B-4244-B07B-B4B38ED8C6F3">
+          UpgradeCode="$(var.BundleUpgradeCode)"
+          IconSourceFile="$(var.IconIco)">
 
     <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.RtfLicense">
       <bal:WixStandardBootstrapperApplication
           LicenseFile="$(var.LicenseRtf)"
+          LogoFile="$(var.LogoPng)"
           SuppressOptionsUI="yes" />
     </BootstrapperApplicationRef>
 

@@ -116,6 +116,16 @@ jobs:
           # ships without one.
           sudo apt-get update
           sudo apt-get install -y ./installer/*.deb
+          # Reinstalling an identical user-visible version must replace that
+          # package rather than conflict with it. Dependencies are present
+          # after the apt install, so the direct dpkg path is safe here.
+          sudo dpkg -i ./installer/*.deb
+
+          VERSION='${{ needs.build_linux.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          test -x "/opt/pioneer/$INSTALL_KEY/pioneer"
+          test "$(readlink -f /usr/bin/pioneer)" = "/opt/pioneer/$INSTALL_KEY/pioneer"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -152,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           SMOKE_DIR="$RUNNER_TEMP/pre-release-smoke"
-          PIONEER="/usr/local/bin/pioneer"
+          PIONEER="/usr/bin/pioneer"
           RAW_FIXTURE="$RUNNER_TEMP/ci-raw-fixture/$RAW_FIXTURE_NAME"
 
           python3 scripts/prepare_release_smoke_inputs.py \
@@ -233,15 +243,27 @@ jobs:
             throw "Setup bundle artifact not found"
           }
 
-          $process = Start-Process $exe.FullName `
-            -ArgumentList @('/install', '/quiet', '/norestart') `
-            -Wait `
-            -PassThru
+          # Run twice: the second pass is the same-version reinstall contract.
+          foreach ($attempt in 1..2) {
+            $process = Start-Process $exe.FullName `
+              -ArgumentList @('/install', '/quiet', '/norestart') `
+              -Wait `
+              -PassThru
 
-          # 0 = success, 3010 = success but reboot required (fine for CI).
-          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
-            throw "Bundle installation failed with exit code $($process.ExitCode)"
+            # 0 = success, 3010 = success but reboot required (fine for CI).
+            if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+              throw "Bundle installation attempt $attempt failed with exit code $($process.ExitCode)"
+            }
           }
+
+          $rawVersion = '${{ needs.build_windows.outputs.version }}'
+          $installKey = $rawVersion -replace '^[vV]', ''
+          $installKey = ([regex]::Replace($installKey.ToLowerInvariant(), '[^a-z0-9.-]+', '-')).Trim([char[]]@('.', '-'))
+          $installRoot = Join-Path $env:ProgramFiles "Pioneer\$installKey"
+          if (-not (Test-Path (Join-Path $installRoot 'pioneer.bat'))) {
+            throw "Versioned Windows install not found at $installRoot"
+          }
+          "PIONEER_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -280,7 +302,7 @@ jobs:
         shell: pwsh
         run: |
           $smokeDir = Join-Path $env:RUNNER_TEMP 'pre-release-smoke'
-          $pioneer = 'C:\Program Files\Pioneer\pioneer.bat'
+          $pioneer = Join-Path $env:PIONEER_INSTALL_ROOT 'pioneer.bat'
           $rawFixture = Join-Path (Join-Path $env:RUNNER_TEMP 'ci-raw-fixture') $env:RAW_FIXTURE_NAME
 
           python scripts/prepare_release_smoke_inputs.py `
@@ -364,6 +386,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo installer -pkg installer/*.pkg -target /
+          sudo installer -pkg installer/*.pkg -target /
+
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          test -x "/usr/local/Pioneer/$INSTALL_KEY/pioneer"
+          test "$(readlink /usr/local/Pioneer/current)" = "/usr/local/Pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -470,6 +499,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo installer -pkg installer/*.pkg -target /
+          sudo installer -pkg installer/*.pkg -target /
+
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          test -x "/usr/local/Pioneer/$INSTALL_KEY/pioneer"
+          test "$(readlink /usr/local/Pioneer/current)" = "/usr/local/Pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache

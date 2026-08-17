@@ -9,7 +9,7 @@ on:
         type: string
         default: ""
       package_installer:
-        description: "Build and upload the native MSI installer"
+        description: "Build and upload the Windows setup executable"
         required: false
         type: boolean
         default: true
@@ -31,7 +31,7 @@ on:
         type: string
         default: ""
       package_installer:
-        description: "Build and upload the native MSI installer"
+        description: "Build and upload the Windows setup executable"
         required: false
         type: boolean
         default: false
@@ -90,6 +90,13 @@ jobs:
         uses: ./.github/actions/normalize-versions
         with:
           raw: ${{ steps.get_version.outputs.version }}
+
+      - name: Derive version-scoped installer identities
+        id: installer_ids
+        shell: pwsh
+        run: |
+          & .\scripts\windows_installer_ids.ps1 `
+            -InstallKey '${{ steps.norm.outputs.install_key }}'
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
@@ -225,30 +232,6 @@ jobs:
           & "$pioneerRoot\pioneer.bat" params-predict $dummy $dummy --params-path "$dummy\params.json"
           Remove-Item -Recurse -Force $dummy
 
-      - name: Normalize version for MSI
-        id: semver
-        shell: pwsh
-        run: |
-          $raw = '${{ steps.get_version.outputs.version }}'
-
-          # strip leading 'v' / 'V'
-          $clean = $raw -replace '^[vV]', ''
-
-          # drop prerelease/build metadata (e.g. -rc.1, +build)
-          $clean = $clean.Split('+')[0]
-          $clean = $clean.Split('-')[0]
-
-          # pad/trim to 3–4 numeric fields for MSI (x.y.z[.w])
-          $parts = $clean.Split('.')
-          if ($parts.Count -lt 3) {
-            $clean = ($parts + @('0','0'))[0..2] -join '.'
-          } elseif ($parts.Count -gt 4) {
-            $clean = $parts[0..3] -join '.'
-          }
-
-          "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "MSI_VERSION=$clean"
-
       # ---- GUI (gui/) -------------------------------------------------
       # windows-latest ships MSVC and the WebView2 runtime, so this needs no
       # extra system packages. The exe is copied into $pioneerRoot below, where
@@ -271,6 +254,8 @@ jobs:
       - name: Build GUI
         working-directory: gui
         shell: pwsh
+        env:
+          PIONEER_INSTALL_KEY: ${{ steps.norm.outputs.install_key }}
         run: |
           npm ci
           # --no-bundle: the bare exe is wanted, not Tauri's own MSI.
@@ -313,7 +298,8 @@ jobs:
           $desc       = $info.description
           $identifier = $info.identifier
           $rawVersion = '${{ steps.get_version.outputs.version }}'
-          Write-Host "MSI will replace any existing Pioneer install (version=$rawVersion)"
+          $installKey = '${{ steps.norm.outputs.install_key }}'
+          Write-Host "MSI will replace Pioneer $rawVersion and coexist with other versions (install-key=$installKey)"
 
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
@@ -326,8 +312,15 @@ jobs:
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
             -dProductVersion="${{ steps.norm.outputs.msi }}" `
+            -dDisplayVersion="$rawVersion" `
+            -dInstallKey="$installKey" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
+            -dUpgradeCode="${{ steps.installer_ids.outputs.msi_upgrade_code }}" `
+            -dPermissionsComponentGuid="${{ steps.installer_ids.outputs.permissions_component_guid }}" `
+            -dShortcutComponentGuid="${{ steps.installer_ids.outputs.shortcut_component_guid }}" `
+            -dPathComponentGuid="${{ steps.installer_ids.outputs.path_component_guid }}" `
+            -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
             -dPlatform="x64" `
             -arch x64 `
             -ext WixUIExtension `
@@ -367,15 +360,22 @@ jobs:
           if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
           if (-not (Test-Path 'vc_redist.x64.exe')) { throw 'vc_redist.x64.exe not downloaded' }
           $identifier = (Get-Content src\build\package_info.json | ConvertFrom-Json).identifier
+          $runNumber = [int]'${{ github.run_number }}'
+          if ($runNumber -gt 65535) { throw "GitHub run number exceeds the Burn version field: $runNumber" }
+          $bundleVersion = "${{ steps.norm.outputs.bundle_base }}.$runNumber"
 
           & candle.exe `
             -ext WixBalExtension `
             -ext WixUtilExtension `
-            -dProductVersion="${{ steps.norm.outputs.msi }}" `
+            -dBundleVersion="$bundleVersion" `
+            -dDisplayVersion="${{ steps.get_version.outputs.version }}" `
             -dPackageIdentifier="$identifier" `
+            -dBundleUpgradeCode="${{ steps.installer_ids.outputs.bundle_upgrade_code }}" `
             -dMsiFile="$msi" `
             -dVcRedistFile="vc_redist.x64.exe" `
             -dLicenseRtf="src\build\windows\LICENSE.rtf" `
+            -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
+            -dLogoPng="${{ github.workspace }}\gui\src-tauri\icons\128x128@2x.png" `
             -arch x64 `
             src\build\windows\Bundle.wxs
 
@@ -384,14 +384,6 @@ jobs:
             -ext WixUtilExtension `
             -out "PioneerSetup-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.exe" `
             Bundle.wixobj
-
-      - name: Upload MSI
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ matrix.identifier }}-msi
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
-          retention-days: ${{ inputs.artifact_retention_days }}
 
       - name: Upload installer bundle
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer

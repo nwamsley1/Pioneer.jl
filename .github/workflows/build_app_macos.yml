@@ -272,9 +272,9 @@ jobs:
 
       # ---- GUI (gui/) -------------------------------------------------
       # The desktop front end is a Tauri app built from source in this repo. It
-      # deliberately does NOT bundle a copy of the distribution: at runtime it
-      # resolves /usr/local/Pioneer, which is where this same .pkg installs the
-      # CLI. One payload, no duplication.
+      # deliberately does NOT bundle a copy of the distribution. Its build-time
+      # install key points it at the matching /usr/local/Pioneer/<version>
+      # payload, even when several versions are installed.
       - name: Setup Node (GUI)
         uses: actions/setup-node@v4
         with:
@@ -297,14 +297,23 @@ jobs:
           # .app afterwards: it signs nested binaries inside-out, which a flat
           # find-and-sign loop over files cannot do correctly.
           APPLE_SIGNING_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          PIONEER_INSTALL_KEY: ${{ steps.norm.outputs.install_key }}
         run: |
           npm ci
+          RAW_VERSION='${{ steps.get_version.outputs.version }}'
+          PACKAGE_SUFFIX='${{ steps.norm.outputs.package_suffix }}'
+          jq -n \
+            --arg productName "Pioneer $RAW_VERSION" \
+            --arg version '${{ steps.norm.outputs.pkg }}' \
+            --arg identifier "org.pioneer.console.v$PACKAGE_SUFFIX" \
+            '{productName: $productName, version: $version, identifier: $identifier}' \
+            > tauri.installer.conf.json
           # --bundles app: only the .app is wanted, since it is staged into the
           # .pkg below. The default target set also builds a DMG, whose
           # bundle_dmg.sh drives Finder via AppleScript and fails on a headless
           # runner — which would fail the whole release build for an artifact
           # we then throw away.
-          npm run tauri:build -- --bundles app
+          npm run tauri:build -- --bundles app --config tauri.installer.conf.json
 
       - name: Codesign & package macOS app
         if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
@@ -312,7 +321,7 @@ jobs:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
         run: |
-          set -o pipefail
+          set -euo pipefail
 
           # Helper function: retry codesign with exponential backoff
           codesign_with_retry() {
@@ -341,51 +350,78 @@ jobs:
             done
           }
 
-          APP="Pioneer"
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
-          VERSION='${{ steps.norm.outputs.pkg }}'
+          PKG_SCRIPTS="pkg-scripts"
+          VERSION='${{ steps.norm.outputs.pkg }}.${{ github.run_number }}'
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
+          INSTALL_KEY='${{ steps.norm.outputs.install_key }}'
+          PACKAGE_SUFFIX='${{ steps.norm.outputs.package_suffix }}'
+          INSTALL_ROOT="/usr/local/Pioneer/$INSTALL_KEY"
+          GUI_NAME="Pioneer $RAW_VERSION.app"
 
           echo "Starting codesigning at $(date)"
 
           rm -rf "$PKGROOT"
-          mkdir -p "$PKGROOT/usr/local/$APP"
-          cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
-          mkdir -p "$PKGROOT/usr/local/$APP/data"
-          cp -R assets/* "$PKGROOT/usr/local/$APP/data/" || true
+          rm -rf "$PKG_SCRIPTS"
+          mkdir -p "$PKGROOT$INSTALL_ROOT"
+          cp -R "$DIST"/* "$PKGROOT$INSTALL_ROOT/"
+          mkdir -p "$PKGROOT$INSTALL_ROOT/data"
+          cp -R assets/* "$PKGROOT$INSTALL_ROOT/data/" || true
 
-          # The GUI installs to /Applications and finds the CLI at
-          # /usr/local/Pioneer. It is signed by the Tauri bundler above, so it
-          # is deliberately not walked by the per-file signing loop below.
-          GUI_APP="gui/src-tauri/target/release/bundle/macos/Pioneer.app"
+          # The versioned GUI is signed by Tauri and is deliberately not walked
+          # by the per-file signing loop below.
+          GUI_APP="gui/src-tauri/target/release/bundle/macos/$GUI_NAME"
           if [[ -d "$GUI_APP" ]]; then
             mkdir -p "$PKGROOT/Applications"
-            cp -R "$GUI_APP" "$PKGROOT/Applications/"
+            cp -R "$GUI_APP" "$PKGROOT/Applications/$GUI_NAME"
           else
             echo "GUI bundle not found at $GUI_APP — packaging CLI only"
           fi
-          chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia" || true
+          chmod -R a+w "$PKGROOT$INSTALL_ROOT/share/julia" || true
 
           # Sign every file with retry
           while IFS= read -r -d '' f; do
             codesign_with_retry "$f" || exit 1
-          done < <(find "$PKGROOT/usr/local/$APP" -type f -print0)
+          done < <(find "$PKGROOT$INSTALL_ROOT" -type f -print0)
 
           mkdir -p "$PKGROOT/usr/local/bin"
-          ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
+          ln -s "$INSTALL_ROOT/pioneer" "$PKGROOT/usr/local/bin/pioneer-$INSTALL_KEY"
+          if [[ -d "$GUI_APP" ]]; then
+            ln -s "/Applications/$GUI_NAME/Contents/MacOS/pioneer-console" \
+              "$PKGROOT/usr/local/bin/pioneer-gui-$INSTALL_KEY"
+          fi
 
           BASE_IDENTIFIER=$(jq -r '.identifier' src/build/package_info.json)
-          if [[ "$RAW_VERSION" == dev-* ]]; then
-            IDENTIFIER="${BASE_IDENTIFIER}.dev"
-          else
-            IDENTIFIER="$BASE_IDENTIFIER"
-          fi
+          IDENTIFIER="${BASE_IDENTIFIER}.v${PACKAGE_SUFFIX}"
           echo "Using package identifier: $IDENTIFIER"
+
+          # macOS has no package-uninstall transaction. The preinstall script
+          # makes a same-version install a true replacement; postinstall moves
+          # only the shared command selectors to the newly installed version.
+          mkdir -p "$PKG_SCRIPTS"
+          cat <<EOF > "$PKG_SCRIPTS/preinstall"
+          #!/bin/sh
+          set -e
+          rm -rf "$INSTALL_ROOT"
+          rm -rf "/Applications/$GUI_NAME"
+          EOF
+          cat <<EOF > "$PKG_SCRIPTS/postinstall"
+          #!/bin/sh
+          set -e
+          mkdir -p /usr/local/Pioneer /usr/local/bin
+          ln -sfn "$INSTALL_ROOT" /usr/local/Pioneer/current
+          ln -sfn /usr/local/Pioneer/current/pioneer /usr/local/bin/pioneer
+          if [ -e "/Applications/$GUI_NAME/Contents/MacOS/pioneer-console" ]; then
+            ln -sfn "/Applications/$GUI_NAME/Contents/MacOS/pioneer-console" /usr/local/bin/pioneer-gui
+          fi
+          EOF
+          chmod 0755 "$PKG_SCRIPTS/preinstall" "$PKG_SCRIPTS/postinstall"
 
           pkgbuild --root "$PKGROOT" \
                   --identifier "$IDENTIFIER" \
                   --version "$VERSION" \
+                  --scripts "$PKG_SCRIPTS" \
                   --install-location / PioneerUnsigned.pkg
 
           productsign --sign "$PKG_SIGN_IDENTITY" \

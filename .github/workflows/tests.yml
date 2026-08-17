@@ -15,6 +15,89 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  installer_metadata:
+    name: Installer version identities
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Normalize release candidate
+        id: release
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: v2.10.3-rc.1
+
+      - name: Normalize development build
+        id: dev
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: dev-20260817123456
+
+      - name: Verify stable cross-platform identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ steps.release.outputs.install_key }}' == '2.10.3-rc.1' ]]
+          [[ '${{ steps.release.outputs.package_suffix }}' == '2-10-3-rc-1' ]]
+          [[ '${{ steps.release.outputs.deb }}' == '2.10.3~rc.1' ]]
+          [[ '${{ steps.release.outputs.pkg }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.msi }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.bundle_base }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.alt_priority }}' == '2010012' ]]
+
+          [[ '${{ steps.dev.outputs.install_key }}' == 'dev-20260817123456' ]]
+          [[ '${{ steps.dev.outputs.package_suffix }}' == 'dev-20260817123456' ]]
+          [[ '${{ steps.dev.outputs.deb }}' == '0.0.0~dev.20260817123456' ]]
+          [[ '${{ steps.dev.outputs.pkg }}' == '0.26.81712' ]]
+          [[ '${{ steps.dev.outputs.msi }}' == '1.26.8420.2096' ]]
+          [[ '${{ steps.dev.outputs.bundle_base }}' == '1.26.8420' ]]
+          [[ '${{ steps.dev.outputs.alt_priority }}' == '1' ]]
+
+  windows_installer_ids:
+    name: Windows installer identities
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Generate first 2.1.0 identity
+        id: first
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.1.0
+
+      - name: Regenerate 2.1.0 identity
+        id: same
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.1.0
+
+      - name: Generate 2.2.0 identity
+        id: other
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.2.0
+
+      - name: Verify replacement and side-by-side families
+        shell: pwsh
+        run: |
+          if ('${{ steps.first.outputs.msi_upgrade_code }}' -ne '${{ steps.same.outputs.msi_upgrade_code }}') {
+            throw 'The same Pioneer version did not retain its MSI upgrade family'
+          }
+          if ('${{ steps.first.outputs.bundle_upgrade_code }}' -ne '${{ steps.same.outputs.bundle_upgrade_code }}') {
+            throw 'The same Pioneer version did not retain its Burn upgrade family'
+          }
+          if ('${{ steps.first.outputs.msi_upgrade_code }}' -eq '${{ steps.other.outputs.msi_upgrade_code }}') {
+            throw 'Different Pioneer versions share an MSI upgrade family'
+          }
+          if ('${{ steps.first.outputs.bundle_upgrade_code }}' -eq '${{ steps.other.outputs.bundle_upgrade_code }}') {
+            throw 'Different Pioneer versions share a Burn upgrade family'
+          }
+
   test:
     name: Julia ${{ matrix.version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

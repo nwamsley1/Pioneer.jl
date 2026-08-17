@@ -224,6 +224,8 @@ jobs:
 
       - name: Build GUI
         working-directory: gui
+        env:
+          PIONEER_INSTALL_KEY: ${{ steps.norm.outputs.install_key }}
         run: |
           npm ci
           # --no-bundle: we want the bare binary, not Tauri's own .deb. It is
@@ -233,65 +235,87 @@ jobs:
       - name: Package Linux .deb
         if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         run: |
-          mkdir -p deb/usr/local/Pioneer
-          cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
-          mkdir -p deb/usr/local/Pioneer/data
-          cp -r assets/* deb/usr/local/Pioneer/data/
-          mkdir -p deb/usr/local/bin
-          ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
-          chmod -R a+rwx deb/usr/local/Pioneer/share/julia
+          set -euo pipefail
+          RAW_VERSION='${{ steps.get_version.outputs.version }}'
+          INSTALL_KEY='${{ steps.norm.outputs.install_key }}'
+          PACKAGE_SUFFIX='${{ steps.norm.outputs.package_suffix }}'
+          INSTALL_ROOT="/opt/pioneer/$INSTALL_KEY"
+          PACKAGE_ROOT="deb$INSTALL_ROOT"
+
+          mkdir -p "$PACKAGE_ROOT"
+          cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* "$PACKAGE_ROOT/"
+          mkdir -p "$PACKAGE_ROOT/data"
+          cp -r assets/* "$PACKAGE_ROOT/data/"
+          chmod -R a+rwx "$PACKAGE_ROOT/share/julia"
 
           GUI_BIN="gui/src-tauri/target/release/pioneer-console"
           if [[ ! -f "$GUI_BIN" ]]; then
             echo "GUI build succeeded without producing $GUI_BIN"
             exit 1
           fi
-          install -Dm755 "$GUI_BIN" deb/usr/local/Pioneer/bin/pioneer-gui
-          ln -sf ../Pioneer/bin/pioneer-gui deb/usr/local/bin/pioneer-gui
+          install -Dm755 "$GUI_BIN" "$PACKAGE_ROOT/bin/pioneer-gui"
+
+          # Every package owns only version-qualified paths. update-alternatives
+          # creates the unqualified pioneer/pioneer-gui commands in postinst.
+          mkdir -p deb/usr/bin
+          ln -s "$INSTALL_ROOT/pioneer" "deb/usr/bin/pioneer-$INSTALL_KEY"
+          ln -s "$INSTALL_ROOT/bin/pioneer-gui" "deb/usr/bin/pioneer-gui-$INSTALL_KEY"
+
+          ICON_ID="org.pioneer.console.$PACKAGE_SUFFIX"
           install -Dm644 gui/src-tauri/icons/icon.svg \
-            deb/usr/share/icons/hicolor/scalable/apps/org.pioneer.console.svg
+            "deb/usr/share/icons/hicolor/scalable/apps/$ICON_ID.svg"
           install -Dm644 gui/src-tauri/icons/128x128@2x.png \
-            deb/usr/share/icons/hicolor/256x256/apps/org.pioneer.console.png
+            "deb/usr/share/icons/hicolor/256x256/apps/$ICON_ID.png"
           mkdir -p deb/usr/share/applications
-          cat <<'DESKTOP' > deb/usr/share/applications/org.pioneer.console.desktop
+          cat <<DESKTOP > "deb/usr/share/applications/$ICON_ID.desktop"
           [Desktop Entry]
           Type=Application
-          Name=Pioneer
+          Name=Pioneer $RAW_VERSION
           Comment=Search and quantify DIA proteomics data
-          Exec=/usr/local/Pioneer/bin/pioneer-gui
-          Icon=org.pioneer.console
+          Exec=$INSTALL_ROOT/bin/pioneer-gui
+          Icon=$ICON_ID
           Terminal=false
           Categories=Science;Biology;
           DESKTOP
           GUI_DEPENDS="libwebkit2gtk-4.1-0, libgtk-3-0"
           echo "GUI included in .deb"
           info=src/build/package_info.json
-          RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)
-          PACKAGE="$BASE_PACKAGE"
+          PACKAGE="${BASE_PACKAGE}-${PACKAGE_SUFFIX}"
           MAINTAINER=$(jq -r '.maintainer' $info)
           DESCRIPTION=$(jq -r '.description' $info)
           DEB_VERSION='${{ steps.norm.outputs.deb }}'
-          if [[ "$RAW_VERSION" == dev-* ]]; then
-            PACKAGE="${BASE_PACKAGE}-dev"
-            CONFLICTS="$BASE_PACKAGE"
-            REPLACES="$BASE_PACKAGE"
-          else
-            CONFLICTS="${BASE_PACKAGE}-dev"
-            REPLACES="${BASE_PACKAGE}-dev"
-          fi
+          ALT_PRIORITY='${{ steps.norm.outputs.alt_priority }}'
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
           Package: $PACKAGE
           Version: $DEB_VERSION
           Architecture: amd64
+          Section: science
+          Priority: optional
           Maintainer: $MAINTAINER
-          Provides: $BASE_PACKAGE
-          Conflicts: $CONFLICTS
-          Replaces: $REPLACES
+          Provides: $BASE_PACKAGE (= $DEB_VERSION)
           Description: $DESCRIPTION
           EOF
+
+          cat <<EOF > deb/DEBIAN/postinst
+          #!/bin/sh
+          set -e
+          update-alternatives --install /usr/bin/pioneer pioneer "$INSTALL_ROOT/pioneer" "$ALT_PRIORITY" \\
+            --slave /usr/bin/pioneer-gui pioneer-gui "$INSTALL_ROOT/bin/pioneer-gui"
+          EOF
+
+          cat <<EOF > deb/DEBIAN/prerm
+          #!/bin/sh
+          set -e
+          case "\$1" in
+            remove|deconfigure)
+              update-alternatives --remove pioneer "$INSTALL_ROOT/pioneer"
+              ;;
+          esac
+          EOF
+          chmod 0755 deb/DEBIAN/postinst deb/DEBIAN/prerm
 
           if [[ -n "$GUI_DEPENDS" ]]; then
             sed -i "/^Description:/i Depends: $GUI_DEPENDS" deb/DEBIAN/control
