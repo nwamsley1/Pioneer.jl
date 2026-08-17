@@ -280,6 +280,11 @@ export default function App() {
   const [modNote, setModNote] = useState({ fixed: '', variable: '' })
 
   const [jobs, setJobs] = useState<Job[]>([])
+
+  /** Shown in the sidebar footer. `pioneer` versions the CLI tools and the
+   *  converter together — they ship as one distribution — and `app` is this
+   *  window. Either can be blank: an older distribution has no VERSION file. */
+  const [versions, setVersions] = useState({ app: '', pioneer: '' })
   const [viewJobId, setViewJobId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
@@ -389,8 +394,15 @@ export default function App() {
     // the detail this used to print at the bottom of every page.
     backend
       .pioneerInfo()
-      .then(() => setPioneerError(''))
+      .then((info) => {
+        setPioneerError('')
+        setVersions((v) => ({ ...v, pioneer: info.version ?? '' }))
+      })
       .catch((e) => setPioneerError(String(e)))
+    backend
+      .appVersion()
+      .then((app) => setVersions((v) => ({ ...v, app })))
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -1420,6 +1432,7 @@ export default function App() {
     >
       <Sidebar
         collapsed={navCollapsed}
+        versions={versions}
         selected={command}
         jobs={jobs}
         viewJobId={viewJobId}

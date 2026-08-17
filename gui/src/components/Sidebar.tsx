@@ -350,6 +350,9 @@ interface Props {
   onReorderQueued: (dragId: string, dropId: string) => void
   /** Give a run a different name. Collisions are resolved by the caller. */
   onRenameJob: (id: string, title: string) => void
+  /** Distribution version (CLI tools + converter) and this window's version.
+   *  Either may be blank when it could not be determined. */
+  versions: { app: string; pioneer: string }
 }
 
 export function Sidebar({
@@ -366,6 +369,7 @@ export function Sidebar({
   onJobAction,
   onReorderQueued,
   onRenameJob,
+  versions,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -1062,8 +1066,35 @@ export function Sidebar({
         </div>
       </div>
 
-
-
+      {/* Which Pioneer this window is driving. Worth having on screen rather
+          than in an About box: the GUI runs whatever distribution it resolved,
+          which is not necessarily the one someone thinks they installed, and
+          the first question about any odd result is what version produced it.
+          Collapsed, the strip has no room for it -- the title carries it. */}
+      {!collapsed && (versions.pioneer || versions.app) && (
+        <div
+          title={[
+            versions.pioneer && `Pioneer CLI and converter ${versions.pioneer}`,
+            versions.app && `Console ${versions.app}`,
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          style={{
+            flex: 'none',
+            padding: '8px 13px 10px',
+            borderTop: '1px solid var(--pio-nav-hair)',
+            color: 'var(--pio-nav-fg-dim)',
+            font: "11px 'IBM Plex Sans'",
+            letterSpacing: 0.2,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {versions.pioneer ? `Pioneer ${versions.pioneer}` : 'Pioneer'}
+          {versions.app && ` \u00b7 console ${versions.app}`}
+        </div>
+      )}
     </aside>
   )
 }

@@ -34,6 +34,8 @@ export interface ExitEvent {
 
 export const pioneerInfo = (): Promise<PioneerInfo> => invoke('pioneer_info')
 
+export const appVersion = (): Promise<string> => invoke('app_version')
+
 export const cpuCount = (): Promise<number> => invoke('cpu_count')
 
 export async function inspectPath(path: string): Promise<PathInfo> {
