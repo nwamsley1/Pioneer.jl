@@ -350,6 +350,9 @@ interface Props {
   onReorderQueued: (dragId: string, dropId: string) => void
   /** Give a run a different name. Collisions are resolved by the caller. */
   onRenameJob: (id: string, title: string) => void
+  /** Distribution version (CLI tools + converter) and this window's version.
+   *  Either may be blank when it could not be determined. */
+  versions: { app: string; pioneer: string }
 }
 
 export function Sidebar({
@@ -366,6 +369,7 @@ export function Sidebar({
   onJobAction,
   onReorderQueued,
   onRenameJob,
+  versions,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -609,6 +613,11 @@ export function Sidebar({
                         lineHeight: 1.25,
                       }}
                     >
+                      {/* The name and its rename button share a line. The
+                          parent is a column -- name, descriptor, progress bar --
+                          so without this row the pencil stacks underneath the
+                          name instead of sitting after it. */}
+                      <span style={{ display: 'flex', alignItems: 'center', maxWidth: '100%' }}>
                       {editingJobId === j.id ? (
                         <input
                           autoFocus
@@ -660,6 +669,40 @@ export function Sidebar({
                           {j.title}
                         </span>
                       )}
+                      {editingJobId !== j.id && (
+                        <button
+                          type="button"
+                          className="pio-jobact pio-iconbtn"
+                          title="Rename"
+                          onClick={(e) => {
+                            // The name sits inside the row's open-this-run
+                            // click target, so the rename must not also open it.
+                            e.stopPropagation()
+                            setEditingJobId(j.id)
+                            setEditingTitle(j.title)
+                          }}
+                          style={{
+                            flex: 'none',
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            padding: 0,
+                            marginLeft: 5,
+                            color: 'var(--pio-nav-fg-dim)',
+                            display: 'flex',
+                          }}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                            <path
+                              d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                              stroke="currentColor"
+                              strokeWidth="1.9"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      )}
+                      </span>
                       {/* The descriptor is unconditional. It used to be the
                           else-branch of `running`, so the bar replaced it and a
                           running row was the one place the command and status
@@ -715,39 +758,6 @@ export function Sidebar({
                     </span>
                   )}
                 </div>
-                {/* Queued, running or finished alike: the name is a label, and
-                    the run worth renaming is often the one that already
-                    finished. Hidden until the row is hovered, like the other
-                    row actions. */}
-                {!collapsed && editingJobId !== j.id && (
-                  <button
-                    type="button"
-                    className="pio-jobact pio-iconbtn"
-                    onClick={() => {
-                      setEditingJobId(j.id)
-                      setEditingTitle(j.title)
-                    }}
-                    title="Rename"
-                    style={{
-                      flex: 'none',
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      padding: 3,
-                      color: 'var(--pio-nav-fg-dim)',
-                      display: 'flex',
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                )}
                 {pending && (
                   <button
                     type="button"
@@ -803,7 +813,7 @@ export function Sidebar({
   return (
     <aside
       style={{
-        width: collapsed ? 66 : 252,
+        width: collapsed ? 66 : 276,
         flex: 'none',
         background: 'var(--pio-nav)',
         color: 'var(--pio-nav-fg)',
@@ -1056,8 +1066,35 @@ export function Sidebar({
         </div>
       </div>
 
-
-
+      {/* Which Pioneer this window is driving. Worth having on screen rather
+          than in an About box: the GUI runs whatever distribution it resolved,
+          which is not necessarily the one someone thinks they installed, and
+          the first question about any odd result is what version produced it.
+          Collapsed, the strip has no room for it -- the title carries it. */}
+      {!collapsed && (versions.pioneer || versions.app) && (
+        <div
+          title={[
+            versions.pioneer && `Pioneer CLI and converter ${versions.pioneer}`,
+            versions.app && `Console ${versions.app}`,
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          style={{
+            flex: 'none',
+            padding: '8px 13px 10px',
+            borderTop: '1px solid var(--pio-nav-hair)',
+            color: 'var(--pio-nav-fg-dim)',
+            font: "11px 'IBM Plex Sans'",
+            letterSpacing: 0.2,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {versions.pioneer ? `Pioneer ${versions.pioneer}` : 'Pioneer'}
+          {versions.app && ` \u00b7 console ${versions.app}`}
+        </div>
+      )}
     </aside>
   )
 }

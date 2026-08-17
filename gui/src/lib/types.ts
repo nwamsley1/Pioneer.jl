@@ -388,4 +388,6 @@ export interface PioneerInfo {
   source: string
   executables: string[]
   has_wrapper: boolean
+  /** From the distribution's VERSION file; absent on older distributions. */
+  version: string | null
 }

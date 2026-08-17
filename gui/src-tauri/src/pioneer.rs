@@ -70,6 +70,10 @@ pub struct PioneerInfo {
     pub executables: Vec<String>,
     /// True when the `pioneer` wrapper script is present.
     pub has_wrapper: bool,
+    /// Contents of the distribution's `VERSION` file, when it has one. The CLI
+    /// tools and the converter ship together, so this one string versions
+    /// both. None for a distribution built before the file existed.
+    pub version: Option<String>,
 }
 
 /// Where the platform installers put the CLI.
@@ -151,11 +155,17 @@ fn inspect(home: &Path, source: &str) -> Option<PioneerInfo> {
     if executables.is_empty() && !has_wrapper {
         return None;
     }
+    let version = std::fs::read_to_string(home.join("VERSION"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
     Some(PioneerInfo {
         home: home.display().to_string(),
         source: source.to_string(),
         executables,
         has_wrapper,
+        version,
     })
 }
 

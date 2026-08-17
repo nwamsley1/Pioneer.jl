@@ -131,6 +131,26 @@ export function msDataNote(value: string, info: PathInfo): Note {
   return NONE
 }
 
+/**
+ * `libraryNote`, except that the path a queued build or download is about to
+ * produce is reported as pending rather than missing.
+ *
+ * Without this the field contradicts the button: `validateSearchRun` lets the
+ * search be queued behind the job that makes its library, while the note under
+ * the field still calls the path an error.
+ */
+export function pendingLibraryNote(
+  value: string,
+  info: PathInfo,
+  pendingLibrary: string | null,
+): Note {
+  const note = libraryNote(value, info)
+  if (note.level !== 'error') return note
+  if (pendingLibrary === null || value.trim() !== pendingLibrary) return note
+  if (info.exists) return note
+  return { level: 'warn', msg: 'Being built by a queued run — this search will wait for it.' }
+}
+
 /** A spectral library is a *directory* of Arrow/JLD2/JLS tables, not a single
  *  file, so the design's extension test is not sufficient: an empty folder
  *  named `lib.poin` passes it and then fails deep inside Pioneer with
@@ -256,17 +276,33 @@ export interface RunBlock {
   msg: string
 }
 
+/**
+ * @param pendingLibrary Path a queued or running BuildSpecLib/DownloadSpecLib
+ *   job will produce, or null when no such job is waiting.
+ */
 export function validateSearchRun(
   values: { msData: string; library: string; results: string; qValue: string; nIsotopes: string; nce: string; minPeptides: string },
   notes: { msData: Note; library: Note; results: Note },
+  pendingLibrary: string | null = null,
 ): RunBlock | null {
   if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }
   if (notes.msData.level === 'error') return { key: 'msData', msg: notes.msData.msg }
 
-  if (!values.library.trim()) {
-    return { key: 'library', msg: 'Set the spectral library path before running.' }
+  // A library that is still being predicted is not a missing library. With a
+  // build or download ahead of it in the queue, the search that consumes its
+  // output can be queued behind it -- the folder does not exist while the
+  // search sits in the queue, and does by the time it starts. Only that one
+  // path earns the exemption: any other path that does not exist is still the
+  // mistake it always was.
+  const awaitsPending =
+    pendingLibrary !== null && values.library.trim() === pendingLibrary
+
+  if (!awaitsPending) {
+    if (!values.library.trim()) {
+      return { key: 'library', msg: 'Set the spectral library path before running.' }
+    }
+    if (notes.library.level === 'error') return { key: 'library', msg: notes.library.msg }
   }
-  if (notes.library.level === 'error') return { key: 'library', msg: notes.library.msg }
 
   if (!values.results.trim()) {
     return { key: 'results', msg: 'Set the results path before running.' }

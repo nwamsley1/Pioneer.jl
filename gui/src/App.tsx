@@ -31,7 +31,7 @@ import {
 } from './lib/config'
 import { makeFastaRow, presetRegex } from './lib/fasta'
 import { moveQueuedJob } from './lib/queue'
-import { recentLibraries } from './lib/recent'
+import { libraryOf, recentLibraries } from './lib/recent'
 import {
   enforceRequiredMods,
   findMod,
@@ -74,7 +74,7 @@ import {
   convertOutputNote,
   fastaNote,
   libPathNote,
-  libraryNote,
+  pendingLibraryNote,
   libraryTargetPath,
   msDataNote,
   resultsNote,
@@ -280,6 +280,11 @@ export default function App() {
   const [modNote, setModNote] = useState({ fixed: '', variable: '' })
 
   const [jobs, setJobs] = useState<Job[]>([])
+
+  /** Shown in the sidebar footer. `pioneer` versions the CLI tools and the
+   *  converter together — they ship as one distribution — and `app` is this
+   *  window. Either can be blank: an older distribution has no VERSION file. */
+  const [versions, setVersions] = useState({ app: '', pioneer: '' })
   const [viewJobId, setViewJobId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
@@ -389,8 +394,15 @@ export default function App() {
     // the detail this used to print at the bottom of every page.
     backend
       .pioneerInfo()
-      .then(() => setPioneerError(''))
+      .then((info) => {
+        setPioneerError('')
+        setVersions((v) => ({ ...v, pioneer: info.version ?? '' }))
+      })
       .catch((e) => setPioneerError(String(e)))
+    backend
+      .appVersion()
+      .then((app) => setVersions((v) => ({ ...v, app })))
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -597,7 +609,13 @@ export default function App() {
           setConvert((c) => ({ ...c, input: path, inputMode: isDir ? 'folder' : 'file' }))
           return
         }
-        onParam(key, path)
+        // `data-key` doubles as the scroll target for validation errors, and
+        // ConvertRAW's output field is keyed `convertOutput` while the state it
+        // writes is `outputDir`. Every other droppable field happens to use the
+        // same name for both, so a plain onParam(key, ...) silently wrote a
+        // field nothing reads and the drop appeared to do nothing at all.
+        const DROP_KEY_TO_FIELD: Record<string, string> = { convertOutput: 'outputDir' }
+        onParam(DROP_KEY_TO_FIELD[key] ?? key, path)
       })()
     }).then((un) => {
       if (cancelled) un()
@@ -661,14 +679,36 @@ export default function App() {
 
   const info = (k: string): PathInfo => pathInfos[k] ?? EMPTY_PATH_INFO
 
+  /** The library a queued or running build/download is about to produce, so a
+   *  search that consumes it can be queued behind it rather than waiting for
+   *  the folder to appear. Most recently queued wins when there are several. */
+  const pendingLibrary = useMemo(() => {
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      const j = jobs[i]
+      if (j.status !== 'queued' && j.status !== 'running') continue
+      if (j.snapshot.cmd !== 'buildspeclib' && j.snapshot.cmd !== 'downloadspeclib') continue
+      const path = libraryOf(j)
+      if (path) return path
+    }
+    return null
+  }, [jobs])
+
+  // Fill an empty library field from that job. The Run handler already does
+  // this at the moment a build is queued; this also covers arriving at
+  // SearchDIA with the field cleared, or a build queued before it was.
+  useEffect(() => {
+    if (!pendingLibrary) return
+    setSearch((p) => (p.library.trim() ? p : { ...p, library: pendingLibrary }))
+  }, [pendingLibrary])
+
   const searchNotes = useMemo(
     () => ({
       msData: msDataNote(search.msData, info('msData')),
-      library: libraryNote(search.library, info('library')),
+      library: pendingLibraryNote(search.library, info('library'), pendingLibrary),
       results: resultsNote(search.results, info('results')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [search.msData, search.library, search.results, pathInfos],
+    [search.msData, search.library, search.results, pathInfos, pendingLibrary],
   )
 
   const fastaNotes = useMemo(
@@ -1223,7 +1263,7 @@ export default function App() {
       : isDownload
         ? validateDownloadRun(download, downloadTargetExists)
         : isSearch
-          ? validateSearchRun(search, searchNotes)
+          ? validateSearchRun(search, searchNotes, pendingLibrary)
           : validateBuildRun(build, fastaNotes, libNote, calibNote)
     if (block) {
       setRunError(block.msg)
@@ -1392,6 +1432,7 @@ export default function App() {
     >
       <Sidebar
         collapsed={navCollapsed}
+        versions={versions}
         selected={command}
         jobs={jobs}
         viewJobId={viewJobId}
@@ -1485,8 +1526,8 @@ export default function App() {
         {/* minHeight: 0 is load-bearing. A flex item defaults to min-height:auto,
             which refuses to shrink below its content, so without this the drawer
             would push the form off the bottom instead of taking space from it. */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 28px 40px' }}>
-          <div style={{ maxWidth: 680, margin: '0 auto' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 44px 40px' }}>
+          <div style={{ maxWidth: 740, margin: '0 auto' }}>
             {(runError || pioneerError) && (
               <div
                 style={{

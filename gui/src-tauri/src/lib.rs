@@ -70,6 +70,13 @@ fn pioneer_info(app: AppHandle) -> Result<pioneer::PioneerInfo, String> {
     pioneer::resolve_home(resource_dir.as_deref())
 }
 
+/// The GUI's own version, for the sidebar footer. Compiled in rather than read
+/// at runtime, so it cannot disagree with the binary the user is running.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[tauri::command]
 fn inspect_path(path: String) -> paths::PathInfo {
     paths::inspect(&path)
@@ -228,6 +235,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             pioneer_info,
+            app_version,
             inspect_path,
             read_config,
             library_info,
