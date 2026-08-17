@@ -803,7 +803,7 @@ export function Sidebar({
   return (
     <aside
       style={{
-        width: collapsed ? 66 : 252,
+        width: collapsed ? 66 : 276,
         flex: 'none',
         background: 'var(--pio-nav)',
         color: 'var(--pio-nav-fg)',

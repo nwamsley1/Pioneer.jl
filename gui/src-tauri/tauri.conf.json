@@ -14,9 +14,9 @@
     "windows": [
       {
         "title": "Pioneer",
-        "width": 980,
+        "width": 1140,
         "height": 840,
-        "minWidth": 980,
+        "minWidth": 940,
         "minHeight": 620,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

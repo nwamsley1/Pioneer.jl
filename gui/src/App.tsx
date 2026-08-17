@@ -1491,8 +1491,8 @@ export default function App() {
         {/* minHeight: 0 is load-bearing. A flex item defaults to min-height:auto,
             which refuses to shrink below its content, so without this the drawer
             would push the form off the bottom instead of taking space from it. */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 28px 40px' }}>
-          <div style={{ maxWidth: 680, margin: '0 auto' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 44px 40px' }}>
+          <div style={{ maxWidth: 740, margin: '0 auto' }}>
             {(runError || pioneerError) && (
               <div
                 style={{
