@@ -22,7 +22,7 @@
 
   <Image X="30" Y="24" Width="64" Height="64" ImageFile="logo.png" Visible="yes" />
   <Text X="112" Y="28" Width="-30" Height="32" FontId="1" Visible="yes" DisablePrefix="yes">#(loc.Title)</Text>
-  <Text X="112" Y="62" Width="-30" Height="22" FontId="5" Visible="yes" DisablePrefix="yes">Mass spectrometry data analysis</Text>
+  <Text X="112" Y="62" Width="-30" Height="22" FontId="5" Visible="yes" DisablePrefix="yes">Fast analysis for DIA proteomics experiments</Text>
 
   <Page Name="Help">
     <Text X="30" Y="124" Width="-30" Height="28" FontId="2" DisablePrefix="yes">#(loc.HelpHeader)</Text>
