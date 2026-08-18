@@ -165,7 +165,7 @@ jobs:
             -dVcRedistFile="$env:WINDIR\System32\where.exe" `
             -dLicenseRtf="${{ github.workspace }}\src\build\windows\LICENSE.rtf" `
             -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
-            -dLogoPng="${{ github.workspace }}\gui\src-tauri\icons\128x128@2x.png" `
+            -dLogoPng="${{ github.workspace }}\src\build\windows\PioneerLogo.png" `
             -dThemeFile="${{ github.workspace }}\src\build\windows\BundleTheme.xml" `
             -arch x64 `
             -out "$testRoot\" `
