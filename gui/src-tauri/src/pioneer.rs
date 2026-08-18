@@ -97,7 +97,10 @@ fn installed_home() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let root = PathBuf::from("/usr/local/lib/pioneer");
-        Some(install_key.map_or(root.clone(), |key| root.join(key)))
+        // Installer builds embed their version key and must remain pinned to
+        // that distribution. An unversioned `tauri dev` build instead follows
+        // the CLI's active-version link, just like /usr/local/bin/pioneer.
+        Some(install_key.map_or_else(|| root.join("current"), |key| root.join(key)))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -237,12 +240,21 @@ mod tests {
     use super::*;
 
     /// A development test build has no embedded install key and therefore uses
-    /// the platform root. Installer builds append their compile-time key.
+    /// the platform's unversioned/active location. Installer builds append
+    /// their compile-time key.
     #[test]
     fn installed_home_matches_the_installer_layout() {
         let home = installed_home().expect("a platform default");
         #[cfg(target_os = "macos")]
-        assert!(home.starts_with("/usr/local/lib/pioneer"));
+        {
+            assert!(home.starts_with("/usr/local/lib/pioneer"));
+            if option_env!("PIONEER_INSTALL_KEY").is_none() {
+                assert!(
+                    home.ends_with("current"),
+                    "dev build should follow {home:?}"
+                );
+            }
+        }
         #[cfg(all(unix, not(target_os = "macos")))]
         assert!(home.starts_with("/opt/pioneer"));
         #[cfg(windows)]

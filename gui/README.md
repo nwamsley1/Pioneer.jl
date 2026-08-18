@@ -27,6 +27,9 @@ Bundling would have duplicated ~600 MB inside a payload that already contains it
 versioned platform install location compiled into installer builds, then
 `<resources>/pioneer` (only present if someone deliberately builds a
 self-contained bundle). If none match, the error names every path it tried.
+An unversioned macOS development build follows
+`/usr/local/lib/pioneer/current`, the same active installation selected by the
+unqualified `/usr/local/bin/pioneer` command.
 
 ### Coverage
 
@@ -54,8 +57,10 @@ npm run tauri:build
 
 1. **`PIONEER_HOME`** — an unpacked distribution. This is the dev loop, and the
    escape hatch when the bundled copy is wrong.
-2. **`<app resources>/pioneer`** — the copy bundled into the app at packaging
-   time, from `src-tauri/resources/pioneer/`.
+2. **The installed distribution** — a release GUI uses its embedded version
+   key; an unversioned macOS development GUI uses the active `current` link.
+3. **`<app resources>/pioneer`** — used only by a deliberately self-contained
+   app bundle.
 
 ```sh
 export PIONEER_HOME=/path/to/Pioneer
