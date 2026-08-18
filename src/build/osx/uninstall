@@ -58,6 +58,12 @@ fallback=""
 newest=0
 if [ "$was_current" = true ]; then
     for candidate in "$install_base"/*; do
+        # `current` points at install_root while it still exists, so it passes
+        # both -d and the executable check below. Never consider selector or
+        # other alias symlinks to be independently installed distributions;
+        # otherwise removing the only version recreates current -> current.
+        [ "$candidate" != "$current_link" ] || continue
+        [ ! -L "$candidate" ] || continue
         [ -d "$candidate" ] || continue
         [ "$candidate" != "$install_root" ] || continue
         [ -x "$candidate/pioneer" ] || continue

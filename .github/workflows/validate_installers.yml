@@ -652,7 +652,7 @@ jobs:
           path: ${{ runner.temp }}/pre-release-smoke
           retention-days: ${{ inputs.artifact_retention_days }}
 
-      - name: Validate macOS Apple Silicon uninstall
+      - name: Validate macOS Apple Silicon single-version uninstall
         shell: bash
         run: |
           set -euo pipefail
@@ -662,12 +662,26 @@ jobs:
           PACKAGE_SUFFIX=$(printf '%s' "$INSTALL_KEY" | tr '.' '-')
           PACKAGE_ID="edu.washu.goldfarblab.pioneer.v$PACKAGE_SUFFIX"
 
+          # This job deliberately has no fallback version. It protects the
+          # case where current is the only other entry under the install base;
+          # the uninstaller must not mistake that selector symlink for a
+          # distribution and recreate current -> current.
+          INSTALL_COUNT=0
+          for candidate in /usr/local/lib/pioneer/*; do
+            test ! -L "$candidate" || continue
+            test ! -d "$candidate" || INSTALL_COUNT=$((INSTALL_COUNT + 1))
+          done
+          test "$INSTALL_COUNT" = 1
+
           sudo "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
 
           test ! -e "/usr/local/lib/pioneer/$INSTALL_KEY"
+          test ! -d /usr/local/lib/pioneer
           test ! -L /usr/local/lib/pioneer/current
           test ! -L /usr/local/bin/pioneer
+          test ! -L /usr/local/bin/pioneer-gui
           test ! -L "/usr/local/bin/pioneer-$INSTALL_KEY"
+          test ! -L "/usr/local/bin/pioneer-gui-$INSTALL_KEY"
           test ! -e "/Applications/Pioneer $VERSION.app"
           if pkgutil --pkg-info "$PACKAGE_ID" >/dev/null 2>&1; then
             echo "Package receipt still exists: $PACKAGE_ID" >&2
