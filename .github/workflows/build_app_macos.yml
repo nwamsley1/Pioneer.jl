@@ -273,7 +273,7 @@ jobs:
       # ---- GUI (gui/) -------------------------------------------------
       # The desktop front end is a Tauri app built from source in this repo. It
       # deliberately does NOT bundle a copy of the distribution. Its build-time
-      # install key points it at the matching /usr/local/Pioneer/<version>
+      # install key points it at the matching /usr/local/lib/pioneer/<version>
       # payload, even when several versions are installed.
       - name: Setup Node (GUI)
         uses: actions/setup-node@v4
@@ -357,7 +357,7 @@ jobs:
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           INSTALL_KEY='${{ steps.norm.outputs.install_key }}'
           PACKAGE_SUFFIX='${{ steps.norm.outputs.package_suffix }}'
-          INSTALL_ROOT="/usr/local/Pioneer/$INSTALL_KEY"
+          INSTALL_ROOT="/usr/local/lib/pioneer/$INSTALL_KEY"
           GUI_NAME="Pioneer $RAW_VERSION.app"
 
           echo "Starting codesigning at $(date)"
@@ -368,6 +368,9 @@ jobs:
           cp -R "$DIST"/* "$PKGROOT$INSTALL_ROOT/"
           mkdir -p "$PKGROOT$INSTALL_ROOT/data"
           cp -R assets/* "$PKGROOT$INSTALL_ROOT/data/" || true
+          mkdir -p "$PKGROOT$INSTALL_ROOT/libexec"
+          cp src/build/osx/uninstall "$PKGROOT$INSTALL_ROOT/libexec/uninstall"
+          chmod 0755 "$PKGROOT$INSTALL_ROOT/libexec/uninstall"
 
           # The versioned GUI is signed by Tauri and is deliberately not walked
           # by the per-file signing loop below.
@@ -409,9 +412,10 @@ jobs:
           cat <<EOF > "$PKG_SCRIPTS/postinstall"
           #!/bin/sh
           set -e
-          mkdir -p /usr/local/Pioneer /usr/local/bin
-          ln -sfn "$INSTALL_ROOT" /usr/local/Pioneer/current
-          ln -sfn /usr/local/Pioneer/current/pioneer /usr/local/bin/pioneer
+          mkdir -p /usr/local/lib/pioneer /usr/local/bin
+          touch "$INSTALL_ROOT/.installed-at"
+          ln -sfn "$INSTALL_ROOT" /usr/local/lib/pioneer/current
+          ln -sfn /usr/local/lib/pioneer/current/pioneer /usr/local/bin/pioneer
           if [ -e "/Applications/$GUI_NAME/Contents/MacOS/pioneer-console" ]; then
             ln -sfn "/Applications/$GUI_NAME/Contents/MacOS/pioneer-console" /usr/local/bin/pioneer-gui
           fi

@@ -96,7 +96,7 @@ fn installed_home() -> Option<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        let root = PathBuf::from("/usr/local/Pioneer");
+        let root = PathBuf::from("/usr/local/lib/pioneer");
         Some(install_key.map_or(root.clone(), |key| root.join(key)))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -242,7 +242,7 @@ mod tests {
     fn installed_home_matches_the_installer_layout() {
         let home = installed_home().expect("a platform default");
         #[cfg(target_os = "macos")]
-        assert!(home.starts_with("/usr/local/Pioneer"));
+        assert!(home.starts_with("/usr/local/lib/pioneer"));
         #[cfg(all(unix, not(target_os = "macos")))]
         assert!(home.starts_with("/opt/pioneer"));
         #[cfg(windows)]

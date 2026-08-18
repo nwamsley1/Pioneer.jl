@@ -397,8 +397,9 @@ jobs:
           VERSION='${{ needs.build_macos.outputs.version }}'
           INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
             | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
-          test -x "/usr/local/Pioneer/$INSTALL_KEY/pioneer"
-          test "$(readlink /usr/local/Pioneer/current)" = "/usr/local/Pioneer/$INSTALL_KEY"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/pioneer"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "/usr/local/lib/pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -482,6 +483,50 @@ jobs:
           path: ${{ runner.temp }}/pre-release-smoke
           retention-days: ${{ inputs.artifact_retention_days }}
 
+      - name: Validate macOS Intel uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=$(printf '%s' "$INSTALL_KEY" | tr '.' '-')
+          PACKAGE_ID="edu.washu.goldfarblab.pioneer.v$PACKAGE_SUFFIX"
+          FALLBACK_KEY='0.0.0-ci-fallback'
+          FALLBACK_VERSION='v0.0.0-ci-fallback'
+          FALLBACK_ROOT="/usr/local/lib/pioneer/$FALLBACK_KEY"
+          FALLBACK_APP="/Applications/Pioneer $FALLBACK_VERSION.app"
+
+          # Exercise the multi-version handoff as well as removal: this small
+          # stand-in behaves like an older installed version without copying a
+          # second full distribution into the runner.
+          sudo mkdir -p "$FALLBACK_ROOT" "$FALLBACK_APP/Contents/MacOS"
+          printf '%s\n' "$FALLBACK_VERSION" | sudo tee "$FALLBACK_ROOT/VERSION" >/dev/null
+          printf '#!/bin/sh\nexit 0\n' | sudo tee "$FALLBACK_ROOT/pioneer" >/dev/null
+          printf '#!/bin/sh\nexit 0\n' | sudo tee \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console" >/dev/null
+          sudo chmod 0755 "$FALLBACK_ROOT/pioneer" \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console"
+          sudo touch "$FALLBACK_ROOT/.installed-at"
+
+          sudo "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+
+          test ! -e "/usr/local/lib/pioneer/$INSTALL_KEY"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "$FALLBACK_ROOT"
+          test "$(readlink /usr/local/bin/pioneer)" = "/usr/local/lib/pioneer/current/pioneer"
+          test "$(readlink /usr/local/bin/pioneer-gui)" = \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console"
+          test ! -L "/usr/local/bin/pioneer-$INSTALL_KEY"
+          test ! -e "/Applications/Pioneer $VERSION.app"
+          if pkgutil --pkg-info "$PACKAGE_ID" >/dev/null 2>&1; then
+            echo "Package receipt still exists: $PACKAGE_ID" >&2
+            exit 1
+          fi
+
+          sudo rm -rf "$FALLBACK_ROOT" "$FALLBACK_APP"
+          sudo rm -f /usr/local/lib/pioneer/current \
+            /usr/local/bin/pioneer /usr/local/bin/pioneer-gui
+
   validate_osx_apple_silicon:
     name: validate osx apple silicon
     needs:
@@ -510,8 +555,9 @@ jobs:
           VERSION='${{ needs.build_macos.outputs.version }}'
           INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
             | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
-          test -x "/usr/local/Pioneer/$INSTALL_KEY/pioneer"
-          test "$(readlink /usr/local/Pioneer/current)" = "/usr/local/Pioneer/$INSTALL_KEY"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/pioneer"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "/usr/local/lib/pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -594,3 +640,25 @@ jobs:
           name: ${{ format('{0}-smoke-macos-apple-silicon', inputs.smoke_artifact_prefix) }}
           path: ${{ runner.temp }}/pre-release-smoke
           retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Validate macOS Apple Silicon uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=$(printf '%s' "$INSTALL_KEY" | tr '.' '-')
+          PACKAGE_ID="edu.washu.goldfarblab.pioneer.v$PACKAGE_SUFFIX"
+
+          sudo "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+
+          test ! -e "/usr/local/lib/pioneer/$INSTALL_KEY"
+          test ! -L /usr/local/lib/pioneer/current
+          test ! -L /usr/local/bin/pioneer
+          test ! -L "/usr/local/bin/pioneer-$INSTALL_KEY"
+          test ! -e "/Applications/Pioneer $VERSION.app"
+          if pkgutil --pkg-info "$PACKAGE_ID" >/dev/null 2>&1; then
+            echo "Package receipt still exists: $PACKAGE_ID" >&2
+            exit 1
+          fi

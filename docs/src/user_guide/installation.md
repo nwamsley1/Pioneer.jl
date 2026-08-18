@@ -33,7 +33,7 @@ version replaces that version, while installing another version keeps both:
 | Platform | Versioned installation | Unqualified `pioneer` command |
 |---|---|---|
 | Windows | `C:\Program Files\Pioneer\<version>` | Most recently installed version; takes effect in new terminals |
-| macOS | `/usr/local/Pioneer/<version>` | Most recently installed version via `/usr/local/Pioneer/current` |
+| macOS | `/usr/local/lib/pioneer/<version>` | Most recently installed version via `/usr/local/lib/pioneer/current` |
 | Linux | `/opt/pioneer/<version>` | Highest installed release selected by `update-alternatives` |
 
 Windows lists each version separately in Installed Apps and creates a
@@ -49,6 +49,13 @@ sudo update-alternatives --config pioneer
 
 On macOS, exact versions are available as `/usr/local/bin/pioneer-<version>`.
 On Windows, invoke an exact version using its full installation path.
+
+To uninstall a macOS version, open that version-labelled Pioneer app, open
+Settings, and choose **Uninstall this version**. macOS asks for an administrator
+password, then removes that app and its matching command-line tools. Pioneer
+settings, run history, spectral libraries, and analysis results are left alone.
+If another version remains installed, the unqualified `pioneer` command is
+automatically redirected to the most recently installed remaining version.
 
 ### Docker
 Run Pioneer in a container without installing dependencies.

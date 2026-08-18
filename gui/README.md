@@ -17,7 +17,7 @@ even when multiple versions are installed:
 
 | platform | CLI installed to | GUI installed to |
 |---|---|---|
-| macOS `.pkg` | `/usr/local/Pioneer/<version>` | `/Applications/Pioneer <version>.app` |
+| macOS `.pkg` | `/usr/local/lib/pioneer/<version>` | `/Applications/Pioneer <version>.app` |
 | Linux `.deb` | `/opt/pioneer/<version>` | version-labelled desktop entry |
 | Windows setup | `%ProgramFiles%\Pioneer\<version>` | version-labelled Start Menu shortcut |
 

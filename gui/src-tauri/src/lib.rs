@@ -2,6 +2,7 @@ mod history;
 mod paths;
 mod pioneer;
 mod runner;
+mod uninstall;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,6 +76,23 @@ fn pioneer_info(app: AppHandle) -> Result<pioneer::PioneerInfo, String> {
 #[tauri::command]
 fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// The GUI only offers uninstall when it is the versioned macOS app installed
+/// by our package and its matching private helper is present.
+#[tauri::command]
+fn uninstall_info() -> uninstall::Info {
+    uninstall::info()
+}
+
+#[tauri::command]
+async fn uninstall_this_version(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.jobs.has_active()? {
+        return Err("Finish or cancel the running Pioneer job before uninstalling.".to_string());
+    }
+    uninstall::run().await?;
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -236,6 +254,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pioneer_info,
             app_version,
+            uninstall_info,
+            uninstall_this_version,
             inspect_path,
             read_config,
             library_info,

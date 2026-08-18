@@ -285,6 +285,10 @@ export default function App() {
    *  converter together — they ship as one distribution — and `app` is this
    *  window. Either can be blank: an older distribution has no VERSION file. */
   const [versions, setVersions] = useState({ app: '', pioneer: '' })
+  const [uninstall, setUninstall] = useState<backend.UninstallInfo | null>(null)
+  const [uninstallOpen, setUninstallOpen] = useState(false)
+  const [uninstalling, setUninstalling] = useState(false)
+  const [uninstallError, setUninstallError] = useState('')
   const [viewJobId, setViewJobId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
@@ -402,6 +406,10 @@ export default function App() {
     backend
       .appVersion()
       .then((app) => setVersions((v) => ({ ...v, app })))
+      .catch(() => {})
+    backend
+      .uninstallInfo()
+      .then(setUninstall)
       .catch(() => {})
   }, [])
 
@@ -1369,7 +1377,7 @@ export default function App() {
 
   // ---- keyboard ----------------------------------------------------------
 
-  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || !!jobConfirm
+  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1433,6 +1441,12 @@ export default function App() {
       <Sidebar
         collapsed={navCollapsed}
         versions={versions}
+        uninstall={uninstall}
+        uninstallBlocked={jobs.some((j) => j.status === 'queued' || j.status === 'running')}
+        onUninstall={() => {
+          setUninstallError('')
+          setUninstallOpen(true)
+        }}
         selected={command}
         jobs={jobs}
         viewJobId={viewJobId}
@@ -1760,6 +1774,34 @@ export default function App() {
             onConfirm={() => {
               setOverwriteOpen(false)
               run(true)
+            }}
+          />
+        )}
+
+        {uninstallOpen && uninstall?.available && (
+          <ConfirmDialog
+            tone="danger"
+            title={`Uninstall Pioneer ${uninstall.version}?`}
+            body="This removes this version’s macOS app and command-line tools. Your settings, run history, libraries, and analysis data are kept."
+            detail={`${uninstall.app_path}\n${uninstall.install_root}`}
+            dismissLabel="Keep Pioneer"
+            confirmLabel={uninstalling ? 'Uninstalling…' : 'Uninstall'}
+            pending={uninstalling}
+            error={uninstallError}
+            onDismiss={() => {
+              setUninstallOpen(false)
+              setUninstallError('')
+            }}
+            onConfirm={() => {
+              setUninstalling(true)
+              setUninstallError('')
+              backend
+                .uninstallThisVersion()
+                .then(() => setUninstallOpen(false))
+                .catch((e) => {
+                  setUninstallError(String(e))
+                  setUninstalling(false)
+                })
             }}
           />
         )}
