@@ -19,7 +19,7 @@ even when multiple versions are installed:
 |---|---|---|
 | macOS `.pkg` | `/usr/local/lib/pioneer/<version>` | `/Applications/Pioneer <version>.app` |
 | Linux `.deb` | `/opt/pioneer/<version>` | version-labelled desktop entry |
-| Windows setup | `%ProgramFiles%\Pioneer\<version>` | version-labelled Start Menu shortcut |
+| Windows setup | `%ProgramFiles%\Pioneer\<version>` | version-labelled Start Menu and optional desktop shortcuts |
 
 Bundling would have duplicated ~600 MB inside a payload that already contains it.
 

@@ -252,7 +252,7 @@ jobs:
           # Run twice: the second pass is the same-version reinstall contract.
           foreach ($attempt in 1..2) {
             $process = Start-Process $exe.FullName `
-              -ArgumentList @('/install', '/quiet', '/norestart') `
+              -ArgumentList @('/install', '/quiet', '/norestart', 'CreateDesktopShortcut=1') `
               -Wait `
               -PassThru
 
@@ -268,6 +268,17 @@ jobs:
           $installRoot = Join-Path $env:ProgramFiles "Pioneer\$installKey"
           if (-not (Test-Path (Join-Path $installRoot 'pioneer.bat'))) {
             throw "Versioned Windows install not found at $installRoot"
+          }
+          $desktopShortcut = Join-Path `
+            ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)) `
+            "Pioneer $rawVersion.lnk"
+          if (-not (Test-Path $desktopShortcut)) {
+            throw "Requested desktop shortcut not found at $desktopShortcut"
+          }
+          $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($desktopShortcut)
+          $expectedTarget = Join-Path $installRoot 'pioneer-gui.exe'
+          if ($shortcut.TargetPath -ne $expectedTarget) {
+            throw "Desktop shortcut target is '$($shortcut.TargetPath)', expected '$expectedTarget'"
           }
           "PIONEER_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 

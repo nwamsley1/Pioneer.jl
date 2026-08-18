@@ -26,6 +26,7 @@ $values = [ordered]@{
     bundle_upgrade_code = New-PioneerGuid 'bundle-upgrade'
     permissions_component_guid = New-PioneerGuid 'component-permissions'
     shortcut_component_guid = New-PioneerGuid 'component-shortcut'
+    desktop_shortcut_component_guid = New-PioneerGuid 'component-desktop-shortcut'
     path_component_guid = New-PioneerGuid 'component-path'
 }
 

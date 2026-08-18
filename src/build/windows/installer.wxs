@@ -30,9 +30,11 @@
       <ComponentRef Id="EnvironmentPath" />
       <ComponentRef Id="JuliaDirPermissions" />
       <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="DesktopFolder" Name="Desktop" />
       <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="Pioneer" />
       </Directory>
@@ -77,6 +79,27 @@
       </Component>
     </DirectoryRef>
 
+    <!-- Optional, per-machine desktop shortcut. Burn passes the checkbox state
+         through CREATE_DESKTOP_SHORTCUT; direct/silent MSI installs default to
+         no shortcut unless they explicitly set the public property to 1. -->
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="$(var.DesktopShortcutComponentGuid)" Win64="yes">
+        <Condition>CREATE_DESKTOP_SHORTCUT = 1</Condition>
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="Pioneer $(var.DisplayVersion)"
+                  Description="$(var.ProductDescription)"
+                  Target="[INSTALLFOLDER]pioneer-gui.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="Pioneer.ico" />
+        <RegistryValue Root="HKLM"
+                       Key="Software\WashU\GoldfarbLab\Pioneer\$(var.InstallKey)"
+                       Name="desktop-shortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <!-- Add installation directory to PATH -->
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="EnvironmentPath" Guid="$(var.PathComponentGuid)" Win64="yes">
@@ -102,6 +125,7 @@
     <!-- Product information -->
     <Property Id="ARPCOMMENTS" Value="$(var.ProductDescription)" />
     <Property Id="ARPPRODUCTICON" Value="Pioneer.ico" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Value="0" Secure="yes" />
     <Icon Id="Pioneer.ico" SourceFile="$(var.IconIco)" />
   </Product>
   

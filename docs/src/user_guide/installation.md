@@ -41,6 +41,11 @@ version-labelled Start Menu shortcut. macOS installs version-labelled apps in
 `/Applications`. Linux installs version-labelled desktop entries and also
 provides commands such as `pioneer-2.1.0` for selecting an exact version.
 
+The Windows setup offers an optional, version-labelled desktop shortcut. Its
+success page also provides **Launch Pioneer**, which starts the newly installed
+GUI. For quiet deployment, pass `CreateDesktopShortcut=1` to the setup
+executable to request the shortcut.
+
 On Linux, inspect or override the active version with:
 
 ```bash

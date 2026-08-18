@@ -319,6 +319,7 @@ jobs:
             -dUpgradeCode="${{ steps.installer_ids.outputs.msi_upgrade_code }}" `
             -dPermissionsComponentGuid="${{ steps.installer_ids.outputs.permissions_component_guid }}" `
             -dShortcutComponentGuid="${{ steps.installer_ids.outputs.shortcut_component_guid }}" `
+            -dDesktopShortcutComponentGuid="${{ steps.installer_ids.outputs.desktop_shortcut_component_guid }}" `
             -dPathComponentGuid="${{ steps.installer_ids.outputs.path_component_guid }}" `
             -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
             -dPlatform="x64" `
@@ -371,11 +372,13 @@ jobs:
             -dDisplayVersion="${{ steps.get_version.outputs.version }}" `
             -dPackageIdentifier="$identifier" `
             -dBundleUpgradeCode="${{ steps.installer_ids.outputs.bundle_upgrade_code }}" `
+            -dInstallKey="${{ steps.norm.outputs.install_key }}" `
             -dMsiFile="$msi" `
             -dVcRedistFile="vc_redist.x64.exe" `
             -dLicenseRtf="src\build\windows\LICENSE.rtf" `
             -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
             -dLogoPng="${{ github.workspace }}\gui\src-tauri\icons\128x128@2x.png" `
+            -dThemeFile="${{ github.workspace }}\src\build\windows\BundleTheme.xml" `
             -arch x64 `
             src\build\windows\Bundle.wxs
 
