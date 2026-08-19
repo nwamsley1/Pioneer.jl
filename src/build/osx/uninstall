@@ -1,0 +1,104 @@
+#!/bin/sh
+# Private helper invoked by the matching packaged macOS GUI. It deliberately
+# lives under the versioned installation rather than on PATH.
+set -eu
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    echo "Pioneer uninstall must be run as an administrator." >&2
+    exit 1
+fi
+
+script_dir=$(CDPATH= cd -P "$(/usr/bin/dirname "$0")" && pwd)
+install_root=$(/usr/bin/dirname "$script_dir")
+install_base=$(/usr/bin/dirname "$install_root")
+install_key=$(/usr/bin/basename "$install_root")
+
+# Never let a moved or renamed copy of this privileged script choose a removal
+# target. Installer keys are normalized to this conservative character set.
+if [ "$install_base" != "/usr/local/lib/pioneer" ]; then
+    echo "Refusing to uninstall from unexpected location: $install_root" >&2
+    exit 1
+fi
+case "$install_key" in
+    ""|.*|-*|*[!a-z0-9.-]*)
+        echo "Refusing to uninstall an invalid Pioneer install key." >&2
+        exit 1
+        ;;
+esac
+
+version_file="$install_root/VERSION"
+if [ ! -f "$version_file" ]; then
+    echo "Pioneer version metadata is missing from $install_root." >&2
+    exit 1
+fi
+display_version=$(/bin/cat "$version_file")
+case "$display_version" in
+    ""|*[!A-Za-z0-9._+-]*)
+        echo "Pioneer version metadata is invalid." >&2
+        exit 1
+        ;;
+esac
+
+gui_app="/Applications/Pioneer $display_version.app"
+versioned_cli="/usr/local/bin/pioneer-$install_key"
+versioned_gui="/usr/local/bin/pioneer-gui-$install_key"
+current_link="$install_base/current"
+package_suffix=$(printf '%s' "$install_key" | /usr/bin/tr '.' '-')
+package_id="edu.washu.goldfarblab.pioneer.v$package_suffix"
+
+# If this version owns the unqualified commands, remember the most recently
+# installed remaining version before removing anything. The installer touches
+# .installed-at after each successful install or reinstall.
+was_current=false
+if [ -L "$current_link" ] && [ "$(/usr/bin/readlink "$current_link")" = "$install_root" ]; then
+    was_current=true
+fi
+
+fallback=""
+newest=0
+if [ "$was_current" = true ]; then
+    for candidate in "$install_base"/*; do
+        # `current` points at install_root while it still exists, so it passes
+        # both -d and the executable check below. Never consider selector or
+        # other alias symlinks to be independently installed distributions;
+        # otherwise removing the only version recreates current -> current.
+        [ "$candidate" != "$current_link" ] || continue
+        [ ! -L "$candidate" ] || continue
+        [ -d "$candidate" ] || continue
+        [ "$candidate" != "$install_root" ] || continue
+        [ -x "$candidate/pioneer" ] || continue
+        stamp=$(/usr/bin/stat -f '%m' "$candidate/.installed-at" 2>/dev/null || \
+            /usr/bin/stat -f '%m' "$candidate" 2>/dev/null || printf '0')
+        case "$stamp" in *[!0-9]*|"") stamp=0 ;; esac
+        if [ "$stamp" -gt "$newest" ]; then
+            newest=$stamp
+            fallback=$candidate
+        fi
+    done
+fi
+
+/bin/rm -f "$versioned_cli" "$versioned_gui"
+/bin/rm -rf "$gui_app"
+/usr/sbin/pkgutil --forget "$package_id" >/dev/null 2>&1 || true
+/bin/rm -rf "$install_root"
+
+if [ "$was_current" = true ]; then
+    /bin/rm -f "$current_link" /usr/local/bin/pioneer /usr/local/bin/pioneer-gui
+    if [ -n "$fallback" ]; then
+        /bin/ln -s "$fallback" "$current_link"
+        /bin/ln -s "$current_link/pioneer" /usr/local/bin/pioneer
+
+        fallback_version=$(/bin/cat "$fallback/VERSION" 2>/dev/null || true)
+        case "$fallback_version" in
+            ""|*[!A-Za-z0-9._+-]*) fallback_version="" ;;
+        esac
+        fallback_gui="/Applications/Pioneer $fallback_version.app"
+        if [ -n "$fallback_version" ] && \
+           [ -x "$fallback_gui/Contents/MacOS/pioneer-console" ]; then
+            /bin/ln -s "$fallback_gui/Contents/MacOS/pioneer-console" \
+                /usr/local/bin/pioneer-gui
+        fi
+    fi
+fi
+
+/bin/rmdir "$install_base" 2>/dev/null || true

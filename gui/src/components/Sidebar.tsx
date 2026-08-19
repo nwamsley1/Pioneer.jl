@@ -6,7 +6,12 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
-import { defaultDir, pickDefaultDir, setDefaultDir } from '../lib/backend'
+import {
+  defaultDir,
+  pickDefaultDir,
+  setDefaultDir,
+  type UninstallInfo,
+} from '../lib/backend'
 import { InfoDot } from './InfoDot'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
@@ -130,7 +135,19 @@ const barberStyle: React.CSSProperties = {
  *  with no way to see its current value, the theme as a lone swatch above the
  *  collapse button. Neither is touched often enough to earn standing space.
  */
-function SettingsPanel({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
+function SettingsPanel({
+  theme,
+  onTheme,
+  uninstall,
+  uninstallBlocked,
+  onUninstall,
+}: {
+  theme: ThemeId
+  onTheme: (id: ThemeId) => void
+  uninstall: UninstallInfo | null
+  uninstallBlocked: boolean
+  onUninstall: () => void
+}) {
   const [dir, setDir] = useState(defaultDir())
   const heading: React.CSSProperties = {
     fontSize: 10,
@@ -233,6 +250,37 @@ function SettingsPanel({ theme, onTheme }: { theme: ThemeId; onTheme: (id: Theme
           )
         })}
       </div>
+
+      {uninstall?.available && (
+        <div
+          style={{
+            margin: '15px -14px -14px',
+            padding: '12px 14px 14px',
+            borderTop: '1px solid var(--pio-nav-hair)',
+          }}
+        >
+          <div style={heading}>Installation</div>
+          <div style={{ fontSize: 11.5, color: 'var(--pio-nav-fg-dim)', lineHeight: 1.45 }}>
+            Remove Pioneer {uninstall.version} from this Mac. Your settings and analysis data are kept.
+          </div>
+          <button
+            type="button"
+            onClick={onUninstall}
+            disabled={uninstallBlocked}
+            title={uninstallBlocked ? 'Finish or remove queued and running jobs first' : undefined}
+            style={{
+              ...panelBtn,
+              width: '100%',
+              marginTop: 9,
+              color: uninstallBlocked ? 'var(--pio-nav-fg-faint)' : '#FCA5A5',
+              borderColor: uninstallBlocked ? 'var(--pio-nav-hair)' : 'rgba(248,113,113,0.45)',
+              cursor: uninstallBlocked ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Uninstall this version…
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -353,6 +401,9 @@ interface Props {
   /** Distribution version (CLI tools + converter) and this window's version.
    *  Either may be blank when it could not be determined. */
   versions: { app: string; pioneer: string }
+  uninstall: UninstallInfo | null
+  uninstallBlocked: boolean
+  onUninstall: () => void
 }
 
 export function Sidebar({
@@ -370,6 +421,9 @@ export function Sidebar({
   onReorderQueued,
   onRenameJob,
   versions,
+  uninstall,
+  uninstallBlocked,
+  onUninstall,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -865,7 +919,16 @@ export function Sidebar({
               </svg>
             </button>
             {themeOpen && (
-              <SettingsPanel theme={theme} onTheme={onTheme} />
+              <SettingsPanel
+                theme={theme}
+                onTheme={onTheme}
+                uninstall={uninstall}
+                uninstallBlocked={uninstallBlocked}
+                onUninstall={() => {
+                  setThemeOpen(false)
+                  onUninstall()
+                }}
+              />
             )}
           </div>
         )}

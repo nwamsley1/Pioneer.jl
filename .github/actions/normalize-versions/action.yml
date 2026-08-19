@@ -1,11 +1,20 @@
 name: "Normalize Versions"
-description: "Outputs Debian, macOS pkg, and MSI-safe versions from a raw tag."
+description: "Outputs shared install identity plus Debian, macOS, and Windows-safe versions."
 inputs:
   raw:
     description: "Raw version/tag (e.g., v1.2.3, v1.2.3-rc.1, 1.2.3+build)"
     required: true
     type: string
 outputs:
+  install_key:
+    description: "Stable filesystem-safe identity for side-by-side installs"
+    value: ${{ steps.mk.outputs.install_key }}
+  package_suffix:
+    description: "Lowercase package-name suffix for versioned Linux packages"
+    value: ${{ steps.mk.outputs.package_suffix }}
+  alt_priority:
+    description: "Numeric priority used by Linux update-alternatives"
+    value: ${{ steps.mk.outputs.alt_priority }}
   deb:
     description: "Debian-safe version"
     value: ${{ steps.mk.outputs.deb }}
@@ -15,6 +24,9 @@ outputs:
   msi:
     description: "MSI-safe version (x.y.z[.w])"
     value: ${{ steps.mk.outputs.msi }}
+  bundle_base:
+    description: "Three-field numeric base used for the Windows Burn bundle"
+    value: ${{ steps.mk.outputs.bundle_base }}
 runs:
   using: "composite"
   steps:
@@ -25,6 +37,19 @@ runs:
         # strip leading v/V and drop +build metadata
         CLEAN="${RAW#[vV]}"
         CLEAN="${CLEAN%%+*}"
+
+        # This key defines installation identity on every platform: rebuilding
+        # the same raw version returns the same key, while another release or
+        # prerelease gets an independent package/directory. Keep it conservative
+        # so it is valid in paths, reverse-DNS identifiers, and package names.
+        INSTALL_KEY=$(printf '%s' "$CLEAN" \
+          | tr '[:upper:]' '[:lower:]' \
+          | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+        if [[ -z "$INSTALL_KEY" ]]; then
+          echo "ERROR: raw version '$RAW' does not produce a usable install key" >&2
+          exit 1
+        fi
+        PACKAGE_SUFFIX=${INSTALL_KEY//./-}
 
         # ---- Dev builds: derive installer-safe numeric versions from timestamp ----
         if [[ "$CLEAN" =~ ^[dD][eE][vV]-([0-9]{14})$ ]]; then
@@ -44,11 +69,16 @@ runs:
 
           # MSI allows x.y.z[.w]; keep fields bounded and numeric.
           MSI="1.$((10#$YEAR - 2000)).$((10#$MONTH * 1000 + 10#$DAY * 24 + 10#$HOUR)).$((10#$MINUTE * 60 + 10#$SECOND))"
+          BUNDLE_BASE=$(cut -d. -f1-3 <<< "$MSI")
 
           {
+            echo "install_key=$INSTALL_KEY"
+            echo "package_suffix=$PACKAGE_SUFFIX"
+            echo "alt_priority=1"
             echo "deb=$DEB"
             echo "pkg=$PKG"
             echo "msi=$MSI"
+            echo "bundle_base=$BUNDLE_BASE"
           } >> "$GITHUB_OUTPUT"
           exit 0
         fi
@@ -95,8 +125,24 @@ runs:
           MSI="$(IFS=.; echo "${mnums[*]}")"
         fi
 
+        BUNDLE_BASE=$(cut -d. -f1-3 <<< "$MSI")
+
+        # update-alternatives selects the greatest priority in auto mode. A
+        # release outranks dev builds, and normal semantic versions retain
+        # major/minor/patch ordering for the versions Pioneer publishes.
+        IFS='.' read -r PRIORITY_MAJOR PRIORITY_MINOR PRIORITY_PATCH <<< "$PKG"
+        ALT_PRIORITY=$((10#$PRIORITY_MAJOR * 1000000 + 10#$PRIORITY_MINOR * 1000 + 10#$PRIORITY_PATCH + 10))
+        [[ $HAS_PRE -eq 1 ]] && ALT_PRIORITY=$((ALT_PRIORITY - 1))
+        if (( ALT_PRIORITY > 2147483647 )); then
+          ALT_PRIORITY=2147483647
+        fi
+
         {
+          echo "install_key=$INSTALL_KEY"
+          echo "package_suffix=$PACKAGE_SUFFIX"
+          echo "alt_priority=$ALT_PRIORITY"
           echo "deb=$DEB"
           echo "pkg=$PKG"
           echo "msi=$MSI"
+          echo "bundle_base=$BUNDLE_BASE"
         } >> "$GITHUB_OUTPUT"

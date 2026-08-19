@@ -81,6 +81,13 @@ struct JobHandle {
 }
 
 impl Jobs {
+    pub fn has_active(&self) -> Result<bool, String> {
+        self.inner
+            .lock()
+            .map(|map| !map.is_empty())
+            .map_err(|e| e.to_string())
+    }
+
     pub fn cancel(&self, job_id: &str) -> Result<(), String> {
         let map = self.inner.lock().map_err(|e| e.to_string())?;
         let handle = map

@@ -15,6 +15,173 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  installer_metadata:
+    name: Installer version identities
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Normalize release candidate
+        id: release
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: v2.10.3-rc.1
+
+      - name: Normalize development build
+        id: dev
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: dev-20260817123456
+
+      - name: Verify stable cross-platform identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ steps.release.outputs.install_key }}' == '2.10.3-rc.1' ]]
+          [[ '${{ steps.release.outputs.package_suffix }}' == '2-10-3-rc-1' ]]
+          [[ '${{ steps.release.outputs.deb }}' == '2.10.3~rc.1' ]]
+          [[ '${{ steps.release.outputs.pkg }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.msi }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.bundle_base }}' == '2.10.3' ]]
+          [[ '${{ steps.release.outputs.alt_priority }}' == '2010012' ]]
+
+          [[ '${{ steps.dev.outputs.install_key }}' == 'dev-20260817123456' ]]
+          [[ '${{ steps.dev.outputs.package_suffix }}' == 'dev-20260817123456' ]]
+          [[ '${{ steps.dev.outputs.deb }}' == '0.0.0~dev.20260817123456' ]]
+          [[ '${{ steps.dev.outputs.pkg }}' == '0.26.81712' ]]
+          [[ '${{ steps.dev.outputs.msi }}' == '1.26.8420.2096' ]]
+          [[ '${{ steps.dev.outputs.bundle_base }}' == '1.26.8420' ]]
+          [[ '${{ steps.dev.outputs.alt_priority }}' == '1' ]]
+
+  windows_installer_ids:
+    name: Windows installer identities
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Generate first 2.1.0 identity
+        id: first
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.1.0
+
+      - name: Regenerate 2.1.0 identity
+        id: same
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.1.0
+
+      - name: Generate 2.2.0 identity
+        id: other
+        shell: pwsh
+        run: .\scripts\windows_installer_ids.ps1 -InstallKey 2.2.0
+
+      - name: Verify replacement and side-by-side families
+        shell: pwsh
+        run: |
+          if ('${{ steps.first.outputs.msi_upgrade_code }}' -ne '${{ steps.same.outputs.msi_upgrade_code }}') {
+            throw 'The same Pioneer version did not retain its MSI upgrade family'
+          }
+          if ('${{ steps.first.outputs.bundle_upgrade_code }}' -ne '${{ steps.same.outputs.bundle_upgrade_code }}') {
+            throw 'The same Pioneer version did not retain its Burn upgrade family'
+          }
+          if ('${{ steps.first.outputs.msi_upgrade_code }}' -eq '${{ steps.other.outputs.msi_upgrade_code }}') {
+            throw 'Different Pioneer versions share an MSI upgrade family'
+          }
+          if ('${{ steps.first.outputs.bundle_upgrade_code }}' -eq '${{ steps.other.outputs.bundle_upgrade_code }}') {
+            throw 'Different Pioneer versions share a Burn upgrade family'
+          }
+          if ('${{ steps.first.outputs.desktop_shortcut_component_guid }}' -ne '${{ steps.same.outputs.desktop_shortcut_component_guid }}') {
+            throw 'The same Pioneer version did not retain its desktop shortcut component identity'
+          }
+          if ('${{ steps.first.outputs.desktop_shortcut_component_guid }}' -eq '${{ steps.other.outputs.desktop_shortcut_component_guid }}') {
+            throw 'Different Pioneer versions share a desktop shortcut component identity'
+          }
+
+      - name: Compile Windows installer authoring
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testRoot = Join-Path $env:RUNNER_TEMP 'pioneer-wix-authoring'
+          $payload = Join-Path $testRoot 'payload'
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+          Set-Content -Path (Join-Path $payload 'pioneer-gui.exe') -Value 'authoring test payload'
+          Copy-Item src\build\windows\LICENSE.rtf (Join-Path $payload 'LICENSE.rtf')
+
+          & heat.exe dir $payload `
+            -cg ProductComponents `
+            -dr INSTALLFOLDER `
+            -platform x64 `
+            -gg -scom -sreg -sfrag -srd `
+            -var var.SourceDir `
+            -out (Join-Path $testRoot 'components.wxs')
+
+          & candle.exe `
+            -dSourceDir="$payload" `
+            -dProductVersion="2.1.0" `
+            -dDisplayVersion="v2.1.0" `
+            -dInstallKey="2.1.0" `
+            -dProductDescription="Pioneer installer authoring test" `
+            -dPackageIdentifier="edu.washu.goldfarblab.pioneer" `
+            -dUpgradeCode="${{ steps.first.outputs.msi_upgrade_code }}" `
+            -dPermissionsComponentGuid="${{ steps.first.outputs.permissions_component_guid }}" `
+            -dShortcutComponentGuid="${{ steps.first.outputs.shortcut_component_guid }}" `
+            -dDesktopShortcutComponentGuid="${{ steps.first.outputs.desktop_shortcut_component_guid }}" `
+            -dPathComponentGuid="${{ steps.first.outputs.path_component_guid }}" `
+            -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
+            -dPlatform="x64" `
+            -arch x64 `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -out "$testRoot\" `
+            src\build\windows\installer.wxs `
+            (Join-Path $testRoot 'components.wxs')
+
+          $msi = Join-Path $testRoot 'Pioneer-test.msi'
+          & light.exe `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -cultures:en-us `
+            -sval `
+            -out $msi `
+            (Join-Path $testRoot 'installer.wixobj') `
+            (Join-Path $testRoot 'components.wixobj')
+
+          & candle.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -dBundleVersion="2.1.0.1" `
+            -dDisplayVersion="v2.1.0" `
+            -dPackageIdentifier="edu.washu.goldfarblab.pioneer" `
+            -dBundleUpgradeCode="${{ steps.first.outputs.bundle_upgrade_code }}" `
+            -dInstallKey="2.1.0" `
+            -dMsiFile="$msi" `
+            -dVcRedistFile="$env:WINDIR\System32\where.exe" `
+            -dLicenseRtf="${{ github.workspace }}\src\build\windows\LICENSE.rtf" `
+            -dIconIco="${{ github.workspace }}\gui\src-tauri\icons\icon.ico" `
+            -dLogoPng="${{ github.workspace }}\src\build\windows\PioneerLogo.png" `
+            -dThemeFile="${{ github.workspace }}\src\build\windows\BundleTheme.xml" `
+            -arch x64 `
+            -out "$testRoot\" `
+            src\build\windows\Bundle.wxs
+
+          $bundle = Join-Path $testRoot 'PioneerSetup-test.exe'
+          & light.exe `
+            -ext WixBalExtension `
+            -ext WixUtilExtension `
+            -out $bundle `
+            (Join-Path $testRoot 'Bundle.wixobj')
+
+          if (-not (Test-Path $msi) -or -not (Test-Path $bundle)) {
+            throw 'WiX authoring test did not produce both installer artifacts'
+          }
+
   test:
     name: Julia ${{ matrix.version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

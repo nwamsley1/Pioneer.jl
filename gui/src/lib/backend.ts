@@ -36,6 +36,17 @@ export const pioneerInfo = (): Promise<PioneerInfo> => invoke('pioneer_info')
 
 export const appVersion = (): Promise<string> => invoke('app_version')
 
+export interface UninstallInfo {
+  available: boolean
+  version: string
+  install_root: string
+  app_path: string
+}
+
+export const uninstallInfo = (): Promise<UninstallInfo> => invoke('uninstall_info')
+
+export const uninstallThisVersion = (): Promise<void> => invoke('uninstall_this_version')
+
 export const cpuCount = (): Promise<number> => invoke('cpu_count')
 
 export async function inspectPath(path: string): Promise<PathInfo> {

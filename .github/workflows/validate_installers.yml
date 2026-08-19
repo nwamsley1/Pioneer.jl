@@ -116,6 +116,22 @@ jobs:
           # ships without one.
           sudo apt-get update
           sudo apt-get install -y ./installer/*.deb
+          # Reinstalling an identical user-visible version must replace that
+          # package rather than conflict with it. Dependencies are present
+          # after the apt install, so the direct dpkg path is safe here.
+          sudo dpkg -i ./installer/*.deb
+
+          VERSION='${{ needs.build_linux.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=${INSTALL_KEY//./-}
+          APP_ID="org.pioneer.console.v$PACKAGE_SUFFIX"
+          test -x "/opt/pioneer/$INSTALL_KEY/pioneer"
+          test "$(readlink -f /usr/bin/pioneer)" = "/opt/pioneer/$INSTALL_KEY/pioneer"
+          test -f "/usr/share/applications/$APP_ID.desktop"
+          test -f "/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
+          test -f "/usr/share/icons/hicolor/256x256/apps/$APP_ID.png"
+          grep -Fxq "Icon=$APP_ID" "/usr/share/applications/$APP_ID.desktop"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -152,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           SMOKE_DIR="$RUNNER_TEMP/pre-release-smoke"
-          PIONEER="/usr/local/bin/pioneer"
+          PIONEER="/usr/bin/pioneer"
           RAW_FIXTURE="$RUNNER_TEMP/ci-raw-fixture/$RAW_FIXTURE_NAME"
 
           python3 scripts/prepare_release_smoke_inputs.py \
@@ -233,15 +249,38 @@ jobs:
             throw "Setup bundle artifact not found"
           }
 
-          $process = Start-Process $exe.FullName `
-            -ArgumentList @('/install', '/quiet', '/norestart') `
-            -Wait `
-            -PassThru
+          # Run twice: the second pass is the same-version reinstall contract.
+          foreach ($attempt in 1..2) {
+            $process = Start-Process $exe.FullName `
+              -ArgumentList @('/install', '/quiet', '/norestart', 'CreateDesktopShortcut=1') `
+              -Wait `
+              -PassThru
 
-          # 0 = success, 3010 = success but reboot required (fine for CI).
-          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
-            throw "Bundle installation failed with exit code $($process.ExitCode)"
+            # 0 = success, 3010 = success but reboot required (fine for CI).
+            if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+              throw "Bundle installation attempt $attempt failed with exit code $($process.ExitCode)"
+            }
           }
+
+          $rawVersion = '${{ needs.build_windows.outputs.version }}'
+          $installKey = $rawVersion -replace '^[vV]', ''
+          $installKey = ([regex]::Replace($installKey.ToLowerInvariant(), '[^a-z0-9.-]+', '-')).Trim([char[]]@('.', '-'))
+          $installRoot = Join-Path $env:ProgramFiles "Pioneer\$installKey"
+          if (-not (Test-Path (Join-Path $installRoot 'pioneer.bat'))) {
+            throw "Versioned Windows install not found at $installRoot"
+          }
+          $desktopShortcut = Join-Path `
+            ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)) `
+            "Pioneer $rawVersion.lnk"
+          if (-not (Test-Path $desktopShortcut)) {
+            throw "Requested desktop shortcut not found at $desktopShortcut"
+          }
+          $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($desktopShortcut)
+          $expectedTarget = Join-Path $installRoot 'pioneer-gui.exe'
+          if ($shortcut.TargetPath -ne $expectedTarget) {
+            throw "Desktop shortcut target is '$($shortcut.TargetPath)', expected '$expectedTarget'"
+          }
+          "PIONEER_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -280,7 +319,7 @@ jobs:
         shell: pwsh
         run: |
           $smokeDir = Join-Path $env:RUNNER_TEMP 'pre-release-smoke'
-          $pioneer = 'C:\Program Files\Pioneer\pioneer.bat'
+          $pioneer = Join-Path $env:PIONEER_INSTALL_ROOT 'pioneer.bat'
           $rawFixture = Join-Path (Join-Path $env:RUNNER_TEMP 'ci-raw-fixture') $env:RAW_FIXTURE_NAME
 
           python scripts/prepare_release_smoke_inputs.py `
@@ -364,6 +403,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo installer -pkg installer/*.pkg -target /
+          sudo installer -pkg installer/*.pkg -target /
+
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/pioneer"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "/usr/local/lib/pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -447,6 +494,50 @@ jobs:
           path: ${{ runner.temp }}/pre-release-smoke
           retention-days: ${{ inputs.artifact_retention_days }}
 
+      - name: Validate macOS Intel uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=$(printf '%s' "$INSTALL_KEY" | tr '.' '-')
+          PACKAGE_ID="edu.washu.goldfarblab.pioneer.v$PACKAGE_SUFFIX"
+          FALLBACK_KEY='0.0.0-ci-fallback'
+          FALLBACK_VERSION='v0.0.0-ci-fallback'
+          FALLBACK_ROOT="/usr/local/lib/pioneer/$FALLBACK_KEY"
+          FALLBACK_APP="/Applications/Pioneer $FALLBACK_VERSION.app"
+
+          # Exercise the multi-version handoff as well as removal: this small
+          # stand-in behaves like an older installed version without copying a
+          # second full distribution into the runner.
+          sudo mkdir -p "$FALLBACK_ROOT" "$FALLBACK_APP/Contents/MacOS"
+          printf '%s\n' "$FALLBACK_VERSION" | sudo tee "$FALLBACK_ROOT/VERSION" >/dev/null
+          printf '#!/bin/sh\nexit 0\n' | sudo tee "$FALLBACK_ROOT/pioneer" >/dev/null
+          printf '#!/bin/sh\nexit 0\n' | sudo tee \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console" >/dev/null
+          sudo chmod 0755 "$FALLBACK_ROOT/pioneer" \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console"
+          sudo touch "$FALLBACK_ROOT/.installed-at"
+
+          sudo "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+
+          test ! -e "/usr/local/lib/pioneer/$INSTALL_KEY"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "$FALLBACK_ROOT"
+          test "$(readlink /usr/local/bin/pioneer)" = "/usr/local/lib/pioneer/current/pioneer"
+          test "$(readlink /usr/local/bin/pioneer-gui)" = \
+            "$FALLBACK_APP/Contents/MacOS/pioneer-console"
+          test ! -L "/usr/local/bin/pioneer-$INSTALL_KEY"
+          test ! -e "/Applications/Pioneer $VERSION.app"
+          if pkgutil --pkg-info "$PACKAGE_ID" >/dev/null 2>&1; then
+            echo "Package receipt still exists: $PACKAGE_ID" >&2
+            exit 1
+          fi
+
+          sudo rm -rf "$FALLBACK_ROOT" "$FALLBACK_APP"
+          sudo rm -f /usr/local/lib/pioneer/current \
+            /usr/local/bin/pioneer /usr/local/bin/pioneer-gui
+
   validate_osx_apple_silicon:
     name: validate osx apple silicon
     needs:
@@ -470,6 +561,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo installer -pkg installer/*.pkg -target /
+          sudo installer -pkg installer/*.pkg -target /
+
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/pioneer"
+          test -x "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+          test "$(readlink /usr/local/lib/pioneer/current)" = "/usr/local/lib/pioneer/$INSTALL_KEY"
 
       - name: Cache RAW fixture
         id: raw_fixture_cache
@@ -552,3 +651,39 @@ jobs:
           name: ${{ format('{0}-smoke-macos-apple-silicon', inputs.smoke_artifact_prefix) }}
           path: ${{ runner.temp }}/pre-release-smoke
           retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Validate macOS Apple Silicon single-version uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='${{ needs.build_macos.outputs.version }}'
+          INSTALL_KEY=$(printf '%s' "${VERSION#[vV]}" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          PACKAGE_SUFFIX=$(printf '%s' "$INSTALL_KEY" | tr '.' '-')
+          PACKAGE_ID="edu.washu.goldfarblab.pioneer.v$PACKAGE_SUFFIX"
+
+          # This job deliberately has no fallback version. It protects the
+          # case where current is the only other entry under the install base;
+          # the uninstaller must not mistake that selector symlink for a
+          # distribution and recreate current -> current.
+          INSTALL_COUNT=0
+          for candidate in /usr/local/lib/pioneer/*; do
+            test ! -L "$candidate" || continue
+            test ! -d "$candidate" || INSTALL_COUNT=$((INSTALL_COUNT + 1))
+          done
+          test "$INSTALL_COUNT" = 1
+
+          sudo "/usr/local/lib/pioneer/$INSTALL_KEY/libexec/uninstall"
+
+          test ! -e "/usr/local/lib/pioneer/$INSTALL_KEY"
+          test ! -d /usr/local/lib/pioneer
+          test ! -L /usr/local/lib/pioneer/current
+          test ! -L /usr/local/bin/pioneer
+          test ! -L /usr/local/bin/pioneer-gui
+          test ! -L "/usr/local/bin/pioneer-$INSTALL_KEY"
+          test ! -L "/usr/local/bin/pioneer-gui-$INSTALL_KEY"
+          test ! -e "/Applications/Pioneer $VERSION.app"
+          if pkgutil --pkg-info "$PACKAGE_ID" >/dev/null 2>&1; then
+            echo "Package receipt still exists: $PACKAGE_ID" >&2
+            exit 1
+          fi

@@ -30,6 +30,8 @@ interface Props {
   dismissLabel: string
   confirmLabel: string
   tone: 'danger' | 'warning'
+  pending?: boolean
+  error?: string
   onDismiss: () => void
   onConfirm: () => void
 }
@@ -41,12 +43,14 @@ export function ConfirmDialog({
   dismissLabel,
   confirmLabel,
   tone,
+  pending = false,
+  error,
   onDismiss,
   onConfirm,
 }: Props) {
   const warning = tone === 'warning'
   return (
-    <div onClick={onDismiss} style={OVERLAY}>
+    <div onClick={() => !pending && onDismiss()} style={OVERLAY}>
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -95,6 +99,7 @@ export function ConfirmDialog({
                         padding: '8px 10px',
                         marginTop: 11,
                         wordBreak: 'break-all',
+                        whiteSpace: 'pre-line',
                       }
                     : {
                         fontSize: 12.5,
@@ -106,6 +111,22 @@ export function ConfirmDialog({
                 }
               >
                 {detail}
+              </div>
+            )}
+            {error && (
+              <div
+                role="alert"
+                style={{
+                  fontSize: 12,
+                  color: '#B42318',
+                  background: '#FEF3F2',
+                  border: '1px solid #FECDCA',
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  marginTop: 11,
+                }}
+              >
+                {error}
               </div>
             )}
           </div>
@@ -120,13 +141,20 @@ export function ConfirmDialog({
             background: '#FAFBFC',
           }}
         >
-          <button type="button" className="pio-light-btn" onClick={onDismiss} style={LIGHT_BTN}>
+          <button
+            type="button"
+            className="pio-light-btn"
+            onClick={onDismiss}
+            disabled={pending}
+            style={{ ...LIGHT_BTN, cursor: pending ? 'not-allowed' : 'pointer', opacity: pending ? 0.6 : 1 }}
+          >
             {dismissLabel}
           </button>
           <button
             type="button"
             className={warning ? 'pio-bright' : 'pio-danger'}
             onClick={onConfirm}
+            disabled={pending}
             style={{
               padding: '9px 18px',
               borderRadius: 9,
@@ -134,7 +162,8 @@ export function ConfirmDialog({
               background: warning ? '#B45309' : '#DC2626',
               color: '#fff',
               font: "700 13px 'IBM Plex Sans'",
-              cursor: 'pointer',
+              cursor: pending ? 'wait' : 'pointer',
+              opacity: pending ? 0.72 : 1,
             }}
           >
             {confirmLabel}

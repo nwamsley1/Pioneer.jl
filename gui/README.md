@@ -11,21 +11,25 @@ Tauri v2 (Rust) + React 18 + TypeScript.
 The GUI lives in `gui/` inside Pioneer.jl so that one tag builds both halves and
 the front end can never drift from the binaries it drives.
 
-It does **not** bundle a copy of the Pioneer distribution. The installers put the
-CLI at a fixed system location, and the GUI resolves that:
+It does **not** bundle a copy of the Pioneer distribution. Installer builds
+embed a stable version key in the GUI, so each GUI resolves its matching CLI
+even when multiple versions are installed:
 
 | platform | CLI installed to | GUI installed to |
 |---|---|---|
-| macOS `.pkg` | `/usr/local/Pioneer` (+ symlink `/usr/local/bin/pioneer`) | `/Applications/Pioneer.app` |
-| Linux `.deb` | `/usr/local/Pioneer` (+ symlink `/usr/local/bin/pioneer`) | *(not wired up yet)* |
-| Windows MSI | `%ProgramFiles%\Pioneer` | *(not wired up yet)* |
+| macOS `.pkg` | `/usr/local/lib/pioneer/<version>` | `/Applications/Pioneer <version>.app` |
+| Linux `.deb` | `/opt/pioneer/<version>` | version-labelled desktop entry |
+| Windows setup | `%ProgramFiles%\Pioneer\<version>` | version-labelled Start Menu and optional desktop shortcuts |
 
 Bundling would have duplicated ~600 MB inside a payload that already contains it.
 
 `resolve_home` in `src-tauri/src/pioneer.rs` tries, in order: `PIONEER_HOME`, the
-platform install location, then `<resources>/pioneer` (only present if someone
-deliberately builds a self-contained bundle). If none match, the error names
-every path it tried.
+versioned platform install location compiled into installer builds, then
+`<resources>/pioneer` (only present if someone deliberately builds a
+self-contained bundle). If none match, the error names every path it tried.
+An unversioned macOS development build follows
+`/usr/local/lib/pioneer/current`, the same active installation selected by the
+unqualified `/usr/local/bin/pioneer` command.
 
 ### Coverage
 
@@ -53,8 +57,10 @@ npm run tauri:build
 
 1. **`PIONEER_HOME`** — an unpacked distribution. This is the dev loop, and the
    escape hatch when the bundled copy is wrong.
-2. **`<app resources>/pioneer`** — the copy bundled into the app at packaging
-   time, from `src-tauri/resources/pioneer/`.
+2. **The installed distribution** — a release GUI uses its embedded version
+   key; an unversioned macOS development GUI uses the active `current` link.
+3. **`<app resources>/pioneer`** — used only by a deliberately self-contained
+   app bundle.
 
 ```sh
 export PIONEER_HOME=/path/to/Pioneer

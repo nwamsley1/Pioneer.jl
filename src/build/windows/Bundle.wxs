@@ -13,24 +13,39 @@
   official redistributable, which is complete by construction and self-updating.
 
   Build (see .github/workflows/build_app_windows.yml):
-    candle -ext WixBalExtension -ext WixUtilExtension -dProductVersion=.. -dMsiFile=.. \
-           -dVcRedistFile=vc_redist.x64.exe -dLicenseRtf=..\LICENSE.rtf -dPackageIdentifier=.. Bundle.wxs
+    candle -ext WixBalExtension -ext WixUtilExtension -dBundleVersion=.. -dMsiFile=.. \
+           -dVcRedistFile=vc_redist.x64.exe -dLicenseRtf=..\LICENSE.rtf \
+           -dBundleUpgradeCode=.. -dPackageIdentifier=.. -dInstallKey=.. \
+           -dThemeFile=..\BundleTheme.xml Bundle.wxs
     light  -ext WixBalExtension -ext WixUtilExtension -out PioneerSetup-<ver>-<id>.exe Bundle.wixobj
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
-  <Bundle Name="Pioneer CLI Tools"
-          Version="$(var.ProductVersion)"
+  <Bundle Name="Pioneer $(var.DisplayVersion)"
+          Version="$(var.BundleVersion)"
           Manufacturer="$(var.PackageIdentifier)"
-          UpgradeCode="0A16E7C7-2B2B-4244-B07B-B4B38ED8C6F3">
+          UpgradeCode="$(var.BundleUpgradeCode)"
+          IconSourceFile="$(var.IconIco)">
 
     <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.RtfLicense">
       <bal:WixStandardBootstrapperApplication
           LicenseFile="$(var.LicenseRtf)"
+          LogoFile="$(var.LogoPng)"
+          ThemeFile="$(var.ThemeFile)"
+          LaunchTarget="[ProgramFiles64Folder]Pioneer\$(var.InstallKey)\pioneer-gui.exe"
+          LaunchWorkingFolder="[ProgramFiles64Folder]Pioneer\$(var.InstallKey)"
           SuppressOptionsUI="yes" />
     </BootstrapperApplicationRef>
+
+    <!-- The named checkbox in BundleTheme.xml updates this variable before
+         planning. It is deliberately opt-in, including for quiet installs. -->
+    <Variable Name="CreateDesktopShortcut"
+              Type="numeric"
+              Value="0"
+              Persisted="yes"
+              bal:Overridable="yes" />
 
     <!-- Detect an already-installed VC++ 2015-2022 x64 runtime (the redist writes this
          key on install); the ExePackage below is skipped when it is present. -->
@@ -60,7 +75,9 @@
       <MsiPackage Id="PioneerMsi"
           SourceFile="$(var.MsiFile)"
           Compressed="yes"
-          Vital="yes" />
+          Vital="yes">
+        <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
+      </MsiPackage>
     </Chain>
   </Bundle>
 </Wix>
