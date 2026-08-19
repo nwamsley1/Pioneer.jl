@@ -36,9 +36,12 @@
 
   <Page Name="Install">
     <Text X="30" Y="108" Width="-30" Height="24" FontId="6" DisablePrefix="yes">License agreement</Text>
-    <Richedit Name="EulaRichedit" X="30" Y="138" Width="-30" Height="112" TabStop="yes" FontId="0" HexStyle="0x800000" />
-    <Checkbox Name="EulaAcceptCheckbox" X="30" Y="262" Width="-30" Height="22" TabStop="yes" FontId="3" HideWhenDisabled="yes">#(loc.InstallAcceptCheckbox)</Checkbox>
-    <Checkbox Name="CreateDesktopShortcut" X="30" Y="294" Width="-30" Height="22" TabStop="yes" FontId="3">Create a desktop shortcut</Checkbox>
+    <!-- Anchor the complete choice/action stack to the client area's bottom.
+         Windows title-bar metrics vary with DPI, so mixing positive-Y choices
+         with negative-Y buttons can make the controls occupy the same row. -->
+    <Richedit Name="EulaRichedit" X="30" Y="138" Width="-30" Height="-142" TabStop="yes" FontId="0" HexStyle="0x800000" />
+    <Checkbox Name="EulaAcceptCheckbox" X="30" Y="-108" Width="-30" Height="22" TabStop="yes" FontId="3" HideWhenDisabled="yes">#(loc.InstallAcceptCheckbox)</Checkbox>
+    <Checkbox Name="CreateDesktopShortcut" X="30" Y="-76" Width="-30" Height="22" TabStop="yes" FontId="3">Create a desktop shortcut</Checkbox>
     <Button Name="OptionsButton" X="30" Y="-24" Width="108" Height="30" TabStop="yes" FontId="0" HideWhenDisabled="yes">#(loc.InstallOptionsButton)</Button>
     <Button Name="InstallButton" X="-140" Y="-24" Width="110" Height="30" TabStop="yes" FontId="0">#(loc.InstallInstallButton)</Button>
     <Button Name="WelcomeCancelButton" X="-24" Y="-24" Width="96" Height="30" TabStop="yes" FontId="0">#(loc.InstallCloseButton)</Button>

@@ -116,12 +116,20 @@ jobs:
           $window = $theme.SelectSingleNode('/theme:Theme/theme:Window', $ns)
           $installButton = $theme.SelectSingleNode(
             '/theme:Theme/theme:Page[@Name="Install"]/theme:Button[@Name="InstallButton"]', $ns)
+          $eula = $theme.SelectSingleNode(
+            '/theme:Theme/theme:Page[@Name="Install"]/theme:Richedit[@Name="EulaRichedit"]', $ns)
+          $acceptCheckbox = $theme.SelectSingleNode(
+            '/theme:Theme/theme:Page[@Name="Install"]/theme:Checkbox[@Name="EulaAcceptCheckbox"]', $ns)
           $desktopCheckbox = $theme.SelectSingleNode(
             '/theme:Theme/theme:Page[@Name="Install"]/theme:Checkbox[@Name="CreateDesktopShortcut"]', $ns)
           $windowHeight = [int]$window.Height
           $buttonHeight = [int]$installButton.Height
-          $buttonTop = $windowHeight + [int]$installButton.Y - $buttonHeight
-          $checkboxBottom = [int]$desktopCheckbox.Y + [int]$desktopCheckbox.Height
+          $buttonTopFromBottom = -([int]$installButton.Y) + $buttonHeight
+          $desktopBottomFromBottom = -([int]$desktopCheckbox.Y)
+          $desktopTopFromBottom = $desktopBottomFromBottom + [int]$desktopCheckbox.Height
+          $acceptBottomFromBottom = -([int]$acceptCheckbox.Y)
+          $acceptTopFromBottom = $acceptBottomFromBottom + [int]$acceptCheckbox.Height
+          $eulaBottomFromBottom = -([int]$eula.Height)
 
           if ($windowHeight -gt 390) {
             throw 'Windows setup is too tall for a 900 px display at 200% scaling'
@@ -129,8 +137,17 @@ jobs:
           if ($buttonHeight -ne 30) {
             throw 'Windows setup action buttons must retain the polished 30-unit height'
           }
-          if (($buttonTop - $checkboxBottom) -lt 16) {
+          if ([int]$acceptCheckbox.Y -ge 0 -or [int]$desktopCheckbox.Y -ge 0) {
+            throw 'Windows setup choices must be bottom-anchored with the action buttons'
+          }
+          if (($desktopBottomFromBottom - $buttonTopFromBottom) -lt 16) {
             throw 'Windows setup choices overlap or crowd the action-button row'
+          }
+          if (($acceptBottomFromBottom - $desktopTopFromBottom) -lt 8) {
+            throw 'Windows setup choices overlap each other'
+          }
+          if (($eulaBottomFromBottom - $acceptTopFromBottom) -lt 8) {
+            throw 'Windows setup license text overlaps the acceptance checkbox'
           }
 
           $testRoot = Join-Path $env:RUNNER_TEMP 'pioneer-wix-authoring'
