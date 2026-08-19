@@ -576,22 +576,22 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     n = length(fasta_peptides)
     
     seq_df = DataFrame(
-        (upid = _upid[1:n],
-         accession_number = _accession_number[1:n],
-         sequence = _sequence[1:n],
-         start_idx = _start_idx[1:n],
-         mods = _structural_mods[1:n],
-         isotopic_mods = _isotopic_mods[1:n],
+        (upid = _upid,
+         accession_number = _accession_number,
+         sequence = _sequence,
+         start_idx = _start_idx,
+         mods = _structural_mods,
+         isotopic_mods = _isotopic_mods,
          num_variable_modifications =
-            _num_variable_modifications[1:n],
-         precursor_charge = _precursor_charge[1:n],
-         num_enzymatic_termini = _num_enzymatic_termini[1:n],
-         collision_energy = _collision_energy[1:n],
-         decoy = _decoy[1:n],
-         entrapment_group_id = _entrapment_group_id[1:n],
-         base_target_id = _base_target_id[1:n],
-         base_pep_id = _base_pep_id[1:n],
-         pair_id = _pair_id[1:n])
+            _num_variable_modifications,
+         precursor_charge = _precursor_charge,
+         num_enzymatic_termini = _num_enzymatic_termini,
+         collision_energy = _collision_energy,
+         decoy = _decoy,
+         entrapment_group_id = _entrapment_group_id,
+         base_target_id = _base_target_id,
+         base_pep_id = _base_pep_id,
+         pair_id = _pair_id)
     )
 
     seq_df[!,:koina_sequence] = getKoinaSeqs(
