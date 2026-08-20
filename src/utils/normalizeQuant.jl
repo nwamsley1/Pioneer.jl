@@ -24,6 +24,14 @@ correction was noise. See dev_docs/quant_spline_guard.
 const QUANT_MIN_BIN_OCCUPANCY = 100
 
 """
+Minimum fraction of runs in which a precursor must be quantified to serve as a
+normalization anchor. With two or more runs, at least two observations are
+always required; a one-run analysis uses its own precursors and therefore
+reduces to the identity correction.
+"""
+const QUANT_MIN_ANCHOR_RUN_FRACTION = 0.5
+
+"""
     _min_bins_for_spline(spline_n_knots) -> Int
 
 Fewest RT bins that may be handed to `UniformSpline`.
@@ -68,18 +76,112 @@ function _occupancy_bins(n::Int, min_occupancy::Int, max_bins::Int)
     return bins
 end
 
+@inline function _required_anchor_runs(n_runs::Int, min_run_fraction::Real)
+    n_runs <= 0 && return 0
+    0.0 < min_run_fraction <= 1.0 || throw(ArgumentError(
+        "min_run_fraction must be in (0, 1], got $min_run_fraction"
+    ))
+    n_runs == 1 && return 1
+    return min(n_runs, max(2, ceil(Int, n_runs * min_run_fraction)))
+end
+
+function _file_precursor_log2_quant(
+    psms::DataFrame,
+    quant_col_name::Symbol,
+    precursor_col_name::Symbol,
+)
+    hasproperty(psms, precursor_col_name) || throw(ArgumentError(
+        "Matched-precursor quant normalization requires column " *
+        "$(precursor_col_name)."
+    ))
+    hasproperty(psms, quant_col_name) || throw(ArgumentError(
+        "Quant normalization requires column $(quant_col_name)."
+    ))
+
+    precursor_idx = psms[!, precursor_col_name]
+    quant = psms[!, quant_col_name]
+    values = Dict{UInt32, Float32}()
+    sizehint!(values, length(precursor_idx))
+
+    @inbounds for i in eachindex(precursor_idx, quant)
+        q_raw = quant[i]
+        ismissing(q_raw) && continue
+        q = Float64(q_raw)
+        (isfinite(q) && q > 0.0) || continue
+        pid = UInt32(precursor_idx[i])
+        logq = Float32(log2(q))
+
+        # Passing-PSM tables normally contain one row per precursor. If a
+        # duplicate is present, keep one run-level value so that run cannot
+        # receive extra weight in the cross-run precursor consensus.
+        values[pid] = max(get(values, pid, -Inf32), logq)
+    end
+    return values
+end
+
+"""
+    getPrecursorQuantConsensus(psms_paths, quant_col_name;
+        precursor_col_name=:precursor_idx,
+        min_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION)
+
+Build a cross-run reference abundance for matched precursors. Each precursor's
+reference is the median log2 abundance across runs in which it was quantified.
+Only precursors observed in at least `min_run_fraction` of runs (and at least two
+runs when multiple runs are present) are retained as normalization anchors.
+
+The run-level de-duplication is deliberate: a precursor contributes at most one
+value per run to the consensus.
+"""
+function getPrecursorQuantConsensus(
+    psms_paths::Vector{String},
+    quant_col_name::Symbol;
+    precursor_col_name::Symbol = :precursor_idx,
+    min_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
+)
+    required_runs = _required_anchor_runs(length(psms_paths), min_run_fraction)
+    required_runs == 0 && return Dict{UInt32, Float32}()
+
+    values_by_precursor = Dict{UInt32, Vector{Float32}}()
+    for fpath in psms_paths
+        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        file_values = _file_precursor_log2_quant(
+            psms,
+            quant_col_name,
+            precursor_col_name,
+        )
+        for (pid, logq) in file_values
+            push!(get!(() -> Float32[], values_by_precursor, pid), logq)
+        end
+    end
+
+    consensus = Dict{UInt32, Float32}()
+    sizehint!(consensus, length(values_by_precursor))
+    for (pid, values) in values_by_precursor
+        length(values) >= required_runs || continue
+        consensus[pid] = Float32(median(values))
+    end
+    return consensus
+end
+
 """
     getQuantSplines(psms_paths, quant_col_name; N=100, spline_n_knots=7,
-                    min_bin_occupancy=QUANT_MIN_BIN_OCCUPANCY)
+                    min_bin_occupancy=QUANT_MIN_BIN_OCCUPANCY,
+                    min_anchor_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION)
 
-Fit RT-dependent quantification splines for each MS file. For each Arrow file,
-bins PSMs by observed iRT into bins of at least `min_bin_occupancy` rows (at most
-`N` bins), computes median log2-abundance per bin, and fits a `UniformSpline`
-mapping iRT -> median log2-abundance.
+Fit matched-precursor RT-dependent quantification splines for each MS file.
+First builds a cross-run median log2 abundance for precursors observed in a
+configurable fraction of runs. For each file, it then computes
 
-Files whose PSM count cannot support `_min_bins_for_spline(spline_n_knots)` such
-bins get no entry in the returned dictionary: they are left uncorrected and
-excluded from the cross-file median. `applyNormalization!` handles the absent key.
+`log2(file abundance) - precursor consensus`
+
+for those matched anchors, bins the residuals by observed iRT into bins of at
+least `min_bin_occupancy` anchors (at most `N` bins), and fits a `UniformSpline`
+mapping iRT to the median matched-precursor residual.
+
+Files whose matched-anchor count cannot support
+`_min_bins_for_spline(spline_n_knots)` such bins get no entry in the returned
+dictionary: they are left uncorrected and excluded from the cross-file median.
+`applyNormalization!` handles the absent key.
 
 Returns `(splines_dict, (min_rt, max_rt))` where `splines_dict` maps file path to
 fitted spline, and the RT range spans only the files that got one.
@@ -88,20 +190,64 @@ function getQuantSplines(psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
     spline_n_knots::Int = 7,
-    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY)
+    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY,
+    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
+    precursor_col_name::Symbol = :precursor_idx)
+    precursor_consensus = getPrecursorQuantConsensus(
+        psms_paths,
+        quant_col_name;
+        precursor_col_name = precursor_col_name,
+        min_run_fraction = min_anchor_run_fraction,
+    )
     quant_splines = Dictionary{String, UniformSpline}()
     min_rt, max_rt = typemax(Float32), typemin(Float32)
     min_bins = _min_bins_for_spline(spline_n_knots)
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        fast_df_sort!(psms, (:irt_obs,))
-        nprecs = size(psms, 1)
+        hasproperty(psms, :irt_obs) || throw(ArgumentError(
+            "Matched-precursor quant normalization requires column irt_obs."
+        ))
+        file_values = _file_precursor_log2_quant(
+            psms,
+            quant_col_name,
+            precursor_col_name,
+        )
 
-        bins = _occupancy_bins(nprecs, min_bin_occupancy, N)
+        anchor_rts = Float64[]
+        anchor_residuals = Float64[]
+        sizehint!(anchor_rts, min(length(file_values), length(precursor_consensus)))
+        sizehint!(anchor_residuals, min(length(file_values), length(precursor_consensus)))
+        precursor_idx = psms[!, precursor_col_name]
+        irt_obs = psms[!, :irt_obs]
+        seen = Set{UInt32}()
+        sizehint!(seen, length(file_values))
+        @inbounds for i in eachindex(precursor_idx, irt_obs)
+            pid = UInt32(precursor_idx[i])
+            pid in seen && continue
+            reference_logq = get(precursor_consensus, pid, nothing)
+            reference_logq === nothing && continue
+            file_logq = get(file_values, pid, nothing)
+            file_logq === nothing && continue
+            rt_raw = irt_obs[i]
+            ismissing(rt_raw) && continue
+            rt = Float64(rt_raw)
+            isfinite(rt) || continue
+            push!(seen, pid)
+            push!(anchor_rts, rt)
+            push!(anchor_residuals, Float64(file_logq - reference_logq))
+        end
+
+        order = sortperm(anchor_rts)
+        anchor_rts = anchor_rts[order]
+        anchor_residuals = anchor_residuals[order]
+        nanchors = length(anchor_rts)
+
+        bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
         if length(bins) < min_bins
             @user_warn "Skipping quant normalization for $(basename(fpath)): " *
-                       "$nprecs PSMs support only $(length(bins)) RT bin(s) at " *
-                       ">= $min_bin_occupancy PSMs each, and a " *
+                       "$nanchors matched precursor anchors support only " *
+                       "$(length(bins)) RT bin(s) at >= $min_bin_occupancy " *
+                       "anchors each, and a " *
                        "$(_n_spline_coeffs(spline_n_knots))-coefficient spline needs at least " *
                        "$min_bins. Abundances are left uncorrected and excluded " *
                        "from the cross-file median."
@@ -111,18 +257,18 @@ function getQuantSplines(psms_paths::Vector{String},
         # Only files that get a spline define the correction grid. A skipped file
         # receives no correction, so widening the grid to its RT range would only
         # extrapolate the surviving splines further than their data supports.
-        if minimum(psms[!,:irt_obs]) < min_rt
-            min_rt = minimum(psms[!,:irt_obs])
+        if first(anchor_rts) < min_rt
+            min_rt = first(anchor_rts)
         end
-        if maximum(psms[!,:irt_obs]) > max_rt
-            max_rt = maximum(psms[!,:irt_obs])
+        if last(anchor_rts) > max_rt
+            max_rt = last(anchor_rts)
         end
 
         median_quant = Vector{Float64}(undef, length(bins))
         median_rts = Vector{Float64}(undef, length(bins))
         for (i, b) in enumerate(bins)
-            median_rts[i] = median(@view(psms[b, :irt_obs]))
-            median_quant[i] = log2(median(@view(psms[b, quant_col_name])))
+            median_rts[i] = median(@view(anchor_rts[b]))
+            median_quant[i] = median(@view(anchor_residuals[b]))
         end
 
         splinefit = UniformSpline(median_quant, median_rts, 3, spline_n_knots)
@@ -165,7 +311,15 @@ function getQuantCorrections(
         for (i, rt) in enumerate(rt_grid)
             offset[i] = spline(rt) - median_interp(rt)
         end
-        insert!(corrections, key, linear_interpolation(rt_grid, offset))
+        # Censoring can leave no matched anchors at one or both RT boundaries.
+        # Rows outside the anchor-supported range still need a correction; hold
+        # the nearest supported value constant instead of extrapolating a trend
+        # that was never observed (or throwing on an out-of-range lookup).
+        insert!(corrections, key, linear_interpolation(
+            rt_grid,
+            offset;
+            extrapolation_bc = Interpolations.Flat(),
+        ))
     end
     return corrections
 end
@@ -208,21 +362,28 @@ end
 """
     normalizeQuant(second_quant_folder, quant_col_name; N=100, spline_n_knots=7)
 
-End-to-end RT-dependent quantification normalization. Reads all Arrow files
-in `second_quant_folder`, fits per-file splines, computes cross-file median,
-and writes corrected abundances back to each file.
+End-to-end RT-dependent quantification normalization. Reads all Arrow files,
+constructs a cross-run matched-precursor reference, fits per-file residual
+splines, computes the cross-file median, and writes corrected abundances back
+to each file.
 
-This corrects for systematic RT-dependent intensity differences between MS runs,
-ensuring that the same protein at the same RT has comparable abundance across files.
+This corrects systematic RT-dependent intensity differences between MS runs
+without forcing the marginal observed intensity distributions to match.
 """
 function normalizeQuant(
     psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
-    spline_n_knots::Int = 7)
+    spline_n_knots::Int = 7,
+    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION)
 
     quant_splines_dict, rt_range = getQuantSplines(
-        psms_paths, quant_col_name, N = N, spline_n_knots = spline_n_knots)
+        psms_paths,
+        quant_col_name;
+        N = N,
+        spline_n_knots = spline_n_knots,
+        min_anchor_run_fraction = min_anchor_run_fraction,
+    )
 
     quant_corrections_dict = getQuantCorrections(
         quant_splines_dict, rt_range, N = N)
@@ -235,8 +396,15 @@ function normalizeQuant(
     second_quant_folder::String,
     quant_col_name::Symbol;
     N::Int = 100,
-    spline_n_knots::Int = 7)
+    spline_n_knots::Int = 7,
+    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION)
 
     psms_paths = [fpath for fpath in readdir(second_quant_folder, join=true) if endswith(fpath, ".arrow")]
-    normalizeQuant(psms_paths, quant_col_name; N = N, spline_n_knots = spline_n_knots)
+    normalizeQuant(
+        psms_paths,
+        quant_col_name;
+        N = N,
+        spline_n_knots = spline_n_knots,
+        min_anchor_run_fraction = min_anchor_run_fraction,
+    )
 end
