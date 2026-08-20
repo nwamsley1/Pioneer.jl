@@ -28,10 +28,63 @@ function _write_quant_arrow(path::String, n::Int, offset::Float64;
     # Apply multiplicative offset (in log2 space)
     abundance = Float32.(base .* 2.0^offset)
     df = DataFrame(
+        precursor_idx = UInt32.(1:n),
         irt_obs = rts,
         abundance = abundance,
     )
     Arrow.write(path, df)
+end
+
+# Create the left-censored loading example that motivated the matched-precursor
+# normalizer. Run 2 is shifted down in log2 space, and values that fall below
+# the limit of detection are absent rather than represented as zeros.
+function _write_censored_quant_pair(
+    dir::String;
+    n::Int = 10_000,
+    loading_offset::Float32 = 3.0f0,
+    log2_lod::Float32 = 4.0f0,
+)
+    precursor_idx = UInt32.(1:n)
+    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
+    base_log2 = Float32[4.0f0 + 6.0f0 * ((i - 1) % 101) / 100 for i in 1:n]
+
+    path1 = joinpath(dir, "complete.arrow")
+    Arrow.write(path1, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ base_log2,
+    ))
+
+    run2_log2 = base_log2 .- loading_offset
+    observed = run2_log2 .>= log2_lod
+    path2 = joinpath(dir, "censored.arrow")
+    Arrow.write(path2, DataFrame(
+        precursor_idx = precursor_idx[observed],
+        irt_obs = rts[observed],
+        abundance = 2.0f0 .^ run2_log2[observed],
+    ))
+    return path1, path2, observed
+end
+
+function _write_rt_bias_quant_pair(dir::String; n::Int = 5_000)
+    precursor_idx = UInt32.(1:n)
+    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
+    base_log2 = Float32[8.0f0 + 0.5f0 * sin(Float32(i) / 17.0f0) for i in 1:n]
+    rt_bias = @. -2.0f0 + 0.04f0 * rts
+
+    path1 = joinpath(dir, "rt_reference.arrow")
+    path2 = joinpath(dir, "rt_biased.arrow")
+    Arrow.write(path1, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ base_log2,
+    ))
+    Arrow.write(path2, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ (base_log2 .+ rt_bias),
+    ))
+    return path1, path2
 end
 
 @testset "normalizeQuant" begin
@@ -149,6 +202,75 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Differential missingness — normalize matched precursors, not marginals
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "left-censored run uses matched precursor ratios" begin
+    mktempdir() do dir
+        path1, path2, observed = _write_censored_quant_pair(dir)
+
+        before1 = copy(DataFrame(Arrow.Table(path1)).abundance)
+        before2 = copy(DataFrame(Arrow.Table(path2)).abundance)
+        raw_matched_shift = median(
+            log2.(before1[observed]) .- log2.(before2)
+        )
+        @test raw_matched_shift ≈ 3.0 atol=0.02
+
+        Pioneer.normalizeQuant(
+            [path1, path2],
+            :abundance;
+            N=100,
+            spline_n_knots=7,
+        )
+
+        after1 = DataFrame(Arrow.Table(path1))
+        after2 = DataFrame(Arrow.Table(path2))
+        matched_shift = median(
+            log2.(after1.abundance_normalized[observed]) .-
+            log2.(after2.abundance_normalized)
+        )
+
+        # The shared precursors align even though the observed marginal
+        # distributions do not: run 2 is still missing its low-abundance tail.
+        @test abs(matched_shift) < 0.05
+        @test abs(
+            median(log2.(after1.abundance_normalized)) -
+            median(log2.(after2.abundance_normalized))
+        ) > 1.0
+        @test (
+            maximum(log2.(after2.abundance_normalized)) -
+            minimum(log2.(after2.abundance_normalized))
+        ) < (
+            maximum(log2.(after1.abundance_normalized)) -
+            minimum(log2.(after1.abundance_normalized))
+        )
+    end
+end
+
+@testset "matched residual spline corrects RT-dependent bias" begin
+    mktempdir() do dir
+        path1, path2 = _write_rt_bias_quant_pair(dir)
+        Pioneer.normalizeQuant(
+            [path1, path2],
+            :abundance;
+            N=50,
+            spline_n_knots=7,
+        )
+
+        run1 = DataFrame(Arrow.Table(path1))
+        run2 = DataFrame(Arrow.Table(path2))
+        normalized_difference = log2.(run2.abundance_normalized) .-
+                                log2.(run1.abundance_normalized)
+
+        # Check local agreement throughout the gradient, not just the global
+        # median. The injected bias ranges from -2 to +2 log2 units.
+        for bin in Pioneer._occupancy_bins(length(normalized_difference), 500, 10)
+            @test abs(median(@view(normalized_difference[bin]))) < 0.05
+        end
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Edge case: single file — normalization should be near-identity
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -198,6 +320,30 @@ end
             # Correction factor 1.0: abundances pass through untouched.
             @test all(df.abundance_normalized .≈ Float64.(df.abundance))
         end
+    end
+end
+
+@testset "no matched precursor overlap" begin
+    mktempdir() do dir
+        path1 = joinpath(dir, "run1.arrow")
+        path2 = joinpath(dir, "run2.arrow")
+        _write_quant_arrow(path1, 1000, 0.0)
+        _write_quant_arrow(path2, 1000, 2.0)
+
+        # Copy before replacing the backing Arrow file; Arrow columns may be
+        # memory-mapped on macOS.
+        run2 = DataFrame(Arrow.Table(path2); copycols=true)
+        run2.precursor_idx .+= UInt32(10_000)
+        Pioneer.writeArrow(path2, run2)
+
+        before1 = copy(DataFrame(Arrow.Table(path1)).abundance)
+        before2 = copy(DataFrame(Arrow.Table(path2)).abundance)
+        Pioneer.normalizeQuant([path1, path2], :abundance; N=50, spline_n_knots=5)
+
+        after1 = DataFrame(Arrow.Table(path1))
+        after2 = DataFrame(Arrow.Table(path2))
+        @test after1.abundance_normalized ≈ before1
+        @test after2.abundance_normalized ≈ before2
     end
 end
 
