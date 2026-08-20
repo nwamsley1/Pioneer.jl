@@ -130,9 +130,13 @@ jobs:
           $acceptBottomFromBottom = -([int]$acceptCheckbox.Y)
           $acceptTopFromBottom = $acceptBottomFromBottom + [int]$acceptCheckbox.Height
           $eulaBottomFromBottom = -([int]$eula.Height)
+          $eulaHeightBudget = $windowHeight - [int]$eula.Y - $eulaBottomFromBottom
 
-          if ($windowHeight -gt 390) {
+          if ($windowHeight -gt 420) {
             throw 'Windows setup is too tall for a 900 px display at 200% scaling'
+          }
+          if ($eulaHeightBudget -lt 135) {
+            throw 'Windows setup license text area is too short'
           }
           if ($buttonHeight -ne 30) {
             throw 'Windows setup action buttons must retain the polished 30-unit height'

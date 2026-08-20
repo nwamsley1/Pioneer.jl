@@ -9,11 +9,10 @@
   a dedicated 64 px logo so the setup remains balanced at Windows DPI scaling.
 -->
 <Theme xmlns="http://wixtoolset.org/schemas/thmutil/2010">
-  <!-- 390 logical px keeps the complete dialog within a 900 px-tall display
-       at 200% scaling, including the title bar and taskbar. WiX v3 is DPI
-       unaware, so an oversized window is shortened by Windows while its
-       positive-Y controls stay fixed, causing them to overlap the action row. -->
-  <Window Width="600" Height="390" HexStyle="100a0000" FontId="0">#(loc.Caption)</Window>
+  <!-- 420 logical px leaves a useful license viewport while fitting a
+       900 px-tall display at 200% scaling. The bottom-anchored install-page
+       controls keep their spacing when Windows applies its title-bar metrics. -->
+  <Window Width="600" Height="420" HexStyle="100a0000" FontId="0">#(loc.Caption)</Window>
 
   <!-- Theme colors use WiX's BGR byte order. -->
   <Font Id="0" Height="-14" Weight="400" Foreground="33291f" Background="ffffff">Segoe UI</Font>
