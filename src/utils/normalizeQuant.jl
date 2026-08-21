@@ -32,6 +32,13 @@ reduces to the identity correction.
 const QUANT_MIN_ANCHOR_RUN_FRACTION = 0.5
 
 """
+Minimum matched precursors required to estimate a run-wide loading offset.
+Unlike an RT spline, a single robust median does not require multiple bins, but
+it still needs enough anchors to avoid applying a noisy constant correction.
+"""
+const QUANT_MIN_GLOBAL_ANCHORS = 100
+
+"""
     _min_bins_for_spline(spline_n_knots) -> Int
 
 Fewest RT bins that may be handed to `UniformSpline`.
@@ -164,111 +171,161 @@ function getPrecursorQuantConsensus(
 end
 
 """
-    getQuantSplines(psms_paths, quant_col_name; N=100, spline_n_knots=7,
-                    min_bin_occupancy=QUANT_MIN_BIN_OCCUPANCY,
-                    min_anchor_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION)
+    getMatchedGlobalOffsets(psms_paths, quant_col_name;
+        precursor_col_name=:precursor_idx,
+        min_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION,
+        min_anchors=QUANT_MIN_GLOBAL_ANCHORS)
 
-Fit matched-precursor RT-dependent quantification splines for each MS file.
-First builds a cross-run median log2 abundance for precursors observed in a
-configurable fraction of runs. For each file, it then computes
+Estimate one global log2 loading offset per run from matched precursor ratios.
+For every run, computes the median of
 
 `log2(file abundance) - precursor consensus`
 
-for those matched anchors, bins the residuals by observed iRT into bins of at
-least `min_bin_occupancy` anchors (at most `N` bins), and fits a `UniformSpline`
-mapping iRT to the median matched-precursor residual.
-
-Files whose matched-anchor count cannot support
-`_min_bins_for_spline(spline_n_knots)` such bins get no entry in the returned
-dictionary: they are left uncorrected and excluded from the cross-file median.
-`applyNormalization!` handles the absent key.
-
-Returns `(splines_dict, (min_rt, max_rt))` where `splines_dict` maps file path to
-fitted spline, and the RT range spans only the files that got one.
+over eligible anchors, then subtracts the median run offset so that the
+experiment-wide correction remains centered at zero. Runs with fewer than
+`min_anchors` matched precursors are omitted and therefore left uncorrected.
 """
-function getQuantSplines(psms_paths::Vector{String},
+function getMatchedGlobalOffsets(
+    psms_paths::Vector{String},
     quant_col_name::Symbol;
-    N::Int = 100,
-    spline_n_knots::Int = 7,
-    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY,
-    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
-    precursor_col_name::Symbol = :precursor_idx)
+    precursor_col_name::Symbol = :precursor_idx,
+    min_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
+    min_anchors::Int = QUANT_MIN_GLOBAL_ANCHORS,
+)
+    min_anchors > 0 || throw(ArgumentError(
+        "min_anchors must be positive, got $min_anchors"
+    ))
     precursor_consensus = getPrecursorQuantConsensus(
         psms_paths,
         quant_col_name;
         precursor_col_name = precursor_col_name,
-        min_run_fraction = min_anchor_run_fraction,
+        min_run_fraction = min_run_fraction,
     )
+
+    raw_offsets = Dictionary{String, Float64}()
+    raw_offset_values = Float64[]
+    for fpath in psms_paths
+        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        file_values = _file_precursor_log2_quant(
+            psms,
+            quant_col_name,
+            precursor_col_name,
+        )
+        residuals = Float64[]
+        sizehint!(residuals, min(length(file_values), length(precursor_consensus)))
+        for (pid, file_logq) in file_values
+            reference_logq = get(precursor_consensus, pid, nothing)
+            reference_logq === nothing && continue
+            push!(residuals, Float64(file_logq - reference_logq))
+        end
+
+        if length(residuals) < min_anchors
+            @user_warn "Skipping quant normalization for $(basename(fpath)): " *
+                       "$(length(residuals)) matched precursor anchors are " *
+                       "below the $min_anchors required for a global loading " *
+                       "offset. Abundances are left uncorrected."
+            continue
+        end
+
+        raw_offset = median(residuals)
+        insert!(raw_offsets, fpath, raw_offset)
+        push!(raw_offset_values, raw_offset)
+    end
+
+    isempty(raw_offsets) && return raw_offsets
+    experiment_center = median(raw_offset_values)
+    offsets = Dictionary{String, Float64}()
+    for (fpath, raw_offset) in pairs(raw_offsets)
+        insert!(offsets, fpath, raw_offset - experiment_center)
+    end
+    return offsets
+end
+
+"""
+    getQuantSplines(psms_paths, quant_col_name; N=100, spline_n_knots=7,
+                    min_bin_occupancy=QUANT_MIN_BIN_OCCUPANCY)
+
+Fit marginal RT-dependent log2-intensity splines for each MS file. All valid
+observed precursors contribute to the shape estimator. Rows are sorted by
+observed iRT, divided into bins of at least `min_bin_occupancy` observations,
+and summarized by the median RT and log2 median abundance.
+
+These splines still contain both a run-wide level and an RT shape.
+`getRTShapeCorrections` removes the run-wide level before comparing shapes;
+the global loading correction comes separately from matched precursors.
+
+Files whose observed precursor count cannot support
+`_min_bins_for_spline(spline_n_knots)` such bins get no entry in the returned
+dictionary. They can still receive a constant matched global correction.
+
+Returns `(splines_dict, (min_rt, max_rt))` where `splines_dict` maps file path to
+fitted spline, and the RT range spans only the files that got one.
+"""
+function getQuantSplines(
+    psms_paths::Vector{String},
+    quant_col_name::Symbol;
+    N::Int = 100,
+    spline_n_knots::Int = 7,
+    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY,
+)
     quant_splines = Dictionary{String, UniformSpline}()
     min_rt, max_rt = typemax(Float32), typemin(Float32)
     min_bins = _min_bins_for_spline(spline_n_knots)
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
         hasproperty(psms, :irt_obs) || throw(ArgumentError(
-            "Matched-precursor quant normalization requires column irt_obs."
+            "RT-dependent quant normalization requires column irt_obs."
         ))
-        file_values = _file_precursor_log2_quant(
-            psms,
-            quant_col_name,
-            precursor_col_name,
-        )
+        hasproperty(psms, quant_col_name) || throw(ArgumentError(
+            "Quant normalization requires column $(quant_col_name)."
+        ))
 
-        anchor_rts = Float64[]
-        anchor_residuals = Float64[]
-        sizehint!(anchor_rts, min(length(file_values), length(precursor_consensus)))
-        sizehint!(anchor_residuals, min(length(file_values), length(precursor_consensus)))
-        precursor_idx = psms[!, precursor_col_name]
+        observed_rts = Float64[]
+        observed_quant = Float64[]
         irt_obs = psms[!, :irt_obs]
-        seen = Set{UInt32}()
-        sizehint!(seen, length(file_values))
-        @inbounds for i in eachindex(precursor_idx, irt_obs)
-            pid = UInt32(precursor_idx[i])
-            pid in seen && continue
-            reference_logq = get(precursor_consensus, pid, nothing)
-            reference_logq === nothing && continue
-            file_logq = get(file_values, pid, nothing)
-            file_logq === nothing && continue
+        quant = psms[!, quant_col_name]
+        sizehint!(observed_rts, length(irt_obs))
+        sizehint!(observed_quant, length(quant))
+        @inbounds for i in eachindex(irt_obs, quant)
             rt_raw = irt_obs[i]
-            ismissing(rt_raw) && continue
+            quant_raw = quant[i]
+            (ismissing(rt_raw) || ismissing(quant_raw)) && continue
             rt = Float64(rt_raw)
-            isfinite(rt) || continue
-            push!(seen, pid)
-            push!(anchor_rts, rt)
-            push!(anchor_residuals, Float64(file_logq - reference_logq))
+            abundance = Float64(quant_raw)
+            (isfinite(rt) && isfinite(abundance) && abundance > 0.0) || continue
+            push!(observed_rts, rt)
+            push!(observed_quant, abundance)
         end
 
-        order = sortperm(anchor_rts)
-        anchor_rts = anchor_rts[order]
-        anchor_residuals = anchor_residuals[order]
-        nanchors = length(anchor_rts)
+        order = sortperm(observed_rts)
+        observed_rts = observed_rts[order]
+        observed_quant = observed_quant[order]
+        nobservations = length(observed_rts)
 
-        bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
+        bins = _occupancy_bins(nobservations, min_bin_occupancy, N)
         if length(bins) < min_bins
-            @user_warn "Skipping quant normalization for $(basename(fpath)): " *
-                       "$nanchors matched precursor anchors support only " *
+            @user_warn "Skipping RT-shape estimation for $(basename(fpath)): " *
+                       "$nobservations observed precursors support only " *
                        "$(length(bins)) RT bin(s) at >= $min_bin_occupancy " *
-                       "anchors each, and a " *
+                       "precursors each, and a " *
                        "$(_n_spline_coeffs(spline_n_knots))-coefficient spline needs at least " *
-                       "$min_bins. Abundances are left uncorrected and excluded " *
-                       "from the cross-file median."
+                       "$min_bins. Only the matched global correction will be " *
+                       "applied when available."
             continue
         end
 
-        # Only files that get a spline define the correction grid. A skipped file
-        # receives no correction, so widening the grid to its RT range would only
-        # extrapolate the surviving splines further than their data supports.
-        if first(anchor_rts) < min_rt
-            min_rt = first(anchor_rts)
+        if first(observed_rts) < min_rt
+            min_rt = first(observed_rts)
         end
-        if last(anchor_rts) > max_rt
-            max_rt = last(anchor_rts)
+        if last(observed_rts) > max_rt
+            max_rt = last(observed_rts)
         end
 
         median_quant = Vector{Float64}(undef, length(bins))
         median_rts = Vector{Float64}(undef, length(bins))
         for (i, b) in enumerate(bins)
-            median_rts[i] = median(@view(anchor_rts[b]))
-            median_quant[i] = median(@view(anchor_residuals[b]))
+            median_rts[i] = median(@view(observed_rts[b]))
+            median_quant[i] = log2(median(@view(observed_quant[b])))
         end
 
         splinefit = UniformSpline(median_quant, median_rts, 3, spline_n_knots)
@@ -283,6 +340,11 @@ end
 Compute per-file RT-dependent correction offsets. Evaluates each file's spline
 on a grid, computes the cross-file median at each RT point, and returns a
 dictionary of interpolated offset functions (file_spline - global_median).
+
+This is the original full marginal correction and is retained as a baseline.
+The decomposed `normalizeQuant` pipeline instead calls
+`getRTShapeCorrections`, which removes marginal run levels before constructing
+the RT component.
 
 Returns an empty dictionary when no file got a spline: there is no cross-file
 median to correct toward, and `rt_range` is still the empty-range sentinel
@@ -311,15 +373,98 @@ function getQuantCorrections(
         for (i, rt) in enumerate(rt_grid)
             offset[i] = spline(rt) - median_interp(rt)
         end
-        # Censoring can leave no matched anchors at one or both RT boundaries.
-        # Rows outside the anchor-supported range still need a correction; hold
-        # the nearest supported value constant instead of extrapolating a trend
-        # that was never observed (or throwing on an out-of-range lookup).
+        # Rows outside the spline grid still need a correction. Hold the nearest
+        # supported value constant instead of extrapolating an unobserved trend
+        # (or throwing on an out-of-range lookup).
         insert!(corrections, key, linear_interpolation(
             rt_grid,
             offset;
             extrapolation_bc = Interpolations.Flat(),
         ))
+    end
+    return corrections
+end
+
+function _median_polish_interactions!(
+    values::Matrix{Float64};
+    max_iterations::Int = 20,
+    tolerance::Float64 = 1.0e-7,
+)
+    for _ in 1:max_iterations
+        row_centers = median(values, dims = 2)
+        values .-= row_centers
+        column_centers = median(values, dims = 1)
+        values .-= column_centers
+        max_adjustment = max(
+            maximum(abs, row_centers),
+            maximum(abs, column_centers),
+        )
+        max_adjustment <= tolerance && break
+    end
+    return values
+end
+
+"""
+    getRTShapeCorrections(quant_splines, rt_range; N=100)
+
+Extract only run-specific RT shape differences from marginal intensity splines.
+Spline values on a common RT grid are robustly double-centered with median
+polish: per-run levels and the common across-run RT profile are removed. The
+remaining interaction has approximately zero median across RT for each run and
+zero median across runs at each RT, so it cannot replace the matched global
+loading estimate.
+"""
+function getRTShapeCorrections(
+    quant_splines::Dictionary{String, UniformSpline},
+    rt_range::Tuple{AbstractFloat, AbstractFloat};
+    N::Int = 100,
+)
+    isempty(quant_splines) && return Dictionary{String, Any}()
+    rt_grid = collect(LinRange(first(rt_range), last(rt_range), N))
+    file_paths = String[]
+    spline_values = Matrix{Float64}(undef, length(quant_splines), N)
+    for (row, (fpath, spline)) in enumerate(pairs(quant_splines))
+        push!(file_paths, fpath)
+        @inbounds for (column, rt) in enumerate(rt_grid)
+            spline_values[row, column] = spline(rt)
+        end
+    end
+
+    _median_polish_interactions!(spline_values)
+    corrections = Dictionary{String, Any}()
+    for (row, fpath) in enumerate(file_paths)
+        insert!(corrections, fpath, linear_interpolation(
+            rt_grid,
+            copy(@view(spline_values[row, :]));
+            extrapolation_bc = Interpolations.Flat(),
+        ))
+    end
+    return corrections
+end
+
+"""
+    combineQuantCorrections(global_offsets, rt_shape_corrections)
+
+Combine the matched run-wide offset with the centered marginal RT shape.
+Only files with a supported matched global offset are normalized. If their RT
+shape spline was skipped, they receive the constant global correction alone.
+"""
+function combineQuantCorrections(
+    global_offsets::Dictionary{String, Float64},
+    rt_shape_corrections::Dictionary{String, Any},
+)
+    corrections = Dictionary{String, Any}()
+    for (fpath, global_offset) in pairs(global_offsets)
+        rt_shape = get(rt_shape_corrections, fpath, nothing)
+        if rt_shape === nothing
+            let offset = global_offset
+                insert!(corrections, fpath, _ -> offset)
+            end
+        else
+            let offset = global_offset, shape = rt_shape
+                insert!(corrections, fpath, rt -> offset + shape(rt))
+            end
+        end
     end
     return corrections
 end
@@ -339,9 +484,9 @@ function applyNormalization!(
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
         norm_quant_col = Symbol(string(quant_col) * "_normalized")
-        # getQuantSplines skips files that cannot support a spline, so this key may
-        # be absent. Emit the column unchanged rather than omitting it: downstream
-        # readers assume every file carries the same schema.
+        # A file without enough matched anchors receives no correction. Emit the
+        # column unchanged rather than omitting it: downstream readers assume
+        # every file carries the same schema.
         correction_spline = get(corrections, fpath, nothing)
         if correction_spline === nothing
             psms[!, norm_quant_col] = Float64.(psms[!, quant_col])
@@ -362,13 +507,15 @@ end
 """
     normalizeQuant(second_quant_folder, quant_col_name; N=100, spline_n_knots=7)
 
-End-to-end RT-dependent quantification normalization. Reads all Arrow files,
-constructs a cross-run matched-precursor reference, fits per-file residual
-splines, computes the cross-file median, and writes corrected abundances back
-to each file.
+End-to-end decomposed quantification normalization. Matched precursor ratios
+estimate one global loading offset per run. All observed precursors estimate a
+separate marginal RT spline whose run-wide level and common RT profile are
+removed by median polish. The constant matched offset and centered RT shape are
+then combined and written back to each file.
 
-This corrects systematic RT-dependent intensity differences between MS runs
-without forcing the marginal observed intensity distributions to match.
+This uses precursor matching where differential missingness is most damaging
+(global loading) while retaining the larger observed population for the local
+RT shape.
 """
 function normalizeQuant(
     psms_paths::Vector{String},
@@ -377,18 +524,32 @@ function normalizeQuant(
     spline_n_knots::Int = 7,
     min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION)
 
-    quant_splines_dict, rt_range = getQuantSplines(
+    global_offsets = getMatchedGlobalOffsets(
         psms_paths,
+        quant_col_name;
+        min_run_fraction = min_anchor_run_fraction,
+    )
+
+    shape_paths = String[
+        fpath for fpath in psms_paths if haskey(global_offsets, fpath)
+    ]
+    quant_splines, rt_range = getQuantSplines(
+        shape_paths,
         quant_col_name;
         N = N,
         spline_n_knots = spline_n_knots,
-        min_anchor_run_fraction = min_anchor_run_fraction,
+    )
+    rt_shape_corrections = getRTShapeCorrections(
+        quant_splines,
+        rt_range;
+        N = N,
+    )
+    quant_corrections = combineQuantCorrections(
+        global_offsets,
+        rt_shape_corrections,
     )
 
-    quant_corrections_dict = getQuantCorrections(
-        quant_splines_dict, rt_range, N = N)
-
-    applyNormalization!(psms_paths, quant_col_name, quant_corrections_dict)
+    applyNormalization!(psms_paths, quant_col_name, quant_corrections)
     return nothing
 end
 
