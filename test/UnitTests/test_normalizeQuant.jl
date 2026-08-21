@@ -87,6 +87,75 @@ function _write_rt_bias_quant_pair(dir::String; n::Int = 5_000)
     return path1, path2
 end
 
+function _write_pairwise_chain_runs(
+    dir::String;
+    n_per_edge::Int = 1_000,
+    offsets::Vector{Float32} = Float32[0.0, 1.0, -2.0, 2.0, -1.0],
+)
+    n_runs = length(offsets)
+    paths = String[]
+    observed_ids_by_run = Dict{UInt32, Vector{UInt32}}()
+    for run in 1:n_runs
+        precursor_idx = UInt32[]
+        irt_obs = Float32[]
+        base_log2 = Float32[]
+        first_edge = max(1, run - 1)
+        last_edge = min(n_runs - 1, run)
+        for edge in first_edge:last_edge
+            append!(
+                precursor_idx,
+                UInt32.(((edge - 1) * n_per_edge + 1):(edge * n_per_edge)),
+            )
+            append!(irt_obs, Float32.(LinRange(0.0, 100.0, n_per_edge)))
+            append!(
+                base_log2,
+                Float32[8.0f0 + 0.25f0 * sin(Float32(i) / 17.0f0)
+                        for i in 1:n_per_edge],
+            )
+        end
+        path = joinpath(dir, "chain_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ (base_log2 .+ offsets[run]),
+            target = trues(length(precursor_idx)),
+            mbr_recovered = falses(length(precursor_idx)),
+        ))
+        push!(paths, path)
+        observed_ids_by_run[UInt32(run)] = precursor_idx
+    end
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), offsets
+end
+
+function _write_mbr_anchor_pair(
+    dir::String;
+    n_observed::Int = 1_000,
+    n_recovered::Int = 2_000,
+)
+    precursor_idx = UInt32.(1:(n_observed + n_recovered))
+    irt_obs = Float32.(LinRange(0.0, 100.0, n_observed + n_recovered))
+    recovered = BitVector(vcat(falses(n_observed), trues(n_recovered)))
+    run1_log2 = vcat(fill(8.0f0, n_observed), fill(14.0f0, n_recovered))
+    run2_log2 = vcat(fill(10.0f0, n_observed), fill(4.0f0, n_recovered))
+    paths = String[]
+    for (run, log2_quant) in enumerate((run1_log2, run2_log2))
+        path = joinpath(dir, "mbr_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ log2_quant,
+            target = trues(length(precursor_idx)),
+            mbr_recovered = recovered,
+        ))
+        push!(paths, path)
+    end
+    observed_ids_by_run = Dict(
+        UInt32(1) => copy(precursor_idx),
+        UInt32(2) => copy(precursor_idx),
+    )
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), n_observed
+end
+
 @testset "normalizeQuant" begin
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -121,6 +190,112 @@ end
             v2 = splines[path2](50.0f0)
             @test v2 - v1 ≈ 2.0 atol=0.5
         end
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pairwise maximum spanning tree — local exact matches without global anchors
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "pairwise maximum spanning tree" begin
+    mktempdir() do dir
+        paths, atlas, offsets = _write_pairwise_chain_runs(dir)
+        run_ids = UInt32.(eachindex(paths))
+
+        # Every precursor occurs in exactly two of five runs, below the current
+        # experiment-wide 50% anchor requirement. The original matched method
+        # therefore cannot fit any run, while adjacent pairwise edges can.
+        global_splines, _ = Pioneer.getQuantSplines(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+        )
+        @test isempty(global_splines)
+
+        tree = Pioneer.getPairwiseQuantTree(
+            paths,
+            :abundance,
+            run_ids,
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+        @test length(tree) == length(paths) - 1
+        @test Set(
+            (min(edge.left_position, edge.right_position),
+             max(edge.left_position, edge.right_position))
+            for edge in tree
+        ) == Set((run, run + 1) for run in 1:(length(paths) - 1))
+        @test all(edge -> edge.nanchors == 1_000, tree)
+
+        corrections, components = Pioneer.getPairwiseQuantCorrections(
+            paths,
+            tree;
+            N=20,
+        )
+        @test components == [collect(eachindex(paths))]
+        for edge in tree
+            left = edge.left_position
+            right = edge.right_position
+            @test (
+                corrections[paths[left]](50.0) -
+                corrections[paths[right]](50.0)
+            ) ≈ offsets[left] - offsets[right] atol=0.05
+        end
+
+        Pioneer.normalizeQuant(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+            run_ids=run_ids,
+            run_similarity_atlas=atlas,
+        )
+        normalized_medians = Float64[]
+        for path in paths
+            frame = DataFrame(Arrow.Table(path))
+            push!(normalized_medians, median(log2.(frame.abundance_normalized)))
+        end
+        @test maximum(normalized_medians) - minimum(normalized_medians) < 0.05
+    end
+end
+
+@testset "MBR-recovered rows are excluded from pairwise anchors" begin
+    mktempdir() do dir
+        paths, atlas, n_observed = _write_mbr_anchor_pair(dir)
+        run_ids = UInt32[1, 2]
+        consensus = Pioneer.getPrecursorQuantConsensus(paths, :abundance)
+        @test length(consensus) == n_observed
+
+        tree = Pioneer.getPairwiseQuantTree(
+            paths,
+            :abundance,
+            run_ids,
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+
+        @test length(tree) == 1
+        @test only(tree).nanchors == n_observed
+        @test only(tree).spline(50.0) ≈ -2.0 atol=0.05
+
+        Pioneer.normalizeQuant(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+            run_ids=run_ids,
+            run_similarity_atlas=atlas,
+        )
+        run1 = DataFrame(Arrow.Table(paths[1]))
+        run2 = DataFrame(Arrow.Table(paths[2]))
+        observed_difference = median(
+            log2.(run1.abundance_normalized[1:n_observed]) .-
+            log2.(run2.abundance_normalized[1:n_observed])
+        )
+        @test abs(observed_difference) < 0.05
     end
 end
 

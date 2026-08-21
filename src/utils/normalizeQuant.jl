@@ -85,6 +85,22 @@ end
     return min(n_runs, max(2, ceil(Int, n_runs * min_run_fraction)))
 end
 
+@inline function _is_normalization_anchor_row(
+    row::Int,
+    target,
+    mbr_recovered,
+)
+    if target !== nothing
+        value = target[row]
+        (ismissing(value) || !Bool(value)) && return false
+    end
+    if mbr_recovered !== nothing
+        value = mbr_recovered[row]
+        !ismissing(value) && Bool(value) && return false
+    end
+    return true
+end
+
 function _file_precursor_log2_quant(
     psms::DataFrame,
     quant_col_name::Symbol,
@@ -100,10 +116,14 @@ function _file_precursor_log2_quant(
 
     precursor_idx = psms[!, precursor_col_name]
     quant = psms[!, quant_col_name]
+    target = hasproperty(psms, :target) ? psms[!, :target] : nothing
+    mbr_recovered = hasproperty(psms, :mbr_recovered) ?
+        psms[!, :mbr_recovered] : nothing
     values = Dict{UInt32, Float32}()
     sizehint!(values, length(precursor_idx))
 
     @inbounds for i in eachindex(precursor_idx, quant)
+        _is_normalization_anchor_row(i, target, mbr_recovered) || continue
         q_raw = quant[i]
         ismissing(q_raw) && continue
         q = Float64(q_raw)
@@ -117,6 +137,54 @@ function _file_precursor_log2_quant(
         values[pid] = max(get(values, pid, -Inf32), logq)
     end
     return values
+end
+
+struct QuantRunAnchor
+    log2_quant::Float32
+    irt::Float32
+end
+
+function _file_precursor_quant_anchors(
+    psms::DataFrame,
+    quant_col_name::Symbol,
+    precursor_col_name::Symbol,
+)
+    hasproperty(psms, :irt_obs) || throw(ArgumentError(
+        "Pairwise quant normalization requires column irt_obs."
+    ))
+    hasproperty(psms, precursor_col_name) || throw(ArgumentError(
+        "Pairwise quant normalization requires column $(precursor_col_name)."
+    ))
+    hasproperty(psms, quant_col_name) || throw(ArgumentError(
+        "Quant normalization requires column $(quant_col_name)."
+    ))
+
+    precursor_idx = psms[!, precursor_col_name]
+    quant = psms[!, quant_col_name]
+    irt_obs = psms[!, :irt_obs]
+    target = hasproperty(psms, :target) ? psms[!, :target] : nothing
+    mbr_recovered = hasproperty(psms, :mbr_recovered) ?
+        psms[!, :mbr_recovered] : nothing
+    anchors = Dict{UInt32, QuantRunAnchor}()
+    sizehint!(anchors, length(precursor_idx))
+
+    @inbounds for row in eachindex(precursor_idx, quant, irt_obs)
+        _is_normalization_anchor_row(row, target, mbr_recovered) || continue
+        quant_raw = quant[row]
+        irt_raw = irt_obs[row]
+        (ismissing(quant_raw) || ismissing(irt_raw)) && continue
+        abundance = Float64(quant_raw)
+        irt = Float64(irt_raw)
+        (isfinite(abundance) && abundance > 0.0 && isfinite(irt)) || continue
+
+        pid = UInt32(precursor_idx[row])
+        anchor = QuantRunAnchor(Float32(log2(abundance)), Float32(irt))
+        previous = get(anchors, pid, nothing)
+        if previous === nothing || anchor.log2_quant > previous.log2_quant
+            anchors[pid] = anchor
+        end
+    end
+    return anchors
 end
 
 """
@@ -219,9 +287,13 @@ function getQuantSplines(psms_paths::Vector{String},
         sizehint!(anchor_residuals, min(length(file_values), length(precursor_consensus)))
         precursor_idx = psms[!, precursor_col_name]
         irt_obs = psms[!, :irt_obs]
+        target = hasproperty(psms, :target) ? psms[!, :target] : nothing
+        mbr_recovered = hasproperty(psms, :mbr_recovered) ?
+            psms[!, :mbr_recovered] : nothing
         seen = Set{UInt32}()
         sizehint!(seen, length(file_values))
         @inbounds for i in eachindex(precursor_idx, irt_obs)
+            _is_normalization_anchor_row(i, target, mbr_recovered) || continue
             pid = UInt32(precursor_idx[i])
             pid in seen && continue
             reference_logq = get(precursor_consensus, pid, nothing)
@@ -275,6 +347,280 @@ function getQuantSplines(psms_paths::Vector{String},
         insert!(quant_splines, fpath, splinefit)
     end
     return quant_splines, (min_rt, max_rt)
+end
+
+struct PairwiseQuantSpline
+    left_position::Int
+    right_position::Int
+    similarity::Float32
+    nanchors::Int
+    min_rt::Float64
+    max_rt::Float64
+    spline::UniformSpline
+end
+
+function _fit_pairwise_quant_spline(
+    left_position::Int,
+    right_position::Int,
+    similarity::Float32,
+    left_anchors::Dict{UInt32, QuantRunAnchor},
+    right_anchors::Dict{UInt32, QuantRunAnchor};
+    N::Int,
+    spline_n_knots::Int,
+    min_bin_occupancy::Int,
+)
+    anchor_rts = Float64[]
+    anchor_residuals = Float64[]
+    npossible = min(length(left_anchors), length(right_anchors))
+    sizehint!(anchor_rts, npossible)
+    sizehint!(anchor_residuals, npossible)
+
+    iterated_anchors, lookup_anchors = length(left_anchors) <= length(right_anchors) ?
+        (left_anchors, right_anchors) : (right_anchors, left_anchors)
+    @inbounds for pid in keys(iterated_anchors)
+        haskey(lookup_anchors, pid) || continue
+        left_anchor = left_anchors[pid]
+        right_anchor = right_anchors[pid]
+        push!(anchor_rts, (Float64(left_anchor.irt) + Float64(right_anchor.irt)) / 2.0)
+        push!(
+            anchor_residuals,
+            Float64(left_anchor.log2_quant - right_anchor.log2_quant),
+        )
+    end
+
+    order = sortperm(anchor_rts)
+    anchor_rts = anchor_rts[order]
+    anchor_residuals = anchor_residuals[order]
+    nanchors = length(anchor_rts)
+    bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
+    length(bins) >= _min_bins_for_spline(spline_n_knots) || return nothing
+
+    median_residuals = Vector{Float64}(undef, length(bins))
+    median_rts = Vector{Float64}(undef, length(bins))
+    for (bin_idx, bin) in enumerate(bins)
+        median_rts[bin_idx] = median(@view(anchor_rts[bin]))
+        median_residuals[bin_idx] = median(@view(anchor_residuals[bin]))
+    end
+
+    return PairwiseQuantSpline(
+        left_position,
+        right_position,
+        similarity,
+        nanchors,
+        first(anchor_rts),
+        last(anchor_rts),
+        UniformSpline(median_residuals, median_rts, 3, spline_n_knots),
+    )
+end
+
+@inline function _quant_tree_root!(parent::Vector{Int}, node::Int)
+    root = node
+    while parent[root] != root
+        root = parent[root]
+    end
+    while parent[node] != node
+        next_node = parent[node]
+        parent[node] = root
+        node = next_node
+    end
+    return root
+end
+
+"""
+    getPairwiseQuantTree(psms_paths, quant_col_name, run_ids,
+                         run_similarity_atlas; ...)
+
+Build a maximum-similarity spanning forest for pairwise quant normalization.
+Candidate run pairs are ordered by the maximum directional containment in the
+existing run-similarity atlas. An edge is accepted only when exact, non-MBR,
+target precursor matches can support the requested RT spline. Kruskal's
+algorithm therefore returns a maximum spanning tree when the supported graph
+is connected, or a maximum spanning forest otherwise.
+
+Only candidate edges that could connect two current components are fitted, so
+the expensive exact-match work normally stops after `n_runs - 1` successful
+pairwise fits.
+"""
+function getPairwiseQuantTree(
+    psms_paths::Vector{String},
+    quant_col_name::Symbol,
+    run_ids::Vector{UInt32},
+    run_similarity_atlas;
+    N::Int = 100,
+    spline_n_knots::Int = 7,
+    min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY,
+    precursor_col_name::Symbol = :precursor_idx,
+)
+    length(psms_paths) == length(run_ids) || throw(DimensionMismatch(
+        "psms_paths and run_ids must have the same length"
+    ))
+    length(unique(run_ids)) == length(run_ids) || throw(ArgumentError(
+        "run_ids must be unique"
+    ))
+    run_similarity_atlas === nothing && throw(ArgumentError(
+        "pairwise quant normalization requires a run-similarity atlas"
+    ))
+
+    run_anchors = Vector{Dict{UInt32, QuantRunAnchor}}(undef, length(psms_paths))
+    for (position, fpath) in enumerate(psms_paths)
+        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        run_anchors[position] = _file_precursor_quant_anchors(
+            psms,
+            quant_col_name,
+            precursor_col_name,
+        )
+    end
+
+    candidates = Tuple{Float32, Int, Int}[]
+    n_runs = length(psms_paths)
+    n_runs <= 1 && return PairwiseQuantSpline[]
+    sizehint!(candidates, n_runs * max(n_runs - 1, 0) ÷ 2)
+    for left_position in 1:(n_runs - 1)
+        left_run = run_ids[left_position]
+        for right_position in (left_position + 1):n_runs
+            right_run = run_ids[right_position]
+            similarity = max(
+                run_similarity(run_similarity_atlas, left_run, right_run),
+                run_similarity(run_similarity_atlas, right_run, left_run),
+            )
+            push!(candidates, (similarity, left_position, right_position))
+        end
+    end
+    sort!(
+        candidates;
+        by = candidate -> (
+            -Float64(candidate[1]),
+            run_ids[candidate[2]],
+            run_ids[candidate[3]],
+        ),
+    )
+
+    parent = collect(1:n_runs)
+    component_size = ones(Int, n_runs)
+    tree = PairwiseQuantSpline[]
+    sizehint!(tree, max(n_runs - 1, 0))
+    for (similarity, left_position, right_position) in candidates
+        left_root = _quant_tree_root!(parent, left_position)
+        right_root = _quant_tree_root!(parent, right_position)
+        left_root == right_root && continue
+
+        pairwise_spline = _fit_pairwise_quant_spline(
+            left_position,
+            right_position,
+            similarity,
+            run_anchors[left_position],
+            run_anchors[right_position];
+            N = N,
+            spline_n_knots = spline_n_knots,
+            min_bin_occupancy = min_bin_occupancy,
+        )
+        pairwise_spline === nothing && continue
+        push!(tree, pairwise_spline)
+
+        if component_size[left_root] < component_size[right_root]
+            left_root, right_root = right_root, left_root
+        end
+        parent[right_root] = left_root
+        component_size[left_root] += component_size[right_root]
+        length(tree) == n_runs - 1 && break
+    end
+    return tree
+end
+
+function _quant_tree_traversal(
+    n_runs::Int,
+    tree::Vector{PairwiseQuantSpline},
+)
+    adjacency = [Tuple{Int, Int}[] for _ in 1:n_runs]
+    for (edge_idx, edge) in enumerate(tree)
+        push!(adjacency[edge.left_position], (edge.right_position, edge_idx))
+        push!(adjacency[edge.right_position], (edge.left_position, edge_idx))
+    end
+
+    parent = zeros(Int, n_runs)
+    parent_edge = zeros(Int, n_runs)
+    components = Vector{Vector{Int}}()
+    orders = Vector{Vector{Int}}()
+    for root in 1:n_runs
+        parent[root] == 0 || continue
+        parent[root] = root
+        component = Int[root]
+        order = Int[root]
+        next_idx = 1
+        while next_idx <= length(order)
+            node = order[next_idx]
+            next_idx += 1
+            for (neighbor, edge_idx) in adjacency[node]
+                parent[neighbor] == 0 || continue
+                parent[neighbor] = node
+                parent_edge[neighbor] = edge_idx
+                push!(component, neighbor)
+                push!(order, neighbor)
+            end
+        end
+        push!(components, component)
+        push!(orders, order)
+    end
+    return parent, parent_edge, components, orders
+end
+
+"""
+    getPairwiseQuantCorrections(psms_paths, tree; N=100)
+
+Propagate pairwise log2 differences through a maximum spanning forest and
+return per-file correction functions. For every RT grid point, each connected
+component is centered independently at its median; this fixes the additive
+degree of freedom without inventing a relationship between disconnected run
+groups.
+
+Returns `(corrections, components)` where components contain path positions.
+"""
+function getPairwiseQuantCorrections(
+    psms_paths::Vector{String},
+    tree::Vector{PairwiseQuantSpline};
+    N::Int = 100,
+)
+    n_runs = length(psms_paths)
+    n_runs == 0 && return Dictionary{String, Any}(), Vector{Vector{Int}}()
+    parent, parent_edge, components, orders = _quant_tree_traversal(n_runs, tree)
+    isempty(tree) && return Dictionary{String, Any}(), components
+    N >= 2 || throw(ArgumentError("N must be at least 2, got $N"))
+
+    min_rt = minimum(edge.min_rt for edge in tree)
+    max_rt = maximum(edge.max_rt for edge in tree)
+    rt_grid = collect(LinRange(min_rt, max_rt, N))
+    offsets = zeros(Float64, n_runs, N)
+    for (rt_idx, rt) in enumerate(rt_grid)
+        for (component, order) in zip(components, orders)
+            root = first(order)
+            offsets[root, rt_idx] = 0.0
+            for node in @view(order[2:end])
+                parent_node = parent[node]
+                edge = tree[parent_edge[node]]
+                edge_rt = clamp(rt, edge.min_rt, edge.max_rt)
+                difference = Float64(edge.spline(edge_rt))
+                if parent_node == edge.left_position
+                    offsets[node, rt_idx] = offsets[parent_node, rt_idx] - difference
+                else
+                    offsets[node, rt_idx] = offsets[parent_node, rt_idx] + difference
+                end
+            end
+            center = median(@view(offsets[component, rt_idx]))
+            for node in component
+                offsets[node, rt_idx] -= center
+            end
+        end
+    end
+
+    corrections = Dictionary{String, Any}()
+    for (position, fpath) in enumerate(psms_paths)
+        insert!(corrections, fpath, linear_interpolation(
+            rt_grid,
+            copy(@view(offsets[position, :]));
+            extrapolation_bc = Interpolations.Flat(),
+        ))
+    end
+    return corrections, components
 end
 
 """
@@ -360,12 +706,16 @@ function applyNormalization!(
 end
 
 """
-    normalizeQuant(second_quant_folder, quant_col_name; N=100, spline_n_knots=7)
+    normalizeQuant(psms_paths, quant_col_name; N=100, spline_n_knots=7,
+                   run_ids=nothing, run_similarity_atlas=nothing)
 
-End-to-end RT-dependent quantification normalization. Reads all Arrow files,
-constructs a cross-run matched-precursor reference, fits per-file residual
-splines, computes the cross-file median, and writes corrected abundances back
-to each file.
+End-to-end RT-dependent quantification normalization. When a run-similarity
+atlas is supplied, fits exact-match pairwise splines only along a supported
+maximum spanning tree, propagates their differences to run corrections, and
+median-centers the tree at each RT. MBR-recovered rows never serve as anchors.
+
+Without an atlas, retains the experiment-wide matched-precursor estimator as a
+fallback.
 
 This corrects systematic RT-dependent intensity differences between MS runs
 without forcing the marginal observed intensity distributions to match.
@@ -375,7 +725,40 @@ function normalizeQuant(
     quant_col_name::Symbol;
     N::Int = 100,
     spline_n_knots::Int = 7,
-    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION)
+    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
+    run_ids::Union{Nothing, Vector{UInt32}} = nothing,
+    run_similarity_atlas = nothing)
+
+    if run_similarity_atlas !== nothing
+        resolved_run_ids = run_ids === nothing ?
+            UInt32.(eachindex(psms_paths)) : run_ids
+        pairwise_tree = getPairwiseQuantTree(
+            psms_paths,
+            quant_col_name,
+            resolved_run_ids,
+            run_similarity_atlas;
+            N = N,
+            spline_n_knots = spline_n_knots,
+        )
+        if !isempty(pairwise_tree) || length(psms_paths) <= 1
+            quant_corrections, components = getPairwiseQuantCorrections(
+                psms_paths,
+                pairwise_tree;
+                N = N,
+            )
+            if length(components) > 1
+                @user_warn "Pairwise quant normalization formed " *
+                           "$(length(components)) disconnected run groups. " *
+                           "Each group is normalized and centered independently."
+            end
+            applyNormalization!(psms_paths, quant_col_name, quant_corrections)
+            return nothing
+        end
+
+        @user_warn "No run pair had enough exact non-MBR precursor matches " *
+                   "to support an RT spline. Falling back to the " *
+                   "experiment-wide matched-precursor normalizer."
+    end
 
     quant_splines_dict, rt_range = getQuantSplines(
         psms_paths,
@@ -397,7 +780,9 @@ function normalizeQuant(
     quant_col_name::Symbol;
     N::Int = 100,
     spline_n_knots::Int = 7,
-    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION)
+    min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
+    run_ids::Union{Nothing, Vector{UInt32}} = nothing,
+    run_similarity_atlas = nothing)
 
     psms_paths = [fpath for fpath in readdir(second_quant_folder, join=true) if endswith(fpath, ".arrow")]
     normalizeQuant(
@@ -406,5 +791,7 @@ function normalizeQuant(
         N = N,
         spline_n_knots = spline_n_knots,
         min_anchor_run_fraction = min_anchor_run_fraction,
+        run_ids = run_ids,
+        run_similarity_atlas = run_similarity_atlas,
     )
 end
