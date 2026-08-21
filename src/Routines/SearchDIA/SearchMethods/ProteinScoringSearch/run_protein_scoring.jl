@@ -66,6 +66,50 @@ function load_run_level_protein_training_rows(
 end
 
 """
+    prepare_run_level_protein_training_rows(actual_groups, shadow_groups)
+
+Attach explicit training labels to reported protein groups and append
+target-backed counterfactual shadow negatives. Actual MBR-only singleton target
+groups remain scoreable but are excluded from the positive seed; treating them
+as positives would teach the model the failure mode the shadow controls are
+designed to expose.
+"""
+function prepare_run_level_protein_training_rows(
+    actual_groups::DataFrame,
+    shadow_groups::DataFrame,
+)
+    groups = copy(actual_groups)
+    nrow(groups) == 0 && return groups
+
+    groups[!, :protein_training_label] = Bool.(groups.target)
+    groups[!, :protein_training_eligible] = .!(
+        Bool.(groups.target) .&
+        Bool.(groups.mbr_only_protein) .&
+        (Int.(groups.mbr_recovered_peptides) .== 1)
+    )
+    groups[!, :protein_shadow_negative] = falses(nrow(groups))
+
+    if nrow(shadow_groups) > 0
+        required = Symbol.(names(actual_groups))
+        missing_columns = [
+            column for column in required
+            if !hasproperty(shadow_groups, column)
+        ]
+        isempty(missing_columns) || error(
+            "Counterfactual shadow protein groups are missing columns: " *
+            string(missing_columns)
+        )
+        shadows = select(shadow_groups, required)
+        shadows[!, :protein_training_label] = falses(nrow(shadows))
+        shadows[!, :protein_training_eligible] = trues(nrow(shadows))
+        shadows[!, :protein_shadow_negative] = trues(nrow(shadows))
+        append!(groups, shadows; cols = :setequal)
+    end
+
+    return groups
+end
+
+"""
     perform_run_level_protein_scoring(pg_refs::Vector{ProteinGroupFileReference},
                                       max_in_memory_rows::Int64,
                                       qc_folder::String,
@@ -93,7 +137,8 @@ function perform_run_level_protein_scoring(
     write_qc_plots::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
-    min_pep_neg_threshold_itr::Float32 = 0.90f0
+    min_pep_neg_threshold_itr::Float32 = 0.90f0,
+    counterfactual_shadow_groups::DataFrame = DataFrame(),
 )
     total_protein_groups = 0
     for ref in pg_refs
@@ -101,6 +146,7 @@ function perform_run_level_protein_scoring(
             total_protein_groups += row_count(ref)
         end
     end
+    total_protein_groups += nrow(counterfactual_shadow_groups)
 
     max_protein_groups_in_memory_limit = max(max_in_memory_rows, 100_000)
 
@@ -108,13 +154,24 @@ function perform_run_level_protein_scoring(
         error("Run-level protein scoring does not support out-of-memory fitting. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    all_protein_groups = load_run_level_protein_training_rows(
+    actual_protein_groups = load_run_level_protein_training_rows(
         pg_refs;
         include_qc_plot_columns = write_qc_plots
     )
+    all_protein_groups = prepare_run_level_protein_training_rows(
+        actual_protein_groups,
+        counterfactual_shadow_groups,
+    )
 
-    n_targets = sum(all_protein_groups.target)
-    n_decoys = sum(.!all_protein_groups.target)
+    eligible = all_protein_groups.protein_training_eligible
+    labels = all_protein_groups.protein_training_label
+    n_targets = count(eligible .& labels)
+    n_decoys = count(eligible .& .!labels)
+    n_shadow_negatives = count(all_protein_groups.protein_shadow_negative)
+    n_excluded_singletons = count(.!eligible)
+    @debug_l1 "Run-level protein training controls: " *
+              "counterfactual shadows=$(n_shadow_negatives), " *
+              "excluded target MBR-only singleton positives=$(n_excluded_singletons)"
     skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
 
     return perform_protein_scoring_multifold(
@@ -166,7 +223,12 @@ function run_protein_scoring!(
         file_idx_to_name[Int64(file_idx)] = String(file_name)
     end
 
-    pg_refs, psm_to_pg_mapping, protein_to_cv_fold = build_protein_group_tables(
+    (
+        pg_refs,
+        psm_to_pg_mapping,
+        protein_to_cv_fold,
+        counterfactual_shadow_groups,
+    ) = build_protein_group_tables(
         passing_refs,
         passing_proteins_folder,
         protein_peptide_opportunities,
@@ -198,7 +260,8 @@ function run_protein_scoring!(
         file_idx_to_name = file_idx_to_name,
         write_qc_plots = write_qc_plots,
         train_q_value_threshold = q_value_threshold,
-        min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
+        min_pep_neg_threshold_itr = min_pep_neg_threshold_itr,
+        counterfactual_shadow_groups = counterfactual_shadow_groups,
     )
 
     n_proteins = length(getProteins(getSpecLib(search_context)))

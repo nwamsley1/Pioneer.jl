@@ -198,6 +198,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
     cand_recovered = candidates[!, :mbr_recovered]
     cand_flag      = candidates[!, :MBR_transfer_candidate]
     cand_prob      = candidates[!, :mbr_target_decoy_prob]
+    cand_cf_prob   = candidates[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+    cand_cf_index  = candidates[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
     cand_ftr_q     = candidates[!, :ftr_qval_true]
     cand_ftr_pep   = candidates[!, :ftr_pep_true]
     cand_tot_q     = candidates[!, :mbr_total_error_qval_true]
@@ -212,6 +214,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
         recovered = falses(n)
         flag      = falses(n)
         prob      = fill(NaN32, n)
+        cf_prob   = fill(NaN32, n)
+        cf_index  = zeros(UInt8, n)
         ftr_q     = fill(NaN32, n)
         ftr_pep   = fill(NaN32, n)
         tot_q     = fill(NaN32, n)
@@ -226,6 +230,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             recovered[row] = cand_recovered[cursor]
             flag[row]      = cand_flag[cursor]
             prob[row]      = cand_prob[cursor]
+            cf_prob[row]   = cand_cf_prob[cursor]
+            cf_index[row]  = cand_cf_index[cursor]
             ftr_q[row]     = cand_ftr_q[cursor]
             ftr_pep[row]   = cand_ftr_pep[cursor]
             tot_q[row]     = cand_tot_q[cursor]
@@ -237,6 +243,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             mbr_recovered = recovered,
             MBR_transfer_candidate = flag,
             mbr_target_decoy_prob = prob,
+            mbr_counterfactual_decoy_prob = cf_prob,
+            mbr_counterfactual_decoy_index = cf_index,
             ftr_qval_true = ftr_q,
             ftr_pep_true = ftr_pep,
             mbr_total_error_qval_true = tot_q,
@@ -275,6 +283,12 @@ function _write_mbr_recovery_sidecars!(
                 Bool.(frame.MBR_transfer_candidate[rows]),
             mbr_target_decoy_prob =
                 Float32.(frame.mbr_target_decoy_prob[rows]),
+            mbr_counterfactual_decoy_prob = Float32.(
+                frame[rows, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+            ),
+            mbr_counterfactual_decoy_index = UInt8.(
+                frame[rows, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
+            ),
             ftr_qval_true = Float32.(frame.ftr_qval_true[rows]),
             ftr_pep_true = Float32.(frame.ftr_pep_true[rows]),
             mbr_total_error_qval_true =
@@ -398,6 +412,16 @@ function _merge_mbr_recoveries!(
             _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate)
         main[!, :mbr_target_decoy_prob] =
             _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob)
+        main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+            _copy_sidecar_column!(
+                Vector{Float32}(undef, n),
+                recovery.mbr_counterfactual_decoy_prob,
+            )
+        main[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
+            _copy_sidecar_column!(
+                Vector{UInt8}(undef, n),
+                recovery.mbr_counterfactual_decoy_index,
+            )
         main[!, :ftr_qval_true] =
             _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_qval_true)
         main[!, :ftr_pep_true] =
@@ -418,16 +442,27 @@ function _merge_mbr_recoveries!(
         # place instead.
         deleteat!(main, .!keep)
         _mmark(:mr_filter)
+        main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
+            fill(NaN32, nrow(main))
         if remap_bounds !== nothing
             score_floor, width = remap_bounds
             recovered = main[!, :mbr_recovered]
             transfer = main[!, :mbr_target_decoy_prob]
+            counterfactual =
+                main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+            counterfactual_prec_prob =
+                main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN]
             prec_prob = main[!, :prec_prob]
             @inbounds for row in eachindex(recovered)
                 Bool(recovered[row]) || continue
                 transfer_score =
                     clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
                 prec_prob[row] = score_floor + width * transfer_score
+                counterfactual_score = Float32(counterfactual[row])
+                if isfinite(counterfactual_score)
+                    counterfactual_prec_prob[row] = score_floor + width *
+                        clamp(counterfactual_score, 0.0f0, 1.0f0)
+                end
             end
         end
         writeArrow(path, main)
@@ -464,6 +499,17 @@ function _remap_mbr_scores!(
         path = file_path(ref)
         main = DataFrame(Tables.columntable(Arrow.Table(path)))
         hasproperty(main, :mbr_recovered) || continue
+        if !hasproperty(main, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN)
+            main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+                fill(NaN32, nrow(main))
+        end
+        if !hasproperty(
+            main,
+            MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN,
+        )
+            main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
+                fill(NaN32, nrow(main))
+        end
         @inbounds for row in 1:nrow(main)
             Bool(main.mbr_recovered[row]) || continue
             transfer_score = clamp(
@@ -472,6 +518,17 @@ function _remap_mbr_scores!(
                 1.0f0,
             )
             main.prec_prob[row] = score_floor + width * transfer_score
+            counterfactual_score = Float32(
+                main[row, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+            )
+            if isfinite(counterfactual_score)
+                main[row, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
+                    score_floor + width * clamp(
+                        counterfactual_score,
+                        0.0f0,
+                        1.0f0,
+                    )
+            end
         end
         writeArrow(path, main)
     end

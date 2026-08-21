@@ -655,13 +655,20 @@ function _protein_model_training_data_sufficient(
     all_protein_groups::DataFrame,
     cv_folds::Vector{UInt8},
 )
-    targets = all_protein_groups.target
+    targets = hasproperty(all_protein_groups, :protein_training_label) ?
+        all_protein_groups.protein_training_label :
+        all_protein_groups.target
+    eligible = hasproperty(
+        all_protein_groups,
+        :protein_training_eligible,
+    ) ? all_protein_groups.protein_training_eligible : trues(nrow(all_protein_groups))
     folds = all_protein_groups.cv_fold
     for test_fold in cv_folds
         n_train_targets = 0
         n_train_decoys = 0
-        @inbounds for row in eachindex(targets, folds)
+        @inbounds for row in eachindex(targets, eligible, folds)
             folds[row] == test_fold && continue
+            eligible[row] || continue
             if targets[row]
                 n_train_targets += 1
             else
@@ -741,15 +748,30 @@ function perform_protein_scoring_multifold(
 
     if use_model_scores
         for test_fold in unique_cv_folds
-            train_mask = all_protein_groups.cv_fold .!= test_fold
+            training_eligible = hasproperty(
+                all_protein_groups,
+                :protein_training_eligible,
+            ) ? all_protein_groups.protein_training_eligible :
+                trues(nrow(all_protein_groups))
+            train_mask = (all_protein_groups.cv_fold .!= test_fold) .&
+                         training_eligible
             train_df = all_protein_groups[train_mask, :]
 
-            y_train = train_df.target
+            y_train = hasproperty(train_df, :protein_training_label) ?
+                train_df.protein_training_label : train_df.target
             initial_scores_train = train_df.pg_score
             context = "protein_lightgbm_multifold_fold_$(test_fold)"
+            plot_train_df = train_df
+            if write_qc_plots &&
+               hasproperty(train_df, :protein_training_label)
+                plot_train_df = copy(train_df)
+                plot_train_df[!, :target] = Bool.(
+                    train_df.protein_training_label
+                )
+            end
             iteration_debug_callback = write_qc_plots ?
                 make_protein_iteration_plot_callback(
-                    train_df,
+                    plot_train_df,
                     test_fold,
                     qc_folder;
                     context = context,
@@ -806,6 +828,15 @@ function perform_protein_scoring_multifold(
     end
     
     # Clean up temporary column
-    select!(all_protein_groups, Not(:cv_fold))
+    training_columns = Symbol[
+        column for column in (
+            :cv_fold,
+            :protein_training_label,
+            :protein_training_eligible,
+            :protein_shadow_negative,
+        ) if hasproperty(all_protein_groups, column)
+    ]
+    isempty(training_columns) ||
+        select!(all_protein_groups, Not(training_columns))
     return use_model_scores
 end

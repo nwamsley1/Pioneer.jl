@@ -77,6 +77,7 @@ end
                 prec_prob = Float32[0.90, 0.10],
                 mbr_recovered = Bool[false, true],
                 mbr_target_decoy_prob = Float32[NaN, 0.50],
+                mbr_counterfactual_decoy_prob = Float32[NaN, 0.25],
             ),
         )
         frozen_qvalue = score ->
@@ -96,6 +97,9 @@ end
         @test remapped.prec_prob[1] == 0.90f0
         @test remapped.prec_prob[2] < 0.80f0
         @test remapped.prec_prob[2] ≈ 0.40f0 atol = 1.0f-4
+        @test isnan(remapped.mbr_counterfactual_decoy_prec_prob[1])
+        @test remapped.mbr_counterfactual_decoy_prec_prob[2] ≈
+            0.20f0 atol = 1.0f-4
     end
 end
 

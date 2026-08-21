@@ -32,6 +32,16 @@ const PASS1_SIDECAR_SUFFIX = ".pass1_sidecar.arrow"
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
 
+# Training-only bridge from precursor MBR to run-level protein scoring. The
+# raw counterfactual score is discarded after the normal pre-MBR score remap;
+# the remapped probability survives until protein-group construction.
+const MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN =
+    :mbr_counterfactual_decoy_prob
+const MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN =
+    :mbr_counterfactual_decoy_index
+const MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN =
+    :mbr_counterfactual_decoy_prec_prob
+
 const MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT = ntuple(_ -> 0.0f0, 8)
 const MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS = ntuple(
     rank -> Symbol("MBR_integrated_frag$(rank)_sqrt"),

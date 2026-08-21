@@ -149,6 +149,28 @@ end
     @test !any(no_budget.recovered)
 end
 
+@testset "MBR counterfactual controls retain the hardest false pairing" begin
+    # Block-major layout: real rows first, followed by three counterfactual
+    # blocks of the same two candidates.
+    scores = Float32[
+        0.9, 0.8,
+        0.2, 0.7,
+        0.6, 0.1,
+        0.5, 0.4,
+    ]
+    present = BitMatrix([
+        true true true
+        true true false
+    ])
+
+    controls = Pioneer._mbr_top_counterfactual_controls(scores, present)
+
+    @test controls.scores == Float32[0.6, 0.7]
+    @test controls.indices == UInt8[2, 1]
+    @test Pioneer._mbr_top_counterfactual_scores(scores, present) ==
+        controls.scores
+end
+
 @testset "MBR training caps are deterministic and counterfactual-stratified" begin
     n_candidates = 12
     folds = fill(UInt8(1), n_candidates)

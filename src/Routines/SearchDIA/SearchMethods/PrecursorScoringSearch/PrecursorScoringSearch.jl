@@ -204,6 +204,8 @@ const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     # MBR false-transfer-rate diagnostics, for method development rather than end users.
     # :mbr_recovered survives and is the flag that says whether a row was transferred.
     :mbr_target_decoy_prob, :mbr_total_error_qval_true, :mbr_total_error_rate_true,
+    :mbr_counterfactual_decoy_prob,
+    :mbr_counterfactual_decoy_index,
     :ftr_qval_true, :ftr_pep_true,
     # Same physical measurement as :rt_fwhm but in library iRT units, which are only interpretable
     # relative to the library. :rt_fwhm is kept, in minutes.

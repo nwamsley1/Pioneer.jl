@@ -1,6 +1,7 @@
 using DataFrames
 using Test
 
+import Pioneer
 using Pioneer: group_psms_by_protein, run_level_protein_feature_names
 
 function _empty_precursor_consensus_for_mbr_feature_tests()
@@ -14,6 +15,62 @@ function _empty_precursor_consensus_for_mbr_feature_tests()
 end
 
 @testset "ProteinScoring MBR feature rollup" begin
+    @testset "Counterfactual protein controls select one MBR-only target precursor" begin
+        psms = DataFrame(
+            inferred_protein_group = [
+                "P_MBR", "P_MBR", "P_MIXED", "P_MIXED", "DECOY_P",
+            ],
+            target = Bool[true, true, true, true, false],
+            entrap_id = zeros(UInt8, 5),
+            use_for_protein_quant = trues(5),
+            qval = fill(0.001f0, 5),
+            global_qval = fill(0.001f0, 5),
+            mbr_recovered = Bool[true, true, true, false, true],
+            precursor_idx = UInt32[10, 11, 20, 21, 30],
+            prec_prob = fill(0.9f0, 5),
+            mbr_counterfactual_decoy_prec_prob =
+                Float32[0.2, 0.4, 0.8, NaN, 0.7],
+        )
+
+        shadows = Pioneer._mbr_counterfactual_shadow_psms(psms)
+
+        @test nrow(shadows) == 1
+        @test shadows.inferred_protein_group == ["P_MBR"]
+        @test shadows.precursor_idx == UInt32[11]
+        @test shadows.prec_prob == Float32[0.4]
+    end
+
+    @testset "Counterfactual protein controls are training-only negatives" begin
+        actual = DataFrame(
+            protein_name = ["P_SINGLE", "P_MULTI", "DECOY_P"],
+            target = Bool[true, true, false],
+            mbr_only_protein = Bool[true, true, true],
+            mbr_recovered_peptides = Int64[1, 2, 1],
+            pg_score = Float32[0.8, 0.9, 0.2],
+        )
+        shadows = DataFrame(
+            protein_name = ["P_SINGLE"],
+            target = Bool[true],
+            mbr_only_protein = Bool[true],
+            mbr_recovered_peptides = Int64[1],
+            pg_score = Float32[0.7],
+        )
+
+        training = Pioneer.prepare_run_level_protein_training_rows(
+            actual,
+            shadows,
+        )
+
+        @test nrow(training) == 4
+        @test training.protein_training_label ==
+            Bool[true, true, false, false]
+        @test training.protein_training_eligible ==
+            Bool[false, true, true, true]
+        @test training.protein_shadow_negative ==
+            Bool[false, false, false, true]
+        @test training.target == Bool[true, true, false, true]
+    end
+
     @testset "MBR recovered support becomes run-level protein features" begin
         psms = DataFrame(
             inferred_protein_group = ["P_MBR", "P_MBR"],
