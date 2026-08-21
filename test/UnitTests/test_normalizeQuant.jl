@@ -87,7 +87,46 @@ function _write_rt_bias_quant_pair(dir::String; n::Int = 5_000)
     return path1, path2
 end
 
+# Four runs with two anchor populations interleaved throughout the gradient.
+# Stable anchors occur in every run and have residuals ±1 in runs 1 and 2.
+# Less-complete anchors occur only in runs 1 and 2 and have residuals ±4. They
+# are slightly more numerous, so an unweighted median chooses ±4, while their
+# 1/2 completeness weight lets the stable anchors determine the bin summary.
+function _write_completeness_weighted_runs(dir::String; n::Int = 2_000)
+    precursor_idx = UInt32.(1:n)
+    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
+    complete = BitVector(mod(i - 1, 20) < 9 for i in 1:n)
+    observed = (trues(n), trues(n), complete, complete)
+
+    run_log2 = (
+        ifelse.(complete, 9.0f0, 12.0f0),
+        ifelse.(complete, 7.0f0, 4.0f0),
+        fill(8.0f0, n),
+        fill(8.0f0, n),
+    )
+    paths = String[]
+    for run in eachindex(run_log2)
+        keep = observed[run]
+        path = joinpath(dir, "run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx[keep],
+            irt_obs = rts[keep],
+            abundance = 2.0f0 .^ run_log2[run][keep],
+        ))
+        push!(paths, path)
+    end
+    return paths, complete
+end
+
 @testset "normalizeQuant" begin
+
+@testset "weighted median" begin
+    @test Pioneer._weighted_median([1.0, 2.0, 10.0], ones(3)) == 2.0
+    @test Pioneer._weighted_median([1.0, 2.0, 10.0, 20.0], ones(4)) == 6.0
+    @test Pioneer._weighted_median([1.0, 2.0, 10.0, 20.0], fill(2.0f0 / 3.0f0, 4)) == 6.0
+    @test Pioneer._weighted_median([1.0, 2.0, 10.0], [1.0, 1.0, 3.0]) == 10.0
+    @test Pioneer._weighted_median([10.0, 1.0, 2.0], [3.0, 1.0, 1.0]) == 10.0
+end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # getQuantSplines — fit per-file splines
@@ -125,21 +164,32 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# getMatchedGlobalOffsets — estimate run-wide loading from shared precursors
+# Completeness weights — favor anchors seen consistently across runs
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@testset "getMatchedGlobalOffsets" begin
+@testset "completeness-weighted matched residuals" begin
     mktempdir() do dir
-        path1 = joinpath(dir, "file1.arrow")
-        path2 = joinpath(dir, "file2.arrow")
-        _write_quant_arrow(path1, 1000, 0.0)
-        _write_quant_arrow(path2, 1000, 2.0)
+        paths, complete = _write_completeness_weighted_runs(dir)
+        _, weights = Pioneer.getPrecursorQuantReference(paths, :abundance)
 
-        offsets = Pioneer.getMatchedGlobalOffsets([path1, path2], :abundance)
-        @test length(offsets) == 2
-        @test offsets[path1] ≈ -1.0 atol=0.05
-        @test offsets[path2] ≈ 1.0 atol=0.05
-        @test offsets[path2] - offsets[path1] ≈ 2.0 atol=0.05
+        complete_pid = UInt32(findfirst(complete))
+        partial_pid = UInt32(findfirst(.!complete))
+        @test weights[complete_pid] == 1.0f0
+        @test weights[partial_pid] == 0.5f0
+
+        splines, _ = Pioneer.getQuantSplines(
+            paths,
+            :abundance;
+            N=8,
+            spline_n_knots=5,
+        )
+        @test length(splines) == 4
+        for rt in (10.0, 50.0, 90.0)
+            @test splines[paths[1]](rt) ≈ 1.0 atol=0.05
+            @test splines[paths[2]](rt) ≈ -1.0 atol=0.05
+            @test splines[paths[3]](rt) ≈ 0.0 atol=0.05
+            @test splines[paths[4]](rt) ≈ 0.0 atol=0.05
+        end
     end
 end
 
@@ -173,24 +223,6 @@ end
             @test c1 < 0.0 || c2 > 0.0
             # They should roughly cancel: c1 + c2 ≈ 0
             @test abs(c1 + c2) < 0.5
-        end
-    end
-end
-
-@testset "global offsets are excluded from RT shape" begin
-    mktempdir() do dir
-        path1 = joinpath(dir, "file1.arrow")
-        path2 = joinpath(dir, "file2.arrow")
-        _write_quant_arrow(path1, 1000, 0.0)
-        _write_quant_arrow(path2, 1000, 2.0)
-
-        splines, rt_range = Pioneer.getQuantSplines(
-            [path1, path2], :abundance; N=50, spline_n_knots=5)
-        shapes = Pioneer.getRTShapeCorrections(splines, rt_range; N=50)
-
-        for rt in range(0.0, 100.0, length=21)
-            @test abs(shapes[path1](rt)) < 0.05
-            @test abs(shapes[path2](rt)) < 0.05
         end
     end
 end
@@ -284,7 +316,7 @@ end
     end
 end
 
-@testset "decomposed estimator corrects RT-dependent bias" begin
+@testset "matched residual spline corrects RT-dependent bias" begin
     mktempdir() do dir
         path1, path2 = _write_rt_bias_quant_pair(dir)
         Pioneer.normalizeQuant(
@@ -327,13 +359,13 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Edge case: too few PSMs for RT shape — retain the global correction
+# Edge case: too few PSMs to fit any spline — fall back to identity
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@testset "global correction does not require an RT spline" begin
+@testset "no file supports a spline" begin
     mktempdir() do dir
         # 200 PSMs fills only 2 bins at >= 100 each, short of the 8 a
-        # 7-coefficient spline needs, but supports a robust global median.
+        # 7-coefficient spline needs, so every file is skipped.
         paths = String[]
         for (i, offset) in enumerate([0.0, 2.0])
             path = joinpath(dir, "file$i.arrow")
@@ -345,41 +377,18 @@ end
             paths, :abundance; N=50, spline_n_knots=5)
         @test isempty(splines)
 
-        shapes = Pioneer.getRTShapeCorrections(splines, rt_range; N=50)
-        @test isempty(shapes)
-        offsets = Pioneer.getMatchedGlobalOffsets(paths, :abundance)
-        @test offsets[paths[2]] - offsets[paths[1]] ≈ 2.0 atol=0.05
+        # No cross-file median exists; corrections must be empty, not an error.
+        corrections = Pioneer.getQuantCorrections(splines, rt_range; N=50)
+        @test isempty(corrections)
 
         Pioneer.normalizeQuant(dir, :abundance; N=50, spline_n_knots=5)
 
-        run1 = DataFrame(Arrow.Table(paths[1]))
-        run2 = DataFrame(Arrow.Table(paths[2]))
-        @test hasproperty(run1, :abundance_normalized)
-        @test hasproperty(run2, :abundance_normalized)
-        @test median(
-            log2.(run2.abundance_normalized) .-
-            log2.(run1.abundance_normalized)
-        ) ≈ 0.0 atol=0.05
-    end
-end
-
-@testset "too few matched anchors falls back to identity" begin
-    mktempdir() do dir
-        path1 = joinpath(dir, "run1.arrow")
-        path2 = joinpath(dir, "run2.arrow")
-        _write_quant_arrow(path1, 50, 0.0)
-        _write_quant_arrow(path2, 50, 2.0)
-
-        before1 = copy(DataFrame(Arrow.Table(path1)).abundance)
-        before2 = copy(DataFrame(Arrow.Table(path2)).abundance)
-        offsets = Pioneer.getMatchedGlobalOffsets([path1, path2], :abundance)
-        @test isempty(offsets)
-
-        Pioneer.normalizeQuant([path1, path2], :abundance; N=50, spline_n_knots=5)
-        after1 = DataFrame(Arrow.Table(path1))
-        after2 = DataFrame(Arrow.Table(path2))
-        @test after1.abundance_normalized ≈ before1
-        @test after2.abundance_normalized ≈ before2
+        for path in paths
+            df = DataFrame(Arrow.Table(path))
+            @test hasproperty(df, :abundance_normalized)
+            # Correction factor 1.0: abundances pass through untouched.
+            @test all(df.abundance_normalized .≈ Float64.(df.abundance))
+        end
     end
 end
 
