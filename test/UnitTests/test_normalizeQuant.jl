@@ -87,46 +87,7 @@ function _write_rt_bias_quant_pair(dir::String; n::Int = 5_000)
     return path1, path2
 end
 
-# Four runs with two anchor populations interleaved throughout the gradient.
-# Stable anchors occur in every run and have residuals ±1 in runs 1 and 2.
-# Less-complete anchors occur only in runs 1 and 2 and have residuals ±4. They
-# are slightly more numerous, so an unweighted median chooses ±4, while their
-# 1/2 completeness weight lets the stable anchors determine the bin summary.
-function _write_completeness_weighted_runs(dir::String; n::Int = 2_000)
-    precursor_idx = UInt32.(1:n)
-    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
-    complete = BitVector(mod(i - 1, 20) < 9 for i in 1:n)
-    observed = (trues(n), trues(n), complete, complete)
-
-    run_log2 = (
-        ifelse.(complete, 9.0f0, 12.0f0),
-        ifelse.(complete, 7.0f0, 4.0f0),
-        fill(8.0f0, n),
-        fill(8.0f0, n),
-    )
-    paths = String[]
-    for run in eachindex(run_log2)
-        keep = observed[run]
-        path = joinpath(dir, "run$(run).arrow")
-        Arrow.write(path, DataFrame(
-            precursor_idx = precursor_idx[keep],
-            irt_obs = rts[keep],
-            abundance = 2.0f0 .^ run_log2[run][keep],
-        ))
-        push!(paths, path)
-    end
-    return paths, complete
-end
-
 @testset "normalizeQuant" begin
-
-@testset "weighted median" begin
-    @test Pioneer._weighted_median([1.0, 2.0, 10.0], ones(3)) == 2.0
-    @test Pioneer._weighted_median([1.0, 2.0, 10.0, 20.0], ones(4)) == 6.0
-    @test Pioneer._weighted_median([1.0, 2.0, 10.0, 20.0], fill(2.0f0 / 3.0f0, 4)) == 6.0
-    @test Pioneer._weighted_median([1.0, 2.0, 10.0], [1.0, 1.0, 3.0]) == 10.0
-    @test Pioneer._weighted_median([10.0, 1.0, 2.0], [3.0, 1.0, 1.0]) == 10.0
-end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # getQuantSplines — fit per-file splines
@@ -159,36 +120,6 @@ end
             v1 = splines[path1](50.0f0)
             v2 = splines[path2](50.0f0)
             @test v2 - v1 ≈ 2.0 atol=0.5
-        end
-    end
-end
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Completeness weights — favor anchors seen consistently across runs
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@testset "completeness-weighted matched residuals" begin
-    mktempdir() do dir
-        paths, complete = _write_completeness_weighted_runs(dir)
-        _, weights = Pioneer.getPrecursorQuantReference(paths, :abundance)
-
-        complete_pid = UInt32(findfirst(complete))
-        partial_pid = UInt32(findfirst(.!complete))
-        @test weights[complete_pid] == 1.0f0
-        @test weights[partial_pid] == 0.5f0
-
-        splines, _ = Pioneer.getQuantSplines(
-            paths,
-            :abundance;
-            N=8,
-            spline_n_knots=5,
-        )
-        @test length(splines) == 4
-        for rt in (10.0, 50.0, 90.0)
-            @test splines[paths[1]](rt) ≈ 1.0 atol=0.05
-            @test splines[paths[2]](rt) ≈ -1.0 atol=0.05
-            @test splines[paths[3]](rt) ≈ 0.0 atol=0.05
-            @test splines[paths[4]](rt) ≈ 0.0 atol=0.05
         end
     end
 end

@@ -120,76 +120,26 @@ function _file_precursor_log2_quant(
 end
 
 """
-    _weighted_median(values, weights)
-
-Return the weighted median of `values`. When the cumulative weight lands
-exactly at half of the total, return the mean of the two adjacent values so
-that equal weights reproduce `Statistics.median`, including for even-length
-vectors.
-"""
-function _weighted_median(
-    values::AbstractVector{<:Real},
-    weights::AbstractVector{<:Real},
-)
-    length(values) == length(weights) || throw(DimensionMismatch(
-        "values and weights must have the same length"
-    ))
-    isempty(values) && throw(ArgumentError(
-        "weighted median requires at least one value"
-    ))
-
-    total_weight = 0.0
-    first_weight = Float64(first(weights))
-    equal_weights = true
-    @inbounds for weight in weights
-        w = Float64(weight)
-        (isfinite(w) && w > 0.0) || throw(ArgumentError(
-            "weighted median requires finite positive weights"
-        ))
-        equal_weights &= w == first_weight
-        total_weight += w
-    end
-    equal_weights && return Float64(median(values))
-
-    order = sortperm(values)
-    half_weight = total_weight / 2.0
-    cumulative_weight = 0.0
-    @inbounds for (position, index) in enumerate(order)
-        cumulative_weight += Float64(weights[index])
-        if cumulative_weight > half_weight
-            return Float64(values[index])
-        elseif cumulative_weight == half_weight && position < length(order)
-            return (Float64(values[index]) + Float64(values[order[position + 1]])) / 2.0
-        end
-    end
-    return Float64(values[last(order)])
-end
-
-"""
-    getPrecursorQuantReference(psms_paths, quant_col_name;
+    getPrecursorQuantConsensus(psms_paths, quant_col_name;
         precursor_col_name=:precursor_idx,
         min_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION)
 
-Build cross-run reference abundances and completeness weights for matched
-precursors. Each reference is the median log2 abundance across runs in which
-the precursor was quantified. Its weight is the fraction of all runs in which
-it was quantified. Only precursors observed in at least `min_run_fraction` of
-runs (and at least two runs when multiple runs are present) are retained.
+Build a cross-run reference abundance for matched precursors. Each precursor's
+reference is the median log2 abundance across runs in which it was quantified.
+Only precursors observed in at least `min_run_fraction` of runs (and at least two
+runs when multiple runs are present) are retained as normalization anchors.
 
 The run-level de-duplication is deliberate: a precursor contributes at most one
-value per run to the reference and completeness count.
+value per run to the consensus.
 """
-function getPrecursorQuantReference(
+function getPrecursorQuantConsensus(
     psms_paths::Vector{String},
     quant_col_name::Symbol;
     precursor_col_name::Symbol = :precursor_idx,
     min_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
 )
-    n_runs = length(psms_paths)
-    required_runs = _required_anchor_runs(n_runs, min_run_fraction)
-    if required_runs == 0
-        return Dict{UInt32, Float32}(), Dict{UInt32, Float32}()
-    end
+    required_runs = _required_anchor_runs(length(psms_paths), min_run_fraction)
+    required_runs == 0 && return Dict{UInt32, Float32}()
 
     values_by_precursor = Dict{UInt32, Vector{Float32}}()
     for fpath in psms_paths
@@ -205,38 +155,11 @@ function getPrecursorQuantReference(
     end
 
     consensus = Dict{UInt32, Float32}()
-    completeness_weights = Dict{UInt32, Float32}()
     sizehint!(consensus, length(values_by_precursor))
-    sizehint!(completeness_weights, length(values_by_precursor))
     for (pid, values) in values_by_precursor
         length(values) >= required_runs || continue
         consensus[pid] = Float32(median(values))
-        completeness_weights[pid] = Float32(length(values) / n_runs)
     end
-    return consensus, completeness_weights
-end
-
-"""
-    getPrecursorQuantConsensus(psms_paths, quant_col_name;
-        precursor_col_name=:precursor_idx,
-        min_run_fraction=QUANT_MIN_ANCHOR_RUN_FRACTION)
-
-Return only the cross-run median log2 abundance from
-`getPrecursorQuantReference`. Retained for callers that do not need the
-completeness weights.
-"""
-function getPrecursorQuantConsensus(
-    psms_paths::Vector{String},
-    quant_col_name::Symbol;
-    precursor_col_name::Symbol = :precursor_idx,
-    min_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
-)
-    consensus, _ = getPrecursorQuantReference(
-        psms_paths,
-        quant_col_name;
-        precursor_col_name = precursor_col_name,
-        min_run_fraction = min_run_fraction,
-    )
     return consensus
 end
 
@@ -253,9 +176,7 @@ configurable fraction of runs. For each file, it then computes
 
 for those matched anchors, bins the residuals by observed iRT into bins of at
 least `min_bin_occupancy` anchors (at most `N` bins), and fits a `UniformSpline`
-mapping iRT to their completeness-weighted median residual. An anchor's weight
-is its observed-run fraction, so consistently quantified precursors have more
-influence without introducing a tuning parameter.
+mapping iRT to the median matched-precursor residual.
 
 Files whose matched-anchor count cannot support
 `_min_bins_for_spline(spline_n_knots)` such bins get no entry in the returned
@@ -272,7 +193,7 @@ function getQuantSplines(psms_paths::Vector{String},
     min_bin_occupancy::Int = QUANT_MIN_BIN_OCCUPANCY,
     min_anchor_run_fraction::Real = QUANT_MIN_ANCHOR_RUN_FRACTION,
     precursor_col_name::Symbol = :precursor_idx)
-    precursor_consensus, precursor_weights = getPrecursorQuantReference(
+    precursor_consensus = getPrecursorQuantConsensus(
         psms_paths,
         quant_col_name;
         precursor_col_name = precursor_col_name,
@@ -294,11 +215,8 @@ function getQuantSplines(psms_paths::Vector{String},
 
         anchor_rts = Float64[]
         anchor_residuals = Float64[]
-        anchor_weights = Float64[]
-        n_possible_anchors = min(length(file_values), length(precursor_consensus))
-        sizehint!(anchor_rts, n_possible_anchors)
-        sizehint!(anchor_residuals, n_possible_anchors)
-        sizehint!(anchor_weights, n_possible_anchors)
+        sizehint!(anchor_rts, min(length(file_values), length(precursor_consensus)))
+        sizehint!(anchor_residuals, min(length(file_values), length(precursor_consensus)))
         precursor_idx = psms[!, precursor_col_name]
         irt_obs = psms[!, :irt_obs]
         seen = Set{UInt32}()
@@ -317,13 +235,11 @@ function getQuantSplines(psms_paths::Vector{String},
             push!(seen, pid)
             push!(anchor_rts, rt)
             push!(anchor_residuals, Float64(file_logq - reference_logq))
-            push!(anchor_weights, Float64(precursor_weights[pid]))
         end
 
         order = sortperm(anchor_rts)
         anchor_rts = anchor_rts[order]
         anchor_residuals = anchor_residuals[order]
-        anchor_weights = anchor_weights[order]
         nanchors = length(anchor_rts)
 
         bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
@@ -352,10 +268,7 @@ function getQuantSplines(psms_paths::Vector{String},
         median_rts = Vector{Float64}(undef, length(bins))
         for (i, b) in enumerate(bins)
             median_rts[i] = median(@view(anchor_rts[b]))
-            median_quant[i] = _weighted_median(
-                @view(anchor_residuals[b]),
-                @view(anchor_weights[b]),
-            )
+            median_quant[i] = median(@view(anchor_residuals[b]))
         end
 
         splinefit = UniformSpline(median_quant, median_rts, 3, spline_n_knots)
@@ -450,9 +363,9 @@ end
     normalizeQuant(second_quant_folder, quant_col_name; N=100, spline_n_knots=7)
 
 End-to-end RT-dependent quantification normalization. Reads all Arrow files,
-constructs a cross-run matched-precursor reference, fits completeness-weighted
-per-file residual splines, computes the cross-file median, and writes corrected
-abundances back to each file.
+constructs a cross-run matched-precursor reference, fits per-file residual
+splines, computes the cross-file median, and writes corrected abundances back
+to each file.
 
 This corrects systematic RT-dependent intensity differences between MS runs
 without forcing the marginal observed intensity distributions to match.
