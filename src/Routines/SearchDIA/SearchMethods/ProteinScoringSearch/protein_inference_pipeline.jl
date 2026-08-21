@@ -1907,6 +1907,75 @@ High-Level Interface
 ==========================================================#
 
 """
+    _mbr_counterfactual_shadow_psms(psms; q_value_threshold = 0.01f0)
+
+Create one training-only counterfactual PSM for each target protein/run whose
+quantitative support consists entirely of MBR recoveries. The hardest retained
+counterfactual transfer is selected and its remapped probability replaces
+`prec_prob`. Protein identity is deliberately preserved so the shadow and the
+real protein are assigned to the same cross-validation fold.
+"""
+function _mbr_counterfactual_shadow_psms(
+    psms::DataFrame;
+    q_value_threshold::Float32 = 0.01f0,
+)
+    required_columns = (
+        :inferred_protein_group,
+        :target,
+        :entrap_id,
+        :use_for_protein_quant,
+        :mbr_recovered,
+        :prec_prob,
+        MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN,
+    )
+    all(column -> hasproperty(psms, column), required_columns) ||
+        return DataFrame()
+
+    selected_rows = Int[]
+    for protein_psms in groupby(
+        psms,
+        [:inferred_protein_group, :target, :entrap_id],
+    )
+        Bool(protein_psms.target[1]) || continue
+        UInt8(protein_psms.entrap_id[1]) == zero(UInt8) || continue
+        ismissing(protein_psms.inferred_protein_group[1]) && continue
+
+        quant_mask = _protein_rollup_quant_mask(
+            protein_psms;
+            q_value_threshold = q_value_threshold,
+        )
+        quant_rows = findall(quant_mask)
+        isempty(quant_rows) && continue
+        all(row -> Bool(protein_psms.mbr_recovered[row]), quant_rows) ||
+            continue
+
+        best_local_row = 0
+        best_probability = -Inf32
+        @inbounds for row in quant_rows
+            probability = Float32(
+                protein_psms[
+                    row,
+                    MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN,
+                ]
+            )
+            if isfinite(probability) && probability > best_probability
+                best_probability = probability
+                best_local_row = row
+            end
+        end
+        best_local_row == 0 && continue
+        push!(selected_rows, parentindices(protein_psms)[1][best_local_row])
+    end
+
+    isempty(selected_rows) && return DataFrame()
+    shadows = copy(psms[selected_rows, :])
+    shadows[!, :prec_prob] = Float32.(
+        shadows[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN]
+    )
+    return shadows
+end
+
+"""
     build_protein_group_tables(
         psm_refs,
         output_folder,
@@ -1948,6 +2017,7 @@ function build_protein_group_tables(
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
     protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+    counterfactual_shadow_protein_groups = DataFrame()
     indexed_refs = collect(enumerate(psm_refs))
 
     precursor_consensus = build_precursor_consensus(
@@ -1966,6 +2036,11 @@ function build_protein_group_tables(
         updated_psms = load_dataframe(psm_ref)
         _update_protein_cv_fold_mapping!(protein_to_cv_fold, updated_psms, precursors)
         peak_area_calibration = estimate_peak_area_detection_model(updated_psms)
+
+        shadow_psms = _mbr_counterfactual_shadow_psms(
+            updated_psms;
+            q_value_threshold = q_value_threshold,
+        )
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
@@ -2006,6 +2081,53 @@ function build_protein_group_tables(
             protein_groups_df = op(protein_groups_df)
         end
 
+        if nrow(shadow_psms) > 0
+            shadow_groups = group_psms_by_protein(
+                shadow_psms;
+                precursor_consensus = precursor_consensus,
+                current_run_order = Int64(idx),
+                q_value_threshold = q_value_threshold,
+            )
+            for (desc, op) in post_inference_pipeline.operations
+                shadow_groups = op(shadow_groups)
+            end
+
+            shadow_shared_precursor_peak_areas =
+                Dict{ProteinKey, Dict{UInt32, Float32}}()
+            add_ambiguous_pg_score!(
+                shadow_groups,
+                shadow_psms,
+                protein_ambiguity_candidates;
+                q_value_threshold = q_value_threshold,
+                shared_precursor_peak_areas =
+                    shadow_shared_precursor_peak_areas,
+            )
+            add_shared_precursor_consensus_shape!(
+                shadow_groups,
+                shadow_shared_precursor_peak_areas,
+                precursor_consensus.shared;
+                current_run_order = Int64(idx),
+            )
+            for (desc, op) in feature_pipeline.operations
+                shadow_groups = op(shadow_groups)
+            end
+            if nrow(shadow_groups) > 0
+                run_idx = hasproperty(updated_psms, :ms_file_idx) ?
+                    Int64(updated_psms.ms_file_idx[1]) : Int64(idx)
+                shadow_groups[!, :file_idx] =
+                    fill(run_idx, nrow(shadow_groups))
+                if ncol(counterfactual_shadow_protein_groups) == 0
+                    counterfactual_shadow_protein_groups = shadow_groups
+                else
+                    append!(
+                        counterfactual_shadow_protein_groups,
+                        shadow_groups;
+                        cols = :union,
+                    )
+                end
+            end
+        end
+
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"
         pg_path = joinpath(output_folder, pg_filename)
 
@@ -2023,5 +2145,12 @@ function build_protein_group_tables(
         end
     end
 
-    return pg_refs, psm_to_pg_mapping, protein_to_cv_fold
+    @debug_l1 "Built $(nrow(counterfactual_shadow_protein_groups)) " *
+              "target-backed counterfactual shadow protein negatives"
+    return (
+        pg_refs,
+        psm_to_pg_mapping,
+        protein_to_cv_fold,
+        counterfactual_shadow_protein_groups,
+    )
 end

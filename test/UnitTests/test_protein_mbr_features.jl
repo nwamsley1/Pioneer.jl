@@ -1,5 +1,6 @@
 using DataFrames
 using Test
+import Pioneer
 
 using Pioneer: group_psms_by_protein, run_level_protein_feature_names
 
@@ -11,6 +12,58 @@ function _empty_precursor_consensus_for_mbr_feature_tests()
         cached_protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}(),
         shape_confidence_scale = 1.0f0
     )
+end
+
+@testset "Counterfactual protein training controls" begin
+    @testset "one hardest shadow PSM is selected only for target MBR-only proteins" begin
+        psms = DataFrame(
+            inferred_protein_group = ["P1", "P1", "P2", "P2", "D1"],
+            target = Bool[true, true, true, true, false],
+            entrap_id = zeros(UInt8, 5),
+            use_for_protein_quant = trues(5),
+            qval = fill(0.001f0, 5),
+            global_qval = fill(0.001f0, 5),
+            mbr_recovered = Bool[true, true, true, false, true],
+            precursor_idx = UInt32[1, 2, 3, 4, 5],
+            prec_prob = Float32[0.9, 0.8, 0.7, 0.6, 0.5],
+            mbr_counterfactual_decoy_prec_prob =
+                Float32[0.2, 0.7, 0.95, 0.9, 0.99],
+        )
+
+        shadows = Pioneer._mbr_counterfactual_shadow_psms(psms)
+        @test nrow(shadows) == 1
+        @test shadows.inferred_protein_group == ["P1"]
+        @test shadows.precursor_idx == UInt32[2]
+        @test shadows.prec_prob == Float32[0.7]
+    end
+
+    @testset "existing targets stay positive and shadows are negatives" begin
+        actual = DataFrame(
+            protein_name = ["P_SINGLE", "P_MULTI", "DECOY"],
+            target = Bool[true, true, false],
+            n_non_mbr_peptides = Int64[0, 0, 0],
+            mbr_only_protein = Bool[true, true, false],
+            mbr_recovered_peptides = Int64[1, 2, 0],
+        )
+        shadows = DataFrame(
+            protein_name = ["P_SINGLE"],
+            target = Bool[true],
+            n_non_mbr_peptides = Int64[0],
+            mbr_only_protein = Bool[true],
+            mbr_recovered_peptides = Int64[1],
+        )
+
+        prepared = Pioneer.prepare_run_level_protein_training_rows(
+            actual,
+            shadows,
+        )
+        @test prepared.n_shadows == 1
+        @test prepared.rows.training_label ==
+            Bool[true, true, false, false]
+        @test prepared.rows.protein_shadow_negative ==
+            Bool[false, false, false, true]
+        @test prepared.rows.target[end]
+    end
 end
 
 @testset "ProteinScoring MBR feature rollup" begin
