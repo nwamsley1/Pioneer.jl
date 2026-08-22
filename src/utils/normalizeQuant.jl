@@ -413,7 +413,7 @@ function _fit_pairwise_quant_spline(
     )
 end
 
-@inline function _quant_tree_root!(parent::Vector{Int}, node::Int)
+@inline function _quant_graph_root!(parent::Vector{Int}, node::Int)
     root = node
     while parent[root] != root
         root = parent[root]
@@ -427,21 +427,22 @@ end
 end
 
 """
-    getPairwiseQuantTree(psms_paths, quant_col_name, run_ids,
-                         run_similarity_atlas; ...)
+    getSparsePairwiseQuantGraph(psms_paths, quant_col_name, run_ids,
+                                run_similarity_atlas; ...)
 
-Build a maximum-similarity spanning forest for pairwise quant normalization.
-Candidate run pairs are ordered by the maximum directional containment in the
-existing run-similarity atlas. An edge is accepted only when exact, non-MBR,
-target precursor matches can support the requested RT spline. Kruskal's
-algorithm therefore returns a maximum spanning tree when the supported graph
-is connected, or a maximum spanning forest otherwise.
+Build a sparse pairwise graph for quant normalization. Candidate run pairs are
+ordered by the maximum directional containment in the existing run-similarity
+atlas. An edge is accepted only when exact, non-MBR, target precursor matches
+can support the requested RT spline.
 
-Only candidate edges that could connect two current components are fitted, so
-the expensive exact-match work normally stops after `n_runs - 1` successful
-pairwise fits.
+The graph starts with a maximum-similarity spanning forest. It then considers
+each run's strongest off-tree candidate and adds that edge when it supports a
+spline. Taking the union of those candidates adds at most `n_runs` fits while
+introducing cycles that make the run corrections an overdetermined consensus
+instead of a unique-path propagation. Runs whose strongest off-tree candidate
+cannot support a spline simply retain their tree connections.
 """
-function getPairwiseQuantTree(
+function getSparsePairwiseQuantGraph(
     psms_paths::Vector{String},
     quant_col_name::Symbol,
     run_ids::Vector{UInt32},
@@ -498,10 +499,12 @@ function getPairwiseQuantTree(
     parent = collect(1:n_runs)
     component_size = ones(Int, n_runs)
     tree = PairwiseQuantSpline[]
+    tree_pairs = Set{Tuple{Int, Int}}()
+    unsupported_pairs = Set{Tuple{Int, Int}}()
     sizehint!(tree, max(n_runs - 1, 0))
     for (similarity, left_position, right_position) in candidates
-        left_root = _quant_tree_root!(parent, left_position)
-        right_root = _quant_tree_root!(parent, right_position)
+        left_root = _quant_graph_root!(parent, left_position)
+        right_root = _quant_graph_root!(parent, right_position)
         left_root == right_root && continue
 
         pairwise_spline = _fit_pairwise_quant_spline(
@@ -514,8 +517,12 @@ function getPairwiseQuantTree(
             spline_n_knots = spline_n_knots,
             min_bin_occupancy = min_bin_occupancy,
         )
-        pairwise_spline === nothing && continue
+        if pairwise_spline === nothing
+            push!(unsupported_pairs, (left_position, right_position))
+            continue
+        end
         push!(tree, pairwise_spline)
+        push!(tree_pairs, (left_position, right_position))
 
         if component_size[left_root] < component_size[right_root]
             left_root, right_root = right_root, left_root
@@ -524,93 +531,199 @@ function getPairwiseQuantTree(
         component_size[left_root] += component_size[right_root]
         length(tree) == n_runs - 1 && break
     end
-    return tree
+
+    # Select the strongest off-tree candidate for each run before fitting any
+    # extras. The union contains at most n_runs distinct pairs, which preserves
+    # the sparse O(n_runs) edge-fitting budget. An unsupported selected edge is
+    # not replaced by progressively weaker candidates: doing so could regress
+    # to all-pairs matching for heterogeneous or disconnected experiments.
+    selected_extra_pair = Vector{Union{Nothing, Tuple{Int, Int}}}(undef, n_runs)
+    fill!(selected_extra_pair, nothing)
+    for (_, left_position, right_position) in candidates
+        pair = (left_position, right_position)
+        pair in tree_pairs && continue
+        selected_extra_pair[left_position] === nothing &&
+            (selected_extra_pair[left_position] = pair)
+        selected_extra_pair[right_position] === nothing &&
+            (selected_extra_pair[right_position] = pair)
+        all(pair -> pair !== nothing, selected_extra_pair) && break
+    end
+
+    graph = copy(tree)
+    selected_pairs = Set{Tuple{Int, Int}}()
+    sizehint!(selected_pairs, n_runs)
+    for selected_pair in selected_extra_pair
+        selected_pair === nothing && continue
+        pair = selected_pair::Tuple{Int, Int}
+        pair in selected_pairs && continue
+        push!(selected_pairs, pair)
+        pair in unsupported_pairs && continue
+
+        left_position, right_position = pair
+        similarity = max(
+            run_similarity(
+                run_similarity_atlas,
+                run_ids[left_position],
+                run_ids[right_position],
+            ),
+            run_similarity(
+                run_similarity_atlas,
+                run_ids[right_position],
+                run_ids[left_position],
+            ),
+        )
+        pairwise_spline = _fit_pairwise_quant_spline(
+            left_position,
+            right_position,
+            similarity,
+            run_anchors[left_position],
+            run_anchors[right_position];
+            N = N,
+            spline_n_knots = spline_n_knots,
+            min_bin_occupancy = min_bin_occupancy,
+        )
+        pairwise_spline === nothing || push!(graph, pairwise_spline)
+    end
+    @debug_l1 "Sparse pairwise quant graph: $(n_runs) run(s), " *
+              "$(length(tree)) spanning edge(s), " *
+              "$(length(graph) - length(tree)) off-tree edge(s)"
+    return graph
 end
 
-function _quant_tree_traversal(
+function _quant_graph_components(
     n_runs::Int,
-    tree::Vector{PairwiseQuantSpline},
+    graph::Vector{PairwiseQuantSpline},
 )
-    adjacency = [Tuple{Int, Int}[] for _ in 1:n_runs]
-    for (edge_idx, edge) in enumerate(tree)
-        push!(adjacency[edge.left_position], (edge.right_position, edge_idx))
-        push!(adjacency[edge.right_position], (edge.left_position, edge_idx))
+    adjacency = [Int[] for _ in 1:n_runs]
+    for edge in graph
+        push!(adjacency[edge.left_position], edge.right_position)
+        push!(adjacency[edge.right_position], edge.left_position)
     end
 
-    parent = zeros(Int, n_runs)
-    parent_edge = zeros(Int, n_runs)
+    visited = falses(n_runs)
     components = Vector{Vector{Int}}()
-    orders = Vector{Vector{Int}}()
     for root in 1:n_runs
-        parent[root] == 0 || continue
-        parent[root] = root
+        visited[root] && continue
+        visited[root] = true
         component = Int[root]
-        order = Int[root]
         next_idx = 1
-        while next_idx <= length(order)
-            node = order[next_idx]
+        while next_idx <= length(component)
+            node = component[next_idx]
             next_idx += 1
-            for (neighbor, edge_idx) in adjacency[node]
-                parent[neighbor] == 0 || continue
-                parent[neighbor] = node
-                parent_edge[neighbor] = edge_idx
+            for neighbor in adjacency[node]
+                visited[neighbor] && continue
+                visited[neighbor] = true
                 push!(component, neighbor)
-                push!(order, neighbor)
             end
         end
+        sort!(component)
         push!(components, component)
-        push!(orders, order)
     end
-    return parent, parent_edge, components, orders
+    return components
 end
 
 """
-    getPairwiseQuantCorrections(psms_paths, tree; N=100)
+    getPairwiseQuantCorrections(psms_paths, graph; N=100)
 
-Propagate pairwise log2 differences through a maximum spanning forest and
-return per-file correction functions. For every RT grid point, each connected
-component is centered independently at its median; this fixes the additive
-degree of freedom without inventing a relationship between disconnected run
-groups.
+Solve the unweighted pairwise log2 differences across a sparse run graph and
+return per-file correction functions. At every RT grid point, the graph
+Laplacian least-squares solution combines all tree and off-tree constraints.
+Each connected component is centered independently at its median; this fixes
+the additive degree of freedom without inventing a relationship between
+disconnected run groups.
 
 Returns `(corrections, components)` where components contain path positions.
 """
 function getPairwiseQuantCorrections(
     psms_paths::Vector{String},
-    tree::Vector{PairwiseQuantSpline};
+    graph::Vector{PairwiseQuantSpline};
     N::Int = 100,
 )
     n_runs = length(psms_paths)
     n_runs == 0 && return Dictionary{String, Any}(), Vector{Vector{Int}}()
-    parent, parent_edge, components, orders = _quant_tree_traversal(n_runs, tree)
-    isempty(tree) && return Dictionary{String, Any}(), components
+    components = _quant_graph_components(n_runs, graph)
+    isempty(graph) && return Dictionary{String, Any}(), components
     N >= 2 || throw(ArgumentError("N must be at least 2, got $N"))
 
-    min_rt = minimum(edge.min_rt for edge in tree)
-    max_rt = maximum(edge.max_rt for edge in tree)
+    min_rt = minimum(edge.min_rt for edge in graph)
+    max_rt = maximum(edge.max_rt for edge in graph)
     rt_grid = collect(LinRange(min_rt, max_rt, N))
     offsets = zeros(Float64, n_runs, N)
-    for (rt_idx, rt) in enumerate(rt_grid)
-        for (component, order) in zip(components, orders)
-            root = first(order)
-            offsets[root, rt_idx] = 0.0
-            for node in @view(order[2:end])
-                parent_node = parent[node]
-                edge = tree[parent_edge[node]]
-                edge_rt = clamp(rt, edge.min_rt, edge.max_rt)
-                difference = Float64(edge.spline(edge_rt))
-                if parent_node == edge.left_position
-                    offsets[node, rt_idx] = offsets[parent_node, rt_idx] - difference
-                else
-                    offsets[node, rt_idx] = offsets[parent_node, rt_idx] + difference
-                end
-            end
-            center = median(@view(offsets[component, rt_idx]))
-            for node in component
-                offsets[node, rt_idx] -= center
+
+    component_by_node = zeros(Int, n_runs)
+    for (component_idx, component) in enumerate(components)
+        component_by_node[component] .= component_idx
+    end
+    edges_by_component = [Int[] for _ in components]
+    for (edge_idx, edge) in enumerate(graph)
+        component_idx = component_by_node[edge.left_position]
+        push!(edges_by_component[component_idx], edge_idx)
+    end
+
+    for (component_idx, component) in enumerate(components)
+        length(component) == 1 && continue
+        reference_node = last(component)
+        local_position = zeros(Int, n_runs)
+        for (position, node) in enumerate(@view(component[1:(end - 1)]))
+            local_position[node] = position
+        end
+
+        reduced_size = length(component) - 1
+        laplacian = spzeros(Float64, reduced_size, reduced_size)
+        for edge_idx in edges_by_component[component_idx]
+            edge = graph[edge_idx]
+            left = local_position[edge.left_position]
+            right = local_position[edge.right_position]
+            left == 0 || (laplacian[left, left] += 1.0)
+            right == 0 || (laplacian[right, right] += 1.0)
+            if left != 0 && right != 0
+                laplacian[left, right] -= 1.0
+                laplacian[right, left] -= 1.0
             end
         end
+        factorization = cholesky(Symmetric(laplacian))
+        rhs = zeros(Float64, reduced_size)
+
+        for (rt_idx, rt) in enumerate(rt_grid)
+            fill!(rhs, 0.0)
+            for edge_idx in edges_by_component[component_idx]
+                edge = graph[edge_idx]
+                edge_rt = clamp(rt, edge.min_rt, edge.max_rt)
+                difference = Float64(edge.spline(edge_rt))
+                left = local_position[edge.left_position]
+                right = local_position[edge.right_position]
+                left == 0 || (rhs[left] += difference)
+                right == 0 || (rhs[right] -= difference)
+            end
+            solution = factorization \ rhs
+            for node in @view(component[1:(end - 1)])
+                offsets[node, rt_idx] = solution[local_position[node]]
+            end
+            offsets[reference_node, rt_idx] = 0.0
+            center = median(@view(offsets[component, rt_idx]))
+            offsets[component, rt_idx] .-= center
+        end
     end
+
+    residual_sum_squares = 0.0
+    residual_max_abs = 0.0
+    residual_count = 0
+    for (rt_idx, rt) in enumerate(rt_grid)
+        for edge in graph
+            edge_rt = clamp(rt, edge.min_rt, edge.max_rt)
+            observed_difference = Float64(edge.spline(edge_rt))
+            solved_difference = offsets[edge.left_position, rt_idx] -
+                                offsets[edge.right_position, rt_idx]
+            residual = solved_difference - observed_difference
+            residual_sum_squares += residual^2
+            residual_max_abs = max(residual_max_abs, abs(residual))
+            residual_count += 1
+        end
+    end
+    residual_rms = sqrt(residual_sum_squares / residual_count)
+    @debug_l1 "Sparse pairwise quant consensus: RMS edge residual = " *
+              "$(round(residual_rms, digits = 4)) log2, maximum = " *
+              "$(round(residual_max_abs, digits = 4)) log2"
 
     corrections = Dictionary{String, Any}()
     for (position, fpath) in enumerate(psms_paths)
@@ -710,9 +823,11 @@ end
                    run_ids=nothing, run_similarity_atlas=nothing)
 
 End-to-end RT-dependent quantification normalization. When a run-similarity
-atlas is supplied, fits exact-match pairwise splines only along a supported
-maximum spanning tree, propagates their differences to run corrections, and
-median-centers the tree at each RT. MBR-recovered rows never serve as anchors.
+atlas is supplied, fits exact-match pairwise splines along a supported maximum
+spanning forest plus a sparse set of strongest off-tree candidates. It solves
+the resulting overdetermined graph for consensus run corrections and
+median-centers each connected component at every RT. MBR-recovered rows never
+serve as anchors.
 
 Without an atlas, retains the experiment-wide matched-precursor estimator as a
 fallback.
@@ -732,7 +847,7 @@ function normalizeQuant(
     if run_similarity_atlas !== nothing
         resolved_run_ids = run_ids === nothing ?
             UInt32.(eachindex(psms_paths)) : run_ids
-        pairwise_tree = getPairwiseQuantTree(
+        pairwise_graph = getSparsePairwiseQuantGraph(
             psms_paths,
             quant_col_name,
             resolved_run_ids,
@@ -740,10 +855,10 @@ function normalizeQuant(
             N = N,
             spline_n_knots = spline_n_knots,
         )
-        if !isempty(pairwise_tree) || length(psms_paths) <= 1
+        if !isempty(pairwise_graph) || length(psms_paths) <= 1
             quant_corrections, components = getPairwiseQuantCorrections(
                 psms_paths,
-                pairwise_tree;
+                pairwise_graph;
                 N = N,
             )
             if length(components) > 1

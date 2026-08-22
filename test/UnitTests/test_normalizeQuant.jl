@@ -127,6 +127,57 @@ function _write_pairwise_chain_runs(
     return paths, Pioneer.build_run_similarity(observed_ids_by_run), offsets
 end
 
+function _write_dense_pairwise_runs(
+    dir::String;
+    n::Int = 1_000,
+    offsets::Vector{Float32} = Float32[0.0, 1.0, -2.0],
+)
+    precursor_idx = UInt32.(1:n)
+    irt_obs = Float32.(LinRange(0.0, 100.0, n))
+    base_log2 = Float32[
+        8.0f0 + 0.25f0 * sin(Float32(i) / 17.0f0)
+        for i in 1:n
+    ]
+    paths = String[]
+    observed_ids_by_run = Dict{UInt32, Vector{UInt32}}()
+    for run in eachindex(offsets)
+        path = joinpath(dir, "dense_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ (base_log2 .+ offsets[run]),
+            target = trues(n),
+            mbr_recovered = falses(n),
+        ))
+        push!(paths, path)
+        observed_ids_by_run[UInt32(run)] = copy(precursor_idx)
+    end
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), offsets
+end
+
+function _constant_pairwise_edge(
+    left_position::Int,
+    right_position::Int,
+    difference::Float64,
+)
+    rt_grid = collect(LinRange(0.0, 100.0, 20))
+    spline = Pioneer.UniformSpline(
+        fill(difference, length(rt_grid)),
+        rt_grid,
+        3,
+        5,
+    )
+    return Pioneer.PairwiseQuantSpline(
+        left_position,
+        right_position,
+        1.0f0,
+        1_000,
+        first(rt_grid),
+        last(rt_grid),
+        spline,
+    )
+end
+
 function _write_mbr_anchor_pair(
     dir::String;
     n_observed::Int = 1_000,
@@ -194,10 +245,10 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Pairwise maximum spanning tree — local exact matches without global anchors
+# Sparse pairwise graph — local exact matches without global anchors
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@testset "pairwise maximum spanning tree" begin
+@testset "sparse pairwise graph" begin
     mktempdir() do dir
         paths, atlas, offsets = _write_pairwise_chain_runs(dir)
         run_ids = UInt32.(eachindex(paths))
@@ -213,7 +264,7 @@ end
         )
         @test isempty(global_splines)
 
-        tree = Pioneer.getPairwiseQuantTree(
+        graph = Pioneer.getSparsePairwiseQuantGraph(
             paths,
             :abundance,
             run_ids,
@@ -221,21 +272,21 @@ end
             N=20,
             spline_n_knots=5,
         )
-        @test length(tree) == length(paths) - 1
+        @test length(graph) == length(paths) - 1
         @test Set(
             (min(edge.left_position, edge.right_position),
              max(edge.left_position, edge.right_position))
-            for edge in tree
+            for edge in graph
         ) == Set((run, run + 1) for run in 1:(length(paths) - 1))
-        @test all(edge -> edge.nanchors == 1_000, tree)
+        @test all(edge -> edge.nanchors == 1_000, graph)
 
         corrections, components = Pioneer.getPairwiseQuantCorrections(
             paths,
-            tree;
+            graph;
             N=20,
         )
         @test components == [collect(eachindex(paths))]
-        for edge in tree
+        for edge in graph
             left = edge.left_position
             right = edge.right_position
             @test (
@@ -261,6 +312,91 @@ end
     end
 end
 
+@testset "off-tree edges produce a redundant consensus" begin
+    mktempdir() do dir
+        paths, atlas, offsets = _write_dense_pairwise_runs(dir)
+        graph = Pioneer.getSparsePairwiseQuantGraph(
+            paths,
+            :abundance,
+            UInt32.(eachindex(paths)),
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+
+        @test length(graph) == 3
+        @test Set(
+            (edge.left_position, edge.right_position)
+            for edge in graph
+        ) == Set([(1, 2), (1, 3), (2, 3)])
+
+        corrections, components = Pioneer.getPairwiseQuantCorrections(
+            paths,
+            graph;
+            N=20,
+        )
+        @test components == [[1, 2, 3]]
+        for edge in graph
+            left = edge.left_position
+            right = edge.right_position
+            @test (
+                corrections[paths[left]](50.0) -
+                corrections[paths[right]](50.0)
+            ) ≈ offsets[left] - offsets[right] atol=0.05
+        end
+    end
+end
+
+@testset "inconsistent cycles are solved by least squares" begin
+    paths = ["run1.arrow", "run2.arrow", "run3.arrow"]
+    graph = Pioneer.PairwiseQuantSpline[
+        _constant_pairwise_edge(1, 2, 2.0),
+        _constant_pairwise_edge(2, 3, 2.0),
+        _constant_pairwise_edge(1, 3, 5.0),
+    ]
+    corrections, components = Pioneer.getPairwiseQuantCorrections(
+        paths,
+        graph;
+        N=20,
+    )
+    @test components == [[1, 2, 3]]
+
+    solved = [corrections[path](50.0) for path in paths]
+    @test median(solved) ≈ 0.0 atol=1e-8
+    @test solved[1] - solved[2] ≈ 7 / 3 atol=1e-6
+    @test solved[2] - solved[3] ≈ 7 / 3 atol=1e-6
+    @test solved[1] - solved[3] ≈ 14 / 3 atol=1e-6
+end
+
+@testset "disconnected graph components are centered independently" begin
+    paths = ["run1.arrow", "run2.arrow", "run3.arrow", "run4.arrow"]
+    graph = Pioneer.PairwiseQuantSpline[
+        _constant_pairwise_edge(1, 2, 2.0),
+        _constant_pairwise_edge(3, 4, -4.0),
+    ]
+    corrections, components = Pioneer.getPairwiseQuantCorrections(
+        paths,
+        graph;
+        N=20,
+    )
+    @test components == [[1, 2], [3, 4]]
+
+    solved = [corrections[path](50.0) for path in paths]
+    @test median(solved[1:2]) ≈ 0.0 atol=1e-8
+    @test median(solved[3:4]) ≈ 0.0 atol=1e-8
+    @test solved[1] - solved[2] ≈ 2.0 atol=1e-6
+    @test solved[3] - solved[4] ≈ -4.0 atol=1e-6
+
+    empty_corrections, singleton_components =
+        Pioneer.getPairwiseQuantCorrections(
+            paths,
+            Pioneer.PairwiseQuantSpline[];
+            N=20,
+        )
+    @test isempty(empty_corrections)
+    @test singleton_components == [[1], [2], [3], [4]]
+end
+
 @testset "MBR-recovered rows are excluded from pairwise anchors" begin
     mktempdir() do dir
         paths, atlas, n_observed = _write_mbr_anchor_pair(dir)
@@ -268,7 +404,7 @@ end
         consensus = Pioneer.getPrecursorQuantConsensus(paths, :abundance)
         @test length(consensus) == n_observed
 
-        tree = Pioneer.getPairwiseQuantTree(
+        graph = Pioneer.getSparsePairwiseQuantGraph(
             paths,
             :abundance,
             run_ids,
@@ -277,9 +413,9 @@ end
             spline_n_knots=5,
         )
 
-        @test length(tree) == 1
-        @test only(tree).nanchors == n_observed
-        @test only(tree).spline(50.0) ≈ -2.0 atol=0.05
+        @test length(graph) == 1
+        @test only(graph).nanchors == n_observed
+        @test only(graph).spline(50.0) ≈ -2.0 atol=0.05
 
         Pioneer.normalizeQuant(
             paths,
