@@ -425,6 +425,26 @@ end
     @test all(isfinite, frame.ftr_pep_true[candidate_rows])
 end
 
+@testset "hardest MBR counterfactual control retains score and block index" begin
+    # Scores are block-stacked: real, false-1, false-2, false-3.
+    scores = Float32[
+        0.9, 0.8,
+        0.2, 0.7,
+        0.6, 0.4,
+        0.5, 0.95,
+    ]
+    present = BitMatrix(Bool[
+        true true true
+        true false true
+    ])
+    controls = Pioneer._mbr_top_counterfactual_controls(scores, present)
+
+    @test controls.scores == Float32[0.6, 0.95]
+    @test controls.indices == UInt8[2, 3]
+    @test Pioneer._mbr_top_counterfactual_scores(scores, present) ==
+        controls.scores
+end
+
 @testset "MBR training caps bound work, not just output" begin
     # The capped branch used to push every eligible row index into per-class Vector{Int}s and then
     # sample those down, so hitting the cap allocated 8 bytes per *available* row to keep `limit` of

@@ -66,6 +66,52 @@ function load_run_level_protein_training_rows(
 end
 
 """
+    prepare_run_level_protein_training_rows(actual, counterfactual_shadows)
+
+Attach explicit labels for run-level protein training. Existing protein-group
+rows retain their ordinary target/decoy labels. Counterfactual shadow rows
+retain the target protein identity (and therefore its CV fold) while carrying
+a negative training label.
+"""
+function prepare_run_level_protein_training_rows(
+    actual::DataFrame,
+    counterfactual_shadows::DataFrame,
+)
+    prepared_actual = copy(actual)
+    n_actual = nrow(prepared_actual)
+    prepared_actual[!, :training_label] = Bool.(prepared_actual.target)
+    prepared_actual[!, :protein_shadow_negative] = falses(n_actual)
+
+    if nrow(counterfactual_shadows) == 0
+        return (
+            rows = prepared_actual,
+            n_shadows = 0,
+        )
+    end
+
+    actual_columns = Symbol.(names(actual))
+    missing_columns = [
+        column for column in actual_columns
+        if !hasproperty(counterfactual_shadows, column)
+    ]
+    isempty(missing_columns) || error(
+        "Counterfactual shadow protein rows are missing columns: " *
+        string(missing_columns),
+    )
+    prepared_shadows = select(copy(counterfactual_shadows), actual_columns)
+    prepared_shadows[!, :training_label] =
+        falses(nrow(prepared_shadows))
+    prepared_shadows[!, :protein_shadow_negative] =
+        trues(nrow(prepared_shadows))
+
+    append!(prepared_actual, prepared_shadows)
+    return (
+        rows = prepared_actual,
+        n_shadows = nrow(prepared_shadows),
+    )
+end
+
+"""
     perform_run_level_protein_scoring(pg_refs::Vector{ProteinGroupFileReference},
                                       max_in_memory_rows::Int64,
                                       qc_folder::String,
@@ -88,6 +134,7 @@ function perform_run_level_protein_scoring(
     max_in_memory_rows::Int64,
     qc_folder::String,
     precursors::LibraryPrecursors;
+    counterfactual_shadow_protein_groups::DataFrame = DataFrame(),
     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     write_qc_plots::Bool = true,
@@ -101,6 +148,7 @@ function perform_run_level_protein_scoring(
             total_protein_groups += row_count(ref)
         end
     end
+    total_protein_groups += nrow(counterfactual_shadow_protein_groups)
 
     max_protein_groups_in_memory_limit = max(max_in_memory_rows, 100_000)
 
@@ -108,14 +156,24 @@ function perform_run_level_protein_scoring(
         error("Run-level protein scoring does not support out-of-memory fitting. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    all_protein_groups = load_run_level_protein_training_rows(
+    actual_protein_groups = load_run_level_protein_training_rows(
         pg_refs;
         include_qc_plot_columns = write_qc_plots
     )
+    prepared = prepare_run_level_protein_training_rows(
+        actual_protein_groups,
+        counterfactual_shadow_protein_groups,
+    )
+    all_protein_groups = prepared.rows
+    @debug_l1 "Run-level protein training controls: " *
+              "counterfactual shadows=$(prepared.n_shadows)"
 
-    n_targets = sum(all_protein_groups.target)
-    n_decoys = sum(.!all_protein_groups.target)
-    skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
+    labels = all_protein_groups.training_label
+    n_targets = count(labels)
+    n_decoys = count(.!labels)
+    skip_scoring = !(
+        n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000
+    )
 
     return perform_protein_scoring_multifold(
         all_protein_groups,
@@ -166,7 +224,12 @@ function run_protein_scoring!(
         file_idx_to_name[Int64(file_idx)] = String(file_name)
     end
 
-    pg_refs, psm_to_pg_mapping, protein_to_cv_fold = build_protein_group_tables(
+    (
+        pg_refs,
+        psm_to_pg_mapping,
+        protein_to_cv_fold,
+        counterfactual_shadow_protein_groups,
+    ) = build_protein_group_tables(
         passing_refs,
         passing_proteins_folder,
         protein_peptide_opportunities,
@@ -194,6 +257,8 @@ function run_protein_scoring!(
         max_in_memory_rows,
         qc_folder,
         precursors;
+        counterfactual_shadow_protein_groups =
+            counterfactual_shadow_protein_groups,
         protein_to_cv_fold = protein_to_cv_fold,
         file_idx_to_name = file_idx_to_name,
         write_qc_plots = write_qc_plots,
