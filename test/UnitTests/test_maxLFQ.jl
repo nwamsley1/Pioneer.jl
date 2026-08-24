@@ -143,6 +143,35 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# solve_maxlfq_component — relative ratios and cumulative-intensity scale
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "solve_maxlfq_component" begin
+    X = Union{Float64, Missing}[
+        log2(10.0)  log2(20.0)  log2(40.0);
+        log2(5.0)   log2(10.0)  log2(20.0)
+    ]
+
+    estimates = Pioneer.solve_maxlfq_component(X)
+    linear_estimates = exp2.(Float64.(estimates))
+    observed_cumulative_intensity = sum(exp2, skipmissing(vec(X)))
+
+    @testset "preserves precursor ratios" begin
+        @test isapprox(estimates[2] - estimates[1], 1.0; atol = 1.0e-6)
+        @test isapprox(estimates[3] - estimates[2], 1.0; atol = 1.0e-6)
+    end
+
+    @testset "preserves cumulative precursor intensity" begin
+        @test isapprox(
+            sum(linear_estimates),
+            observed_cumulative_intensity;
+            rtol = 1.0e-6
+        )
+        @test all(isapprox.(linear_estimates, [15.0, 30.0, 60.0]; rtol = 1.0e-6))
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # getProtAbundance — end-to-end protein quantification
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -206,6 +235,11 @@ end
         vals = collect(skipmissing(log2_abund_out))
         diffs = diff(vals)
         @test all(d -> isapprox(d, 1.0, atol=0.1), diffs)
+    end
+
+    @testset "protein profile preserves cumulative precursor intensity" begin
+        protein_cumulative_intensity = sum(exp2, skipmissing(log2_abund_out))
+        @test isapprox(protein_cumulative_intensity, sum(abundance); rtol = 1.0e-6)
     end
 
     @testset "peptide lists populated" begin
@@ -310,6 +344,7 @@ end
         vals = collect(skipmissing(log2_abund_out))
         @test all(isfinite, vals)
         @test length(vals) == 3
+        @test isapprox(sum(exp2, vals), sum(abundance); rtol = 1.0e-6)
     end
 
     @testset "peptide list reflects missing data" begin

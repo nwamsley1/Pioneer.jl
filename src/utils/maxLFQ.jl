@@ -261,6 +261,9 @@ end
     solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
 
 Solve the MaxLFQ system for a single connected run component in log2 space.
+The relative profile is rescaled so that its cumulative linear intensity across
+runs matches the cumulative observed precursor intensity, as described in the
+original MaxLFQ algorithm.
 """
 function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
     n_runs = size(X, 2)
@@ -285,13 +288,25 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
 
     rhs = Vector{Float64}(undef, n_runs + 1)
     rhs[1:n_runs] = 2.0 .* Atb
-    rhs[end] = mean(observed_values) * n_runs
+    rhs[end] = 0.0
 
     solution = system_matrix \ rhs
+    relative_profile = @view solution[1:n_runs]
+    max_observed = maximum(observed_values)
+    max_profile = maximum(relative_profile)
+    log2_cumulative_intensity = Float64(max_observed) + log2(sum(
+        exp2(Float64(value) - Float64(max_observed)) for value in observed_values
+    ))
+    log2_profile_intensity = max_profile + log2(sum(
+        exp2(value - max_profile) for value in relative_profile
+    ))
+    log2_scale = log2_cumulative_intensity - log2_profile_intensity
+
     estimates = Vector{Union{Missing, Float32}}(missing, n_runs)
     for run_idx in 1:n_runs
-        if isfinite(solution[run_idx])
-            estimates[run_idx] = solution[run_idx]
+        scaled_estimate = solution[run_idx] + log2_scale
+        if isfinite(scaled_estimate)
+            estimates[run_idx] = scaled_estimate
         end
     end
 
