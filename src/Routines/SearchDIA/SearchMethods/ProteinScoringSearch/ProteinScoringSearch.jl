@@ -129,7 +129,8 @@ function summarize_results!(
         q_value_interpolation_points_per_bin = params.q_value_interpolation_points_per_bin
     )
     empty!(protein_ambiguity_candidates)
-    empty!(protein_peptide_opportunities)
+    # MaxLFQ reuses the common, unique library-peptide opportunity counts as
+    # its iBAQ denominator and releases this dictionary after quantification.
 
     return nothing
 end

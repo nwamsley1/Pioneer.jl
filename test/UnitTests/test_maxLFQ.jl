@@ -169,6 +169,54 @@ end
         )
         @test all(isapprox.(linear_estimates, [15.0, 30.0, 60.0]; rtol = 1.0e-6))
     end
+
+    @testset "iBAQ scaling divides by common library peptide opportunities" begin
+        scaled_estimates = Pioneer.solve_maxlfq_component(
+            X;
+            n_common_peptides = 5
+        )
+        scaled_linear = exp2.(Float64.(scaled_estimates))
+
+        @test all(isapprox.(scaled_linear, [3.0, 6.0, 12.0]; rtol = 1.0e-6))
+        @test isapprox(
+            sum(scaled_linear),
+            observed_cumulative_intensity / 5;
+            rtol = 1.0e-6
+        )
+        @test isapprox(
+            scaled_estimates[2] - scaled_estimates[1],
+            estimates[2] - estimates[1];
+            atol = 1.0e-6
+        )
+        @test_throws ArgumentError Pioneer.solve_maxlfq_component(
+            X;
+            n_common_peptides = 0
+        )
+    end
+end
+
+@testset "iBAQ common peptide denominators" begin
+    protein = Pioneer.ProteinKey("ProteinA", true, UInt8(0))
+    decoy = Pioneer.ProteinKey("ProteinA", false, UInt8(0))
+    uncommon_only = Pioneer.ProteinKey("ProteinB", true, UInt8(0))
+    opportunities = Dict(
+        protein => Pioneer.ProteinPeptideOpportunityCounts(12, 4, 5),
+        decoy => Pioneer.ProteinPeptideOpportunityCounts(8, 1, 3),
+        uncommon_only => Pioneer.ProteinPeptideOpportunityCounts(2, 0, 0),
+    )
+
+    @test Pioneer.get_ibaq_common_peptide_count(
+        "ProteinA", true, UInt8(0), opportunities
+    ) == 5
+    @test Pioneer.get_ibaq_common_peptide_count(
+        "ProteinA", false, UInt8(0), opportunities
+    ) == 3
+    @test Pioneer.get_ibaq_common_peptide_count(
+        "ProteinB", true, UInt8(0), opportunities
+    ) == 1
+    @test_throws ArgumentError Pioneer.get_ibaq_common_peptide_count(
+        "MissingProtein", true, UInt8(0), opportunities
+    )
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -254,6 +302,65 @@ end
         @test all(!ismissing, qval_out)
         @test all(!ismissing, pep_out)
         @test all(!ismissing, score_out)
+    end
+
+    @testset "iBAQ protein profile preserves ratios and divides total signal" begin
+        scaled_log2_abundances =
+            Vector{Union{Missing, Float32}}(missing, n_experiments)
+        Pioneer.getProtAbundance(
+            "ProteinA", 1, true, UInt8(0), "HUMAN",
+            peptides, exps, use_quant, abundance,
+            gqvals, qvals, peps, scores, gscores,
+            target_out, entrap_out, species_out, protein_out,
+            peptides_out, experiments_out, scaled_log2_abundances,
+            gqval_out, qval_out, pep_out, score_out, gscore_out,
+            peak_area_out;
+            n_common_peptides = 3
+        )
+
+        @test all(isapprox.(
+            exp2.(Float64.(scaled_log2_abundances)),
+            [5.0, 10.0, 20.0];
+            rtol = 1.0e-6
+        ))
+        @test all(isapprox.(
+            diff(Float64.(scaled_log2_abundances)),
+            [1.0, 1.0];
+            atol = 1.0e-6
+        ))
+    end
+
+    @testset "single-run proteins use the same iBAQ denominator" begin
+        single_target = Vector{Union{Missing, Bool}}(missing, 1)
+        single_entrap = Vector{Union{Missing, UInt8}}(missing, 1)
+        single_species = Vector{Union{Missing, String}}(missing, 1)
+        single_protein = Vector{Union{Missing, String}}(missing, 1)
+        single_peptides =
+            Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(missing, 1)
+        single_experiments = Vector{Union{Missing, UInt32}}(missing, 1)
+        single_log2 = Vector{Union{Missing, Float32}}(missing, 1)
+        single_global_qval = Vector{Union{Missing, Float32}}(missing, 1)
+        single_qval = Vector{Union{Missing, Float32}}(missing, 1)
+        single_pep = Vector{Union{Missing, Float32}}(missing, 1)
+        single_score = Vector{Union{Missing, Float32}}(missing, 1)
+        single_global_score = Vector{Union{Missing, Float32}}(missing, 1)
+        single_peak_area = Vector{Union{Missing, Float32}}(missing, 1)
+
+        Pioneer.getProtAbundance(
+            "ProteinA", 1, true, UInt8(0), "HUMAN",
+            UInt32[1, 2], UInt16[1, 1], Bool[true, true],
+            Float32[10.0, 5.0],
+            Float32[0.005, 0.005], Float32[0.01, 0.01],
+            Float32[0.05, 0.05], Float32[5.0, 5.0], Float32[4.0, 4.0],
+            single_target, single_entrap, single_species, single_protein,
+            single_peptides, single_experiments, single_log2,
+            single_global_qval, single_qval, single_pep, single_score,
+            single_global_score, single_peak_area;
+            n_common_peptides = 3
+        )
+
+        @test single_peak_area[1] ≈ 15.0f0
+        @test exp2(single_log2[1]) ≈ 5.0f0 rtol = 1.0e-6
     end
 end
 

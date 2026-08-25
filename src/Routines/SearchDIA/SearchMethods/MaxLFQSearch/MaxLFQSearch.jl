@@ -254,6 +254,15 @@ function summarize_results!(
     @user_info "Performing MaxLFQ..."
     # Chunked MaxLFQ protein quantification (bounded memory per chunk)
     precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
+    protein_inference_results = get_results(search_context, ProteinInferenceSearch)
+    protein_inference_results isa ProteinInferenceSearchResults || error(
+        "MaxLFQ iBAQ scaling requires protein inference results"
+    )
+    protein_peptide_opportunities =
+        protein_inference_results.protein_peptide_opportunities
+    isempty(protein_peptide_opportunities) && error(
+        "MaxLFQ iBAQ scaling requires common library peptide opportunities"
+    )
     LFQ_chunked(
         chunk_refs,
         protein_long_path,
@@ -264,9 +273,11 @@ function summarize_results!(
         getIsotopicMods(precursors),
         params.q_value_threshold,
         build_accession_to_species(precursors),
+        protein_peptide_opportunities = protein_peptide_opportunities,
         output_schema_policy = output_schema_policy,
         batch_size = params.batch_size
     )
+    empty!(protein_peptide_opportunities)
     chunk_paths = [file_path(ref) for ref in chunk_refs]
 
     # Create FileReference for output metadata tracking

@@ -258,14 +258,23 @@ function getA(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
 end
 
 """
-    solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
+    solve_maxlfq_component(
+        X::AbstractMatrix{Union{Missing, T}};
+        n_common_peptides::Integer = 1
+    ) where {T<:Real}
 
 Solve the MaxLFQ system for a single connected run component in log2 space.
 The relative profile is rescaled so that its cumulative linear intensity across
-runs matches the cumulative observed precursor intensity, as described in the
-original MaxLFQ algorithm.
+runs matches the cumulative observed precursor intensity divided by the number
+of common, unique library peptides available to the protein group. A count of
+one preserves the original cumulative-intensity MaxLFQ scale.
 """
-function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
+function solve_maxlfq_component(
+    X::AbstractMatrix{Union{Missing, T}};
+    n_common_peptides::Integer = 1
+) where {T<:Real}
+    n_common_peptides > 0 ||
+        throw(ArgumentError("n_common_peptides must be positive"))
     n_runs = size(X, 2)
     n_runs == 0 && return Union{Missing, Float32}[]
 
@@ -300,7 +309,8 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
     log2_profile_intensity = max_profile + log2(sum(
         exp2(value - max_profile) for value in relative_profile
     ))
-    log2_scale = log2_cumulative_intensity - log2_profile_intensity
+    log2_scale = log2_cumulative_intensity -
+        log2_profile_intensity - log2(n_common_peptides)
 
     estimates = Vector{Union{Missing, Float32}}(missing, n_runs)
     for run_idx in 1:n_runs
@@ -316,7 +326,8 @@ end
 """
     solve_maxlfq(
         X::AbstractMatrix{Union{Missing, T}},
-        run_priorities::AbstractVector{Union{Missing, F}}
+        run_priorities::AbstractVector{Union{Missing, F}};
+        n_common_peptides::Integer = 1
     ) where {T<:Real, F<:Real}
 
 Solve MaxLFQ in log2 space using only the single best connected component,
@@ -325,8 +336,11 @@ runs, with ties broken by the highest summed per-run priority.
 """
 function solve_maxlfq(
     X::AbstractMatrix{Union{Missing, T}},
-    run_priorities::AbstractVector{Union{Missing, F}}
+    run_priorities::AbstractVector{Union{Missing, F}};
+    n_common_peptides::Integer = 1
 ) where {T<:Real, F<:Real}
+    n_common_peptides > 0 ||
+        throw(ArgumentError("n_common_peptides must be positive"))
     n_runs = size(X, 2)
     estimates = Vector{Union{Missing, Float32}}(missing, n_runs)
     n_runs == 0 && return estimates, Int[]
@@ -338,7 +352,10 @@ function solve_maxlfq(
 
     component_indices = findall(==(best_component_id), component_labels)
     if length(component_indices) > 1
-        component_estimates = solve_maxlfq_component(@view X[:, component_indices])
+        component_estimates = solve_maxlfq_component(
+            @view(X[:, component_indices]);
+            n_common_peptides = n_common_peptides
+        )
         for (local_idx, global_idx) in enumerate(component_indices)
             estimates[global_idx] = component_estimates[local_idx]
         end
@@ -497,7 +514,11 @@ function getProtAbundance(protein::String,
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
-                            total_peak_area_out::Vector{Union{Missing, Float32}})
+                            total_peak_area_out::Vector{Union{Missing, Float32}};
+                            n_common_peptides::Integer = 1)
+
+    n_common_peptides > 0 ||
+        throw(ArgumentError("n_common_peptides must be positive"))
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -604,11 +625,16 @@ function getProtAbundance(protein::String,
     S = getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
     X = get_log2_intensity_matrix(S)
     total_peak_area = get_total_peak_area(S)
-    log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
+    log2_abundances, component_labels = solve_maxlfq(
+        X,
+        run_pg_scores;
+        n_common_peptides = n_common_peptides
+    )
     quantified_runs = findall(x -> !ismissing(x), total_peak_area)
     if length(quantified_runs) == 1
         run_idx = only(quantified_runs)
-        log2_abundances[run_idx] = log2(total_peak_area[run_idx])
+        log2_abundances[run_idx] =
+            log2(total_peak_area[run_idx]) - log2(n_common_peptides)
     end
     
     # Debug: Check if all abundances are missing/NaN/Inf
@@ -649,6 +675,35 @@ function getProtAbundance(protein::String,
                    S,
                    total_peak_area)
 
+end
+
+"""
+    get_ibaq_common_peptide_count(
+        protein, target, entrap_id, protein_peptide_opportunities
+    )
+
+Return the experiment-wide number of common, unique library peptide sequences
+for the inferred protein group. Protein scoring computes this denominator
+using fully enzymatic, zero-missed-cleavage, variable-unmodified precursors.
+Groups with no common peptide opportunities retain their cumulative-intensity
+scale instead of dividing by zero.
+"""
+function get_ibaq_common_peptide_count(
+    protein::AbstractString,
+    target::Bool,
+    entrap_id::UInt8,
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    }
+)
+    key = ProteinKey(String(protein), target, entrap_id)
+    opportunities = get(protein_peptide_opportunities, key, nothing)
+    opportunities === nothing && throw(ArgumentError(
+        "Missing common library peptide opportunities for protein group " *
+        "$(repr(key.name)), target=$(key.is_target), entrap_id=$(key.entrap_id)"
+    ))
+    return max(1, opportunities.n_common_unique_peptides)
 end
 
 """
@@ -701,6 +756,10 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             precursor_isotopic_mods::AbstractVector,
             q_value_threshold::Float32,
             accession_to_species::Dict{String, String};
+            protein_peptide_opportunities::Dict{
+                ProteinKey,
+                ProteinPeptideOpportunityCounts
+            },
             output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
             batch_size = 100000,
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
@@ -798,6 +857,12 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                 push!(species_set, sp)
             end
             species_agg = join(sort!(collect(species_set)), ';')
+            n_common_peptides = get_ibaq_common_peptide_count(
+                protein[:inferred_protein_group],
+                protein[:target],
+                protein[:entrapment_group_id],
+                protein_peptide_opportunities
+            )
 
             getProtAbundance(protein[:inferred_protein_group],
                                 (group_idx*nfiles) - nfiles + 1,
@@ -825,7 +890,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:pg_pep],
                                 out[:pg_score],
                                 out[:global_pg_score],
-                                out[:total_peak_area]
+                                out[:total_peak_area];
+                                n_common_peptides = n_common_peptides
                             )
         end
         out = DataFrame(out)
@@ -906,6 +972,10 @@ function LFQ_chunked(
     precursor_isotopic_mods::AbstractVector,
     q_value_threshold::Float32,
     accession_to_species::Dict{String, String};
+    protein_peptide_opportunities::Dict{
+        ProteinKey,
+        ProteinPeptideOpportunityCounts
+    },
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     batch_size::Int = 100000
 )
@@ -924,6 +994,7 @@ function LFQ_chunked(
                 precursor_isotopic_mods,
                 q_value_threshold,
                 accession_to_species;
+                protein_peptide_opportunities=protein_peptide_opportunities,
                 output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref)
             pbar !== nothing && update(pbar)
