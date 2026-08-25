@@ -156,6 +156,43 @@ function _write_mbr_anchor_pair(
     return paths, Pioneer.build_run_similarity(observed_ids_by_run), n_observed
 end
 
+function _write_detection_biased_quant_pair(dir::String; n::Int = 4_000)
+    precursor_idx = UInt32.(1:n)
+    irt_obs = Float32.(LinRange(0.0, 100.0, n))
+    low_abundance = BitVector(mod(i - 1, 10) < 6 for i in 1:n)
+    reference_log2 = Float32[
+        low_abundance[i] ? 8.0f0 + 0.01f0 * mod(i - 1, 10) :
+                           12.0f0 + 0.01f0 * mod(i - 1, 10)
+        for i in 1:n
+    ]
+
+    # The true loading shift is three log2 units, but the low-abundance
+    # measurements surviving identification are biased upward by two units.
+    observed_log2 = Float32[
+        reference_log2[i] - (low_abundance[i] ? 1.0f0 : 3.0f0)
+        for i in 1:n
+    ]
+
+    paths = String[]
+    for (run, log2_quant) in enumerate((reference_log2, observed_log2))
+        path = joinpath(dir, "detection_biased_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ log2_quant,
+            target = trues(n),
+            mbr_recovered = falses(n),
+        ))
+        push!(paths, path)
+    end
+
+    observed_ids_by_run = Dict(
+        UInt32(1) => copy(precursor_idx),
+        UInt32(2) => copy(precursor_idx),
+    )
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), low_abundance
+end
+
 @testset "normalizeQuant" begin
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -196,6 +233,29 @@ end
 # ═══════════════════════════════════════════════════════════════════════════════
 # Pairwise maximum spanning tree — local exact matches without global anchors
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "pairwise anchor intensity percentiles" begin
+    frame = DataFrame(
+        precursor_idx = UInt32[1, 2, 3, 4, 2, 5, 6],
+        irt_obs = Float32.(1:7),
+        abundance = Float32[1, 4, 4, 16, 2, 1_024, 2_048],
+        target = Bool[true, true, true, true, true, false, true],
+        mbr_recovered = Bool[false, false, false, false, false, false, true],
+    )
+
+    anchors = Pioneer._file_precursor_quant_anchors(
+        frame,
+        :abundance,
+        :precursor_idx,
+    )
+
+    @test length(anchors) == 4
+    @test anchors[UInt32(1)].intensity_percentile ≈ 0.25f0
+    @test anchors[UInt32(2)].intensity_percentile ≈ 0.75f0
+    @test anchors[UInt32(3)].intensity_percentile ≈ 0.75f0
+    @test anchors[UInt32(4)].intensity_percentile ≈ 1.0f0
+    @test anchors[UInt32(2)].log2_quant ≈ 2.0f0
+end
 
 @testset "pairwise maximum spanning tree" begin
     mktempdir() do dir
@@ -258,6 +318,52 @@ end
             push!(normalized_medians, median(log2.(frame.abundance_normalized)))
         end
         @test maximum(normalized_medians) - minimum(normalized_medians) < 0.05
+    end
+end
+
+@testset "pairwise intensity weighting limits detection bias" begin
+    mktempdir() do dir
+        paths, atlas, low_abundance = _write_detection_biased_quant_pair(dir)
+        run_ids = UInt32[1, 2]
+
+        reference = DataFrame(Arrow.Table(paths[1]))
+        observed = DataFrame(Arrow.Table(paths[2]))
+        unweighted_ratios = log2.(reference.abundance) .-
+                            log2.(observed.abundance)
+
+        # Most matched precursors are biased, so the existing unweighted median
+        # underestimates the known three-unit loading difference.
+        @test median(unweighted_ratios) ≈ 1.0 atol=1e-5
+
+        tree = Pioneer.getPairwiseQuantTree(
+            paths,
+            :abundance,
+            run_ids,
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+
+        @test length(tree) == 1
+        @test only(tree).nanchors == length(low_abundance)
+        @test only(tree).spline(50.0) ≈ 3.0 atol=0.05
+
+        Pioneer.normalizeQuant(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+            run_ids=run_ids,
+            run_similarity_atlas=atlas,
+        )
+        normalized_reference = DataFrame(Arrow.Table(paths[1]))
+        normalized_observed = DataFrame(Arrow.Table(paths[2]))
+        reliable_ratios = log2.(
+            normalized_reference.abundance_normalized[.!low_abundance],
+        ) .- log2.(
+            normalized_observed.abundance_normalized[.!low_abundance],
+        )
+        @test median(reliable_ratios) ≈ 0.0 atol=0.05
     end
 end
 
