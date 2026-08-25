@@ -294,6 +294,17 @@ This updates the final `:isotopes_captured` and
 """
 function apply_quant_trace_selection!(psms::DataFrame, selected_quant_trace::Dict{UInt32, Tuple{Tuple{Int8, Int8}, Float32}})
     prec_col = psms[!, :precursor_idx]::AbstractVector{UInt32}
+
+    # MainSearch no longer materialises :isotopes_captured on the PSM table --
+    # it is computed on the chromatogram rows by get_isotopes_captured!. In
+    # separate-trace mode the PSM-level vector is only the lookup key
+    # identifying the chosen quantification trace, so create it on demand.
+    # The sentinel (-1, -1) matches no chromatogram group, leaving precursors
+    # with no extracted chromatogram at zero area (not quantifiable).
+    if !hasproperty(psms, :isotopes_captured)
+        psms[!, :isotopes_captured] = fill((Int8(-1), Int8(-1)), length(prec_col))
+    end
+
     iso_col = psms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
     fraction_col = psms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
 
