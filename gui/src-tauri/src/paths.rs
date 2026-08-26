@@ -237,31 +237,56 @@ pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<Strin
         if dst.symlink_metadata().is_ok() {
             let _ = std::fs::remove_file(&dst);
         }
-        link_file(&src, &dst)?;
+        let hard = link_file(&src, &dst)?;
+        if !hard && name.to_ascii_lowercase().ends_with(".raw") {
+            // Only a symlink was possible, which for a .raw means the converter
+            // would read nothing and still report success. Say so now, with the
+            // reason, rather than after a batch has silently produced no output.
+            let _ = std::fs::remove_file(&dst);
+            return Err(format!(
+                "{name} is on a different volume from the temporary folder, so it can only be \
+                 linked in a way the Thermo reader cannot open. Convert that folder on its own \
+                 in Folder mode, or copy the file alongside the others first."
+            ));
+        }
         seen.push(name);
     }
     Ok(dir.display().to_string())
 }
 
+/// Link `src` into place at `dst`.
+///
+/// A hard link first, on every platform. It is not a portability nicety: the
+/// Thermo reader PioneerConverter uses memory-maps the file it is given, and
+/// through a symlink it maps the *link* — a few dozen bytes — then reads past
+/// the end of it and dies with `System.OverflowException` out of
+/// `MemMapReader.ReadBytes`. Worse, PioneerConverter still exits 0, so a whole
+/// batch converts to nothing while reporting success. A hard link is a second
+/// name for the same inode and is indistinguishable from the original to
+/// anything that opens it.
+///
+/// The symlink fallback covers the one case a hard link cannot express, a
+/// source on another volume. `stage_files` refuses to use it for `.raw`, since
+/// for those it is the broken path above rather than a fallback.
+fn link_file(src: &Path, dst: &Path) -> Result<bool, String> {
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(true);
+    }
+    symlink_file(src, dst).map(|()| false)
+}
+
 #[cfg(unix)]
-fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
+fn symlink_file(src: &Path, dst: &Path) -> Result<(), String> {
     std::os::unix::fs::symlink(src, dst)
         .map_err(|e| format!("could not link {} into place: {e}", src.display()))
 }
 
 #[cfg(windows)]
-fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
-    // Hard link first: unprivileged, and these are always plain files. Falls
-    // back to a symlink when the source is on another volume, which is the one
-    // case a hard link cannot express.
-    if std::fs::hard_link(src, dst).is_ok() {
-        return Ok(());
-    }
+fn symlink_file(src: &Path, dst: &Path) -> Result<(), String> {
     std::os::windows::fs::symlink_file(src, dst).map_err(|e| {
         format!(
             "could not link {} into place: {e}. A hard link failed too, which \
-             usually means the file is on another drive; enable Developer Mode \
-             or copy the file next to the others.",
+             usually means the file is on another drive.",
             src.display()
         )
     })

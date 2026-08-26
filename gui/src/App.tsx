@@ -16,6 +16,7 @@ import {
   buildConvertArgs,
   convertGroups,
   groupParams,
+  rawStepArgs,
   downloadCommandLine,
   buildDownloadArgs,
   buildLibJson,
@@ -778,6 +779,40 @@ export default function App() {
 
   // ---- job events --------------------------------------------------------
 
+  /** Downgrade a "successful" conversion that produced nothing.
+   *
+   *  See the call site: the converter's exit code does not mean what it looks
+   *  like it means. Runs after the exit event rather than instead of it, so the
+   *  log the user is already reading stays intact and only the verdict changes.
+   */
+  const verifyConversionProduced = useCallback(async (job: Job) => {
+    if (job.snapshot.cmd !== 'convertraw') return
+    const c = job.snapshot.convert
+    const dir = c.outputDir.trim() || `${c.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    if (!dir) return
+    const info = await backend.inspectPath(dir)
+    if (info.arrow_count > 0) return
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.id === job.id
+          ? {
+              ...j,
+              status: 'failed' as JobStatus,
+              failMsg: 'The converter reported success but wrote no .arrow files.',
+              logLines: [
+                ...j.logLines,
+                {
+                  text: `ERROR: no .arrow files in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  stream: 'app' as const,
+                  transient: false,
+                },
+              ],
+            }
+          : j,
+      ),
+    )
+  }, [])
+
   useEffect(() => {
     const unlisteners: Array<() => void> = []
     // The listeners are registered asynchronously. If this effect is torn down
@@ -801,6 +836,16 @@ export default function App() {
           prev.map((j) => {
             if (j.id !== job_id) return j
             const status: JobStatus = cancelled ? 'cancelled' : success ? 'done' : 'failed'
+            // A conversion that exits 0 is not necessarily a conversion that
+            // happened: PioneerConverter reports every file it could not open
+            // and still exits 0, so a whole batch can fail while the queue says
+            // "done" and the output folder stays empty. Checked rather than
+            // trusted -- but only when the folder holds no .arrow at all, so a
+            // run that legitimately skipped everything (--skip-existing) or
+            // added to an existing folder is never called a failure.
+            if (status === 'done' && j.cmd === 'convertraw') {
+              void verifyConversionProduced(j)
+            }
             return {
               ...j,
               status,
@@ -1284,9 +1329,27 @@ export default function App() {
           convert.inputMode === 'files'
             ? convertGroups(convert.inputFiles)
                 .map((g) =>
-                  convertCommandLine(
-                    groupParams(convert, g, `<${g.files.length} staged ${g.format === 'raw' ? '.raw' : '.mzML'} file${g.files.length > 1 ? 's' : ''}>`),
-                  ),
+                  g.format === 'raw'
+                    ? // Exactly what will run: one line per file, real paths.
+                      g.files
+                        .map((f) =>
+                          convertCommandLine({
+                            ...convert,
+                            format: 'raw',
+                            inputMode: 'folder',
+                            input: f,
+                          }),
+                        )
+                        .join('\n')
+                    : // One invocation over a staging folder named after a job
+                      // id that does not exist yet, so the path stands in.
+                      convertCommandLine(
+                        groupParams(
+                          convert,
+                          g,
+                          `<${g.files.length} staged .mzML file${g.files.length > 1 ? 's' : ''}>`,
+                        ),
+                      ),
                 )
                 .join('\n\n') || 'Add files to convert.'
             : convertCommandLine(convert)
@@ -1347,6 +1410,7 @@ export default function App() {
     title: string,
     over?: SearchParams,
     overConvert?: ConvertParams,
+    convertSteps?: string[][],
   ): Job => {
     const s = over ?? search
     const c = overConvert ?? convert
@@ -1378,7 +1442,9 @@ export default function App() {
       failMsg: '',
       paramsJson: json,
       invocation: isConvert
-        ? { kind: 'args' as const, args: buildConvertArgs(c) }
+        ? convertSteps
+          ? { kind: 'steps' as const, steps: convertSteps }
+          : { kind: 'args' as const, args: buildConvertArgs(c) }
         : isDownload
           ? { kind: 'args' as const, args: buildDownloadArgs(download) }
           : { kind: 'paramsFile' as const, json },
@@ -1432,6 +1498,31 @@ export default function App() {
       const base = resolveRunName(jobName, taken)
       for (const group of groups) {
         const { id, runNo } = await allocate()
+        // Suffixed only when there are two, so a list of one format keeps the
+        // plain name rather than gaining a label that distinguishes nothing.
+        const title =
+          groups.length > 1 ? resolveRunName(`${base}-${group.format}`, taken) : base
+        taken.add(title)
+
+        if (group.format === 'raw') {
+          // One invocation per file on its real path -- PioneerConverter's
+          // Thermo reader cannot open a linked .raw (see convertGroups) -- but
+          // one job, because one list is one thing the user asked for. `input`
+          // on the snapshot is the first file, so recalling the run and the
+          // "point SearchDIA at the output" step both still have a path.
+          added.push(
+            makeJob(
+              id,
+              runNo,
+              title,
+              undefined,
+              { ...convert, format: 'raw', inputMode: 'folder', input: group.files[0] },
+              rawStepArgs(convert, group),
+            ),
+          )
+          continue
+        }
+
         let dir: string
         try {
           dir = await backend.stageFiles(id, `${group.format}_in`, group.files)
@@ -1439,11 +1530,6 @@ export default function App() {
           failure = String(e)
           break
         }
-        // Suffixed only when there are two, so a list of one format keeps the
-        // plain name rather than gaining a label that distinguishes nothing.
-        const title =
-          groups.length > 1 ? resolveRunName(`${base}-${group.format}`, taken) : base
-        taken.add(title)
         added.push(makeJob(id, runNo, title, undefined, groupParams(convert, group, dir)))
       }
     } else {

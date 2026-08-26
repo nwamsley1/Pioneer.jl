@@ -347,6 +347,8 @@ export const CONVERT_DEFAULTS: ConvertParams = {
 export type Invocation =
   | { kind: 'paramsFile'; json: string }
   | { kind: 'args'; args: string[] }
+  /** Run the same program once per argument set, in order, as one job. */
+  | { kind: 'steps'; steps: string[][] }
 
 /** `interrupted` is not reported by a run — it is inferred at startup for a
  *  row still marked queued or running, which can only mean the app went away

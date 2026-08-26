@@ -527,10 +527,19 @@ export interface ConvertGroup {
 
 /** Split a chosen file list into the runs it will become.
  *
- *  One run per format present, never per file: both converters batch several
- *  files internally (`--concurrent-files`), so starting them once each is
- *  strictly better than starting them N times. `.raw` first when both are
- *  present, matching the order of the format toggle.
+ *  One run per format present. `.raw` first when both are present, matching the
+ *  order of the format toggle.
+ *
+ *  What happens *inside* a run differs by format, because the two converters
+ *  do. convertMzML reads a directory of links happily and parallelises across
+ *  files, so its group is one invocation over a staging folder. PioneerConverter
+ *  cannot: its Thermo reader memory-maps the file it is given and gets the size
+ *  of the link rather than the target, so a linked `.raw` dies with an
+ *  arithmetic overflow — while the process still exits 0. So the `.raw` group is
+ *  one invocation per file, on real paths, run in sequence as a single job.
+ *  Nothing is lost by that: buildConvertArgs already pins `--concurrent-files 1`
+ *  for `.raw`, so one invocation over N files converted them one at a time
+ *  anyway.
  *
  *  Anything neither converter reads is left out entirely; validateConvertRun
  *  refuses the run rather than letting it be silently dropped here.
@@ -555,4 +564,12 @@ export function groupParams(
   stagedDir: string,
 ): ConvertParams {
   return { ...s, format: group.format, inputMode: 'folder', input: stagedDir }
+}
+
+/** The argv for each invocation a `.raw` group becomes: one per file, on the
+ *  real path, in the order the list holds them. */
+export function rawStepArgs(s: ConvertParams, group: ConvertGroup): string[][] {
+  return group.files.map((f) =>
+    buildConvertArgs({ ...s, format: 'raw', inputMode: 'folder', input: f }),
+  )
 }
