@@ -873,7 +873,23 @@ export default function App() {
 
   const onParam = (key: string, value: string) => {
     if (isSearch) setSearch((p) => ({ ...p, [key]: value }))
-    else if (isConvert) setConvert((p) => ({ ...p, [key]: value }))
+    else if (isConvert)
+      setConvert((p) => {
+        const next = { ...p, [key]: value }
+        // Switching between a file and a folder invalidates whatever is in the
+        // box: a path to a .raw file is never a folder of them, and the other
+        // way round. Leaving it there means the field reads as filled in while
+        // showing an error, and the Browse dialog opens on a path that cannot
+        // be what is wanted. Cleared only on a real change, so re-clicking the
+        // mode you are already in does not wipe the path.
+        //
+        // Deliberately not done for the format toggle beside it: there the
+        // stale path is what makes "No .raw files in this folder, but 3 .mzML
+        // files -- switch the format" possible, and that message is more use
+        // than an empty box.
+        if (key === 'inputMode' && value !== p.inputMode) next.input = ''
+        return next
+      })
     else if (key === 'predictionModel') switchModel(value)
     else setBuild((p) => ({ ...p, [key]: value }))
     setRunError('')
