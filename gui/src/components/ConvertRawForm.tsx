@@ -83,8 +83,8 @@ export function ConvertRawForm({
             <>
               Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code>{' '}
               files to Arrow, which is what SearchDIA reads. Runs Pioneer&rsquo;s own converter, so
-              it works on any platform and reads{' '}
-              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML.gz</code> too.
+              it works on any platform. The data must be centroided — profile-mode spectra are
+              skipped.
             </>
           ) : (
             <>

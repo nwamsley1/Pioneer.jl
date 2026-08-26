@@ -40,6 +40,24 @@ const MS_EXTENSIONS: [&str; 3] = ["raw", "mzml", "arrow"];
 /// serialization difference between library versions does not matter.
 const PION_MARKERS: [&str; 2] = ["precursors_table", "detailed_fragments"];
 
+/// Which MS data format a file name names, or "" for anything else.
+///
+/// Deliberately NOT `extension_of`: that looks through a trailing `.gz`, which
+/// is right for FASTA (Pioneer reads a gzipped one) and wrong for every MS
+/// format here. None of the three converters or readers decompresses --
+/// `convertMzML` matches `endswith(lowercase(path), ".mzml")` and nothing else
+/// -- so counting `run.mzML.gz` as an mzML would promise a conversion that
+/// silently finds no files to do.
+fn ms_extension_of(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    for ext in MS_EXTENSIONS {
+        if lower.ends_with(&format!(".{ext}")) {
+            return ext;
+        }
+    }
+    ""
+}
+
 /// Lowercased extension, looking through a trailing `.gz`.
 ///
 /// Pioneer reads gzipped FASTA directly, so `proteins.fasta.gz` must report
@@ -91,9 +109,10 @@ pub fn inspect(path: &str) -> PathInfo {
     info.extension = extension_of(&p);
 
     if info.is_file {
-        if MS_EXTENSIONS.contains(&info.extension.as_str()) {
+        let ms = ms_extension_of(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        if MS_EXTENSIONS.contains(&ms) {
             info.ms_file_count = 1;
-            match info.extension.as_str() {
+            match ms {
                 "raw" => info.raw_count = 1,
                 "mzml" => info.mzml_count = 1,
                 "arrow" => info.arrow_count = 1,
@@ -121,8 +140,7 @@ pub fn inspect(path: &str) -> PathInfo {
                     if PION_MARKERS.contains(&stem) {
                         markers_seen += 1;
                     }
-                    let ext = extension_of(Path::new(name.as_ref()));
-                    match ext.as_str() {
+                    match ms_extension_of(name.as_ref()) {
                         "raw" => {
                             info.raw_count += 1;
                             info.ms_file_count += 1;
@@ -277,6 +295,25 @@ mod staging_tests {
         assert_eq!(first, second);
         assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&first);
+    }
+
+    #[test]
+    fn a_gzipped_mzml_is_not_counted_as_ms_data() {
+        // extension_of looks through .gz because Pioneer reads a gzipped FASTA.
+        // No MS converter does, so the counts must not promise otherwise: the
+        // form would say "1 .mzML file to convert" and convertMzML would find
+        // none, having matched only on a literal .mzml suffix.
+        let d = scratch("gz");
+        std::fs::write(d.join("run.mzML.gz"), b"x").unwrap();
+        std::fs::write(d.join("real.mzML"), b"x").unwrap();
+        let info = super::inspect(d.to_str().unwrap());
+        assert_eq!(info.mzml_count, 1, "only the uncompressed file converts");
+        assert_eq!(info.ms_file_count, 1);
+
+        let one = super::inspect(d.join("run.mzML.gz").to_str().unwrap());
+        assert_eq!(one.mzml_count, 0, "a lone .gz is not MS data either");
+        // The FASTA-facing field keeps looking through the .gz, unchanged.
+        assert_eq!(one.extension, "mzml");
     }
 
     #[test]

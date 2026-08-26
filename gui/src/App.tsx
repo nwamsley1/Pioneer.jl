@@ -940,14 +940,14 @@ export default function App() {
   }
 
   const browseConvertInput = async () => {
-    // `gz` is offered alongside `mzML` because convertMzML reads `.mzML.gz`,
-    // and the dialog filters on the final extension only -- without it a
-    // compressed file the converter handles fine would be unpickable.
+    // No `gz`: convertMzML matches `endswith(lowercase(path), ".mzml")` and has
+    // no decompression step, so offering a compressed file here would let one
+    // be picked and then converted into nothing.
     const mzml = convert.format === 'mzml'
     const picked =
       convert.inputMode === 'file'
         ? mzml
-          ? await backend.pickFile('Choose an .mzML file', 'mzML', ['mzML', 'gz'])
+          ? await backend.pickFile('Choose an .mzML file', 'mzML', ['mzML'])
           : await backend.pickFile('Choose a .raw file', 'Thermo RAW', ['raw'])
         : await backend.pickFolder(
             mzml ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',

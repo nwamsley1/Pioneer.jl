@@ -537,8 +537,14 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
 
   if (p.inputMode === 'file') {
     if (info.is_dir) return { level: 'error', msg: 'That is a folder — switch to Folder mode.' }
-    // `extension` looks through a trailing .gz, so a compressed mzML reads as
-    // "mzml" here and is accepted -- convertMzML handles it.
+    // Checked on the typed path, not on `info.extension`: that field looks
+    // through a trailing .gz (right for FASTA, which Pioneer reads compressed)
+    // and would report `run.mzML.gz` as an mzML. No converter here
+    // decompresses, so such a file must be refused rather than handed over to
+    // be silently skipped.
+    if (/\.gz$/i.test(p.input.trim())) {
+      return { level: 'error', msg: 'Compressed files are not supported — decompress it first.' }
+    }
     if (info.extension !== (mzml ? 'mzml' : 'raw')) {
       return {
         level: 'error',
