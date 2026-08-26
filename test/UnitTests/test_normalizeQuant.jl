@@ -156,20 +156,22 @@ function _write_mbr_anchor_pair(
     return paths, Pioneer.build_run_similarity(observed_ids_by_run), n_observed
 end
 
-function _write_abundance_extreme_biased_quant_pair(dir::String; n::Int = 4_000)
+function _write_detection_biased_quant_pair(dir::String; n::Int = 4_000)
     precursor_idx = UInt32.(1:n)
     irt_obs = Float32.(LinRange(0.0, 100.0, n))
-    abundance_decile = Int[mod(i - 1, 10) for i in 1:n]
-    biased = BitVector(decile < 3 || decile >= 7 for decile in abundance_decile)
-    pair_mean_log2 = Float32[7.0f0 + decile for decile in abundance_decile]
+    low_abundance = BitVector(mod(i - 1, 10) < 6 for i in 1:n)
+    reference_log2 = Float32[
+        low_abundance[i] ? 8.0f0 + 0.01f0 * mod(i - 1, 10) :
+                           12.0f0 + 0.01f0 * mod(i - 1, 10)
+        for i in 1:n
+    ]
 
-    # The true loading shift is three log2 units. Ratios at both abundance
-    # extremes are compressed to one unit, so the ordinary median and a
-    # monotonically increasing abundance weight both select the biased value.
-    # Middle-peaked abundance weights select the reliable central anchors.
-    observed_ratio = Float32[biased[i] ? 1.0f0 : 3.0f0 for i in 1:n]
-    reference_log2 = pair_mean_log2 .+ observed_ratio ./ 2.0f0
-    observed_log2 = pair_mean_log2 .- observed_ratio ./ 2.0f0
+    # The true loading shift is three log2 units, but the low-abundance
+    # measurements surviving identification are biased upward by two units.
+    observed_log2 = Float32[
+        reference_log2[i] - (low_abundance[i] ? 1.0f0 : 3.0f0)
+        for i in 1:n
+    ]
 
     paths = String[]
     for (run, log2_quant) in enumerate((reference_log2, observed_log2))
@@ -188,7 +190,7 @@ function _write_abundance_extreme_biased_quant_pair(dir::String; n::Int = 4_000)
         UInt32(1) => copy(precursor_idx),
         UInt32(2) => copy(precursor_idx),
     )
-    return paths, Pioneer.build_run_similarity(observed_ids_by_run), biased
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), low_abundance
 end
 
 @testset "normalizeQuant" begin
@@ -232,7 +234,7 @@ end
 # Pairwise maximum spanning tree — local exact matches without global anchors
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@testset "pairwise quant anchors" begin
+@testset "pairwise anchor intensity percentiles" begin
     frame = DataFrame(
         precursor_idx = UInt32[1, 2, 3, 4, 2, 5, 6],
         irt_obs = Float32.(1:7),
@@ -248,10 +250,11 @@ end
     )
 
     @test length(anchors) == 4
-    @test anchors[UInt32(1)].log2_quant ≈ 0.0f0
+    @test anchors[UInt32(1)].intensity_percentile ≈ 0.25f0
+    @test anchors[UInt32(2)].intensity_percentile ≈ 0.75f0
+    @test anchors[UInt32(3)].intensity_percentile ≈ 0.75f0
+    @test anchors[UInt32(4)].intensity_percentile ≈ 1.0f0
     @test anchors[UInt32(2)].log2_quant ≈ 2.0f0
-    @test anchors[UInt32(3)].log2_quant ≈ 2.0f0
-    @test anchors[UInt32(4)].log2_quant ≈ 4.0f0
 end
 
 @testset "pairwise maximum spanning tree" begin
@@ -318,9 +321,9 @@ end
     end
 end
 
-@testset "middle-abundance weighting limits ratio compression" begin
+@testset "pairwise intensity weighting limits detection bias" begin
     mktempdir() do dir
-        paths, atlas, biased = _write_abundance_extreme_biased_quant_pair(dir)
+        paths, atlas, low_abundance = _write_detection_biased_quant_pair(dir)
         run_ids = UInt32[1, 2]
 
         reference = DataFrame(Arrow.Table(paths[1]))
@@ -328,7 +331,7 @@ end
         unweighted_ratios = log2.(reference.abundance) .-
                             log2.(observed.abundance)
 
-        # Most matched precursors are biased, so the unweighted median
+        # Most matched precursors are biased, so the existing unweighted median
         # underestimates the known three-unit loading difference.
         @test median(unweighted_ratios) ≈ 1.0 atol=1e-5
 
@@ -342,7 +345,7 @@ end
         )
 
         @test length(tree) == 1
-        @test only(tree).nanchors == length(biased)
+        @test only(tree).nanchors == length(low_abundance)
         @test only(tree).spline(50.0) ≈ 3.0 atol=0.05
 
         Pioneer.normalizeQuant(
@@ -356,9 +359,9 @@ end
         normalized_reference = DataFrame(Arrow.Table(paths[1]))
         normalized_observed = DataFrame(Arrow.Table(paths[2]))
         reliable_ratios = log2.(
-            normalized_reference.abundance_normalized[.!biased],
+            normalized_reference.abundance_normalized[.!low_abundance],
         ) .- log2.(
-            normalized_observed.abundance_normalized[.!biased],
+            normalized_observed.abundance_normalized[.!low_abundance],
         )
         @test median(reliable_ratios) ≈ 0.0 atol=0.05
     end
