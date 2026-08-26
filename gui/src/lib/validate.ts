@@ -582,10 +582,22 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   }
 }
 
-export function convertOutputNote(value: string, info: PathInfo): Note {
-  if (!value.trim()) return NONE // converter defaults to <input_dir>/arrow_out
+/** Takes the whole `convert` object rather than just the path, because whether
+ *  existing output is at risk depends on "Skip existing" as much as on what is
+ *  in the folder. */
+export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
+  if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
   if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
   if (info.exists && info.arrow_count > 0) {
+    // Nothing to warn about once the files are being left alone: the warning
+    // existed only to offer this setting, and telling someone to enable what
+    // they have already enabled reads as the app not knowing its own state.
+    if (p.skipExisting) {
+      return {
+        level: '',
+        msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''}. They will be left alone.`,
+      }
+    }
     return {
       level: 'warn',
       msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''} — they may be overwritten. Enable "Skip existing" to keep them.`,

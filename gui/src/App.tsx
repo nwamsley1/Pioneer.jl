@@ -230,6 +230,22 @@ const TITLES: Record<CommandId, string> = {
   convertraw: 'ConvertRAW',
 }
 
+/** What the overwrite confirmation says, per workflow.
+ *
+ *  Was a two-way `isSearch ? ... : ...`, so ConvertRAW and DownloadSpecLib both
+ *  fell into the BuildSpecLib branch and a conversion was asked to confirm
+ *  "A library already exists here / Overwrite & build" over a path taken from
+ *  the BuildSpecLib form, which it had nothing to do with. */
+const OVERWRITE_COPY: Record<CommandId, { title: string; confirm: string }> = {
+  searchdia: { title: 'Results folder already exists', confirm: 'Overwrite & run' },
+  buildspeclib: { title: 'A library already exists here', confirm: 'Overwrite & build' },
+  downloadspeclib: { title: 'A library already exists here', confirm: 'Overwrite & download' },
+  convertraw: {
+    title: 'This folder already holds converted files',
+    confirm: 'Overwrite & convert',
+  },
+}
+
 const SUBTITLES: Record<CommandId, string> = {
   searchdia: 'Find & quantify proteins',
   buildspeclib: 'Predict a spectral library',
@@ -765,7 +781,7 @@ export default function App() {
   const convertNotes = useMemo(
     () => ({
       input: convertInputNote(convert, info('convertInput')),
-      output: convertOutputNote(convert.outputDir, info('convertOutput')),
+      output: convertOutputNote(convert, info('convertOutput')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [convert, pathInfos],
@@ -1373,6 +1389,16 @@ export default function App() {
       : isSearch
         ? searchNotes.results
         : libNote
+
+  /** The path the overwrite confirmation is about. */
+  const overwriteDetail = isConvert
+    ? convert.outputDir.trim() ||
+      `${convert.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    : isDownload
+      ? downloadTargetPath(download.dest, download.selected)
+      : isSearch
+        ? search.results
+        : libraryTargetPath(build.libPath)
 
   /** Names already spoken for, across this session and persisted history. */
   const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
@@ -2071,11 +2097,11 @@ export default function App() {
         {overwriteOpen && (
           <ConfirmDialog
             tone="warning"
-            title={isSearch ? 'Results folder already exists' : 'A library already exists here'}
+            title={OVERWRITE_COPY[command].title}
             body={overwriteNote.msg}
-            detail={isSearch ? search.results : libraryTargetPath(build.libPath)}
+            detail={overwriteDetail}
             dismissLabel="Cancel"
-            confirmLabel={isSearch ? 'Overwrite & run' : 'Overwrite & build'}
+            confirmLabel={OVERWRITE_COPY[command].confirm}
             onDismiss={() => setOverwriteOpen(false)}
             onConfirm={() => {
               setOverwriteOpen(false)
