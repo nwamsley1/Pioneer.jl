@@ -26,7 +26,12 @@ import {
   previewDigest,
 } from '../lib/enzymes'
 import { BROWSE, HINT, LABEL } from '../lib/styles'
-import { PREDICTION_MODELS, isPrositModel, predictionModelById } from '../lib/types'
+import {
+  PREDICTION_MODELS,
+  isPrositModel,
+  predictionModelById,
+  unlocalizedMods,
+} from '../lib/types'
 import type { BuildParams, FastaEntry, HeaderPresetId, ModEntry } from '../lib/types'
 import { conflictingResidues, modPatternResidues } from '../lib/validate'
 import type { Note } from '../lib/validate'
@@ -1258,7 +1263,8 @@ export function BuildSpecLibForm({
           onAdd={onAddMod}
         />
         <div style={{ height: 18 }} />
-        {isPrositModel(params.predictionModel) && params.variableMods.length > 0 && (
+        {isPrositModel(params.predictionModel) &&
+          unlocalizedMods(params.variableMods).length > 0 && (
           <div
             style={{
               marginTop: 12,

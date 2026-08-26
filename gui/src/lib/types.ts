@@ -178,6 +178,32 @@ export function isPrositModel(id: string): boolean {
   return id.startsWith('prosit')
 }
 
+/** Oxidation on methionine, however the modification is spelled.
+ *
+ *  Accepts the accession or the label, and tolerates the bracketed form a
+ *  pattern is sometimes written in, because this is asked both of a ModEntry
+ *  the user built in the form and of a string parsed back out of a library's
+ *  own config. */
+export function isOxidationOnMet(name: string, pattern: string): boolean {
+  const isOx = /^(unimod:35|oxidation)$/i.test(name.trim())
+  const residues = pattern.replace(/[[\]]/g, '').trim().toUpperCase()
+  return isOx && residues === 'M'
+}
+
+/** The variable modifications the site-localization caveat is actually about.
+ *
+ *  Everything except oxidation on methionine. That one is a variable
+ *  modification in the strict sense, but it is near-universal in bottom-up
+ *  search and is the default this app itself ships with — warning about it
+ *  meant the caveat appeared on an ordinary library doing an ordinary thing,
+ *  which is how a warning stops being read. What the caveat is for is a library
+ *  carrying phospho, acetyl and the like, where which residue is modified is
+ *  the result and Pioneer does not score it.
+ */
+export function unlocalizedMods<T extends { name: string; pattern: string }>(mods: T[]): T[] {
+  return mods.filter((m) => !isOxidationOnMet(m.name, m.pattern))
+}
+
 export function predictionModelById(id: string): PredictionModel {
   return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
 }

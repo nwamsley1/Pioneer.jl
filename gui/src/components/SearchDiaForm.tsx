@@ -14,10 +14,10 @@ import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
-import { unimodDisplay } from '../lib/fasta'
+import { parseModEntry, unimodDisplay } from '../lib/fasta'
 import { BROWSE, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
-import { isPrositModel } from '../lib/types'
+import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
 import { fileStem } from '../lib/validate'
 import type { Note } from '../lib/validate'
@@ -303,6 +303,11 @@ export function SearchDiaForm({
   onGoToBuild,
 }: Props) {
   const byFiles = params.msDataMode === 'files'
+  // Only the modifications the caveat is about -- oxidation on M is standard
+  // and is excluded, so an ordinary Prosit library raises nothing.
+  const caveatMods = (libInfo?.variable_mods ?? []).filter(
+    (e) => unlocalizedMods([parseModEntry(e)]).length > 0,
+  )
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
@@ -382,7 +387,7 @@ export function SearchDiaForm({
             {libInfo &&
               libInfo.is_library &&
               isPrositModel(libInfo.prediction_model) &&
-              libInfo.variable_mods.length > 0 && (
+              caveatMods.length > 0 && (
                 <div
                   style={{
                     marginTop: 10,
@@ -397,7 +402,7 @@ export function SearchDiaForm({
                 >
                   <strong style={{ fontWeight: 600 }}>Experimental.</strong> This library
                   is Prosit-predicted and carries variable modifications
-                  ({libInfo.variable_mods.map(unimodDisplay).join(', ')}). Pioneer does not report
+                  ({caveatMods.map(unimodDisplay).join(', ')}). Pioneer does not report
                   site-localization confidence, so a modified residue is placed but the
                   placement is not scored.
                 </div>
