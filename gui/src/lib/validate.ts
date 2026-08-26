@@ -66,13 +66,28 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
   batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
   scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
+  // convertMzML's own default is 2.
+  concurrentFiles: {
+    label: 'Files at a time',
+    min: 1,
+    max: null,
+    step: 1,
+    int: true,
+    info: 'How many .mzML files are converted at the same time. Each one is read and written whole, so this is bounded by disk and memory rather than by cores — the default of 2 is a deliberately conservative starting point.',
+  },
 }
 
+/** The numeric fields PioneerConverter reads. */
 export const CONVERT_NUM_KEYS = [
   'threadsPerFile',
   'batchSize',
   'scanChunkSize',
 ] as const
+
+/** The numeric fields convertMzML reads. Deliberately disjoint from
+ *  CONVERT_NUM_KEYS: the two converters share no tuning parameter, and
+ *  validating a field the running binary ignores would block a valid run. */
+export const MZML_NUM_KEYS = ['concurrentFiles'] as const
 
 export const DIGEST_KEYS = [
   'minLen',
@@ -461,25 +476,54 @@ export function modSiteConflict(fixed: ModEntry[], variable: ModEntry[]): string
 // ConvertRAW
 // ---------------------------------------------------------------------------
 
-/** PioneerConverter takes one path: a .raw file, or a directory of them. */
+/** Either converter takes one path: an input file, or a directory of them.
+ *
+ *  The format picker, not the path, decides which converter runs -- so a `.raw`
+ *  handed to the mzML converter is caught here rather than by the binary, whose
+ *  failure would arrive several seconds later as a stack trace. The other
+ *  direction is the more likely mistake and gets the same treatment.
+ */
 export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   if (!p.input.trim()) return NONE
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
 
+  const mzml = p.format === 'mzml'
+  const label = mzml ? '.mzML' : '.raw'
+  const count = mzml ? info.mzml_count : info.raw_count
+  const other = mzml ? info.raw_count : info.mzml_count
+  const otherLabel = mzml ? '.raw' : '.mzML'
+
   if (p.inputMode === 'file') {
     if (info.is_dir) return { level: 'error', msg: 'That is a folder — switch to Folder mode.' }
-    if (info.extension !== 'raw') {
-      return { level: 'error', msg: 'Expected a Thermo .raw file.' }
+    // `extension` looks through a trailing .gz, so a compressed mzML reads as
+    // "mzml" here and is accepted -- convertMzML handles it.
+    if (info.extension !== (mzml ? 'mzml' : 'raw')) {
+      return {
+        level: 'error',
+        msg:
+          info.extension === (mzml ? 'raw' : 'mzml')
+            ? `That is a ${otherLabel} file — switch the format to ${otherLabel}.`
+            : mzml
+              ? 'Expected an .mzML file.'
+              : 'Expected a Thermo .raw file.',
+      }
     }
     return NONE
   }
 
   if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Single file mode.' }
-  if (info.raw_count === 0) return { level: 'error', msg: 'No .raw files in this folder.' }
+  if (count === 0) {
+    return {
+      level: 'error',
+      msg: other
+        ? `No ${label} files in this folder, but ${other} ${otherLabel} file${other > 1 ? 's' : ''} — switch the format to ${otherLabel}.`
+        : `No ${label} files in this folder.`,
+    }
+  }
   return {
     level: '',
-    msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} to convert.`,
+    msg: `${count} ${label} file${count > 1 ? 's' : ''} to convert.`,
   }
 }
 
@@ -524,7 +568,10 @@ export function validateConvertRun(
   if (!p.input.trim()) return { key: 'convertInput', msg: 'Choose the file or folder to convert.' }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
   if (outputNote.level === 'error') return { key: 'convertOutput', msg: outputNote.msg }
-  for (const key of CONVERT_NUM_KEYS) {
+  // Only the fields the chosen converter actually reads: a stale batch size
+  // left over from a RAW run must not block an mzML conversion that ignores it.
+  const keys = p.format === 'mzml' ? MZML_NUM_KEYS : CONVERT_NUM_KEYS
+  for (const key of keys) {
     const err = numError(key, p[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
   }

@@ -435,21 +435,36 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 // ConvertRAW
 // ---------------------------------------------------------------------------
 
-/** Build PioneerConverter's argv.
+/** Build the argv for whichever converter the format selects.
  *
- *  Unlike the two Julia commands this has no params file — the converter takes
- *  a positional RAW path plus flags:
+ *  Neither converter has a params file; both take a positional input path plus
+ *  flags, and the two flag sets only partly overlap:
  *
- *    PioneerConverter RAW_PATH [-o DIR] [--skip-existing]
+ *    PioneerConverter RAW_PATH  [-o DIR] [--skip-existing]
  *                     [-n CONCURRENT] [-t PER_FILE] [-b BATCH] [--scan-chunk-size N]
  *
- *  Flags equal to the converter's own defaults are still emitted, so the logged
+ *    convertMzML      MZML_PATH [-o DIR] [--skip-existing]
+ *                     [-n CONCURRENT] [--skip-header | --include-scan-header]
+ *
+ *  Flags equal to a converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
  */
 export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
   if (s.skipExisting) args.push('--skip-existing')
+
+  if (s.format === 'mzml') {
+    // convertMzML parallelises across files only -- there is no within-file
+    // knob to multiply against -- so this one is exposed as-is rather than
+    // pinned the way the RAW path pins it.
+    args.push('--concurrent-files', String(Math.max(1, parseInt(s.concurrentFiles, 10) || 1)))
+    // Emitted either way: --skip-header is the converter's default, but naming
+    // it keeps the logged line unambiguous about which was chosen.
+    args.push(s.includeScanHeader ? '--include-scan-header' : '--skip-header')
+    return args
+  }
+
   // One file at a time, split across `threads` scan readers. The converter can
   // work on several files concurrently, but exposing both knobs meant the two
   // multiplied and it was easy to oversubscribe the machine without noticing.
@@ -480,5 +495,6 @@ export function downloadCommandLine(s: DownloadParams): string {
 /** The command line as a user would type it, for the preview panel. */
 export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  return ['PioneerConverter', ...buildConvertArgs(s).map(quote)].join(' ')
+  const exe = s.format === 'mzml' ? 'convertMzML' : 'PioneerConverter'
+  return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
 }

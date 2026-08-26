@@ -10,7 +10,7 @@
 //!     bin/BuildSpecLib
 //!     bin/GetSearchParams
 //!     bin/GetBuildLibParams
-//!     bin/convertMzML
+//!     bin/convertMzML         Julia, ships with the CLI tools
 //!     bin/PioneerConverter    separate .NET 8 repo
 //!     lib/
 //! ```
@@ -31,6 +31,12 @@ pub enum Command {
     BuildSpecLib,
     DownloadSpecLib,
     ConvertRaw,
+    /// The other half of the ConvertRAW page. Same destination as ConvertRaw --
+    /// an Arrow file SearchDIA can read -- but a different program: Thermo
+    /// `.raw` needs the .NET converter, `.mzML` is handled by Pioneer's own
+    /// Julia one. The page picks between them; they are separate here because
+    /// they are separate binaries with separate flags and separate environments.
+    ConvertMzml,
 }
 
 impl Command {
@@ -40,6 +46,7 @@ impl Command {
             Command::BuildSpecLib => "BuildSpecLib",
             Command::DownloadSpecLib => "DownloadSpecLib",
             Command::ConvertRaw => "PioneerConverter",
+            Command::ConvertMzml => "convertMzML",
         }
     }
 
@@ -50,10 +57,13 @@ impl Command {
             Command::BuildSpecLib => "predict",
             Command::DownloadSpecLib => "download",
             Command::ConvertRaw => "convert-raw",
+            Command::ConvertMzml => "convert-mzml",
         }
     }
 
-    /// Julia-based executables need JULIA_NUM_THREADS; the .NET converter does not.
+    /// Julia-based executables need JULIA_NUM_THREADS; the .NET converter does
+    /// not. `convertMzML` is Julia, so it does -- it is the one converter that
+    /// honours the sidebar thread count.
     pub fn is_julia(self) -> bool {
         !matches!(self, Command::ConvertRaw)
     }
@@ -166,7 +176,7 @@ fn inspect(home: &Path, source: &str) -> Option<PioneerInfo> {
     let bin = home.join("bin");
     let mut executables = Vec::new();
     for cmd in [Command::SearchDia, Command::BuildSpecLib, Command::DownloadSpecLib,
-                Command::ConvertRaw] {
+                Command::ConvertRaw, Command::ConvertMzml] {
         if exe_path(&bin, cmd.exe_name()).is_some() {
             executables.push(cmd.exe_name().to_string());
         }

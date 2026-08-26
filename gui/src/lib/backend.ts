@@ -6,7 +6,7 @@ import { homeDir } from '@tauri-apps/api/path'
 
 import {
   EMPTY_PATH_INFO,
-  type CommandId,
+  type BackendCommand,
   type Invocation,
   type PathInfo,
   type PioneerInfo,
@@ -73,7 +73,7 @@ export interface Started {
 
 export const startJob = (
   jobId: string,
-  command: CommandId,
+  command: BackendCommand,
   invocation: Invocation,
   threads: number,
 ): Promise<Started> => invoke('start_job', { jobId, command, invocation, threads })

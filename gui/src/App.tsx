@@ -52,6 +52,7 @@ import {
   EMPTY_PATH_INFO,
   SEARCH_DEFAULTS,
   DOWNLOAD_DEFAULTS,
+  type BackendCommand,
   type BuildParams,
   type CommandId,
   type ConvertParams,
@@ -228,7 +229,7 @@ const SUBTITLES: Record<CommandId, string> = {
   searchdia: 'Find & quantify proteins',
   buildspeclib: 'Predict a spectral library',
   downloadspeclib: 'Download a prebuilt spectral library',
-  convertraw: 'Convert .raw files to Arrow',
+  convertraw: 'Convert .raw or .mzML files to Arrow',
 }
 
 /** Append one line of process output, emulating the bits of a terminal that
@@ -457,7 +458,10 @@ export default function App() {
       // full-specific build. The same applies to the cleavage rule.
       setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
     } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
-    else setConvert(job.snapshot.convert)
+    // Same reason as the build merge above: runs stored before the mzML
+    // converter existed carry no `format`, and recalling one must still render
+    // a form with a format selected rather than neither segment lit.
+    else setConvert({ ...CONVERT_DEFAULTS, ...job.snapshot.convert })
     setRunError('')
   }, [command, search, build, convert])
 
@@ -818,8 +822,16 @@ export default function App() {
       ),
     )
 
+    // The ConvertRAW workflow drives two binaries. Which one is a property of
+    // the run, not of the tab, so it is read off the snapshot rather than the
+    // command id -- that way a restored mzML run re-runs as an mzML run.
+    const backendCmd: BackendCommand =
+      next.snapshot.cmd === 'convertraw' && next.snapshot.convert.format === 'mzml'
+        ? 'convertmzml'
+        : next.cmd
+
     backend
-      .startJob(next.id, next.cmd, next.invocation, next.threads)
+      .startJob(next.id, backendCmd, next.invocation, next.threads)
       .then(({ params_path, env_summary }) => {
         setJobs((prev) =>
           prev.map((j) =>
@@ -908,10 +920,18 @@ export default function App() {
   }
 
   const browseConvertInput = async () => {
+    // `gz` is offered alongside `mzML` because convertMzML reads `.mzML.gz`,
+    // and the dialog filters on the final extension only -- without it a
+    // compressed file the converter handles fine would be unpickable.
+    const mzml = convert.format === 'mzml'
     const picked =
       convert.inputMode === 'file'
-        ? await backend.pickFile('Choose a .raw file', 'Thermo RAW', ['raw'])
-        : await backend.pickFolder('Choose a folder of .raw files')
+        ? mzml
+          ? await backend.pickFile('Choose an .mzML file', 'mzML', ['mzML', 'gz'])
+          : await backend.pickFile('Choose a .raw file', 'Thermo RAW', ['raw'])
+        : await backend.pickFolder(
+            mzml ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
+          )
     if (picked) onParam('input', picked)
   }
 
@@ -1258,8 +1278,10 @@ export default function App() {
       setRunError(pioneerError)
       return
     }
-    // Not on ConvertRAW: the picker is hidden there and the value is unused,
-    // so blocking on it would be an error about an invisible control.
+    // Not on ConvertRAW: the picker is hidden there, so blocking on it would be
+    // an error about an invisible control. The value is still passed through --
+    // convertMzML spawns on Julia threads -- but it is never zero, because it is
+    // seeded from the core count and only this hidden control could clear it.
     if (!isConvert && threads < 1) {
       setRunError(`Enter a thread count between 1 and ${maxThreads}.`)
       const el = document.querySelector('[data-key="threads"]')
@@ -1523,9 +1545,12 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            // ConvertRAW is a .NET program: it never reads JULIA_NUM_THREADS,
-            // and its own thread count lives in the form. A picker here would
-            // be a control that changes nothing.
+            // Neither converter wants a picker here. PioneerConverter is .NET
+            // and never reads JULIA_NUM_THREADS at all; convertMzML is Julia and
+            // does, but its own knob is files-at-a-time and a second control
+            // would just be the multiplying-knobs trap the RAW path already
+            // avoids. The backend sets JULIA_NUM_THREADS from this value
+            // regardless, so the mzML converter still gets threads to spawn on.
             showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}

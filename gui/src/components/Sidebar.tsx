@@ -68,6 +68,8 @@ function searchableText(j: Job): string {
     parts.push(s.download.selected, s.download.dest)
   } else {
     parts.push(s.convert.input, s.convert.outputDir)
+    // So "mzml" finds the mzML conversions among a history of .raw ones.
+    parts.push(s.convert.format === 'mzml' ? 'mzml' : 'raw')
   }
   return parts.filter(Boolean).join(' \u0000 ').toLowerCase()
 }
@@ -1133,12 +1135,24 @@ export function Sidebar({
           than in an About box: the GUI runs whatever distribution it resolved,
           which is not necessarily the one someone thinks they installed, and
           the first question about any odd result is what version produced it.
-          Collapsed, the strip has no room for it -- the title carries it. */}
+          Collapsed, the strip has no room for it -- the title carries it.
+
+          The two numbers are independent: the console is versioned by its own
+          crate and the CLI by the distribution's VERSION file, so shipping a
+          console fix without a Pioneer release makes them diverge. They are
+          released together often enough that printing both every time is
+          mostly noise, so the console number appears only when it differs --
+          which is exactly when it is worth reading. The tooltip always carries
+          both. */}
       {!collapsed && (versions.pioneer || versions.app) && (
         <div
           title={[
             versions.pioneer && `Pioneer CLI and converter ${versions.pioneer}`,
             versions.app && `Console ${versions.app}`,
+            versions.pioneer &&
+              versions.app &&
+              versions.pioneer !== versions.app &&
+              'These were released separately.',
           ]
             .filter(Boolean)
             .join('\n')}
@@ -1155,7 +1169,7 @@ export function Sidebar({
           }}
         >
           {versions.pioneer ? `Pioneer ${versions.pioneer}` : 'Pioneer'}
-          {versions.app && ` \u00b7 console ${versions.app}`}
+          {versions.app && versions.app !== versions.pioneer && ` \u00b7 console ${versions.app}`}
         </div>
       )}
     </aside>

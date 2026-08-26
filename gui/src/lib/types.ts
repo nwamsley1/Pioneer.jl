@@ -3,6 +3,12 @@ import { modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
 
+/** What the Rust side is asked to run. One more value than CommandId: the
+ *  ConvertRAW page drives two different binaries, so the workflow the user
+ *  picked and the program that ends up being spawned are not the same thing.
+ *  Mirrors the Rust `pioneer::Command` enum. */
+export type BackendCommand = CommandId | 'convertmzml'
+
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
  *  contract between the two halves of the feature. */
@@ -249,13 +255,29 @@ export const BUILD_DEFAULTS: BuildParams = {
   debugLogging: false,
 }
 
-/** ConvertRAW is a .NET program driven entirely by CLI flags — there is no
- *  params JSON for it. Defaults are PioneerConverter's own. */
+/** Which converter the page drives.
+ *
+ *  Two different programs reach the same destination: Thermo `.raw` goes
+ *  through PioneerConverter (a .NET binary), `.mzML` through Pioneer's own
+ *  `convertMzML` (Julia). They share the input/output/skip-existing shape but
+ *  nothing else -- PioneerConverter's batching and scan-chunk knobs have no
+ *  counterpart in the Julia converter, which instead exposes files-at-a-time
+ *  and whether to carry scan headers into the Arrow file.
+ *
+ *  Held as an explicit field rather than sniffed from the input path, because
+ *  in Folder mode the path says nothing about what is inside it, and a folder
+ *  can hold both. */
+export type ConvertFormat = 'raw' | 'mzml'
+
+/** ConvertRAW's two converters are both driven entirely by CLI flags — there is
+ *  no params JSON for either. Defaults are each converter's own. */
 export interface ConvertParams {
-  /** A single .raw file, or a folder of them. The binary accepts one path. */
+  format: ConvertFormat
+  /** A single input file, or a folder of them. Both binaries accept one path. */
   inputMode: 'file' | 'folder'
   input: string
-  /** Blank means the converter's default of <input_dir>/arrow_out. */
+  /** Blank means the converter's default of <input_dir>/arrow_out. Both
+   *  converters use the same default, so this note holds either way. */
   outputDir: string
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
@@ -264,13 +286,26 @@ export interface ConvertParams {
    *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
    *  only one exposed. It is deliberately not the sidebar thread count: that
    *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
-   *  reads it. */
+   *  reads it.
+   *
+   *  RAW only — convertMzML has no equivalent. */
   threadsPerFile: string
+  /** RAW only. */
   batchSize: string
+  /** RAW only. */
   scanChunkSize: string
+  /** mzML only: files converted at the same time. The Julia converter has one
+   *  level of parallelism rather than two, so unlike the RAW path this is
+   *  exposed directly instead of being pinned at 1. */
+  concurrentFiles: string
+  /** mzML only. convertMzML omits scan headers by default; they roughly double
+   *  the Arrow file and nothing in SearchDIA reads them, so this stays off
+   *  unless someone wants the output for something else. */
+  includeScanHeader: boolean
 }
 
 export const CONVERT_DEFAULTS: ConvertParams = {
+  format: 'raw',
   inputMode: 'folder',
   input: '',
   outputDir: '',
@@ -278,6 +313,8 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
+  concurrentFiles: '2',
+  includeScanHeader: false,
 }
 
 /** Mirrors the Rust `runner::Invocation` enum. */
