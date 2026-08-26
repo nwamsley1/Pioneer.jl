@@ -497,9 +497,22 @@ export default function App() {
     setInspectingJobId(null)
   }, [])
 
-  /** `${id}:${status}` pairs already written, so a re-render does not rewrite
-   *  the history — but a status *change* does write, which is what lets an
-   *  interrupted run be recognised later. */
+  /** What a row has to match to count as already written.
+   *
+   *  Status, because a change of it is exactly what has to be persisted — that
+   *  is how an interrupted run is recognised next launch. And runNo, because
+   *  reordering the queue reassigns it and a status that has not changed would
+   *  otherwise suppress the write.
+   *
+   *  One function rather than the same template written twice: it was written
+   *  twice, the two drifted (the seed omitted runNo), and the mismatch meant
+   *  every row read from the store was immediately written back to it — a
+   *  full rewrite of the entire history on every launch, which at a few
+   *  thousand runs is a few thousand IPC round trips and SQLite upserts before
+   *  the app is any use. */
+  const runKey = (j: Job) => `${j.id}:${j.status}:${j.runNo}`
+
+  /** Rows already written, so a re-render does not rewrite the history. */
   const savedRuns = useRef(new Set<string>())
 
   useEffect(() => {
@@ -508,9 +521,7 @@ export default function App() {
       // is how interruption is detected: if the app goes away, the row stays
       // pending on disk and startup can see it never finished. Waiting for a
       // close event would miss a crash or a force quit.
-      // runNo is part of the key because reordering the queue reassigns it,
-      // and a status that has not changed would otherwise suppress the write.
-      const key = `${j.id}:${j.status}:${j.runNo}`
+      const key = runKey(j)
       if (savedRuns.current.has(key)) continue
       savedRuns.current.add(key)
       backend.historySave(jobToRun(j)).catch(() => {
@@ -553,7 +564,7 @@ export default function App() {
               ? { ...j, status: 'interrupted' as JobStatus }
               : j
           })
-        merged.forEach((j) => savedRuns.current.add(`${j.id}:${j.status}`))
+        merged.forEach((j) => savedRuns.current.add(runKey(j)))
         // Persist only the reinterpretations, so they are not redone next launch.
         const onDisk = new Map(rows.map((r) => [r.id, r.status]))
         merged

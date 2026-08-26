@@ -51,6 +51,23 @@ const DOT_COLORS: Record<Job['status'], string> = {
  *  used the phospho library". Every path in the snapshot is included, so a
  *  match on any part of any of them finds the run.
  */
+const searchCache = new WeakMap<Job, string>()
+
+/** `searchableText`, computed once per job object.
+ *
+ *  Keyed on the job itself, so an edited job (a new object) is recomputed and a
+ *  deleted one is collected with it. Worth caching because the sidebar
+ *  re-renders on every line of output a running job produces, and this walks
+ *  every FASTA path and modification label of every run each time. */
+function searchable(j: Job): string {
+  let t = searchCache.get(j)
+  if (t === undefined) {
+    t = searchableText(j)
+    searchCache.set(j, t)
+  }
+  return t
+}
+
 function searchableText(j: Job): string {
   const parts: string[] = [j.title, CMD_TEXT[j.cmd], j.target, String(j.runNo), j.status]
   const s = j.snapshot
@@ -102,6 +119,11 @@ function rowTitle(j: Job): string {
     .filter(Boolean)
     .join('\n')
 }
+
+/** History rows rendered initially, and added each time the list is scrolled to
+ *  the end. Comfortably more than a sidebar can show at once, so the growth is
+ *  never visible. */
+const HISTORY_WINDOW = 60
 
 const CMD_TEXT: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
@@ -429,6 +451,15 @@ export function Sidebar({
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
+  /** How many finished runs are on screen.
+   *
+   *  Not a limit on how many are *loaded* — reading the whole store costs about
+   *  4 ms per thousand runs, which is nothing. Rendering them is what costs:
+   *  10,000 rows took 2.3 s to paint, and paid it again on every re-render,
+   *  which for a running job means every line of output. A window keeps both
+   *  the first paint and every re-render flat no matter how long the history
+   *  gets. It grows as you scroll, so there is nothing to click. */
+  const [windowSize, setWindowSize] = useState(HISTORY_WINDOW)
   /** The queued job being dragged, and the one it is currently over.
    *
    *  Pointer events rather than HTML5 drag-and-drop: Tauri handles the OS drop
@@ -524,10 +555,16 @@ export function Sidebar({
   )
   // Every term must appear somewhere, so "yeast phospho" narrows rather than
   // widening. Matched case-insensitively across the whole of searchableText.
+  // A new search starts a new window: otherwise scrolling deep into one result
+  // set would leave the next one rendering hundreds of rows for no reason.
+  useEffect(() => {
+    setWindowSize(HISTORY_WINDOW)
+  }, [query])
+
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const shown = terms.length
     ? history.filter((j) => {
-        const hay = searchableText(j)
+        const hay = searchable(j)
         return terms.every((t) => hay.includes(t))
       })
     : history
@@ -1061,6 +1098,14 @@ export function Sidebar({
         }}
       >
         <div
+          onScroll={(e) => {
+            // Grow when the end comes into view. Cheap to check and it fires
+            // only while scrolling; the guard stops it setting state on every
+            // pixel once everything is already rendered.
+            const el = e.currentTarget
+            if (el.scrollHeight - el.scrollTop - el.clientHeight > 240) return
+            setWindowSize((n) => (n < shown.length ? n + HISTORY_WINDOW : n))
+          }}
           style={{
             flex: 1,
             minHeight: 0,
@@ -1127,7 +1172,23 @@ export function Sidebar({
           )}
           {/* Collapsed, history is deliberately absent: the strip is for what is
               happening now, plus whatever finished while you were not looking. */}
-          {!collapsed && shown.map(renderRow)}
+          {!collapsed && shown.slice(0, windowSize).map(renderRow)}
+          {!collapsed && shown.length > windowSize && (
+            <button
+              type="button"
+              onClick={() => setWindowSize((n) => n + HISTORY_WINDOW)}
+              style={{
+                ...emptyHint,
+                textAlign: 'left',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                font: "11.5px 'IBM Plex Sans'",
+              }}
+            >
+              {`Showing ${windowSize} of ${shown.length.toLocaleString()} — scroll for more`}
+            </button>
+          )}
         </div>
       </div>
 
