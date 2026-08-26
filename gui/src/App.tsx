@@ -737,18 +737,20 @@ export default function App() {
     [build.calibrationFile, pathInfos],
   )
 
+  // Depends on the whole `convert` object, not a list of its fields. The list
+  // was a trap: convertInputNote takes the object, so every field it reads has
+  // to be named here, and adding `format` to the validator without adding it
+  // here left the note reading "switch the format to .mzML" after the format
+  // had been switched. The deps lint that would have caught it is off (see
+  // `info`, which is rebuilt every render), so nothing did. Recomputing when an
+  // unrelated field like batchSize changes costs two pure string comparisons.
   const convertNotes = useMemo(
     () => ({
       input: convertInputNote(convert, info('convertInput')),
       output: convertOutputNote(convert.outputDir, info('convertOutput')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      convert.input,
-      convert.inputMode,
-      convert.outputDir,
-      pathInfos,
-    ],
+    [convert, pathInfos],
   )
 
   const libNote = useMemo(
