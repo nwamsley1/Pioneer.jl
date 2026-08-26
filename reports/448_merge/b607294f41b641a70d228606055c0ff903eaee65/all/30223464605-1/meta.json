@@ -1,6 +1,7 @@
 {
-  "plots_available": true,
-  "plots_pruned": false,
+  "plots_available": false,
+  "plots_pruned": true,
+  "plots_pruned_at": "2026-08-26T13:48:15Z",
   "plots_retention_days": 30,
   "timestamp": "2026-07-27T05:25:44Z"
 }
