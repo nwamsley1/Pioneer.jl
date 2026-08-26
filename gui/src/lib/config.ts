@@ -8,7 +8,14 @@
  */
 import { DEFAULT_CLEAVAGE, enzymeByPattern } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
-import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
+import type {
+  BuildParams,
+  ConvertFormat,
+  ConvertParams,
+  DownloadParams,
+  ModEntry,
+  SearchParams,
+} from './types'
 
 export type Json = Record<string, unknown>
 
@@ -497,4 +504,55 @@ export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
   const exe = s.format === 'mzml' ? 'convertMzML' : 'PioneerConverter'
   return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
+}
+
+/** The format a chosen file will be converted with, or null if neither
+ *  converter can read it.
+ *
+ *  Matched on the name rather than on a stat, because this runs over a list on
+ *  every keystroke. `.gz` is excluded deliberately: `extension_of` on the Rust
+ *  side looks through it, but no converter decompresses. */
+export function formatOfFile(path: string): ConvertFormat | null {
+  const p = path.trim().toLowerCase()
+  if (p.endsWith('.raw')) return 'raw'
+  if (p.endsWith('.mzml')) return 'mzml'
+  return null
+}
+
+/** One run's worth of a chosen file list: a format, and the files of it. */
+export interface ConvertGroup {
+  format: ConvertFormat
+  files: string[]
+}
+
+/** Split a chosen file list into the runs it will become.
+ *
+ *  One run per format present, never per file: both converters batch several
+ *  files internally (`--concurrent-files`), so starting them once each is
+ *  strictly better than starting them N times. `.raw` first when both are
+ *  present, matching the order of the format toggle.
+ *
+ *  Anything neither converter reads is left out entirely; validateConvertRun
+ *  refuses the run rather than letting it be silently dropped here.
+ */
+export function convertGroups(files: string[]): ConvertGroup[] {
+  const raw = files.filter((f) => formatOfFile(f) === 'raw')
+  const mzml = files.filter((f) => formatOfFile(f) === 'mzml')
+  const groups: ConvertGroup[] = []
+  if (raw.length) groups.push({ format: 'raw', files: raw })
+  if (mzml.length) groups.push({ format: 'mzml', files: mzml })
+  return groups
+}
+
+/** The params one group runs with.
+ *
+ *  A group is an ordinary folder-mode conversion whose folder happens to be the
+ *  staging directory built for it -- so it goes through the same
+ *  buildConvertArgs as everything else and the two cannot drift apart. */
+export function groupParams(
+  s: ConvertParams,
+  group: ConvertGroup,
+  stagedDir: string,
+): ConvertParams {
+  return { ...s, format: group.format, inputMode: 'folder', input: stagedDir }
 }

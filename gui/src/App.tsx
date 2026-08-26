@@ -14,6 +14,8 @@ import { Sidebar } from './components/Sidebar'
 import * as backend from './lib/backend'
 import {
   buildConvertArgs,
+  convertGroups,
+  groupParams,
   downloadCommandLine,
   buildDownloadArgs,
   buildLibJson,
@@ -609,7 +611,7 @@ export default function App() {
           return
         }
         if (kind === 'file' && isDir) {
-          setRunError('That is a folder — this field takes a single file.')
+          setRunError('That is a folder — this field takes a file.')
           return
         }
         setRunError('')
@@ -620,7 +622,22 @@ export default function App() {
           return
         }
         if (key === 'convertInput') {
-          setConvert((c) => ({ ...c, input: path, inputMode: isDir ? 'folder' : 'file' }))
+          // Dropping a folder means folder mode; dropping files means the list,
+          // and every dropped path joins it rather than only the first -- the
+          // whole point of the list is that a batch arrives at once. The mode
+          // follows what was dropped, so neither has to be chosen first.
+          if (isDir) {
+            setConvert((c) => ({ ...c, input: path, inputMode: 'folder' }))
+          } else {
+            setConvert((c) => {
+              const have = new Set(c.inputFiles)
+              return {
+                ...c,
+                inputMode: 'files',
+                inputFiles: [...c.inputFiles, ...paths.filter((f) => !have.has(f))],
+              }
+            })
+          }
           return
         }
         // `data-key` doubles as the scroll target for validation errors, and
@@ -958,19 +975,33 @@ export default function App() {
   }
 
   const browseConvertInput = async () => {
-    // No `gz`: convertMzML matches `endswith(lowercase(path), ".mzml")` and has
-    // no decompression step, so offering a compressed file here would let one
-    // be picked and then converted into nothing.
-    const mzml = convert.format === 'mzml'
-    const picked =
-      convert.inputMode === 'file'
-        ? mzml
-          ? await backend.pickFile('Choose an .mzML file', 'mzML', ['mzML'])
-          : await backend.pickFile('Choose a .raw file', 'Thermo RAW', ['raw'])
-        : await backend.pickFolder(
-            mzml ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
-          )
+    const picked = await backend.pickFolder(
+      convert.format === 'mzml' ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
+    )
     if (picked) onParam('input', picked)
+  }
+
+  /** Add to the convert list rather than replacing it, for the same reason the
+   *  search list does: a batch is usually assembled from more than one folder.
+   *
+   *  One picker for both formats -- the list is allowed to mix them, and which
+   *  converter each file goes to is decided from its name at run time. No `gz`:
+   *  neither converter decompresses. */
+  const addConvertFiles = async () => {
+    const picked = await backend.pickFiles('Choose the files to convert', 'MS data', [
+      'raw',
+      'mzML',
+    ])
+    if (picked.length === 0) return
+    setConvert((p) => {
+      const have = new Set(p.inputFiles)
+      return { ...p, inputFiles: [...p.inputFiles, ...picked.filter((f) => !have.has(f))] }
+    })
+    setRunError('')
+  }
+
+  const removeConvertFile = (index: number) => {
+    setConvert((p) => ({ ...p, inputFiles: p.inputFiles.filter((_, i) => i !== index) }))
   }
 
   const browseConvertOutput = async () => {
@@ -1244,7 +1275,21 @@ export default function App() {
         ? // Clamped: while the threads field is being cleared it holds 0, and
           // the preview should not show `--threads-per-file 0` as if that were
           // the command we would run. Run refuses in that state anyway.
-          convertCommandLine(convert)
+          //
+          // A file list is more than one command, so the preview is all of
+          // them, one per line. The input path each will really be given is a
+          // staging folder named after a job id that does not exist yet, so it
+          // stands in as `<staged .raw files>`; every other argument is exact,
+          // and each run's own log opens with the command line as executed.
+          convert.inputMode === 'files'
+            ? convertGroups(convert.inputFiles)
+                .map((g) =>
+                  convertCommandLine(
+                    groupParams(convert, g, `<${g.files.length} staged ${g.format === 'raw' ? '.raw' : '.mzML'} file${g.files.length > 1 ? 's' : ''}>`),
+                  ),
+                )
+                .join('\n\n') || 'Add files to convert.'
+            : convertCommandLine(convert)
         : JSON.stringify(
             isSearch ? buildSearchJson(previewSearch, currentExtras) : buildLibJson(build, currentExtras),
             null,
@@ -1292,11 +1337,19 @@ export default function App() {
 
   /** One queued job, ready to be appended.
    *
-   *  `over` replaces the search parameters for a fanned-out run, which differs
-   *  from the form only in its `ms_data` and `results` paths. The JSON is built
-   *  by the same function either way, so the two cannot drift apart. */
-  const makeJob = (id: string, runNo: number, title: string, over?: SearchParams): Job => {
+   *  `over` replaces the parameters for a fanned-out run -- a search over one
+   *  staged file, or one format's group of a convert list. Either way the JSON
+   *  and the argv are built by the same functions as the un-fanned case, so the
+   *  two cannot drift apart. */
+  const makeJob = (
+    id: string,
+    runNo: number,
+    title: string,
+    over?: SearchParams,
+    overConvert?: ConvertParams,
+  ): Job => {
     const s = over ?? search
+    const c = overConvert ?? convert
     const json = over ? JSON.stringify(buildSearchJson(over, currentExtras), null, 2) : jsonText
     return {
       id,
@@ -1305,7 +1358,7 @@ export default function App() {
       cmd: command,
       title,
       snapshot: isConvert
-        ? { cmd: 'convertraw' as const, convert }
+        ? { cmd: 'convertraw' as const, convert: c }
         : isDownload
           ? { cmd: 'downloadspeclib' as const, download }
           : isSearch
@@ -1313,7 +1366,7 @@ export default function App() {
             : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
-          ? convert.outputDir || convert.input
+          ? c.outputDir || c.input
           : isDownload
             ? download.dest
             : isSearch
@@ -1325,7 +1378,7 @@ export default function App() {
       failMsg: '',
       paramsJson: json,
       invocation: isConvert
-        ? { kind: 'args' as const, args: buildConvertArgs(convert) }
+        ? { kind: 'args' as const, args: buildConvertArgs(c) }
         : isDownload
           ? { kind: 'args' as const, args: buildDownloadArgs(download) }
           : { kind: 'paramsFile' as const, json },
@@ -1352,7 +1405,7 @@ export default function App() {
         const { id, runNo } = await allocate()
         let msData: string
         try {
-          msData = await backend.stageMsFile(id, file)
+          msData = await backend.stageFiles(id, 'ms_data', [file])
         } catch (e) {
           // Stop rather than queue a run pointed at nothing. Whatever was
           // already built stays queued -- those files are fine, and dropping
@@ -1369,6 +1422,29 @@ export default function App() {
             results: joinPath(search.results, stem),
           }),
         )
+      }
+    } else if (isConvert && convert.inputMode === 'files') {
+      // One run per format present, never per file: both converters batch
+      // internally, so starting each once beats starting it N times. Each group
+      // becomes an ordinary folder-mode conversion whose folder is the staging
+      // directory built for it.
+      const groups = convertGroups(convert.inputFiles)
+      const base = resolveRunName(jobName, taken)
+      for (const group of groups) {
+        const { id, runNo } = await allocate()
+        let dir: string
+        try {
+          dir = await backend.stageFiles(id, `${group.format}_in`, group.files)
+        } catch (e) {
+          failure = String(e)
+          break
+        }
+        // Suffixed only when there are two, so a list of one format keeps the
+        // plain name rather than gaining a label that distinguishes nothing.
+        const title =
+          groups.length > 1 ? resolveRunName(`${base}-${group.format}`, taken) : base
+        taken.add(title)
+        added.push(makeJob(id, runNo, title, undefined, groupParams(convert, group, dir)))
       }
     } else {
       const { id, runNo } = await allocate()
@@ -1741,6 +1817,8 @@ export default function App() {
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowseInput={browseConvertInput}
+                onAddFiles={addConvertFiles}
+                onRemoveFile={removeConvertFile}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
               />

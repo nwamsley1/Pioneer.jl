@@ -60,12 +60,15 @@ export async function inspectPath(path: string): Promise<PathInfo> {
 
 export const readConfig = (path: string): Promise<string> => invoke('read_config', { path })
 
-/** Build the single-file `ms_data` directory for one fanned-out search, and
- *  return its path. SearchDIA takes a directory and searches everything in it,
- *  so searching a chosen file on its own means giving it a directory that holds
- *  only that file — see `paths::stage_ms_file`. */
-export const stageMsFile = (jobId: string, file: string): Promise<string> =>
-  invoke('stage_ms_file', { jobId, file })
+/** Build the input directory for one run over a chosen set of files, and return
+ *  its path.
+ *
+ *  No Pioneer program takes a list — each takes one directory and works on
+ *  everything in it — so a chosen set is handed over as a directory of links.
+ *  SearchDIA stages one file per run, which is what makes them separate runs;
+ *  ConvertRAW stages a whole format's worth into one. See `paths::stage_files`. */
+export const stageFiles = (jobId: string, subdir: string, files: string[]): Promise<string> =>
+  invoke('stage_files', { jobId, subdir, files })
 
 /** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
  *  Captured rather than streamed: it is data, not run output. */

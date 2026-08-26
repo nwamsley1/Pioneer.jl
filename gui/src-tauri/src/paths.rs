@@ -181,43 +181,65 @@ pub fn read_config(path: &str) -> Result<String, String> {
     std::fs::read_to_string(&target).map_err(|e| format!("Could not read {}: {e}", target.display()))
 }
 
-/// Stage one MS data file as a directory that contains only that file.
+/// Stage a chosen set of files as a directory containing only those files.
 ///
-/// SearchDIA takes a *directory* and searches every `.arrow` inside it. There is
-/// no way to hand it a chosen handful out of a folder of forty, which is exactly
-/// what searching a batch of method-development files one at a time needs. So
-/// each such run gets its own directory holding a single link to the real file,
-/// and points `ms_data` at that.
+/// Every Pioneer program the console drives takes a *directory* (or a single
+/// file) and works on everything in it. None of them takes a list. But choosing
+/// a handful out of a folder of forty is what both "search these files
+/// separately" and "convert this list" mean, so each such run gets a directory
+/// built for it, holding links to exactly the files chosen.
 ///
-/// A link, not a copy: these files are gigabytes, and copying forty of them to
-/// search forty of them would be absurd. On Unix that is a symlink. On Windows a
-/// hard link is tried first — it needs no special privilege, where a symlink
-/// needs Developer Mode or an elevated process — and a symlink is the fallback
-/// for the case a hard link cannot serve, a source on another volume.
+/// SearchDIA stages one file per run — that is what makes them separate runs.
+/// ConvertRAW stages a whole format's worth into one, because the converters
+/// batch internally and there is no reason to make them start N times.
+///
+/// Links, not copies: these files are gigabytes. On Unix that is a symlink. On
+/// Windows a hard link is tried first — it needs no special privilege, where a
+/// symlink needs Developer Mode or an elevated process — and a symlink is the
+/// fallback for the one case a hard link cannot serve, a source on another
+/// volume.
 ///
 /// Lives beside the params file for the same job, under the same temp root, and
 /// is left behind for the same reason: it is part of the record of what ran.
-pub fn stage_ms_file(job_id: &str, file: &str) -> Result<String, String> {
-    let src = PathBuf::from(file);
-    if !src.is_file() {
-        return Err(format!("{file} is not a file"));
+///
+/// Two files with the same name from different folders cannot both be staged —
+/// one directory, one name each — so that is refused here rather than silently
+/// converting one file twice under the other's name.
+pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<String, String> {
+    if files.is_empty() {
+        return Err("nothing to stage".to_string());
     }
-    let name = src
-        .file_name()
-        .ok_or_else(|| format!("{file} has no file name"))?
-        .to_owned();
-
-    let dir = std::env::temp_dir().join("pioneer-console").join(job_id).join("ms_data");
+    let dir = std::env::temp_dir().join("pioneer-console").join(job_id).join(subdir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
 
-    let dst = dir.join(&name);
-    // A resumed or re-run job can find its own link already there. Remove rather
-    // than fail: the link is derived state, and the source it points at is the
-    // thing that matters.
-    if dst.symlink_metadata().is_ok() {
-        let _ = std::fs::remove_file(&dst);
+    let mut seen: Vec<String> = Vec::with_capacity(files.len());
+    for file in files {
+        let src = PathBuf::from(file);
+        if !src.is_file() {
+            return Err(format!("{file} is not a file"));
+        }
+        let name = src
+            .file_name()
+            .ok_or_else(|| format!("{file} has no file name"))?
+            .to_string_lossy()
+            .into_owned();
+        if seen.contains(&name) {
+            return Err(format!(
+                "two of the chosen files are both named {name}. They would have to \
+                 share one name in the folder handed to the converter; rename one, \
+                 or convert them separately."
+            ));
+        }
+        let dst = dir.join(&name);
+        // A resumed or re-run job can find its own link already there. Remove
+        // rather than fail: the link is derived state, and the source it points
+        // at is the thing that matters.
+        if dst.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(&dst);
+        }
+        link_file(&src, &dst)?;
+        seen.push(name);
     }
-    link_file(&src, &dst)?;
     Ok(dir.display().to_string())
 }
 
@@ -247,12 +269,16 @@ fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod staging_tests {
-    use super::stage_ms_file;
+    use super::stage_files;
 
     /// A unique job id per test, so the tests do not collide in the shared temp
     /// root and so a rerun does not see the previous run's links.
     fn job_id(tag: &str) -> String {
         format!("test-{tag}-{}", std::process::id())
+    }
+
+    fn path_of(dir: &std::path::Path, name: &str) -> String {
+        dir.join(name).to_string_lossy().into_owned()
     }
 
     fn scratch(tag: &str) -> std::path::PathBuf {
@@ -272,7 +298,7 @@ mod staging_tests {
         std::fs::write(src.join("b.arrow"), b"b").unwrap();
 
         let id = job_id("one");
-        let dir = stage_ms_file(&id, src.join("a.arrow").to_str().unwrap()).unwrap();
+        let dir = stage_files(&id, "ms_data", &[path_of(&src, "a.arrow")]).unwrap();
         let staged: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -289,12 +315,56 @@ mod staging_tests {
         let src = scratch("twice");
         std::fs::write(src.join("a.arrow"), b"a").unwrap();
         let id = job_id("twice");
-        let path = src.join("a.arrow");
-        let first = stage_ms_file(&id, path.to_str().unwrap()).unwrap();
-        let second = stage_ms_file(&id, path.to_str().unwrap()).unwrap();
+        let path = path_of(&src, "a.arrow");
+        let first = stage_files(&id, "ms_data", &[path.clone()]).unwrap();
+        let second = stage_files(&id, "ms_data", &[path.clone()]).unwrap();
         assert_eq!(first, second);
         assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&first);
+    }
+
+    #[test]
+    fn stages_a_whole_group_into_one_directory() {
+        // The ConvertRAW list case: several files, one run, one input folder.
+        let a = scratch("group-a");
+        let b = scratch("group-b");
+        std::fs::write(a.join("one.raw"), b"1").unwrap();
+        std::fs::write(a.join("two.raw"), b"2").unwrap();
+        // Deliberately from a different folder: a list is often assembled from
+        // more than one place, and all of it has to land in the same directory.
+        std::fs::write(b.join("three.raw"), b"3").unwrap();
+
+        let dir = stage_files(
+            &job_id("group"),
+            "raw_in",
+            &[path_of(&a, "one.raw"), path_of(&a, "two.raw"), path_of(&b, "three.raw")],
+        )
+        .unwrap();
+        let mut staged: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        staged.sort();
+        assert_eq!(staged, vec!["one.raw", "three.raw", "two.raw"]);
+        assert_eq!(std::fs::read(std::path::Path::new(&dir).join("three.raw")).unwrap(), b"3");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_two_chosen_files_with_the_same_name() {
+        // One directory cannot hold both, so converting the list would silently
+        // do one file twice. Refused with the name, rather than guessed at.
+        let a = scratch("dup-a");
+        let b = scratch("dup-b");
+        std::fs::write(a.join("QC_01.raw"), b"1").unwrap();
+        std::fs::write(b.join("QC_01.raw"), b"2").unwrap();
+        let err = stage_files(
+            &job_id("dup"),
+            "raw_in",
+            &[path_of(&a, "QC_01.raw"), path_of(&b, "QC_01.raw")],
+        )
+        .unwrap_err();
+        assert!(err.contains("QC_01.raw"), "the message must name the file: {err}");
     }
 
     #[test]
@@ -320,8 +390,9 @@ mod staging_tests {
     fn refuses_a_directory_or_a_missing_path() {
         let src = scratch("bad");
         let id = job_id("bad");
-        assert!(stage_ms_file(&id, src.to_str().unwrap()).is_err());
-        assert!(stage_ms_file(&id, src.join("nope.arrow").to_str().unwrap()).is_err());
+        assert!(stage_files(&id, "ms_data", &[src.to_string_lossy().into_owned()]).is_err());
+        assert!(stage_files(&id, "ms_data", &[path_of(&src, "nope.arrow")]).is_err());
+        assert!(stage_files(&id, "ms_data", &[]).is_err());
     }
 }
 

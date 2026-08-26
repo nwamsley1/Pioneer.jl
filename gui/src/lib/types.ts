@@ -287,10 +287,20 @@ export type ConvertFormat = 'raw' | 'mzml'
 /** ConvertRAW's two converters are both driven entirely by CLI flags — there is
  *  no params JSON for either. Defaults are each converter's own. */
 export interface ConvertParams {
+  /** Which converter a *folder* is handed to.
+   *
+   *  Only meaningful in folder mode: a directory's path says nothing about
+   *  what is inside it, and it can hold both. In file-list mode every file
+   *  names its own format, so the toggle is hidden and this is ignored. */
   format: ConvertFormat
-  /** A single input file, or a folder of them. Both binaries accept one path. */
-  inputMode: 'file' | 'folder'
+  /** A chosen list of files, or one folder. Neither binary takes a list, so a
+   *  list is handed over as a directory of links -- see paths::stage_files. */
+  inputMode: 'files' | 'folder'
+  /** The folder, in folder mode. */
   input: string
+  /** The chosen files, in file-list mode. May mix .raw and .mzML: they are
+   *  grouped by format at run time, one run per format present. */
+  inputFiles: string[]
   /** Blank means the converter's default of <input_dir>/arrow_out. Both
    *  converters use the same default, so this note holds either way. */
   outputDir: string
@@ -323,6 +333,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   format: 'raw',
   inputMode: 'folder',
   input: '',
+  inputFiles: [],
   outputDir: '',
   skipExisting: false,
   threadsPerFile: '3',

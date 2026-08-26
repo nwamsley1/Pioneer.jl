@@ -517,14 +517,46 @@ export function modSiteConflict(fixed: ModEntry[], variable: ModEntry[]): string
 // ConvertRAW
 // ---------------------------------------------------------------------------
 
-/** Either converter takes one path: an input file, or a directory of them.
+/** What the Input field is saying about itself.
  *
- *  The format picker, not the path, decides which converter runs -- so a `.raw`
- *  handed to the mzML converter is caught here rather than by the binary, whose
- *  failure would arrive several seconds later as a stack trace. The other
- *  direction is the more likely mistake and gets the same treatment.
+ *  Folder mode: the format picker, not the path, decides which converter runs,
+ *  so a `.raw` folder handed to the mzML converter is caught here rather than
+ *  by the binary, whose failure would arrive seconds later as a stack trace.
+ *
+ *  File-list mode: the format is read off each name instead, so what has to be
+ *  checked is that every file is one a converter can actually read.
  */
 export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
+  if (p.inputMode === 'files') {
+    const files = p.inputFiles
+    if (files.length === 0) return NONE
+    const bad = files.filter((f) => !/\.(raw|mzml)$/i.test(f.trim()))
+    if (bad.length) {
+      // Named, not counted: with a list on screen, "2 files are not supported"
+      // still leaves you hunting for which.
+      const names = bad.slice(0, 3).map((f) => f.trim().split(/[\\/]/).pop())
+      return {
+        level: 'error',
+        msg: `Not a .raw or .mzML file: ${names.join(', ')}${bad.length > 3 ? `, and ${bad.length - 3} more` : ''}.`,
+      }
+    }
+    // Two files of the same name cannot share the one folder each converter is
+    // handed, so they are refused here rather than by paths::stage_files once
+    // the run has already been queued.
+    const seen = new Set<string>()
+    for (const f of files) {
+      const name = (f.trim().split(/[\\/]/).pop() ?? '').toLowerCase()
+      if (seen.has(name)) {
+        return {
+          level: 'error',
+          msg: `Two of these files are named ${name}. Rename one, or convert them separately.`,
+        }
+      }
+      seen.add(name)
+    }
+    return NONE
+  }
+
   if (!p.input.trim()) return NONE
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
@@ -535,31 +567,7 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   const other = mzml ? info.raw_count : info.mzml_count
   const otherLabel = mzml ? '.raw' : '.mzML'
 
-  if (p.inputMode === 'file') {
-    if (info.is_dir) return { level: 'error', msg: 'That is a folder — switch to Folder mode.' }
-    // Checked on the typed path, not on `info.extension`: that field looks
-    // through a trailing .gz (right for FASTA, which Pioneer reads compressed)
-    // and would report `run.mzML.gz` as an mzML. No converter here
-    // decompresses, so such a file must be refused rather than handed over to
-    // be silently skipped.
-    if (/\.gz$/i.test(p.input.trim())) {
-      return { level: 'error', msg: 'Compressed files are not supported — decompress it first.' }
-    }
-    if (info.extension !== (mzml ? 'mzml' : 'raw')) {
-      return {
-        level: 'error',
-        msg:
-          info.extension === (mzml ? 'raw' : 'mzml')
-            ? `That is a ${otherLabel} file — switch the format to ${otherLabel}.`
-            : mzml
-              ? 'Expected an .mzML file.'
-              : 'Expected a Thermo .raw file.',
-      }
-    }
-    return NONE
-  }
-
-  if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Single file mode.' }
+  if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Files mode.' }
   if (count === 0) {
     return {
       level: 'error',
@@ -612,12 +620,35 @@ export function validateConvertRun(
   inputNote: Note,
   outputNote: Note,
 ): RunBlock | null {
-  if (!p.input.trim()) return { key: 'convertInput', msg: 'Choose the file or folder to convert.' }
+  if (p.inputMode === 'files') {
+    if (p.inputFiles.length === 0) {
+      return { key: 'convertInput', msg: 'Add at least one file to convert.' }
+    }
+    // Each converter is handed a staging folder under the system temp
+    // directory, so its own <input_dir>/arrow_out default would write there --
+    // somewhere nobody would think to look. Required rather than guessed at:
+    // the files can come from several folders and none of them is the obvious
+    // answer.
+    if (!p.outputDir.trim()) {
+      return { key: 'convertOutput', msg: 'Choose an output folder for the converted files.' }
+    }
+  } else if (!p.input.trim()) {
+    return { key: 'convertInput', msg: 'Choose the folder to convert.' }
+  }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
   if (outputNote.level === 'error') return { key: 'convertOutput', msg: outputNote.msg }
-  // Only the fields the chosen converter actually reads: a stale batch size
-  // left over from a RAW run must not block an mzML conversion that ignores it.
-  const keys = p.format === 'mzml' ? MZML_NUM_KEYS : CONVERT_NUM_KEYS
+  // Only the fields the converters that will actually run read. A list can hold
+  // both formats, so it is checked against both; a stale batch size left over
+  // from a RAW run must not block an mzML-only conversion that ignores it.
+  const keys =
+    p.inputMode === 'files'
+      ? [
+          ...(p.inputFiles.some((f) => /\.raw$/i.test(f.trim())) ? CONVERT_NUM_KEYS : []),
+          ...(p.inputFiles.some((f) => /\.mzml$/i.test(f.trim())) ? MZML_NUM_KEYS : []),
+        ]
+      : p.format === 'mzml'
+        ? MZML_NUM_KEYS
+        : CONVERT_NUM_KEYS
   for (const key of keys) {
     const err = numError(key, p[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
