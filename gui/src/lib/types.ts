@@ -43,6 +43,19 @@ export const DOWNLOAD_DEFAULTS: DownloadParams = {
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
  *  strings, so a half-typed number ("0.0") survives a re-render intact. */
 export interface SearchParams {
+  /** How the MS data is given.
+   *
+   *  'folder' is the original and still the default: one directory, searched as
+   *  one experiment, with FDR and match-between-runs spanning every file in it.
+   *
+   *  'files' is for method development, where a batch of files are variations on
+   *  each other rather than replicates of one experiment. Each picked file is
+   *  searched on its own and written to its own results folder — the console
+   *  fans one click out into one run per file, because searching them together
+   *  would pool exactly the files that are meant to be compared. */
+  msDataMode: 'folder' | 'files'
+  /** The chosen files, when msDataMode is 'files'. */
+  msDataFiles: string[]
   msData: string
   library: string
   results: string
@@ -63,6 +76,8 @@ export interface SearchParams {
 }
 
 export const SEARCH_DEFAULTS: SearchParams = {
+  msDataMode: 'folder',
+  msDataFiles: [],
   msData: '',
   library: '',
   results: '',

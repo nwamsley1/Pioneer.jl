@@ -14,7 +14,7 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { BROWSE, LABEL } from '../lib/styles'
+import { BROWSE, LABEL, SEG_TRACK, seg } from '../lib/styles'
 import type { ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
@@ -65,18 +65,6 @@ export function ConvertRawForm({
   onBrowseOutput,
   onToggleAdvanced,
 }: Props) {
-  const seg = (active: boolean): React.CSSProperties => ({
-    padding: '7px 14px',
-    border: 'none',
-    borderRadius: 8,
-    font: "600 12.5px 'IBM Plex Sans'",
-    cursor: 'pointer',
-    transition: 'all .12s',
-    ...(active
-      ? { background: '#fff', color: '#1B2A4A', boxShadow: '0 1px 3px rgba(15,20,27,0.12)' }
-      : { background: 'none', color: '#667085' }),
-  })
-
   const isMzml = params.format === 'mzml'
 
 
@@ -108,15 +96,7 @@ export function ConvertRawForm({
         </p>
 
         <label style={LABEL}>Format</label>
-        <div
-          style={{
-            display: 'inline-flex',
-            padding: 3,
-            background: '#EEF1F4',
-            borderRadius: 10,
-            marginBottom: 14,
-          }}
-        >
+        <div style={{ ...SEG_TRACK, marginBottom: 14 }}>
           <button
             type="button"
             onClick={() => onParam('format', 'raw')}
@@ -134,15 +114,7 @@ export function ConvertRawForm({
         </div>
 
         <label style={LABEL}>Input</label>
-        <div
-          style={{
-            display: 'inline-flex',
-            padding: 3,
-            background: '#EEF1F4',
-            borderRadius: 10,
-            marginBottom: 12,
-          }}
-        >
+        <div style={{ ...SEG_TRACK, marginBottom: 12 }}>
           <button
             type="button"
             onClick={() => onParam('inputMode', 'file')}

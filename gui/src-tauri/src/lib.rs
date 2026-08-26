@@ -148,6 +148,13 @@ async fn list_spec_libs(app: AppHandle, repo: Option<String>) -> Result<String, 
     .map_err(|e| format!("listing task failed: {e}"))?
 }
 
+/// Build the single-file `ms_data` directory for one fanned-out search.
+/// See `paths::stage_ms_file` for why a search of chosen files needs one.
+#[tauri::command]
+fn stage_ms_file(job_id: String, file: String) -> Result<String, String> {
+    paths::stage_ms_file(&job_id, &file)
+}
+
 #[tauri::command]
 fn read_config(path: String) -> Result<String, String> {
     paths::read_config(&path)
@@ -257,6 +264,7 @@ pub fn run() {
             uninstall_info,
             uninstall_this_version,
             inspect_path,
+            stage_ms_file,
             read_config,
             library_info,
             list_spec_libs,

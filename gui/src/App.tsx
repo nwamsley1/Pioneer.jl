@@ -72,6 +72,8 @@ import {
 import {
   calibrationNote,
   convertInputNote,
+  fileStem,
+  joinPath,
   convertOutputNote,
   fastaNote,
   libPathNote,
@@ -919,6 +921,24 @@ export default function App() {
     else setBuild((p) => ({ ...p, [key]: !p[key as keyof BuildParams] }))
   }
 
+  /** Add to the file list rather than replacing it: a batch is often assembled
+   *  from more than one folder, and a picker that discarded the previous
+   *  selection would make that impossible. Duplicates are dropped -- the same
+   *  file twice would be the same search twice. */
+  const addMsFiles = async () => {
+    const picked = await backend.pickFiles('Choose the files to search', 'MS data', ['arrow'])
+    if (picked.length === 0) return
+    setSearch((p) => {
+      const have = new Set(p.msDataFiles)
+      return { ...p, msDataFiles: [...p.msDataFiles, ...picked.filter((f) => !have.has(f))] }
+    })
+    setRunError('')
+  }
+
+  const removeMsFile = (index: number) => {
+    setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
+  }
+
   const browseConvertInput = async () => {
     // `gz` is offered alongside `mzML` because convertMzML reads `.mzML.gz`,
     // and the dialog filters on the final extension only -- without it a
@@ -1180,6 +1200,24 @@ export default function App() {
 
   const currentExtras = extras[command] ?? null
 
+  /** What the JSON preview describes.
+   *
+   *  In folder mode that is the form itself. In file-list mode one click makes
+   *  several runs and there is no single config to show, so the preview stands
+   *  for the first of them -- the settings below the paths are shared by all of
+   *  them, and those are what the preview is read for.
+   *
+   *  `ms_data` shows the chosen file rather than the directory the run is
+   *  actually handed. That directory is created when the run starts, is named
+   *  after a job id that does not exist yet, and holds nothing but a link to
+   *  this file -- so the file is both the honest answer and the useful one. The
+   *  params file written for each run does carry the real path. */
+  const previewSearch = useMemo(() => {
+    if (!isSearch || search.msDataMode !== 'files' || search.msDataFiles.length === 0) return search
+    const first = search.msDataFiles[0]
+    return { ...search, msData: first, results: joinPath(search.results, fileStem(first)) }
+  }, [isSearch, search])
+
   const jsonText = useMemo(
     () =>
       isDownload
@@ -1190,13 +1228,13 @@ export default function App() {
           // the command we would run. Run refuses in that state anyway.
           convertCommandLine(convert)
         : JSON.stringify(
-            isSearch ? buildSearchJson(search, currentExtras) : buildLibJson(build, currentExtras),
+            isSearch ? buildSearchJson(previewSearch, currentExtras) : buildLibJson(build, currentExtras),
             null,
             2,
           ),
     // `threads` belongs here: the ConvertRAW preview renders --threads-per-file
     // from it, so without it the command line goes stale when the stepper moves.
-    [isConvert, isDownload, isSearch, search, build, convert, download, currentExtras, threads],
+    [isConvert, isDownload, isSearch, previewSearch, build, convert, download, currentExtras, threads],
   )
 
   const overwriteNote = isConvert
@@ -1220,25 +1258,40 @@ export default function App() {
    *  a preview that reshuffles on every keystroke is noise. */
   const resolvedJobName = trimmedJobName ? resolveRunName(trimmedJobName, takenTitles) : ''
 
-  const enqueue = async () => {
+  /** Claim the identity for one run: a session-unique id, and the next history
+   *  number from the store. Separate from building the job because a fanned-out
+   *  search needs the id first — the staging directory is named after it — and
+   *  the parameters only afterwards. */
+  const allocate = async (): Promise<{ id: string; runNo: number }> => {
     jobSeq.current += 1
     const id = `${sessionId.current}-job${jobSeq.current}`
     // From the store, so it keeps climbing across restarts and cannot
     // diverge from the rows it numbers. Falls back to the local counter if
     // the store is unavailable.
     const runNo = await backend.historyNextRunNo().catch(() => nextRunNo())
-    const job: Job = {
+    return { id, runNo }
+  }
+
+  /** One queued job, ready to be appended.
+   *
+   *  `over` replaces the search parameters for a fanned-out run, which differs
+   *  from the form only in its `ms_data` and `results` paths. The JSON is built
+   *  by the same function either way, so the two cannot drift apart. */
+  const makeJob = (id: string, runNo: number, title: string, over?: SearchParams): Job => {
+    const s = over ?? search
+    const json = over ? JSON.stringify(buildSearchJson(over, currentExtras), null, 2) : jsonText
+    return {
       id,
       runNo,
       finishedAt: 0,
       cmd: command,
-      title: resolveRunName(jobName, jobs.map((j) => j.title)),
+      title,
       snapshot: isConvert
         ? { cmd: 'convertraw' as const, convert }
         : isDownload
           ? { cmd: 'downloadspeclib' as const, download }
           : isSearch
-            ? { cmd: 'searchdia' as const, search }
+            ? { cmd: 'searchdia' as const, search: s }
             : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
@@ -1246,31 +1299,75 @@ export default function App() {
           : isDownload
             ? download.dest
             : isSearch
-              ? search.results
-              : libraryTargetPath(build.libPath)) || '—',
+              ? s.results
+              : libraryTargetPath(build.libPath)) || '\u2014',
       threads: Math.max(1, threads),
       status: 'queued',
       logLines: [],
       failMsg: '',
-      paramsJson: jsonText,
+      paramsJson: json,
       invocation: isConvert
         ? { kind: 'args' as const, args: buildConvertArgs(convert) }
         : isDownload
           ? { kind: 'args' as const, args: buildDownloadArgs(download) }
-          : { kind: 'paramsFile' as const, json: jsonText },
-      viewerPaths: isSearch
-        ? { results: search.results, msData: search.msData, library: search.library }
-        : null,
+          : { kind: 'paramsFile' as const, json },
+      viewerPaths: isSearch ? { results: s.results, msData: s.msData, library: s.library } : null,
       paramsPath: '',
     }
-    setJobs((prev) => [...prev, job])
-    // If this run came from tweaking a past one, follow the new job rather than
-    // staying pointed at the old one. The stashed draft is deliberately kept, so
-    // a workflow tab still gives back the work in progress.
-    setInspectingJobId((current) => (current ? id : null))
-    setViewJobId(id)
-    setDrawerOpen(true)
-    setRunError('')
+  }
+
+  const enqueue = async () => {
+    const taken = new Set(jobs.map((j) => j.title))
+    const added: Job[] = []
+    let failure = ''
+
+    if (isSearch && search.msDataMode === 'files') {
+      // One run per file. Pioneer has no way to be handed a list -- it takes a
+      // directory and searches everything in it -- so each run gets a directory
+      // of its own holding a single link to its file, plus a results folder
+      // named after that file. Together those are what "search these
+      // separately" means: no shared FDR, no match-between-runs across files
+      // that are meant to be compared, and one output tree per file.
+      const base = resolveRunName(jobName, taken)
+      for (const file of search.msDataFiles) {
+        const stem = fileStem(file)
+        const { id, runNo } = await allocate()
+        let msData: string
+        try {
+          msData = await backend.stageMsFile(id, file)
+        } catch (e) {
+          // Stop rather than queue a run pointed at nothing. Whatever was
+          // already built stays queued -- those files are fine, and dropping
+          // them too would turn one bad path into a wasted batch.
+          failure = `Could not prepare ${stem}: ${String(e)}`
+          break
+        }
+        const title = resolveRunName(`${base}-${stem}`, taken)
+        taken.add(title)
+        added.push(
+          makeJob(id, runNo, title, {
+            ...search,
+            msData,
+            results: joinPath(search.results, stem),
+          }),
+        )
+      }
+    } else {
+      const { id, runNo } = await allocate()
+      added.push(makeJob(id, runNo, resolveRunName(jobName, taken)))
+    }
+
+    if (added.length > 0) {
+      setJobs((prev) => [...prev, ...added])
+      // If this run came from tweaking a past one, follow the new job rather
+      // than staying pointed at the old one. The stashed draft is deliberately
+      // kept, so a workflow tab still gives back the work in progress.
+      const first = added[0].id
+      setInspectingJobId((current) => (current ? first : null))
+      setViewJobId(first)
+      setDrawerOpen(true)
+    }
+    setRunError(failure)
   }
 
   const run = (skipOverwriteCheck = false) => {
@@ -1653,6 +1750,8 @@ export default function App() {
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
+                onAddMsFiles={addMsFiles}
+                onRemoveMsFile={removeMsFile}
                 onJobName={setJobName}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}

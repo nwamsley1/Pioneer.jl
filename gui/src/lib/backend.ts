@@ -60,6 +60,13 @@ export async function inspectPath(path: string): Promise<PathInfo> {
 
 export const readConfig = (path: string): Promise<string> => invoke('read_config', { path })
 
+/** Build the single-file `ms_data` directory for one fanned-out search, and
+ *  return its path. SearchDIA takes a directory and searches everything in it,
+ *  so searching a chosen file on its own means giving it a directory that holds
+ *  only that file — see `paths::stage_ms_file`. */
+export const stageMsFile = (jobId: string, file: string): Promise<string> =>
+  invoke('stage_ms_file', { jobId, file })
+
 /** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
  *  Captured rather than streamed: it is data, not run output. */
 export const listSpecLibs = (repo?: string): Promise<string> =>
@@ -286,6 +293,26 @@ export async function pickFastaFiles(multiple = true): Promise<string[]> {
 }
 
 /** Native file picker restricted to `extensions`. */
+/** Like pickFile, but returns every file chosen. Used by the SearchDIA file
+ *  list, where picking a batch one file at a time would be the whole cost of
+ *  the feature. */
+export async function pickFiles(
+  title: string,
+  name: string,
+  extensions: string[],
+): Promise<string[]> {
+  const picked = await open({
+    directory: false,
+    multiple: true,
+    title,
+    filters: [{ name, extensions }],
+    defaultPath: lastDir(),
+  })
+  if (!Array.isArray(picked) || picked.length === 0) return []
+  rememberDir(picked[0], false)
+  return picked
+}
+
 export async function pickFile(
   title: string,
   name: string,

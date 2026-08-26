@@ -163,6 +163,132 @@ pub fn read_config(path: &str) -> Result<String, String> {
     std::fs::read_to_string(&target).map_err(|e| format!("Could not read {}: {e}", target.display()))
 }
 
+/// Stage one MS data file as a directory that contains only that file.
+///
+/// SearchDIA takes a *directory* and searches every `.arrow` inside it. There is
+/// no way to hand it a chosen handful out of a folder of forty, which is exactly
+/// what searching a batch of method-development files one at a time needs. So
+/// each such run gets its own directory holding a single link to the real file,
+/// and points `ms_data` at that.
+///
+/// A link, not a copy: these files are gigabytes, and copying forty of them to
+/// search forty of them would be absurd. On Unix that is a symlink. On Windows a
+/// hard link is tried first — it needs no special privilege, where a symlink
+/// needs Developer Mode or an elevated process — and a symlink is the fallback
+/// for the case a hard link cannot serve, a source on another volume.
+///
+/// Lives beside the params file for the same job, under the same temp root, and
+/// is left behind for the same reason: it is part of the record of what ran.
+pub fn stage_ms_file(job_id: &str, file: &str) -> Result<String, String> {
+    let src = PathBuf::from(file);
+    if !src.is_file() {
+        return Err(format!("{file} is not a file"));
+    }
+    let name = src
+        .file_name()
+        .ok_or_else(|| format!("{file} has no file name"))?
+        .to_owned();
+
+    let dir = std::env::temp_dir().join("pioneer-console").join(job_id).join("ms_data");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+    let dst = dir.join(&name);
+    // A resumed or re-run job can find its own link already there. Remove rather
+    // than fail: the link is derived state, and the source it points at is the
+    // thing that matters.
+    if dst.symlink_metadata().is_ok() {
+        let _ = std::fs::remove_file(&dst);
+    }
+    link_file(&src, &dst)?;
+    Ok(dir.display().to_string())
+}
+
+#[cfg(unix)]
+fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(src, dst)
+        .map_err(|e| format!("could not link {} into place: {e}", src.display()))
+}
+
+#[cfg(windows)]
+fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
+    // Hard link first: unprivileged, and these are always plain files. Falls
+    // back to a symlink when the source is on another volume, which is the one
+    // case a hard link cannot express.
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::os::windows::fs::symlink_file(src, dst).map_err(|e| {
+        format!(
+            "could not link {} into place: {e}. A hard link failed too, which \
+             usually means the file is on another drive; enable Developer Mode \
+             or copy the file next to the others.",
+            src.display()
+        )
+    })
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::stage_ms_file;
+
+    /// A unique job id per test, so the tests do not collide in the shared temp
+    /// root and so a rerun does not see the previous run's links.
+    fn job_id(tag: &str) -> String {
+        format!("test-{tag}-{}", std::process::id())
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("pioneer-stage-src-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn stages_one_file_into_a_directory_of_its_own() {
+        let src = scratch("one");
+        // Two files side by side is the situation the whole feature exists for:
+        // the staged directory must contain the chosen one and *only* it, or
+        // SearchDIA would search both.
+        std::fs::write(src.join("a.arrow"), b"a").unwrap();
+        std::fs::write(src.join("b.arrow"), b"b").unwrap();
+
+        let id = job_id("one");
+        let dir = stage_ms_file(&id, src.join("a.arrow").to_str().unwrap()).unwrap();
+        let staged: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(staged, vec!["a.arrow"], "only the chosen file may be staged");
+        // Reachable through the link, which is what the search will do.
+        assert_eq!(std::fs::read(std::path::Path::new(&dir).join("a.arrow")).unwrap(), b"a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn staging_the_same_file_twice_is_not_an_error() {
+        // A re-run of the same job finds its own link already in place.
+        let src = scratch("twice");
+        std::fs::write(src.join("a.arrow"), b"a").unwrap();
+        let id = job_id("twice");
+        let path = src.join("a.arrow");
+        let first = stage_ms_file(&id, path.to_str().unwrap()).unwrap();
+        let second = stage_ms_file(&id, path.to_str().unwrap()).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&first);
+    }
+
+    #[test]
+    fn refuses_a_directory_or_a_missing_path() {
+        let src = scratch("bad");
+        let id = job_id("bad");
+        assert!(stage_ms_file(&id, src.to_str().unwrap()).is_err());
+        assert!(stage_ms_file(&id, src.join("nope.arrow").to_str().unwrap()).is_err());
+    }
+}
+
+
 #[cfg(test)]
 mod extension_tests {
     use super::extension_of;

@@ -270,6 +270,27 @@ export function downloadTargetPath(dest: string, library: string): string {
   return d.endsWith('/') ? `${d}${l}` : `${d}/${l}`
 }
 
+/** The file name without its directory or extension: what a per-file search
+ *  names its run and its results folder after.
+ *
+ *  Splits on both separators rather than the platform's own, because a path can
+ *  reach the console from a drag-and-drop or a stored run rather than from this
+ *  machine's picker. */
+export function fileStem(path: string): string {
+  const name = path.trim().split(/[\\/]/).pop() ?? ''
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
+/** Join a directory and one child name, tolerating a trailing separator on the
+ *  directory. Same shape as downloadTargetPath, kept separate because that one
+ *  is about a specific pair of fields and this one is not. */
+export function joinPath(dir: string, child: string): string {
+  const d = dir.trim()
+  if (!d) return child
+  return /[\\/]$/.test(d) ? `${d}${child}` : `${d}/${child}`
+}
+
 export function libPathNote(value: string, targetInfo: PathInfo): Note {
   if (!value.trim()) return NONE
   if (!/[\\/]/.test(value)) return { level: 'error', msg: 'Enter a full path.' }
@@ -296,12 +317,32 @@ export interface RunBlock {
  *   job will produce, or null when no such job is waiting.
  */
 export function validateSearchRun(
-  values: { msData: string; library: string; results: string; qValue: string; nIsotopes: string; nce: string; minPeptides: string },
+  values: {
+    msDataMode?: 'folder' | 'files'
+    msDataFiles?: string[]
+    msData: string
+    library: string
+    results: string
+    qValue: string
+    nIsotopes: string
+    nce: string
+    minPeptides: string
+  },
   notes: { msData: Note; library: Note; results: Note },
   pendingLibrary: string | null = null,
 ): RunBlock | null {
-  if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }
-  if (notes.msData.level === 'error') return { key: 'msData', msg: notes.msData.msg }
+  // In file-list mode the folder field is unused and its note is meaningless:
+  // what has to be there is at least one file. Everything below is shared --
+  // each fanned-out run gets the same library, the same thresholds, and a
+  // results folder under the same root.
+  if (values.msDataMode === 'files') {
+    if (!(values.msDataFiles ?? []).length) {
+      return { key: 'msData', msg: 'Add at least one file to search.' }
+    }
+  } else {
+    if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }
+    if (notes.msData.level === 'error') return { key: 'msData', msg: notes.msData.msg }
+  }
 
   // A library that is still being predicted is not a missing library. With a
   // build or download ahead of it in the queue, the search that consumes its
