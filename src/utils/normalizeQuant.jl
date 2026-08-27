@@ -393,6 +393,39 @@ function _pairwise_middle_rank_weights(
     return pair_weights
 end
 
+"""
+    _pairwise_containment_count_adjustment(nleft, nright, nmatched)
+
+Estimate the part of a pairwise loading difference hidden by unequal precursor
+detection. The direct-ID count ratio supplies the candidate log2 adjustment,
+while geometric containment shrinks it toward zero when the runs share only a
+small fraction of their anchors:
+
+`nmatched / sqrt(nleft * nright) * log2(nleft / nright)`
+
+All counts refer to target, non-MBR normalization anchors. The adjustment is
+zero when there are no matched anchors.
+"""
+function _pairwise_containment_count_adjustment(
+    nleft::Integer,
+    nright::Integer,
+    nmatched::Integer,
+)
+    nleft >= 0 || throw(ArgumentError("nleft must be nonnegative, got $nleft"))
+    nright >= 0 || throw(ArgumentError("nright must be nonnegative, got $nright"))
+    nmatched >= 0 || throw(ArgumentError(
+        "nmatched must be nonnegative, got $nmatched",
+    ))
+    nmatched <= min(nleft, nright) || throw(ArgumentError(
+        "nmatched ($nmatched) cannot exceed either run count ($nleft, $nright)",
+    ))
+    nmatched == 0 && return 0.0
+
+    containment = Float64(nmatched) /
+                  sqrt(Float64(nleft) * Float64(nright))
+    return containment * log2(Float64(nleft) / Float64(nright))
+end
+
 function _fit_pairwise_quant_spline(
     left_position::Int,
     right_position::Int,
@@ -437,6 +470,18 @@ function _fit_pairwise_quant_spline(
     bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
     length(bins) >= _min_bins_for_spline(spline_n_knots) || return nothing
 
+    # Exact-match ratios can underestimate a loading difference when the
+    # lower-loading run loses more precursors below detection. Use the ratio of
+    # all direct, target, non-MBR anchor counts to recover part of that missing
+    # global offset. Geometric containment shrinks the adjustment when the two
+    # runs have little overlap. Adding one constant to every RT bin preserves
+    # the locally estimated RT-dependent shape.
+    count_adjustment = _pairwise_containment_count_adjustment(
+        length(left_anchors),
+        length(right_anchors),
+        nanchors,
+    )
+
     median_residuals = Vector{Float64}(undef, length(bins))
     median_rts = Vector{Float64}(undef, length(bins))
     for (bin_idx, bin) in enumerate(bins)
@@ -456,7 +501,7 @@ function _fit_pairwise_quant_spline(
         median_residuals[bin_idx] = median(
             @view(anchor_residuals[bin]),
             weights(bin_weights),
-        )
+        ) + count_adjustment
     end
 
     return PairwiseQuantSpline(
@@ -494,9 +539,11 @@ target precursor matches can support the requested RT spline. Within each RT
 bin, each matched precursor receives separate middle-peaked percentile-rank
 weights from its left- and right-run abundances, and the smaller weight is used
 for the pair. This gives high influence only to anchors that are away from the
-abundance extremes in both runs. Kruskal's algorithm therefore returns a
-maximum spanning tree when the supported graph is connected, or a maximum
-spanning forest otherwise.
+abundance extremes in both runs. Each edge's global offset is additionally
+adjusted by the direct-ID count ratio, shrunk by the geometric containment of
+the two runs; its RT-dependent shape is unchanged. Kruskal's algorithm therefore
+returns a maximum spanning tree when the supported graph is connected, or a
+maximum spanning forest otherwise.
 
 Only candidate edges that could connect two current components are fitted, so
 the expensive exact-match work normally stops after `n_runs - 1` successful
@@ -773,7 +820,9 @@ end
 End-to-end RT-dependent quantification normalization. When a run-similarity
 atlas is supplied, fits exact-match pairwise splines only along a supported
 maximum spanning tree, propagates their differences to run corrections, and
-median-centers the tree at each RT. MBR-recovered rows never serve as anchors.
+median-centers the tree at each RT. Pairwise global offsets also receive a
+containment-shrunk adjustment from the direct-ID count ratio. MBR-recovered rows
+never serve as anchors or contribute to those counts.
 
 Without an atlas, retains the experiment-wide matched-precursor estimator as a
 fallback.

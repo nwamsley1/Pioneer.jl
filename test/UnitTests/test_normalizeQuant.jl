@@ -113,6 +113,22 @@ function _write_pairwise_chain_runs(
                         for i in 1:n_per_edge],
             )
         end
+        # Give endpoint runs the same total direct-ID count as interior runs.
+        # This fixture isolates tree propagation; count imbalance is exercised
+        # separately below.
+        if run == 1 || run == n_runs
+            filler_start = (n_runs - 1 + run) * n_per_edge + 1
+            append!(
+                precursor_idx,
+                UInt32.(filler_start:(filler_start + n_per_edge - 1)),
+            )
+            append!(irt_obs, Float32.(LinRange(0.0, 100.0, n_per_edge)))
+            append!(
+                base_log2,
+                Float32[8.0f0 + 0.25f0 * sin(Float32(i) / 17.0f0)
+                        for i in 1:n_per_edge],
+            )
+        end
         path = joinpath(dir, "chain_run$(run).arrow")
         Arrow.write(path, DataFrame(
             precursor_idx = precursor_idx,
@@ -287,6 +303,47 @@ end
         left_log2,
         right_log2[1:end-1],
     )
+end
+
+@testset "containment-shrunk precursor-count adjustment" begin
+    @test Pioneer._pairwise_containment_count_adjustment(100, 100, 80) == 0.0
+    @test Pioneer._pairwise_containment_count_adjustment(100, 25, 20) ≈ 0.8
+    @test Pioneer._pairwise_containment_count_adjustment(25, 100, 20) ≈ -0.8
+    @test Pioneer._pairwise_containment_count_adjustment(100, 25, 0) == 0.0
+    @test_throws ArgumentError Pioneer._pairwise_containment_count_adjustment(
+        10,
+        5,
+        6,
+    )
+
+    left_anchors = Dict{UInt32, Pioneer.QuantRunAnchor}()
+    right_anchors = Dict{UInt32, Pioneer.QuantRunAnchor}()
+    for idx in 1:1_000
+        rt = Float32(100.0 * (idx - 1) / 999)
+        left_anchors[UInt32(idx)] = Pioneer.QuantRunAnchor(10.0f0, rt)
+        if idx <= 800
+            right_anchors[UInt32(idx)] = Pioneer.QuantRunAnchor(8.0f0, rt)
+        end
+    end
+
+    edge = Pioneer._fit_pairwise_quant_spline(
+        1,
+        2,
+        1.0f0,
+        left_anchors,
+        right_anchors;
+        N = 20,
+        spline_n_knots = 5,
+        min_bin_occupancy = 100,
+    )
+    expected_adjustment = Pioneer._pairwise_containment_count_adjustment(
+        length(left_anchors),
+        length(right_anchors),
+        800,
+    )
+    @test edge !== nothing
+    @test edge.nanchors == 800
+    @test edge.spline(50.0) ≈ 2.0 + expected_adjustment atol=0.01
 end
 
 @testset "pairwise maximum spanning tree" begin
