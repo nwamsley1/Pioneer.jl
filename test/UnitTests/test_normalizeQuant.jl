@@ -254,6 +254,41 @@ end
     @test anchors[UInt32(4)].log2_quant ≈ 4.0f0
 end
 
+@testset "pairwise rank weights require middle abundance in both runs" begin
+    left_log2 = Float64[10, 20, 30, 40, 100, 60, 70, 80, 90]
+    right_log2 = Float64[10, 20, 30, 40, 0, 60, 70, 80, 90]
+
+    pair_weights = Pioneer._pairwise_middle_rank_weights(
+        left_log2,
+        right_log2,
+    )
+
+    # The fifth anchor has a perfectly middle pairwise mean, but it is the
+    # highest-abundance anchor in the left run and the lowest in the right.
+    # Separate run ranks therefore downweight it instead of assigning the
+    # maximum weight that pair-mean ranking would give it.
+    pair_means = (left_log2 .+ right_log2) ./ 2.0
+    pair_mean_weight = Pioneer._middle_rank_weight(
+        pair_means[5],
+        sort(pair_means),
+    )
+    @test pair_mean_weight ≈ 1.0
+    @test pair_weights[5] ≈ 17 / 81
+    @test pair_weights[5] < pair_weights[4]
+    @test pair_weights[4] > 0.9
+
+    # The estimator is symmetric in edge orientation.
+    @test pair_weights ≈ Pioneer._pairwise_middle_rank_weights(
+        right_log2,
+        left_log2,
+    )
+    @test isempty(Pioneer._pairwise_middle_rank_weights(Float64[], Float64[]))
+    @test_throws DimensionMismatch Pioneer._pairwise_middle_rank_weights(
+        left_log2,
+        right_log2[1:end-1],
+    )
+end
+
 @testset "pairwise maximum spanning tree" begin
     mktempdir() do dir
         paths, atlas, offsets = _write_pairwise_chain_runs(dir)

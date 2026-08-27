@@ -359,6 +359,40 @@ struct PairwiseQuantSpline
     spline::UniformSpline
 end
 
+@inline function _middle_rank_weight(value::Real, sorted_values::AbstractVector)
+    lower_rank = searchsortedfirst(sorted_values, value)
+    upper_rank = searchsortedlast(sorted_values, value)
+    percentile = ((lower_rank + upper_rank) / 2.0 - 0.5) / length(sorted_values)
+    return 4.0 * percentile * (1.0 - percentile)
+end
+
+function _pairwise_middle_rank_weights(
+    left_log2_abundances::AbstractVector,
+    right_log2_abundances::AbstractVector,
+)
+    length(left_log2_abundances) == length(right_log2_abundances) ||
+        throw(DimensionMismatch(
+            "left and right abundance vectors must have the same length",
+        ))
+    isempty(left_log2_abundances) && return Float64[]
+
+    sorted_left = sort!(collect(left_log2_abundances))
+    sorted_right = sort!(collect(right_log2_abundances))
+    pair_weights = Vector{Float64}(undef, length(left_log2_abundances))
+    @inbounds for idx in eachindex(left_log2_abundances, right_log2_abundances)
+        left_weight = _middle_rank_weight(
+            left_log2_abundances[idx],
+            sorted_left,
+        )
+        right_weight = _middle_rank_weight(
+            right_log2_abundances[idx],
+            sorted_right,
+        )
+        pair_weights[idx] = min(left_weight, right_weight)
+    end
+    return pair_weights
+end
+
 function _fit_pairwise_quant_spline(
     left_position::Int,
     right_position::Int,
@@ -371,11 +405,13 @@ function _fit_pairwise_quant_spline(
 )
     anchor_rts = Float64[]
     anchor_residuals = Float64[]
-    anchor_pair_log2_abundances = Float64[]
+    anchor_left_log2_abundances = Float64[]
+    anchor_right_log2_abundances = Float64[]
     npossible = min(length(left_anchors), length(right_anchors))
     sizehint!(anchor_rts, npossible)
     sizehint!(anchor_residuals, npossible)
-    sizehint!(anchor_pair_log2_abundances, npossible)
+    sizehint!(anchor_left_log2_abundances, npossible)
+    sizehint!(anchor_right_log2_abundances, npossible)
 
     iterated_anchors, lookup_anchors = length(left_anchors) <= length(right_anchors) ?
         (left_anchors, right_anchors) : (right_anchors, left_anchors)
@@ -388,16 +424,15 @@ function _fit_pairwise_quant_spline(
             anchor_residuals,
             Float64(left_anchor.log2_quant - right_anchor.log2_quant),
         )
-        push!(
-            anchor_pair_log2_abundances,
-            (Float64(left_anchor.log2_quant) + Float64(right_anchor.log2_quant)) / 2.0,
-        )
+        push!(anchor_left_log2_abundances, Float64(left_anchor.log2_quant))
+        push!(anchor_right_log2_abundances, Float64(right_anchor.log2_quant))
     end
 
     order = sortperm(anchor_rts)
     anchor_rts = anchor_rts[order]
     anchor_residuals = anchor_residuals[order]
-    anchor_pair_log2_abundances = anchor_pair_log2_abundances[order]
+    anchor_left_log2_abundances = anchor_left_log2_abundances[order]
+    anchor_right_log2_abundances = anchor_right_log2_abundances[order]
     nanchors = length(anchor_rts)
     bins = _occupancy_bins(nanchors, min_bin_occupancy, N)
     length(bins) >= _min_bins_for_spline(spline_n_knots) || return nothing
@@ -407,30 +442,17 @@ function _fit_pairwise_quant_spline(
     for (bin_idx, bin) in enumerate(bins)
         median_rts[bin_idx] = median(@view(anchor_rts[bin]))
 
-        # Rank abundance within this matched pair and RT neighborhood. The
-        # average log2 abundance is the log2 geometric mean of the two raw
-        # intensities, so it measures combined signal without directly
-        # weighting on the left-minus-right ratio. Give the middle of that
-        # distribution the most influence: low-abundance ratios can be biased
-        # by detection limits, while the highest-abundance ratios can be
-        # compressed by saturation or other high-signal effects.
-        pair_abundances = @view(anchor_pair_log2_abundances[bin])
-        sorted_pair_abundances = sort!(collect(pair_abundances))
-        bin_weights = Vector{Float64}(undef, length(bin))
-        for local_idx in eachindex(pair_abundances)
-            lower_rank = searchsortedfirst(
-                sorted_pair_abundances,
-                pair_abundances[local_idx],
-            )
-            upper_rank = searchsortedlast(
-                sorted_pair_abundances,
-                pair_abundances[local_idx],
-            )
-            percentile = (
-                (lower_rank + upper_rank) / 2.0 - 0.5
-            ) / length(bin)
-            bin_weights[local_idx] = 4.0 * percentile * (1.0 - percentile)
-        end
+        # Rank the matched anchors separately in the two runs within this RT
+        # neighborhood. Each run gets the same middle-peaked rank weight, and
+        # the pair receives the smaller of the two. An anchor therefore has
+        # high influence only when it is away from both the detection-limited
+        # and potentially saturated extremes in both runs. Unlike a hard rank
+        # filter, the weight changes smoothly and every exact match remains
+        # available to support the RT spline.
+        bin_weights = _pairwise_middle_rank_weights(
+            @view(anchor_left_log2_abundances[bin]),
+            @view(anchor_right_log2_abundances[bin]),
+        )
         median_residuals[bin_idx] = median(
             @view(anchor_residuals[bin]),
             weights(bin_weights),
@@ -469,13 +491,12 @@ Build a maximum-similarity spanning forest for pairwise quant normalization.
 Candidate run pairs are ordered by the maximum directional containment in the
 existing run-similarity atlas. An edge is accepted only when exact, non-MBR,
 target precursor matches can support the requested RT spline. Within each RT
-bin, matched precursor ratios receive middle-peaked weights based on the
-percentile rank of their pairwise mean log2 abundance (equivalently, their
-raw-intensity geometric mean). This downweights both detection-limited and
-potentially high-signal-compressed measurements without directly weighting on
-the ratio being estimated. Kruskal's algorithm therefore returns a maximum
-spanning tree when the supported graph is connected, or a maximum spanning
-forest otherwise.
+bin, each matched precursor receives separate middle-peaked percentile-rank
+weights from its left- and right-run abundances, and the smaller weight is used
+for the pair. This gives high influence only to anchors that are away from the
+abundance extremes in both runs. Kruskal's algorithm therefore returns a
+maximum spanning tree when the supported graph is connected, or a maximum
+spanning forest otherwise.
 
 Only candidate edges that could connect two current components are fitted, so
 the expensive exact-match work normally stops after `n_runs - 1` successful
