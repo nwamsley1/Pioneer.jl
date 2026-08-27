@@ -136,7 +136,7 @@ function _write_mbr_anchor_pair(
     irt_obs = Float32.(LinRange(0.0, 100.0, n_observed + n_recovered))
     recovered = BitVector(vcat(falses(n_observed), trues(n_recovered)))
     run1_log2 = vcat(fill(8.0f0, n_observed), fill(14.0f0, n_recovered))
-    run2_log2 = vcat(fill(10.0f0, n_observed), fill(4.0f0, n_recovered))
+    run2_log2 = vcat(fill(10.0f0, n_observed), fill(16.0f0, n_recovered))
     paths = String[]
     for (run, log2_quant) in enumerate((run1_log2, run2_log2))
         path = joinpath(dir, "mbr_run$(run).arrow")
@@ -282,7 +282,7 @@ end
 
         @test length(tree) == 1
         @test only(tree).nanchors == n_observed + n_recovered
-        @test only(tree).spline(50.0) ≈ 10.0 atol=0.05
+        @test only(tree).spline(50.0) ≈ -2.0 atol=0.05
 
         Pioneer.normalizeQuant(
             paths,
