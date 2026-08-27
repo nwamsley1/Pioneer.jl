@@ -163,13 +163,14 @@ function _file_precursor_quant_anchors(
     quant = psms[!, quant_col_name]
     irt_obs = psms[!, :irt_obs]
     target = hasproperty(psms, :target) ? psms[!, :target] : nothing
-    mbr_recovered = hasproperty(psms, :mbr_recovered) ?
-        psms[!, :mbr_recovered] : nothing
     anchors = Dict{UInt32, QuantRunAnchor}()
     sizehint!(anchors, length(precursor_idx))
 
     @inbounds for row in eachindex(precursor_idx, quant, irt_obs)
-        _is_normalization_anchor_row(row, target, mbr_recovered) || continue
+        # Pairwise normalization operates on the final passing-PSM tables, so
+        # accepted MBR recoveries are valid run-level quantities. Keep the
+        # target filter, but allow both directly identified and recovered rows.
+        _is_normalization_anchor_row(row, target, nothing) || continue
         quant_raw = quant[row]
         irt_raw = irt_obs[row]
         (ismissing(quant_raw) || ismissing(irt_raw)) && continue
@@ -432,8 +433,8 @@ end
 
 Build a maximum-similarity spanning forest for pairwise quant normalization.
 Candidate run pairs are ordered by the maximum directional containment in the
-existing run-similarity atlas. An edge is accepted only when exact, non-MBR,
-target precursor matches can support the requested RT spline. Kruskal's
+existing run-similarity atlas. An edge is accepted only when exact target
+precursor matches can support the requested RT spline. Kruskal's
 algorithm therefore returns a maximum spanning tree when the supported graph
 is connected, or a maximum spanning forest otherwise.
 
@@ -712,7 +713,8 @@ end
 End-to-end RT-dependent quantification normalization. When a run-similarity
 atlas is supplied, fits exact-match pairwise splines only along a supported
 maximum spanning tree, propagates their differences to run corrections, and
-median-centers the tree at each RT. MBR-recovered rows never serve as anchors.
+median-centers the tree at each RT. Both directly identified and MBR-recovered
+target rows can serve as pairwise anchors.
 
 Without an atlas, retains the experiment-wide matched-precursor estimator as a
 fallback.
@@ -755,7 +757,7 @@ function normalizeQuant(
             return nothing
         end
 
-        @user_warn "No run pair had enough exact non-MBR precursor matches " *
+        @user_warn "No run pair had enough exact precursor matches " *
                    "to support an RT spline. Falling back to the " *
                    "experiment-wide matched-precursor normalizer."
     end
