@@ -127,8 +127,17 @@ export function unimodLabel(name: string): string {
  *  wrong, and the number is still something the reader can look up.
  */
 export function unimodDisplay(entry: string): string {
-  const sep = entry.indexOf(' on ')
-  const label = unimodLabel(sep === -1 ? entry : entry.slice(0, sep))
+  const { name, pattern } = parseModEntry(entry)
+  const label = unimodLabel(name)
   if (!label) return entry
-  return sep === -1 ? label : label + entry.slice(sep)
+  return pattern ? `${label} on ${pattern}` : label
+}
+
+/** Split a `"<name> on <pattern>"` entry, the shape LibraryInfo reports
+ *  modifications in, into the two fields a ModEntry holds separately. */
+export function parseModEntry(entry: string): { name: string; pattern: string } {
+  const sep = entry.indexOf(' on ')
+  return sep === -1
+    ? { name: entry.trim(), pattern: '' }
+    : { name: entry.slice(0, sep).trim(), pattern: entry.slice(sep + 4).trim() }
 }

@@ -14,6 +14,9 @@ import { Sidebar } from './components/Sidebar'
 import * as backend from './lib/backend'
 import {
   buildConvertArgs,
+  convertGroups,
+  groupParams,
+  rawStepArgs,
   downloadCommandLine,
   buildDownloadArgs,
   buildLibJson,
@@ -52,6 +55,7 @@ import {
   EMPTY_PATH_INFO,
   SEARCH_DEFAULTS,
   DOWNLOAD_DEFAULTS,
+  type BackendCommand,
   type BuildParams,
   type CommandId,
   type ConvertParams,
@@ -71,6 +75,8 @@ import {
 import {
   calibrationNote,
   convertInputNote,
+  fileStem,
+  joinPath,
   convertOutputNote,
   fastaNote,
   libPathNote,
@@ -224,11 +230,27 @@ const TITLES: Record<CommandId, string> = {
   convertraw: 'ConvertRAW',
 }
 
+/** What the overwrite confirmation says, per workflow.
+ *
+ *  Was a two-way `isSearch ? ... : ...`, so ConvertRAW and DownloadSpecLib both
+ *  fell into the BuildSpecLib branch and a conversion was asked to confirm
+ *  "A library already exists here / Overwrite & build" over a path taken from
+ *  the BuildSpecLib form, which it had nothing to do with. */
+const OVERWRITE_COPY: Record<CommandId, { title: string; confirm: string }> = {
+  searchdia: { title: 'Results folder already exists', confirm: 'Overwrite & run' },
+  buildspeclib: { title: 'A library already exists here', confirm: 'Overwrite & build' },
+  downloadspeclib: { title: 'A library already exists here', confirm: 'Overwrite & download' },
+  convertraw: {
+    title: 'This folder already holds converted files',
+    confirm: 'Overwrite & convert',
+  },
+}
+
 const SUBTITLES: Record<CommandId, string> = {
   searchdia: 'Find & quantify proteins',
   buildspeclib: 'Predict a spectral library',
   downloadspeclib: 'Download a prebuilt spectral library',
-  convertraw: 'Convert .raw files to Arrow',
+  convertraw: 'Convert .raw or .mzML files to Arrow',
 }
 
 /** Append one line of process output, emulating the bits of a terminal that
@@ -457,7 +479,10 @@ export default function App() {
       // full-specific build. The same applies to the cleavage rule.
       setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
     } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
-    else setConvert(job.snapshot.convert)
+    // Same reason as the build merge above: runs stored before the mzML
+    // converter existed carry no `format`, and recalling one must still render
+    // a form with a format selected rather than neither segment lit.
+    else setConvert({ ...CONVERT_DEFAULTS, ...job.snapshot.convert })
     setRunError('')
   }, [command, search, build, convert])
 
@@ -472,9 +497,22 @@ export default function App() {
     setInspectingJobId(null)
   }, [])
 
-  /** `${id}:${status}` pairs already written, so a re-render does not rewrite
-   *  the history — but a status *change* does write, which is what lets an
-   *  interrupted run be recognised later. */
+  /** What a row has to match to count as already written.
+   *
+   *  Status, because a change of it is exactly what has to be persisted — that
+   *  is how an interrupted run is recognised next launch. And runNo, because
+   *  reordering the queue reassigns it and a status that has not changed would
+   *  otherwise suppress the write.
+   *
+   *  One function rather than the same template written twice: it was written
+   *  twice, the two drifted (the seed omitted runNo), and the mismatch meant
+   *  every row read from the store was immediately written back to it — a
+   *  full rewrite of the entire history on every launch, which at a few
+   *  thousand runs is a few thousand IPC round trips and SQLite upserts before
+   *  the app is any use. */
+  const runKey = (j: Job) => `${j.id}:${j.status}:${j.runNo}`
+
+  /** Rows already written, so a re-render does not rewrite the history. */
   const savedRuns = useRef(new Set<string>())
 
   useEffect(() => {
@@ -483,9 +521,7 @@ export default function App() {
       // is how interruption is detected: if the app goes away, the row stays
       // pending on disk and startup can see it never finished. Waiting for a
       // close event would miss a crash or a force quit.
-      // runNo is part of the key because reordering the queue reassigns it,
-      // and a status that has not changed would otherwise suppress the write.
-      const key = `${j.id}:${j.status}:${j.runNo}`
+      const key = runKey(j)
       if (savedRuns.current.has(key)) continue
       savedRuns.current.add(key)
       backend.historySave(jobToRun(j)).catch(() => {
@@ -528,7 +564,7 @@ export default function App() {
               ? { ...j, status: 'interrupted' as JobStatus }
               : j
           })
-        merged.forEach((j) => savedRuns.current.add(`${j.id}:${j.status}`))
+        merged.forEach((j) => savedRuns.current.add(runKey(j)))
         // Persist only the reinterpretations, so they are not redone next launch.
         const onDisk = new Map(rows.map((r) => [r.id, r.status]))
         merged
@@ -603,7 +639,7 @@ export default function App() {
           return
         }
         if (kind === 'file' && isDir) {
-          setRunError('That is a folder — this field takes a single file.')
+          setRunError('That is a folder — this field takes a file.')
           return
         }
         setRunError('')
@@ -614,7 +650,22 @@ export default function App() {
           return
         }
         if (key === 'convertInput') {
-          setConvert((c) => ({ ...c, input: path, inputMode: isDir ? 'folder' : 'file' }))
+          // Dropping a folder means folder mode; dropping files means the list,
+          // and every dropped path joins it rather than only the first -- the
+          // whole point of the list is that a batch arrives at once. The mode
+          // follows what was dropped, so neither has to be chosen first.
+          if (isDir) {
+            setConvert((c) => ({ ...c, input: path, inputMode: 'folder' }))
+          } else {
+            setConvert((c) => {
+              const have = new Set(c.inputFiles)
+              return {
+                ...c,
+                inputMode: 'files',
+                inputFiles: [...c.inputFiles, ...paths.filter((f) => !have.has(f))],
+              }
+            })
+          }
           return
         }
         // `data-key` doubles as the scroll target for validation errors, and
@@ -731,18 +782,20 @@ export default function App() {
     [build.calibrationFile, pathInfos],
   )
 
+  // Depends on the whole `convert` object, not a list of its fields. The list
+  // was a trap: convertInputNote takes the object, so every field it reads has
+  // to be named here, and adding `format` to the validator without adding it
+  // here left the note reading "switch the format to .mzML" after the format
+  // had been switched. The deps lint that would have caught it is off (see
+  // `info`, which is rebuilt every render), so nothing did. Recomputing when an
+  // unrelated field like batchSize changes costs two pure string comparisons.
   const convertNotes = useMemo(
     () => ({
       input: convertInputNote(convert, info('convertInput')),
-      output: convertOutputNote(convert.outputDir, info('convertOutput')),
+      output: convertOutputNote(convert, info('convertOutput')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      convert.input,
-      convert.inputMode,
-      convert.outputDir,
-      pathInfos,
-    ],
+    [convert, pathInfos],
   )
 
   const libNote = useMemo(
@@ -752,6 +805,40 @@ export default function App() {
   )
 
   // ---- job events --------------------------------------------------------
+
+  /** Downgrade a "successful" conversion that produced nothing.
+   *
+   *  See the call site: the converter's exit code does not mean what it looks
+   *  like it means. Runs after the exit event rather than instead of it, so the
+   *  log the user is already reading stays intact and only the verdict changes.
+   */
+  const verifyConversionProduced = useCallback(async (job: Job) => {
+    if (job.snapshot.cmd !== 'convertraw') return
+    const c = job.snapshot.convert
+    const dir = c.outputDir.trim() || `${c.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    if (!dir) return
+    const info = await backend.inspectPath(dir)
+    if (info.arrow_count > 0) return
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.id === job.id
+          ? {
+              ...j,
+              status: 'failed' as JobStatus,
+              failMsg: 'The converter reported success but wrote no .arrow files.',
+              logLines: [
+                ...j.logLines,
+                {
+                  text: `ERROR: no .arrow files in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  stream: 'app' as const,
+                  transient: false,
+                },
+              ],
+            }
+          : j,
+      ),
+    )
+  }, [])
 
   useEffect(() => {
     const unlisteners: Array<() => void> = []
@@ -776,6 +863,16 @@ export default function App() {
           prev.map((j) => {
             if (j.id !== job_id) return j
             const status: JobStatus = cancelled ? 'cancelled' : success ? 'done' : 'failed'
+            // A conversion that exits 0 is not necessarily a conversion that
+            // happened: PioneerConverter reports every file it could not open
+            // and still exits 0, so a whole batch can fail while the queue says
+            // "done" and the output folder stays empty. Checked rather than
+            // trusted -- but only when the folder holds no .arrow at all, so a
+            // run that legitimately skipped everything (--skip-existing) or
+            // added to an existing folder is never called a failure.
+            if (status === 'done' && j.cmd === 'convertraw') {
+              void verifyConversionProduced(j)
+            }
             return {
               ...j,
               status,
@@ -818,8 +915,16 @@ export default function App() {
       ),
     )
 
+    // The ConvertRAW workflow drives two binaries. Which one is a property of
+    // the run, not of the tab, so it is read off the snapshot rather than the
+    // command id -- that way a restored mzML run re-runs as an mzML run.
+    const backendCmd: BackendCommand =
+      next.snapshot.cmd === 'convertraw' && next.snapshot.convert.format === 'mzml'
+        ? 'convertmzml'
+        : next.cmd
+
     backend
-      .startJob(next.id, next.cmd, next.invocation, next.threads)
+      .startJob(next.id, backendCmd, next.invocation, next.threads)
       .then(({ params_path, env_summary }) => {
         setJobs((prev) =>
           prev.map((j) =>
@@ -857,7 +962,23 @@ export default function App() {
 
   const onParam = (key: string, value: string) => {
     if (isSearch) setSearch((p) => ({ ...p, [key]: value }))
-    else if (isConvert) setConvert((p) => ({ ...p, [key]: value }))
+    else if (isConvert)
+      setConvert((p) => {
+        const next = { ...p, [key]: value }
+        // Switching between a file and a folder invalidates whatever is in the
+        // box: a path to a .raw file is never a folder of them, and the other
+        // way round. Leaving it there means the field reads as filled in while
+        // showing an error, and the Browse dialog opens on a path that cannot
+        // be what is wanted. Cleared only on a real change, so re-clicking the
+        // mode you are already in does not wipe the path.
+        //
+        // Deliberately not done for the format toggle beside it: there the
+        // stale path is what makes "No .raw files in this folder, but 3 .mzML
+        // files -- switch the format" possible, and that message is more use
+        // than an empty box.
+        if (key === 'inputMode' && value !== p.inputMode) next.input = ''
+        return next
+      })
     else if (key === 'predictionModel') switchModel(value)
     else setBuild((p) => ({ ...p, [key]: value }))
     setRunError('')
@@ -907,12 +1028,52 @@ export default function App() {
     else setBuild((p) => ({ ...p, [key]: !p[key as keyof BuildParams] }))
   }
 
+  /** Add to the file list rather than replacing it: a batch is often assembled
+   *  from more than one folder, and a picker that discarded the previous
+   *  selection would make that impossible. Duplicates are dropped -- the same
+   *  file twice would be the same search twice. */
+  const addMsFiles = async () => {
+    const picked = await backend.pickFiles('Choose the files to search', 'MS data', ['arrow'])
+    if (picked.length === 0) return
+    setSearch((p) => {
+      const have = new Set(p.msDataFiles)
+      return { ...p, msDataFiles: [...p.msDataFiles, ...picked.filter((f) => !have.has(f))] }
+    })
+    setRunError('')
+  }
+
+  const removeMsFile = (index: number) => {
+    setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
+  }
+
   const browseConvertInput = async () => {
-    const picked =
-      convert.inputMode === 'file'
-        ? await backend.pickFile('Choose a .raw file', 'Thermo RAW', ['raw'])
-        : await backend.pickFolder('Choose a folder of .raw files')
+    const picked = await backend.pickFolder(
+      convert.format === 'mzml' ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
+    )
     if (picked) onParam('input', picked)
+  }
+
+  /** Add to the convert list rather than replacing it, for the same reason the
+   *  search list does: a batch is usually assembled from more than one folder.
+   *
+   *  One picker for both formats -- the list is allowed to mix them, and which
+   *  converter each file goes to is decided from its name at run time. No `gz`:
+   *  neither converter decompresses. */
+  const addConvertFiles = async () => {
+    const picked = await backend.pickFiles('Choose the files to convert', 'MS data', [
+      'raw',
+      'mzML',
+    ])
+    if (picked.length === 0) return
+    setConvert((p) => {
+      const have = new Set(p.inputFiles)
+      return { ...p, inputFiles: [...p.inputFiles, ...picked.filter((f) => !have.has(f))] }
+    })
+    setRunError('')
+  }
+
+  const removeConvertFile = (index: number) => {
+    setConvert((p) => ({ ...p, inputFiles: p.inputFiles.filter((_, i) => i !== index) }))
   }
 
   const browseConvertOutput = async () => {
@@ -1160,6 +1321,24 @@ export default function App() {
 
   const currentExtras = extras[command] ?? null
 
+  /** What the JSON preview describes.
+   *
+   *  In folder mode that is the form itself. In file-list mode one click makes
+   *  several runs and there is no single config to show, so the preview stands
+   *  for the first of them -- the settings below the paths are shared by all of
+   *  them, and those are what the preview is read for.
+   *
+   *  `ms_data` shows the chosen file rather than the directory the run is
+   *  actually handed. That directory is created when the run starts, is named
+   *  after a job id that does not exist yet, and holds nothing but a link to
+   *  this file -- so the file is both the honest answer and the useful one. The
+   *  params file written for each run does carry the real path. */
+  const previewSearch = useMemo(() => {
+    if (!isSearch || search.msDataMode !== 'files' || search.msDataFiles.length === 0) return search
+    const first = search.msDataFiles[0]
+    return { ...search, msData: first, results: joinPath(search.results, fileStem(first)) }
+  }, [isSearch, search])
+
   const jsonText = useMemo(
     () =>
       isDownload
@@ -1168,15 +1347,47 @@ export default function App() {
         ? // Clamped: while the threads field is being cleared it holds 0, and
           // the preview should not show `--threads-per-file 0` as if that were
           // the command we would run. Run refuses in that state anyway.
-          convertCommandLine(convert)
+          //
+          // A file list is more than one command, so the preview is all of
+          // them, one per line. The input path each will really be given is a
+          // staging folder named after a job id that does not exist yet, so it
+          // stands in as `<staged .raw files>`; every other argument is exact,
+          // and each run's own log opens with the command line as executed.
+          convert.inputMode === 'files'
+            ? convertGroups(convert.inputFiles)
+                .map((g) =>
+                  g.format === 'raw'
+                    ? // Exactly what will run: one line per file, real paths.
+                      g.files
+                        .map((f) =>
+                          convertCommandLine({
+                            ...convert,
+                            format: 'raw',
+                            inputMode: 'folder',
+                            input: f,
+                          }),
+                        )
+                        .join('\n')
+                    : // One invocation over a staging folder named after a job
+                      // id that does not exist yet, so the path stands in.
+                      convertCommandLine(
+                        groupParams(
+                          convert,
+                          g,
+                          `<${g.files.length} staged .mzML file${g.files.length > 1 ? 's' : ''}>`,
+                        ),
+                      ),
+                )
+                .join('\n\n') || 'Add files to convert.'
+            : convertCommandLine(convert)
         : JSON.stringify(
-            isSearch ? buildSearchJson(search, currentExtras) : buildLibJson(build, currentExtras),
+            isSearch ? buildSearchJson(previewSearch, currentExtras) : buildLibJson(build, currentExtras),
             null,
             2,
           ),
     // `threads` belongs here: the ConvertRAW preview renders --threads-per-file
     // from it, so without it the command line goes stale when the stepper moves.
-    [isConvert, isDownload, isSearch, search, build, convert, download, currentExtras, threads],
+    [isConvert, isDownload, isSearch, previewSearch, build, convert, download, currentExtras, threads],
   )
 
   const overwriteNote = isConvert
@@ -1190,6 +1401,16 @@ export default function App() {
         ? searchNotes.results
         : libNote
 
+  /** The path the overwrite confirmation is about. */
+  const overwriteDetail = isConvert
+    ? convert.outputDir.trim() ||
+      `${convert.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    : isDownload
+      ? downloadTargetPath(download.dest, download.selected)
+      : isSearch
+        ? search.results
+        : libraryTargetPath(build.libPath)
+
   /** Names already spoken for, across this session and persisted history. */
   const takenTitles = useMemo(() => new Set(jobs.map((j) => j.title)), [jobs])
   // Straight off the run history, which already records each run's parameters.
@@ -1200,57 +1421,170 @@ export default function App() {
    *  a preview that reshuffles on every keystroke is noise. */
   const resolvedJobName = trimmedJobName ? resolveRunName(trimmedJobName, takenTitles) : ''
 
-  const enqueue = async () => {
+  /** Claim the identity for one run: a session-unique id, and the next history
+   *  number from the store. Separate from building the job because a fanned-out
+   *  search needs the id first — the staging directory is named after it — and
+   *  the parameters only afterwards. */
+  const allocate = async (): Promise<{ id: string; runNo: number }> => {
     jobSeq.current += 1
     const id = `${sessionId.current}-job${jobSeq.current}`
     // From the store, so it keeps climbing across restarts and cannot
     // diverge from the rows it numbers. Falls back to the local counter if
     // the store is unavailable.
     const runNo = await backend.historyNextRunNo().catch(() => nextRunNo())
-    const job: Job = {
+    return { id, runNo }
+  }
+
+  /** One queued job, ready to be appended.
+   *
+   *  `over` replaces the parameters for a fanned-out run -- a search over one
+   *  staged file, or one format's group of a convert list. Either way the JSON
+   *  and the argv are built by the same functions as the un-fanned case, so the
+   *  two cannot drift apart. */
+  const makeJob = (
+    id: string,
+    runNo: number,
+    title: string,
+    over?: SearchParams,
+    overConvert?: ConvertParams,
+    convertSteps?: string[][],
+  ): Job => {
+    const s = over ?? search
+    const c = overConvert ?? convert
+    const json = over ? JSON.stringify(buildSearchJson(over, currentExtras), null, 2) : jsonText
+    return {
       id,
       runNo,
       finishedAt: 0,
       cmd: command,
-      title: resolveRunName(jobName, jobs.map((j) => j.title)),
+      title,
       snapshot: isConvert
-        ? { cmd: 'convertraw' as const, convert }
+        ? { cmd: 'convertraw' as const, convert: c }
         : isDownload
           ? { cmd: 'downloadspeclib' as const, download }
           : isSearch
-            ? { cmd: 'searchdia' as const, search }
+            ? { cmd: 'searchdia' as const, search: s }
             : { cmd: 'buildspeclib' as const, build },
       target:
         (isConvert
-          ? convert.outputDir || convert.input
+          ? c.outputDir || c.input
           : isDownload
             ? download.dest
             : isSearch
-              ? search.results
-              : libraryTargetPath(build.libPath)) || '—',
+              ? s.results
+              : libraryTargetPath(build.libPath)) || '\u2014',
       threads: Math.max(1, threads),
       status: 'queued',
       logLines: [],
       failMsg: '',
-      paramsJson: jsonText,
+      paramsJson: json,
       invocation: isConvert
-        ? { kind: 'args' as const, args: buildConvertArgs(convert) }
+        ? convertSteps
+          ? { kind: 'steps' as const, steps: convertSteps }
+          : { kind: 'args' as const, args: buildConvertArgs(c) }
         : isDownload
           ? { kind: 'args' as const, args: buildDownloadArgs(download) }
-          : { kind: 'paramsFile' as const, json: jsonText },
-      viewerPaths: isSearch
-        ? { results: search.results, msData: search.msData, library: search.library }
-        : null,
+          : { kind: 'paramsFile' as const, json },
+      viewerPaths: isSearch ? { results: s.results, msData: s.msData, library: s.library } : null,
       paramsPath: '',
     }
-    setJobs((prev) => [...prev, job])
-    // If this run came from tweaking a past one, follow the new job rather than
-    // staying pointed at the old one. The stashed draft is deliberately kept, so
-    // a workflow tab still gives back the work in progress.
-    setInspectingJobId((current) => (current ? id : null))
-    setViewJobId(id)
-    setDrawerOpen(true)
-    setRunError('')
+  }
+
+  const enqueue = async () => {
+    const taken = new Set(jobs.map((j) => j.title))
+    const added: Job[] = []
+    let failure = ''
+
+    if (isSearch && search.msDataMode === 'files') {
+      // One run per file. Pioneer has no way to be handed a list -- it takes a
+      // directory and searches everything in it -- so each run gets a directory
+      // of its own holding a single link to its file, plus a results folder
+      // named after that file. Together those are what "search these
+      // separately" means: no shared FDR, no match-between-runs across files
+      // that are meant to be compared, and one output tree per file.
+      const base = resolveRunName(jobName, taken)
+      for (const file of search.msDataFiles) {
+        const stem = fileStem(file)
+        const { id, runNo } = await allocate()
+        let msData: string
+        try {
+          msData = await backend.stageFiles(id, 'ms_data', [file])
+        } catch (e) {
+          // Stop rather than queue a run pointed at nothing. Whatever was
+          // already built stays queued -- those files are fine, and dropping
+          // them too would turn one bad path into a wasted batch.
+          failure = `Could not prepare ${stem}: ${String(e)}`
+          break
+        }
+        const title = resolveRunName(`${base}-${stem}`, taken)
+        taken.add(title)
+        added.push(
+          makeJob(id, runNo, title, {
+            ...search,
+            msData,
+            results: joinPath(search.results, stem),
+          }),
+        )
+      }
+    } else if (isConvert && convert.inputMode === 'files') {
+      // One run per format present, never per file: both converters batch
+      // internally, so starting each once beats starting it N times. Each group
+      // becomes an ordinary folder-mode conversion whose folder is the staging
+      // directory built for it.
+      const groups = convertGroups(convert.inputFiles)
+      const base = resolveRunName(jobName, taken)
+      for (const group of groups) {
+        const { id, runNo } = await allocate()
+        // Suffixed only when there are two, so a list of one format keeps the
+        // plain name rather than gaining a label that distinguishes nothing.
+        const title =
+          groups.length > 1 ? resolveRunName(`${base}-${group.format}`, taken) : base
+        taken.add(title)
+
+        if (group.format === 'raw') {
+          // One invocation per file on its real path -- PioneerConverter's
+          // Thermo reader cannot open a linked .raw (see convertGroups) -- but
+          // one job, because one list is one thing the user asked for. `input`
+          // on the snapshot is the first file, so recalling the run and the
+          // "point SearchDIA at the output" step both still have a path.
+          added.push(
+            makeJob(
+              id,
+              runNo,
+              title,
+              undefined,
+              { ...convert, format: 'raw', inputMode: 'folder', input: group.files[0] },
+              rawStepArgs(convert, group),
+            ),
+          )
+          continue
+        }
+
+        let dir: string
+        try {
+          dir = await backend.stageFiles(id, `${group.format}_in`, group.files)
+        } catch (e) {
+          failure = String(e)
+          break
+        }
+        added.push(makeJob(id, runNo, title, undefined, groupParams(convert, group, dir)))
+      }
+    } else {
+      const { id, runNo } = await allocate()
+      added.push(makeJob(id, runNo, resolveRunName(jobName, taken)))
+    }
+
+    if (added.length > 0) {
+      setJobs((prev) => [...prev, ...added])
+      // If this run came from tweaking a past one, follow the new job rather
+      // than staying pointed at the old one. The stashed draft is deliberately
+      // kept, so a workflow tab still gives back the work in progress.
+      const first = added[0].id
+      setInspectingJobId((current) => (current ? first : null))
+      setViewJobId(first)
+      setDrawerOpen(true)
+    }
+    setRunError(failure)
   }
 
   const run = (skipOverwriteCheck = false) => {
@@ -1258,8 +1592,10 @@ export default function App() {
       setRunError(pioneerError)
       return
     }
-    // Not on ConvertRAW: the picker is hidden there and the value is unused,
-    // so blocking on it would be an error about an invisible control.
+    // Not on ConvertRAW: the picker is hidden there, so blocking on it would be
+    // an error about an invisible control. The value is still passed through --
+    // convertMzML spawns on Julia threads -- but it is never zero, because it is
+    // seeded from the core count and only this hidden control could clear it.
     if (!isConvert && threads < 1) {
       setRunError(`Enter a thread count between 1 and ${maxThreads}.`)
       const el = document.querySelector('[data-key="threads"]')
@@ -1523,9 +1859,12 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            // ConvertRAW is a .NET program: it never reads JULIA_NUM_THREADS,
-            // and its own thread count lives in the form. A picker here would
-            // be a control that changes nothing.
+            // Neither converter wants a picker here. PioneerConverter is .NET
+            // and never reads JULIA_NUM_THREADS at all; convertMzML is Julia and
+            // does, but its own knob is files-at-a-time and a second control
+            // would just be the multiplying-knobs trap the RAW path already
+            // avoids. The backend sets JULIA_NUM_THREADS from this value
+            // regardless, so the mzML converter still gets threads to spawn on.
             showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}
@@ -1601,6 +1940,8 @@ export default function App() {
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowseInput={browseConvertInput}
+                onAddFiles={addConvertFiles}
+                onRemoveFile={removeConvertFile}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
               />
@@ -1628,6 +1969,8 @@ export default function App() {
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
+                onAddMsFiles={addMsFiles}
+                onRemoveMsFile={removeMsFile}
                 onJobName={setJobName}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
@@ -1765,11 +2108,11 @@ export default function App() {
         {overwriteOpen && (
           <ConfirmDialog
             tone="warning"
-            title={isSearch ? 'Results folder already exists' : 'A library already exists here'}
+            title={OVERWRITE_COPY[command].title}
             body={overwriteNote.msg}
-            detail={isSearch ? search.results : libraryTargetPath(build.libPath)}
+            detail={overwriteDetail}
             dismissLabel="Cancel"
-            confirmLabel={isSearch ? 'Overwrite & run' : 'Overwrite & build'}
+            confirmLabel={OVERWRITE_COPY[command].confirm}
             onDismiss={() => setOverwriteOpen(false)}
             onConfirm={() => {
               setOverwriteOpen(false)

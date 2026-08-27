@@ -148,6 +148,13 @@ async fn list_spec_libs(app: AppHandle, repo: Option<String>) -> Result<String, 
     .map_err(|e| format!("listing task failed: {e}"))?
 }
 
+/// Build the input directory for one run over a chosen set of files.
+/// See `paths::stage_files` for why a chosen set needs one.
+#[tauri::command]
+fn stage_files(job_id: String, subdir: String, files: Vec<String>) -> Result<String, String> {
+    paths::stage_files(&job_id, &subdir, &files)
+}
+
 #[tauri::command]
 fn read_config(path: String) -> Result<String, String> {
     paths::read_config(&path)
@@ -257,6 +264,7 @@ pub fn run() {
             uninstall_info,
             uninstall_this_version,
             inspect_path,
+            stage_files,
             read_config,
             library_info,
             list_spec_libs,

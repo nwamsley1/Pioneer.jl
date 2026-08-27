@@ -124,6 +124,13 @@ pub enum Invocation {
     ParamsFile { json: String },
     /// Pass these arguments through verbatim.
     Args { args: Vec<String> },
+    /// Run the same program once per argument set, in order, as one job.
+    ///
+    /// For PioneerConverter over a chosen list of `.raw` files: its Thermo
+    /// reader takes one path and cannot read a linked file, so the list can
+    /// only be one invocation each — but that is one thing the user asked for
+    /// and should be one row in the queue, one log, and one outcome.
+    Steps { steps: Vec<Vec<String>> },
 }
 
 /// Everything needed to start one run.
@@ -147,6 +154,7 @@ fn params_path(job_id: &str, command: pioneer::Command) -> PathBuf {
         // Argv-driven, so it never writes one; named for completeness.
         pioneer::Command::DownloadSpecLib => "download.json",
         pioneer::Command::ConvertRaw => "convert.json",
+        pioneer::Command::ConvertMzml => "convertmzml.json",
     };
     dir.join(name)
 }
@@ -161,20 +169,21 @@ pub struct Started {
 }
 
 /// Spawn the job and stream its output as events.
+///
+/// A job is usually one child process, but not always: `Invocation::Steps` runs
+/// several in order under a single job id, streaming into one log and reporting
+/// one outcome. That exists because PioneerConverter's Thermo reader cannot be
+/// handed a list and cannot read a linked file, so converting a chosen set of
+/// `.raw` means one invocation per file — while the queue should still show the
+/// one thing the user asked for.
 pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, String> {
     let resolved = pioneer::resolve_command(&spec.home, spec.command)?;
-
-    let mut cmd = Command::new(&resolved.program);
-    hide_console(&mut cmd);
-    for arg in &resolved.leading_args {
-        cmd.arg(arg);
-    }
 
     // `params_path` doubles as the record of what was run: for a params-file
     // command it is the JSON; for an argv command there is no file, so the
     // reported path is empty and the log carries the command line instead.
     let mut params_display = String::new();
-    match &spec.invocation {
+    let steps: Vec<Vec<String>> = match &spec.invocation {
         Invocation::ParamsFile { json } => {
             let params = params_path(&spec.job_id, spec.command);
             if let Some(parent) = params.parent() {
@@ -183,22 +192,20 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
             }
             std::fs::write(&params, json)
                 .map_err(|e| format!("could not write {}: {e}", params.display()))?;
-            cmd.arg(&params);
             params_display = params.display().to_string();
+            vec![vec![params.display().to_string()]]
         }
-        Invocation::Args { args } => {
-            for a in args {
-                cmd.arg(a);
-            }
-        }
+        Invocation::Args { args } => vec![args.clone()],
+        Invocation::Steps { steps } => steps.clone(),
+    };
+    if steps.is_empty() {
+        return Err("nothing to run".to_string());
     }
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
 
     // Bypassing the `pioneer` wrapper means we own these. Without
     // JULIA_NUM_THREADS a direct bin/SearchDIA call defaults to a single thread.
     let mut env_summary = String::new();
+    let mut envs: Vec<(String, String)> = Vec::new();
     if spec.command.is_julia() && !resolved.via_wrapper {
         // `JULIA_NUM_GC_THREADS` is the variable Julia actually reads — it is
         // the env form of `--gcthreads=N,M` (N marking, M concurrent sweeper).
@@ -207,14 +214,142 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
         // Matches the `pioneer` wrapper's own formula, `(threads + 1) / 2`,
         // i.e. ceil rather than floor — so the GUI and the shell script agree.
         let gc = format!("{},1", ((spec.threads + 1) / 2).max(1));
-        cmd.env("JULIA_NUM_THREADS", spec.threads.to_string());
-        cmd.env("JULIA_NUM_GC_THREADS", &gc);
+        envs.push(("JULIA_NUM_THREADS".into(), spec.threads.to_string()));
+        envs.push(("JULIA_NUM_GC_THREADS".into(), gc.clone()));
         env_summary = format!(
             "JULIA_NUM_THREADS={} JULIA_NUM_GC_THREADS={}",
             spec.threads, gc
         );
     }
 
+    // The first step is spawned here rather than in the driver thread so that a
+    // distribution that cannot be executed at all still fails out of `start`,
+    // where the frontend surfaces it as an error on the Run button.
+    let multi = steps.len() > 1;
+    if multi {
+        announce(&app, &spec.job_id, &resolved, &steps[0], 1, steps.len());
+    }
+    let first = spawn_step(&resolved, &steps[0], &envs)?;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    jobs.insert(
+        spec.job_id.clone(),
+        JobHandle { pid: first.id(), cancelled: Arc::clone(&cancelled) },
+    );
+
+    // Driver thread: owns each Child in turn, and reports one terminal state for
+    // the whole sequence.
+    let job_id = spec.job_id.clone();
+    let jobs_for_wait = Arc::clone(&jobs);
+    std::thread::spawn(move || {
+        let mut child = first;
+        let mut index = 0usize;
+        let event = loop {
+            // Drain both pipes to completion before the next step starts, so a
+            // step's output cannot interleave with the tail of the one before.
+            let out = child.stdout.take().map(|r| pump(app.clone(), job_id.clone(), r, "stdout"));
+            let err = child.stderr.take().map(|r| pump(app.clone(), job_id.clone(), r, "stderr"));
+            let status = child.wait();
+            if let Some(h) = out {
+                let _ = h.join();
+            }
+            if let Some(h) = err {
+                let _ = h.join();
+            }
+            let was_cancelled = cancelled.load(Ordering::SeqCst);
+
+            let st = match status {
+                Ok(st) => st,
+                Err(e) => {
+                    break ExitEvent {
+                        job_id: job_id.clone(),
+                        code: None,
+                        success: false,
+                        cancelled: was_cancelled,
+                        message: format!("Could not wait for Pioneer: {e}"),
+                    }
+                }
+            };
+
+            index += 1;
+            let last = index >= steps.len();
+            // A failed step ends the job: the steps of a sequence are the same
+            // command over different files, and continuing after one has failed
+            // would bury the failure under whatever came next.
+            if was_cancelled || !st.success() || last {
+                let success = st.success() && !was_cancelled;
+                let code = st.code();
+                let message = if was_cancelled {
+                    "Cancelled by user.".to_string()
+                } else if success {
+                    String::new()
+                } else {
+                    let where_ = if multi {
+                        format!(" on step {index} of {}", steps.len())
+                    } else {
+                        String::new()
+                    };
+                    match code {
+                        Some(c) => format!("Pioneer exited with code {c}{where_}."),
+                        None => format!("Pioneer was terminated by a signal{where_}."),
+                    }
+                };
+                break ExitEvent {
+                    job_id: job_id.clone(),
+                    code,
+                    success,
+                    cancelled: was_cancelled,
+                    message,
+                };
+            }
+
+            announce(&app, &job_id, &resolved, &steps[index], index + 1, steps.len());
+            match spawn_step(&resolved, &steps[index], &envs) {
+                Ok(next) => {
+                    // Replaces the previous entry, so a cancel now kills the
+                    // step that is actually running.
+                    jobs_for_wait.insert(
+                        job_id.clone(),
+                        JobHandle { pid: next.id(), cancelled: Arc::clone(&cancelled) },
+                    );
+                    child = next;
+                }
+                Err(e) => {
+                    break ExitEvent {
+                        job_id: job_id.clone(),
+                        code: None,
+                        success: false,
+                        cancelled: false,
+                        message: e,
+                    }
+                }
+            }
+        };
+        jobs_for_wait.remove(&job_id);
+        let _ = app.emit("job-exit", event);
+    });
+
+    Ok(Started { params_path: params_display, env_summary })
+}
+
+/// Build and spawn one step of a job.
+fn spawn_step(
+    resolved: &pioneer::Resolved,
+    args: &[String],
+    envs: &[(String, String)],
+) -> Result<Child, String> {
+    let mut cmd = Command::new(&resolved.program);
+    hide_console(&mut cmd);
+    for arg in &resolved.leading_args {
+        cmd.arg(arg);
+    }
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
     // Put the child in its own process group so cancel can take down Julia's
     // worker processes too, not just the parent.
     #[cfg(unix)]
@@ -222,64 +357,41 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    cmd.spawn()
+        .map_err(|e| format!("could not start {}: {e}", resolved.program.display()))
+}
 
-    let mut child: Child = cmd
-        .spawn()
-        .map_err(|e| format!("could not start {}: {e}", resolved.program.display()))?;
-
-    let pid = child.id();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    jobs.insert(
-        spec.job_id.clone(),
-        JobHandle { pid, cancelled: Arc::clone(&cancelled) },
+/// Write a header into the log naming the step about to run.
+///
+/// Only for multi-step jobs, where the log would otherwise be several files'
+/// output run together with nothing saying where one ends and the next begins.
+fn announce(
+    app: &AppHandle,
+    job_id: &str,
+    resolved: &pioneer::Resolved,
+    args: &[String],
+    n: usize,
+    total: usize,
+) {
+    let program = resolved
+        .program
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| resolved.program.display().to_string());
+    let quoted: Vec<String> = args
+        .iter()
+        .map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() })
+        .collect();
+    let _ = app.emit(
+        "job-line",
+        LineEvent {
+            job_id: job_id.to_string(),
+            line: format!("[{n}/{total}] {program} {}", quoted.join(" ")),
+            stream: "stdout",
+            transient: false,
+            overwrite: 0,
+        },
     );
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    if let Some(out) = stdout {
-        pump(app.clone(), spec.job_id.clone(), out, "stdout");
-    }
-    if let Some(err) = stderr {
-        pump(app.clone(), spec.job_id.clone(), err, "stderr");
-    }
-
-    // Waiter thread: owns the Child, reports the terminal state.
-    let job_id = spec.job_id.clone();
-    let jobs_for_wait = Arc::clone(&jobs);
-    std::thread::spawn(move || {
-        let status = child.wait();
-        jobs_for_wait.remove(&job_id);
-        let was_cancelled = cancelled.load(Ordering::SeqCst);
-
-        let event = match status {
-            Ok(st) => {
-                let code = st.code();
-                let success = st.success() && !was_cancelled;
-                let message = if was_cancelled {
-                    "Cancelled by user.".to_string()
-                } else if success {
-                    String::new()
-                } else {
-                    match code {
-                        Some(c) => format!("Pioneer exited with code {c}."),
-                        None => "Pioneer was terminated by a signal.".to_string(),
-                    }
-                };
-                ExitEvent { job_id: job_id.clone(), code, success, cancelled: was_cancelled, message }
-            }
-            Err(e) => ExitEvent {
-                job_id: job_id.clone(),
-                code: None,
-                success: false,
-                cancelled: was_cancelled,
-                message: format!("Could not wait for Pioneer: {e}"),
-            },
-        };
-        let _ = app.emit("job-exit", event);
-    });
-
-    Ok(Started { params_path: params_display, env_summary })
 }
 
 /// Forward one pipe to the frontend, honouring terminal carriage-return
@@ -296,7 +408,7 @@ fn pump<R: std::io::Read + Send + 'static>(
     job_id: String,
     reader: R,
     stream: &'static str,
-) {
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = BufReader::new(reader);
         let mut splitter = LineSplitter::default();
@@ -333,7 +445,7 @@ fn pump<R: std::io::Read + Send + 'static>(
                 },
             );
         }
-    });
+    })
 }
 
 /// One line ready to show, with the terminal control that applied to it.

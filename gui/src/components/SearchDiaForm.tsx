@@ -14,11 +14,12 @@ import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
-import { unimodDisplay } from '../lib/fasta'
-import { BROWSE, HINT, LABEL, LABEL_TIGHT } from '../lib/styles'
+import { parseModEntry, unimodDisplay } from '../lib/fasta'
+import { BROWSE, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
-import { isPrositModel } from '../lib/types'
+import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
+import { fileStem } from '../lib/validate'
 import type { Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -76,7 +77,7 @@ function PathRow({
     // data field" can plausibly land on the label, the Browse button or the
     // padding between them.
     <div data-drop={fieldKey}>
-      <label style={LABEL}>{label}</label>
+      {label ? <label style={LABEL}>{label}</label> : null}
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           className="pio-input"
@@ -104,6 +105,107 @@ function PathRow({
         </div>
       )}
       {children}
+    </div>
+  )
+}
+
+/** The chosen-files list.
+ *
+ *  Each row is one search: the file on the left, the results folder it will
+ *  write to on the right. Showing the destination per row rather than once
+ *  above the list is the point of the mode -- what makes these separate runs is
+ *  that they do not share an output tree, and a list that only showed file
+ *  names would look like the folder mode with extra steps.
+ */
+function MsFileList({
+  params,
+  onAdd,
+  onRemove,
+}: {
+  params: SearchParams
+  onAdd: () => void
+  onRemove: (index: number) => void
+}) {
+  const files = params.msDataFiles
+  const root = params.results.trim()
+  return (
+    <div>
+      {files.length > 0 && (
+        <div
+          style={{
+            border: '1px solid #E3E8EC',
+            borderRadius: 9,
+            overflow: 'hidden',
+            marginBottom: 9,
+          }}
+        >
+          {files.map((f, i) => (
+            <div
+              key={`${f}:${i}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderTop: i ? '1px solid #EEF1F4' : undefined,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  title={f}
+                  style={{
+                    font: "12.5px 'IBM Plex Mono'",
+                    color: '#1A2230',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    direction: 'rtl',
+                    textAlign: 'left',
+                  }}
+                >
+                  {f}
+                </div>
+                <div style={{ ...HINT, marginTop: 2 }}>
+                  {root ? `\u2192 ${root}/${fileStem(f)}` : '\u2192 set a results folder below'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                title="Remove from the list"
+                style={{
+                  flex: 'none',
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  padding: 4,
+                  lineHeight: 0,
+                  color: '#98A2B3',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M6 6l12 12M18 6L6 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button type="button" className="pio-browse" onClick={onAdd} style={BROWSE}>
+          {files.length ? 'Add more files' : 'Choose files'}
+        </button>
+        <span style={HINT}>
+          {files.length
+            ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
+            : 'Each file is searched on its own, into its own results folder.'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -175,6 +277,10 @@ interface Props {
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowse: (key: 'msData' | 'library' | 'results') => void
+  /** Add files to the list, via the multi-select picker. */
+  onAddMsFiles: () => void
+  /** Drop one file from the list, by index. */
+  onRemoveMsFile: (index: number) => void
   onJobName: (value: string) => void
   onOpenLoad: () => void
   onGoToBuild: () => void
@@ -190,10 +296,18 @@ export function SearchDiaForm({
   onParam,
   onToggle,
   onBrowse,
+  onAddMsFiles,
+  onRemoveMsFile,
   onJobName,
   onOpenLoad,
   onGoToBuild,
 }: Props) {
+  const byFiles = params.msDataMode === 'files'
+  // Only the modifications the caveat is about -- oxidation on M is standard
+  // and is excluded, so an ordinary Prosit library raises nothing.
+  const caveatMods = (libInfo?.variable_mods ?? []).filter(
+    (e) => unlocalizedMods([parseModEntry(e)]).length > 0,
+  )
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
@@ -210,15 +324,28 @@ export function SearchDiaForm({
           <LoadPreviousButton onClick={onOpenLoad} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <PathRow
-            label="MS data folder"
-            fieldKey="msData"
-            value={params.msData}
-            placeholder="/path/to/ms/data"
-            note={notes.msData}
-            onChange={onParam}
-            onBrowse={() => onBrowse('msData')}
-          />
+          <div data-key="msData">
+            <label style={LABEL}>MS data</label>
+            <div style={{ ...SEG_TRACK, marginBottom: 10 }}>
+              <button type="button" onClick={() => onParam('msDataMode', 'folder')} style={seg(!byFiles)}>
+                One folder
+              </button>
+              <button type="button" onClick={() => onParam('msDataMode', 'files')} style={seg(byFiles)}>
+                Chosen files
+              </button>
+            </div>
+            {byFiles ? <MsFileList params={params} onAdd={onAddMsFiles} onRemove={onRemoveMsFile} /> : (
+              <PathRow
+                label=""
+                fieldKey="msData"
+                value={params.msData}
+                placeholder="/path/to/ms/data"
+                note={notes.msData}
+                onChange={onParam}
+                onBrowse={() => onBrowse('msData')}
+              />
+            )}
+          </div>
           <PathRow
             label="Spectral library"
             fieldKey="library"
@@ -260,7 +387,7 @@ export function SearchDiaForm({
             {libInfo &&
               libInfo.is_library &&
               isPrositModel(libInfo.prediction_model) &&
-              libInfo.variable_mods.length > 0 && (
+              caveatMods.length > 0 && (
                 <div
                   style={{
                     marginTop: 10,
@@ -275,7 +402,7 @@ export function SearchDiaForm({
                 >
                   <strong style={{ fontWeight: 600 }}>Experimental.</strong> This library
                   is Prosit-predicted and carries variable modifications
-                  ({libInfo.variable_mods.map(unimodDisplay).join(', ')}). Pioneer does not report
+                  ({caveatMods.map(unimodDisplay).join(', ')}). Pioneer does not report
                   site-localization confidence, so a modified residue is placed but the
                   placement is not scored.
                 </div>

@@ -66,13 +66,28 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
   batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
   scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
+  // convertMzML's own default is 2.
+  concurrentFiles: {
+    label: 'Files at a time',
+    min: 1,
+    max: null,
+    step: 1,
+    int: true,
+    info: 'How many .mzML files are converted at the same time. Each one is read and written whole, so this is bounded by disk and memory rather than by cores — the default of 2 is a deliberately conservative starting point.',
+  },
 }
 
+/** The numeric fields PioneerConverter reads. */
 export const CONVERT_NUM_KEYS = [
   'threadsPerFile',
   'batchSize',
   'scanChunkSize',
 ] as const
+
+/** The numeric fields convertMzML reads. Deliberately disjoint from
+ *  CONVERT_NUM_KEYS: the two converters share no tuning parameter, and
+ *  validating a field the running binary ignores would block a valid run. */
+export const MZML_NUM_KEYS = ['concurrentFiles'] as const
 
 export const DIGEST_KEYS = [
   'minLen',
@@ -255,6 +270,27 @@ export function downloadTargetPath(dest: string, library: string): string {
   return d.endsWith('/') ? `${d}${l}` : `${d}/${l}`
 }
 
+/** The file name without its directory or extension: what a per-file search
+ *  names its run and its results folder after.
+ *
+ *  Splits on both separators rather than the platform's own, because a path can
+ *  reach the console from a drag-and-drop or a stored run rather than from this
+ *  machine's picker. */
+export function fileStem(path: string): string {
+  const name = path.trim().split(/[\\/]/).pop() ?? ''
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
+/** Join a directory and one child name, tolerating a trailing separator on the
+ *  directory. Same shape as downloadTargetPath, kept separate because that one
+ *  is about a specific pair of fields and this one is not. */
+export function joinPath(dir: string, child: string): string {
+  const d = dir.trim()
+  if (!d) return child
+  return /[\\/]$/.test(d) ? `${d}${child}` : `${d}/${child}`
+}
+
 export function libPathNote(value: string, targetInfo: PathInfo): Note {
   if (!value.trim()) return NONE
   if (!/[\\/]/.test(value)) return { level: 'error', msg: 'Enter a full path.' }
@@ -281,12 +317,32 @@ export interface RunBlock {
  *   job will produce, or null when no such job is waiting.
  */
 export function validateSearchRun(
-  values: { msData: string; library: string; results: string; qValue: string; nIsotopes: string; nce: string; minPeptides: string },
+  values: {
+    msDataMode?: 'folder' | 'files'
+    msDataFiles?: string[]
+    msData: string
+    library: string
+    results: string
+    qValue: string
+    nIsotopes: string
+    nce: string
+    minPeptides: string
+  },
   notes: { msData: Note; library: Note; results: Note },
   pendingLibrary: string | null = null,
 ): RunBlock | null {
-  if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }
-  if (notes.msData.level === 'error') return { key: 'msData', msg: notes.msData.msg }
+  // In file-list mode the folder field is unused and its note is meaningless:
+  // what has to be there is at least one file. Everything below is shared --
+  // each fanned-out run gets the same library, the same thresholds, and a
+  // results folder under the same root.
+  if (values.msDataMode === 'files') {
+    if (!(values.msDataFiles ?? []).length) {
+      return { key: 'msData', msg: 'Add at least one file to search.' }
+    }
+  } else {
+    if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }
+    if (notes.msData.level === 'error') return { key: 'msData', msg: notes.msData.msg }
+  }
 
   // A library that is still being predicted is not a missing library. With a
   // build or download ahead of it in the queue, the search that consumes its
@@ -461,32 +517,87 @@ export function modSiteConflict(fixed: ModEntry[], variable: ModEntry[]): string
 // ConvertRAW
 // ---------------------------------------------------------------------------
 
-/** PioneerConverter takes one path: a .raw file, or a directory of them. */
+/** What the Input field is saying about itself.
+ *
+ *  Folder mode: the format picker, not the path, decides which converter runs,
+ *  so a `.raw` folder handed to the mzML converter is caught here rather than
+ *  by the binary, whose failure would arrive seconds later as a stack trace.
+ *
+ *  File-list mode: the format is read off each name instead, so what has to be
+ *  checked is that every file is one a converter can actually read.
+ */
 export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
-  if (!p.input.trim()) return NONE
-  if (info.error) return { level: 'error', msg: info.error }
-  if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
-
-  if (p.inputMode === 'file') {
-    if (info.is_dir) return { level: 'error', msg: 'That is a folder — switch to Folder mode.' }
-    if (info.extension !== 'raw') {
-      return { level: 'error', msg: 'Expected a Thermo .raw file.' }
+  if (p.inputMode === 'files') {
+    const files = p.inputFiles
+    if (files.length === 0) return NONE
+    const bad = files.filter((f) => !/\.(raw|mzml)$/i.test(f.trim()))
+    if (bad.length) {
+      // Named, not counted: with a list on screen, "2 files are not supported"
+      // still leaves you hunting for which.
+      const names = bad.slice(0, 3).map((f) => f.trim().split(/[\\/]/).pop())
+      return {
+        level: 'error',
+        msg: `Not a .raw or .mzML file: ${names.join(', ')}${bad.length > 3 ? `, and ${bad.length - 3} more` : ''}.`,
+      }
+    }
+    // Two files of the same name cannot share the one folder each converter is
+    // handed, so they are refused here rather than by paths::stage_files once
+    // the run has already been queued.
+    const seen = new Set<string>()
+    for (const f of files) {
+      const name = (f.trim().split(/[\\/]/).pop() ?? '').toLowerCase()
+      if (seen.has(name)) {
+        return {
+          level: 'error',
+          msg: `Two of these files are named ${name}. Rename one, or convert them separately.`,
+        }
+      }
+      seen.add(name)
     }
     return NONE
   }
 
-  if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Single file mode.' }
-  if (info.raw_count === 0) return { level: 'error', msg: 'No .raw files in this folder.' }
+  if (!p.input.trim()) return NONE
+  if (info.error) return { level: 'error', msg: info.error }
+  if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
+
+  const mzml = p.format === 'mzml'
+  const label = mzml ? '.mzML' : '.raw'
+  const count = mzml ? info.mzml_count : info.raw_count
+  const other = mzml ? info.raw_count : info.mzml_count
+  const otherLabel = mzml ? '.raw' : '.mzML'
+
+  if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Files mode.' }
+  if (count === 0) {
+    return {
+      level: 'error',
+      msg: other
+        ? `No ${label} files in this folder, but ${other} ${otherLabel} file${other > 1 ? 's' : ''} — switch the format to ${otherLabel}.`
+        : `No ${label} files in this folder.`,
+    }
+  }
   return {
     level: '',
-    msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} to convert.`,
+    msg: `${count} ${label} file${count > 1 ? 's' : ''} to convert.`,
   }
 }
 
-export function convertOutputNote(value: string, info: PathInfo): Note {
-  if (!value.trim()) return NONE // converter defaults to <input_dir>/arrow_out
+/** Takes the whole `convert` object rather than just the path, because whether
+ *  existing output is at risk depends on "Skip existing" as much as on what is
+ *  in the folder. */
+export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
+  if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
   if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
   if (info.exists && info.arrow_count > 0) {
+    // Nothing to warn about once the files are being left alone: the warning
+    // existed only to offer this setting, and telling someone to enable what
+    // they have already enabled reads as the app not knowing its own state.
+    if (p.skipExisting) {
+      return {
+        level: '',
+        msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''}. They will be left alone.`,
+      }
+    }
     return {
       level: 'warn',
       msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''} — they may be overwritten. Enable "Skip existing" to keep them.`,
@@ -521,10 +632,36 @@ export function validateConvertRun(
   inputNote: Note,
   outputNote: Note,
 ): RunBlock | null {
-  if (!p.input.trim()) return { key: 'convertInput', msg: 'Choose the file or folder to convert.' }
+  if (p.inputMode === 'files') {
+    if (p.inputFiles.length === 0) {
+      return { key: 'convertInput', msg: 'Add at least one file to convert.' }
+    }
+    // Each converter is handed a staging folder under the system temp
+    // directory, so its own <input_dir>/arrow_out default would write there --
+    // somewhere nobody would think to look. Required rather than guessed at:
+    // the files can come from several folders and none of them is the obvious
+    // answer.
+    if (!p.outputDir.trim()) {
+      return { key: 'convertOutput', msg: 'Choose an output folder for the converted files.' }
+    }
+  } else if (!p.input.trim()) {
+    return { key: 'convertInput', msg: 'Choose the folder to convert.' }
+  }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
   if (outputNote.level === 'error') return { key: 'convertOutput', msg: outputNote.msg }
-  for (const key of CONVERT_NUM_KEYS) {
+  // Only the fields the converters that will actually run read. A list can hold
+  // both formats, so it is checked against both; a stale batch size left over
+  // from a RAW run must not block an mzML-only conversion that ignores it.
+  const keys =
+    p.inputMode === 'files'
+      ? [
+          ...(p.inputFiles.some((f) => /\.raw$/i.test(f.trim())) ? CONVERT_NUM_KEYS : []),
+          ...(p.inputFiles.some((f) => /\.mzml$/i.test(f.trim())) ? MZML_NUM_KEYS : []),
+        ]
+      : p.format === 'mzml'
+        ? MZML_NUM_KEYS
+        : CONVERT_NUM_KEYS
+  for (const key of keys) {
     const err = numError(key, p[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
   }
