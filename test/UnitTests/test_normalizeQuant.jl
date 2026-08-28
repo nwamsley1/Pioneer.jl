@@ -136,7 +136,7 @@ function _write_mbr_anchor_pair(
     irt_obs = Float32.(LinRange(0.0, 100.0, n_observed + n_recovered))
     recovered = BitVector(vcat(falses(n_observed), trues(n_recovered)))
     run1_log2 = vcat(fill(8.0f0, n_observed), fill(14.0f0, n_recovered))
-    run2_log2 = vcat(fill(10.0f0, n_observed), fill(4.0f0, n_recovered))
+    run2_log2 = vcat(fill(10.0f0, n_observed), fill(16.0f0, n_recovered))
     paths = String[]
     for (run, log2_quant) in enumerate((run1_log2, run2_log2))
         path = joinpath(dir, "mbr_run$(run).arrow")
@@ -153,7 +153,8 @@ function _write_mbr_anchor_pair(
         UInt32(1) => copy(precursor_idx),
         UInt32(2) => copy(precursor_idx),
     )
-    return paths, Pioneer.build_run_similarity(observed_ids_by_run), n_observed
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run),
+           n_observed, n_recovered
 end
 
 @testset "normalizeQuant" begin
@@ -261,10 +262,12 @@ end
     end
 end
 
-@testset "MBR-recovered rows are excluded from pairwise anchors" begin
+@testset "MBR-recovered rows are included in pairwise anchors" begin
     mktempdir() do dir
-        paths, atlas, n_observed = _write_mbr_anchor_pair(dir)
+        paths, atlas, n_observed, n_recovered = _write_mbr_anchor_pair(dir)
         run_ids = UInt32[1, 2]
+
+        # The legacy experiment-wide fallback still excludes recovered rows.
         consensus = Pioneer.getPrecursorQuantConsensus(paths, :abundance)
         @test length(consensus) == n_observed
 
@@ -278,7 +281,7 @@ end
         )
 
         @test length(tree) == 1
-        @test only(tree).nanchors == n_observed
+        @test only(tree).nanchors == n_observed + n_recovered
         @test only(tree).spline(50.0) ≈ -2.0 atol=0.05
 
         Pioneer.normalizeQuant(
@@ -291,11 +294,12 @@ end
         )
         run1 = DataFrame(Arrow.Table(paths[1]))
         run2 = DataFrame(Arrow.Table(paths[2]))
-        observed_difference = median(
-            log2.(run1.abundance_normalized[1:n_observed]) .-
-            log2.(run2.abundance_normalized[1:n_observed])
+        recovered_rows = (n_observed + 1):(n_observed + n_recovered)
+        recovered_difference = median(
+            log2.(run1.abundance_normalized[recovered_rows]) .-
+            log2.(run2.abundance_normalized[recovered_rows])
         )
-        @test abs(observed_difference) < 0.05
+        @test abs(recovered_difference) < 0.05
     end
 end
 
