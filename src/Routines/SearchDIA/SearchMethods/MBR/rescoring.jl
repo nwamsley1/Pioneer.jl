@@ -98,7 +98,30 @@ function load_postintegration_mbr_candidates(
         end
         push!(parts, frame)
     end
-    candidates = isempty(parts) ? DataFrame() : vcat(parts...; cols = :union)
+    # Typed and empty rather than bare. With no surviving candidate anywhere,
+    # _write_mbr_recovery_sidecars_from_candidates! still runs -- it must, since
+    # it writes one recovery sidecar per file and pipeline.jl errors with
+    # "Missing MBR recovery sidecar" if any is absent -- and it reads
+    # :precursor_idx and :scan_idx off this frame. The other nine columns it
+    # needs are supplied by apply_postintegration_mbr_rescoring!, which sizes
+    # them to nrow *before* its own `n == 0` early return. A bare DataFrame()
+    # has no columns at all, so those two reads threw ArgumentError; zero rows
+    # is a state every consumer here already handles.
+    candidates = if isempty(parts)
+        DataFrame(
+            precursor_idx = UInt32[],
+            scan_idx = UInt32[],
+            ms_file_idx = UInt32[],
+            cv_fold = UInt8[],
+            target = Bool[],
+            qval = Float32[],
+            global_qval = Float32[],
+            trace_prob_prepass = Float32[],
+            trace_prob_infold = Float32[],
+        )
+    else
+        vcat(parts...; cols = :union)
+    end
     return (
         candidates = candidates,
         masks = masks,
