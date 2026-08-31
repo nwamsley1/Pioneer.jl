@@ -13,14 +13,18 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
  *  already carries for validation focus, so nothing new is threaded through
  *  the forms. */
 export const DROP_FIELDS: Record<string, 'dir' | 'file' | 'either'> = {
-  // A .poin library is a directory of tables, not a file.
-  msData: 'dir',
+  // Either, because the field is two fields: a folder in "One folder" mode and
+  // a list of files in "Chosen files" mode. It was 'dir', so dropping a batch
+  // of .arrow onto the list -- the one place a batch is what the field wants --
+  // was refused with "this field takes a folder". The handler decides what to
+  // do with what actually landed, and switches mode to match it.
+  msData: 'either',
   library: 'dir',
   results: 'dir',
   libPath: 'dir',
   convertOutput: 'dir',
   calibrationFile: 'file',
-  // ConvertRAW takes a single .raw or a folder of them.
+  // ConvertRAW likewise takes a list of files or a folder of them.
   convertInput: 'either',
   // The FASTA row's add button: dropping onto it appends rows.
   fastaAdd: 'file',

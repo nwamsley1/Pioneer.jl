@@ -56,6 +56,17 @@ export interface SearchParams {
   msDataMode: 'folder' | 'files'
   /** The chosen files, when msDataMode is 'files'. */
   msDataFiles: string[]
+  /** With a chosen file list, whether each file is its own search.
+   *
+   *  True -- the default and the reason the list exists -- gives one run per
+   *  file, each with its own results folder, so method-development files are
+   *  not pooled with the very files they are meant to be compared against.
+   *
+   *  False searches the whole list as one experiment, sharing FDR and
+   *  match-between-runs across it. That is the right choice when the list is a
+   *  subset of one experiment rather than a set of alternatives. Ignored in
+   *  folder mode, where a folder is always one experiment. */
+  msDataBatch: boolean
   msData: string
   library: string
   results: string
@@ -78,6 +89,7 @@ export interface SearchParams {
 export const SEARCH_DEFAULTS: SearchParams = {
   msDataMode: 'folder',
   msDataFiles: [],
+  msDataBatch: true,
   msData: '',
   library: '',
   results: '',
