@@ -230,8 +230,8 @@ function MsFileList({
             </div>
             <div style={{ ...HINT, marginTop: 2 }}>
               {batch
-                ? 'One run per file, each with its own results folder. Nothing is shared between them.'
-                : 'Off: one run over the whole list, sharing FDR and match-between-runs across it.'}
+                ? 'One run per file, each with its own results folder and nothing shared between them.'
+                : 'One run over the whole list, sharing FDR and match-between-runs across it.'}
             </div>
           </div>
           <Toggle on={batch} fieldKey="msDataBatch" onClick={onToggleBatch} />

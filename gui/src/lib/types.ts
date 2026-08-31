@@ -58,14 +58,16 @@ export interface SearchParams {
   msDataFiles: string[]
   /** With a chosen file list, whether each file is its own search.
    *
-   *  True -- the default and the reason the list exists -- gives one run per
-   *  file, each with its own results folder, so method-development files are
-   *  not pooled with the very files they are meant to be compared against.
+   *  False by default, matching folder mode: a list of files is most often a
+   *  subset of one experiment, and searching it as one -- sharing FDR and
+   *  match-between-runs across it -- is what picking files out of a folder
+   *  usually means. Choosing files does not by itself say the files are
+   *  unrelated.
    *
-   *  False searches the whole list as one experiment, sharing FDR and
-   *  match-between-runs across it. That is the right choice when the list is a
-   *  subset of one experiment rather than a set of alternatives. Ignored in
-   *  folder mode, where a folder is always one experiment. */
+   *  True gives one run per file, each with its own results folder, so
+   *  method-development files are not pooled with the very files they are
+   *  meant to be compared against. Ignored in folder mode, where a folder is
+   *  always one experiment. */
   msDataBatch: boolean
   msData: string
   library: string
@@ -89,7 +91,7 @@ export interface SearchParams {
 export const SEARCH_DEFAULTS: SearchParams = {
   msDataMode: 'folder',
   msDataFiles: [],
-  msDataBatch: true,
+  msDataBatch: false,
   msData: '',
   library: '',
   results: '',

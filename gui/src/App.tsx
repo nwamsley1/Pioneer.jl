@@ -472,7 +472,13 @@ export default function App() {
       return job.id
     })
     setCommand(job.cmd)
-    if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
+    // Merged for the same reason as the build and convert snapshots below: runs
+    // stored before the file list existed carry no msDataMode or msDataFiles,
+    // and recalling one and then switching to Chosen files would otherwise map
+    // over an undefined list.
+    if (job.snapshot.cmd === 'searchdia') {
+      setSearch({ ...SEARCH_DEFAULTS, ...job.snapshot.search })
+    }
     else if (job.snapshot.cmd === 'buildspeclib') {
       // Stored runs from before digestion specificity was added do not carry
       // the field. Merge defaults so recalling one still renders and emits a
