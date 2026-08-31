@@ -320,6 +320,7 @@ export function validateSearchRun(
   values: {
     msDataMode?: 'folder' | 'files'
     msDataFiles?: string[]
+    msDataBatch?: boolean
     msData: string
     library: string
     results: string
@@ -336,8 +337,26 @@ export function validateSearchRun(
   // each fanned-out run gets the same library, the same thresholds, and a
   // results folder under the same root.
   if (values.msDataMode === 'files') {
-    if (!(values.msDataFiles ?? []).length) {
+    const files = values.msDataFiles ?? []
+    if (!files.length) {
       return { key: 'msData', msg: 'Add at least one file to search.' }
+    }
+    // Only when they share one directory. Searched separately, each file gets a
+    // staging directory of its own and two files may safely have the same name;
+    // searched together they cannot, so this is checked here rather than left
+    // to paths::stage_files after the run is already queued.
+    if (values.msDataBatch === false) {
+      const seen = new Set<string>()
+      for (const f of files) {
+        const name = (f.trim().split(/[\\/]/).pop() ?? '').toLowerCase()
+        if (seen.has(name)) {
+          return {
+            key: 'msData',
+            msg: `Two of these files are named ${name}. Searched together they would share one folder — rename one, or search each file separately.`,
+          }
+        }
+        seen.add(name)
+      }
     }
   } else {
     if (!values.msData.trim()) return { key: 'msData', msg: 'Set the MS data path before running.' }

@@ -14,7 +14,7 @@
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { BROWSE, LABEL, SEG_TRACK, seg } from '../lib/styles'
+import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
 import { convertGroups, formatOfFile, type ConvertGroup } from '../lib/config'
 import type { ConvertFormat, ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
@@ -178,7 +178,7 @@ function ConvertFileList({
           type="button"
           className="pio-browse"
           onClick={onAdd}
-          style={{ ...BROWSE, padding: '7px 13px', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          style={BROWSE_BLOCK}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
             <path

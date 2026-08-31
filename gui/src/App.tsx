@@ -472,7 +472,13 @@ export default function App() {
       return job.id
     })
     setCommand(job.cmd)
-    if (job.snapshot.cmd === 'searchdia') setSearch(job.snapshot.search)
+    // Merged for the same reason as the build and convert snapshots below: runs
+    // stored before the file list existed carry no msDataMode or msDataFiles,
+    // and recalling one and then switching to Chosen files would otherwise map
+    // over an undefined list.
+    if (job.snapshot.cmd === 'searchdia') {
+      setSearch({ ...SEARCH_DEFAULTS, ...job.snapshot.search })
+    }
     else if (job.snapshot.cmd === 'buildspeclib') {
       // Stored runs from before digestion specificity was added do not carry
       // the field. Merge defaults so recalling one still renders and emits a
@@ -647,6 +653,24 @@ export default function App() {
           // Every dropped path, not just the first: picking several FASTAs at
           // once is the normal case.
           setBuild((b) => ({ ...b, fastaFiles: [...b.fastaFiles, ...paths.map(makeFastaRow)] }))
+          return
+        }
+        if (key === 'msData') {
+          // Same shape as convertInput below: a folder selects folder mode, and
+          // files join the list -- all of them, since dropping a batch is the
+          // whole reason the list exists.
+          if (isDir) {
+            setSearch((p) => ({ ...p, msData: path, msDataMode: 'folder' }))
+          } else {
+            setSearch((p) => {
+              const have = new Set(p.msDataFiles)
+              return {
+                ...p,
+                msDataMode: 'files',
+                msDataFiles: [...p.msDataFiles, ...paths.filter((f) => !have.has(f))],
+              }
+            })
+          }
           return
         }
         if (key === 'convertInput') {
@@ -1335,6 +1359,12 @@ export default function App() {
    *  params file written for each run does carry the real path. */
   const previewSearch = useMemo(() => {
     if (!isSearch || search.msDataMode !== 'files' || search.msDataFiles.length === 0) return search
+    const n = search.msDataFiles.length
+    // Searched together there is one run and one results folder; only `ms_data`
+    // stands in, because the directory holding the links does not exist yet.
+    if (!search.msDataBatch) {
+      return { ...search, msData: `<${n} staged file${n > 1 ? 's' : ''}>` }
+    }
     const first = search.msDataFiles[0]
     return { ...search, msData: first, results: joinPath(search.results, fileStem(first)) }
   }, [isSearch, search])
@@ -1495,7 +1525,22 @@ export default function App() {
     const added: Job[] = []
     let failure = ''
 
-    if (isSearch && search.msDataMode === 'files') {
+    if (isSearch && search.msDataMode === 'files' && !search.msDataBatch) {
+      // One run over the whole list. The files are staged into a single
+      // directory, exactly as folder mode would have been given one, so the
+      // search sees them as the one experiment they are -- shared FDR, and
+      // match-between-runs across them. Results go to the chosen folder
+      // unsuffixed: there is only one run, so there is nothing to tell apart.
+      const { id, runNo } = await allocate()
+      let msData: string
+      try {
+        msData = await backend.stageFiles(id, 'ms_data', search.msDataFiles)
+      } catch (e) {
+        setRunError(String(e))
+        return
+      }
+      added.push(makeJob(id, runNo, resolveRunName(jobName, taken), { ...search, msData }))
+    } else if (isSearch && search.msDataMode === 'files') {
       // One run per file. Pioneer has no way to be handed a list -- it takes a
       // directory and searches everything in it -- so each run gets a directory
       // of its own holding a single link to its file, plus a results folder
@@ -1909,27 +1954,22 @@ export default function App() {
               </div>
             )}
 
-            {/* SearchDIA carries this inside its Essentials card, beside the
-                paths the run will be remembered alongside. The other commands
-                have no equivalent card to host it, so for them it keeps one of
-                its own. */}
-            {!isSearch && (
-              <section
-                style={{
-                  background: '#fff',
-                  border: '1px solid #E7EAEE',
-                  borderRadius: 13,
-                  padding: '18px 20px',
-                  marginBottom: 14,
-                }}
-              >
-                <JobNameField
-                  value={jobName}
-                  resolved={resolvedJobName}
-                  onChange={setJobName}
-                />
-              </section>
-            )}
+            {/* Above the form on every workflow. It used to sit inside
+                SearchDIA's own Essentials card, below the three paths, which put
+                the same field at the top of three pages and halfway down the
+                fourth -- so on the one page people use most it was the field
+                they had to go looking for. */}
+            <section
+              style={{
+                background: '#fff',
+                border: '1px solid #E7EAEE',
+                borderRadius: 13,
+                padding: '18px 20px',
+                marginBottom: 14,
+              }}
+            >
+              <JobNameField value={jobName} resolved={resolvedJobName} onChange={setJobName} />
+            </section>
 
             {isConvert ? (
               <ConvertRawForm
@@ -1964,14 +2004,12 @@ export default function App() {
                 notes={searchNotes}
                 libInfo={libInfo}
                 recentLibraries={recentLibraryPaths}
-                jobName={jobName}
-                resolvedJobName={resolvedJobName}
                 onParam={onParam}
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
                 onAddMsFiles={addMsFiles}
                 onRemoveMsFile={removeMsFile}
-                onJobName={setJobName}
+                onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
               />

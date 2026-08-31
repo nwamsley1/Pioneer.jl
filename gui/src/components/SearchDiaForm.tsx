@@ -9,13 +9,12 @@
  *  reproduced: the Console variant carries that state on its Component class
  *  but never renders it — everything is on one page.
  */
-import { JobNameField } from './JobNameField'
 import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
 import { parseModEntry, unimodDisplay } from '../lib/fasta'
-import { BROWSE, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
+import { BROWSE, BROWSE_BLOCK, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
@@ -121,13 +120,16 @@ function MsFileList({
   params,
   onAdd,
   onRemove,
+  onToggleBatch,
 }: {
   params: SearchParams
   onAdd: () => void
   onRemove: (index: number) => void
+  onToggleBatch: () => void
 }) {
   const files = params.msDataFiles
   const root = params.results.trim()
+  const batch = params.msDataBatch
   return (
     <div>
       {files.length > 0 && (
@@ -165,9 +167,11 @@ function MsFileList({
                 >
                   {f}
                 </div>
-                <div style={{ ...HINT, marginTop: 2 }}>
-                  {root ? `\u2192 ${root}/${fileStem(f)}` : '\u2192 set a results folder below'}
-                </div>
+                {batch && (
+                  <div style={{ ...HINT, marginTop: 2 }}>
+                    {root ? `\u2192 ${root}/${fileStem(f)}` : '\u2192 set a results folder below'}
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -197,15 +201,50 @@ function MsFileList({
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button type="button" className="pio-browse" onClick={onAdd} style={BROWSE}>
+        <button type="button" className="pio-browse" onClick={onAdd} style={BROWSE_BLOCK}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
           {files.length ? 'Add more files' : 'Choose files'}
         </button>
         <span style={HINT}>
           {files.length
-            ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
-            : 'Each file is searched on its own, into its own results folder.'}
+            ? batch
+              ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
+              : `${files.length} file${files.length > 1 ? 's' : ''}, searched together \u2014 1 run queued.`
+            : 'Pick the .arrow files to search.'}
         </span>
       </div>
+      {files.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: '1px solid #EEF1F4',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+              Search each file separately
+            </div>
+            <div style={{ ...HINT, marginTop: 2 }}>
+              {batch
+                ? 'One run per file, each with its own results folder and nothing shared between them.'
+                : 'One run over the whole list, sharing FDR and match-between-runs across it.'}
+            </div>
+          </div>
+          <Toggle on={batch} fieldKey="msDataBatch" onClick={onToggleBatch} />
+        </div>
+      )}
     </div>
   )
 }
@@ -271,9 +310,6 @@ interface Props {
   libInfo: LibraryInfo | null
   /** Libraries used by earlier SearchDIA runs, most recent first. */
   recentLibraries: string[]
-  jobName: string
-  /** The name the run will get once collisions are resolved; empty when unset. */
-  resolvedJobName: string
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowse: (key: 'msData' | 'library' | 'results') => void
@@ -281,7 +317,8 @@ interface Props {
   onAddMsFiles: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
-  onJobName: (value: string) => void
+  /** Flip between one run per file and one run over the whole list. */
+  onToggleMsBatch: () => void
   onOpenLoad: () => void
   onGoToBuild: () => void
 }
@@ -291,14 +328,12 @@ export function SearchDiaForm({
   notes,
   libInfo,
   recentLibraries,
-  jobName,
-  resolvedJobName,
   onParam,
   onToggle,
   onBrowse,
   onAddMsFiles,
   onRemoveMsFile,
-  onJobName,
+  onToggleMsBatch,
   onOpenLoad,
   onGoToBuild,
 }: Props) {
@@ -324,7 +359,7 @@ export function SearchDiaForm({
           <LoadPreviousButton onClick={onOpenLoad} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div data-key="msData">
+          <div data-drop="msData" data-key="msData">
             <label style={LABEL}>MS data</label>
             <div style={{ ...SEG_TRACK, marginBottom: 10 }}>
               <button type="button" onClick={() => onParam('msDataMode', 'folder')} style={seg(!byFiles)}>
@@ -334,7 +369,14 @@ export function SearchDiaForm({
                 Chosen files
               </button>
             </div>
-            {byFiles ? <MsFileList params={params} onAdd={onAddMsFiles} onRemove={onRemoveMsFile} /> : (
+            {byFiles ? (
+              <MsFileList
+                params={params}
+                onAdd={onAddMsFiles}
+                onRemove={onRemoveMsFile}
+                onToggleBatch={onToggleMsBatch}
+              />
+            ) : (
               <PathRow
                 label=""
                 fieldKey="msData"
@@ -417,7 +459,6 @@ export function SearchDiaForm({
             onChange={onParam}
             onBrowse={() => onBrowse('results')}
           />
-          <JobNameField value={jobName} resolved={resolvedJobName} onChange={onJobName} />
         </div>
       </section>
 
