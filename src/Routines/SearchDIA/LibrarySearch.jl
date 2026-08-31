@@ -15,6 +15,21 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# An empty PSM frame carrying the columns the search would have produced.
+#
+# `process_scans_fused!` builds its result from the per-thread scored-PSM
+# struct-of-arrays, so a zero-length view of that same store gives the exact
+# schema with no rows — and cannot drift from it the way a hand-written column
+# list would.
+#
+# The early exits in `library_search` returned a bare `DataFrame()` instead, so a
+# file that matched nothing produced a frame with *no columns at all*, and the
+# first downstream reader of `:precursor_idx` threw `ArgumentError: column name
+# :precursor_idx not found` rather than seeing zero PSMs. Every such reader
+# already handles zero rows; none of them could handle zero columns.
+_empty_scored_psms(search_data, params) =
+    DataFrame(@view(get_scored_psms(first(search_data), params)[1:0]))
+
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
 
@@ -67,7 +82,7 @@ function library_search(
 
     # NCE models to iterate: [(calibrated_model, nothing)]
     nce_entries = get_nce_models(search_context, params, ms_file_idx)
-    isempty(nce_entries) && return DataFrame()
+    isempty(nce_entries) && return _empty_scored_psms(search_data, params)
 
     # --- 2. Fragment index search (runs once, shared across all NCE models) ---
     if scan_indices === nothing
@@ -92,7 +107,7 @@ function library_search(
         filter!(tt -> !isempty(last(tt)), thread_tasks)
     end
 
-    isempty(all_scan_idxs) && return DataFrame()
+    isempty(all_scan_idxs) && return _empty_scored_psms(search_data, params)
 
     # Build score filter: use learned LUT if available, otherwise fall back to count_ones
     bitvec_filter = getBitVecFilter(search_context, ms_file_idx)

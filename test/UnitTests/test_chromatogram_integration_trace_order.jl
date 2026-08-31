@@ -68,16 +68,21 @@ end
         intensity = Float32[1.0, 10.0, 2.0, 20.0, 3.0],
         precursor_fraction_transmitted = Float32[0.35, 0.82, 0.40, 0.80, 0.55],
     )
+    # Deliberately WITHOUT :isotopes_captured. The real passing_psms table does
+    # not carry it — it was retired from the PSM schema — and this fixture used
+    # to supply it, which is why `apply_quant_trace_selection!` reading it went
+    # unnoticed until a real separate-trace run threw ArgumentError.
     passing_psms = DataFrame(
         precursor_idx = UInt32[10, 20],
-        isotopes_captured = [(Int8(1), Int8(2)), (Int8(1), Int8(2))],
         precursor_fraction_transmitted = Float32[0.35, 0.1],
     )
 
     selected = Pioneer.select_quant_trace_by_transmission(chromatograms)
-    Pioneer.apply_quant_trace_selection!(passing_psms, selected)
+    isotopes_captured = Pioneer.apply_quant_trace_selection!(passing_psms, selected)
 
-    @test passing_psms.isotopes_captured == [(Int8(0), Int8(1)), (Int8(0), Int8(1))]
+    # Returned as the chromatogram-index lookup key, not written onto the frame.
+    @test isotopes_captured == [(Int8(0), Int8(1)), (Int8(0), Int8(1))]
+    @test !hasproperty(passing_psms, :isotopes_captured)
     @test passing_psms.precursor_fraction_transmitted == Float32[0.82, 0.55]
 end
 
