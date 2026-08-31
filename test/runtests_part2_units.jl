@@ -27,6 +27,7 @@ include("./UnitTests/test_whittaker_henderson.jl")
 include("./UnitTests/test_retention_time_index.jl")
 include("./UnitTests/test_arrow_psm_container.jl")
 include("./UnitTests/test_empty_search_results.jl")
+include("./UnitTests/test_quant_trace_selection.jl")
 include("./UnitTests/test_buildpionlib_index_filters.jl")
 include("./UnitTests/test_enzymatic_termini_metadata.jl")
 
