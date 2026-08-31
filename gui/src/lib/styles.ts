@@ -48,6 +48,22 @@ export const BROWSE: CSSProperties = {
   cursor: 'pointer',
 }
 
+/** `BROWSE` for a button that stands on its own rather than beside an input.
+ *
+ *  `BROWSE` has no vertical padding on purpose: in a path row it is a flex item
+ *  next to the input and stretches to the input's height, so padding of its own
+ *  would fight that. A button with no such sibling has nothing to stretch
+ *  against and collapses to the height of its text, which against a 9px-padded
+ *  input reads as a different, rounder control. This restores the same box.
+ */
+export const BROWSE_BLOCK: CSSProperties = {
+  ...BROWSE,
+  padding: '9px 14px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+}
+
 /** One button of a segmented control -- the pill pair that picks between two
  *  shapes of the same field (single file vs folder, .raw vs .mzML, one folder
  *  vs chosen files). Was defined inside ConvertRawForm; the SearchDIA file-list

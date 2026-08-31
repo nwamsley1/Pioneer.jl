@@ -14,7 +14,7 @@ import { NumField } from './NumField'
 import { RecentLibraries } from './RecentLibraries'
 import { Toggle } from './Toggle'
 import { parseModEntry, unimodDisplay } from '../lib/fasta'
-import { BROWSE, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
+import { BROWSE, BROWSE_BLOCK, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '../lib/styles'
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
@@ -201,7 +201,15 @@ function MsFileList({
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button type="button" className="pio-browse" onClick={onAdd} style={BROWSE}>
+        <button type="button" className="pio-browse" onClick={onAdd} style={BROWSE_BLOCK}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
           {files.length ? 'Add more files' : 'Choose files'}
         </button>
         <span style={HINT}>
