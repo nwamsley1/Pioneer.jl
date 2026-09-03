@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - develop
-    tags:
-      - 'v*.*.*'
+  # Human-published releases start this workflow directly. The automated release
+  # workflow dispatches it after publication so the release exists before reporting.
   release:
     types: [published]
   pull_request:

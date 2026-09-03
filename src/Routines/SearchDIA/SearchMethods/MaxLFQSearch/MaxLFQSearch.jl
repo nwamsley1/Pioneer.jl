@@ -165,9 +165,13 @@ function summarize_results!(
     # MaxLFQ expects).
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
     existing_passing_psm_paths = String[]
-    for (_, path) in indexed_paths
+    existing_passing_psm_run_ids = UInt32[]
+    for (file_idx, path) in indexed_paths
         ref = PSMFileReference(path)
-        row_count(ref) > 0 && push!(existing_passing_psm_paths, path)
+        if row_count(ref) > 0
+            push!(existing_passing_psm_paths, path)
+            push!(existing_passing_psm_run_ids, UInt32(file_idx))
+        end
     end
 
     # Get all file names (needed for LFQ indexing by experiment ID)
@@ -192,11 +196,20 @@ function summarize_results!(
     # IntegrateChromatograms already populates :peak_area_normalized with
     # placeholder zeros, so a missing column never breaks downstream.
     if params.run_to_run_normalization
+        precursor_scoring_results = get_results(
+            search_context,
+            PrecursorScoringSearch,
+        )
+        run_similarity_atlas =
+            precursor_scoring_results isa PrecursorScoringSearchResults ?
+            precursor_scoring_results.run_similarity[] : nothing
         normalizeQuant(
             [file_path(ref) for ref in psm_refs],
             :peak_area,
             N = MAXLFQ_NORM_N_RT_BINS,
-            spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS
+            spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS,
+            run_ids = existing_passing_psm_run_ids,
+            run_similarity_atlas = run_similarity_atlas,
         )
     end
 

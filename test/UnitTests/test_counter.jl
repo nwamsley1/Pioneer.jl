@@ -521,8 +521,35 @@ end
         # `--check-bounds=yes` (CI), where `@inbounds` in inc! is ignored.
         # Using UInt16 counts widens the wrap horizon to 65 535,
         # comfortably above 100 × 8.
+        #
+        # A single timed loop is short enough (sub-millisecond) that one
+        # scheduling hiccup on a shared CI runner decides the result — this
+        # test failed at ratio=3.04 on code that had not changed. So: time
+        # each op over several trials and compare the *minimum* of each,
+        # the least noise-contaminated estimate of the true cost. The loops
+        # live in functions rather than in the testset body so they are
+        # measured as compiled code (in the testset body the loop variables
+        # are boxed, which costs ~200x and swamps the thing being compared).
         n_ids = 1000
         n_ops = 100_000
+        n_trials = 5
+
+        function bench_or!(c::Pioneer.Counter{UInt16,UInt16}, n_ids::Int, n_ops::Int)
+            @elapsed for i in 1:n_ops
+                id = UInt16(mod(i, n_ids) + 1)
+                mask = UInt16(1) << UInt16(mod(i, 8))
+                Pioneer.or!(c, id, mask)
+            end
+        end
+
+        function bench_inc!(c::Pioneer.Counter{UInt16,UInt16}, n_ids::Int, n_ops::Int)
+            @elapsed for i in 1:n_ops
+                id = UInt16(mod(i, n_ids) + 1)
+                score = UInt16(mod(i, 8) + 1)
+                Pioneer.inc!(c, id, score)
+            end
+        end
+
         c_or = Pioneer.Counter(UInt16, UInt16, n_ids + 1)
         c_inc = Pioneer.Counter(UInt16, UInt16, n_ids + 1)
 
@@ -533,29 +560,18 @@ end
         end
         Pioneer.reset!(c_or); Pioneer.reset!(c_inc)
 
-        # Benchmark or!
-        t_or = @elapsed begin
-            for i in 1:n_ops
-                id = UInt16(mod(i, n_ids) + 1)
-                mask = UInt16(1) << UInt16(mod(i, 8))
-                Pioneer.or!(c_or, id, mask)
-            end
-        end
-
-        Pioneer.reset!(c_or)
-
-        # Benchmark inc!
-        t_inc = @elapsed begin
-            for i in 1:n_ops
-                id = UInt16(mod(i, n_ids) + 1)
-                score = UInt16(mod(i, 8) + 1)
-                Pioneer.inc!(c_inc, id, score)
-            end
+        t_or = Inf
+        t_inc = Inf
+        for _ in 1:n_trials
+            t_or = min(t_or, bench_or!(c_or, n_ids, n_ops))
+            Pioneer.reset!(c_or)
+            t_inc = min(t_inc, bench_inc!(c_inc, n_ids, n_ops))
+            Pioneer.reset!(c_inc)
         end
 
         # or! should be within 2x of inc! (same algorithm, just |= vs +=)
         @test t_or < t_inc * 2.0
         # Print for visibility (not a hard assertion)
-        @info "Counter performance: or!=$(round(t_or*1e6/n_ops, digits=2))ns/op, inc!=$(round(t_inc*1e6/n_ops, digits=2))ns/op, ratio=$(round(t_or/t_inc, digits=2))"
+        @info "Counter performance (best of $n_trials): or!=$(round(t_or*1e9/n_ops, digits=2))ns/op, inc!=$(round(t_inc*1e9/n_ops, digits=2))ns/op, ratio=$(round(t_or/t_inc, digits=2))"
     end
 end

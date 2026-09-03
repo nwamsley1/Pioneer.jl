@@ -427,11 +427,13 @@ function process_file!(
             # for quantification and mirror that choice onto the PSM/output
             # columns. Combined mode keeps the upstream PSM isotope metadata.
             selected_quant_trace = select_quant_trace_by_transmission(chromatograms)
-            apply_quant_trace_selection!(
+            # Returns the isotope key; :precursor_fraction_transmitted is
+            # updated in place. The key is not stored on the frame — see
+            # apply_quant_trace_selection!.
+            psm_isotopes_captured = apply_quant_trace_selection!(
                 passing_psms,
                 selected_quant_trace,
             )
-            psm_isotopes_captured = passing_psms[!, :isotopes_captured]
         end
         integrate_precursors(
             chromatograms,

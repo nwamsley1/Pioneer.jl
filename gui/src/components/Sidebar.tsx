@@ -6,7 +6,12 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
-import { defaultDir, pickDefaultDir, setDefaultDir } from '../lib/backend'
+import {
+  defaultDir,
+  pickDefaultDir,
+  setDefaultDir,
+  type UninstallInfo,
+} from '../lib/backend'
 import { InfoDot } from './InfoDot'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
@@ -46,6 +51,23 @@ const DOT_COLORS: Record<Job['status'], string> = {
  *  used the phospho library". Every path in the snapshot is included, so a
  *  match on any part of any of them finds the run.
  */
+const searchCache = new WeakMap<Job, string>()
+
+/** `searchableText`, computed once per job object.
+ *
+ *  Keyed on the job itself, so an edited job (a new object) is recomputed and a
+ *  deleted one is collected with it. Worth caching because the sidebar
+ *  re-renders on every line of output a running job produces, and this walks
+ *  every FASTA path and modification label of every run each time. */
+function searchable(j: Job): string {
+  let t = searchCache.get(j)
+  if (t === undefined) {
+    t = searchableText(j)
+    searchCache.set(j, t)
+  }
+  return t
+}
+
 function searchableText(j: Job): string {
   const parts: string[] = [j.title, CMD_TEXT[j.cmd], j.target, String(j.runNo), j.status]
   const s = j.snapshot
@@ -63,6 +85,8 @@ function searchableText(j: Job): string {
     parts.push(s.download.selected, s.download.dest)
   } else {
     parts.push(s.convert.input, s.convert.outputDir)
+    // So "mzml" finds the mzML conversions among a history of .raw ones.
+    parts.push(s.convert.format === 'mzml' ? 'mzml' : 'raw')
   }
   return parts.filter(Boolean).join(' \u0000 ').toLowerCase()
 }
@@ -95,6 +119,11 @@ function rowTitle(j: Job): string {
     .filter(Boolean)
     .join('\n')
 }
+
+/** History rows rendered initially, and added each time the list is scrolled to
+ *  the end. Comfortably more than a sidebar can show at once, so the growth is
+ *  never visible. */
+const HISTORY_WINDOW = 60
 
 const CMD_TEXT: Record<CommandId, string> = {
   searchdia: 'SearchDIA',
@@ -130,7 +159,19 @@ const barberStyle: React.CSSProperties = {
  *  with no way to see its current value, the theme as a lone swatch above the
  *  collapse button. Neither is touched often enough to earn standing space.
  */
-function SettingsPanel({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
+function SettingsPanel({
+  theme,
+  onTheme,
+  uninstall,
+  uninstallBlocked,
+  onUninstall,
+}: {
+  theme: ThemeId
+  onTheme: (id: ThemeId) => void
+  uninstall: UninstallInfo | null
+  uninstallBlocked: boolean
+  onUninstall: () => void
+}) {
   const [dir, setDir] = useState(defaultDir())
   const heading: React.CSSProperties = {
     fontSize: 10,
@@ -233,6 +274,37 @@ function SettingsPanel({ theme, onTheme }: { theme: ThemeId; onTheme: (id: Theme
           )
         })}
       </div>
+
+      {uninstall?.available && (
+        <div
+          style={{
+            margin: '15px -14px -14px',
+            padding: '12px 14px 14px',
+            borderTop: '1px solid var(--pio-nav-hair)',
+          }}
+        >
+          <div style={heading}>Installation</div>
+          <div style={{ fontSize: 11.5, color: 'var(--pio-nav-fg-dim)', lineHeight: 1.45 }}>
+            Remove Pioneer {uninstall.version} from this Mac. Your settings and analysis data are kept.
+          </div>
+          <button
+            type="button"
+            onClick={onUninstall}
+            disabled={uninstallBlocked}
+            title={uninstallBlocked ? 'Finish or remove queued and running jobs first' : undefined}
+            style={{
+              ...panelBtn,
+              width: '100%',
+              marginTop: 9,
+              color: uninstallBlocked ? 'var(--pio-nav-fg-faint)' : '#FCA5A5',
+              borderColor: uninstallBlocked ? 'var(--pio-nav-hair)' : 'rgba(248,113,113,0.45)',
+              cursor: uninstallBlocked ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Uninstall this version…
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -350,6 +422,12 @@ interface Props {
   onReorderQueued: (dragId: string, dropId: string) => void
   /** Give a run a different name. Collisions are resolved by the caller. */
   onRenameJob: (id: string, title: string) => void
+  /** Distribution version (CLI tools + converter) and this window's version.
+   *  Either may be blank when it could not be determined. */
+  versions: { app: string; pioneer: string }
+  uninstall: UninstallInfo | null
+  uninstallBlocked: boolean
+  onUninstall: () => void
 }
 
 export function Sidebar({
@@ -366,9 +444,22 @@ export function Sidebar({
   onJobAction,
   onReorderQueued,
   onRenameJob,
+  versions,
+  uninstall,
+  uninstallBlocked,
+  onUninstall,
 }: Props) {
   const [themeOpen, setThemeOpen] = useState(false)
   const [query, setQuery] = useState('')
+  /** How many finished runs are on screen.
+   *
+   *  Not a limit on how many are *loaded* — reading the whole store costs about
+   *  4 ms per thousand runs, which is nothing. Rendering them is what costs:
+   *  10,000 rows took 2.3 s to paint, and paid it again on every re-render,
+   *  which for a running job means every line of output. A window keeps both
+   *  the first paint and every re-render flat no matter how long the history
+   *  gets. It grows as you scroll, so there is nothing to click. */
+  const [windowSize, setWindowSize] = useState(HISTORY_WINDOW)
   /** The queued job being dragged, and the one it is currently over.
    *
    *  Pointer events rather than HTML5 drag-and-drop: Tauri handles the OS drop
@@ -464,10 +555,16 @@ export function Sidebar({
   )
   // Every term must appear somewhere, so "yeast phospho" narrows rather than
   // widening. Matched case-insensitively across the whole of searchableText.
+  // A new search starts a new window: otherwise scrolling deep into one result
+  // set would leave the next one rendering hundreds of rows for no reason.
+  useEffect(() => {
+    setWindowSize(HISTORY_WINDOW)
+  }, [query])
+
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const shown = terms.length
     ? history.filter((j) => {
-        const hay = searchableText(j)
+        const hay = searchable(j)
         return terms.every((t) => hay.includes(t))
       })
     : history
@@ -609,6 +706,11 @@ export function Sidebar({
                         lineHeight: 1.25,
                       }}
                     >
+                      {/* The name and its rename button share a line. The
+                          parent is a column -- name, descriptor, progress bar --
+                          so without this row the pencil stacks underneath the
+                          name instead of sitting after it. */}
+                      <span style={{ display: 'flex', alignItems: 'center', maxWidth: '100%' }}>
                       {editingJobId === j.id ? (
                         <input
                           autoFocus
@@ -660,6 +762,40 @@ export function Sidebar({
                           {j.title}
                         </span>
                       )}
+                      {editingJobId !== j.id && (
+                        <button
+                          type="button"
+                          className="pio-jobact pio-iconbtn"
+                          title="Rename"
+                          onClick={(e) => {
+                            // The name sits inside the row's open-this-run
+                            // click target, so the rename must not also open it.
+                            e.stopPropagation()
+                            setEditingJobId(j.id)
+                            setEditingTitle(j.title)
+                          }}
+                          style={{
+                            flex: 'none',
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            padding: 0,
+                            marginLeft: 5,
+                            color: 'var(--pio-nav-fg-dim)',
+                            display: 'flex',
+                          }}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                            <path
+                              d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                              stroke="currentColor"
+                              strokeWidth="1.9"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      )}
+                      </span>
                       {/* The descriptor is unconditional. It used to be the
                           else-branch of `running`, so the bar replaced it and a
                           running row was the one place the command and status
@@ -715,39 +851,6 @@ export function Sidebar({
                     </span>
                   )}
                 </div>
-                {/* Queued, running or finished alike: the name is a label, and
-                    the run worth renaming is often the one that already
-                    finished. Hidden until the row is hovered, like the other
-                    row actions. */}
-                {!collapsed && editingJobId !== j.id && (
-                  <button
-                    type="button"
-                    className="pio-jobact pio-iconbtn"
-                    onClick={() => {
-                      setEditingJobId(j.id)
-                      setEditingTitle(j.title)
-                    }}
-                    title="Rename"
-                    style={{
-                      flex: 'none',
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      padding: 3,
-                      color: 'var(--pio-nav-fg-dim)',
-                      display: 'flex',
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                )}
                 {pending && (
                   <button
                     type="button"
@@ -803,7 +906,7 @@ export function Sidebar({
   return (
     <aside
       style={{
-        width: collapsed ? 66 : 252,
+        width: collapsed ? 66 : 276,
         flex: 'none',
         background: 'var(--pio-nav)',
         color: 'var(--pio-nav-fg)',
@@ -855,7 +958,16 @@ export function Sidebar({
               </svg>
             </button>
             {themeOpen && (
-              <SettingsPanel theme={theme} onTheme={onTheme} />
+              <SettingsPanel
+                theme={theme}
+                onTheme={onTheme}
+                uninstall={uninstall}
+                uninstallBlocked={uninstallBlocked}
+                onUninstall={() => {
+                  setThemeOpen(false)
+                  onUninstall()
+                }}
+              />
             )}
           </div>
         )}
@@ -986,6 +1098,14 @@ export function Sidebar({
         }}
       >
         <div
+          onScroll={(e) => {
+            // Grow when the end comes into view. Cheap to check and it fires
+            // only while scrolling; the guard stops it setting state on every
+            // pixel once everything is already rendered.
+            const el = e.currentTarget
+            if (el.scrollHeight - el.scrollTop - el.clientHeight > 240) return
+            setWindowSize((n) => (n < shown.length ? n + HISTORY_WINDOW : n))
+          }}
           style={{
             flex: 1,
             minHeight: 0,
@@ -1052,12 +1172,67 @@ export function Sidebar({
           )}
           {/* Collapsed, history is deliberately absent: the strip is for what is
               happening now, plus whatever finished while you were not looking. */}
-          {!collapsed && shown.map(renderRow)}
+          {!collapsed && shown.slice(0, windowSize).map(renderRow)}
+          {!collapsed && shown.length > windowSize && (
+            <button
+              type="button"
+              onClick={() => setWindowSize((n) => n + HISTORY_WINDOW)}
+              style={{
+                ...emptyHint,
+                textAlign: 'left',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                font: "11.5px 'IBM Plex Sans'",
+              }}
+            >
+              {`Showing ${windowSize} of ${shown.length.toLocaleString()} — scroll for more`}
+            </button>
+          )}
         </div>
       </div>
 
+      {/* Which Pioneer this window is driving. Worth having on screen rather
+          than in an About box: the GUI runs whatever distribution it resolved,
+          which is not necessarily the one someone thinks they installed, and
+          the first question about any odd result is what version produced it.
+          Collapsed, the strip has no room for it -- the title carries it.
 
-
+          The two numbers are independent: the console is versioned by its own
+          crate and the CLI by the distribution's VERSION file, so shipping a
+          console fix without a Pioneer release makes them diverge. They are
+          released together often enough that printing both every time is
+          mostly noise, so the console number appears only when it differs --
+          which is exactly when it is worth reading. The tooltip always carries
+          both. */}
+      {!collapsed && (versions.pioneer || versions.app) && (
+        <div
+          title={[
+            versions.pioneer && `Pioneer CLI and converter ${versions.pioneer}`,
+            versions.app && `Console ${versions.app}`,
+            versions.pioneer &&
+              versions.app &&
+              versions.pioneer !== versions.app &&
+              'These were released separately.',
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          style={{
+            flex: 'none',
+            padding: '8px 13px 10px',
+            borderTop: '1px solid var(--pio-nav-hair)',
+            color: 'var(--pio-nav-fg-dim)',
+            font: "11px 'IBM Plex Sans'",
+            letterSpacing: 0.2,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {versions.pioneer ? `Pioneer ${versions.pioneer}` : 'Pioneer'}
+          {versions.app && versions.app !== versions.pioneer && ` \u00b7 console ${versions.app}`}
+        </div>
+      )}
     </aside>
   )
 }

@@ -98,7 +98,30 @@ function load_postintegration_mbr_candidates(
         end
         push!(parts, frame)
     end
-    candidates = isempty(parts) ? DataFrame() : vcat(parts...; cols = :union)
+    # Typed and empty rather than bare. With no surviving candidate anywhere,
+    # _write_mbr_recovery_sidecars_from_candidates! still runs -- it must, since
+    # it writes one recovery sidecar per file and pipeline.jl errors with
+    # "Missing MBR recovery sidecar" if any is absent -- and it reads
+    # :precursor_idx and :scan_idx off this frame. The other nine columns it
+    # needs are supplied by apply_postintegration_mbr_rescoring!, which sizes
+    # them to nrow *before* its own `n == 0` early return. A bare DataFrame()
+    # has no columns at all, so those two reads threw ArgumentError; zero rows
+    # is a state every consumer here already handles.
+    candidates = if isempty(parts)
+        DataFrame(
+            precursor_idx = UInt32[],
+            scan_idx = UInt32[],
+            ms_file_idx = UInt32[],
+            cv_fold = UInt8[],
+            target = Bool[],
+            qval = Float32[],
+            global_qval = Float32[],
+            trace_prob_prepass = Float32[],
+            trace_prob_infold = Float32[],
+        )
+    else
+        vcat(parts...; cols = :union)
+    end
     return (
         candidates = candidates,
         masks = masks,
@@ -956,12 +979,13 @@ function _mbr_semisupervised_oof(
     return best_state, present
 end
 
-function _mbr_top_counterfactual_scores(
+function _mbr_top_counterfactual_controls(
     scores::Vector{Float32},
     present::BitMatrix,
 )
     n_candidates, n_counterfactuals = size(present)
     top_scores = fill(-Inf32, n_candidates)
+    top_indices = zeros(UInt8, n_candidates)
     @inbounds for candidate_idx in 1:n_candidates
         for counterfactual_idx in 1:n_counterfactuals
             present[candidate_idx, counterfactual_idx] || continue
@@ -970,10 +994,18 @@ function _mbr_top_counterfactual_scores(
             ]
             if isfinite(score) && score > top_scores[candidate_idx]
                 top_scores[candidate_idx] = score
+                top_indices[candidate_idx] = UInt8(counterfactual_idx)
             end
         end
     end
-    return top_scores
+    return (scores = top_scores, indices = top_indices)
+end
+
+function _mbr_top_counterfactual_scores(
+    scores::Vector{Float32},
+    present::BitMatrix,
+)
+    return _mbr_top_counterfactual_controls(scores, present).scores
 end
 
 function _mbr_combined_error_recovery(
@@ -1128,6 +1160,8 @@ function apply_postintegration_mbr_rescoring!(
     frame[!, :ftr_pep_true] = fill(NaN32, n)
     frame[!, :mbr_total_error_qval_true] = fill(NaN32, n)
     frame[!, :mbr_total_error_rate_true] = fill(NaN32, n)
+    frame[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] = fill(NaN32, n)
+    frame[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] = zeros(UInt8, n)
     n == 0 && return (
         n_candidates = 0,
         n_recovered = 0,
@@ -1204,10 +1238,11 @@ function apply_postintegration_mbr_rescoring!(
         evaluated_top[candidate_idx] ||
             (real_scores[candidate_idx] = NaN32)
     end
-    false_scores = _mbr_top_counterfactual_scores(
+    counterfactual_controls = _mbr_top_counterfactual_controls(
         best_state.scores,
         present,
     )
+    false_scores = counterfactual_controls.scores
     combined = _mbr_combined_error_recovery(
         real_scores,
         BitVector(candidates.target),
@@ -1232,6 +1267,17 @@ function apply_postintegration_mbr_rescoring!(
             combined.qvalues[candidate_position]
         frame[row, :mbr_total_error_rate_true] =
             combined.rates[candidate_position]
+        if Bool(candidates.target[candidate_position]) &&
+           isfinite(combined.threshold) &&
+           isfinite(real_scores[candidate_position]) &&
+           isfinite(false_scores[candidate_position]) &&
+           real_scores[candidate_position] >= combined.threshold &&
+           false_scores[candidate_position] >= combined.threshold
+            frame[row, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+                false_scores[candidate_position]
+            frame[row, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
+                counterfactual_controls.indices[candidate_position]
+        end
     end
 
     internal_targets = combined.mbr_targets

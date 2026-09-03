@@ -205,6 +205,10 @@ const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     # :mbr_recovered survives and is the flag that says whether a row was transferred.
     :mbr_target_decoy_prob, :mbr_total_error_qval_true, :mbr_total_error_rate_true,
     :ftr_qval_true, :ftr_pep_true,
+    # Defined in MBR/types.jl, which is loaded after this module file. Keep the
+    # literals here so the raw controls are dropped only after protein scoring
+    # has consumed their remapped probability.
+    :mbr_counterfactual_decoy_prob, :mbr_counterfactual_decoy_index,
     # Same physical measurement as :rt_fwhm but in library iRT units, which are only interpretable
     # relative to the library. :rt_fwhm is kept, in minutes.
     :irt_fwhm,

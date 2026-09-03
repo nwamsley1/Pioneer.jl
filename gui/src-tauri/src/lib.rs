@@ -2,6 +2,7 @@ mod history;
 mod paths;
 mod pioneer;
 mod runner;
+mod uninstall;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -70,6 +71,30 @@ fn pioneer_info(app: AppHandle) -> Result<pioneer::PioneerInfo, String> {
     pioneer::resolve_home(resource_dir.as_deref())
 }
 
+/// The GUI's own version, for the sidebar footer. Compiled in rather than read
+/// at runtime, so it cannot disagree with the binary the user is running.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// The GUI only offers uninstall when it is the versioned macOS app installed
+/// by our package and its matching private helper is present.
+#[tauri::command]
+fn uninstall_info() -> uninstall::Info {
+    uninstall::info()
+}
+
+#[tauri::command]
+async fn uninstall_this_version(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.jobs.has_active()? {
+        return Err("Finish or cancel the running Pioneer job before uninstalling.".to_string());
+    }
+    uninstall::run().await?;
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn inspect_path(path: String) -> paths::PathInfo {
     paths::inspect(&path)
@@ -121,6 +146,13 @@ async fn list_spec_libs(app: AppHandle, repo: Option<String>) -> Result<String, 
     })
     .await
     .map_err(|e| format!("listing task failed: {e}"))?
+}
+
+/// Build the input directory for one run over a chosen set of files.
+/// See `paths::stage_files` for why a chosen set needs one.
+#[tauri::command]
+fn stage_files(job_id: String, subdir: String, files: Vec<String>) -> Result<String, String> {
+    paths::stage_files(&job_id, &subdir, &files)
 }
 
 #[tauri::command]
@@ -228,7 +260,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             pioneer_info,
+            app_version,
+            uninstall_info,
+            uninstall_this_version,
             inspect_path,
+            stage_files,
             read_config,
             library_info,
             list_spec_libs,

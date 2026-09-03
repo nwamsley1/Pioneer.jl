@@ -13,7 +13,7 @@ import type { Job } from './types'
 import { downloadTargetPath, libraryTargetPath } from './validate'
 
 /** The library a run either used or produced, if any. */
-function libraryOf(job: Job): string {
+export function libraryOf(job: Job): string {
   switch (job.snapshot.cmd) {
     case 'searchdia':
       return job.snapshot.search.library.trim()

@@ -3,6 +3,12 @@ import { modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
 
+/** What the Rust side is asked to run. One more value than CommandId: the
+ *  ConvertRAW page drives two different binaries, so the workflow the user
+ *  picked and the program that ends up being spawned are not the same thing.
+ *  Mirrors the Rust `pioneer::Command` enum. */
+export type BackendCommand = CommandId | 'convertmzml'
+
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
  *  contract between the two halves of the feature. */
@@ -37,6 +43,32 @@ export const DOWNLOAD_DEFAULTS: DownloadParams = {
 /** Every field the SearchDIA form owns. Kept as strings where the design keeps
  *  strings, so a half-typed number ("0.0") survives a re-render intact. */
 export interface SearchParams {
+  /** How the MS data is given.
+   *
+   *  'folder' is the original and still the default: one directory, searched as
+   *  one experiment, with FDR and match-between-runs spanning every file in it.
+   *
+   *  'files' is for method development, where a batch of files are variations on
+   *  each other rather than replicates of one experiment. Each picked file is
+   *  searched on its own and written to its own results folder — the console
+   *  fans one click out into one run per file, because searching them together
+   *  would pool exactly the files that are meant to be compared. */
+  msDataMode: 'folder' | 'files'
+  /** The chosen files, when msDataMode is 'files'. */
+  msDataFiles: string[]
+  /** With a chosen file list, whether each file is its own search.
+   *
+   *  False by default, matching folder mode: a list of files is most often a
+   *  subset of one experiment, and searching it as one -- sharing FDR and
+   *  match-between-runs across it -- is what picking files out of a folder
+   *  usually means. Choosing files does not by itself say the files are
+   *  unrelated.
+   *
+   *  True gives one run per file, each with its own results folder, so
+   *  method-development files are not pooled with the very files they are
+   *  meant to be compared against. Ignored in folder mode, where a folder is
+   *  always one experiment. */
+  msDataBatch: boolean
   msData: string
   library: string
   results: string
@@ -57,6 +89,9 @@ export interface SearchParams {
 }
 
 export const SEARCH_DEFAULTS: SearchParams = {
+  msDataMode: 'folder',
+  msDataFiles: [],
+  msDataBatch: false,
   msData: '',
   library: '',
   results: '',
@@ -157,6 +192,32 @@ export function isPrositModel(id: string): boolean {
   return id.startsWith('prosit')
 }
 
+/** Oxidation on methionine, however the modification is spelled.
+ *
+ *  Accepts the accession or the label, and tolerates the bracketed form a
+ *  pattern is sometimes written in, because this is asked both of a ModEntry
+ *  the user built in the form and of a string parsed back out of a library's
+ *  own config. */
+export function isOxidationOnMet(name: string, pattern: string): boolean {
+  const isOx = /^(unimod:35|oxidation)$/i.test(name.trim())
+  const residues = pattern.replace(/[[\]]/g, '').trim().toUpperCase()
+  return isOx && residues === 'M'
+}
+
+/** The variable modifications the site-localization caveat is actually about.
+ *
+ *  Everything except oxidation on methionine. That one is a variable
+ *  modification in the strict sense, but it is near-universal in bottom-up
+ *  search and is the default this app itself ships with — warning about it
+ *  meant the caveat appeared on an ordinary library doing an ordinary thing,
+ *  which is how a warning stops being read. What the caveat is for is a library
+ *  carrying phospho, acetyl and the like, where which residue is modified is
+ *  the result and Pioneer does not score it.
+ */
+export function unlocalizedMods<T extends { name: string; pattern: string }>(mods: T[]): T[] {
+  return mods.filter((m) => !isOxidationOnMet(m.name, m.pattern))
+}
+
 export function predictionModelById(id: string): PredictionModel {
   return PREDICTION_MODELS.find((m) => m.id === id) ?? PREDICTION_MODELS[0]
 }
@@ -249,13 +310,39 @@ export const BUILD_DEFAULTS: BuildParams = {
   debugLogging: false,
 }
 
-/** ConvertRAW is a .NET program driven entirely by CLI flags — there is no
- *  params JSON for it. Defaults are PioneerConverter's own. */
+/** Which converter the page drives.
+ *
+ *  Two different programs reach the same destination: Thermo `.raw` goes
+ *  through PioneerConverter (a .NET binary), `.mzML` through Pioneer's own
+ *  `convertMzML` (Julia). They share the input/output/skip-existing shape but
+ *  nothing else -- PioneerConverter's batching and scan-chunk knobs have no
+ *  counterpart in the Julia converter, which instead exposes files-at-a-time
+ *  and whether to carry scan headers into the Arrow file.
+ *
+ *  Held as an explicit field rather than sniffed from the input path, because
+ *  in Folder mode the path says nothing about what is inside it, and a folder
+ *  can hold both. */
+export type ConvertFormat = 'raw' | 'mzml'
+
+/** ConvertRAW's two converters are both driven entirely by CLI flags — there is
+ *  no params JSON for either. Defaults are each converter's own. */
 export interface ConvertParams {
-  /** A single .raw file, or a folder of them. The binary accepts one path. */
-  inputMode: 'file' | 'folder'
+  /** Which converter a *folder* is handed to.
+   *
+   *  Only meaningful in folder mode: a directory's path says nothing about
+   *  what is inside it, and it can hold both. In file-list mode every file
+   *  names its own format, so the toggle is hidden and this is ignored. */
+  format: ConvertFormat
+  /** A chosen list of files, or one folder. Neither binary takes a list, so a
+   *  list is handed over as a directory of links -- see paths::stage_files. */
+  inputMode: 'files' | 'folder'
+  /** The folder, in folder mode. */
   input: string
-  /** Blank means the converter's default of <input_dir>/arrow_out. */
+  /** The chosen files, in file-list mode. May mix .raw and .mzML: they are
+   *  grouped by format at run time, one run per format present. */
+  inputFiles: string[]
+  /** Blank means the converter's default of <input_dir>/arrow_out. Both
+   *  converters use the same default, so this note holds either way. */
   outputDir: string
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
@@ -264,26 +351,44 @@ export interface ConvertParams {
    *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
    *  only one exposed. It is deliberately not the sidebar thread count: that
    *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
-   *  reads it. */
+   *  reads it.
+   *
+   *  RAW only — convertMzML has no equivalent. */
   threadsPerFile: string
+  /** RAW only. */
   batchSize: string
+  /** RAW only. */
   scanChunkSize: string
+  /** mzML only: files converted at the same time. The Julia converter has one
+   *  level of parallelism rather than two, so unlike the RAW path this is
+   *  exposed directly instead of being pinned at 1. */
+  concurrentFiles: string
+  /** mzML only. convertMzML omits scan headers by default; they roughly double
+   *  the Arrow file and nothing in SearchDIA reads them, so this stays off
+   *  unless someone wants the output for something else. */
+  includeScanHeader: boolean
 }
 
 export const CONVERT_DEFAULTS: ConvertParams = {
+  format: 'raw',
   inputMode: 'folder',
   input: '',
+  inputFiles: [],
   outputDir: '',
   skipExisting: false,
   threadsPerFile: '3',
   batchSize: '10000',
   scanChunkSize: '128',
+  concurrentFiles: '2',
+  includeScanHeader: false,
 }
 
 /** Mirrors the Rust `runner::Invocation` enum. */
 export type Invocation =
   | { kind: 'paramsFile'; json: string }
   | { kind: 'args'; args: string[] }
+  /** Run the same program once per argument set, in order, as one job. */
+  | { kind: 'steps'; steps: string[][] }
 
 /** `interrupted` is not reported by a run — it is inferred at startup for a
  *  row still marked queued or running, which can only mean the app went away
@@ -388,4 +493,6 @@ export interface PioneerInfo {
   source: string
   executables: string[]
   has_wrapper: boolean
+  /** From the distribution's VERSION file; absent on older distributions. */
+  version: string | null
 }

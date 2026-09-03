@@ -8,7 +8,14 @@
  */
 import { DEFAULT_CLEAVAGE, enzymeByPattern } from './enzymes'
 import { makeFastaRow, matchPreset, presetRegex, unimodLabel } from './fasta'
-import type { BuildParams, ConvertParams, DownloadParams, ModEntry, SearchParams } from './types'
+import type {
+  BuildParams,
+  ConvertFormat,
+  ConvertParams,
+  DownloadParams,
+  ModEntry,
+  SearchParams,
+} from './types'
 
 export type Json = Record<string, unknown>
 
@@ -435,21 +442,36 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 // ConvertRAW
 // ---------------------------------------------------------------------------
 
-/** Build PioneerConverter's argv.
+/** Build the argv for whichever converter the format selects.
  *
- *  Unlike the two Julia commands this has no params file — the converter takes
- *  a positional RAW path plus flags:
+ *  Neither converter has a params file; both take a positional input path plus
+ *  flags, and the two flag sets only partly overlap:
  *
- *    PioneerConverter RAW_PATH [-o DIR] [--skip-existing]
+ *    PioneerConverter RAW_PATH  [-o DIR] [--skip-existing]
  *                     [-n CONCURRENT] [-t PER_FILE] [-b BATCH] [--scan-chunk-size N]
  *
- *  Flags equal to the converter's own defaults are still emitted, so the logged
+ *    convertMzML      MZML_PATH [-o DIR] [--skip-existing]
+ *                     [-n CONCURRENT] [--skip-header | --include-scan-header]
+ *
+ *  Flags equal to a converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
  */
 export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
   if (s.skipExisting) args.push('--skip-existing')
+
+  if (s.format === 'mzml') {
+    // convertMzML parallelises across files only -- there is no within-file
+    // knob to multiply against -- so this one is exposed as-is rather than
+    // pinned the way the RAW path pins it.
+    args.push('--concurrent-files', String(Math.max(1, parseInt(s.concurrentFiles, 10) || 1)))
+    // Emitted either way: --skip-header is the converter's default, but naming
+    // it keeps the logged line unambiguous about which was chosen.
+    args.push(s.includeScanHeader ? '--include-scan-header' : '--skip-header')
+    return args
+  }
+
   // One file at a time, split across `threads` scan readers. The converter can
   // work on several files concurrently, but exposing both knobs meant the two
   // multiplied and it was easy to oversubscribe the machine without noticing.
@@ -480,5 +502,74 @@ export function downloadCommandLine(s: DownloadParams): string {
 /** The command line as a user would type it, for the preview panel. */
 export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  return ['PioneerConverter', ...buildConvertArgs(s).map(quote)].join(' ')
+  const exe = s.format === 'mzml' ? 'convertMzML' : 'PioneerConverter'
+  return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
+}
+
+/** The format a chosen file will be converted with, or null if neither
+ *  converter can read it.
+ *
+ *  Matched on the name rather than on a stat, because this runs over a list on
+ *  every keystroke. `.gz` is excluded deliberately: `extension_of` on the Rust
+ *  side looks through it, but no converter decompresses. */
+export function formatOfFile(path: string): ConvertFormat | null {
+  const p = path.trim().toLowerCase()
+  if (p.endsWith('.raw')) return 'raw'
+  if (p.endsWith('.mzml')) return 'mzml'
+  return null
+}
+
+/** One run's worth of a chosen file list: a format, and the files of it. */
+export interface ConvertGroup {
+  format: ConvertFormat
+  files: string[]
+}
+
+/** Split a chosen file list into the runs it will become.
+ *
+ *  One run per format present. `.raw` first when both are present, matching the
+ *  order of the format toggle.
+ *
+ *  What happens *inside* a run differs by format, because the two converters
+ *  do. convertMzML reads a directory of links happily and parallelises across
+ *  files, so its group is one invocation over a staging folder. PioneerConverter
+ *  cannot: its Thermo reader memory-maps the file it is given and gets the size
+ *  of the link rather than the target, so a linked `.raw` dies with an
+ *  arithmetic overflow — while the process still exits 0. So the `.raw` group is
+ *  one invocation per file, on real paths, run in sequence as a single job.
+ *  Nothing is lost by that: buildConvertArgs already pins `--concurrent-files 1`
+ *  for `.raw`, so one invocation over N files converted them one at a time
+ *  anyway.
+ *
+ *  Anything neither converter reads is left out entirely; validateConvertRun
+ *  refuses the run rather than letting it be silently dropped here.
+ */
+export function convertGroups(files: string[]): ConvertGroup[] {
+  const raw = files.filter((f) => formatOfFile(f) === 'raw')
+  const mzml = files.filter((f) => formatOfFile(f) === 'mzml')
+  const groups: ConvertGroup[] = []
+  if (raw.length) groups.push({ format: 'raw', files: raw })
+  if (mzml.length) groups.push({ format: 'mzml', files: mzml })
+  return groups
+}
+
+/** The params one group runs with.
+ *
+ *  A group is an ordinary folder-mode conversion whose folder happens to be the
+ *  staging directory built for it -- so it goes through the same
+ *  buildConvertArgs as everything else and the two cannot drift apart. */
+export function groupParams(
+  s: ConvertParams,
+  group: ConvertGroup,
+  stagedDir: string,
+): ConvertParams {
+  return { ...s, format: group.format, inputMode: 'folder', input: stagedDir }
+}
+
+/** The argv for each invocation a `.raw` group becomes: one per file, on the
+ *  real path, in the order the list holds them. */
+export function rawStepArgs(s: ConvertParams, group: ConvertGroup): string[][] {
+  return group.files.map((f) =>
+    buildConvertArgs({ ...s, format: 'raw', inputMode: 'folder', input: f }),
+  )
 }

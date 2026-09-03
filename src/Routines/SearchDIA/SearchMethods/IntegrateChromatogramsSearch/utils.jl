@@ -286,25 +286,47 @@ function select_quant_trace_by_transmission(chromatograms::DataFrame)
 end
 
 """
-    apply_quant_trace_selection!(psms, selected_quant_trace)
+    apply_quant_trace_selection!(psms, selected_quant_trace) -> Vector{Tuple{Int8, Int8}}
 
-Mirror the selected separate-trace quantification channel onto the PSM table.
-This updates the final `:isotopes_captured` and
-`:precursor_fraction_transmitted` output columns for separate-trace runs.
+Apply the selected separate-trace quantification channel to the PSM table.
+
+Updates `:precursor_fraction_transmitted` in place — that is a real output
+column, and in separate-trace mode it must report the fraction of the trace
+actually quantified — and RETURNS the per-PSM isotope-capture key rather than
+writing it into the frame.
+
+The isotope key is deliberately not a column. `:isotopes_captured` was retired
+from the PSM schema, and its only live consumer here is
+`chromatogram_index_key(::SeperateTraces, ...)`, which uses it to look rows up
+in the chromatogram index. Nothing reads it back out: the output alias in
+writeCSVTables maps `:isotopes_captured` to a source column
+`:isotopes_captured_traces` that nothing in the pipeline produces, so the rename
+guarded on its presence never fires. Materialising a column would therefore add
+a per-PSM field to the staged table that only this function writes and only this
+function reads — and would make the separate-trace output schema differ from
+combined for no gain. A local vector costs two bytes a row and only in separate
+mode.
+
+Precursors with no chromatogram row get an unmatchable `(-1, -1)` key. That is
+the correct outcome rather than a fallback: there is no extracted chromatogram
+to integrate, so the precursor keeps zero area and is not quantifiable.
 """
 function apply_quant_trace_selection!(psms::DataFrame, selected_quant_trace::Dict{UInt32, Tuple{Tuple{Int8, Int8}, Float32}})
     prec_col = psms[!, :precursor_idx]::AbstractVector{UInt32}
-    iso_col = psms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
     fraction_col = psms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    isotopes_captured = Vector{Tuple{Int8, Int8}}(undef, length(prec_col))
 
-    for i in eachindex(prec_col)
+    @inbounds for i in eachindex(prec_col)
         selected = get(selected_quant_trace, prec_col[i], nothing)
-        selected === nothing && continue
-        iso_col[i] = selected[1]
+        if selected === nothing
+            isotopes_captured[i] = (Int8(-1), Int8(-1))
+            continue
+        end
+        isotopes_captured[i] = selected[1]
         fraction_col[i] = selected[2]
     end
 
-    return psms
+    return isotopes_captured
 end
 
 function combined_trace_seed_score_column(psms::DataFrame)

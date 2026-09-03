@@ -28,10 +28,133 @@ function _write_quant_arrow(path::String, n::Int, offset::Float64;
     # Apply multiplicative offset (in log2 space)
     abundance = Float32.(base .* 2.0^offset)
     df = DataFrame(
+        precursor_idx = UInt32.(1:n),
         irt_obs = rts,
         abundance = abundance,
     )
     Arrow.write(path, df)
+end
+
+# Create the left-censored loading example that motivated the matched-precursor
+# normalizer. Run 2 is shifted down in log2 space, and values that fall below
+# the limit of detection are absent rather than represented as zeros.
+function _write_censored_quant_pair(
+    dir::String;
+    n::Int = 10_000,
+    loading_offset::Float32 = 3.0f0,
+    log2_lod::Float32 = 4.0f0,
+)
+    precursor_idx = UInt32.(1:n)
+    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
+    base_log2 = Float32[4.0f0 + 6.0f0 * ((i - 1) % 101) / 100 for i in 1:n]
+
+    path1 = joinpath(dir, "complete.arrow")
+    Arrow.write(path1, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ base_log2,
+    ))
+
+    run2_log2 = base_log2 .- loading_offset
+    observed = run2_log2 .>= log2_lod
+    path2 = joinpath(dir, "censored.arrow")
+    Arrow.write(path2, DataFrame(
+        precursor_idx = precursor_idx[observed],
+        irt_obs = rts[observed],
+        abundance = 2.0f0 .^ run2_log2[observed],
+    ))
+    return path1, path2, observed
+end
+
+function _write_rt_bias_quant_pair(dir::String; n::Int = 5_000)
+    precursor_idx = UInt32.(1:n)
+    rts = Float32.(collect(LinRange(0.0, 100.0, n)))
+    base_log2 = Float32[8.0f0 + 0.5f0 * sin(Float32(i) / 17.0f0) for i in 1:n]
+    rt_bias = @. -2.0f0 + 0.04f0 * rts
+
+    path1 = joinpath(dir, "rt_reference.arrow")
+    path2 = joinpath(dir, "rt_biased.arrow")
+    Arrow.write(path1, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ base_log2,
+    ))
+    Arrow.write(path2, DataFrame(
+        precursor_idx = precursor_idx,
+        irt_obs = rts,
+        abundance = 2.0f0 .^ (base_log2 .+ rt_bias),
+    ))
+    return path1, path2
+end
+
+function _write_pairwise_chain_runs(
+    dir::String;
+    n_per_edge::Int = 1_000,
+    offsets::Vector{Float32} = Float32[0.0, 1.0, -2.0, 2.0, -1.0],
+)
+    n_runs = length(offsets)
+    paths = String[]
+    observed_ids_by_run = Dict{UInt32, Vector{UInt32}}()
+    for run in 1:n_runs
+        precursor_idx = UInt32[]
+        irt_obs = Float32[]
+        base_log2 = Float32[]
+        first_edge = max(1, run - 1)
+        last_edge = min(n_runs - 1, run)
+        for edge in first_edge:last_edge
+            append!(
+                precursor_idx,
+                UInt32.(((edge - 1) * n_per_edge + 1):(edge * n_per_edge)),
+            )
+            append!(irt_obs, Float32.(LinRange(0.0, 100.0, n_per_edge)))
+            append!(
+                base_log2,
+                Float32[8.0f0 + 0.25f0 * sin(Float32(i) / 17.0f0)
+                        for i in 1:n_per_edge],
+            )
+        end
+        path = joinpath(dir, "chain_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ (base_log2 .+ offsets[run]),
+            target = trues(length(precursor_idx)),
+            mbr_recovered = falses(length(precursor_idx)),
+        ))
+        push!(paths, path)
+        observed_ids_by_run[UInt32(run)] = precursor_idx
+    end
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run), offsets
+end
+
+function _write_mbr_anchor_pair(
+    dir::String;
+    n_observed::Int = 1_000,
+    n_recovered::Int = 2_000,
+)
+    precursor_idx = UInt32.(1:(n_observed + n_recovered))
+    irt_obs = Float32.(LinRange(0.0, 100.0, n_observed + n_recovered))
+    recovered = BitVector(vcat(falses(n_observed), trues(n_recovered)))
+    run1_log2 = vcat(fill(8.0f0, n_observed), fill(14.0f0, n_recovered))
+    run2_log2 = vcat(fill(10.0f0, n_observed), fill(16.0f0, n_recovered))
+    paths = String[]
+    for (run, log2_quant) in enumerate((run1_log2, run2_log2))
+        path = joinpath(dir, "mbr_run$(run).arrow")
+        Arrow.write(path, DataFrame(
+            precursor_idx = precursor_idx,
+            irt_obs = irt_obs,
+            abundance = 2.0f0 .^ log2_quant,
+            target = trues(length(precursor_idx)),
+            mbr_recovered = recovered,
+        ))
+        push!(paths, path)
+    end
+    observed_ids_by_run = Dict(
+        UInt32(1) => copy(precursor_idx),
+        UInt32(2) => copy(precursor_idx),
+    )
+    return paths, Pioneer.build_run_similarity(observed_ids_by_run),
+           n_observed, n_recovered
 end
 
 @testset "normalizeQuant" begin
@@ -68,6 +191,115 @@ end
             v2 = splines[path2](50.0f0)
             @test v2 - v1 ≈ 2.0 atol=0.5
         end
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pairwise maximum spanning tree — local exact matches without global anchors
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "pairwise maximum spanning tree" begin
+    mktempdir() do dir
+        paths, atlas, offsets = _write_pairwise_chain_runs(dir)
+        run_ids = UInt32.(eachindex(paths))
+
+        # Every precursor occurs in exactly two of five runs, below the current
+        # experiment-wide 50% anchor requirement. The original matched method
+        # therefore cannot fit any run, while adjacent pairwise edges can.
+        global_splines, _ = Pioneer.getQuantSplines(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+        )
+        @test isempty(global_splines)
+
+        tree = Pioneer.getPairwiseQuantTree(
+            paths,
+            :abundance,
+            run_ids,
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+        @test length(tree) == length(paths) - 1
+        @test Set(
+            (min(edge.left_position, edge.right_position),
+             max(edge.left_position, edge.right_position))
+            for edge in tree
+        ) == Set((run, run + 1) for run in 1:(length(paths) - 1))
+        @test all(edge -> edge.nanchors == 1_000, tree)
+
+        corrections, components = Pioneer.getPairwiseQuantCorrections(
+            paths,
+            tree;
+            N=20,
+        )
+        @test components == [collect(eachindex(paths))]
+        for edge in tree
+            left = edge.left_position
+            right = edge.right_position
+            @test (
+                corrections[paths[left]](50.0) -
+                corrections[paths[right]](50.0)
+            ) ≈ offsets[left] - offsets[right] atol=0.05
+        end
+
+        Pioneer.normalizeQuant(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+            run_ids=run_ids,
+            run_similarity_atlas=atlas,
+        )
+        normalized_medians = Float64[]
+        for path in paths
+            frame = DataFrame(Arrow.Table(path))
+            push!(normalized_medians, median(log2.(frame.abundance_normalized)))
+        end
+        @test maximum(normalized_medians) - minimum(normalized_medians) < 0.05
+    end
+end
+
+@testset "MBR-recovered rows are included in pairwise anchors" begin
+    mktempdir() do dir
+        paths, atlas, n_observed, n_recovered = _write_mbr_anchor_pair(dir)
+        run_ids = UInt32[1, 2]
+
+        # The legacy experiment-wide fallback still excludes recovered rows.
+        consensus = Pioneer.getPrecursorQuantConsensus(paths, :abundance)
+        @test length(consensus) == n_observed
+
+        tree = Pioneer.getPairwiseQuantTree(
+            paths,
+            :abundance,
+            run_ids,
+            atlas;
+            N=20,
+            spline_n_knots=5,
+        )
+
+        @test length(tree) == 1
+        @test only(tree).nanchors == n_observed + n_recovered
+        @test only(tree).spline(50.0) ≈ -2.0 atol=0.05
+
+        Pioneer.normalizeQuant(
+            paths,
+            :abundance;
+            N=20,
+            spline_n_knots=5,
+            run_ids=run_ids,
+            run_similarity_atlas=atlas,
+        )
+        run1 = DataFrame(Arrow.Table(paths[1]))
+        run2 = DataFrame(Arrow.Table(paths[2]))
+        recovered_rows = (n_observed + 1):(n_observed + n_recovered)
+        recovered_difference = median(
+            log2.(run1.abundance_normalized[recovered_rows]) .-
+            log2.(run2.abundance_normalized[recovered_rows])
+        )
+        @test abs(recovered_difference) < 0.05
     end
 end
 
@@ -149,6 +381,75 @@ end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Differential missingness — normalize matched precursors, not marginals
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@testset "left-censored run uses matched precursor ratios" begin
+    mktempdir() do dir
+        path1, path2, observed = _write_censored_quant_pair(dir)
+
+        before1 = copy(DataFrame(Arrow.Table(path1)).abundance)
+        before2 = copy(DataFrame(Arrow.Table(path2)).abundance)
+        raw_matched_shift = median(
+            log2.(before1[observed]) .- log2.(before2)
+        )
+        @test raw_matched_shift ≈ 3.0 atol=0.02
+
+        Pioneer.normalizeQuant(
+            [path1, path2],
+            :abundance;
+            N=100,
+            spline_n_knots=7,
+        )
+
+        after1 = DataFrame(Arrow.Table(path1))
+        after2 = DataFrame(Arrow.Table(path2))
+        matched_shift = median(
+            log2.(after1.abundance_normalized[observed]) .-
+            log2.(after2.abundance_normalized)
+        )
+
+        # The shared precursors align even though the observed marginal
+        # distributions do not: run 2 is still missing its low-abundance tail.
+        @test abs(matched_shift) < 0.05
+        @test abs(
+            median(log2.(after1.abundance_normalized)) -
+            median(log2.(after2.abundance_normalized))
+        ) > 1.0
+        @test (
+            maximum(log2.(after2.abundance_normalized)) -
+            minimum(log2.(after2.abundance_normalized))
+        ) < (
+            maximum(log2.(after1.abundance_normalized)) -
+            minimum(log2.(after1.abundance_normalized))
+        )
+    end
+end
+
+@testset "matched residual spline corrects RT-dependent bias" begin
+    mktempdir() do dir
+        path1, path2 = _write_rt_bias_quant_pair(dir)
+        Pioneer.normalizeQuant(
+            [path1, path2],
+            :abundance;
+            N=50,
+            spline_n_knots=7,
+        )
+
+        run1 = DataFrame(Arrow.Table(path1))
+        run2 = DataFrame(Arrow.Table(path2))
+        normalized_difference = log2.(run2.abundance_normalized) .-
+                                log2.(run1.abundance_normalized)
+
+        # Check local agreement throughout the gradient, not just the global
+        # median. The injected bias ranges from -2 to +2 log2 units.
+        for bin in Pioneer._occupancy_bins(length(normalized_difference), 500, 10)
+            @test abs(median(@view(normalized_difference[bin]))) < 0.05
+        end
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Edge case: single file — normalization should be near-identity
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -198,6 +499,30 @@ end
             # Correction factor 1.0: abundances pass through untouched.
             @test all(df.abundance_normalized .≈ Float64.(df.abundance))
         end
+    end
+end
+
+@testset "no matched precursor overlap" begin
+    mktempdir() do dir
+        path1 = joinpath(dir, "run1.arrow")
+        path2 = joinpath(dir, "run2.arrow")
+        _write_quant_arrow(path1, 1000, 0.0)
+        _write_quant_arrow(path2, 1000, 2.0)
+
+        # Copy before replacing the backing Arrow file; Arrow columns may be
+        # memory-mapped on macOS.
+        run2 = DataFrame(Arrow.Table(path2); copycols=true)
+        run2.precursor_idx .+= UInt32(10_000)
+        Pioneer.writeArrow(path2, run2)
+
+        before1 = copy(DataFrame(Arrow.Table(path1)).abundance)
+        before2 = copy(DataFrame(Arrow.Table(path2)).abundance)
+        Pioneer.normalizeQuant([path1, path2], :abundance; N=50, spline_n_knots=5)
+
+        after1 = DataFrame(Arrow.Table(path1))
+        after2 = DataFrame(Arrow.Table(path2))
+        @test after1.abundance_normalized ≈ before1
+        @test after2.abundance_normalized ≈ before2
     end
 end
 

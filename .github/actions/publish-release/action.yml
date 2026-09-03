@@ -1,6 +1,6 @@
 # .github/actions/publish-release/action.yml
 name: "Publish GitHub Release"
-description: "Create or update a GitHub Release and upload all artifacts."
+description: "Create or update a GitHub Release and upload supported installers."
 inputs:
   version:
     description: "The release tag/version to publish (e.g., v1.2.3)"
@@ -31,17 +31,31 @@ runs:
             --title "Release ${{ inputs.version }}" \
             --generate-notes
 
-    - name: Upload all assets
+    - name: Upload supported installer assets
       shell: bash
       run: |
         set -euo pipefail
         export GH_TOKEN="$GITHUB_TOKEN"
 
-        shopt -s nullglob
-        files=(artifacts/**/*)
+        shopt -s globstar nullglob
+
+        # The MSI remains a private build intermediate embedded in the Burn
+        # setup. Refuse to publish it if a future workflow uploads one again.
+        msi_files=(artifacts/**/*.msi)
+        if [ ${#msi_files[@]} -ne 0 ]; then
+          echo "ERROR: bare Windows MSI artifacts must not be published:" >&2
+          printf '  %s\n' "${msi_files[@]}" >&2
+          exit 1
+        fi
+
+        files=(
+          artifacts/**/*.deb
+          artifacts/**/*.pkg
+          artifacts/**/PioneerSetup-*.exe
+        )
         if [ ${#files[@]} -eq 0 ]; then
-          echo "No artifacts to upload; skipping."
-          exit 0
+          echo "ERROR: no supported installer artifacts were downloaded" >&2
+          exit 1
         fi
 
         for file in "${files[@]}"; do

@@ -11,7 +11,7 @@
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop)
 [![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v2-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2)
 
-Pioneer and its companion tool, Altimeter, are an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Pioneer includes routines for searching DIA experiments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
+Pioneer is an open-source and performant solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
 
 **[Documentation](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)** &bull; **[Regression Reports](https://nwamsley1.github.io/Pioneer.jl/reports/)** &bull; **[Landing Page](https://nwamsley1.github.io/Pioneer.jl/)**
 
@@ -23,13 +23,15 @@ The Pioneer manuscript is available on bioRxiv:
 
 https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2
 
-## Design Goals
+## Features
 
 - **Open-Source:** Pioneer is completely open source.
-- **Cross-Platform:** Pioneer and the .raw file conversion tool run on Linux, macOS, and Windows
-- **High-Performance:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets
-- **Scalability:** Memory consumption and speed remain constant as the number of raw files in an analysis grows. Pioneer scales to very large experiments with hundreds to thousands of raw files (experimental)
-- **Fast:** Pioneer searches data several times faster than it can be acquired and faster than state-of-the-art search tools.
+- **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
+- **GUI:** The latest release (v0.8.0 and later) ships with a fully functioning graphical user interface.
+- **Fast:** Pioneer searches data much faster than it can be acquired and several faster than state-of-the-art search tools.
+- **High-Performance:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters. 
+- **Scalability:** Memory consumption and speed remain constant as the number of raw files in an analysis grows. Pioneer scales to very large experiments with hundreds to thousands of raw files.
+
 
 ## Installation
 
@@ -37,7 +39,7 @@ Download the installer for your operating system from the [releases page](https:
 
 | Platform | Installer |
 |----------|-----------|
-| Windows | `.msi` |
+| Windows | `.exe` |
 | macOS | `.pkg` (Intel and Apple Silicon) |
 | Linux | `.deb` |
 
@@ -63,10 +65,8 @@ pioneer search search_params.json
 
 ## Current Limitations
 
-- **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM
-- **Digestion:** Fully enzymatic digestion only (no semi-enzymatic or non-specific searches)
-- **Ion mobility:** We currently don't support ion mobility data. A single FAIMS CV throughout the dataset is fine though.
-- **Interface:** Command-line only; no graphical user interface yet
+- **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM for altimeter libraries. Other PTMs are supported via prosit libraries, but the feature is in early development and we have not implemented site-localization confidence. 
+- **Ion mobility:** We currently do not support ion mobility data. A single FAIMS CV throughout the dataset is fine.
 
 ## Regression Tests
 

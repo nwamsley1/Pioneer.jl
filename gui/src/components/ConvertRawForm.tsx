@@ -1,15 +1,22 @@
 /** The ConvertRAW page.
  *
  *  Adapted rather than ported: the design shows a file / file-list / folder
- *  toggle and a JSON config, but PioneerConverter is a .NET program that takes
- *  ONE positional RAW path plus flags and has no params file at all. So the
- *  file-list mode is dropped (the binary cannot express it) and the panel shows
- *  the real command line instead of an invented JSON document.
+ *  toggle and a JSON config, but neither converter takes a params file -- both
+ *  take ONE positional path plus flags. So the file-list mode is dropped (the
+ *  binaries cannot express it) and the panel shows the real command line
+ *  instead of an invented JSON document.
+ *
+ *  The page drives two programs, not one: Thermo `.raw` goes through
+ *  PioneerConverter (.NET), `.mzML` through Pioneer's own `convertMzML`
+ *  (Julia). They are one page because they are one task -- get instrument data
+ *  into the Arrow files SearchDIA reads -- but their tuning knobs are disjoint,
+ *  so the advanced section swaps rather than greying fields out.
  */
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
-import { BROWSE, LABEL } from '../lib/styles'
-import type { ConvertParams } from '../lib/types'
+import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
+import { convertGroups, formatOfFile, type ConvertGroup } from '../lib/config'
+import type { ConvertFormat, ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -44,8 +51,155 @@ interface Props {
   onParam: (key: string, value: string) => void
   onToggle: (key: string) => void
   onBrowseInput: () => void
+  /** Add files to the list, via the multi-select picker. */
+  onAddFiles: () => void
+  /** Drop one file from the list, by index. */
+  onRemoveFile: (index: number) => void
   onBrowseOutput: () => void
   onToggleAdvanced: () => void
+}
+
+/** A pill naming which converter a file goes to. */
+function FormatTag({ format }: { format: ConvertFormat | null }) {
+  const [text, fg, bg] =
+    format === 'raw'
+      ? ['RAW', '#1B4B7A', '#E6F0F9']
+      : format === 'mzml'
+        ? ['mzML', '#3B5A1B', '#EDF5E3']
+        : ['?', '#8A2B22', '#FBE9E7']
+  return (
+    <span
+      style={{
+        flex: 'none',
+        padding: '2px 7px',
+        borderRadius: 5,
+        font: "600 10.5px 'IBM Plex Sans'",
+        letterSpacing: '0.03em',
+        color: fg,
+        background: bg,
+      }}
+    >
+      {text}
+    </span>
+  )
+}
+
+/** The chosen-files list.
+ *
+ *  Each row carries the format it was matched as, because that is what decides
+ *  which converter it goes to and it is read off the name alone -- a file that
+ *  neither converter can read is a `?` in the list rather than a surprise at
+ *  run time.
+ */
+function ConvertFileList({
+  files,
+  groups,
+  unreadable,
+  onAdd,
+  onRemove,
+}: {
+  files: string[]
+  groups: ConvertGroup[]
+  unreadable: string[]
+  onAdd: () => void
+  onRemove: (index: number) => void
+}) {
+  const summary = groups
+    .map((g) => `${g.files.length} ${g.format === 'raw' ? '.raw' : '.mzML'}`)
+    .join(' and ')
+  return (
+    <div data-key="convertInput">
+      {files.length > 0 && (
+        <div
+          style={{
+            border: '1px solid #E3E8EC',
+            borderRadius: 9,
+            overflow: 'hidden',
+            marginBottom: 9,
+          }}
+        >
+          {files.map((f, i) => (
+            <div
+              key={`${f}:${i}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 9,
+                padding: '7px 10px',
+                borderTop: i ? '1px solid #EEF1F4' : undefined,
+              }}
+            >
+              <FormatTag format={formatOfFile(f)} />
+              <div
+                title={f}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  font: "12.5px 'IBM Plex Mono'",
+                  color: '#1A2230',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  direction: 'rtl',
+                  textAlign: 'left',
+                }}
+              >
+                {f}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                title="Remove from the list"
+                style={{
+                  flex: 'none',
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  padding: 4,
+                  lineHeight: 0,
+                  color: '#98A2B3',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M6 6l12 12M18 6L6 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          type="button"
+          className="pio-browse"
+          onClick={onAdd}
+          style={BROWSE_BLOCK}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
+          {files.length ? 'Add more files' : 'Choose files'}
+        </button>
+        <span style={{ fontSize: 11.5, color: '#98A2B3' }}>
+          {unreadable.length
+            ? `${unreadable.length} file${unreadable.length > 1 ? 's' : ''} neither converter reads.`
+            : files.length
+              ? `${summary} \u2014 ${groups.length} run${groups.length > 1 ? 's' : ''}.`
+              : 'Pick .raw or .mzML files. Mixing them is fine.'}
+        </span>
+      </div>
+    </div>
+  )
 }
 
 export function ConvertRawForm({
@@ -56,92 +210,132 @@ export function ConvertRawForm({
   onParam,
   onToggle,
   onBrowseInput,
+  onAddFiles,
+  onRemoveFile,
   onBrowseOutput,
   onToggleAdvanced,
 }: Props) {
-  const seg = (active: boolean): React.CSSProperties => ({
-    padding: '7px 14px',
-    border: 'none',
-    borderRadius: 8,
-    font: "600 12.5px 'IBM Plex Sans'",
-    cursor: 'pointer',
-    transition: 'all .12s',
-    ...(active
-      ? { background: '#fff', color: '#1B2A4A', boxShadow: '0 1px 3px rgba(15,20,27,0.12)' }
-      : { background: 'none', color: '#667085' }),
-  })
+  const byFiles = params.inputMode === 'files'
+  // In list mode each file names its own converter, so the format toggle has
+  // nothing to decide and is hidden. `format` still drives the folder-mode copy.
+  const isMzml = !byFiles && params.format === 'mzml'
+  const groups = convertGroups(params.inputFiles)
+  const unreadable = params.inputFiles.filter((f) => formatOfFile(f) === null)
 
-  // The two knobs multiply: N files in flight, each with M scan-reader threads.
-  // Shared with the validator so the readout and the block can never disagree.
-
-  const defaultOut = params.input.trim()
-    ? `${params.inputMode === 'file' ? params.input.trim().replace(/[^\\/]+$/, '').replace(/[\\/]$/, '') : params.input.trim()}/arrow_out`
-    : '<input folder>/arrow_out'
+  // In list mode the converters are handed a staging folder under the system
+  // temp directory, so their own <input_dir>/arrow_out default would write
+  // there. validateConvertRun requires the field instead of quietly defaulting
+  // somewhere nobody would look.
+  const defaultOut = byFiles
+    ? 'required for a list of files'
+    : params.input.trim()
+      ? `${params.input.trim()}/arrow_out`
+      : '<input folder>/arrow_out'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-          <h2 style={H2}>Convert raw files</h2>
+          <h2 style={H2}>
+            {byFiles ? 'Convert files' : isMzml ? 'Convert mzML files' : 'Convert raw files'}
+          </h2>
         </div>
         <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
-          Convert Thermo{' '}
-          <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> files to Arrow,
-          which is what SearchDIA reads.
+          {byFiles ? (
+            <>
+              Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> and{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code> files to
+              Arrow, which is what SearchDIA reads. The list can mix the two — each format goes to
+              its own converter, as its own run.
+            </>
+          ) : isMzml ? (
+            <>
+              Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code>{' '}
+              files to Arrow, which is what SearchDIA reads. Runs Pioneer&rsquo;s own converter, so
+              it works on any platform. The data must be centroided — profile-mode spectra are
+              skipped.
+            </>
+          ) : (
+            <>
+              Convert Thermo{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> files to
+              Arrow, which is what SearchDIA reads.
+            </>
+          )}
         </p>
 
-        <label style={LABEL}>Input</label>
-        <div
-          style={{
-            display: 'inline-flex',
-            padding: 3,
-            background: '#EEF1F4',
-            borderRadius: 10,
-            marginBottom: 12,
-          }}
-        >
+        {!byFiles && <label style={LABEL}>Format</label>}
+        <div style={{ ...SEG_TRACK, marginBottom: 14, display: byFiles ? 'none' : undefined }}>
           <button
             type="button"
-            onClick={() => onParam('inputMode', 'file')}
-            style={seg(params.inputMode === 'file')}
+            onClick={() => onParam('format', 'raw')}
+            style={seg(!isMzml)}
           >
-            Single file
+            Thermo .raw
+          </button>
+          <button
+            type="button"
+            onClick={() => onParam('format', 'mzml')}
+            style={seg(isMzml)}
+          >
+            .mzML
+          </button>
+        </div>
+
+        <label style={LABEL}>Input</label>
+        <div style={{ ...SEG_TRACK, marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => onParam('inputMode', 'files')}
+            style={seg(byFiles)}
+          >
+            Files
           </button>
           <button
             type="button"
             onClick={() => onParam('inputMode', 'folder')}
-            style={seg(params.inputMode === 'folder')}
+            style={seg(!byFiles)}
           >
             Folder
           </button>
         </div>
 
-        <div data-drop="convertInput" style={{ display: 'flex', gap: 8 }}>
-          <input
-            className="pio-input"
-            data-key="convertInput"
-            value={params.input}
-            onChange={(e) => onParam('input', e.target.value)}
-            placeholder={
-              params.inputMode === 'file' ? '/path/to/file.raw' : '/path/to/raw/folder'
-            }
-            style={{
-              flex: 1,
-              padding: '9px 12px',
-              borderRadius: 9,
-              font: "13px 'IBM Plex Mono'",
-              outline: 'none',
-              minWidth: 0,
-              border: `1px solid ${inputNote.level === 'error' ? '#E5484D' : '#D7DBE0'}`,
-            }}
-          />
-          <button type="button" className="pio-browse" onClick={onBrowseInput} style={BROWSE}>
-            Browse
-          </button>
+        <div data-drop="convertInput">
+          {byFiles ? (
+            <ConvertFileList
+              files={params.inputFiles}
+              groups={groups}
+              unreadable={unreadable}
+              onAdd={onAddFiles}
+              onRemove={onRemoveFile}
+            />
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="pio-input"
+                data-key="convertInput"
+                value={params.input}
+                onChange={(e) => onParam('input', e.target.value)}
+                placeholder={isMzml ? '/path/to/mzml/folder' : '/path/to/raw/folder'}
+                style={{
+                  flex: 1,
+                  padding: '9px 12px',
+                  borderRadius: 9,
+                  font: "13px 'IBM Plex Mono'",
+                  outline: 'none',
+                  minWidth: 0,
+                  border: `1px solid ${inputNote.level === 'error' ? '#E5484D' : '#D7DBE0'}`,
+                }}
+              />
+              <button type="button" className="pio-browse" onClick={onBrowseInput} style={BROWSE}>
+                Browse
+              </button>
+            </div>
+          )}
         </div>
         {inputNote.msg && (
           <div style={noteStyle(inputNote)}>
-            {inputNote.level ? '⚠  ' : ''}
+            {inputNote.level ? '\u26a0  ' : ''}
             {inputNote.msg}
           </div>
         )}
@@ -153,7 +347,9 @@ export function ConvertRawForm({
         </div>
         <label style={LABEL}>
           Output folder{' '}
-          <span style={{ fontWeight: 400, color: '#98A2B3' }}>— defaults to the input folder</span>
+          <span style={{ fontWeight: 400, color: '#98A2B3' }}>
+            {byFiles ? '— required for a list of files' : '— defaults to the input folder'}
+          </span>
         </label>
         <div data-drop="convertOutput" style={{ display: 'flex', gap: 8 }}>
           <input
@@ -262,19 +458,75 @@ export function ConvertRawForm({
         </button>
         {advancedOpen && (
           <div style={{ padding: '4px 20px 20px', borderTop: '1px solid #EEF1F4' }}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 14,
-                alignItems: 'start',
-                marginTop: 16,
-              }}
-            >
-              <NumField fieldKey="threadsPerFile" value={params.threadsPerFile} onChange={onParam} />
-              <NumField fieldKey="batchSize" value={params.batchSize} onChange={onParam} />
-              <NumField fieldKey="scanChunkSize" value={params.scanChunkSize} onChange={onParam} />
-            </div>
+            {/* Disjoint sets, not a shared set with some fields disabled: none
+                of PioneerConverter's knobs has a counterpart in convertMzML,
+                so showing them greyed out would only suggest otherwise. */}
+            {isMzml ? (
+              <>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 14,
+                    alignItems: 'start',
+                    marginTop: 16,
+                  }}
+                >
+                  <NumField
+                    fieldKey="concurrentFiles"
+                    value={params.concurrentFiles}
+                    onChange={onParam}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 14,
+                    marginTop: 18,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+                      Include scan headers
+                    </div>
+                    <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
+                      Carry each scan&rsquo;s header into the Arrow file. SearchDIA does not read
+                      them and they roughly double the output — leave off unless something else
+                      needs them.
+                    </div>
+                  </div>
+                  <Toggle
+                    on={params.includeScanHeader}
+                    fieldKey="includeScanHeader"
+                    onClick={() => onToggle('includeScanHeader')}
+                  />
+                </div>
+              </>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 14,
+                  alignItems: 'start',
+                  marginTop: 16,
+                }}
+              >
+                <NumField
+                  fieldKey="threadsPerFile"
+                  value={params.threadsPerFile}
+                  onChange={onParam}
+                />
+                <NumField fieldKey="batchSize" value={params.batchSize} onChange={onParam} />
+                <NumField
+                  fieldKey="scanChunkSize"
+                  value={params.scanChunkSize}
+                  onChange={onParam}
+                />
+              </div>
+            )}
           </div>
         )}
       </section>

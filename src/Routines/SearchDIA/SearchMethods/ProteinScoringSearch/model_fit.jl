@@ -655,7 +655,8 @@ function _protein_model_training_data_sufficient(
     all_protein_groups::DataFrame,
     cv_folds::Vector{UInt8},
 )
-    targets = all_protein_groups.target
+    targets = hasproperty(all_protein_groups, :training_label) ?
+        all_protein_groups.training_label : all_protein_groups.target
     folds = all_protein_groups.cv_fold
     for test_fold in cv_folds
         n_train_targets = 0
@@ -744,12 +745,18 @@ function perform_protein_scoring_multifold(
             train_mask = all_protein_groups.cv_fold .!= test_fold
             train_df = all_protein_groups[train_mask, :]
 
-            y_train = train_df.target
+            y_train = hasproperty(train_df, :training_label) ?
+                train_df.training_label : train_df.target
             initial_scores_train = train_df.pg_score
             context = "protein_lightgbm_multifold_fold_$(test_fold)"
+            plot_df = train_df
+            if write_qc_plots && hasproperty(train_df, :training_label)
+                plot_df = copy(train_df)
+                plot_df[!, :target] = Bool.(train_df.training_label)
+            end
             iteration_debug_callback = write_qc_plots ?
                 make_protein_iteration_plot_callback(
-                    train_df,
+                    plot_df,
                     test_fold,
                     qc_folder;
                     context = context,
@@ -805,7 +812,15 @@ function perform_protein_scoring_multifold(
         )
     end
     
-    # Clean up temporary column
-    select!(all_protein_groups, Not(:cv_fold))
+    # Clean up temporary columns.
+    columns_to_remove = Symbol[:cv_fold]
+    for column in (
+        :training_label,
+        :protein_shadow_negative,
+    )
+        hasproperty(all_protein_groups, column) &&
+            push!(columns_to_remove, column)
+    end
+    select!(all_protein_groups, Not(columns_to_remove))
     return use_model_scores
 end

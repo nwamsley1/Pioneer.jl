@@ -202,6 +202,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
     cand_ftr_pep   = candidates[!, :ftr_pep_true]
     cand_tot_q     = candidates[!, :mbr_total_error_qval_true]
     cand_tot_r     = candidates[!, :mbr_total_error_rate_true]
+    cand_cf_prob   = candidates[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+    cand_cf_idx    = candidates[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
     cursor = 0
     for (file_idx, path) in enumerate(file_paths)
         main = Arrow.Table(path)
@@ -216,6 +218,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
         ftr_pep   = fill(NaN32, n)
         tot_q     = fill(NaN32, n)
         tot_r     = fill(NaN32, n)
+        cf_prob   = fill(NaN32, n)
+        cf_idx    = zeros(UInt8, n)
         @inbounds for row in 1:n
             mask[row] || continue
             cursor += 1
@@ -230,6 +234,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             ftr_pep[row]   = cand_ftr_pep[cursor]
             tot_q[row]     = cand_tot_q[cursor]
             tot_r[row]     = cand_tot_r[cursor]
+            cf_prob[row]   = cand_cf_prob[cursor]
+            cf_idx[row]    = cand_cf_idx[cursor]
         end
         writeArrow(path * RECOVERY_SIDECAR_SUFFIX, DataFrame(
             precursor_idx = UInt32.(main.precursor_idx),
@@ -241,6 +247,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             ftr_pep_true = ftr_pep,
             mbr_total_error_qval_true = tot_q,
             mbr_total_error_rate_true = tot_r,
+            mbr_counterfactual_decoy_prob = cf_prob,
+            mbr_counterfactual_decoy_index = cf_idx,
         ))
     end
     cursor == nrow(candidates) ||
@@ -281,6 +289,12 @@ function _write_mbr_recovery_sidecars!(
                 Float32.(frame.mbr_total_error_qval_true[rows]),
             mbr_total_error_rate_true =
                 Float32.(frame.mbr_total_error_rate_true[rows]),
+            mbr_counterfactual_decoy_prob = Float32.(
+                frame[rows, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+            ),
+            mbr_counterfactual_decoy_index = UInt8.(
+                frame[rows, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
+            ),
         )
         writeArrow(path * RECOVERY_SIDECAR_SUFFIX, recovery)
         offset += n
@@ -406,6 +420,16 @@ function _merge_mbr_recoveries!(
             _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_qval_true)
         main[!, :mbr_total_error_rate_true] =
             _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_rate_true)
+        main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+            _copy_sidecar_column!(
+                Vector{Float32}(undef, n),
+                Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN),
+            )
+        main[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
+            _copy_sidecar_column!(
+                Vector{UInt8}(undef, n),
+                Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN),
+            )
         _mmark(:mr_copycols)
 
         # Same hoist as the alignment check above: these were three DataFrame `getproperty` calls per
@@ -423,12 +447,22 @@ function _merge_mbr_recoveries!(
             recovered = main[!, :mbr_recovered]
             transfer = main[!, :mbr_target_decoy_prob]
             prec_prob = main[!, :prec_prob]
+            counterfactual = main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+            counterfactual_prec_prob = fill(NaN32, nrow(main))
             @inbounds for row in eachindex(recovered)
-                Bool(recovered[row]) || continue
-                transfer_score =
-                    clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
-                prec_prob[row] = score_floor + width * transfer_score
+                if Bool(recovered[row])
+                    transfer_score =
+                        clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
+                    prec_prob[row] = score_floor + width * transfer_score
+                end
+                counterfactual_score = Float32(counterfactual[row])
+                if isfinite(counterfactual_score)
+                    counterfactual_prec_prob[row] = score_floor + width *
+                        clamp(counterfactual_score, 0.0f0, 1.0f0)
+                end
             end
+            main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
+                counterfactual_prec_prob
         end
         writeArrow(path, main)
         _mmark(:mr_write)
@@ -464,14 +498,32 @@ function _remap_mbr_scores!(
         path = file_path(ref)
         main = DataFrame(Tables.columntable(Arrow.Table(path)))
         hasproperty(main, :mbr_recovered) || continue
+        has_counterfactual =
+            hasproperty(main, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN)
+        counterfactual_prec_prob = has_counterfactual ?
+            fill(NaN32, nrow(main)) : Float32[]
         @inbounds for row in 1:nrow(main)
-            Bool(main.mbr_recovered[row]) || continue
-            transfer_score = clamp(
-                Float32(main.mbr_target_decoy_prob[row]),
-                0.0f0,
-                1.0f0,
-            )
-            main.prec_prob[row] = score_floor + width * transfer_score
+            if Bool(main.mbr_recovered[row])
+                transfer_score = clamp(
+                    Float32(main.mbr_target_decoy_prob[row]),
+                    0.0f0,
+                    1.0f0,
+                )
+                main.prec_prob[row] = score_floor + width * transfer_score
+            end
+            if has_counterfactual
+                counterfactual_score = Float32(
+                    main[row, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
+                )
+                if isfinite(counterfactual_score)
+                    counterfactual_prec_prob[row] = score_floor + width *
+                        clamp(counterfactual_score, 0.0f0, 1.0f0)
+                end
+            end
+        end
+        if has_counterfactual
+            main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
+                counterfactual_prec_prob
         end
         writeArrow(path, main)
     end

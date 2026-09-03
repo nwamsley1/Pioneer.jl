@@ -48,6 +48,51 @@ export const BROWSE: CSSProperties = {
   cursor: 'pointer',
 }
 
+/** `BROWSE` for a button that stands on its own rather than beside an input.
+ *
+ *  `BROWSE` has no vertical padding on purpose: in a path row it is a flex item
+ *  next to the input and stretches to the input's height, so padding of its own
+ *  would fight that. A button with no such sibling has nothing to stretch
+ *  against and collapses to the height of its text, which against a 9px-padded
+ *  input reads as a different, rounder control. This restores the same box.
+ */
+export const BROWSE_BLOCK: CSSProperties = {
+  ...BROWSE,
+  padding: '9px 14px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+}
+
+/** One button of a segmented control -- the pill pair that picks between two
+ *  shapes of the same field (single file vs folder, .raw vs .mzML, one folder
+ *  vs chosen files). Was defined inside ConvertRawForm; the SearchDIA file-list
+ *  toggle is the same control, so it lives here rather than being copied.
+ *
+ *  Wrap the buttons in a container with `padding: 3`, a `#EEF1F4` background
+ *  and `borderRadius: 10` -- the raised look comes from the active button
+ *  sitting on that inset track.
+ */
+export const seg = (active: boolean): CSSProperties => ({
+  padding: '7px 14px',
+  border: 'none',
+  borderRadius: 8,
+  font: "600 12.5px 'IBM Plex Sans'",
+  cursor: 'pointer',
+  transition: 'all .12s',
+  ...(active
+    ? { background: '#fff', color: '#1B2A4A', boxShadow: '0 1px 3px rgba(15,20,27,0.12)' }
+    : { background: 'none', color: '#667085' }),
+})
+
+/** The track a `seg` pair sits in. */
+export const SEG_TRACK: CSSProperties = {
+  display: 'inline-flex',
+  padding: 3,
+  background: '#EEF1F4',
+  borderRadius: 10,
+}
+
 /** Space reserved at the top of the window for the macOS traffic lights.
  *
  *  The window sets titleBarStyle "Overlay", so on macOS the webview starts at

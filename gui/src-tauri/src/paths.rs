@@ -40,6 +40,24 @@ const MS_EXTENSIONS: [&str; 3] = ["raw", "mzml", "arrow"];
 /// serialization difference between library versions does not matter.
 const PION_MARKERS: [&str; 2] = ["precursors_table", "detailed_fragments"];
 
+/// Which MS data format a file name names, or "" for anything else.
+///
+/// Deliberately NOT `extension_of`: that looks through a trailing `.gz`, which
+/// is right for FASTA (Pioneer reads a gzipped one) and wrong for every MS
+/// format here. None of the three converters or readers decompresses --
+/// `convertMzML` matches `endswith(lowercase(path), ".mzml")` and nothing else
+/// -- so counting `run.mzML.gz` as an mzML would promise a conversion that
+/// silently finds no files to do.
+fn ms_extension_of(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    for ext in MS_EXTENSIONS {
+        if lower.ends_with(&format!(".{ext}")) {
+            return ext;
+        }
+    }
+    ""
+}
+
 /// Lowercased extension, looking through a trailing `.gz`.
 ///
 /// Pioneer reads gzipped FASTA directly, so `proteins.fasta.gz` must report
@@ -91,9 +109,10 @@ pub fn inspect(path: &str) -> PathInfo {
     info.extension = extension_of(&p);
 
     if info.is_file {
-        if MS_EXTENSIONS.contains(&info.extension.as_str()) {
+        let ms = ms_extension_of(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        if MS_EXTENSIONS.contains(&ms) {
             info.ms_file_count = 1;
-            match info.extension.as_str() {
+            match ms {
                 "raw" => info.raw_count = 1,
                 "mzml" => info.mzml_count = 1,
                 "arrow" => info.arrow_count = 1,
@@ -121,8 +140,7 @@ pub fn inspect(path: &str) -> PathInfo {
                     if PION_MARKERS.contains(&stem) {
                         markers_seen += 1;
                     }
-                    let ext = extension_of(Path::new(name.as_ref()));
-                    match ext.as_str() {
+                    match ms_extension_of(name.as_ref()) {
                         "raw" => {
                             info.raw_count += 1;
                             info.ms_file_count += 1;
@@ -162,6 +180,247 @@ pub fn read_config(path: &str) -> Result<String, String> {
     };
     std::fs::read_to_string(&target).map_err(|e| format!("Could not read {}: {e}", target.display()))
 }
+
+/// Stage a chosen set of files as a directory containing only those files.
+///
+/// Every Pioneer program the console drives takes a *directory* (or a single
+/// file) and works on everything in it. None of them takes a list. But choosing
+/// a handful out of a folder of forty is what both "search these files
+/// separately" and "convert this list" mean, so each such run gets a directory
+/// built for it, holding links to exactly the files chosen.
+///
+/// SearchDIA stages one file per run — that is what makes them separate runs.
+/// ConvertRAW stages a whole format's worth into one, because the converters
+/// batch internally and there is no reason to make them start N times.
+///
+/// Links, not copies: these files are gigabytes. On Unix that is a symlink. On
+/// Windows a hard link is tried first — it needs no special privilege, where a
+/// symlink needs Developer Mode or an elevated process — and a symlink is the
+/// fallback for the one case a hard link cannot serve, a source on another
+/// volume.
+///
+/// Lives beside the params file for the same job, under the same temp root, and
+/// is left behind for the same reason: it is part of the record of what ran.
+///
+/// Two files with the same name from different folders cannot both be staged —
+/// one directory, one name each — so that is refused here rather than silently
+/// converting one file twice under the other's name.
+pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<String, String> {
+    if files.is_empty() {
+        return Err("nothing to stage".to_string());
+    }
+    let dir = std::env::temp_dir().join("pioneer-console").join(job_id).join(subdir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+    let mut seen: Vec<String> = Vec::with_capacity(files.len());
+    for file in files {
+        let src = PathBuf::from(file);
+        if !src.is_file() {
+            return Err(format!("{file} is not a file"));
+        }
+        let name = src
+            .file_name()
+            .ok_or_else(|| format!("{file} has no file name"))?
+            .to_string_lossy()
+            .into_owned();
+        if seen.contains(&name) {
+            return Err(format!(
+                "two of the chosen files are both named {name}. They would have to \
+                 share one name in the folder handed to the converter; rename one, \
+                 or convert them separately."
+            ));
+        }
+        let dst = dir.join(&name);
+        // A resumed or re-run job can find its own link already there. Remove
+        // rather than fail: the link is derived state, and the source it points
+        // at is the thing that matters.
+        if dst.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(&dst);
+        }
+        let hard = link_file(&src, &dst)?;
+        if !hard && name.to_ascii_lowercase().ends_with(".raw") {
+            // Only a symlink was possible, which for a .raw means the converter
+            // would read nothing and still report success. Say so now, with the
+            // reason, rather than after a batch has silently produced no output.
+            let _ = std::fs::remove_file(&dst);
+            return Err(format!(
+                "{name} is on a different volume from the temporary folder, so it can only be \
+                 linked in a way the Thermo reader cannot open. Convert that folder on its own \
+                 in Folder mode, or copy the file alongside the others first."
+            ));
+        }
+        seen.push(name);
+    }
+    Ok(dir.display().to_string())
+}
+
+/// Link `src` into place at `dst`.
+///
+/// A hard link first, on every platform. It is not a portability nicety: the
+/// Thermo reader PioneerConverter uses memory-maps the file it is given, and
+/// through a symlink it maps the *link* — a few dozen bytes — then reads past
+/// the end of it and dies with `System.OverflowException` out of
+/// `MemMapReader.ReadBytes`. Worse, PioneerConverter still exits 0, so a whole
+/// batch converts to nothing while reporting success. A hard link is a second
+/// name for the same inode and is indistinguishable from the original to
+/// anything that opens it.
+///
+/// The symlink fallback covers the one case a hard link cannot express, a
+/// source on another volume. `stage_files` refuses to use it for `.raw`, since
+/// for those it is the broken path above rather than a fallback.
+fn link_file(src: &Path, dst: &Path) -> Result<bool, String> {
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(true);
+    }
+    symlink_file(src, dst).map(|()| false)
+}
+
+#[cfg(unix)]
+fn symlink_file(src: &Path, dst: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(src, dst)
+        .map_err(|e| format!("could not link {} into place: {e}", src.display()))
+}
+
+#[cfg(windows)]
+fn symlink_file(src: &Path, dst: &Path) -> Result<(), String> {
+    std::os::windows::fs::symlink_file(src, dst).map_err(|e| {
+        format!(
+            "could not link {} into place: {e}. A hard link failed too, which \
+             usually means the file is on another drive.",
+            src.display()
+        )
+    })
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::stage_files;
+
+    /// A unique job id per test, so the tests do not collide in the shared temp
+    /// root and so a rerun does not see the previous run's links.
+    fn job_id(tag: &str) -> String {
+        format!("test-{tag}-{}", std::process::id())
+    }
+
+    fn path_of(dir: &std::path::Path, name: &str) -> String {
+        dir.join(name).to_string_lossy().into_owned()
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("pioneer-stage-src-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn stages_one_file_into_a_directory_of_its_own() {
+        let src = scratch("one");
+        // Two files side by side is the situation the whole feature exists for:
+        // the staged directory must contain the chosen one and *only* it, or
+        // SearchDIA would search both.
+        std::fs::write(src.join("a.arrow"), b"a").unwrap();
+        std::fs::write(src.join("b.arrow"), b"b").unwrap();
+
+        let id = job_id("one");
+        let dir = stage_files(&id, "ms_data", &[path_of(&src, "a.arrow")]).unwrap();
+        let staged: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(staged, vec!["a.arrow"], "only the chosen file may be staged");
+        // Reachable through the link, which is what the search will do.
+        assert_eq!(std::fs::read(std::path::Path::new(&dir).join("a.arrow")).unwrap(), b"a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn staging_the_same_file_twice_is_not_an_error() {
+        // A re-run of the same job finds its own link already in place.
+        let src = scratch("twice");
+        std::fs::write(src.join("a.arrow"), b"a").unwrap();
+        let id = job_id("twice");
+        let path = path_of(&src, "a.arrow");
+        let first = stage_files(&id, "ms_data", &[path.clone()]).unwrap();
+        let second = stage_files(&id, "ms_data", &[path.clone()]).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&first);
+    }
+
+    #[test]
+    fn stages_a_whole_group_into_one_directory() {
+        // The ConvertRAW list case: several files, one run, one input folder.
+        let a = scratch("group-a");
+        let b = scratch("group-b");
+        std::fs::write(a.join("one.raw"), b"1").unwrap();
+        std::fs::write(a.join("two.raw"), b"2").unwrap();
+        // Deliberately from a different folder: a list is often assembled from
+        // more than one place, and all of it has to land in the same directory.
+        std::fs::write(b.join("three.raw"), b"3").unwrap();
+
+        let dir = stage_files(
+            &job_id("group"),
+            "raw_in",
+            &[path_of(&a, "one.raw"), path_of(&a, "two.raw"), path_of(&b, "three.raw")],
+        )
+        .unwrap();
+        let mut staged: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        staged.sort();
+        assert_eq!(staged, vec!["one.raw", "three.raw", "two.raw"]);
+        assert_eq!(std::fs::read(std::path::Path::new(&dir).join("three.raw")).unwrap(), b"3");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_two_chosen_files_with_the_same_name() {
+        // One directory cannot hold both, so converting the list would silently
+        // do one file twice. Refused with the name, rather than guessed at.
+        let a = scratch("dup-a");
+        let b = scratch("dup-b");
+        std::fs::write(a.join("QC_01.raw"), b"1").unwrap();
+        std::fs::write(b.join("QC_01.raw"), b"2").unwrap();
+        let err = stage_files(
+            &job_id("dup"),
+            "raw_in",
+            &[path_of(&a, "QC_01.raw"), path_of(&b, "QC_01.raw")],
+        )
+        .unwrap_err();
+        assert!(err.contains("QC_01.raw"), "the message must name the file: {err}");
+    }
+
+    #[test]
+    fn a_gzipped_mzml_is_not_counted_as_ms_data() {
+        // extension_of looks through .gz because Pioneer reads a gzipped FASTA.
+        // No MS converter does, so the counts must not promise otherwise: the
+        // form would say "1 .mzML file to convert" and convertMzML would find
+        // none, having matched only on a literal .mzml suffix.
+        let d = scratch("gz");
+        std::fs::write(d.join("run.mzML.gz"), b"x").unwrap();
+        std::fs::write(d.join("real.mzML"), b"x").unwrap();
+        let info = super::inspect(d.to_str().unwrap());
+        assert_eq!(info.mzml_count, 1, "only the uncompressed file converts");
+        assert_eq!(info.ms_file_count, 1);
+
+        let one = super::inspect(d.join("run.mzML.gz").to_str().unwrap());
+        assert_eq!(one.mzml_count, 0, "a lone .gz is not MS data either");
+        // The FASTA-facing field keeps looking through the .gz, unchanged.
+        assert_eq!(one.extension, "mzml");
+    }
+
+    #[test]
+    fn refuses_a_directory_or_a_missing_path() {
+        let src = scratch("bad");
+        let id = job_id("bad");
+        assert!(stage_files(&id, "ms_data", &[src.to_string_lossy().into_owned()]).is_err());
+        assert!(stage_files(&id, "ms_data", &[path_of(&src, "nope.arrow")]).is_err());
+        assert!(stage_files(&id, "ms_data", &[]).is_err());
+    }
+}
+
 
 #[cfg(test)]
 mod extension_tests {

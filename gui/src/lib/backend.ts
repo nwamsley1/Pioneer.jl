@@ -6,7 +6,7 @@ import { homeDir } from '@tauri-apps/api/path'
 
 import {
   EMPTY_PATH_INFO,
-  type CommandId,
+  type BackendCommand,
   type Invocation,
   type PathInfo,
   type PioneerInfo,
@@ -34,6 +34,19 @@ export interface ExitEvent {
 
 export const pioneerInfo = (): Promise<PioneerInfo> => invoke('pioneer_info')
 
+export const appVersion = (): Promise<string> => invoke('app_version')
+
+export interface UninstallInfo {
+  available: boolean
+  version: string
+  install_root: string
+  app_path: string
+}
+
+export const uninstallInfo = (): Promise<UninstallInfo> => invoke('uninstall_info')
+
+export const uninstallThisVersion = (): Promise<void> => invoke('uninstall_this_version')
+
 export const cpuCount = (): Promise<number> => invoke('cpu_count')
 
 export async function inspectPath(path: string): Promise<PathInfo> {
@@ -46,6 +59,16 @@ export async function inspectPath(path: string): Promise<PathInfo> {
 }
 
 export const readConfig = (path: string): Promise<string> => invoke('read_config', { path })
+
+/** Build the input directory for one run over a chosen set of files, and return
+ *  its path.
+ *
+ *  No Pioneer program takes a list — each takes one directory and works on
+ *  everything in it — so a chosen set is handed over as a directory of links.
+ *  SearchDIA stages one file per run, which is what makes them separate runs;
+ *  ConvertRAW stages a whole format's worth into one. See `paths::stage_files`. */
+export const stageFiles = (jobId: string, subdir: string, files: string[]): Promise<string> =>
+  invoke('stage_files', { jobId, subdir, files })
 
 /** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
  *  Captured rather than streamed: it is data, not run output. */
@@ -60,7 +83,7 @@ export interface Started {
 
 export const startJob = (
   jobId: string,
-  command: CommandId,
+  command: BackendCommand,
   invocation: Invocation,
   threads: number,
 ): Promise<Started> => invoke('start_job', { jobId, command, invocation, threads })
@@ -273,6 +296,26 @@ export async function pickFastaFiles(multiple = true): Promise<string[]> {
 }
 
 /** Native file picker restricted to `extensions`. */
+/** Like pickFile, but returns every file chosen. Used by the SearchDIA file
+ *  list, where picking a batch one file at a time would be the whole cost of
+ *  the feature. */
+export async function pickFiles(
+  title: string,
+  name: string,
+  extensions: string[],
+): Promise<string[]> {
+  const picked = await open({
+    directory: false,
+    multiple: true,
+    title,
+    filters: [{ name, extensions }],
+    defaultPath: lastDir(),
+  })
+  if (!Array.isArray(picked) || picked.length === 0) return []
+  rememberDir(picked[0], false)
+  return picked
+}
+
 export async function pickFile(
   title: string,
   name: string,
