@@ -599,10 +599,11 @@ function writePrecursorCSV_chunked(
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
-        # Area over the same window before baseline subtraction. Retained so the
-        # QUANT_MIN_AREA_SURVIVING_RATIO cut can be re-evaluated against an
-        # existing search rather than requiring a re-run.
-        :peak_area_unsubtracted,
+        # True when QUANT_MIN_AREA_SURVIVING_RATIO withheld this row's area -- i.e. the
+        # blank peak_area is a withheld measurement rather than a peak that was never found.
+        # Recorded where the rule fires, so it classifies every blanked row exactly; the
+        # previous Float32 peak_area_unsubtracted could not separate all cases.
+        :quant_withheld,
         :precursor_fraction_transmitted,
         :isotopes_captured,
         :rt,
