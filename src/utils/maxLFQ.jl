@@ -60,6 +60,36 @@ function getS(
 end
 
 """
+    getPresence(peptides, peptides_dict, experiments, experiments_dict, M, N) -> BitMatrix
+
+Peptide-by-run occupancy for the *scoring* set: `true` where a precursor was observed in a
+run at all, regardless of whether it could be quantified.
+
+This is deliberately independent of `getS`. `getS` applies an `abundance > 0` test because
+MaxLFQ must not ingest zero or withheld areas; a precursor whose area was zeroed (no peak
+found, or withheld by QUANT_MIN_AREA_SURVIVING_RATIO) is nonetheless part of the set that
+scored the protein group -- it passed the roll-up mask in
+`_protein_rollup_quant_mask`, which has no `peak_area` term. Reporting support from `S` is
+what produced protein groups with `n_peptides == 0` beside a passing q-value.
+
+A BitMatrix is used so the added footprint is M*N bits per protein group.
+"""
+function getPresence(
+    peptides::AbstractVector{UInt32},
+    peptides_dict::Dict{UInt32, Int64},
+    experiments::AbstractVector{<:Integer},
+    experiments_dict::Dict{E, Int64},
+    M::Int,
+    N::Int
+) where {E<:Integer}
+    P = falses(M, N)
+    @inbounds for i in eachindex(peptides)
+        P[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = true
+    end
+    return P
+end
+
+"""
     get_log2_intensity_matrix(S::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
 
 Convert the linear-intensity peptide-by-run matrix `S` into log2 space while
@@ -497,7 +527,8 @@ function getProtAbundance(protein::String,
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
-                            total_peak_area_out::Vector{Union{Missing, Float32}})
+                            total_peak_area_out::Vector{Union{Missing, Float32}},
+                            n_precursors_quantified_out::Vector{Union{Missing, UInt32}})
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -552,26 +583,23 @@ function getProtAbundance(protein::String,
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
                             total_peak_area_out::Vector{Union{Missing, Float32}},
+                            n_precursors_quantified_out::Vector{Union{Missing, UInt32}},
                             experiments_out::Vector{Union{Missing, I}}, 
                             S::Matrix{Union{Missing, S_T}},
+                            P::BitMatrix,
                             total_peak_area::AbstractVector{Union{Missing, Float32}}) where {A<:Real,S_T<:Real,I<:Integer}
         
         function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                                 row_idx::Int64,
                                 unique_peptides::Vector{UInt32}, 
-                                S::Matrix{Union{Missing,S_T}})
-            #Each column of S corresponds to and experiment and each row corresponds to a peptide
-            #Need to get each non-missing peptide for each experiment. Concatenate the non-missing peptides
-            #For and experiment with a semi-colon. See example in the getProtAbundance docstring 
-            for j in eachindex(eachcol(S))
-                #Each row in S is for a peptide 
-                sample_peptides = Vector{Union{Missing, UInt32}}(undef, size(S, 1))
-                for i in eachindex(@view(S[:,j]))
-                    if !ismissing(S[i,j])
-                        sample_peptides[i] =  unique_peptides[i]
-                    else
-                        sample_peptides[i] = missing
-                    end
+                                P::BitMatrix)
+            #Each column of P is an experiment; each row is a precursor of this protein group.
+            #Report the precursors that SCORED the group -- those observed in the run -- not the
+            #subset that could be quantified. Quantification still uses S; see getPresence.
+            for j in axes(P, 2)
+                sample_peptides = Vector{Union{Missing, UInt32}}(undef, size(P, 1))
+                for i in axes(P, 1)
+                    sample_peptides[i] = P[i, j] ? unique_peptides[i] : missing
                 end
                 peptides_out[row_idx + j - 1] = sample_peptides
             end
@@ -592,16 +620,25 @@ function getProtAbundance(protein::String,
             target_out[row_idx + i] = target
             entrap_id_out[row_idx + i] = entrap_id
             total_peak_area_out[row_idx + i] = total_peak_area[i + 1]
+            # Precursors this run actually contributed to quantification: the non-missing
+            # entries of S. Reported alongside n_precursors (the scoring set) so the two
+            # populations stay distinguishable in the output.
+            total_quant = 0
+            @inbounds for k in axes(S, 1)
+                total_quant += ismissing(S[k, i + 1]) ? 0 : 1
+            end
+            n_precursors_quantified_out[row_idx + i] = UInt32(total_quant)
         end
         appendPeptides!(peptides_out, 
                         row_idx,
                         unique_peptides, 
-                        S)
+                        P)
     end
 
     #ixj matrix where rows are for experiments and columns are for peptides. Each entry is the abundance of the peptide
     #in the given experiment, or missing if peptide j was not seen in experiment i. 
     S = getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
+    P = getPresence(peptides, peptides_dict, experiments, experiments_dict, M, N)
     X = get_log2_intensity_matrix(S)
     total_peak_area = get_total_peak_area(S)
     log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
@@ -645,8 +682,10 @@ function getProtAbundance(protein::String,
                    pg_score_out,
                    global_pg_score_out,
                    total_peak_area_out,
+                   n_precursors_quantified_out,
                    experiments_out,
                    S,
+                   P,
                    total_peak_area)
 
 end
@@ -780,6 +819,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
             :global_pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
             :total_peak_area => Vector{Union{Missing, Float32}}(missing, nrows),
+            :n_precursors_quantified => Vector{Union{Missing, UInt32}}(missing, nrows),
         )
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
@@ -825,7 +865,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:pg_pep],
                                 out[:pg_score],
                                 out[:global_pg_score],
-                                out[:total_peak_area]
+                                out[:total_peak_area],
+                                out[:n_precursors_quantified]
                             )
         end
         out = DataFrame(out)
@@ -856,6 +897,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :protein,
             :peptides,
             :n_precursors,
+            :n_precursors_quantified,
             :n_modified_peptides,
             :n_peptides,
             :global_qval,
