@@ -17,6 +17,67 @@
 
 
 
+"""
+Quantification columns whose zero values are a sentinel, not a measurement.
+
+`integrate_chrom` writes `0.0f0` when a precursor could not be quantified in a run --
+either integration found no peak, or `QUANT_MIN_AREA_SURVIVING_RATIO` withheld the area
+because too little survived baseline subtraction. Downstream already reads zero as "not
+quantified": `getS` maps any `abundance <= 0` to `missing` so MaxLFQ never ingests one.
+
+Rendering that sentinel as `0.0` in the output tables is misleading -- it is
+indistinguishable from a real measurement of zero. Blank it at the OUTPUT BOUNDARY only.
+The chunk files keep plain `Float32` zeros, so MaxLFQ's input is byte-for-byte unchanged
+and no `Union{Missing,Float32}` is introduced into any carried column.
+
+`peak_area_normalized` carries the same sentinel when run-to-run normalization is enabled,
+so it is blanked too. When normalization is *disabled* the column is never computed at all
+(`MaxLFQSearch` selects `:peak_area` as the quant column); it is then dropped from the output
+by `drop_uncomputed_normalized` rather than emitted as an empty column.
+"""
+const OUTPUT_BLANKED_QUANT_COLUMNS = (:peak_area, :peak_area_normalized)
+
+function _blank_unquantified(col::AbstractVector)
+    out = Vector{Union{Missing, Float32}}(undef, length(col))
+    @inbounds for i in eachindex(col)
+        v = col[i]
+        out[i] = (ismissing(v) || v <= 0) ? missing : Float32(v)
+    end
+    return out
+end
+
+"""Blank sentinel zero areas in a DataFrame, in place (TSV path)."""
+function blank_unquantified_areas!(df)
+    for c in OUTPUT_BLANKED_QUANT_COLUMNS
+        hasproperty(df, c) && (df[!, c] = _blank_unquantified(df[!, c]))
+    end
+    return df
+end
+
+"""
+    drop_uncomputed_normalized(cols, normalized::Bool)
+
+`peak_area_normalized` is only populated when run-to-run normalization is enabled --
+`MaxLFQSearch` selects `:peak_area` as the quant column otherwise and never fills it. Emitting
+it as an all-zero (or, after blanking, all-empty) column invites readers to treat uncomputed
+values as measurements. Drop it from the output entirely when normalization is off.
+"""
+function drop_uncomputed_normalized(cols::NamedTuple, normalized::Bool)
+    normalized && return cols
+    haskey(cols, :peak_area_normalized) || return cols
+    ks = filter(!=(:peak_area_normalized), keys(cols))
+    return NamedTuple{ks}(map(k -> cols[k], ks))
+end
+
+"""Blank sentinel zero areas in a column table, returning a NamedTuple (Arrow path)."""
+function blank_unquantified_areas(tbl)
+    cols = Tables.columntable(tbl)
+    ks = keys(cols)
+    any(k -> k in OUTPUT_BLANKED_QUANT_COLUMNS, ks) || return cols
+    return NamedTuple{ks}(map(k -> k in OUTPUT_BLANKED_QUANT_COLUMNS ?
+                                   _blank_unquantified(cols[k]) : cols[k], ks))
+end
+
 function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}) where {S<:AbstractString}
     # Convert the original string into an array of characters for easier manipulation
     char_array = collect(original)
@@ -590,6 +651,13 @@ function writePrecursorCSV_chunked(
                     end
                     n_rows = size(precursors_long, 1)
                     n_rows == 0 && continue
+
+                    # Sentinel zero areas -> missing, so the TSV renders an empty cell
+                    # rather than a value that looks like a measurement.
+                    blank_unquantified_areas!(precursors_long)
+                    if !normalized && hasproperty(precursors_long, :peak_area_normalized)
+                        select!(precursors_long, Not(:peak_area_normalized))
+                    end
 
                     # Drop excluded columns (only those that exist)
                     cols_to_drop = intersect(long_columns_exclude, Symbol.(names(precursors_long)))
