@@ -749,6 +749,7 @@ function writeProteinGroupsCSV(
         :entrap_id,
         :peptides,
         :n_precursors,
+        :n_precursors_quantified,
         :n_modified_peptides,
         :n_peptides,
         :global_pg_score,
