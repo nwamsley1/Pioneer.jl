@@ -279,15 +279,17 @@ function getApexScan(
 
     apex_idx = apex_scan + n_pad
 
-    # Walk right: climb while next scan is strictly higher
+    # Walk right: climb while next scan is at least as high. `>=` rather than `>` so the
+    # walk can cross a flat region: a seed landing on dead baseline has zero gradient in
+    # both directions, so a strict climb cannot move and the apex stays on a zero.
     right_apex = apex_idx
-    while right_apex < N && intensities[right_apex + 1] > intensities[right_apex]
+    while right_apex < N && intensities[right_apex + 1] >= intensities[right_apex]
         right_apex += 1
     end
 
-    # Walk left: climb while next scan is strictly higher
+    # Walk left: same.
     left_apex = apex_idx
-    while left_apex > 1 && intensities[left_apex - 1] > intensities[left_apex]
+    while left_apex > 1 && intensities[left_apex - 1] >= intensities[left_apex]
         left_apex -= 1
     end
 
