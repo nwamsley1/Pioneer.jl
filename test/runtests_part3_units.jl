@@ -32,6 +32,9 @@ include("./UnitTests/test_download_speclib.jl")
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
 
+# Scanning-quad (ZT) meta-scan expansion
+include("./UnitTests/test_zt_expand_to_metascans.jl")
+
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")

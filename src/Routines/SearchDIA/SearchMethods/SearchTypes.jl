@@ -272,6 +272,9 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
+    # Scanning-quad (ZT) Q1 bin lattice, per file, filled lazily on first touch.
+    # `nothing` = checked and not a scanning acquisition. Key absent = not yet checked.
+    zt_geometry::Dict{Int64, Union{Nothing, ZTGeometry}}
     mass_error_model::Dict{Int64, AbstractMassErrorModel}
     ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
@@ -328,6 +331,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
+            Dict{Int64, Union{Nothing, ZTGeometry}}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, NceModel}(),
@@ -532,6 +536,23 @@ end
 
 # Simple setters
 setQuadTransmissionModel!(s::SearchContext, index::I, model::QuadTransmissionModel) where {I<:Integer} = (s.quad_transmission_model[index] = model)
+
+"""
+   getZTGeometry(s::SearchContext, index::Integer) -> Union{Nothing, ZTGeometry}
+
+Q1 bin lattice for a scanning-quad file, or `nothing` when the file is not a scanning
+acquisition (or detection has not run for it yet). Unlike `getQuadTransmissionModel`, absence
+is the normal case — most files are not scanning acquisitions — so this does not warn.
+"""
+getZTGeometry(s::SearchContext, index::I) where {I<:Integer} =
+    get(s.zt_geometry, Int64(index), nothing)::Union{Nothing, ZTGeometry}
+
+setZTGeometry!(s::SearchContext, index::I, g::Union{Nothing, ZTGeometry}) where {I<:Integer} =
+    (s.zt_geometry[Int64(index)] = g)
+
+"""True when `index` has been checked and is a scanning-quad acquisition."""
+isZTFile(s::SearchContext, index::I) where {I<:Integer} =
+    getZTGeometry(s, index) !== nothing
 
 """
    getMassErrorModel(s::SearchContext, index::Integer)

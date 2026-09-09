@@ -49,6 +49,7 @@ function execute_search(
     search_results = init_search_results(search_type, search_parameters, search_context)
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
+        ensure_zt_geometry!(search_context, params, ms_file_idx, spectra)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
@@ -257,6 +258,60 @@ function initSearchContext(
     @user_info "Library: $n_targets target precursors, $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=4)))"
     
     return search_context
+end
+
+"""
+    ensure_zt_geometry!(search_context, params, ms_file_idx, spectra) -> Nothing
+
+Detect and record the Q1 bin lattice for one file, the first time that file is seen.
+Idempotent — later search phases hit the cache and return immediately.
+
+Called from `execute_search`'s per-file loop, so it measures the `spectra` already open for
+that iteration: one file at a time, no extra file opens.
+
+Activation is `acquisition.scanning_quad` (default `false`); `acquisition.metascan_k` sets the
+expansion half-width in bins (default 6). The physical swept width is NOT recoverable from the
+data — `scanHeader` is empty and `lowMz`/`highMz` are the fragment range — so `k` is a config
+input, not an inference.
+
+The measured lattice is PER FILE: sibling runs from the same acquisition method differ slightly
+in sweep start and step. `metascan_k` is a config value and so is the same for every file.
+
+Every file logs its ZT status exactly once, ON or OFF — silence is never a valid state, because
+a silent no-op of the ZT path is the single most expensive bug this work has hit.
+"""
+function ensure_zt_geometry!(
+    search_context::SearchContext,
+    params::PioneerParameters,
+    ms_file_idx::Int64,
+    spectra::MassSpecData,
+)
+    haskey(search_context.zt_geometry, ms_file_idx) && return nothing
+
+    fname = getParsedFileName(getMassSpecData(search_context), ms_file_idx)
+    acq = params.acquisition
+
+    if !(hasproperty(acq, :scanning_quad) && Bool(acq.scanning_quad))
+        setZTGeometry!(search_context, ms_file_idx, nothing)
+        @user_info "Scanning-quad (ZT) [$fname]: OFF"
+        return nothing
+    end
+
+    k = hasproperty(acq, :metascan_k) ? Int(acq.metascan_k) : 6
+    g = detect_zt_geometry(spectra, k)
+    if g === nothing
+        setZTGeometry!(search_context, ms_file_idx, nothing)
+        @user_warn "Scanning-quad (ZT) [$fname]: ON, but no usable MS2 isolation metadata — ZT off for this file"
+        return nothing
+    end
+
+    setZTGeometry!(search_context, ms_file_idx, g)
+    tiling = zt_tiles_contiguously(g) ? "contiguous" : "NON-CONTIGUOUS (check acquisition!)"
+    @user_info "Scanning-quad (ZT) [$fname]: ON  k=$(g.metascan_k) (±$(g.metascan_k) bins, " *
+               "±$(round(g.metascan_k * g.bin_step, digits=2)) Da)  S=$(round(g.bin_step, digits=4)) Da  " *
+               "nominal width=$(round(g.nominal_width, digits=4)) Da ($tiling)  " *
+               "bins/ramp=$(g.bins_per_ramp)  span=$(round(zt_span_mz(g), digits=2)) Da"
+    return nothing
 end
 
 function initSimpleSearchContexts(

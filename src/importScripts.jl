@@ -233,6 +233,9 @@ function importScripts()
     # fusedScan defines FusedScratch, which SearchTypes references as a field
     # on SimpleLibrarySearch — must load first.
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "fusedScan.jl"))
+    # zt_geometry defines ZTGeometry, which SearchTypes references as a field on SearchContext
+    # — must load first.
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "zt_geometry.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
     # Include remaining files using safe import for directories

@@ -262,6 +262,120 @@ function filter_low_scan_candidates!(
 end
 
 """
+    _sort_dedup!(v) -> Int
+
+Sort `v` and compact duplicates to the front in place. Returns the count of unique elements;
+`v[1:n]` holds them. Replaces a per-scan `Set{UInt32}` in `expand_to_metascans!`.
+"""
+@inline function _sort_dedup!(v::Vector{UInt32})
+    isempty(v) && return 0
+    sort!(v)
+    m = 1
+    @inbounds for i in 2:length(v)
+        if v[i] != v[m]
+            m += 1
+            v[m] = v[i]
+        end
+    end
+    return m
+end
+
+"""
+    expand_to_metascans!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, k)
+
+Scanning-quad (ZT) meta-scan expansion. The swept quadrupole spreads a precursor's ions across
+~`2k+1` adjacent Q1 bins (consecutive MS2 scans within a cycle), so replace each searched scan's
+candidate set with the UNION of the candidates of every scan within ±`k` of it in the SAME cycle.
+Deconvolution then estimates a per-bin weight across the whole meta-scan, which the collapse step
+exploits.
+
+Neighbours are `si±j` guarded by `getMsOrder == 2` and equal `getCycleIdx`, so expansion never
+crosses a cycle or MS1 boundary.
+
+Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
+`filter_low_scan_candidates!`). Returns the new `precursors_passed`. Candidates are sorted within
+each scan.
+
+Threaded over contiguous chunks of `all_scan_idxs`. **The parallel phase is strictly read-only on
+`scan_to_prec_idx`; every write happens in the serial phase after it.** A scan's neighbours must
+be read as they were BEFORE any expansion, so the two phases cannot be fused.
+"""
+function expand_to_metascans!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    k::Int,
+)
+    (k <= 0 || isempty(all_scan_idxs)) && return precursors_passed
+    n     = length(all_scan_idxs)
+    nspec = length(spectra)
+
+    # Contiguous chunks, assigned in order, so concatenating buffers in chunk order
+    # reproduces scan order.
+    nchunks = min(Threads.nthreads(), n)
+    bounds  = [(n * (t - 1)) ÷ nchunks + 1 for t in 1:(nchunks + 1)]
+    bounds[end] = n + 1
+
+    counts   = Vector{Int32}(undef, n)
+    out_bufs = Vector{Vector{UInt32}}(undef, nchunks)
+
+    # --- Phase 1: gather + dedup (parallel, READ-ONLY on scan_to_prec_idx) ---
+    Threads.@threads for t in 1:nchunks
+        lo, hi  = bounds[t], bounds[t + 1] - 1
+        buf     = UInt32[]
+        scratch = UInt32[]
+        @inbounds for i in lo:hi
+            si = all_scan_idxs[i]
+            ci = getCycleIdx(spectra, si)
+            empty!(scratch)
+            for j in -k:k
+                sj = si + j
+                (sj < 1 || sj > nspec) && continue
+                getMsOrder(spectra, sj) == 2 || continue
+                getCycleIdx(spectra, sj) == ci || continue
+                rng = scan_to_prec_idx[sj]
+                ismissing(rng) && continue
+                for r in rng
+                    push!(scratch, precursors_passed[r])
+                end
+            end
+            m = _sort_dedup!(scratch)
+            counts[i] = Int32(m)
+            m > 0 && append!(buf, @view scratch[1:m])
+        end
+        out_bufs[t] = buf
+    end
+
+    # --- Phase 2: concatenate and reindex (serial) ---
+    total = 0
+    @inbounds for i in 1:n
+        total += counts[i]
+    end
+    new_precursors = Vector{UInt32}(undef, total)
+    pos = 1
+    @inbounds for t in 1:nchunks
+        buf = out_bufs[t]
+        isempty(buf) && continue
+        copyto!(new_precursors, pos, buf, 1, length(buf))
+        pos += length(buf)
+    end
+
+    off = 0
+    @inbounds for i in 1:n
+        si = all_scan_idxs[i]
+        c  = Int(counts[i])
+        if c == 0
+            scan_to_prec_idx[si] = missing
+        else
+            scan_to_prec_idx[si] = (off + 1):(off + c)
+            off += c
+        end
+    end
+    return new_precursors
+end
+
+"""
     filter_by_bitvec!(scan_to_prec_idx, precursors_passed, scores_passed, filter_table)
 
 Remove fragment index candidates whose bitmask pattern does not pass the BitVec filter.

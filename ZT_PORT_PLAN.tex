@@ -1,0 +1,323 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\definecolor{hl}{RGB}{0,90,160}
+\titleformat{\section}{\large\bfseries\color{hl}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{ZT scanning-DIA $\to$ develop:\\ staged re-implementation plan}}
+\author{Pioneer.jl --- branch \code{feat/zt-scanning-v2}}
+\date{2026-09-09}
+
+\begin{document}
+\maketitle
+
+Branch \code{feat/zt-scanning-v2}, cut clean from \code{origin/develop} @ \code{9baafa921}.
+Source of truth for prior work: \code{origin/feat/zt-batched-collapse} @ \code{7653d38d0}
+(45 commits, 375 behind develop).
+Handoff: \code{/Volumes/d.goldfarb/.../ZT\_HANDOFF\_2026-09-09/}.
+
+\section{Principles}
+
+\begin{enumerate}[leftmargin=*,itemsep=0.3em]
+  \item \textbf{Re-implement conceptually, don't replay commits.} The old branch is a research
+        trail with reversals in it. We port the \emph{conclusions}, not the path.
+  \item \textbf{Every stage ends at a number.} Each stage has an A\_REP1 precursor-ID checkpoint.
+        If the number is wrong, stop --- do not stack the next stage on an unverified one.
+  \item \textbf{Dead ends are not ported at all} (see Section~\ref{sec:oos}).
+  \item \textbf{Known-bad designs get fixed at build time}, not ported-then-optimized later.
+  \item \textbf{ZT activation moves from env var to config.} The single most expensive bug in the
+        whole project was a silent no-op; the new design makes it structurally impossible.
+\end{enumerate}
+
+\section{Verification ladder}
+
+\begin{center}
+\begin{tabular}{clrr}
+\toprule
+\textbf{stage} & \textbf{what lands} & \textbf{A\_REP1 target} & \textbf{actual} \\
+\midrule
+0 & nothing (control)              & measure (old ZT-off 23,013) & \textbf{22,656} \checkmark \\
+1 & geometry + activation          & unchanged from stage 0 & \textbf{22,656} bit-ident.\ \checkmark \\
+2 & expansion + collapse           & $\sim$26,552 & --- \\
+3 & bitvec window alignment        & $\sim$27,234 & --- \\
+4 & shape / elution features       & $\ge$ 27,234 & --- \\
+5 & \textbf{wide-emit tol=2}       & \textbf{$\sim$30,359} & --- \\
+\midrule
+\multicolumn{2}{l}{\emph{reference: DIA-NN direct}} & \emph{30,478} & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All runs: A\_REP1 single file, \code{--threads 12 --gcthreads 8,1}, MBR off, $\sim$170\,s/file.
+
+\section{Stage 0 --- develop baseline (no code changes)}
+
+Run A\_REP1 on clean develop with no ZT anything. Develop has moved 375 commits since the ZT
+branch forked, so the old 23,013 control is not assumed to still hold. \textbf{This number is the
+control for every stage after it.}
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item Deliverable: \code{results/s0\_develop\_baseline}, ID count recorded.
+  \item Also confirms the environment: threads, memory, library path, arrow integrity.
+\end{itemize}
+
+\section{Stage 1 --- Geometry and activation \textnormal{(DONE)}}
+
+\textbf{Concept:} teach the search that this acquisition is a \emph{swept} quadrupole --- the
+recorded $\sim$1.02\,Da \code{isolationWidthMz} is only the Q1 step, while the physical window is
+several Da swept across $m/z$. Q1 bins are contiguous MS2 scans within a cycle.
+
+Detection, storage and logging \textbf{only}. No consumer reads the geometry, so results are
+unchanged.
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item \code{ZTGeometry} (\code{src/Routines/SearchDIA/zt\_geometry.jl}): \code{bin\_step},
+        \code{nominal\_width}, \code{bins\_per\_ramp}, \code{metascan\_k}.
+  \item \textbf{Config-driven activation}: \code{acquisition.scanning\_quad} +
+        \code{acquisition.metascan\_k}, not \code{PIONEER\_ZT\_METASCAN\_K}. \code{acquisition}
+        parses generically to a NamedTuple, so no parser change was needed.
+  \item \textbf{Lazy, per file}, from \code{execute\_search}'s existing loop --- measures the
+        already-open \code{spectra}, one file at a time, no extra file opens. Idempotent via cache.
+  \item Every file logs its status \textbf{exactly once}, ON or OFF. Silence is never a valid
+        state; the cache stores \code{nothing} for ``checked, not ZT''.
+\end{itemize}
+
+\subsection*{$\bigstar$ \code{bin\_step} must come from \code{centerMz} differences, NOT \code{isolationWidthMz}}
+
+The recorded width is \textbf{dithered 50/50 between two quantized values} that strictly alternate
+(\code{1.02, 1.0241, 1.02, 1.0241, ...}): 1.0199999809 at 50.04\% and 1.0241279602 at 49.96\%,
+separated by $4.13\times10^{-3}$\,Da $=$ \textbf{34,628 Float32 ulps} --- far too large to be a
+representation artifact. Their \emph{average} is the true step, so:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{estimator} & \textbf{value} \\
+\midrule
+\code{median(isolationWidthMz)} & 1.0200 \quad(degenerate on a 50/50 split) \\
+\code{mean(isolationWidthMz)}   & 1.0220625 \\
+\textbf{\code{median(diff(centerMz))}} & \textbf{1.0220642} \quad(direct, robust) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The median of \code{isolationWidthMz} is off by $2.1\times10^{-3}$\,Da, compounding to \textbf{a
+full bin of drift across a 496-bin ramp} ($495 \times 1.0200 = 504.90$ vs the actual
+505.92\,Da). The old branch's \code{\_zt\_bin\_step} used exactly that median.
+
+\code{nominal\_width} keeps the dithered median but is used \emph{only} for the tiling check,
+where the 2\% tolerance absorbs the 0.2\% discrepancy.
+
+\subsection*{Measured lattice (reference data)}
+
+\code{A\_REP1 bin\_step=1.0220642  nominal=1.02  bins/ramp=496  tiles=true  span(k=6)=13.29 Da};
+\code{B\_REP1 1.0220947}; \code{C\_REP1 1.0222473}.
+
+Within a file the lattice is exact --- ramp-start std \textbf{0.0} and step std $\sim 3\times
+10^{-8}$ over 818 cycles --- so 8 sampled cycles reproduce the full-file value. Between files it
+genuinely drifts (ramp start by $\sim$60\,mDa, step by $1.8\times10^{-4}$\,Da), which is why the
+lattice is stored \textbf{per file} while \code{metascan\_k}, a config choice, is global.
+
+Cycle $=$ return to the same \code{centerMz} (\code{compute\_cycle\_idxs}), \textbf{not} per-MS1;
+MS1 scans inherit the current cycle index. On this data the two coincide --- exactly one MS1 at
+the head of each ramp.
+
+\textbf{Checkpoint (met):} 22,656 --- identical precursor set \emph{and} identical q-value vector
+to stage 0, max $|\Delta q| = 0.0$. Gotcha \#1 is now structurally impossible.
+
+\section{Stage 2 --- Metascan expansion + collapse}
+
+\textbf{Concept:} a precursor's fragments are smeared across $\pm k$ bins, so (a) give it
+candidacy in all $\pm k$ bins and (b) collapse the resulting per-bin PSMs back to one meta-PSM per
+(cycle, precursor) carrying a weight profile.
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item \textbf{Two-width quad model}: narrow box for the fragment index, wide box for
+        deconvolution. (Moved here from stage 1 --- a wide deconv box changes results
+        immediately, so it cannot sit in a stage whose checkpoint is ``no change''. It only
+        becomes meaningful once candidates span bins.)
+  \item \code{expand\_to\_metascans!} --- union candidates over $\pm k$ same-cycle MS2 bins.
+        \textbf{Re-implement parallel} with per-scan thread-local buffers; the original allocates
+        a \code{Vector\{Set\{UInt32\}\}} over every searched scan.
+  \item \code{collapse\_to\_metascans} --- the substantive core ($\sim$595 lines). Port
+        structurally; \textbf{drop the batched and disk-spill variants} for now (single code path,
+        easier to verify).
+  \item \code{filter\_to\_center\_bin!} --- center-bin candidacy, i.e.\ pre-wide-emit behavior.
+  \item Skip spectral scoring for non-center bins (perf; no ID effect).
+\end{itemize}
+
+\textbf{Checkpoint: $\sim$26,552.}
+
+\section{Stage 3 --- Bitvec calibration window alignment}
+
+\textbf{Concept:} the bitvec LUT must be calibrated with the same precursor window candidacy
+actually uses. On ZT these were mismatched --- calibration used the QuadTuning-tuned model while
+candidacy used the narrow square box. Correctness fix, not a tuning knob.
+
+\textbf{Checkpoint: $\sim$27,234} (the alignment alone was worth $+682$).
+
+Note: \code{PIONEER\_BITVEC\_MIN\_EXCESS} ($\theta$) is \emph{not} the chosen mechanism ---
+wide-emit supersedes lowering $\theta$. Add the knob only as a diagnostic.
+
+\section{Stage 4 --- Shape / elution features}
+
+Within-metascan fragment shape, across-cycle elution, metascan-aware chromatogram integration;
+\code{zt\_tri\_cosine}, \code{zt\_entropy}, \code{zt\_tri\_pcor} promoted to the 2nd-pass model.
+
+\textbf{This is the hot conflict zone.} Develop churned
+\code{IntegrateChromatogramsSearch/utils.jl} by $\sim$1020 lines and
+\code{IntegrateChromatogramsSearch.jl} by $\sim$464 while ZT touched them by 88 and 46.
+Do \textbf{not} port the old diff. Re-derive against develop's current implementation --- note
+that \code{cf30cc4bd} (``run develop chromatogram features post-collapse; drop bespoke elution
+impl'') already moved in exactly that direction, so the honest delta here is small.
+
+\textbf{Checkpoint:} $\ge$ stage 3.
+
+\section{Stage 5 --- Wide-emit candidacy (the winner)}
+
+\textbf{Concept:} today a precursor is emitted only if its \emph{center} bin clears the bitvec.
+Give it an emission chance in \emph{every} bin, then re-anchor each emission to the center bin. It
+survives if it cleared in \textbf{any} bin. Different bins expose different fragment subsets, so
+these are real second looks, not noise admission.
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item Widen the fragment-index candidacy box, \code{tol = 2.0}\,Da half-width.
+        (\code{tol = 4.0} saturates and collapses to 23,013 --- there is a sweet spot; do not
+        overshoot.)
+  \item \code{map\_any\_hit\_to\_center!} --- \textbf{re-implement, do not port.} The original is a
+        serial \code{Dict\{Int,Set\{UInt32\}\}} plus a \code{Set\{(cycle,prec)\}} dedup over
+        $\sim$60\,M emissions: 181\,s, the \#2 cost in the whole search and the top serial
+        bottleneck. Replace with per-cycle bucket arrays and direct nearest-bin arithmetic from
+        the known uniform bin step, instead of the $\pm$halfbins linear scan. This is the
+        handoff's next-step \#2, done at build time.
+\end{itemize}
+
+\textbf{Checkpoint: $\sim$30,359 = DIA-NN parity.} This is the headline gate.
+
+\section{Stage 6 --- Tractability}
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item \textbf{\code{metascan\_k} sweep} --- a speed/recall tradeoff, \textbf{not} a correctness
+        fix. Size $k$ against the \emph{measured} effective transmission (Gaussian,
+        FWHM $\approx$ 6.7\,Da), not the nominal 5\,Da: $6.7/1.0221 = 6.55$ bins FWHM, so
+        $\sigma = 2.78$ bins.
+
+        \begin{center}
+        \begin{tabular}{rlrr}
+        \toprule
+        $k$ & span & in $\sigma$ & $\sim$fraction of signal \\
+        \midrule
+        3 & $\pm$3.07\,Da & $\pm$1.08$\sigma$ & $\sim$72\% \\
+        4 & $\pm$4.09\,Da & $\pm$1.44$\sigma$ & $\sim$85\% \\
+        5 & $\pm$5.11\,Da & $\pm$1.80$\sigma$ & $\sim$93\% \\
+        \textbf{6} & \textbf{$\pm$6.13\,Da} & \textbf{$\pm$2.16$\sigma$} & \textbf{$\sim$97\%} \\
+        \bottomrule
+        \end{tabular}
+        \end{center}
+
+        $k=6$ is well chosen, not an overshoot --- an earlier draft claimed $k=3$ was ``more
+        physically correct'' by comparing the nominal 5\,Da full-width against a half-width. That
+        was wrong. $k=3$ discards $\sim$28\% of the transmitted signal; it may still win on net
+        because the tails are also where cross-talk lives and deconv cost scales with bin count,
+        but that is an empirical question. \textbf{$k=4$ and $k=5$ are the more interesting
+        probes.}
+  \item Split deconv timing: build (\code{run\_fused!}) vs solve
+        (\code{solvePoissonMM\_fast!}).
+  \item Disk-spill only if memory demands it --- this machine has 48\,GB and the old peak was
+        $\sim$22\,GB, so likely unnecessary.
+\end{itemize}
+
+\section{Explicitly out of scope (do not port)}\label{sec:oos}
+
+\begin{center}
+\begin{tabular}{p{0.34\textwidth}p{0.58\textwidth}}
+\toprule
+\textbf{dropped} & \textbf{why} \\
+\midrule
+no-reset merge (\code{PIONEER\_ZT\_MERGE\_K}) &
+abandoned --- 29,485 $<$ wide-emit 30,359, and \emph{not} cheaper (463\,M vs 519\,M candidates) \\
+\addlinespace
+merged-LUT calibration &
+over-prunes (15/256 patterns pass), 24,292 --- worse than baseline \\
+\addlinespace
+empirical Gaussian quad transmission &
+tested \emph{worse} (24,583); square box stays the default. Drops
+\code{zt\_transmission\_estimate.jl} + \code{empiricalQuadModel.jl} entirely \\
+\addlinespace
+batched collapse (\code{PIONEER\_ZT\_BATCHED}) &
+rejected --- not byte-identical, slower \\
+\addlinespace
+diagnostic dump knobs &
+re-add individually when a specific question needs one \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Roughly 40\% of the old branch's surface area, removed before we start.
+
+\section{Known conflict map (ZT lines vs develop lines since fork)}
+
+\textbf{Clean --- develop never touched ($\sim$1,150 lines, near-zero risk):}
+\code{metascan\_collapse.jl} (595, new) $\cdot$ \code{QuadTuningSearch.jl} (75) $\cdot$
+\code{process\_scans\_fused.jl} (61) $\cdot$ \code{PartitionedFragmentIndex/search.jl} (55)
+$\cdot$ \code{BitVecCalibration.jl} (41) $\cdot$ \code{getFragIsotopes.jl} (41) $\cdot$
+\code{ParameterTuningSearch.jl} (33) $\cdot$ \code{PrecEstimation.jl} (12)
+
+\textbf{Hot --- real merge work:}
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+\textbf{file} & \textbf{ZT} & \textbf{develop} \\
+\midrule
+\code{IntegrateChromatogramsSearch/utils.jl}  &  88 & 1020 \\
+\code{IntegrateChromatogramsSearch.jl}        &  46 &  464 \\
+\code{score\_psms.jl}                          &  17 &  303 \\
+\code{spectralDistanceMetrics.jl}             &  35 &  131 \\
+\code{MainSearch.jl}                          & 225 &  108 \\
+\code{LibrarySearch.jl}                       & 372 &   72 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Warning:} \code{score\_psms.jl} also carries uncommitted work on
+\code{feat/empirical-library-isotopes} in the main checkout --- coordinate before touching it.
+
+\section{Standing gotchas}
+
+\begin{itemize}[leftmargin=*,itemsep=0.2em]
+  \item Always pass \code{--threads} (bare \code{julia} is \code{Threads:1}, $\sim$7$\times$
+        slower). Verify via the \code{Threads:} line in \code{pioneer\_search\_debug.log}.
+  \item \code{main\_search\_psms/1.arrow} \code{q\_value} is an all-zeros placeholder. Use
+        \code{trace\_prob}; final FDR is \code{precursors\_long.qval}.
+  \item Use the peptidoform-aware join (\code{overlap\_pepform.jl}) for DIA-NN comparisons.
+  \item Never run two searches concurrently when timing anything.
+\end{itemize}
+
+\section{The strategic context}
+
+Wide-emit reaching parity is \emph{not} the end state. The decomposition of the 6,352
+DIA-NN-only precursors says \textbf{78\% (4,898) are already extracted at the correct retention
+time} --- 98.2\% within 0.1\,min of DIA-NN, median $|\Delta \mathrm{RT}| = 0.000$ --- and simply
+rank below the 1\% FDR bar (median \code{trace\_prob} 0.285 vs a passing floor of 0.982). Only
+22\% is a genuine recall gap.
+
+So this port restores the extraction capability; the remaining gap is a \textbf{scoring} problem.
+That is also what \code{feat/empirical-library-isotopes} is already working on in the main
+checkout.
+
+\end{document}
