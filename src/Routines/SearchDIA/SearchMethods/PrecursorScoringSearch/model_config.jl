@@ -106,14 +106,14 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_shape,
     :n_correlated_fragments_shape,
     :n_correlated_fragments_bitvec_rank_shape,
-    # Weight-profile-vs-triangle match. zt_tri_pcor is mean-centered Pearson (top-3 in this
-    # model); zt_tri_cosine is the uncentered cosine; zt_emp_cosine uses a template shifted to
-    # the precursor's in-bin m/z offset. Of the nine original profile descriptors only
-    # zt_tri_cosine and zt_entropy carried signal — the other seven measured as noise.
+    # Weight profile vs the expected transmission shape. zt_tri_pcor is mean-centered Pearson,
+    # zt_tri_cosine the uncentered cosine; they differ (r = 0.79) because centering makes pcor
+    # respond to shape rather than magnitude. zt_entropy is near-independent of both (r = -0.05
+    # with pcor). Of the nine original profile descriptors only these carried signal; the other
+    # six measured as noise, and zt_emp_cosine was dropped at r = 0.991 with zt_tri_cosine.
     :zt_tri_pcor,
     :zt_tri_cosine,
     :zt_entropy,
-    :zt_emp_cosine,
     # ZT across-cycle (elution) features are NOT listed separately: for ZT they ARE the develop
     # chromatogram features above (frag_corr_strength, ms1_corr_*, n_scans, ...), recomputed on
     # the collapsed one-point-per-cycle meta trace.

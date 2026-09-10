@@ -49,9 +49,15 @@ const ZT_SHAPE_FEATURES = Symbol[
     :frag_apex_dispersion_shape,
     :n_correlated_fragments_shape,
     :n_correlated_fragments_bitvec_rank_shape,
-    :zt_tri_pcor,     # mean-centered Pearson vs the triangle; complements the uncentered cosine
-    :zt_emp_cosine,   # cosine vs a triangle SHIFTED to the precursor's in-bin m/z offset
+    :zt_tri_pcor,     # mean-centered Pearson vs the template; complements the uncentered cosine
 ]
+
+# zt_emp_cosine (cosine vs a template shifted to the precursor's in-bin m/z offset) was dropped
+# 2026-09-10: measured r = 0.991 with zt_tri_cosine over 5.46M meta-PSMs, with no discrimination
+# advantage (|AUC-0.5| 0.0213 vs 0.0211). The physical idea -- transmission peaks at the
+# precursor's true m/z, not the bin centre -- is sound, but the shift is at most +/-0.5 bins on a
+# profile ~6 bins wide, so the shifted and centred templates are collinear. It cost a fresh
+# template allocation per meta-PSM.
 
 """
 The subset the per-file main-search LGBM consumes. The 2nd-pass model takes all of
@@ -109,21 +115,6 @@ Gather `col[perm]` into a fresh concrete `Vector{Float32}` in one pass, with no 
     out = Vector{Float32}(undef, length(perm))
     @inbounds for i in eachindex(perm); out[i] = Float32(col[perm[i]]); end
     return out
-end
-
-"""
-    _zt_shifted_cosine(w, tmpl_shifted) -> Float32
-
-Cosine of the weight profile against a template centred on the precursor's in-bin m/z offset
-rather than on the bin centre. The transmission peak sits at the precursor's true m/z, so a
-centred template penalises real off-centre precursors; interference has no such alignment.
-"""
-@inline function _zt_shifted_cosine(w::Vector{Float32}, tmpl::Vector{Float32})
-    dotwt = 0f0; nw = 0f0; nt = 0f0
-    @inbounds for t in eachindex(w)
-        dotwt += w[t] * tmpl[t]; nw += w[t] * w[t]; nt += tmpl[t] * tmpl[t]
-    end
-    return (nw > 0f0 && nt > 0f0) ? dotwt / (sqrt(nw) * sqrt(nt)) : 0f0
 end
 
 """
@@ -218,7 +209,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     f_tri_cos  = Float32[]; sizehint!(f_tri_cos, hint)
     f_entropy  = Float32[]; sizehint!(f_entropy, hint)
     f_tri_pcor = Float32[]; sizehint!(f_tri_pcor, hint)
-    f_emp_cos  = Float32[]; sizehint!(f_emp_cos, hint)
     sh_str  = Float32[];    sh_effn = Float32[]; sh_best = Float32[]
     sh_disp = Float32[];    sh_n70  = UInt8[];   sh_rank = UInt16[]
 
@@ -257,10 +247,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(f_tri_cos, cosv)
             push!(f_entropy, entv)
             push!(f_tri_pcor, _frag_pcor(w, tri))
-            # The transmission peak sits at the precursor's in-bin m/z offset, not the bin
-            # center, so the template is shifted there.
-            push!(f_emp_cos,
-                  _zt_shifted_cosine(w, zt_shifted_template(geom, k, (pm - cmzs[c]) / max(hws[c], 1f-6))))
 
             # ---- within-metascan shape features (fragment profile vs weight profile) ----
             str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)
@@ -308,7 +294,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     meta[!, :zt_tri_cosine] = f_tri_cos
     meta[!, :zt_entropy]    = f_entropy
     meta[!, :zt_tri_pcor]   = f_tri_pcor
-    meta[!, :zt_emp_cosine] = f_emp_cos
     meta[!, :frag_corr_strength_shape]                 = sh_str
     meta[!, :frag_corr_effective_n_shape]              = sh_effn
     meta[!, :frag_corr_best_shape]                     = sh_best

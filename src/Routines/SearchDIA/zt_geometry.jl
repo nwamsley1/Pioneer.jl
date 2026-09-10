@@ -210,15 +210,3 @@ function zt_transmission_template(g::ZTGeometry, k::Int)
     return t, sqrt(sum(x -> x * x, t))
 end
 
-"""
-    zt_shifted_template(g::ZTGeometry, k::Int, offset_bins::Float32) -> Vector{Float32}
-
-As [`zt_transmission_template`](@ref), but centred on the precursor's in-bin m/z offset (in bin
-units) rather than on the bin centre. The transmission peak sits at the precursor's true m/z, so
-an off-centre precursor is penalised by a centred template.
-"""
-function zt_shifted_template(g::ZTGeometry, k::Int, offset_bins::Float32)
-    σ = g.transmission_fwhm / 2.3548f0
-    o = offset_bins * g.bin_step
-    return Float32[exp(-((Float32(j) * g.bin_step) - o)^2 / (2f0 * σ * σ)) for j in -k:k]
-end

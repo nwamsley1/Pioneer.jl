@@ -103,16 +103,6 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
         @test meta.zt_tri_cosine[1] < 1.0f0        # flat is a poor triangle match
     end
 
-    @testset "off-center precursor: shifted template beats centered" begin
-        # weights peak one bin above the center bin, matching precursor 2's +0.45 bin offset
-        shifted = Pioneer.zt_shifted_template(geom, k, 1.0f0)
-        rows = [(2, bscan(10 + d), shifted[d + k + 1]) for d in -k:k]
-        df = psm_table(rows)
-        meta = collapse_to_metascans(df, spectra, precs, geom)
-        @test nrow(meta) == 1
-        @test meta.zt_emp_cosine[1] > meta.zt_tri_cosine[1]
-    end
-
     @testset "center selection matches brute force" begin
         rows = Tuple{Int,Int,Float32}[]
         for b in 4:16, p in 1:2

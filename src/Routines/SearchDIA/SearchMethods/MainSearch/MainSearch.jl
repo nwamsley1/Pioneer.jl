@@ -415,6 +415,25 @@ function process_search_results!(
         bitvec_rank_table = bitvec_rank_table,
     )
 
+    # DIAGNOSTIC (PIONEER_ZT_DUMP_FEATURES=<dir>): dump both feature families side by side --
+    # the within-metascan (_shape, across BINS) set from the collapse and the across-cycle
+    # (elution, across TIME) set from add_chromatogram_features! -- plus the target label, so
+    # redundancy and per-feature discrimination can be measured offline. Inert when unset.
+    let _fdir = get(ENV, "PIONEER_ZT_DUMP_FEATURES", "")
+        if !isempty(_fdir) && nrow(psms) > 0
+            _want = vcat(ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES,
+                         [:frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
+                          :frag_apex_dispersion_irt, :n_correlated_fragments,
+                          :n_correlated_fragments_bitvec_rank, :n_scans,
+                          :precursor_idx, :target])
+            _have = intersect(_want, Symbol.(names(psms)))
+            mkpath(_fdir)
+            _fp = joinpath(_fdir, "zt_features_file$(ms_file_idx).arrow")
+            writeArrow(_fp, psms[!, _have])
+            @user_info "ZT: dumped $(nrow(psms)) rows x $(length(_have)) feature cols -> $_fp"
+        end
+    end
+
     # Train LightGBM on all PSMs and select the narrow set of representatives
     # needed to fit the out-of-fold iRT correction.
     n_total_psms = nrow(psms)
