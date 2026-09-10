@@ -31,6 +31,9 @@ Fields:
 - `bins_per_ramp` median MS2 scans per centerMz ramp (a "cycle" per `compute_cycle_idxs`;
                   MS1 scans are not delimiters, they inherit the current cycle index).
 - `metascan_k`    expansion half-width in bins. A config value, identical for every file.
+- `transmission_fwhm` FWHM (Da) of the effective transmission profile. A PHYSICAL property of
+                  the acquisition, deliberately independent of `metascan_k`: `k` decides how much
+                  of the profile we sample, not what shape it has.
 
 `bin_step` is deliberately taken from `centerMz` differences rather than `isolationWidthMz`:
 the recorded width is dithered 50/50 between two quantized values (e.g. 1.0200 / 1.0241) whose
@@ -41,10 +44,19 @@ struct ZTGeometry
     nominal_width::Float32
     bins_per_ramp::Int32
     metascan_k::Int32
+    transmission_fwhm::Float32
 end
 
 """Number of complete cycles sampled by `detect_zt_geometry`."""
 const ZT_GEOM_SAMPLE_CYCLES = 8
+
+"""
+Default effective transmission FWHM (Da). Measured on the reference ZT 5Da data by two
+independent routes — isotope-ratio integration (6.30 Da) and a Razo fit with its width bound
+relaxed (6.84-6.97 Da) — agreeing with a weight-profile fit from the prior effort (~6.7 Da).
+Override per acquisition with `acquisition.transmission_fwhm_mz`.
+"""
+const ZT_TRANSMISSION_FWHM_DEFAULT = 6.5f0
 
 """
 Overhang (Da) added to the recorded half-width for the ZT fragment-index candidacy box. Zero, so
@@ -65,6 +77,31 @@ discards everything outside +/-w/2 regardless, so those extra emissions are comp
 away; the only channel by which they help is a marginally different LUT calibration. Not worth it.
 """
 zt_frag_overhang() = ZT_FRAG_OVERHANG
+
+"""
+    zt_candidacy_tol() -> Float32
+
+Wide-emit candidacy half-width in Da (`PIONEER_ZT_CANDIDACY_TOL`); 0 disables it.
+
+Wide-emit widens the fragment-index box so a precursor gets an emission CHANCE in every bin of
+its meta-scan, then `map_any_hit_to_center!` re-anchors each emission to the precursor's own bin.
+It survives if it cleared the bitvec in ANY bin, rather than needing its center bin to clear.
+"""
+zt_candidacy_tol() =
+    something(tryparse(Float32, get(ENV, "PIONEER_ZT_CANDIDACY_TOL", "")), 0.0f0)
+
+"""
+    zt_candidacy_overhang(g::ZTGeometry) -> Float32
+
+Overhang for the fragment-index candidacy box: the wide-emit half-width when one is set, else
+the precursor's own bin. Single source of truth, so BitVecCalibration's LUT keeps mirroring
+candidacy whichever mode is active — a mismatch there cost 2,008 IDs when measured.
+"""
+function zt_candidacy_overhang(g::ZTGeometry)
+    tol = zt_candidacy_tol()
+    hw = g.nominal_width / 2
+    return tol > hw ? tol - hw : zt_frag_overhang()
+end
 
 """
 Extra margin (Da) by which the deconvolution box exceeds the meta-scan expansion span, so the
@@ -91,7 +128,8 @@ Sampling a handful of cycles is sufficient: within a single file the lattice is 
 within Float32 granularity (ramp start std 0.0, step std ~3e-8 over 818 cycles on the reference
 ZT data). Returns `nothing` when the file carries no usable MS2 isolation metadata.
 """
-function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer)
+function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
+                            transmission_fwhm::Real = ZT_TRANSMISSION_FWHM_DEFAULT)
     widths       = Float32[]
     spacings     = Float32[]
     cycle_counts = Int32[]
@@ -132,6 +170,7 @@ function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer)
         median(widths),
         isempty(cycle_counts) ? Int32(n_in_cycle) : Int32(round(median(cycle_counts))),
         Int32(metascan_k),
+        Float32(transmission_fwhm),
     )
 end
 
@@ -152,3 +191,34 @@ zt_tiles_contiguously(g::ZTGeometry; rtol::Float64 = 0.02) =
 Full m/z width spanned by a `±metascan_k` expansion.
 """
 zt_span_mz(g::ZTGeometry) = Float32(2 * g.metascan_k + 1) * g.bin_step
+
+
+"""
+    zt_transmission_template(g::ZTGeometry, k::Int) -> (Vector{Float32}, Float32)
+
+Expected weight profile across the `2k+1` sampled bins, and its Euclidean norm.
+
+The shape comes from the acquisition's transmission FWHM, NOT from `k`: the profile is a fixed
+physical property and `k` only decides how much of it we sample. A `k`-dependent template (the
+earlier `1 - |j|/(k+1)` triangle) makes the same physical bin claim different transmission at
+different `k` — 0.25 at j=3 with k=3 versus 0.57 with k=6, against a true value near 0.52 — so
+`zt_tri_cosine` was measured against a different yardstick at each `k`.
+"""
+function zt_transmission_template(g::ZTGeometry, k::Int)
+    σ = g.transmission_fwhm / 2.3548f0                 # FWHM -> Gaussian sigma, in Da
+    t = Float32[exp(-(Float32(j) * g.bin_step)^2 / (2f0 * σ * σ)) for j in -k:k]
+    return t, sqrt(sum(x -> x * x, t))
+end
+
+"""
+    zt_shifted_template(g::ZTGeometry, k::Int, offset_bins::Float32) -> Vector{Float32}
+
+As [`zt_transmission_template`](@ref), but centred on the precursor's in-bin m/z offset (in bin
+units) rather than on the bin centre. The transmission peak sits at the precursor's true m/z, so
+an off-centre precursor is penalised by a centred template.
+"""
+function zt_shifted_template(g::ZTGeometry, k::Int, offset_bins::Float32)
+    σ = g.transmission_fwhm / 2.3548f0
+    o = offset_bins * g.bin_step
+    return Float32[exp(-((Float32(j) * g.bin_step) - o)^2 / (2f0 * σ * σ)) for j in -k:k]
+end

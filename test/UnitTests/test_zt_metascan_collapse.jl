@@ -4,7 +4,7 @@ using DataFrames
 
 using Pioneer
 using Pioneer: BasicMassSpecData, getMsOrder, getCenterMz, collapse_to_metascans,
-               zt_triangle_template, _zt_profile_features, _zt_shifted_tri_cosine,
+               zt_transmission_template, ZTGeometry, _zt_profile_features,
                ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES
 
 const CSTEP = 1.0f0
@@ -70,7 +70,8 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
     spectra = write_collapse_arrow(joinpath(mktempdir(), "c.arrow"))
     k = 3
     L = 2k + 1
-    tri, tnorm = zt_triangle_template(k)
+    geom = ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(k), 3.0f0)
+    tri, tnorm = zt_transmission_template(geom, k)
 
     # bin b (1-based) -> scan index, MS1 at the head
     bscan(b) = b + 1
@@ -78,16 +79,16 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
     pmz = Float32[CSTART + 9 * CSTEP, CSTART + 9 * CSTEP + 0.45f0 * CSTEP]
     precs = TestPrecursors(pmz)
 
-    @testset "perfect triangle profile -> zt_tri_cosine == 1" begin
+    @testset "profile matching the transmission template -> zt_tri_cosine == 1" begin
         rows = Tuple{Int,Int,Float32}[]
         for d in -k:k
             push!(rows, (1, bscan(10 + d), tri[d + k + 1]))
         end
         df = psm_table(rows)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test nrow(meta) == 1
         @test isapprox(meta.zt_tri_cosine[1], 1.0f0; atol = 1e-5)
-        # entropy of the triangle, computed independently
+        # entropy of that profile, computed independently
         w = Float32[tri[j] for j in 1:L]
         W = sum(w); expected_ent = -sum(p -> p > 0 ? p * log(p) : 0f0, w ./ W)
         @test isapprox(meta.zt_entropy[1], expected_ent; atol = 1e-5)
@@ -96,7 +97,7 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
     @testset "flat profile -> entropy == log(2k+1)" begin
         rows = [(1, bscan(10 + d), 1.0f0) for d in -k:k]
         df = psm_table(rows)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test nrow(meta) == 1
         @test isapprox(meta.zt_entropy[1], Float32(log(L)); atol = 1e-5)
         @test meta.zt_tri_cosine[1] < 1.0f0        # flat is a poor triangle match
@@ -104,10 +105,10 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
 
     @testset "off-center precursor: shifted template beats centered" begin
         # weights peak one bin above the center bin, matching precursor 2's +0.45 bin offset
-        shifted = Float32[max(0f0, 1f0 - abs(Float32(d) - 1f0) / Float32(k + 1)) for d in -k:k]
+        shifted = Pioneer.zt_shifted_template(geom, k, 1.0f0)
         rows = [(2, bscan(10 + d), shifted[d + k + 1]) for d in -k:k]
         df = psm_table(rows)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test nrow(meta) == 1
         @test meta.zt_emp_cosine[1] > meta.zt_tri_cosine[1]
     end
@@ -119,20 +120,20 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
         end
         df = psm_table(rows)
         want = brute_centers(df, spectra, pmz)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test nrow(meta) == length(want)
         @test sort(meta.tag) == sort(df.tag[want])
     end
 
     @testset "k <= 0 returns the input unchanged" begin
         df = psm_table([(1, bscan(10), 1.0f0)])
-        out = collapse_to_metascans(df, spectra, precs, 0)
+        out = collapse_to_metascans(df, spectra, precs, ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(0), 3.0f0))
         @test out === df
     end
 
     @testset "empty input" begin
         df = psm_table(Tuple{Int,Int,Float32}[])
-        @test nrow(collapse_to_metascans(df, spectra, precs, k)) == 0
+        @test nrow(collapse_to_metascans(df, spectra, precs, geom)) == 0
     end
 
     @testset "all feature columns present and finite" begin
@@ -141,7 +142,7 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
             push!(rows, (p, bscan(10 + d), tri[d + k + 1] * Float32(p)))
         end
         df = psm_table(rows; with_frags = true)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test nrow(meta) == 2
         for f in vcat(ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES)
             @test hasproperty(meta, f)
@@ -155,7 +156,7 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
     @testset "passenger columns survive the collapse" begin
         rows = [(1, bscan(10 + d), tri[d + k + 1]) for d in -k:k]
         df = psm_table(rows)
-        meta = collapse_to_metascans(df, spectra, precs, k)
+        meta = collapse_to_metascans(df, spectra, precs, geom)
         @test hasproperty(meta, :tag)
         @test hasproperty(meta, :weight)
         @test nrow(meta) == 1

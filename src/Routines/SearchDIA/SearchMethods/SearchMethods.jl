@@ -298,7 +298,9 @@ function ensure_zt_geometry!(
     end
 
     k = hasproperty(acq, :metascan_k) ? Int(acq.metascan_k) : 6
-    g = detect_zt_geometry(spectra, k)
+    fwhm = hasproperty(acq, :transmission_fwhm_mz) ? Float32(acq.transmission_fwhm_mz) :
+                                                     ZT_TRANSMISSION_FWHM_DEFAULT
+    g = detect_zt_geometry(spectra, k, fwhm)
     if g === nothing
         setZTGeometry!(search_context, ms_file_idx, nothing)
         @user_warn "Scanning-quad (ZT) [$fname]: ON, but no usable MS2 isolation metadata — ZT off for this file"

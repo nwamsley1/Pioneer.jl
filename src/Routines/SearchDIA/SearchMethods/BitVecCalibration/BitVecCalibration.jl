@@ -325,7 +325,7 @@ function process_file!(
     # and the threshold rejects far more.
     _zt_geom = getZTGeometry(search_context, ms_file_idx)
     qtm = _zt_geom === nothing ? getQuadTransmissionModel(search_context, ms_file_idx) :
-                                 SquareQuadModel(zt_frag_overhang())
+                                 SquareQuadModel(zt_candidacy_overhang(_zt_geom))
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)

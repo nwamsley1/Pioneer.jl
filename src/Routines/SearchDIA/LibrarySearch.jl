@@ -85,7 +85,7 @@ function library_search(
     # Candidacy expansion and the wide deconv box are MAIN-search only: the tuning searches
     # must not be calibrated on the metascan-expanded, wide-box deconvolution.
     zt_main = zt_on && (params isa MainSearchParameters)
-    qtm_frag = zt_on ? SquareQuadModel(zt_frag_overhang()) : qtm
+    qtm_frag = zt_on ? SquareQuadModel(zt_candidacy_overhang(zt_geom)) : qtm
 
     # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE=<Da>): widen the quad-tuning candidacy AND deconv box
     # so the isotope-pair measurement can observe offsets far enough off bin-center to resolve
@@ -199,8 +199,22 @@ function library_search(
     zt_probe > 0f0 && (qtm_deconv = SquareQuadModel(zt_probe))
     if zt_main
         n_emitted = length(precursors_passed)
-        precursors_passed = filter_to_center_bin!(
-            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
+        # Wide-emit re-anchors every emission to the precursor's own bin (survives if it cleared
+        # in ANY bin); the narrow path requires the center bin itself to clear.
+        # Re-anchoring is useful even at the DEFAULT box: with isotope_err_bounds (1,0) the
+        # effective search window is ~1.52 Da against a ~1.02 Da bin step, so a precursor in the
+        # upper half of its bin is also a candidate in the bin above. filter_to_center_bin!
+        # discards that emission; if it cleared the bitvec there but not in its own bin, the
+        # precursor is lost. Re-anchoring keeps it at no extra emission cost.
+        _reanchor = zt_candidacy_tol() > zt_geom.nominal_width / 2 ||
+                    get(ENV, "PIONEER_ZT_REANCHOR", "0") != "0"
+        precursors_passed = if _reanchor
+            map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra,
+                                   all_scan_idxs, getMz(precursors), zt_geom)
+        else
+            filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra,
+                                  all_scan_idxs, getMz(precursors))
+        end
         n_center = length(precursors_passed)
         if zt_k > 0
             precursors_passed = expand_to_metascans!(

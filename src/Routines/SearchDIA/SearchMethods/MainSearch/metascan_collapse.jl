@@ -112,33 +112,18 @@ Gather `col[perm]` into a fresh concrete `Vector{Float32}` in one pass, with no 
 end
 
 """
-    _zt_shifted_tri_cosine(w, o, k) -> Float32
+    _zt_shifted_cosine(w, tmpl_shifted) -> Float32
 
-Cosine of the weight profile against a triangle template SHIFTED to the precursor's in-bin m/z
-offset `o` (bin-width units). The fixed centered triangle (`zt_tri_cosine`) penalizes real
-precursors whose m/z sits off bin-center — their transmission peaks at their true m/z, not at
-the bin center. Shifting the template to `o` should match real precursors better than
-interference, whose apex is unrelated to the precursor m/z. Same base width as the triangle.
+Cosine of the weight profile against a template centred on the precursor's in-bin m/z offset
+rather than on the bin centre. The transmission peak sits at the precursor's true m/z, so a
+centred template penalises real off-centre precursors; interference has no such alignment.
 """
-@inline function _zt_shifted_tri_cosine(w::Vector{Float32}, o::Float32, k::Int)
-    L = 2k + 1; kf = Float32(k + 1)
+@inline function _zt_shifted_cosine(w::Vector{Float32}, tmpl::Vector{Float32})
     dotwt = 0f0; nw = 0f0; nt = 0f0
-    @inbounds for t in 1:L
-        j = Float32(t - (k + 1))
-        tri = max(0f0, 1f0 - abs(j - o) / kf)
-        dotwt += w[t] * tri; nw += w[t] * w[t]; nt += tri * tri
+    @inbounds for t in eachindex(w)
+        dotwt += w[t] * tmpl[t]; nw += w[t] * w[t]; nt += tmpl[t] * tmpl[t]
     end
     return (nw > 0f0 && nt > 0f0) ? dotwt / (sqrt(nw) * sqrt(nt)) : 0f0
-end
-
-"""
-    zt_triangle_template(k) -> (tri, tnorm)
-
-Ideal transmission template across the 2k+1 bins, and its Euclidean norm.
-"""
-function zt_triangle_template(k::Int)
-    tri = Float32[max(0f0, 1f0 - abs(Float32(j)) / Float32(k + 1)) for j in -k:k]
-    return tri, sqrt(sum(x -> x * x, tri))
 end
 
 """
@@ -176,8 +161,9 @@ within a cycle). Keeps the center rows and attaches `ZT_PROFILE_FEATURES` +
 The raw 2k+1 weight profile is NOT materialized as columns — it is consumed inline and a
 single buffer is reused across centers.
 """
-function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors, k::Int;
-                               bitvec_rank_table = nothing)
+function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors,
+                               geom::ZTGeometry; bitvec_rank_table = nothing)
+    k = Int(geom.metascan_k)
     n = nrow(psms)
     (n == 0 || k <= 0) && return psms
 
@@ -208,7 +194,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     wt  = _permute_f32(psms[!, :weight], perm)
 
     L = 2k + 1
-    tri, tnorm = zt_triangle_template(k)
+    tri, tnorm = zt_transmission_template(geom, k)
 
     # Fragment intensity columns for the shape features. Concrete NTuple{8,Vector{Float32}}
     # (never a Union): a Union boxes fcols[b] on every inner-gather iteration. Gate use with
@@ -273,7 +259,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(f_tri_pcor, _frag_pcor(w, tri))
             # The transmission peak sits at the precursor's in-bin m/z offset, not the bin
             # center, so the template is shifted there.
-            push!(f_emp_cos, _zt_shifted_tri_cosine(w, (pm - cmzs[c]) / max(hws[c], 1f-6), k))
+            push!(f_emp_cos,
+                  _zt_shifted_cosine(w, zt_shifted_template(geom, k, (pm - cmzs[c]) / max(hws[c], 1f-6))))
 
             # ---- within-metascan shape features (fragment profile vs weight profile) ----
             str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)

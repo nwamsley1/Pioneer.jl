@@ -403,7 +403,7 @@ function process_search_results!(
         _n_pre = nrow(psms)
         _zt_dump_precollapse(psms, search_context, ms_file_idx)
         t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
-            psms, spectra, getPrecursors(getSpecLib(search_context)), Int(_zt_geom.metascan_k);
+            psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_geom;
             bitvec_rank_table = bitvec_rank_table)
         @user_info "ZT meta-scan collapse (k=$(_zt_geom.metascan_k)): $_n_pre -> $(nrow(psms)) " *
                    "meta-PSMs in $(round(t_collapse; digits=1))s"

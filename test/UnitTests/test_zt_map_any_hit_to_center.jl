@@ -112,7 +112,7 @@ end
     spectra = write_map_arrow(joinpath(mktempdir(), "m.arrow"); n_cycles = 6)
     nspec = length(spectra)
     all_scan_idxs = [i for i in 1:nspec if getMsOrder(spectra, i) == 2]
-    geom = ZTGeometry(MSTEP, MSTEP, Int32(MBINS), Int32(6))
+    geom = ZTGeometry(MSTEP, MSTEP, Int32(MBINS), Int32(6), 6.5f0)
 
     # precursors spread across the ramp, deliberately off bin centres by varying amounts
     rng = MersenneTwister(4242)
