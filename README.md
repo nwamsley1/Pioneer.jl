@@ -21,7 +21,7 @@ The Pioneer manuscript is available on bioRxiv:
 
 *Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows*. bioRxiv (2026).
 
-https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2
+[https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3)
 
 ## Features
 
