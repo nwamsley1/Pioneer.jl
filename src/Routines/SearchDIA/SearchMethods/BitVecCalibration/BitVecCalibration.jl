@@ -259,6 +259,19 @@ const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
 const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
 
+"""
+    bitvec_min_excess_rate() -> Float64
+
+Minimum library-corrected target-over-decoy EXCESS a fragment-index bitmask pattern must show to
+be emitted as a candidate. Lowering it lets weaker, lower-bit patterns through, which helps
+recall where signal is diluted across bins — the scanning-quad case — at some FDR cost.
+
+Env-overridable (`PIONEER_BITVEC_MIN_EXCESS`) for sweeps; the default is unchanged.
+"""
+bitvec_min_excess_rate() =
+    Float64(something(tryparse(Float64, get(ENV, "PIONEER_BITVEC_MIN_EXCESS", "")),
+                      BITVEC_MIN_EXCESS_RATE))
+
 function _bitvec_excess_rank_table(
     target_counts::AbstractVector{<:Integer},
     decoy_counts::AbstractVector{<:Integer},
@@ -373,7 +386,7 @@ function process_file!(
 
     # Compute per-file filter
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
-    min_excess_rate = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_excess_rate = bitvec_min_excess_rate()
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
@@ -452,7 +465,7 @@ function summarize_results!(
     end
 
     z = Float64(BITVEC_DIAGNOSTIC_Z)
-    min_r = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_r = bitvec_min_excess_rate()
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
     result = _adaptive_merge(tc, dc, z, min_r, fdr_scale)
     partition = result.partition

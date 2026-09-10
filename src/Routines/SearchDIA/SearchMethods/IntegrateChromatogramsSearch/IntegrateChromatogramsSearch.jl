@@ -392,6 +392,20 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    # Scanning-quad (ZT): collapse each precursor's metascan bins within a cycle into ONE point
+    # before smoothing and integration. Extraction selects a precursor in every scan its
+    # transmission window covers, so on ZT the raw trace carries ~2k+1 points per cycle spanning
+    # a few tens of ms — which the integrator would read as that many separate time samples.
+    _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
+    if _zt_geom !== nothing && _zt_geom.metascan_k > 0 && nrow(chromatograms) > 0
+        _n_pre = nrow(chromatograms)
+        chromatograms = collapse_chromatograms_to_metascans(
+            chromatograms, spectra, getPrecursors(getSpecLib(search_context)),
+            Int(_zt_geom.metascan_k))
+        @user_info "ZT chromatogram collapse (k=$(_zt_geom.metascan_k)): " *
+                   "$_n_pre -> $(nrow(chromatograms)) points"
+    end
+
     if nrow(chromatograms) > 0
         # WH smoothing uses precursor transmission as both a correction factor
         # and an observation weight. Separate-trace mode also uses isotope
@@ -408,6 +422,13 @@ function process_file!(
             getIsolationWidthMzs(spectra),
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
+        # A collapsed metascan point already integrates the whole transmission window, so
+        # applying a per-point transmission correction in WH smoothing would double-count it.
+        # `get_isotopes_captured!` still runs above, because it also produces
+        # `isotopes_captured`, which SeperateTraces mode groups on.
+        if _zt_geom !== nothing && _zt_geom.metascan_k > 0
+            chromatograms[!, :precursor_fraction_transmitted] .= one(Float32)
+        end
     end
     if _sdiag
         MBR_STEP_DIAG[:isotopes_bytes] += Base.gc_bytes() - _sa

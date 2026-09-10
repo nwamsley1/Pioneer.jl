@@ -366,6 +366,163 @@ function filter_to_center_bin!(
 end
 
 """
+    map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs,
+                           prec_mzs, geom) -> Vector{UInt32}
+
+Scanning-quad (ZT) wide-emit candidacy. The fragment index runs with a WIDENED box, so a
+precursor can be emitted from any bin of its meta-scan; this maps every emission back to the
+precursor's OWN bin, deduped per (cycle, precursor). Net effect: a precursor survives if it
+cleared the bitvec in ANY of its bins, where `filter_to_center_bin!` requires the center bin
+itself to clear. Different bins expose different fragment subsets, so those are real second
+looks rather than noise admission.
+
+`expand_to_metascans!` then fills each survivor's +/-k as usual, so collapse and the shape
+features are unchanged.
+
+Implementation notes — the reference version was the single fattest serial step in the search
+(~181 s over ~60 M emissions), for three separable reasons, all addressed here:
+
+  * It found each precursor's bin by scanning `+/-search_halfbins` neighbours with three
+    accessor calls apiece. The lattice is uniform to Float32 granularity, so the bin is
+    `si + round((prec_mz - centerMz[si]) / S)` in O(1).
+  * It deduped with a `Set{Tuple{UInt32,UInt32}}` and accumulated into a
+    `Dict{Int,Set{UInt32}}`. Center scan is bounded by `length(spectra)`, so this is a COUNTING
+    sort: count per center scan, prefix-sum, scatter by index. No hashing, no `push!` in the
+    hot loop, one exactly-sized allocation, and dedup becomes a sort of each scan's ~160-element
+    slice rather than one global sort of tens of millions.
+  * It was serial. Both passes and the per-scan dedup are threaded.
+
+`cs` is deliberately recomputed in the scatter pass rather than stored: the arithmetic is a
+multiply, a round and a clamp, against hundreds of MB of stores and loads.
+"""
+function map_any_hit_to_center!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    prec_mzs::AbstractVector{Float32},
+    geom::ZTGeometry,
+)
+    (isempty(all_scan_idxs) || isempty(precursors_passed)) && return precursors_passed
+    nspec = length(spectra)
+    inv_S = 1.0f0 / geom.bin_step
+
+    # Per-cycle MS2 scan bounds, so a re-anchored center never crosses a ramp boundary.
+    cyc = Vector{UInt32}(getCycleIdxs(spectra))
+    ncyc = 0
+    @inbounds for si in 1:nspec
+        getMsOrder(spectra, si) == 2 || continue
+        c = Int(cyc[si]); c > ncyc && (ncyc = c)
+    end
+    ncyc == 0 && return precursors_passed
+    cyc_lo = fill(typemax(Int), ncyc)
+    cyc_hi = zeros(Int, ncyc)
+    @inbounds for si in 1:nspec
+        getMsOrder(spectra, si) == 2 || continue
+        c = Int(cyc[si])
+        si < cyc_lo[c] && (cyc_lo[c] = si)
+        si > cyc_hi[c] && (cyc_hi[c] = si)
+    end
+
+    cmzs = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
+
+    n = length(all_scan_idxs)
+    nchunks = min(Threads.nthreads(), n)
+    bounds = [(n * (t - 1)) ÷ nchunks + 1 for t in 1:(nchunks + 1)]
+    bounds[end] = n + 1
+
+    # --- Pass A: count emissions per center scan (parallel; nothing allocates in the loop) ---
+    counts = [zeros(Int64, nspec) for _ in 1:nchunks]
+    Threads.@threads for t in 1:nchunks
+        ct = counts[t]
+        @inbounds for i in bounds[t]:(bounds[t + 1] - 1)
+            si = all_scan_idxs[i]
+            rng = scan_to_prec_idx[si]
+            ismissing(rng) && continue
+            cm = cmzs[si]; isnan(cm) && continue
+            c = Int(cyc[si]); (c < 1 || c > ncyc) && continue
+            lo, hi = cyc_lo[c], cyc_hi[c]
+            for r in rng
+                cs = si + round(Int, (prec_mzs[precursors_passed[r]] - cm) * inv_S)
+                ct[clamp(cs, lo, hi)] += 1
+            end
+        end
+    end
+
+    # --- Prefix sums: each chunk gets its own write cursor per scan, so scatters never race ---
+    scan_start = Vector{Int}(undef, nspec)
+    scan_len   = zeros(Int32, nspec)
+    total = 0
+    @inbounds for cs in 1:nspec
+        scan_start[cs] = total
+        s = 0
+        for t in 1:nchunks
+            ct = counts[t][cs]
+            counts[t][cs] = total + s      # this chunk's start slot for this scan
+            s += ct
+        end
+        scan_len[cs] = Int32(s)
+        total += s
+    end
+    total == 0 && return UInt32[]
+
+    # --- Pass B: scatter by index (parallel; no push!, one exactly-sized allocation) ---
+    scratch = Vector{UInt32}(undef, total)
+    Threads.@threads for t in 1:nchunks
+        pos = counts[t]
+        @inbounds for i in bounds[t]:(bounds[t + 1] - 1)
+            si = all_scan_idxs[i]
+            rng = scan_to_prec_idx[si]
+            ismissing(rng) && continue
+            cm = cmzs[si]; isnan(cm) && continue
+            c = Int(cyc[si]); (c < 1 || c > ncyc) && continue
+            lo, hi = cyc_lo[c], cyc_hi[c]
+            for r in rng
+                p = precursors_passed[r]
+                cs = clamp(si + round(Int, (prec_mzs[p] - cm) * inv_S), lo, hi)
+                k = pos[cs] + 1
+                scratch[k] = p
+                pos[cs] = k
+            end
+        end
+    end
+
+    # --- Dedup within each scan's slice (parallel; ~160 elements each, not one global sort) ---
+    new_len = zeros(Int32, nspec)
+    Threads.@threads for cs in 1:nspec
+        L = Int(scan_len[cs]); L == 0 && continue
+        st = scan_start[cs]
+        v = view(scratch, (st + 1):(st + L))
+        sort!(v)
+        m = 1
+        @inbounds for i in 2:L
+            if v[i] != v[m]
+                m += 1; v[m] = v[i]
+            end
+        end
+        new_len[cs] = Int32(m)
+    end
+
+    # --- Compact and reindex ---
+    outn = 0
+    @inbounds for cs in 1:nspec
+        outn += new_len[cs]
+    end
+    new_passed = Vector{UInt32}(undef, outn)
+    @inbounds for si in 1:nspec
+        scan_to_prec_idx[si] = missing
+    end
+    off = 0
+    @inbounds for cs in 1:nspec
+        L = Int(new_len[cs]); L == 0 && continue
+        copyto!(new_passed, off + 1, scratch, scan_start[cs] + 1, L)
+        scan_to_prec_idx[cs] = (off + 1):(off + L)
+        off += L
+    end
+    return new_passed
+end
+
+"""
     _sort_dedup!(v) -> Int
 
 Sort `v` and compact duplicates to the front in place. Returns the count of unique elements;

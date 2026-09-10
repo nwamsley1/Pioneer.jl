@@ -35,6 +35,7 @@ include("./UnitTests/test_fdr_utilities.jl")
 # Scanning-quad (ZT) meta-scan expansion + collapse
 include("./UnitTests/test_zt_expand_to_metascans.jl")
 include("./UnitTests/test_zt_metascan_collapse.jl")
+include("./UnitTests/test_zt_map_any_hit_to_center.jl")
 
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
