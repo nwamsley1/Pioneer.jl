@@ -279,15 +279,17 @@ function getApexScan(
 
     apex_idx = apex_scan + n_pad
 
-    # Walk right: climb while next scan is strictly higher
+    # Walk right: climb while next scan is at least as high. `>=` rather than `>` so the
+    # walk can cross a flat region: a seed landing on dead baseline has zero gradient in
+    # both directions, so a strict climb cannot move and the apex stays on a zero.
     right_apex = apex_idx
-    while right_apex < N && intensities[right_apex + 1] > intensities[right_apex]
+    while right_apex < N && intensities[right_apex + 1] >= intensities[right_apex]
         right_apex += 1
     end
 
-    # Walk left: climb while next scan is strictly higher
+    # Walk left: same.
     left_apex = apex_idx
-    while left_apex > 1 && intensities[left_apex - 1] > intensities[left_apex]
+    while left_apex > 1 && intensities[left_apex - 1] >= intensities[left_apex]
         left_apex -= 1
     end
 
@@ -568,7 +570,7 @@ on concrete `Vector{Float32}` fields of `ws`, eliminating GC-root / view-lifetim
 - Integration stop scan index
 - Smoothed apex intensity *before* baseline subtraction
 - Apex intensity *after* baseline subtraction (the integration normalization factor)
-- Area over the same window *before* baseline subtraction
+- Whether QUANT_MIN_AREA_SURVIVING_RATIO withheld the area (`quant_withheld`)
 - Width of the integration window in scans
 
 The last four are diagnostics; they do not affect the quantified area. Callers
@@ -719,7 +721,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             UInt32(0),
             apex_smoothed,
             _apex_val,
-            area_unsubtracted,
+            false,
             width_points,
         )
     end
@@ -765,9 +767,11 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     # meaningless -- typically 10-100x below what the same precursor gives in a
     # replicate. Report no quantity rather than a wrong one; downstream reads a
     # zero area as "not quantified in this run" (see getS in maxLFQ.jl).
+    quant_withheld = false
     if trapezoid_area > 0f0 && area_unsubtracted > 0f0 &&
        area_unsubtracted >= QUANT_MIN_AREA_SURVIVING_RATIO * trapezoid_area
         trapezoid_area = 0.0f0
+        quant_withheld = true
     end
 
     # Count points within the full width at 20% maximum of the smoothed signal
@@ -817,7 +821,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         UInt32(scan_idx_col[last(scan_range)]),
         apex_smoothed,
         norm_factor,
-        area_unsubtracted,
+        quant_withheld,
         width_points,
     )
 end

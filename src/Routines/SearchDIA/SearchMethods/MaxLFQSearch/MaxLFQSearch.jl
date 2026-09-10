@@ -296,7 +296,10 @@ function summarize_results!(
                 # Dictionary-encode the repeated string columns here, at the final write only --
                 # see OUTPUT_DICT_ENCODED_COLUMNS. -14.3% on this file, values unchanged.
                 Arrow.write(arrow_writer, dict_encode_output_columns(
-                    enabled_output_table(output_schema_policy, :precursors, tbl)))
+                    drop_uncomputed_normalized(
+                        blank_unquantified_areas(
+                            enabled_output_table(output_schema_policy, :precursors, tbl)),
+                        params.run_to_run_normalization)))
             end
         end
     end

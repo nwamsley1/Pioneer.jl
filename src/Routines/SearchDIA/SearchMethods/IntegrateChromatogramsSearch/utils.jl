@@ -418,9 +418,8 @@ For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
-scan indices, along with `peak_area_unsubtracted` -- the area over the same
-window before baseline subtraction, which is what the not-quantifiable rule in
-`integrate_chrom` tests against.
+scan indices, along with `quant_withheld` -- whether the not-quantifiable
+rule in `integrate_chrom` withheld this row's area.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -432,7 +431,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             peak_area_unsubtracted::AbstractVector{Float32};
+                             quant_withheld::AbstractVector{Bool};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              )
@@ -491,7 +490,7 @@ function integrate_precursors(chromatograms::DataFrame,
 
                 peak_area[i], new_best_scan[i], points_integrated[i],
                     integration_start_scan[i], integration_stop_scan[i],
-                    _, _, peak_area_unsubtracted[i], _ =
+                    _, _, quant_withheld[i], _ =
                     integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -535,7 +534,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             peak_area_unsubtracted::AbstractVector{Float32};
+                             quant_withheld::AbstractVector{Bool};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -549,7 +548,7 @@ function integrate_precursors(chromatograms::DataFrame,
         points_integrated,
         integration_start_scan,
         integration_stop_scan,
-        peak_area_unsubtracted;
+        quant_withheld;
         λ = λ,
     )
 end
