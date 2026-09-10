@@ -181,7 +181,13 @@ function initialize_models!(search_context, ms_file_idx, params)
 
     # Quad transmission: trust the stated isolation width with a hard
     # square cutoff during tuning, before any file-specific Razo fit.
-    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
+    # EXCEPT on a scanning quad, where the stated isolation width is only the Q1 step and the
+    # model installed from the detected geometry spans the whole meta-scan. Clobbering it here
+    # would leave MainSearch deconvolving with a ~+/-0.5 Da box, giving every expanded
+    # neighbour-bin candidate zero transmission.
+    if getZTGeometry(search_context, ms_file_idx) === nothing
+        setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
+    end
 end
 
 

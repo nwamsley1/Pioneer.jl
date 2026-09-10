@@ -97,6 +97,26 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_strength,
     :frag_corr_effective_n,
     :frag_corr_best_m0,
+    # Scanning-quad (ZT) within-metascan shape features — present only when the meta-scan
+    # collapse ran (acquisition.scanning_quad with metascan_k > 0); filtered out by hasproperty
+    # on every other dataset, so this is inert for non-ZT data.
+    :frag_corr_strength_shape,
+    :frag_corr_effective_n_shape,
+    :frag_corr_best_shape,
+    :frag_apex_dispersion_shape,
+    :n_correlated_fragments_shape,
+    :n_correlated_fragments_bitvec_rank_shape,
+    # Weight-profile-vs-triangle match. zt_tri_pcor is mean-centered Pearson (top-3 in this
+    # model); zt_tri_cosine is the uncentered cosine; zt_emp_cosine uses a template shifted to
+    # the precursor's in-bin m/z offset. Of the nine original profile descriptors only
+    # zt_tri_cosine and zt_entropy carried signal — the other seven measured as noise.
+    :zt_tri_pcor,
+    :zt_tri_cosine,
+    :zt_entropy,
+    :zt_emp_cosine,
+    # ZT across-cycle (elution) features are NOT listed separately: for ZT they ARE the develop
+    # chromatogram features above (frag_corr_strength, ms1_corr_*, n_scans, ...), recomputed on
+    # the collapsed one-point-per-cycle meta trace.
     :n_frags_detected_union,
     :n_frags_detected_intersection,
     :n_frags_detected_union_bitvec_rank,

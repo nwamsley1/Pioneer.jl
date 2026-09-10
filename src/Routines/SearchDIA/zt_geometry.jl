@@ -47,6 +47,42 @@ end
 const ZT_GEOM_SAMPLE_CYCLES = 8
 
 """
+Overhang (Da) added to the recorded half-width for the ZT fragment-index candidacy box. Zero, so
+candidacy is exactly the precursor's own Q1 bin (+/-w/2 ~ +/-0.51 Da) — the narrow half of the
+two-width quad model. Isotope slack is supplied separately by `isotope_err_bounds`, which widens
+the low side by ~0.5 Da to catch precursors whose M+1 sits in the bin.
+"""
+const ZT_FRAG_OVERHANG = 0.0f0
+
+"""
+    zt_frag_overhang() -> Float32
+
+Candidacy overhang. Zero: candidacy is exactly the precursor's own Q1 bin.
+
+Measured on A_REP1 — widening to 0.5 (a +/-1.01 Da box) costs +26% emissions
+(30.9M -> 39.1M) for +1.9% centers and +71 IDs (25,141 -> 25,212). `filter_to_center_bin!`
+discards everything outside +/-w/2 regardless, so those extra emissions are computed and thrown
+away; the only channel by which they help is a marginally different LUT calibration. Not worth it.
+"""
+zt_frag_overhang() = ZT_FRAG_OVERHANG
+
+"""
+Extra margin (Da) by which the deconvolution box exceeds the meta-scan expansion span, so the
+box never clips a bin that `expand_to_metascans!` deliberately included.
+"""
+const ZT_DECONV_MARGIN = 0.5f0
+
+"""
+    zt_deconv_overhang(g::ZTGeometry) -> Float32
+
+Overhang for the deconvolution box: enough to span `+/-k` bins plus a margin. With
+`SquareQuadModel` the resulting window is `centerMz +/- (w/2 + overhang)`, so this makes the box
+strictly wider than the expansion span and keeps `metascan_k` the single control.
+"""
+zt_deconv_overhang(g::ZTGeometry) =
+    Float32(g.metascan_k) * g.bin_step + ZT_DECONV_MARGIN
+
+"""
     detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer) -> Union{Nothing, ZTGeometry}
 
 Measure the Q1 bin lattice from the first `ZT_GEOM_SAMPLE_CYCLES` complete cycles.

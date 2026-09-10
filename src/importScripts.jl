@@ -319,6 +319,7 @@ function importScripts()
         "types.jl",                      # MainSearchParameters (no deps)
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
+        "metascan_collapse.jl",          # ZT meta-scan collapse (uses features.jl helpers)
         "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
         "scoring.jl",                    # train_lgbm_for_irt_refinement (uses features)
         "utils.jl",                      # recalibrate_rt!

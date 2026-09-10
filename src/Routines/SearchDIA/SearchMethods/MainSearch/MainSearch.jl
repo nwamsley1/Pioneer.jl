@@ -392,6 +392,23 @@ function process_search_results!(
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+
+    # Scanning-quad (ZT): collapse the per-bin PSMs of each meta-scan into one meta-PSM
+    # carrying the weight-profile shape features, THEN run develop's chromatogram features on
+    # the collapsed one-point-per-cycle meta trace. Running them post-collapse means the
+    # across-cycle "elution" features are develop's own, on the same code path, rather than a
+    # bespoke ZT implementation.
+    _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
+    if _zt_geom !== nothing && _zt_geom.metascan_k > 0
+        _n_pre = nrow(psms)
+        _zt_dump_precollapse(psms, search_context, ms_file_idx)
+        t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
+            psms, spectra, getPrecursors(getSpecLib(search_context)), Int(_zt_geom.metascan_k);
+            bitvec_rank_table = bitvec_rank_table)
+        @user_info "ZT meta-scan collapse (k=$(_zt_geom.metascan_k)): $_n_pre -> $(nrow(psms)) " *
+                   "meta-PSMs in $(round(t_collapse; digits=1))s"
+    end
+
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;

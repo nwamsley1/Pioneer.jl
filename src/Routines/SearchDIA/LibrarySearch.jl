@@ -75,6 +75,29 @@ function library_search(
         get_fragment_index(spec_lib, params)
     end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Scanning-quad (ZT) two-width quad model. The recorded isolation width is only the Q1
+    # step; the physical window is several Da swept across m/z. So the fragment index keeps a
+    # NARROW ~1 m/z box (candidacy stays tight and specific) while deconvolution uses a box
+    # wide enough to span the whole meta-scan. `qtm_deconv` is finalized once k is known below.
+    zt_geom = getZTGeometry(search_context, ms_file_idx)
+    zt_on   = zt_geom !== nothing
+    zt_k    = zt_on ? Int(zt_geom.metascan_k) : 0
+    # Candidacy expansion and the wide deconv box are MAIN-search only: the tuning searches
+    # must not be calibrated on the metascan-expanded, wide-box deconvolution.
+    zt_main = zt_on && (params isa MainSearchParameters)
+    qtm_frag = zt_on ? SquareQuadModel(zt_frag_overhang()) : qtm
+
+    # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE=<Da>): widen the quad-tuning candidacy AND deconv box
+    # so the isotope-pair measurement can observe offsets far enough off bin-center to resolve
+    # the swept transmission. QuadTuning measures yt = log T(x0) - log T(x1) across the isotope
+    # spacing, so mapping a several-Da-wide profile needs x0 to span several Da — which it
+    # cannot if candidacy stops at the recorded ~1 Da step. Inert unless the env var is set.
+    zt_probe = (zt_on && params isa QuadTuningSearchParameters) ?
+        something(tryparse(Float32, get(ENV, "PIONEER_ZT_QUAD_PROBE", "")), 0f0) : 0f0
+    if zt_probe > 0f0
+        qtm_frag = SquareQuadModel(zt_probe)
+    end
+
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -145,7 +168,7 @@ function library_search(
     #
     precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-        Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+        Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
         getMz(precursors);
         score_filter = score_filter, max_peaks = max_peaks,
         scratch = getFragIndexScratch(search_context))
@@ -164,7 +187,43 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
-    # --- 2b. Build precursor index ---
+    # --- 2b. ZT: anchor candidacy on the precursor's own bin, then span the meta-scan ---
+    # Non-ZT files and the tuning searches keep the tuned quad model untouched.
+    # Deconvolution uses the file's installed transmission model. On ZT that is the flat box
+    # spanning the meta-scan, set once in ensure_zt_geometry! — so there is no per-call-site
+    # patching here, and every other consumer sees the same model.
+    # Tuning searches must NOT calibrate on the wide meta-scan deconvolution box: it admits
+    # many off-center precursors whose interference degrades the mass-error and NCE fits. Only
+    # the MAIN search deconvolves across the meta-scan; everything else stays on the bin.
+    qtm_deconv = (zt_on && !zt_main) ? SquareQuadModel(0.0f0) : qtm
+    zt_probe > 0f0 && (qtm_deconv = SquareQuadModel(zt_probe))
+    if zt_main
+        n_emitted = length(precursors_passed)
+        precursors_passed = filter_to_center_bin!(
+            scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, getMz(precursors))
+        n_center = length(precursors_passed)
+        if zt_k > 0
+            precursors_passed = expand_to_metascans!(
+                scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, zt_k)
+        end
+        # Report the boxes by INTERROGATING the models actually in use, never by recomputing
+        # what they were meant to be — a log that restates intent cannot catch a model that
+        # something else overwrote.
+        _c = Float32(500)
+        _fq = getQuadTransmissionFunction(qtm_frag,   _c, zt_geom.nominal_width)
+        _dq = getQuadTransmissionFunction(qtm_deconv, _c, zt_geom.nominal_width)
+        _fw = (getPrecMaxBound(_fq) - getPrecMinBound(_fq)) / 2
+        _dw = (getPrecMaxBound(_dq) - getPrecMinBound(_dq)) / 2
+        @user_info "ZT candidacy (k=$zt_k): $n_emitted emitted -> $n_center center -> " *
+                   "$(length(precursors_passed)) expanded; candidacy box +/-$(round(_fw, digits=2)) Da, " *
+                   "deconv box +/-$(round(_dw, digits=2)) Da (expansion span +/-" *
+                   "$(round(Float32(zt_k) * zt_geom.bin_step, digits=2)) Da)"
+        _dw < Float32(zt_k) * zt_geom.bin_step &&
+            @user_warn "ZT: deconv box (+/-$(round(_dw,digits=2)) Da) is NARROWER than the " *
+                       "expansion span (+/-$(round(Float32(zt_k)*zt_geom.bin_step,digits=2)) Da) — " *
+                       "expanded candidates in outer bins will get zero transmission." 
+    end
+
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -180,7 +239,7 @@ function library_search(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                intensity_model, qtm, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
@@ -256,6 +315,51 @@ function filter_low_scan_candidates!(
             end
         end
         scan_to_prec_idx[scan_idx] = length(new_passed) >= start ?
+            (start:length(new_passed)) : missing
+    end
+    return new_passed
+end
+
+"""
+    filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, prec_mzs)
+
+Scanning-quad (ZT) center-bin candidacy. The fragment index runs with a widened box so a
+precursor can be emitted from neighbouring Q1 bins; this keeps only the emissions whose scan is
+the precursor's own bin, i.e. `|prec_mz - centerMz| <= isolationWidth/2`. `expand_to_metascans!`
+then refills the ±k neighbours, so the meta-scan is anchored on the precursor's true bin rather
+than on wherever it happened to be emitted.
+
+Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
+`filter_low_scan_candidates!`). Returns the new `precursors_passed`.
+"""
+function filter_to_center_bin!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    prec_mzs::AbstractVector{Float32},
+)
+    new_passed = UInt32[]
+    sizehint!(new_passed, length(precursors_passed))
+    @inbounds for si in all_scan_idxs
+        rng = scan_to_prec_idx[si]
+        ismissing(rng) && continue
+        cv = getCenterMz(spectra, si)
+        wv = getIsolationWidthMz(spectra, si)
+        start = length(new_passed) + 1
+        if ismissing(cv) || ismissing(wv)
+            # No window metadata: keep everything rather than silently dropping candidates.
+            for r in rng
+                push!(new_passed, precursors_passed[r])
+            end
+        else
+            c = Float32(cv); hw = Float32(wv) / 2
+            for r in rng
+                p = precursors_passed[r]
+                abs(prec_mzs[p] - c) <= hw && push!(new_passed, p)
+            end
+        end
+        scan_to_prec_idx[si] = length(new_passed) >= start ?
             (start:length(new_passed)) : missing
     end
     return new_passed

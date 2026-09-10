@@ -194,6 +194,19 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
+    # Scanning-quad (ZT): the transmission model was installed from the measured lattice in
+    # ensure_zt_geometry!. Skip the fit — fitRazoQuadModel bounds al/ar to (0.2, window_width),
+    # and window_width here is the RECORDED Q1 step (~1 Da), so FWHM is capped at ~2 Da while
+    # the measured profile is ~6.3-7.0 Da. The fit pins at the bound and compensates with an
+    # unphysically shallow slope, producing a cusp. Revisit by keying the bound off the sweep
+    # width rather than the recorded step.
+    if getZTGeometry(search_context, ms_file_idx) !== nothing
+        setQuadModel(results, getQuadTransmissionModel(search_context, ms_file_idx))
+        @user_info "Quad tuning skipped for scanning-quad file $ms_file_idx — using the " *
+                   "meta-scan transmission model from the detected geometry"
+        return nothing
+    end
+
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.5f0))
 
     # Get file name for debugging
@@ -275,6 +288,19 @@ function process_file!(
             @user_warn "QuadTuning [$file_name]: only $n_collected PSMs collected (target=$target_psms_int, fallback_min=$min_psms_int); using SquareQuadModel fallback"
         else
             total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
+            # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE): dump the raw isotope-pair measurement cloud
+            # (x0, x1, yt, charge) so the transmission profile can be reconstructed and
+            # inspected offline, independent of whatever model form is fitted to it.
+            let _probe_dir = get(ENV, "PIONEER_ZT_QUAD_PROBE_DIR", "")
+                if !isempty(_probe_dir) && !isempty(total_psms)
+                    mkpath(_probe_dir)
+                    _pp = joinpath(_probe_dir, "quad_probe_file$(ms_file_idx).arrow")
+                    writeArrow(_pp, total_psms)
+                    @user_info "ZT quad probe: $(nrow(total_psms)) isotope pairs, " *
+                               "x0 in [$(round(minimum(total_psms.x0),digits=2)), " *
+                               "$(round(maximum(total_psms.x0),digits=2))] Da -> $_pp"
+                end
+            end
             if nrow(total_psms) >= 50
                 fitted_params, initial_params = fit_quad_model(total_psms, window_width)
                 fitted_model = RazoQuadModel(fitted_params)
@@ -333,6 +359,8 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
 
+    # ZT files keep the model installed from the detected geometry (see process_file!).
+    getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
 end
 

@@ -306,6 +306,23 @@ function ensure_zt_geometry!(
     end
 
     setZTGeometry!(search_context, ms_file_idx, g)
+
+    # Install the transmission model for this file up front, so every consumer
+    # (BitVecCalibration, HuberTuning, precursor_fraction_transmitted, chromatogram
+    # integration, quant) sees ONE coherent model instead of a per-call-site patch.
+    #
+    # A flat box spanning the meta-scan is the right choice for deconvolution: after expansion
+    # each (precursor, scan) gets its OWN weight, so the true transmission is absorbed into that
+    # weight rather than needing to be in the model. Measured on the reference ZT data the
+    # profile is ~Gaussian with FWHM ~6.3-7.0 Da, and modelling it as flat mis-states only the
+    # intra-scan M0/M1 ratio — by <=11% within +/-2 Da, where 53% of transmission lives.
+    #
+    # The box is derived from the expansion span so `metascan_k` stays the single control over
+    # which bins a precursor participates in; a box narrower than the expansion would silently
+    # clip bins the expansion deliberately included.
+    setQuadTransmissionModel!(search_context, ms_file_idx,
+                              SquareQuadModel(zt_deconv_overhang(g)))
+
     tiling = zt_tiles_contiguously(g) ? "contiguous" : "NON-CONTIGUOUS (check acquisition!)"
     @user_info "Scanning-quad (ZT) [$fname]: ON  k=$(g.metascan_k) (±$(g.metascan_k) bins, " *
                "±$(round(g.metascan_k * g.bin_step, digits=2)) Da)  S=$(round(g.bin_step, digits=4)) Da  " *
