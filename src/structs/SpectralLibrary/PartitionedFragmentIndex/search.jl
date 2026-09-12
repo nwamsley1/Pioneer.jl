@@ -203,6 +203,10 @@ end
 Score one partition's fragments using hint-informed search with SIMD acceleration.
 When `mass_err_model` is an IntensityMassErrorModel, uses per-peak intensity-aware
 bias correction and tolerance windows via the 3-arg getCorrectedMz / getMzBoundsReverse.
+Accepted peaks' low/high windows are computed once on the first nonempty
+overlapping RT bin and reused in the original peak order for later bins.
+The optional scratch vectors retain capacity, but their contents are rebuilt
+on every call so scans, calibrated models, and intensity cutoffs cannot go stale.
 """
 @inline function _score_partition_hinted!(
         local_counter::Counter{UInt16, UInt8},
@@ -214,6 +218,8 @@ bias correction and tolerance windows via the 3-arg getCorrectedMz / getMzBounds
         mass_err_model::AbstractMassErrorModel;
         linear_threshold::UInt32 = HINT_LINEAR_THRESHOLD,
         intensity_threshold::Float32 = 0.0f0,
+        mz_low_buf::Vector{Float32} = Float32[],
+        mz_high_buf::Vector{Float32} = Float32[],
         ) where {T<:AbstractFloat, U<:AbstractFloat, V<:AbstractFloat}
 
     p_rt_bins   = getRTBins(partition)
@@ -227,22 +233,37 @@ bias correction and tolerance windows via the 3-arg getCorrectedMz / getMzBounds
     local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
     local_rt_bin_idx > n_rt && return nothing
 
+    windows_ready = false
+    n_windows = 0
     @inbounds @fastmath while getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
         sub_bin_range = getSubBinRange(p_rt_bins[local_rt_bin_idx])
         min_frag_bin = first(sub_bin_range)
         max_frag_bin = last(sub_bin_range)
 
         if min_frag_bin <= max_frag_bin
+            if !windows_ready
+                n_peaks = length(masses)
+                length(mz_low_buf) < n_peaks && resize!(mz_low_buf, n_peaks)
+                length(mz_high_buf) < n_peaks && resize!(mz_high_buf, n_peaks)
+                for peak_i in 1:n_peaks
+                    int_f32 = intensities[peak_i]::Float32
+                    int_f32 < intensity_threshold && continue
+                    mass_f32 = masses[peak_i]::Float32
+                    _, frag_min, frag_max = getCorrectedMzAndBounds(mass_err_model, mass_f32, int_f32)
+                    n_windows += 1
+                    mz_low_buf[n_windows] = frag_min
+                    mz_high_buf[n_windows] = frag_max
+                end
+                windows_ready = true
+            end
+
             lower_bound_guess = min_frag_bin
             upper_bound_guess = min_frag_bin
             prev_mz = Float32(0)
-            n_peaks = length(masses)
 
-            for peak_i in 1:n_peaks
-                @inbounds int_f32 = intensities[peak_i]::Float32
-                int_f32 < intensity_threshold && continue
-                @inbounds mass_f32 = masses[peak_i]::Float32
-                corrected_mz, frag_min, frag_max = getCorrectedMzAndBounds(mass_err_model, mass_f32, int_f32)
+            for peak_i in 1:n_windows
+                frag_min = mz_low_buf[peak_i]
+                frag_max = mz_high_buf[peak_i]
 
                 lower_bound_guess, upper_bound_guess = queryFragmentHinted!(
                     local_counter, max_frag_bin,
@@ -418,9 +439,9 @@ function searchFragmentIndexPartitionMajorHinted(
     # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
     est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
-    int_buf_size = max_peaks > 0 ?
-        maximum(si -> length(getMzArray(spectra, all_scan_idxs[si])),
-                1:n_scans; init=0) : 0
+    mz_buf_size = maximum(si -> length(getMzArray(spectra, all_scan_idxs[si])),
+                          1:n_scans; init=0)
+    int_buf_size = max_peaks > 0 ? mz_buf_size : 0
 
     if scratch === nothing
         thread_si_bufs  = [Vector{Int32}(undef, est_per_thread) for _ in 1:n_threads]
@@ -429,16 +450,21 @@ function searchFragmentIndexPartitionMajorHinted(
         thread_int_bufs = max_peaks > 0 ?
             [Vector{Float32}(undef, int_buf_size) for _ in 1:n_threads] :
             [Float32[] for _ in 1:n_threads]
+        thread_mz_low_bufs = [Vector{Float32}(undef, mz_buf_size) for _ in 1:n_threads]
+        thread_mz_high_bufs = [Vector{Float32}(undef, mz_buf_size) for _ in 1:n_threads]
     else
         prepare!(scratch;
             n_threads = n_threads,
             est_per_thread = est_per_thread,
             counter_size = max_local + 1,
-            int_buf_size = int_buf_size)
+            int_buf_size = int_buf_size,
+            mz_buf_size = mz_buf_size)
         thread_si_bufs  = scratch.si
         thread_pid_bufs = scratch.pid
         thread_counters = scratch.counters
         thread_int_bufs = scratch.int_bufs
+        thread_mz_low_bufs = scratch.mz_low_bufs
+        thread_mz_high_bufs = scratch.mz_high_bufs
     end
     thread_counts = zeros(Int, n_threads)
 
@@ -462,7 +488,8 @@ function searchFragmentIndexPartitionMajorHinted(
                 scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
                 scan_irts, precursor_mzs,
                 mem, linear_threshold, n_threads,
-                thread_int_bufs[tid], max_peaks)
+                thread_int_bufs[tid], max_peaks,
+                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid])
             thread_times[tid] = time() - t_thread
         end
     end
@@ -534,7 +561,8 @@ function _run_thread(tid::Int, emit::E,
         precursor_mzs::AbstractVector{Float32},
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
-        int_buf::Vector{Float32}, max_peaks::Int
+        int_buf::Vector{Float32}, max_peaks::Int,
+        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32}
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
 
     wp = 0
@@ -572,7 +600,9 @@ function _run_thread(tid::Int, emit::E,
                 getIntensityArray(spectra, scan_idx),
                 mem;
                 linear_threshold=linear_threshold,
-                intensity_threshold=intensity_threshold)
+                intensity_threshold=intensity_threshold,
+                mz_low_buf=mz_low_buf,
+                mz_high_buf=mz_high_buf)
 
             wp = emit_candidates!(emit, lc, l2g, si, scan_irts[si],
                 scan_prec_min[si], scan_prec_max[si],
