@@ -38,26 +38,50 @@ struct CubicSpline{N, T<:AbstractFloat}
     inv_bin_width::T
 end
 
-function (s::CubicSpline)(t::U) where {U<:AbstractFloat}
+# Splines on the same knot grid can share an interval and local coordinate.
+@inline function _isotope_spline_position(s::CubicSpline{N, T}, t::U) where {N, T, U<:AbstractFloat}
     @inbounds @fastmath begin
         if t < s.first
-            return s.coeffs[1]
+            return (coefficient=Int32(1), u=zero(promote_type(T, U)), clamped=true)
         end
-
         idx = floor(Int32, (t - s.first)*s.inv_bin_width)
         u = t - (s.first + s.bin_width*idx)
-
-        coeff = idx*4 + 1
-        a0 = s.coeffs[coeff]
-        a1 = s.coeffs[coeff + 1]
-        a2 = s.coeffs[coeff + 2]
-        a3 = s.coeffs[coeff + 3]
-
-        x = muladd(a3, u, a2)
-        x = muladd(x, u, a1)
-        x = muladd(x, u, a0)
+        return (coefficient=idx*Int32(4) + Int32(1), u=u, clamped=false)
     end
-    return x
+end
+
+@inline function _evaluate_isotope_spline(s::CubicSpline, position)
+    @inbounds @fastmath begin
+        position.clamped && return s.coeffs[1]
+        c, u = position.coefficient, position.u
+        x = muladd(s.coeffs[c + 3], u, s.coeffs[c + 2])
+        x = muladd(x, u, s.coeffs[c + 1])
+        return muladd(x, u, s.coeffs[c])
+    end
+end
+
+@inline function (s::CubicSpline)(t::AbstractFloat)
+    return _evaluate_isotope_spline(s, _isotope_spline_position(s, t))
+end
+
+const MAX_ISOTOPE_SPLINES = 10
+
+function _validate_isotope_grids(splines)
+    for row in splines
+        length(row) <= MAX_ISOTOPE_SPLINES ||
+            throw(ArgumentError("Isotope spline models support at most $MAX_ISOTOPE_SPLINES isotopes per sulfur count"))
+        isempty(row) && continue
+        reference = first(row)
+        for i in 2:length(row)
+            s = row[i]
+            if !(isequal(s.first, reference.first) && isequal(s.last, reference.last) &&
+                 isequal(s.bin_width, reference.bin_width) &&
+                 isequal(s.inv_bin_width, reference.inv_bin_width))
+                throw(ArgumentError("Isotope splines must share a knot grid within each sulfur count"))
+            end
+        end
+    end
+    return nothing
 end
 
 """
@@ -81,6 +105,11 @@ end
 Container for isotope probability splines indexed by [sulfur_count][isotope_index].
 Loaded from Goldfarb et al. 2018 XML via [`parseIsoXML`](@ref).
 Callable: `model(sulfur_count, isotope_idx, mass)` returns isotope probability.
+
+Models contain at most ten isotopes (M+0 through M+9). Construction validates a
+common knot grid in each sulfur row, allowing transmission-mode abundances to
+reuse interval calculations. Models are read-only during use; reconstruct the
+model after replacing spline grids so that this invariant is revalidated.
 """
 # 40 is hardcoded rather than carried as a type parameter. parseIsoXML already builds these as
 # `CubicSpline{40, Float32}` with `SVector{40, Float32}` coefficients, so the parameter only ever
@@ -88,7 +117,15 @@ Callable: `model(sulfur_count, isotope_idx, mass)` returns isotope probability.
 # different coefficient count in the XML still fails loudly, at the SVector{40} conversion.
 struct IsotopeSplineModel{T<:Real}
     splines::Vector{Vector{CubicSpline{40, T}}}
+
+    function IsotopeSplineModel{T}(splines::Vector{Vector{CubicSpline{40, T}}}) where {T<:Real}
+        _validate_isotope_grids(splines)
+        return new{T}(splines)
+    end
 end
+
+IsotopeSplineModel(splines::Vector{Vector{CubicSpline{40, T}}}) where {T<:Real} =
+    IsotopeSplineModel{T}(splines)
 
 function (p::IsotopeSplineModel)(S, I, x)
     return p.splines[S::Int64 + 1][I::Int64 + 1](x::Float32)
@@ -169,9 +206,9 @@ end
 #
 # Four method overloads:
 #   1. (isotopes, iso_splines, frag, prec, pset)           — isolation-set mode
-#   2. (frag_isotopes, prec_isotopes, iso_splines, frag, prec) — transmission mode
+#   2. (frag_isotopes, prec_isotopes, iso_splines, frag, prec, range) — transmission mode
 #   3. (isotopes, iso_splines, prec_mz, ..., frag::LibraryFragmentIon, pset) — wrapper for (1)
-#   4. (frag_isotopes, precursor_transmission, iso_splines, ..., frag::LibraryFragmentIon) — wrapper for (2)
+#   4. (frag_isotopes, precursor_transmission, iso_splines, ..., frag::LibraryFragmentIon, range) — wrapper for (2)
 #############################################################################
 
 """
@@ -200,7 +237,13 @@ function getFragAbundance!(isotopes::Vector{T},
     comp_sulfurs = min(prec.sulfurs - frag.sulfurs, 5)
     frag_mass = Float32(frag.mass)
     comp_mass = Float32(prec.mass - frag.mass)
-    @inbounds @fastmath for f in range(0, min(length(isotopes)-1, max_p))
+    last_frag_iso = min(length(isotopes)-1, max_p)
+    last_frag_iso < 0 && return nothing
+    checkbounds(iso_splines.splines[frag_sulfurs + 1], last_frag_iso + 1)
+    if min_p <= max_p
+        checkbounds(iso_splines.splines[comp_sulfurs + 1], max_p + 1)
+    end
+    @inbounds @fastmath for f in range(0, last_frag_iso)
         # Eq. 5, Goldfarb et al. 2018 pg. 11389
         complement_prob = 0.0
         f_i = iso_splines(frag_sulfurs, f, frag_mass)
@@ -215,26 +258,47 @@ function getFragAbundance!(isotopes::Vector{T},
 end
 
 """
-    getFragAbundance!(frag_isotopes, prec_isotopes, iso_splines, frag, prec)
+    getFragAbundance!(frag_isotopes, prec_isotopes, iso_splines, frag, prec,
+                      frag_iso_idx_range)
 
 Transmission-mode variant: `prec_isotopes[i]` gives the transmission probability
 for each precursor isotope (from quadrupole model) instead of a discrete set.
+Only requested fragment isotope outputs supported by `prec_isotopes` are written;
+other output entries are left unchanged. Each retained output still includes all
+contributing precursor isotopes, including those beyond `frag_iso_idx_range`.
+Supports at most ten precursor isotopes (M+0 through M+9). Their grids are
+validated when the model is constructed, so interval selection is performed
+once for the fragment and once for its complement.
 """
 function getFragAbundance!(frag_isotopes::Vector{T},
                             prec_isotopes::Vector{T},
                             iso_splines::IsotopeSplineModel,
                             frag::isotope{T, I},
-                            prec::isotope{T, I}
+                            prec::isotope{T, I},
+                            frag_iso_idx_range::UnitRange{Int64}
                         ) where {T<:Real,I<:Integer}
+    first_frag_iso = max(0, first(frag_iso_idx_range))
+    last_frag_iso = min(length(prec_isotopes)-1, last(frag_iso_idx_range))
+    first_frag_iso > last_frag_iso && return nothing
+    length(prec_isotopes) <= MAX_ISOTOPE_SPLINES ||
+        throw(ArgumentError("Transmission-mode abundance supports at most $MAX_ISOTOPE_SPLINES precursor isotopes (M+0 through M+9)"))
+
     frag_sulfurs = min(frag.sulfurs, 5)
     comp_sulfurs = min(prec.sulfurs - frag.sulfurs, 5)
     frag_mass = Float32(frag.mass)
     comp_mass = Float32(prec.mass - frag.mass)
-    @inbounds @fastmath for f in range(0, length(prec_isotopes)-1)
+
+    frag_splines = iso_splines.splines[frag_sulfurs + 1]
+    comp_splines = iso_splines.splines[comp_sulfurs + 1]
+    checkbounds(frag_splines, last_frag_iso + 1)
+    checkbounds(comp_splines, length(prec_isotopes) - first_frag_iso)
+    frag_position = _isotope_spline_position(first(frag_splines), frag_mass)
+    comp_position = _isotope_spline_position(first(comp_splines), comp_mass)
+    @inbounds @fastmath for f in first_frag_iso:last_frag_iso
         complement_prob = 0.0
-        f_i = iso_splines(frag_sulfurs, f, frag_mass)
+        f_i = _evaluate_isotope_spline(frag_splines[f + 1], frag_position)
         for p in range(max(f, 0), length(prec_isotopes) - 1)
-            complement_prob += iso_splines(comp_sulfurs, p - f, comp_mass) * prec_isotopes[p + 1]
+            complement_prob += _evaluate_isotope_spline(comp_splines[p - f + 1], comp_position) * prec_isotopes[p + 1]
         end
         frag_isotopes[f+1] = f_i*complement_prob
     end
@@ -265,13 +329,15 @@ function getFragAbundance!(frag_isotopes::Vector{Float32},
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
-                            frag::LibraryFragmentIon{Float32})
+                            frag::LibraryFragmentIon{Float32},
+                            frag_iso_idx_range::UnitRange{Int64})
     getFragAbundance!(
         frag_isotopes,
         precursor_transmission,
         iso_splines,
         isotope((getMz(frag) - Float32(PROTON))*getFragCharge(frag), Int64(getSulfurCount(frag)), 0),
-        isotope((prec_mz - Float32(PROTON))*prec_charge, Int64(prec_sulfur_count), 0)
+        isotope((prec_mz - Float32(PROTON))*prec_charge, Int64(prec_sulfur_count), 0),
+        frag_iso_idx_range
     )
 end
 
@@ -353,7 +419,8 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
     total_fragment_intensity = frag.intensity
 
     getFragAbundance!(frag_isotopes, precursor_transmission, iso_splines,
-                      prec_mz, prec_charge, prec_sulfur_count, frag)
+                      prec_mz, prec_charge, prec_sulfur_count, frag,
+                      0:(length(precursor_transmission) - 1))
 
     @inbounds @fastmath for i in reverse(range(1, length(frag_isotopes)))
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
@@ -491,6 +558,7 @@ end
 
     precursor_mass = (prec_mono_mz * prec_charge) - prec_charge
     sulfur_idx = min(Int64(sulfur_count), 5)
+    checkbounds(iso_splines.splines[sulfur_idx + 1], last_idx)
     @inbounds @fastmath for iso in first_idx:last_idx
         probability += iso_splines(sulfur_idx, iso - 1, precursor_mass) * precursor_transmission[iso]
     end

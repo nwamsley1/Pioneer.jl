@@ -32,7 +32,7 @@ const run_fused!             = Pioneer.run_fused!
 
 # Load the real isotope splines once (small XML, fast parse).
 const ISO_XML = joinpath(dirname(dirname(@__DIR__)), "assets",
-                         "IsotopeSplines_10kDa_21isotopes.xml")
+                         "IsotopeSplines_10kDa_10isotopes.xml")
 const ISO_SPLINES = parseIsoXML(ISO_XML)
 
 # -----------------------------------------------------------------------------
@@ -113,11 +113,7 @@ function make_fused_fixture(;
         scan_int[i] = peak_int[i] isa Missing ? missing : Float32(peak_int[i])
     end
 
-    # Working buffers used inside the iso loop. `getFragAbundance!` (called
-    # transitively from `getFragIsotopes!`) iterates `f ∈ 0:length(prec_isotopes)-1`
-    # and writes `frag_isotopes[f+1]` — so `isotopes_buf` must be ≥ the
-    # length of `prec_trans_buf` or `--check-bounds=yes` runs surface a
-    # `BoundsError` that's silenced by `@inbounds` otherwise.
+    # Match production's five-isotope scratch size, with room for larger requests.
     prec_trans_buf = zeros(Float32, 5)   # 5 precursor isotopes is the standard size
     isotopes_buf   = zeros(Float32, max(n_frag_isotopes, length(prec_trans_buf)))
 
@@ -925,4 +921,164 @@ end
         @test fx.Hs.n_vals == n
     end
 
+end
+
+@testset "partial capture predicts only requested fragment isotopes" begin
+    prec_mz, prec_charge, prec_sulfur = 800f0, UInt8(3), UInt8(3)
+    constant_frag = CompactFrag(UInt32(1), 450f0, Float16(700),
+        true, false, false, false, UInt8(2), UInt8(5), prec_charge,
+        UInt8(1), UInt8(1))
+    spline_frag = Pioneer.SplineCompactFrag(UInt32(1), 450f0,
+        (100f0, 500f0, 900f0, 1300f0), true, false, false, false,
+        UInt8(2), UInt8(5), prec_charge, UInt8(1), UInt8(1))
+    knots = (10f0, 10f0, 10f0, 10f0, 50f0, 50f0, 50f0, 50f0)
+    intensity_cases = ((constant_frag, Pioneer.ConstantType()),
+        (spline_frag, Pioneer.SplineType(knots, 20f0, 3)),
+        (spline_frag, Pioneer.SplineType(knots, 40f0, 3)))
+    @test Pioneer.getIntensity(spline_frag, intensity_cases[2][2]) !=
+        Pioneer.getIntensity(spline_frag, intensity_cases[3][2])
+
+    @testset "requested predictions are scaled and reused scratch is cleared" begin
+        transmissions = (Float32[1, 0.7, 0.4, 0.2, 0.1],
+            Float32[0, 0, 0, 0, 1], Float32[0, 1, 0, 0.5, 0.25])
+        output = fill(-99f0, 7)
+        for (frag, intensity_data) in intensity_cases, transmission in transmissions,
+                count in (5, 2, 1, 4)
+            requested = 0:count - 1
+            abundance = zeros(Float32, 7)
+            Pioneer.getFragAbundance!(abundance, transmission, ISO_SPLINES,
+                prec_mz, prec_charge, prec_sulfur, frag, requested)
+            expected = Pioneer.getIntensity(frag, intensity_data) .* abundance
+            Pioneer.getFragIsotopes!(PartialPrecCapture(), output,
+                transmission, (0, 4), requested, ISO_SPLINES,
+                prec_mz, prec_charge, prec_sulfur, frag, intensity_data)
+            @test isequal(output, expected)
+            @test all(iszero, output[count + 1:end])
+            @test Pioneer.fragment_trace_max_pred_intensity(output, requested, 1f0) ===
+                maximum(expected[1:count])
+        end
+    end
+
+    @testset "M+4 precursor transmission contributes to M+0 and M+1 fragments" begin
+        transmission = Float32[0, 0, 0, 0, 1]
+        frag = Pioneer.isotope(900f0, Int64(1), Int64(0))
+        prec = Pioneer.isotope(2400f0, Int64(3), Int64(0))
+        output = fill(-99f0, 5)
+        Pioneer.getFragAbundance!(output, transmission, ISO_SPLINES, frag, prec, 0:1)
+        # With only precursor M+4 transmitted, the complementary fragment must
+        # carry the remaining four or three isotopes, respectively.
+        expected = Float32[ISO_SPLINES(1, 0, 900f0) * ISO_SPLINES(2, 4, 1500f0),
+            ISO_SPLINES(1, 1, 900f0) * ISO_SPLINES(2, 3, 1500f0)]
+        @test all(>(0f0), expected)
+        @test isapprox(output[1:2], expected; rtol=4 * eps(Float32))
+        @test output[3:5] == fill(-99f0, 3)
+
+        Pioneer.getFragAbundance!(output, zeros(Float32, 5), ISO_SPLINES, frag, prec, 0:1)
+        @test all(iszero, output[1:2])
+    end
+
+    @testset "empty, nonzero-start, and longer requested ranges" begin
+        transmission = Float32[1, 0.7, 0.4, 0.2, 0.1]
+        for requested in (1:0, 1:2, 0:6)
+            abundance = zeros(Float32, 7)
+            Pioneer.getFragAbundance!(abundance, transmission, ISO_SPLINES,
+                prec_mz, prec_charge, prec_sulfur, constant_frag, requested)
+            output = fill(-99f0, 7)
+            Pioneer.getFragIsotopes!(PartialPrecCapture(), output,
+                transmission, (0, 4), requested, ISO_SPLINES, prec_mz,
+                prec_charge, prec_sulfur, constant_frag, Pioneer.ConstantType())
+            @test isequal(output, 700f0 .* abundance)
+            @test all(i -> i in requested || iszero(output[i + 1]), 0:6)
+        end
+    end
+end
+
+@testset "requested isotope predictions populate fused matrices" begin
+    @testset "constant and NCE spline predictions, misses, and metadata" begin
+        for use_spline in (false, true), count in (1, 2, 4),
+                kind_type in (FusedStandard, FusedRTIndexed)
+            frags = [(UInt32(1), 200f0, 1000f0, UInt8(1)),
+                (UInt32(1), 300f0, 0f0, UInt8(2)),
+                (UInt32(1), 400f0, 800f0, UInt8(3))]
+            mzs = Float32[Pioneer.iso_mz_for(200f0, i, 1f0) for i in 0:count - 1]
+            push!(mzs, 400f0)
+            fx = make_fused_fixture(frags = frags,
+                prec_frag_ranges = UInt64[1, 4], peak_mz = mzs,
+                peak_int = Float32.(100:100:100 * length(mzs)), n_frag_isotopes = count,
+                kind = kind_type(PartialPrecCapture(), UInt8(7)))
+            if use_spline
+                spline_frags = [Pioneer.SplineCompactFrag(f.prec_id, f.mz,
+                    (Float32(f.intensity), Float32(f.intensity) * 1.2f0,
+                     Float32(f.intensity) * 0.8f0, Float32(f.intensity) * 1.5f0),
+                    f.packed_a, f.packed_b) for f in fx.ion_list.frags]
+                knots = (10f0, 10f0, 10f0, 10f0, 50f0, 50f0, 50f0, 50f0)
+                lookup = Pioneer.SplineFragmentLookup(spline_frags, UInt64[1, 4], knots, 3)
+                fx = merge(fx, (ion_list = lookup,))
+            end
+            @test call_run_fused!(fx) == (count + 1, 2count - 1)
+            h = fx.Hs
+            @test (h.n, h.m, h.n_vals) == (1, 3count, 3count)
+            @test h.colptr[1:2] == UInt32[1, 3count + 1]
+            @test fx.id_to_col[1] == UInt16(1)
+            matched = [i for i in 1:h.n_vals if Pioneer.matched_at(h, i)]
+            @test h.rowval[matched] == UInt32.(1:count + 1)
+            @test h.x[matched] == Float32.(100:100:100 * (count + 1))
+
+            intensity_data = Pioneer.getSplineData(fx.ion_list, fx.nce_model,
+                fx.prec_charges[1], fx.prec_mzs[1])
+            for (rank, frag) in enumerate(fx.ion_list.frags)
+                entries = [i for i in 1:h.n_vals if Pioneer.rank_at(h, i) == rank]
+                predicted = zeros(Float32, count)
+                Pioneer.getFragIsotopes!(PartialPrecCapture(), predicted,
+                    fx.prec_trans_buf, (0, 4), 0:count - 1, ISO_SPLINES,
+                    fx.prec_mzs[1], fx.prec_charges[1], fx.prec_sulfur_counts[1],
+                    frag, intensity_data)
+                @test isequal(h.nzval[entries], predicted)
+                @test [Pioneer.isotope_at(h, i) for i in entries] == UInt8.(0:count - 1)
+            end
+            # The zero-intensity fragment still produces one synthetic miss per isotope.
+            zero_misses = [i for i in 1:h.n_vals if Pioneer.rank_at(h, i) == 2]
+            @test length(zero_misses) == count
+            @test all(i -> !Pioneer.matched_at(h, i) && iszero(h.nzval[i]) &&
+                iszero(h.x[i]), zero_misses)
+            psm = fx.unscored_psms[1]
+            if kind_type === FusedStandard
+                @test (psm.precursor_idx, psm.best_rank, psm.y_count) ==
+                    (UInt32(1), UInt8(1), UInt8(2))
+                @test psm.isotope_count == UInt8(count - 1)
+            else
+                # RT-indexed extraction builds the matrix without updating PSM scores.
+                @test (psm.best_rank, psm.y_count, psm.isotope_count) ==
+                    (typemax(UInt8), UInt8(0), UInt8(0))
+            end
+            @test psm.error == 0f0
+        end
+    end
+
+    @testset "Quad keeps four fragment isotopes in each one-hot pass" begin
+        fx = make_fused_fixture(kind = FusedQuadEst(), n_frag_isotopes = 2,
+            frags = [(UInt32(1), 200f0, 1000f0, UInt8(1))],
+            prec_frag_ranges = UInt64[1, 2], peak_mz = Float32[200],
+            peak_int = Float32[1500])
+        @test call_run_fused!(fx) == (3, 9)
+        @test (fx.Hs.n, fx.Hs.n_vals) == (3, 12)
+        frag = only(fx.ion_list.frags)
+        for pass in 1:3
+            transmission = zeros(Float32, 5)
+            transmission[pass] = 1f0
+            predicted = zeros(Float32, 4)
+            Pioneer.getFragIsotopes!(PartialPrecCapture(), predicted,
+                transmission, (pass - 1, pass - 1), 0:3, ISO_SPLINES,
+                fx.prec_mzs[1], fx.prec_charges[1], fx.prec_sulfur_counts[1],
+                frag, Pioneer.ConstantType())
+            @test all(iszero, predicted[pass + 1:end])
+            scale = Pioneer.frag_isotope_scale(fx.kind, fx.prec_sulfur_counts[1],
+                fx.prec_mzs[1], fx.prec_charges[1], pass, ISO_SPLINES)
+            entries = Int(fx.Hs.colptr[pass]):Int(fx.Hs.colptr[pass + 1] - 1)
+            @test isequal(fx.Hs.nzval[entries], predicted .* scale)
+            @test [Pioneer.isotope_at(fx.Hs, i) for i in entries] == UInt8[0, 1, 2, 3]
+            @test [Pioneer.matched_at(fx.Hs, i) for i in entries] == [true, false, false, false]
+            @test fx.id_to_col[pass] == UInt16(pass)
+        end
+    end
 end

@@ -18,7 +18,7 @@
 #############
 #Simmulate data 
 
-iso_splines = parseIsoXML(joinpath(dirname(dirname(@__DIR__)),"assets", "IsotopeSplines_10kDa_21isotopes.xml"));
+iso_splines = parseIsoXML(joinpath(dirname(dirname(@__DIR__)),"assets", "IsotopeSplines_10kDa_10isotopes.xml"));
 
 SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib/"
  

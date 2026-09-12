@@ -61,7 +61,7 @@ end
 """
     Locate the isotope spline XML file bundled with the application.
 """
-isotope_spline_path() = asset_path("IsotopeSplines_10kDa_21isotopes.xml")
+isotope_spline_path() = asset_path("IsotopeSplines_10kDa_10isotopes.xml")
 
 
 """
