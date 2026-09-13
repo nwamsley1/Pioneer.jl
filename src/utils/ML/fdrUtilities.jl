@@ -98,7 +98,29 @@ function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fd
         return
     end
 
-    order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : collect(eachindex(scores))
+    order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : eachindex(scores)
+    _get_PEP_from_order!(scores, is_target, fdrs, order, fdr_scale_factor)
+    return
+end
+
+"""
+    _get_PEP_from_order!(scores, is_target, fdrs, order, fdr_scale_factor)
+
+Evaluate PAVA in an existing descending-score order. MainSearch uses this entry
+point with its reusable per-file `Int32` permutation; experiment-wide callers
+continue through `get_PEP!` and its native-`Int` sort.
+"""
+function _get_PEP_from_order!(
+    scores::AbstractVector{U},
+    is_target::AbstractVector{Bool},
+    fdrs::AbstractVector{T},
+    order::AbstractVector{<:Integer},
+    fdr_scale_factor::Float32,
+) where {T,U<:AbstractFloat}
+    N = length(scores)
+    @assert length(is_target) == N
+    @assert length(fdrs) == N
+    @assert length(order) == N
 
     labels = Vector{Float64}(undef, N + 1)
     weights = Vector{Float64}(undef, N + 1)

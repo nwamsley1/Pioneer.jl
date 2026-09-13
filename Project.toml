@@ -4,6 +4,7 @@ version = "0.10.0"
 authors = ["Nathan Wamsley"]
 
 [deps]
+AcceleratedKernels = "6a4ca0a5-0e36-4168-a932-d9be78d558f1"
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
 ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
@@ -44,9 +45,9 @@ ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
 ProtoBuf = "3349acd9-ac6a-5e09-bcdb-63829b23a429"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 RobustModels = "d6ea1423-9682-4bbd-952f-b1577cbf8c98"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 SentinelArrays = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
-SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
@@ -57,6 +58,7 @@ StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 
 [compat]
+AcceleratedKernels = "0.4.3"
 ArgParse = "1.2"
 Arrow = "2.8"
 ArrowTypes = "2.3"

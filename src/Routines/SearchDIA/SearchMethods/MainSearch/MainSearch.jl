@@ -99,16 +99,16 @@ end
 """
 Results container for main search.
 
-`lgbm_buffers` holds the reusable backing stores for the per-file LightGBM
-feature matrices. The file loop in `execute_search` is sequential, so one buffer
-set serves every file — the matrices are population-scaled (hundreds of MB per
-file), so allocating them per file is churn that grows with file count. Living
-here scopes them to MainSearch: they are released with the results container
-instead of being retained through the later search phases.
+`lgbm_buffers` and `sortperm_workspace` hold reusable backing stores for the
+per-file LightGBM feature matrices and parallel permutations. The file loop in
+`execute_search` is sequential, so one buffer set serves every file. Living here
+scopes the large arrays to MainSearch instead of retaining them through later
+search phases.
 """
 struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     lgbm_buffers::LGBMMatrixBuffers
+    sortperm_workspace::Int32SortPermWorkspace
 end
 
 #==========================================================
@@ -139,7 +139,8 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
 
     return MainSearchResults(
         DataFrame(),
-        LGBMMatrixBuffers()
+        LGBMMatrixBuffers(),
+        Int32SortPermWorkspace(),
     )
 end
 
@@ -153,7 +154,11 @@ Core Processing Methods
 `dst[i] = src[perm[i]]` for a concretely-typed column. Separate method so the loop specialises on the
 column's element type rather than the `AbstractVector` that `eachcol` statically yields.
 """
-@noinline function _gather_into!(dst::Vector{T}, src::Vector{T}, perm::Vector{Int}) where {T}
+@noinline function _gather_into!(
+    dst::Vector{T},
+    src::Vector{T},
+    perm::AbstractVector{<:Integer},
+) where {T}
     @inbounds for i in eachindex(perm)
         dst[i] = src[perm[i]]
     end
@@ -161,7 +166,7 @@ column's element type rather than the `AbstractVector` that `eachcol` statically
 end
 
 """
-    permute_psms_by_precursor_idx!(psms::DataFrame) -> DataFrame
+    permute_psms_by_precursor_idx!(psms, sortperm_workspace) -> DataFrame
 
 Sort `psms` in place by `:precursor_idx` with a hand-rolled column-wise gather. Much faster than
 `DataFrames.sort!(psms, :precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols),
@@ -176,10 +181,16 @@ Establishes the sorted-by-precursor invariant that downstream passes
 can take advantage of to skip their own sortperm.
 """
 
-function permute_psms_by_precursor_idx!(psms::DataFrame)
+function permute_psms_by_precursor_idx!(
+    psms::DataFrame,
+    sortperm_workspace::Int32SortPermWorkspace,
+)
     n = nrow(psms)
     n == 0 && return psms
-    perm = sortperm(psms[!, :precursor_idx]::Vector{UInt32})
+    perm = parallel_sortperm_int32!(
+        sortperm_workspace,
+        psms[!, :precursor_idx]::Vector{UInt32},
+    )
     # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
     # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
     # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
@@ -313,7 +324,10 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
+        psms,
+        results.sortperm_workspace,
+    )
 
     results.psms[] = psms
 
@@ -452,7 +466,12 @@ function process_search_results!(
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
         peps_filt  = Vector{Float32}(undef, length(probs_filt))
-        get_PEP!(probs_filt, is_t_filt, peps_filt; doSort=true, fdr_scale_factor=1.0f0)
+        pep_order = parallel_sortperm_int32!(
+            results.sortperm_workspace,
+            probs_filt;
+            rev = true,
+        )
+        _get_PEP_from_order!(probs_filt, is_t_filt, peps_filt, pep_order, 1.0f0)
         keep = peps_filt .<= pep_filter_thr
         n_before_pep = nrow(best_psms)
         n_drop_t = count(.!keep .& is_t_filt)
@@ -482,6 +501,7 @@ function process_search_results!(
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
         psms[!, :lgbm_score],
         psms[!, :target],
+        results.sortperm_workspace,
     )
     @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
         best_psms,

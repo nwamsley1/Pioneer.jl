@@ -18,6 +18,7 @@
 module Pioneer
 
 using Arrow, ArrowTypes, ArgParse, Dates
+import AcceleratedKernels
 using Base64
 using Base.Order
 using Base.Iterators: partition

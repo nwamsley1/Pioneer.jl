@@ -603,7 +603,8 @@ end
 
 function _mainsearch_peps_and_pass_mask(
     scores::AbstractVector{<:Real},
-    targets::AbstractVector{Bool};
+    targets::AbstractVector{Bool},
+    sortperm_workspace::Int32SortPermWorkspace;
     pep_threshold::Float32 = MAIN_PEP_FILTER_THR,
 )
     n = length(scores)
@@ -612,7 +613,8 @@ function _mainsearch_peps_and_pass_mask(
     end
     score_f32 = scores isa AbstractVector{Float32} ? scores : Float32.(scores)
     peps = Vector{Float32}(undef, n)
-    get_PEP!(score_f32, targets, peps; doSort = true, fdr_scale_factor = 1.0f0)
+    order = parallel_sortperm_int32!(sortperm_workspace, score_f32; rev = true)
+    _get_PEP_from_order!(score_f32, targets, peps, order, 1.0f0)
     return peps, peps .<= pep_threshold
 end
 
