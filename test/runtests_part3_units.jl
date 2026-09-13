@@ -34,6 +34,7 @@ include("./UnitTests/test_fdr_utilities.jl")
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
+include("./UnitTests/test_isotope_interval_reuse.jl")
 include("./UnitTests/test_fragment_isotope_trace_intensities.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")
 include("./UnitTests/test_feature_finiteness.jl")
