@@ -113,6 +113,8 @@ Post-design-matrix processing. Returns `true` if scoring should proceed.
 - Simple path: no-op, always returns true.
 - MainSearch: initialize weights, solve deconvolution, update precursor weights.
 """
+const MAIN_SEARCH_NORMALIZED_COLD_START = 1.0f0
+
 function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::MainSearchParameters)
     weights = getTempWeights(search_data)
     initialize_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
@@ -120,7 +122,8 @@ function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSpar
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff
+        params.max_iter_outer, params.max_diff;
+        normalized_cold_start=MAIN_SEARCH_NORMALIZED_COLD_START
     ))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))

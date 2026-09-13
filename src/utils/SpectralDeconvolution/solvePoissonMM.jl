@@ -100,9 +100,12 @@ end
 """
     solvePoissonMM_fast!(Hs, μ, y, X₁, max_iter_outer,
                           relative_convergence_threshold;
-                          max_inner_iter=5)
+                          max_inner_iter=5,
+                          normalized_cold_start=nothing)
 
 Optimized Poisson MLE coordinate descent with fused μ-update + derivative computation.
+When `normalized_cold_start` is provided, zero-valued weights are initialized to
+that value after intensity normalization; nonzero warm starts are preserved.
 Returns `(converged::Bool, iterations::Int)` tuple matching `solveOLS!` interface.
 """
 function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
@@ -111,7 +114,8 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
                                X₁::Vector{T},
                                max_iter_outer::Int64,
                                relative_convergence_threshold::T;
-                               max_inner_iter::Int64 = Int64(5)) where {Ti<:Integer, T<:AbstractFloat}
+                               max_inner_iter::Int64 = Int64(5),
+                               normalized_cold_start::Union{Nothing, T} = nothing) where {Ti<:Integer, T<:AbstractFloat}
 
     # ── Y-scaling: divide y by max(y) to bring weights into tractable range ──
     y_scale = T(0)
@@ -125,7 +129,16 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
             y[i] /= y_scale
         end
         @inbounds for j in 1:Hs.n
-            X₁[j] /= y_scale
+            if normalized_cold_start !== nothing && iszero(X₁[j])
+                X₁[j] = normalized_cold_start
+            else
+                X₁[j] /= y_scale
+            end
+        end
+        initMu!(μ, Hs, X₁)
+    elseif normalized_cold_start !== nothing
+        @inbounds for j in 1:Hs.n
+            iszero(X₁[j]) && (X₁[j] = normalized_cold_start)
         end
         initMu!(μ, Hs, X₁)
     end
@@ -264,12 +277,14 @@ function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_ite
     return solveLasso!(Hs, r, w, colnorm2, eltype(w)(s.λ_rel), max_iter, conv)
 end
 
-function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv;
+                              normalized_cold_start=nothing)
     # Resize residuals for downstream getDistanceMetrics (which recomputes r from scratch)
     if length(r) < Hs.m
         append!(r, zeros(eltype(r), Hs.m - length(r)))
     end
     initObserved!(y, Hs)
-    initMu!(μ, Hs, w)
-    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv)
+    normalized_cold_start === nothing && initMu!(μ, Hs, w)
+    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv;
+                                normalized_cold_start=normalized_cold_start)
 end

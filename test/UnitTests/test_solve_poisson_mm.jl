@@ -254,6 +254,44 @@ end
         @test X[1] ≈ 500.0f0 atol=2.0f0
     end
 
+    @testset "normalized cold start preserves nonzero warm starts" begin
+        sa = _make_sparse_fused([
+            (1,1,1.0),
+            (2,2,1.0),
+        ], 2, 2)
+        y = Float32[100.0, 50.0]
+        y_orig = copy(y)
+        X = Float32[0.0, 25.0]
+        μ = zeros(Float32, 2)
+
+        converged, iterations = solvePoissonMM_fast!(
+            sa, μ, y, X, Int64(0), 1f-5;
+            normalized_cold_start=1.0f0)
+
+        @test !converged
+        @test iterations == 0
+        @test y == y_orig
+        @test X == Float32[100.0, 25.0]
+        @test μ == Float32[100.0, 25.0]
+    end
+
+    @testset "normalized cold start without intensity scaling" begin
+        sa = _make_sparse_fused([
+            (1,1,1.0),
+            (2,2,1.0),
+        ], 2, 2)
+        y = Float32[1.0, 0.5]
+        X = Float32[0.0, 0.25]
+        μ = zeros(Float32, 2)
+
+        solvePoissonMM_fast!(
+            sa, μ, y, X, Int64(0), 1f-5;
+            normalized_cold_start=1.0f0)
+
+        @test X == Float32[1.0, 0.25]
+        @test μ == Float32[1.0, 0.25]
+    end
+
     @testset "warm-start at optimum: converges in 1 outer iter" begin
         # Same single-column problem, but start at the closed-form optimum.
         sa = _make_sparse_fused([(1,1,2.0), (1,2,3.0)], 2, 1)
@@ -294,6 +332,20 @@ end
             # x = (Σ y) / (Σ a) = (2 + 4 + 6) / (1 + 1 + 2) = 3.0
             @test X[1] ≈ 3.0f0 atol=5f-3
             @test X[1] ≥ 0
+        end
+
+        @testset "PoissonMMSolver forwards normalized cold start" begin
+            X = Float32[0.0]
+            observed = copy(y)
+            converged, iterations = solve_deconvolution!(
+                PoissonMMSolver(), sa, copy(r), X, copy(colnorm2),
+                copy(μ), observed, Int64(0), 1f-5;
+                normalized_cold_start=1.0f0)
+
+            @test !converged
+            @test iterations == 0
+            @test X == Float32[6.0]
+            @test observed == Float32[2.0, 4.0, 6.0]
         end
 
         @testset "OLSSolver path runs without error" begin
