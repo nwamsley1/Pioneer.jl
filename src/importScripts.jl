@@ -242,7 +242,7 @@ function importScripts()
     # Partitioned fragment index (build + search depend on CommonSearchUtils types)
     include_files!(
         joinpath(package_root, "src", "structs", "SpectralLibrary", "PartitionedFragmentIndex"),
-        ["build.jl", "search.jl"]
+        ["build.jl", "barrier.jl", "search.jl"]
     )
     
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)

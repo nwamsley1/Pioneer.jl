@@ -52,6 +52,8 @@ include("./utils/FileOperations/core/test_core_references_basic.jl")
 include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 
 # Partitioned fragment index tests
+include("./UnitTests/partitionBarrier.jl")
+include("./UnitTests/test_partition_barrier_search.jl")
 include("./UnitTests/partitionedFragmentIndex.jl")
 include("./UnitTests/buildPartitionedIndex.jl")
 include("./UnitTests/test_build_fragment_index_exact.jl")

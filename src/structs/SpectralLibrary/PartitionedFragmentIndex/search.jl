@@ -395,8 +395,8 @@ end
         precursor_mzs)
 
 Partition-major search: outer loop over partitions, inner loop fans MS2 scans
-across threads. All threads working at any given time read the same partition's
-fragment/bin arrays, maximizing shared cache utilization.
+across workers. Main Search workers rendezvous before each partition to encourage
+reuse of its shared fragment/bin arrays. Calibration workers advance independently.
 
 Returns a flat vector of global precursor IDs (concatenated across all scans).
 """
@@ -475,25 +475,33 @@ function searchFragmentIndexPartitionMajorHinted(
         EmitToBuffer(score_filter)
     end
 
-    # ── 6. Partition-major parallel execution ──────────────────────────────
+    # ── 5. Partition-major parallel execution ──────────────────────────────
+    partition_barrier = params isa MainSearchParameters && n_threads > 1 ?
+        PartitionBarrier(n_threads) : nothing
     thread_times = zeros(Float64, n_threads)
     t_parallel_start = time()
-    tasks = map(1:n_threads) do tid
+    @sync for tid in 1:n_threads
         Threads.@spawn begin
-            t_thread = time()
-            thread_counts[tid] = _run_thread(tid, emit_strategy,
-                thread_counters[tid],
-                thread_si_bufs[tid], thread_pid_bufs[tid],
-                pfi, partition_to_scans, all_scan_idxs, spectra,
-                scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
-                scan_irts, precursor_mzs,
-                mem, linear_threshold, n_threads,
-                thread_int_bufs[tid], max_peaks,
-                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid])
-            thread_times[tid] = time() - t_thread
+            try
+                t_thread = time()
+                thread_counts[tid] = _run_thread(tid, emit_strategy,
+                    thread_counters[tid],
+                    thread_si_bufs[tid], thread_pid_bufs[tid],
+                    pfi, partition_to_scans, all_scan_idxs, spectra,
+                    scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
+                    scan_irts, precursor_mzs,
+                    mem, linear_threshold, n_threads,
+                    thread_int_bufs[tid], max_peaks,
+                    thread_mz_low_bufs[tid], thread_mz_high_bufs[tid],
+                    partition_barrier)
+                thread_times[tid] = time() - t_thread
+            catch error
+                # @sync joins every worker after the waiting peers are released.
+                abort_partition!(partition_barrier, error)
+                rethrow()
+            end
         end
     end
-    fetch.(tasks)
     t_parallel = time() - t_parallel_start
 
     # ── 6. Collect results via counting sort ───────────────────────────────
@@ -562,12 +570,15 @@ function _run_thread(tid::Int, emit::E,
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
         int_buf::Vector{Float32}, max_peaks::Int,
-        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32}
+        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32},
+        partition_barrier::Union{Nothing, PartitionBarrier}
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
 
     wp = 0
 
     for k in 1:pfi_ref.n_partitions
+        # Rendezvous before the empty-partition check: every worker participates.
+        wait_partition!(partition_barrier)
         relevant = partition_to_scans[k]
         partition = getPartition(pfi_ref, k)
         n_relevant = length(relevant)
