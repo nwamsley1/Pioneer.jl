@@ -354,59 +354,10 @@ function predict_irt_refinement(
     return predict_irt_refinement(model, scratch, current_irt_pred)
 end
 
-function _refresh_predicted_irt_dependent_features!(psms::DataFrame)
-    if hasproperty(psms, :irt_error) && hasproperty(psms, :irt_obs) && hasproperty(psms, :irt_pred)
-        psms[!, :irt_error] = abs.(Float32.(psms[!, :irt_obs]) .- Float32.(psms[!, :irt_pred]))
-    end
-    if hasproperty(psms, :irt_diff) && hasproperty(psms, :irt_obs) && hasproperty(psms, :irt_pred)
-        psms[!, :irt_diff] = abs.(Float32.(psms[!, :irt_obs]) .- Float32.(psms[!, :irt_pred]))
-    end
-    return nothing
-end
-
-function apply_mainsearch_irt_refinement_model!(
-    psms::DataFrame,
-    strategy::MainSearchIrtRefinement,
-    model::MainSearchIrtCorrectionModel,
-)
-    nrow(psms) == 0 && return nothing
-    !(hasproperty(psms, :irt_pred) && hasproperty(psms, :precursor_idx)) && return nothing
-
-    current_pred = Float32.(psms[!, :irt_pred])
-    refined_pred = copy(current_pred)
-    prec_idx = psms.precursor_idx
-    # PSMs are sorted contiguous-by-precursor_idx upstream (see
-    # `permute_psms_by_precursor_idx!`). current_pred is the library iRT,
-    # constant per precursor. Each chunk walks its row range with a last-pid
-    # sentinel — correction is recomputed only when pid changes. Chunks write
-    # to disjoint rows so the threading is allocation-free.
-    n = nrow(psms)
-    nt = Threads.nthreads()
-    chunk = max(1, cld(n, nt))
-    scratches = [IrtCountScratch() for _ in 1:nt]   # one reusable buffer per task
-    @sync for t in 1:nt
-        c_start = (t - 1) * chunk + 1
-        c_start > n && break
-        c_end = min(t * chunk, n)
-        scratch = scratches[t]
-        Threads.@spawn begin
-            last_pid = UInt32(0)
-            last_corr = 0f0
-            have_corr = false
-            @inbounds for row_idx in c_start:c_end
-                pid = UInt32(prec_idx[row_idx])
-                if pid != last_pid || !have_corr
-                    corr = predict_irt_refinement(scratch, strategy, model, pid, current_pred[row_idx])
-                    last_corr = isfinite(corr) ? Float32(corr) : 0f0
-                    last_pid = pid
-                    have_corr = true
-                end
-                refined_pred[row_idx] = current_pred[row_idx] + last_corr
-            end
-        end
-    end
-    psms[!, :irt_pred] = refined_pred
-    _refresh_predicted_irt_dependent_features!(psms)
+function _refresh_mainsearch_irt_error!(psms::DataFrame)
+    irt_obs = psms[!, :irt_obs]::Vector{Float32}
+    irt_pred = psms[!, :irt_pred]::Vector{Float32}
+    psms[!, :irt_error] = abs.(irt_obs .- irt_pred)
     return nothing
 end
 
@@ -415,15 +366,10 @@ function apply_mainsearch_irt_refinement_model!(
     strategy::MainSearchIrtRefinement,
     models::Dict{UInt8, MainSearchIrtCorrectionModel},
 )
-    nrow(psms) == 0 && return nothing
-    !(hasproperty(psms, :irt_pred) && hasproperty(psms, :precursor_idx) && hasproperty(psms, :cv_fold)) &&
-        return nothing
-    isempty(models) && return nothing
-
-    current_pred = Float32.(psms[!, :irt_pred])
+    current_pred = psms[!, :irt_pred]::Vector{Float32}
     refined_pred = copy(current_pred)
-    folds = UInt8.(psms[!, :cv_fold])
-    prec_idx = psms.precursor_idx
+    folds = psms[!, :cv_fold]::Vector{UInt8}
+    prec_idx = psms[!, :precursor_idx]::Vector{UInt32}
     # cv_fold is precursor-keyed; PSMs are sorted contiguous-by-precursor_idx
     # upstream. Each chunk walks with a last-pid sentinel — predict_irt_refinement
     # runs once per pid change (vs once per PSM previously). Chunks write disjoint
@@ -462,107 +408,81 @@ function apply_mainsearch_irt_refinement_model!(
     t_predict_loop = time() - t_loop
     psms[!, :irt_pred] = refined_pred
     t_r = time()
-    _refresh_predicted_irt_dependent_features!(psms)
+    _refresh_mainsearch_irt_error!(psms)
     t_refresh = time() - t_r
     @debug_l1 "    apply (cv_fold dict, n=$(nrow(psms))): predict_loop=$(round(t_predict_loop, digits=2))s refresh=$(round(t_refresh, digits=2))s"
     return nothing
 end
 
+"""
+    refine_mainsearch_irt_predictions!(psms, refinement_psms, strategy)
+
+Fit an out-of-fold iRT correction from the narrow, one-row-per-precursor
+`refinement_psms` table and apply it to every row in `psms`. The fit table is
+read-only and is discarded by MainSearch after this call.
+"""
 function refine_mainsearch_irt_predictions!(
     psms::DataFrame,
-    best_psms::DataFrame,
-    scores::Vector{Float32},
+    refinement_psms::DataFrame,
     strategy::MainSearchIrtRefinement,
 )
-    required = (:precursor_idx, :target, :irt_pred, :irt_obs)
-    if !all(c -> hasproperty(best_psms, c), required) ||
-       !all(c -> hasproperty(psms, c), (:precursor_idx, :irt_pred)) ||
-       length(scores) != nrow(best_psms)
-        return (refined = false, training_target_precursors = UInt32[], model = nothing)
+    refinement_folds = refinement_psms[!, :cv_fold]::Vector{UInt8}
+    scores = refinement_psms[!, :lgbm_score]::Vector{Float32}
+    fold_values = sort!(unique(refinement_folds))
+    models = Dict{UInt8, MainSearchIrtCorrectionModel}()
+    training_target_precursors = UInt32[]
+
+    t_qval = 0.0
+    t_fit = 0.0
+    for fold in fold_values
+        train_rows = findall(!=(fold), refinement_folds)
+        isempty(train_rows) && continue
+
+        tq = time()
+        precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
+            refinement_psms.precursor_idx[train_rows],
+            refinement_psms.target[train_rows],
+            scores[train_rows],
+            refinement_psms.irt_pred[train_rows],
+            refinement_psms.irt_obs[train_rows],
+            strategy.q_value_threshold,
+        )
+        t_qval += time() - tq
+        append!(training_target_precursors, precursor_ids)
+
+        tf = time()
+        model = fit_irt_refinement_model(
+            strategy,
+            precursor_ids,
+            irt_pred_inputs,
+            irt_corrections,
+        )
+        t_fit += time() - tf
+        isnothing(model) && continue
+        models[fold] = model
     end
 
-    if hasproperty(best_psms, :cv_fold) && hasproperty(psms, :cv_fold)
-        best_folds = UInt8.(best_psms[!, :cv_fold])
-        fold_values = sort!(unique(best_folds))
-        models = Dict{UInt8, MainSearchIrtCorrectionModel}()
-        training_target_precursors = UInt32[]
-
-        t_qval = 0.0
-        t_fit  = 0.0
-        for fold in fold_values
-            train_rows = findall(!=(fold), best_folds)
-            isempty(train_rows) && continue
-
-            tq = time()
-            precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
-                best_psms.precursor_idx[train_rows],
-                best_psms.target[train_rows],
-                scores[train_rows],
-                best_psms.irt_pred[train_rows],
-                best_psms.irt_obs[train_rows],
-                strategy.q_value_threshold,
-            )
-            t_qval += time() - tq
-            append!(training_target_precursors, precursor_ids)
-
-            tf = time()
-            model = fit_irt_refinement_model(
-                strategy,
-                precursor_ids,
-                irt_pred_inputs,
-                irt_corrections,
-            )
-            t_fit += time() - tf
-            isnothing(model) && continue
-            models[fold] = model
-        end
-
-        training_target_precursors = sort!(unique(training_target_precursors))
-        if isempty(models)
-            return (
-                refined = false,
-                training_target_precursors = training_target_precursors,
-                model = nothing,
-            )
-        end
-
-        t_ap = time()
-        apply_mainsearch_irt_refinement_model!(psms, strategy, models)
-        t_apply_psms = time() - t_ap
-        t_ab = time()
-        apply_mainsearch_irt_refinement_model!(best_psms, strategy, models)
-        t_apply_best = time() - t_ab
-        tokens_str = join([length(m.coefficients) for m in values(models)], ",")
-        @debug_l1 "  iRT refine breakdown: qval+agg=$(round(t_qval, digits=2))s " *
-                   "fit=$(round(t_fit, digits=2))s " *
-                   "apply_psms=$(round(t_apply_psms, digits=2))s " *
-                   "apply_best=$(round(t_apply_best, digits=2))s " *
-                   "(n_psms=$(nrow(psms))  n_best=$(nrow(best_psms))  " *
-                   "n_train_total=$(length(training_target_precursors))  " *
-                   "n_tokens_per_fold=$(tokens_str))"
-
+    training_target_precursors = sort!(unique(training_target_precursors))
+    if isempty(models)
         return (
-            refined = true,
+            refined = false,
             training_target_precursors = training_target_precursors,
-            model = models,
         )
     end
 
-    precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
-        best_psms.precursor_idx,
-        best_psms.target,
-        scores,
-        best_psms.irt_pred,
-        best_psms.irt_obs,
-        strategy.q_value_threshold,
+    t_apply = time()
+    apply_mainsearch_irt_refinement_model!(psms, strategy, models)
+    t_apply_psms = time() - t_apply
+    tokens_str = join([length(m.coefficients) for m in values(models)], ",")
+    @debug_l1 "  iRT refine breakdown: qval+agg=$(round(t_qval, digits=2))s " *
+               "fit=$(round(t_fit, digits=2))s " *
+               "apply_psms=$(round(t_apply_psms, digits=2))s " *
+               "(n_psms=$(nrow(psms))  n_refinement=$(nrow(refinement_psms))  " *
+               "n_train_total=$(length(training_target_precursors))  " *
+               "n_tokens_per_fold=$(tokens_str))"
+
+    return (
+        refined = true,
+        training_target_precursors = training_target_precursors,
     )
-    model = fit_irt_refinement_model(strategy, precursor_ids, irt_pred_inputs, irt_corrections)
-    if isnothing(model)
-        return (refined = false, training_target_precursors = precursor_ids, model = nothing)
-    end
-
-    apply_mainsearch_irt_refinement_model!(psms, strategy, model)
-    apply_mainsearch_irt_refinement_model!(best_psms, strategy, model)
-
-    return (refined = true, training_target_precursors = precursor_ids, model = model)
 end

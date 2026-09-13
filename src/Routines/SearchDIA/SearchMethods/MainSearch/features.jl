@@ -1331,7 +1331,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     # :n_scans (per-precursor PSM count) — also a PRESCORE_FEATURES feature.
     # Populated inside the same threaded per-precursor loop below (saves a
-    # second pass and the Dict-build that train_lgbm_and_select_best would
+    # second pass and the Dict-build that classifier training would
     # otherwise do over ~14M rows).
     psms[!, :n_scans]                     = ones(UInt32, n)   # default 1 for single-PSM precs
     n == 0 && return

@@ -2,9 +2,9 @@ using Test
 using DataFrames
 using Pioneer
 
-using Pioneer: MainSearchIrtCorrectionModel, MainSearchIrtRefinement, _compute_phase2_columns!
+using Pioneer: MainSearchIrtRefinement, _compute_phase2_columns!
 using Pioneer: _passing_precursor_targets, refine_mainsearch_irt_predictions!
-using Pioneer: reapply_psm_classifier_and_select_best!, train_lgbm_and_select_best
+using Pioneer: _select_irt_refinement_psms, select_best_per_precursor
 using Pioneer: train_psm_classifier_with_fallback
 
 struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
@@ -109,6 +109,44 @@ Pioneer.getMz(p::MainSearchMockPrecursors) = p.mz
 Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
 
 @testset "MainSearch iRT refinement" begin
+    @testset "lightweight selection preserves exact winners" begin
+        sorted_psms = DataFrame(
+            precursor_idx = UInt32[1, 1, 1, 2, 2, 3, 3],
+            target = Bool[true, true, true, false, false, true, true],
+            cv_fold = UInt8[0, 0, 0, 1, 1, 0, 0],
+            lgbm_score = Float32[0.9, 0.8, 0.7, 0.5, 0.5, 0.6, 0.6],
+            weight = Float32[1, 10, 100, 4, 8, 7, 7],
+            irt_pred = Float32[10, 10, 10, 20, 20, 30, 30],
+            irt_obs = Float32[101, 102, 103, 201, 202, 301, 302],
+            rt = Float32[1, 2, 3, 4, 5, 6, 7],
+            scan_idx = UInt32[1, 2, 3, 4, 5, 6, 7],
+        )
+        center_mzs = Union{Missing, Float32}[500, 500, 500, 500, 500, 500, 500]
+        isolation_widths = Union{Missing, Float32}[4, 4, 4, 4, 4, 4, 4]
+
+        full = select_best_per_precursor(
+            sorted_psms;
+            center_mzs = center_mzs,
+            isolation_widths = isolation_widths,
+        )
+        lightweight = _select_irt_refinement_psms(sorted_psms)
+
+        @test lightweight.precursor_idx == full.precursor_idx
+        @test lightweight.irt_obs == full.irt_obs
+        @test lightweight.lgbm_score == full.lgbm_score
+        @test lightweight.irt_obs == Float32[102, 202, 301]
+        @test propertynames(lightweight) == [
+            :precursor_idx,
+            :target,
+            :irt_pred,
+            :irt_obs,
+            :cv_fold,
+            :lgbm_score,
+        ]
+        @test !hasproperty(lightweight, :irt_fwhm)
+        @test !hasproperty(lightweight, :smoothness)
+    end
+
     @testset "passing targets use prescore q-value criteria" begin
         precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
             UInt32[11, 22, 33],
@@ -124,42 +162,7 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         @test irt_corrections == Float32[2.0]
     end
 
-    @testset "refinement updates predictions and errors before classifier reapply" begin
-        precursors = MainSearchMockPrecursors(
-            ["AAAA", "CCCC", "AAAA", "CCCC", "DDDD", "DDDD"],
-            fill(missing, 6),
-            fill(500.0f0, 6),
-            fill(10.0f0, 6),
-        )
-        psms = DataFrame(
-            target = Bool[true, true, false, true, true, false],
-            precursor_idx = UInt32[1, 2, 5, 3, 4, 6],
-            irt_pred = fill(10.0f0, 6),
-            irt_obs = Float32[4, 8, 6, 4, 8, 6],
-            irt_error = fill(0.0f0, 6),
-        )
-        psms[!, :irt_error] = abs.(psms.irt_obs .- psms.irt_pred)
-        scores = Float32[0.99, 0.98, 0.01, 0.99, 0.98, 0.01]
-        best_psms = copy(psms)
-
-        result = refine_mainsearch_irt_predictions!(
-            psms,
-            best_psms,
-            scores,
-            MainSearchIrtRefinement(precursors; q_value_threshold = 0.01f0, min_precursors = 2),
-        )
-
-        @test result.refined
-        @test Set(result.training_target_precursors) == Set(UInt32[1, 2, 3, 4])
-        @test psms.irt_pred[1] ≈ 4.0f0 atol = 1f-4
-        @test psms.irt_pred[2] ≈ 8.0f0 atol = 1f-4
-        @test psms.irt_pred[4] ≈ 4.0f0 atol = 1f-4
-        @test psms.irt_pred[5] ≈ 8.0f0 atol = 1f-4
-        @test psms.irt_error[1] ≈ 0.0f0 atol = 1f-4
-        @test psms.irt_error[2] ≈ 0.0f0 atol = 1f-4
-    end
-
-    @testset "refinement trains out-of-fold models when cv_fold is present" begin
+    @testset "refinement trains out-of-fold models and leaves its fit table unchanged" begin
         precursors = MainSearchMockPrecursors(
             fill("AAAA", 6),
             fill(missing, 6),
@@ -174,26 +177,71 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
             irt_obs = Float32[8, 8, 13, 13, 8, 13],
             irt_error = fill(0.0f0, 6),
         )
-        best_psms = copy(psms)
-        scores = Float32[0.99, 0.98, 0.99, 0.98, 0.01, 0.01]
+        refinement_psms = copy(psms)
+        refinement_psms[!, :lgbm_score] = Float32[0.99, 0.98, 0.99, 0.98, 0.01, 0.01]
+        refinement_before = copy(refinement_psms)
 
         result = refine_mainsearch_irt_predictions!(
             psms,
-            best_psms,
-            scores,
+            refinement_psms,
             MainSearchIrtRefinement(precursors; q_value_threshold = 0.01f0, min_precursors = 2),
         )
 
         @test result.refined
-        @test result.model isa Dict{UInt8, MainSearchIrtCorrectionModel}
-        @test sort(collect(keys(result.model))) == UInt8[0, 1]
         @test Set(result.training_target_precursors) == Set(UInt32[1, 2, 3, 4])
         @test psms.irt_pred[1] ≈ 13.0f0 atol = 1f-4
         @test psms.irt_pred[2] ≈ 13.0f0 atol = 1f-4
         @test psms.irt_pred[3] ≈ 8.0f0 atol = 1f-4
         @test psms.irt_pred[4] ≈ 8.0f0 atol = 1f-4
-        @test best_psms.irt_pred[1] ≈ 13.0f0 atol = 1f-4
-        @test best_psms.irt_pred[3] ≈ 8.0f0 atol = 1f-4
+        @test psms.irt_error ≈ fill(5.0f0, 6) atol = 1f-4
+        @test refinement_psms == refinement_before
+    end
+
+    @testset "insufficient fold training data leaves predictions unchanged" begin
+        precursors = MainSearchMockPrecursors(
+            fill("AAAA", 6),
+            fill(missing, 6),
+            fill(500.0f0, 6),
+            fill(10.0f0, 6),
+        )
+        psms = DataFrame(
+            target = Bool[true, true, true, true, false, false],
+            precursor_idx = UInt32[1, 2, 3, 4, 5, 6],
+            cv_fold = UInt8[0, 0, 1, 1, 0, 1],
+            lgbm_score = Float32[0.99, 0.98, 0.99, 0.98, 0.01, 0.01],
+            weight = ones(Float32, 6),
+            scan_idx = UInt32[1, 2, 3, 4, 5, 6],
+            rt = Float32[1, 2, 3, 4, 5, 6],
+            irt_pred = fill(10.0f0, 6),
+            irt_obs = Float32[8, 8, 13, 13, 8, 13],
+            irt_error = Float32[2, 2, 3, 3, 2, 3],
+        )
+        refinement_psms = _select_irt_refinement_psms(psms)
+        psms_before = copy(psms)
+
+        result = refine_mainsearch_irt_predictions!(
+            psms,
+            refinement_psms,
+            MainSearchIrtRefinement(
+                precursors;
+                q_value_threshold = 0.01f0,
+                min_precursors = 3,
+            ),
+        )
+
+        @test !result.refined
+        @test psms == psms_before
+        best_psms = select_best_per_precursor(
+            psms;
+            center_mzs = fill(500.0f0, 6),
+            isolation_widths = fill(4.0f0, 6),
+        )
+        @test best_psms.lgbm_score == psms.lgbm_score
+        @test best_psms.irt_fwhm == zeros(Float32, 6)
+        @test all(
+            column -> hasproperty(best_psms, column),
+            (:irt_fwhm, :n_above_hm, :rt_fwhm, :best_rt, :smoothness),
+        )
     end
 
     @testset "phase two iRT difference uses refined prediction column" begin
