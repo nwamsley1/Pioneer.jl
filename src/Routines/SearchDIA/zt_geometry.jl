@@ -45,6 +45,9 @@ struct ZTGeometry
     bins_per_ramp::Int32
     metascan_k::Int32
     transmission_fwhm::Float32
+    # Fitted transmission half-base (Da) from QuadTuningSearch; 0 until fitted. When > 0 the
+    # collapse template is a triangle of this width instead of the Gaussian above.
+    template_h::Float32
 end
 
 """Expansion half-width used before quad tuning when `acquisition.metascan_k` is absent."""
@@ -185,6 +188,7 @@ function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
         isempty(cycle_counts) ? Int32(n_in_cycle) : Int32(round(median(cycle_counts))),
         Int32(metascan_k),
         Float32(transmission_fwhm),
+        0f0,
     )
 end
 
@@ -214,7 +218,18 @@ Same measured lattice, different expansion half-width. Used when `metascan_k` is
 the fitted transmission profile (`k_implied = round(h / bin_step)`) after quad tuning.
 """
 zt_with_metascan_k(g::ZTGeometry, k::Integer) =
-    ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, Int32(k), g.transmission_fwhm)
+    ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, Int32(k), g.transmission_fwhm,
+               g.template_h)
+
+"""
+    zt_with_template_h(g::ZTGeometry, h::Real) -> ZTGeometry
+
+Same geometry with the fitted transmission half-base installed, so `zt_transmission_template`
+returns the measured triangle rather than the configured Gaussian.
+"""
+zt_with_template_h(g::ZTGeometry, h::Real) =
+    ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, g.metascan_k, g.transmission_fwhm,
+               Float32(h))
 
 """
     zt_transmission_template(g::ZTGeometry, k::Int) -> (Vector{Float32}, Float32)
@@ -228,8 +243,13 @@ different `k` — 0.25 at j=3 with k=3 versus 0.57 with k=6, against a true valu
 `zt_tri_cosine` was measured against a different yardstick at each `k`.
 """
 function zt_transmission_template(g::ZTGeometry, k::Int)
-    σ = g.transmission_fwhm / 2.3548f0                 # FWHM -> Gaussian sigma, in Da
-    t = Float32[exp(-(Float32(j) * g.bin_step)^2 / (2f0 * σ * σ)) for j in -k:k]
+    t = if g.template_h > 0f0
+        # Measured triangle (QuadTuningSearch): linear to zero at +/-h.
+        Float32[max(0f0, 1f0 - abs(Float32(j) * g.bin_step) / g.template_h) for j in -k:k]
+    else
+        σ = g.transmission_fwhm / 2.3548f0             # FWHM -> Gaussian sigma, in Da
+        Float32[exp(-(Float32(j) * g.bin_step)^2 / (2f0 * σ * σ)) for j in -k:k]
+    end
     return t, sqrt(sum(x -> x * x, t))
 end
 

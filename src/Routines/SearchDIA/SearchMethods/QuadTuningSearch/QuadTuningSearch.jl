@@ -272,11 +272,20 @@ function process_file!(
                 else
                     "  <-- DIFFERS from configured metascan_k=$(Int(_g.metascan_k))"
                 end
+                # Collapse template from the fit: the meta-scan collapse uses the transmission
+                # template as matched filter (fitted/shadow spectra) and as the feature template
+                # (zt_tri_cosine / zt_tri_pcor). PIONEER_ZT_TEMPLATE=gaussian keeps the
+                # configured Gaussian instead.
+                if get(ENV, "PIONEER_ZT_TEMPLATE", "fit") != "gaussian"
+                    _g = zt_with_template_h(_g, _fit.h)
+                    setZTGeometry!(search_context, ms_file_idx, _g)
+                end
                 @user_info "ZT quad tuning [file $ms_file_idx]: h=$(round(_fit.h; digits=3)) Da " *
                     "(IQR $(round(_fit.h_iqr_lo; digits=2))–$(round(_fit.h_iqr_hi; digits=2))), " *
                     "bin_step=$(round(_g.bin_step; digits=4)), k_implied=$(_fit.k_implied)$_flag; " *
                     "$(_fit.n_metascans) meta-scans, median R²=$(round(_fit.median_r2; digits=3)); " *
-                    (_install ? "INSTALLED for MainSearch" : "reported only (square meta-scan box kept)")
+                    (_install ? "INSTALLED for MainSearch" : "reported only (square meta-scan box kept)") *
+                    (_g.template_h > 0f0 ? "; collapse template = fitted triangle" : "; collapse template = Gaussian")
             end
             return nothing
         end
