@@ -100,7 +100,7 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
         Ref{Union{Nothing, RunSimilarityAtlas}}(nothing),
-        joinpath(getDataOutDir(search_context), "merged_quant.arrow")
+        joinpath(getDataOutDir(search_context), "temp_data", "merged_quant.arrow")
     )
 end
 

@@ -460,7 +460,7 @@ function summarize_results!(
     end
 
     # ── 4. Write Arrow diagnostics ──
-    out_dir = getDataOutDir(search_context)
+    out_dir = joinpath(getDataOutDir(search_context), "temp_data")
 
     # Raw 256-bin counts
     Arrow.write(joinpath(out_dir, "bitvec_counts_256.arrow"), DataFrame(
