@@ -396,6 +396,14 @@ export function BuildSpecLibForm({
 }: Props) {
   const selectedModel = predictionModelById(params.predictionModel)
   const selectedRtModel = rtModelById(params.rtModel)
+  /** The selected models that cannot predict an unmodified cysteine, when the
+   *  fixed modifications leave it unmodified. Empty means nothing to say. */
+  const freeCysOffenders = isFreeCys(params.fixedMods)
+    ? [
+        ...(modelAllowsFreeCys(params.predictionModel) ? [] : [selectedModel.label]),
+        ...(selectedRtModel.freeCys ? [] : [selectedRtModel.label]),
+      ]
+    : []
   /** "Phospho on S, T" for each modification the RT model cannot predict, and
    *  the RT models that would take the whole selection instead. */
   const rtProblems = [...params.fixedMods, ...params.variableMods].flatMap((m) => {
@@ -1382,53 +1390,41 @@ export function BuildSpecLibForm({
           onRemove={onRemoveMod}
           onAdd={onAddMod}
         />
-        {isFreeCys(params.fixedMods) && (
+        {freeCysOffenders.length > 0 && (
           <div
             style={{
               marginTop: 12,
               padding: '10px 12px',
               borderRadius: 9,
-              background: modelAllowsFreeCys(params.predictionModel) ? '#EFF6FF' : '#FEF2F2',
-              border: `1px solid ${modelAllowsFreeCys(params.predictionModel) ? '#BFDBFE' : '#FECACA'}`,
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
               fontSize: 12,
               lineHeight: 1.5,
-              color: modelAllowsFreeCys(params.predictionModel) ? '#1E40AF' : '#B91C1C',
+              color: '#B91C1C',
             }}
           >
-            {modelAllowsFreeCys(params.predictionModel) ? (
-              <>
-                <strong style={{ fontWeight: 600 }}>Unmodified cysteine.</strong> No fixed
-                modification covers C, so the library models free cysteine — for samples
-                that were not reduced and alkylated. {selectedModel.label} was trained on
-                it; add Carbamidomethyl back for alkylated samples.
-              </>
-            ) : (
-              <>
-                <strong style={{ fontWeight: 600 }}>Unmodified cysteine.</strong>{' '}
-                {selectedModel.label} assumes carbamidomethylated cysteine, so the build
-                is blocked. The retention-time model is not the issue — it is the
-                fragment model. Add Carbamidomethyl back as a fixed modification on C, or{' '}
-                {PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className="pio-link-underline"
-                    onClick={() => onParam('predictionModel', m.id)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      padding: 0,
-                      cursor: 'pointer',
-                      font: "600 12px 'IBM Plex Sans'",
-                      color: '#B91C1C',
-                    }}
-                  >
-                    switch the fragment model to {m.label}
-                  </button>
-                ))}
-                , which was trained on free cysteine.
-              </>
-            )}
+            Unmodified cysteine needs a fragment model and a retention-time model
+            trained on it — {freeCysOffenders.join(' and ')} {freeCysOffenders.length > 1 ? 'are' : 'is'} not.
+            {!modelAllowsFreeCys(params.predictionModel) &&
+              PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="pio-link-underline"
+                  onClick={() => onParam('predictionModel', m.id)}
+                  style={{
+                    marginLeft: 6,
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    font: "600 12px 'IBM Plex Sans'",
+                    color: '#B91C1C',
+                  }}
+                >
+                  Switch to {m.label}
+                </button>
+              ))}
           </div>
         )}
         <div style={{ height: 18 }} />

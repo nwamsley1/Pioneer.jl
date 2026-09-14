@@ -12,7 +12,7 @@ import type {
   ModEntry,
   PathInfo,
 } from './types'
-import { PREDICTION_MODELS, predictionModelById } from './types'
+import { predictionModelById } from './types'
 import {
   findMod,
   isFreeCys,
@@ -521,16 +521,14 @@ export function modelSupportBlock(p: BuildParams): RunBlock | null {
     }
   }
   if (isFreeCys(p.fixedMods)) {
-    if (!modelAllowsFreeCys(p.predictionModel)) {
+    const offenders = [
+      ...(modelAllowsFreeCys(p.predictionModel) ? [] : [frag.label]),
+      ...(rt.freeCys ? [] : [rt.label]),
+    ]
+    if (offenders.length) {
       return {
-        key: 'fixedMods',
-        msg: `${frag.label} assumes carbamidomethylated cysteine (the retention-time model is not the issue). Add Carbamidomethyl as a fixed modification on C, or switch the fragment model to ${PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => m.label).join(' or ')}.`,
-      }
-    }
-    if (!rt.freeCys) {
-      return {
-        key: 'rtModel',
-        msg: `${rt.label} cannot predict retention times for unmodified cysteine. Add Carbamidomethyl on C, or switch the retention-time model.`,
+        key: modelAllowsFreeCys(p.predictionModel) ? 'rtModel' : 'fixedMods',
+        msg: `Unmodified cysteine needs a fragment model and a retention-time model trained on it — ${offenders.join(' and ')} ${offenders.length > 1 ? 'are' : 'is'} not. Add Carbamidomethyl on C, or switch model.`,
       }
     }
   }
