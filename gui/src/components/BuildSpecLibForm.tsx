@@ -13,7 +13,6 @@ import {
   allowedSiteValues,
   initialSite,
   isFreeCys,
-  isRequiredFixedMod,
   modelAllowsFreeCys,
   modsForModel,
   occupiedResidues,
@@ -301,17 +300,7 @@ function ModTable({
               >
                 {m.mass || '—'}
               </div>
-              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name, m.pattern) ? (
-                // No control at all rather than a disabled one: with this model
-                // there is no state in which the row becomes removable. The
-                // tooltip names the model that would make it one.
-                <div
-                  style={{ width: 21, flex: 'none' }}
-                  title={`${modelLabel} was trained on carbamidomethylated cysteine, so this cannot be removed. Choose Prosit 2025 40-PTM to model unmodified cysteine.`}
-                />
-              ) : (
-                removeBtn(() => onRemove(kind, i), 'Remove', 21)
-              )}
+              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
             </div>
           )
         })}
