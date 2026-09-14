@@ -297,7 +297,11 @@ function ensure_zt_geometry!(
         return nothing
     end
 
-    k = hasproperty(acq, :metascan_k) ? Int(acq.metascan_k) : 6
+    # `acquisition.metascan_k` absent (or 0) means DERIVE it: the tuning stages run with the
+    # default 6, then QuadTuningSearch replaces it with `k_implied = round(h / bin_step)` from
+    # the fitted transmission profile. An explicit value is authoritative and only warned on.
+    _k_cfg = hasproperty(acq, :metascan_k) ? Int(acq.metascan_k) : 0
+    k = _k_cfg > 0 ? _k_cfg : ZT_METASCAN_K_DEFAULT
     fwhm = hasproperty(acq, :transmission_fwhm_mz) ? Float32(acq.transmission_fwhm_mz) :
                                                      ZT_TRANSMISSION_FWHM_DEFAULT
     g = detect_zt_geometry(spectra, k, fwhm)

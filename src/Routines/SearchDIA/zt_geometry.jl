@@ -47,6 +47,20 @@ struct ZTGeometry
     transmission_fwhm::Float32
 end
 
+"""Expansion half-width used before quad tuning when `acquisition.metascan_k` is absent."""
+const ZT_METASCAN_K_DEFAULT = 6
+
+"""
+    zt_metascan_k_is_derived(params) -> Bool
+
+True when the config leaves `acquisition.metascan_k` unset (or 0), so QuadTuningSearch may
+replace the provisional default with the value implied by the fitted transmission profile.
+"""
+function zt_metascan_k_is_derived(params)
+    acq = params.acquisition
+    return !(hasproperty(acq, :metascan_k) && Int(acq.metascan_k) > 0)
+end
+
 """Number of complete cycles sampled by `detect_zt_geometry`."""
 const ZT_GEOM_SAMPLE_CYCLES = 8
 
@@ -192,6 +206,15 @@ Full m/z width spanned by a `±metascan_k` expansion.
 """
 zt_span_mz(g::ZTGeometry) = Float32(2 * g.metascan_k + 1) * g.bin_step
 
+
+"""
+    zt_with_metascan_k(g::ZTGeometry, k::Integer) -> ZTGeometry
+
+Same measured lattice, different expansion half-width. Used when `metascan_k` is DERIVED from
+the fitted transmission profile (`k_implied = round(h / bin_step)`) after quad tuning.
+"""
+zt_with_metascan_k(g::ZTGeometry, k::Integer) =
+    ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, Int32(k), g.transmission_fwhm)
 
 """
     zt_transmission_template(g::ZTGeometry, k::Int) -> (Vector{Float32}, Float32)

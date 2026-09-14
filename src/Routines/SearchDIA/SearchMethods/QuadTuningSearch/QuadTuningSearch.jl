@@ -103,6 +103,9 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     min_quad_tuning_fragments::Int64
     min_quad_tuning_psms_per_thompson::Int64
     initial_percent::Float32
+    # Scanning-quad: true when `acquisition.metascan_k` is unset, so the fitted transmission
+    # profile may replace the provisional default (see zt_metascan_k_is_derived).
+    zt_metascan_k_derived::Bool
     prec_estimation::P
 
     function QuadTuningSearchParameters(params::PioneerParameters)
@@ -126,6 +129,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             QUAD_TUNING_MIN_FRAGMENTS,                                     # min_quad_tuning_fragments
             QUAD_TUNING_MIN_PSMS_PER_THOMPSON,                             # min_quad_tuning_psms_per_thompson
             QUAD_TUNING_INITIAL_PERCENT,                                   # initial_percent
+            zt_metascan_k_is_derived(params),                              # zt_metascan_k_derived
             prec_estimation                                                # prec_estimation
         )
     end
@@ -251,8 +255,23 @@ function process_file!(
                 push!(results.per_file_models,
                       (getParsedFileName(search_context, ms_file_idx), _model,
                        Float64(_g.nominal_width)))
-                _flag = _fit.k_implied == Int(_g.metascan_k) ? "" :
-                        "  <-- DIFFERS from configured metascan_k=$(Int(_g.metascan_k))"
+                # Derived metascan_k: when the config leaves it unset, the fitted profile decides
+                # how far the expansion reaches. Re-install the geometry AND the flat deconv box
+                # (its width is keyed to k) so BitVecCalibration, MainSearch and the collapse all
+                # see the new k. An explicit config value is only warned on.
+                _derive_k = params.zt_metascan_k_derived
+                _flag = if _fit.k_implied == Int(_g.metascan_k)
+                    _derive_k ? " (derived, = provisional default)" : ""
+                elseif _derive_k
+                    _g2 = zt_with_metascan_k(_g, _fit.k_implied)
+                    setZTGeometry!(search_context, ms_file_idx, _g2)
+                    _install || setQuadTransmissionModel!(search_context, ms_file_idx,
+                                                          SquareQuadModel(zt_deconv_overhang(_g2)))
+                    _g = _g2
+                    "  <-- DERIVED: metascan_k $(Int(_g.metascan_k)) replaces provisional $(ZT_METASCAN_K_DEFAULT)"
+                else
+                    "  <-- DIFFERS from configured metascan_k=$(Int(_g.metascan_k))"
+                end
                 @user_info "ZT quad tuning [file $ms_file_idx]: h=$(round(_fit.h; digits=3)) Da " *
                     "(IQR $(round(_fit.h_iqr_lo; digits=2))–$(round(_fit.h_iqr_hi; digits=2))), " *
                     "bin_step=$(round(_g.bin_step; digits=4)), k_implied=$(_fit.k_implied)$_flag; " *
