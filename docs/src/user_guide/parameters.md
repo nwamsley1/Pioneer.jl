@@ -161,6 +161,13 @@ Header-parsing regex patterns can be configured three ways:
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
 
+### Prediction Models
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
+| `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
+
 ### Top-level
 
 | Parameter | Type | Default | Description |

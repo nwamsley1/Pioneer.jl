@@ -199,6 +199,17 @@ function check_params_bsp(json_string::String)
     # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
     # endpoint isn't instrument-parameterized.
 
+    # Retention-time model. Defaulted here rather than at the call site so the
+    # config.json written into the library records which model predicted its
+    # retention times.
+    rt_model = get!(library_params, "rt_model", DEFAULT_RT_MODEL)
+    if !(rt_model isa AbstractString) || !haskey(RT_MODEL_CONFIGS, rt_model)
+        throw(InvalidParametersError(
+            "library_params.rt_model must be one of: " *
+            join(sort(collect(keys(RT_MODEL_CONFIGS))), ", ") * " (got $(repr(rt_model)))",
+            params))
+    end
+
     # Check variable_mods and fixed_mods
     for mod_type in ["variable_mods", "fixed_mods"]
         mods = params[mod_type]
