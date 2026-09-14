@@ -418,7 +418,7 @@ export function BuildSpecLibForm({
       minLength: int(params.minLen, 7),
       maxLength: int(params.maxLen, 40),
       missedCleavages: int(params.missedCleav, 1),
-      clipNtermMet: params.clipNtermMet,
+      ntermMetExcision: params.ntermMetExcision,
     })
   })()
 
@@ -1242,9 +1242,9 @@ export function BuildSpecLibForm({
             </div>
           </div>
           <Toggle
-            on={params.clipNtermMet}
-            fieldKey="clipNtermMet"
-            onClick={() => onToggle('clipNtermMet')}
+            on={params.ntermMetExcision}
+            fieldKey="ntermMetExcision"
+            onClick={() => onToggle('ntermMetExcision')}
           />
         </div>
         {lengthClamp && (

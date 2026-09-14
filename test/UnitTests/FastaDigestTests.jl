@@ -113,7 +113,7 @@
         # MPEPTIDEK -> both MPEPTIDEK and PEPTIDEK; residue 2 is an enzymatic start.
         sequence = "MPEPTIDEKAAAR"
         peptides, starts, ntt = digest_sequence(
-            sequence, r"[KR]", 20, 4, 0, "full"; clip_nterm_met = true
+            sequence, r"[KR]", 20, 4, 0, "full"; nterm_met_excision = true
         )
         @test Set(peptides) == Set(["MPEPTIDEK", "PEPTIDEK", "AAAR"])
         @test starts[findfirst(==("PEPTIDEK"), peptides)] == UInt32(2)
@@ -123,28 +123,28 @@
         off, _, _ = digest_sequence(sequence, r"[KR]", 20, 4, 0, "full")
         @test Set(off) == Set(["MPEPTIDEK", "AAAR"])
 
-        # Missed-cleavage forms are clipped too and cost no extra missed cleavage.
+        # Missed-cleavage forms are excised too and cost no extra missed cleavage.
         peptides, _, _ = digest_sequence(
-            sequence, r"[KR]", 20, 4, 1, "full"; clip_nterm_met = true
+            sequence, r"[KR]", 20, 4, 1, "full"; nterm_met_excision = true
         )
         @test Set(peptides) == Set(["MPEPTIDEK", "PEPTIDEK", "MPEPTIDEKAAAR", "PEPTIDEKAAAR", "AAAR"])
 
         # Proteins that do not start with M are untouched.
         peptides, starts, _ = digest_sequence(
-            "APEPTIDEKAAAR", r"[KR]", 20, 4, 0, "full"; clip_nterm_met = true
+            "APEPTIDEKAAAR", r"[KR]", 20, 4, 0, "full"; nterm_met_excision = true
         )
         @test Set(peptides) == Set(["APEPTIDEK", "AAAR"])
         @test !(UInt32(2) in starts)
 
-        # The length window applies to the clipped form itself:
-        # too short after clipping -> dropped, while the intact form survives ...
+        # The length window applies to the excised form itself:
+        # too short after excision -> dropped, while the intact form survives ...
         peptides, _, _ = digest_sequence(
-            sequence, r"[KR]", 20, 9, 0, "full"; clip_nterm_met = true
+            sequence, r"[KR]", 20, 9, 0, "full"; nterm_met_excision = true
         )
         @test Set(peptides) == Set(["MPEPTIDEK"])
-        # ... and an intact form one residue over max_length still yields its clipped form.
+        # ... and an intact form one residue over max_length still yields its excised form.
         peptides, starts, _ = digest_sequence(
-            sequence, r"[KR]", 8, 4, 0, "full"; clip_nterm_met = true
+            sequence, r"[KR]", 8, 4, 0, "full"; nterm_met_excision = true
         )
         @test Set(peptides) == Set(["PEPTIDEK", "AAAR"])
         @test starts[findfirst(==("PEPTIDEK"), peptides)] == UInt32(2)
@@ -152,7 +152,7 @@
         # Semi-specific modes: residue 2 counts as an enzymatic N terminus, no duplicates.
         for spec in ("semi", "semi-n", "semi-c")
             peptides, starts, ntt = digest_sequence(
-                sequence, r"[KR]", 20, 4, 0, spec; clip_nterm_met = true
+                sequence, r"[KR]", 20, 4, 0, spec; nterm_met_excision = true
             )
             idx = findall(==("PEPTIDEK"), peptides)
             @test length(idx) == 1
@@ -160,7 +160,7 @@
             @test ntt[only(idx)] == UInt8(2)
             @test length(peptides) == length(unique(zip(peptides, starts)))
         end
-        # Without clipping, semi-n still emits PEPTIDEK but as a non-enzymatic start.
+        # Without excision, semi-n still emits PEPTIDEK but as a non-enzymatic start.
         peptides, _, ntt = digest_sequence(sequence, r"[KR]", 20, 4, 0, "semi-n")
         @test ntt[only(findall(==("PEPTIDEK"), peptides))] == UInt8(1)
     end
@@ -205,7 +205,7 @@
         ]
         
         # Test basic digestion
-        peptides = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=0, clip_nterm_met=false)
+        peptides = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=0, nterm_met_excision=false)
         
         # Should only digest the first protein (second has unusual AAs)
         @test length(peptides) == 3
@@ -232,7 +232,7 @@
         @test get_base_pep_id(peptides[2]) == 2
         
         # Test with missed cleavages
-        peptides = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=1, clip_nterm_met=false)
+        peptides = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=1, nterm_met_excision=false)
         
         # Should have original 4 peptides plus missed cleavage peptides
         @test length(peptides) == 7
@@ -249,15 +249,15 @@
             min_length=2,
             missed_cleavages=0,
             specificity="semi",
-            clip_nterm_met=false,
+            nterm_met_excision=false,
         )
         @test "AK" in get_sequence.(semi_peptides)
         @test any(==(UInt8(1)), get_num_enzymatic_termini.(semi_peptides))
 
         # N-terminal Met excision is on by default: MAK is also emitted as AK at residue 2.
-        clipped = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=0)
-        @test sort(get_sequence.(clipped)) == sort(["MAK", "AK", "PEPT", "TGK"])
-        ak = only(filter(p -> get_sequence(p) == "AK", clipped))
+        excised = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=0)
+        @test sort(get_sequence.(excised)) == sort(["MAK", "AK", "PEPT", "TGK"])
+        ak = only(filter(p -> get_sequence(p) == "AK", excised))
         @test get_start_idx(ak) == UInt32[2]
         @test get_num_enzymatic_termini(ak) == 2
         @test get_id(ak) == "P12345"

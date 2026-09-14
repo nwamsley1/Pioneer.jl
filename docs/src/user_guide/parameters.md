@@ -130,7 +130,7 @@ Header-parsing regex patterns can be configured three ways:
 | `fasta_digest_params.cleavage_regex` | String | `[KR][^_\|$]` | Cleavage rule. To exclude cleavage before proline use `[KR][^P\|$]`. |
 | `fasta_digest_params.missed_cleavages` | Int | `1` | Maximum missed cleavages. |
 | `fasta_digest_params.specificity` | String | `"full"` | Digestion specificity: `"full"`, `"semi"` (either terminus), `"semi-n"` (C terminus required), or `"semi-c"` (N terminus required). Protein termini count as enzymatic. |
-| `fasta_digest_params.clip_nterm_met` | Bool | `true` | N-terminal Met excision. Each protein N-terminal peptide is emitted both with and without its initiator Met (`MPEPTIDEK` and `PEPTIDEK`); the clipped form is length-filtered on its own and costs no missed cleavage. |
+| `fasta_digest_params.nterm_met_excision` | Bool | `true` | N-terminal Met excision. Each protein N-terminal peptide is emitted both with and without its initiator Met (`MPEPTIDEK` and `PEPTIDEK`); the excised form is length-filtered on its own and costs no missed cleavage. |
 | `fasta_digest_params.max_var_mods` | Int | `1` | Maximum variable modifications per peptide. |
 | `fasta_digest_params.add_decoys` | Bool | `true` | Generate decoy sequences. |
 | `fasta_digest_params.entrapment_r` | Float | `0` | Entrapment-sequence ratio. |

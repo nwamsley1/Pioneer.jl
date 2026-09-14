@@ -152,7 +152,7 @@ function prepare_chronologer_input(
                 min_length = digest_min_length,
                 missed_cleavages = _params.fasta_digest_params["missed_cleavages"],
                 specificity = get(_params.fasta_digest_params, "specificity", "full"),
-                clip_nterm_met = get(_params.fasta_digest_params, "clip_nterm_met", true),
+                nterm_met_excision = get(_params.fasta_digest_params, "nterm_met_excision", true),
             ))
         )
     end

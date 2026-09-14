@@ -171,7 +171,7 @@ export const BUILD_OWNED_PATHS = [
   'fasta_digest_params.max_charge',
   'fasta_digest_params.missed_cleavages',
   'fasta_digest_params.specificity',
-  'fasta_digest_params.clip_nterm_met',
+  'fasta_digest_params.nterm_met_excision',
   'fasta_digest_params.max_var_mods',
   'fasta_digest_params.add_decoys',
   'variable_mods',
@@ -265,7 +265,7 @@ export function buildLibJsonBase(s: BuildParams): Json {
       // config records the rule the library was actually built with.
       cleavage_regex: s.cleavageRegex.trim() || DEFAULT_CLEAVAGE,
       specificity: s.digestSpecificity,
-      clip_nterm_met: s.clipNtermMet,
+      nterm_met_excision: s.ntermMetExcision,
       max_var_mods: num(s.maxVarMods, 1),
       add_decoys: s.addDecoys,
     },
@@ -374,7 +374,7 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (specificity && ['full', 'semi', 'semi-n', 'semi-c'].includes(specificity)) {
     set.digestSpecificity = specificity as BuildParams['digestSpecificity']
   }
-  if ('clip_nterm_met' in d) set.clipNtermMet = !!d.clip_nterm_met
+  if ('nterm_met_excision' in d) set.ntermMetExcision = !!d.nterm_met_excision
   if (str(d.max_var_mods) !== undefined) set.maxVarMods = str(d.max_var_mods)
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys
 
