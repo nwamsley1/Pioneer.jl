@@ -98,6 +98,9 @@ export interface DigestSettings {
   minLength: number
   maxLength: number
   missedCleavages: number
+  /** N-terminal Met excision: residue 2 of an M-initiated sequence also counts
+   *  as an enzymatic start, as in `digest_sequence`. */
+  ntermMetExcision?: boolean
 }
 
 /**
@@ -194,7 +197,9 @@ export function previewDigest(
   for (let i = 0; i < n; i++) if (mask[i]) specificEnds.push(i)
   if (specificEnds[specificEnds.length - 1] !== n - 1) specificEnds.push(n - 1)
 
-  const startEnzymatic = (start: number) => start === 0 || mask[start - 1]
+  const exciseStart = !!settings.ntermMetExcision && sequence.startsWith('M')
+  const startEnzymatic = (start: number) =>
+    start === 0 || (exciseStart && start === 1) || mask[start - 1]
   const internalCleavages = (start: number, end: number) =>
     end <= start ? 0 : prefix[end - 1] - (start > 0 ? prefix[start - 1] : 0)
 

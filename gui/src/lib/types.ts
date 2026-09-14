@@ -263,6 +263,9 @@ export interface BuildParams {
    *  where cleavage may occur, this says how much of the peptide has to
    *  respect it. */
   digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
+  /** fasta_digest_params.nterm_met_excision: emit each protein N-terminal peptide
+   *  both with and without its initiator Met (MPEPTIDEK and PEPTIDEK). */
+  ntermMetExcision: boolean
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -299,6 +302,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   cleavageRegex: DEFAULT_CLEAVAGE,
   customEnzyme: false,
   digestSpecificity: 'full',
+  ntermMetExcision: true,
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,

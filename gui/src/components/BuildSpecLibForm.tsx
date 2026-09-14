@@ -418,6 +418,7 @@ export function BuildSpecLibForm({
       minLength: int(params.minLen, 7),
       maxLength: int(params.maxLen, 40),
       missedCleavages: int(params.missedCleav, 1),
+      ntermMetExcision: params.ntermMetExcision,
     })
   })()
 
@@ -1222,6 +1223,29 @@ export function BuildSpecLibForm({
           <NumField fieldKey="minCharge" value={params.minCharge} onChange={onParam} />
           <NumField fieldKey="maxCharge" value={params.maxCharge} onChange={onParam} />
           <NumField fieldKey="maxVarMods" value={params.maxVarMods} onChange={onParam} />
+        </div>
+        <div
+          style={{
+            marginTop: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+              N-terminal Met excision
+            </div>
+            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
+              Include each protein N-terminal peptide both with and without its initiator Met
+            </div>
+          </div>
+          <Toggle
+            on={params.ntermMetExcision}
+            fieldKey="ntermMetExcision"
+            onClick={() => onToggle('ntermMetExcision')}
+          />
         </div>
         {lengthClamp && (
           <div
