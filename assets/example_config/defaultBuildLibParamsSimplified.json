@@ -26,6 +26,7 @@
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
         "specificity": "full",
+        "clip_nterm_met": true,
         "max_var_mods": 1,
         "add_decoys": true,
         "entrapment_r": 0

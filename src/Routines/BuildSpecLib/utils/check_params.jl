@@ -150,6 +150,7 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "specificity", String)
     specificity = normalize_digest_specificity(fasta_digest_params["specificity"])
     fasta_digest_params["specificity"] = specificity
+    check_param(fasta_digest_params, "clip_nterm_met", Bool)
     
     # Check decoy_method with default value
     if !haskey(fasta_digest_params, "decoy_method")
