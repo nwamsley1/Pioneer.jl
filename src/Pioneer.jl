@@ -807,6 +807,7 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
 
 const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
+    "prosit_2024_irt_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_irt_PTMs_gl/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
@@ -819,6 +820,22 @@ const KOINA_URLS = Dict(
 # Valid `library_params.im_model` values. Both take (peptide_sequences,
 # precursor_charges) and return a `ccs` tensor in Å².
 const IM_MODEL_NAMES = Set(["alphapept_ccs", "im2deep"])
+
+# Retention-time models, selected by `library_params.rt_model`. Every one takes
+# the same single `peptide_sequences` input as the fragment models (sequence with
+# `[UNIMOD:n]` modifications), so the request is built once and only the
+# endpoint and the name of the output tensor differ.
+#
+# `output`: the output tensor the model returns its prediction in -- Chronologer
+# reports `rt` (a hydrophobic index, %ACN), the Prosit models `irt`. The search
+# treats either as an arbitrary monotone iRT scale: per-file RT<->iRT splines and
+# data-driven tolerances absorb the difference, so nothing downstream depends
+# on which was used.
+const DEFAULT_RT_MODEL = "chronologer"
+const RT_MODEL_CONFIGS = Dict{String, @NamedTuple{output::Symbol}}(
+    "chronologer" => (output = :rt,),
+    "prosit_2024_irt_ptm" => (output = :irt,),
+)
 
 function __init__()
     # Don't initialize gr() immediately - let it be initialized when first used

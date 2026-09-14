@@ -18,56 +18,55 @@
 # src/chronologer/chronologer_predict.jl
 
 """
-    predict_retention_times(chronologer_out_path::String)
+    predict_retention_times(chronologer_in_path, chronologer_out_path;
+                            rt_model = DEFAULT_RT_MODEL)
 
-Predict retention times for peptides using either Koina's Chronologer service
-or local Chronologer installation as fallback.
+Predict retention times for peptides through Koina, with the model named by
+`rt_model` (a key of `RT_MODEL_CONFIGS`).
 
 Parameters:
-- chronologer_out_path::String: Path to Arrow file containing peptide data.
-                               Must have 'chronologer_sequence' column.
-                               Will be updated in-place with predictions.
-
-Notes:
-- First attempts prediction through Koina API
-- Falls back to local Chronologer if Koina fails
-- Handles UniMod code conversion for local Chronologer
-- Updates the input file in place with RT predictions
+- chronologer_in_path::String: Path to Arrow file containing peptide data.
+                               Must have a 'koina_sequence' column.
+- chronologer_out_path::String: Where the same table is written with an `rt`
+                                column of predictions.
 """
-function predict_retention_times(chronologer_in_path::String, chronologer_out_path::String)
-    # Try Koina service first
+function predict_retention_times(chronologer_in_path::String, chronologer_out_path::String;
+                                 rt_model::String = DEFAULT_RT_MODEL)
     try
         chronologer_table = DataFrame(Tables.columntable(Arrow.Table(chronologer_in_path)))
-        predictions = predict_rt_koina(chronologer_table)
+        predictions = predict_rt_koina(chronologer_table; rt_model = rt_model)
         chronologer_table[!, :rt] = predictions
         Arrow.write(chronologer_out_path, chronologer_table)
         return
     catch e
-        @user_warn "Chronologer failed through Koina. Falling back to local installation..." exception=e
+        @user_warn "Retention time prediction with $(rt_model) failed through Koina." exception=e
         rethrow(e)
     end
     # Fall back to local Chronologer
-    # no longer included. See commits before 
+    # no longer included. See commits before
     #predict_rt_local(chronologer_out_path)
 end
 
 """
 Helper function to predict RTs using Koina service.
 """
-function predict_rt_koina(chronologer_table::DataFrame)::Vector{Float32}
-    model = RetentionTimeModel("chronologer")
-    
+function predict_rt_koina(chronologer_table::DataFrame;
+                          rt_model::String = DEFAULT_RT_MODEL)::Vector{Float32}
+    haskey(RT_MODEL_CONFIGS, rt_model) || error(
+        "Unknown rt_model '$rt_model'. Valid: $(join(sort(collect(keys(RT_MODEL_CONFIGS))), ", "))")
+    model = RetentionTimeModel(rt_model)
+
     # Prepare batches
     batches = prepare_koina_batch(
         model,
         chronologer_table,
         batch_size=1000
     )
-    
+
     # Make requests
     results = make_koina_batch_requests(
         batches,
-        KOINA_URLS["chronologer"]
+        KOINA_URLS[rt_model]
     )
     
     # Parse results

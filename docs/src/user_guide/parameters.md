@@ -165,6 +165,13 @@ Header-parsing regex patterns can be configured three ways:
 | `library_params.prec_partition_width` | Float | from `isolation_window_width` | Explicit precursor-m/z width (Da) of the fragment-index partitions, overriding the value derived from `isolation_window_width`. |
 | `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective width drops below `prec_partition_width` (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
 
+### Prediction Models
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
+| `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
+
 ### Top-level
 
 | Parameter | Type | Default | Description |
