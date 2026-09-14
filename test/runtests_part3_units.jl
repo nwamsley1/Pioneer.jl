@@ -64,6 +64,7 @@ include("./Routines/BuildSpecLib/test_build_determinism.jl")
 include("./UnitTests/test_buildspeclib_filter_equivalence.jl")
 include("./UnitTests/test_mod_site_conflicts.jl")
 include("./UnitTests/test_rt_model_selection.jl")
+include("./UnitTests/test_model_mod_support.jl")
 include("./UnitTests/test_cleavage_presets.jl")
 
 # Parallel utilities
