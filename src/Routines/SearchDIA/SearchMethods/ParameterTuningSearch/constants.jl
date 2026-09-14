@@ -15,6 +15,11 @@ const TUNING_INTENSITY_FILTER_QUANTILE = Float32(0.5)
 
 # ParameterTuningSearch-specific
 const TUNING_FRAG_ERR_QUANTILE = Float32(0.01)
+# Scanning-quad (ZT) quad tuning: fittable (precursor, cycle) meta-scan targets for the triangle
+# fit. h is stable to ~1.3% with only 200 meta-scans, so these are generous.
+const ZT_QUAD_TARGET_METASCANS = Int64(2000)
+const ZT_QUAD_MIN_METASCANS    = Int64(100)
+
 const TUNING_MIN_SAMPLES = Int64(1200)          # PSM target for collection phase
 const TUNING_MAX_PRESEARCH_ITERS = Int64(10)
 const TUNING_MAX_Q_VALUE = Float32(0.01)

@@ -85,6 +85,13 @@ function library_search(
     # Candidacy expansion and the wide deconv box are MAIN-search only: the tuning searches
     # must not be calibrated on the metascan-expanded, wide-box deconvolution.
     zt_main = zt_on && (params isa MainSearchParameters)
+    # Scanning-quad (ZT) quad tuning needs the SAME meta-scan view as the main search: the
+    # expansion, so a precursor is seen in all 2k+1 bins, and the WIDE square deconvolution box,
+    # so its fitted weight tracks true transmission instead of being divided by an assumed
+    # model. Without both, every (precursor, cycle) group holds 1-2 bins and the triangle fit
+    # has nothing to regress against. Only the fit differs from the main search, not the view.
+    zt_qtune = zt_on && (params isa QuadTuningSearchParameters)
+    zt_meta  = zt_main || zt_qtune
     qtm_frag = zt_on ? SquareQuadModel(zt_candidacy_overhang(zt_geom)) : qtm
 
     # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE=<Da>): widen the quad-tuning candidacy AND deconv box
@@ -195,9 +202,9 @@ function library_search(
     # Tuning searches must NOT calibrate on the wide meta-scan deconvolution box: it admits
     # many off-center precursors whose interference degrades the mass-error and NCE fits. Only
     # the MAIN search deconvolves across the meta-scan; everything else stays on the bin.
-    qtm_deconv = (zt_on && !zt_main) ? SquareQuadModel(0.0f0) : qtm
+    qtm_deconv = (zt_on && !zt_meta) ? SquareQuadModel(0.0f0) : qtm
     zt_probe > 0f0 && (qtm_deconv = SquareQuadModel(zt_probe))
-    if zt_main
+    if zt_meta
         n_emitted = length(precursors_passed)
         # Wide-emit re-anchors every emission to the precursor's own bin (survives if it cleared
         # in ANY bin); the narrow path requires the center bin itself to clear.

@@ -200,11 +200,67 @@ function process_file!(
     # the measured profile is ~6.3-7.0 Da. The fit pins at the bound and compensates with an
     # unphysically shallow slope, producing a cusp. Revisit by keying the bound off the sweep
     # width rather than the recorded step.
-    if getZTGeometry(search_context, ms_file_idx) !== nothing
-        setQuadModel(results, getQuadTransmissionModel(search_context, ms_file_idx))
-        @user_info "Quad tuning skipped for scanning-quad file $ms_file_idx — using the " *
-                   "meta-scan transmission model from the detected geometry"
-        return nothing
+    let _g = getZTGeometry(search_context, ms_file_idx)
+        if _g !== nothing
+            # Scanning-quad: fit the transmission TRIANGLE instead of Razo. No isotope-ratio
+            # probe — a swept quad shows each precursor in ~2k+1 bins of one meta-scan, and with
+            # the wide square deconvolution box the fitted weight is already proportional to
+            # transmission. See zt_quad_tuning.jl.
+            _sq = getQuadTransmissionModel(search_context, ms_file_idx)   # wide box for collection
+            _psms, _nfit, _ncyc = collect_zt_quad_psms(spectra, search_context, params, ms_file_idx)
+            # Apex sits at the isotope centre of mass; use the library's isotope splines
+            # (mass + sulfur count) rather than an averagine guess.
+            _iso = getIsoSplines(first(getSearchData(search_context)))
+            # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE_DIR): dump the collected per-bin rows so the
+            # centroid / shape choices can be swept offline without re-running the search.
+            let _pd = get(ENV, "PIONEER_ZT_QUAD_PROBE_DIR", "")
+                if !isempty(_pd) && nrow(_psms) > 0
+                    mkpath(_pd)
+                    _cyc = UInt32.(getCycleIdxs(spectra))
+                    _cm  = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
+                    _d = DataFrame(precursor_idx = _psms.precursor_idx, scan_idx = _psms.scan_idx,
+                                   cycle = _cyc[_psms.scan_idx], center_mz = _cm[_psms.scan_idx],
+                                   weight = _psms.weight)
+                    writeArrow(joinpath(_pd, "zt_quad_rows_file$(ms_file_idx).arrow"), _d)
+                end
+            end
+            _fit, _hist = _nfit >= ZT_QUAD_MIN_METASCANS ?
+                fit_zt_triangle_from_psms(_psms, spectra, getPrecursors(getSpecLib(search_context)), _g;
+                                          iso_splines = _iso) :
+                (nothing, Int[])
+            if _fit === nothing
+                setQuadModel(results, _sq)
+                @user_warn "ZT quad tuning [file $ms_file_idx]: triangle fit failed " *
+                           "($(nrow(_psms)) PSM rows over $_ncyc cycles, $_nfit fittable meta-scans; " *
+                           "bins-per-metascan 1..10 = $(_hist[1:min(10,length(_hist))])) " *
+                           "— keeping the geometry's square model"
+            else
+                _model = ZTTriangleModel(_fit.h)
+                # The fitted triangle is REPORTED but not installed by default. Deconvolving
+                # under it (weights divided by T, outer bins near zero) lost 3,088 precursors on
+                # A_REP1 (27,926 -> 24,838) versus the flat meta-scan box, which stays the shipped
+                # model. PIONEER_ZT_INSTALL_TRIANGLE=1 installs it for MainSearch instead.
+                _install = get(ENV, "PIONEER_ZT_INSTALL_TRIANGLE", "0") != "0"
+                _install && setQuadTransmissionModel!(search_context, ms_file_idx, _model)
+                setQuadModel(results, _install ? _model : _sq)
+                append!(results.quad_plot_objects,
+                        plot_zt_triangle(_fit, _psms, spectra,
+                                         getPrecursors(getSpecLib(search_context)), _g,
+                                         getParsedFileName(search_context, ms_file_idx);
+                                         iso_splines = _iso))
+                push!(results.per_file_models,
+                      (getParsedFileName(search_context, ms_file_idx), _model,
+                       Float64(_g.nominal_width)))
+                _flag = _fit.k_implied == Int(_g.metascan_k) ? "" :
+                        "  <-- DIFFERS from configured metascan_k=$(Int(_g.metascan_k))"
+                @user_info "ZT quad tuning [file $ms_file_idx]: h=$(round(_fit.h; digits=3)) Da " *
+                    "(IQR $(round(_fit.h_iqr_lo; digits=2))–$(round(_fit.h_iqr_hi; digits=2))), " *
+                    "bin_step=$(round(_g.bin_step; digits=4)), k_implied=$(_fit.k_implied)$_flag; " *
+                    "$(_fit.n_metascans) meta-scans, median R²=$(round(_fit.median_r2; digits=3)); " *
+                    (_install ? "INSTALLED for MainSearch" : "reported only (square meta-scan box kept)")
+            end
+            return nothing
+        end
     end
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.5f0))
