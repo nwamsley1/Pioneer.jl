@@ -423,10 +423,15 @@ export interface LogLine {
  *  Stored as the form's own params rather than the serialized params file:
  *  ConvertRAW's `paramsJson` is a display command line and cannot be parsed back,
  *  and even for the Julia commands round-tripping through the Pioneer JSON would
- *  lose anything the form models but the config does not. */
+ *  lose anything the form models but the config does not.
+ *
+ *  `extras` are the keys of an edited or loaded config that the form does not
+ *  model (the "advanced" JSON). They are part of what the run was launched
+ *  with, so recalling the run must bring them back too; runs stored before
+ *  they were recorded carry none. */
 export type JobSnapshot =
-  | { cmd: 'searchdia'; search: SearchParams }
-  | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'searchdia'; search: SearchParams; extras?: Record<string, unknown> | null }
+  | { cmd: 'buildspeclib'; build: BuildParams; extras?: Record<string, unknown> | null }
   | { cmd: 'downloadspeclib'; download: DownloadParams }
   | { cmd: 'convertraw'; convert: ConvertParams }
 

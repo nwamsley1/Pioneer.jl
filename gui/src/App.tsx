@@ -348,6 +348,8 @@ export default function App() {
     search: SearchParams
     build: BuildParams
     convert: ConvertParams
+    extras: Record<string, Json | null>
+    threads: number
   } | null>(null)
 
   const jobSeq = useRef(0)
@@ -467,7 +469,7 @@ export default function App() {
       // Stash only on the way in. Clicking from one run straight to another must
       // not overwrite the draft with the first run's params.
       if (!current) {
-        stashedDraft.current = { command, search, build, convert }
+        stashedDraft.current = { command, search, build, convert, extras, threads }
       }
       return job.id
     })
@@ -478,19 +480,25 @@ export default function App() {
     // over an undefined list.
     if (job.snapshot.cmd === 'searchdia') {
       setSearch({ ...SEARCH_DEFAULTS, ...job.snapshot.search })
+      setExtras((e) => ({ ...e, searchdia: job.snapshot.cmd === 'searchdia' ? job.snapshot.extras ?? null : null }))
     }
     else if (job.snapshot.cmd === 'buildspeclib') {
       // Stored runs from before digestion specificity was added do not carry
       // the field. Merge defaults so recalling one still renders and emits a
       // full-specific build. The same applies to the cleavage rule.
       setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
+      setExtras((e) => ({ ...e, buildspeclib: job.snapshot.cmd === 'buildspeclib' ? job.snapshot.extras ?? null : null }))
     } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
     // Same reason as the build merge above: runs stored before the mzML
     // converter existed carry no `format`, and recalling one must still render
     // a form with a format selected rather than neither segment lit.
     else setConvert({ ...CONVERT_DEFAULTS, ...job.snapshot.convert })
+    // The run's thread count is part of how it was launched, and the picker
+    // is what the next run reads. Rows restored from before it was recorded
+    // carry 0 and leave the picker alone.
+    if (job.threads > 0) setThreads(job.threads)
     setRunError('')
-  }, [command, search, build, convert])
+  }, [command, search, build, convert, extras, threads])
 
   /** Leave inspection and restore the draft, if there is one to restore. */
   const restoreDraft = useCallback(() => {
@@ -499,6 +507,8 @@ export default function App() {
     setSearch(d.search)
     setBuild(d.build)
     setConvert(d.convert)
+    setExtras(d.extras)
+    setThreads(d.threads)
     stashedDraft.current = null
     setInspectingJobId(null)
   }, [])
@@ -1493,8 +1503,8 @@ export default function App() {
         : isDownload
           ? { cmd: 'downloadspeclib' as const, download }
           : isSearch
-            ? { cmd: 'searchdia' as const, search: s }
-            : { cmd: 'buildspeclib' as const, build },
+            ? { cmd: 'searchdia' as const, search: s, extras: currentExtras }
+            : { cmd: 'buildspeclib' as const, build, extras: currentExtras },
       target:
         (isConvert
           ? c.outputDir || c.input
