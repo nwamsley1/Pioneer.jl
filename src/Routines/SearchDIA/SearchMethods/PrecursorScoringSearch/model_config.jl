@@ -126,5 +126,5 @@ const ADVANCED_FEATURE_SET = [
     # 2026-05-21: removed 11 features added during the 2026-05-20 experiment
     # (5 max_*, 3 Tier-2 re-adds, 3 min_*). 8-file Olsen showed only ~+1% ID
     # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
-    # along with their computation in select_best_per_precursor!.
+    # along with their computation in select_best_per_precursor.
 ]

@@ -172,7 +172,7 @@ Each isbits column is gathered through a single shared byte buffer rather than l
 both necessary and safe for peak memory.
 
 Establishes the sorted-by-precursor invariant that downstream passes
-(`_build_precursor_groups`, feature passes, `select_best_per_precursor!`)
+(`_build_precursor_groups`, feature passes, `select_best_per_precursor`)
 can take advantage of to skip their own sortperm.
 """
 
@@ -384,20 +384,17 @@ function process_search_results!(
         bitvec_rank_table = bitvec_rank_table,
     )
 
-    # Train LightGBM on ALL PSMs, select best scan per precursor
+    # Train LightGBM on all PSMs and select the narrow set of representatives
+    # needed to fit the out-of-fold iRT correction.
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
-    best_psms, scores, lgbm_timings, lgbm_predictor =
-        @alloc_bucket "train_lgbm_and_select_best" train_lgbm_and_select_best(
-            psms;
-            center_mzs = center_mzs,
-            isolation_widths = isolation_widths,
-            buffers = results.lgbm_buffers,
+    refinement_psms, lgbm_timings, lgbm_predictor =
+        @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
+            psms,
+            results.lgbm_buffers,
         )
-    best_psms[!, :lgbm_prob] = scores
-    _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
 
     # Refine predicted iRTs with out-of-fold correction models. The correction
@@ -409,25 +406,36 @@ function process_search_results!(
         q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
         min_precursors = MAIN_IRT_REFINEMENT_MIN_PRECURSORS,
     )
-    irt_refinement_result = refine_mainsearch_irt_predictions!(psms, best_psms, scores, irt_refinement)
+    irt_refinement_result = refine_mainsearch_irt_predictions!(
+        psms,
+        refinement_psms,
+        irt_refinement,
+    )
     if irt_refinement_result.refined
-        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
+        best_psms, reapply_timings = reapply_psm_classifier_and_select_best!(
             psms,
             lgbm_predictor;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
             buffers = results.lgbm_buffers,
         )
-        best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "$(length(irt_refinement_result.training_target_precursors)) training precursors; " *
                    "reapply predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s"
-        _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
+        # The lightweight first reduction omits final shape columns. If there
+        # is not enough evidence to fit an iRT correction, materialize the full
+        # result using the original classifier scores.
+        best_psms = select_best_per_precursor(
+            psms;
+            center_mzs = center_mzs,
+            isolation_widths = isolation_widths,
+        )
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): skipped " *
                    "($(length(irt_refinement_result.training_target_precursors)) " *
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
+    best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
 
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()

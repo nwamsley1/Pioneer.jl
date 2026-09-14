@@ -36,7 +36,7 @@ const SHARED_LGBM_HP = (num_iterations=50, learning_rate=0.20, max_depth=8,
 
 # Lightweight per-file MainSearch model (config C): smaller trees + coarser bins.
 # Applies ONLY to the MainSearch per-file best-scan/PEP-gate model
-# (train_lgbm_and_select_best) — NOT pass1_oom, the FTR model, or ScoringSearch,
+# (train_lgbm_for_irt_refinement) — NOT pass1_oom, the FTR model, or ScoringSearch,
 # which keep SHARED_LGBM_HP / SCORING_LGBM_HP. Matches the env-sweep "C" arm.
 const MAINSEARCH_LGBM_HP = merge(SHARED_LGBM_HP,
     (max_depth = 4, num_leaves = 15, max_bin = 63))
@@ -85,7 +85,7 @@ const ADAPTIVE_HP_OVERRIDES = (
 const SHARED_LGBM_LOW_DATA_THRESHOLD = 10_000
 
 # Diagnostic dump: when nonzero, dump pre-reduction psms (with lgbm_score) to
-# DIAG_DUMP_DIR/<file_idx>.arrow inside train_lgbm_and_select_best.
+# DIAG_DUMP_DIR/<file_idx>.arrow inside train_lgbm_for_irt_refinement.
 const DIAG_DUMP_FILE_IDX = Ref{Int64}(0)
 const DIAG_DUMP_DIR      = Ref{String}("")
 
@@ -107,7 +107,7 @@ Two-fold CV LightGBM training with the shared hyperparameters
    - `info :: NamedTuple` — diagnostics plus `available_features` and a
      reusable fold predictor for reapplying scores after feature refreshes
 
-Used by both `train_lgbm_and_select_best` (MainSearch) and
+Used by both `train_lgbm_for_irt_refinement` (MainSearch) and
 `score_precursor_isotope_traces` (PrecursorScoringSearch).
 
 `buffers` supplies reusable backing stores for the feature matrices; the default
@@ -501,49 +501,36 @@ function _predict_psm_classifier_scores(
 end
 
 """
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings, predictor)
+    train_lgbm_for_irt_refinement(psms, buffers) -> (refinement_psms, timings, predictor)
 
 Train LightGBM (with low-data probit fallback) on ALL PSMs (all scans) using
-the shared `train_psm_classifier_with_fallback` helper, then select the best
-scan per precursor by LightGBM score and log feature importances.
+the shared `train_psm_classifier_with_fallback` helper, then create the narrow
+best-per-precursor table used to fit MainSearch's iRT correction. Final shape
+features are deferred until the post-refinement selection.
 
 Returns:
-- best_psms: DataFrame with one row per precursor (best by LightGBM score)
-- scores: Vector{Float32} of LightGBM probabilities for best_psms
+- refinement_psms: narrow DataFrame with one row per precursor
 - timings: NamedTuple with timing breakdowns
 - predictor: fold predictor from the fitted classifier; after iRT refinement,
   refreshed candidate features are scored with this same model before
   best-scan selection is repeated
 """
-function train_lgbm_and_select_best(
-    psms::DataFrame;
-    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    lgbm_hp = MAINSEARCH_LGBM_HP,
-    center_mzs = nothing,
-    isolation_widths = nothing,
-    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
+function train_lgbm_for_irt_refinement(
+    psms::DataFrame,
+    buffers::LGBMMatrixBuffers,
 )
     t0 = time()
-    # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
-    # LightGBM can use :n_scans as a feature.
-    if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
-        counts = Dict{UInt32, UInt32}()
-        @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
-            counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
-        end
-        psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
-    end
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         psms;
-        features = features,
-        lgbm_hp = lgbm_hp,
+        features = collect(PRESCORE_FEATURES),
+        lgbm_hp = MAINSEARCH_LGBM_HP,
         buffers = buffers,
     )
     t_train_cv = time()
 
     # Surface the adaptive model selection result so we can see per-file picks
     # in the log without grepping debug_l1.
-    if hasproperty(info, :adaptive) && info.adaptive
+    if info.adaptive
         oof_str = join(["$k=$v" for (k,v) in sort(collect(info.candidate_oof))], " ")
         @debug_l1 "  Adaptive model selection (n=$(nrow(psms))): $oof_str → $(info.winner)"
     end
@@ -566,16 +553,7 @@ function train_lgbm_and_select_best(
         Arrow.write(joinpath(diag_dir, "$(DIAG_DUMP_FILE_IDX[]).arrow"), psms[!, keep])
     end
 
-    # Select best scan per precursor by LightGBM score
-    psms = select_best_per_precursor!(
-        psms,
-        :lgbm_score;
-        center_mzs = center_mzs,
-        isolation_widths = isolation_widths,
-    )
-
-    # Extract scores for best PSMs
-    scores = psms[!, :lgbm_score]
+    refinement_psms = _select_irt_refinement_psms(psms)
     t_best = time()
 
     # Feature importances — diagnostic only.
@@ -591,47 +569,36 @@ function train_lgbm_and_select_best(
     end
 
     timings = (
-        matrix = 0.0,            # subsumed into train_cv now
         train_cv = t_train_cv - t0,
         best = t_best - t_train_cv,
     )
 
-    return psms, Vector{Float32}(scores), timings, info.predictor
+    return refinement_psms, timings, info.predictor
 end
 
 function reapply_psm_classifier_and_select_best!(
     psms::DataFrame,
     predictor;
-    center_mzs = nothing,
-    isolation_widths = nothing,
-    buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
+    center_mzs,
+    isolation_widths,
+    buffers::LGBMMatrixBuffers,
 )
     t0 = time()
-    if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
-        counts = Dict{UInt32, UInt32}()
-        @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
-            counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
-        end
-        psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
-    end
-
     all_scores = predict_psm_classifier_scores(psms, predictor; buffers = buffers)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    best_psms = select_best_per_precursor!(
+    best_psms = select_best_per_precursor(
         psms,
-        :lgbm_score;
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
     )
-    scores = best_psms[!, :lgbm_score]
     t_best = time()
 
     timings = (
         predict = t_predict - t0,
         best = t_best - t_predict,
     )
-    return best_psms, Vector{Float32}(scores), timings
+    return best_psms, timings
 end
 
 function _mainsearch_peps_and_pass_mask(
@@ -1306,74 +1273,112 @@ function add_trace_and_fragment_features!(
     return best_psms
 end
 
-"""
-    select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
-
-Keeps one row per precursor_idx. Uses sortperm for contiguous group processing:
-per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥4 PSMs),
-otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
-weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt`. When scan
-window arrays are supplied, those shape features use only the selected PSM's
-isolation window.
-"""
-function select_best_per_precursor!(
-    psms::DataFrame,
-    score_col::Symbol;
-    center_mzs = nothing,
-    isolation_widths = nothing,
+@inline function _select_best_psm_row(
+    scores::Vector{Float32},
+    weights::Vector{Float32},
+    group_start::Int,
+    group_stop::Int,
 )
-    scores = psms[!, score_col]::Vector{Float32}
-    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
-    use_window_groups = center_mzs !== nothing && isolation_widths !== nothing
-    scan_idxs = use_window_groups ? psms[!, :scan_idx]::Vector{UInt32} : nothing
-    has_irt = hasproperty(psms, :irt_obs)
-    has_weight = hasproperty(psms, :weight)
-    has_rt = hasproperty(psms, :rt)
-    irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
-    rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
-    weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
-    # Type-assert the Float16 scoring columns. Without `::Vector{Float16}`
-    # the DataFrame accessor returns an abstract type, which forces dynamic
-    # dispatch inside the sub-pass-1 hot loop and costs ~3.5s/file on
-    # Astral. Identified 2026-05-19.
-    n = nrow(psms)
+    best_score = typemin(Float32)
+    best_row = group_start
 
-    # sortperm groups PSMs by precursor_idx for contiguous processing
-    perm = sortperm(prec_ids)
+    @inbounds for row in group_start:group_stop
+        score = scores[row]
+        if score > best_score
+            best_score = score
+            best_row = row
+        end
+    end
+
+    score_threshold = best_score - 0.1f0
+    best_weight = typemin(Float32)
+    @inbounds for row in group_start:group_stop
+        scores[row] >= score_threshold || continue
+        weight = weights[row]
+        if weight > best_weight
+            best_weight = weight
+            best_row = row
+        end
+    end
+    return best_row
+end
+
+"""
+    _select_irt_refinement_psms(psms::DataFrame) -> DataFrame
+
+Select one row per precursor for fitting the MainSearch iRT correction. Input
+must be contiguous and sorted by `precursor_idx`. The result contains exactly
+the six columns consumed by iRT refinement; final chromatogram-shape features
+are calculated only after refined rescoring.
+"""
+function _select_irt_refinement_psms(psms::DataFrame)
+    scores = psms[!, :lgbm_score]::Vector{Float32}
+    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    weights = psms[!, :weight]::Vector{Float32}
+    n = nrow(psms)
+    keep_rows = Vector{Int}()
+    sizehint!(keep_rows, n ÷ 10)
+
+    group_start = 1
+    while group_start <= n
+        group_stop = group_start
+        pid = prec_ids[group_start]
+        while group_stop < n && prec_ids[group_stop + 1] == pid
+            group_stop += 1
+        end
+        best_row = _select_best_psm_row(scores, weights, group_start, group_stop)
+        push!(keep_rows, best_row)
+        group_start = group_stop + 1
+    end
+
+    columns = [:precursor_idx, :target, :irt_pred, :irt_obs, :cv_fold, :lgbm_score]
+    return psms[keep_rows, columns]
+end
+
+"""
+    select_best_per_precursor(psms::DataFrame; center_mzs, isolation_widths) -> DataFrame
+
+Keeps one row per precursor from a table that is contiguous and sorted by
+`precursor_idx`. Per group, selects the highest-weight PSM among those scoring
+within 0.1 of the maximum. Computes `irt_fwhm` (iRT span of scans with weight ≥
+50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` using only the
+selected PSM's isolation window.
+"""
+function select_best_per_precursor(
+    psms::DataFrame;
+    center_mzs,
+    isolation_widths,
+)
+    scores = psms[!, :lgbm_score]::Vector{Float32}
+    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    scan_idxs = psms[!, :scan_idx]::Vector{UInt32}
+    irt_obs = psms[!, :irt_obs]::Vector{Float32}
+    rt_vals = psms[!, :rt]::Vector{Float32}
+    weights = psms[!, :weight]::Vector{Float32}
+    n = nrow(psms)
 
     # Output arrays — one element per unique precursor
     keep_rows = Vector{Int}()
     sizehint!(keep_rows, n ÷ 10)
-    compute_fwhm = weights !== nothing  # implies has_irt
-    compute_rt = has_rt
-
-    out_irt_fwhm = compute_fwhm ? Vector{Float32}() : nothing
+    out_irt_fwhm = Vector{Float32}()
     # n_above_hm + rt_fwhm not LGBM features but still consumed by
     # prescore_aggregation.jl, so keep them as outputs.
-    out_n_above_hm = compute_fwhm ? Vector{UInt16}() : nothing
-    out_rt_fwhm = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
-    out_best_rt = compute_rt ? Vector{Float32}() : nothing
+    out_n_above_hm = Vector{UInt16}()
+    out_rt_fwhm = Vector{Float32}()
+    out_best_rt = Vector{Float32}()
     # Re-added 2026-05-11 (orphaned in 2025-03 consolidation):
     # `smoothness` = Σ(((Δw_left + Δw_right)/w_apex)²) — squared second-derivative
     # of weight chromatogram; real peaks → smooth → low value, noise → jagged → high.
     # `num_scans` = group_len (count of PSMs / MS2 scans for this precursor).
-    out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
+    out_smoothness = Vector{Float32}()
     # 2026-05-21: max_* / min_* / n_above_hm / num_scans / rt_fwhm outputs
     # removed (compute+write cost wasn't worth the ~+1% ID gain).
 
-    if compute_fwhm
-        sizehint!(out_irt_fwhm, n ÷ 10)
-        sizehint!(out_n_above_hm, n ÷ 10)
-    end
-    if out_rt_fwhm !== nothing
-        sizehint!(out_rt_fwhm, n ÷ 10)
-    end
-    if out_best_rt !== nothing
-        sizehint!(out_best_rt, n ÷ 10)
-    end
-    if out_smoothness !== nothing
-        sizehint!(out_smoothness, n ÷ 10)
-    end
+    sizehint!(out_irt_fwhm, n ÷ 10)
+    sizehint!(out_n_above_hm, n ÷ 10)
+    sizehint!(out_rt_fwhm, n ÷ 10)
+    sizehint!(out_best_rt, n ÷ 10)
+    sizehint!(out_smoothness, n ÷ 10)
 
     # Reusable buffers
     smooth_w_buf  = Vector{Float32}(undef, 128)  # weights sorted by rt
@@ -1383,65 +1388,32 @@ function select_best_per_precursor!(
     # Single pass: process each precursor group contiguously
     gi = 1
     while gi <= n
-        pid = prec_ids[perm[gi]]
+        pid = prec_ids[gi]
         group_start = gi
-        while gi <= n && prec_ids[perm[gi]] == pid
+        while gi <= n && prec_ids[gi] == pid
             gi += 1
         end
         group_len = gi - group_start
 
-        # --- Sub-pass 1: find best-score row and max weight (max weight is
-        # used by sub-pass 2 for the FWHM half-max threshold, even though
-        # it's not output as a feature). ---
-        best_s = typemin(Float32)
-        best_row = perm[group_start]
-        mw = 0f0
+        best_row = _select_best_psm_row(
+            scores,
+            weights,
+            group_start,
+            gi - 1,
+        )
 
+        selected_window_key = _scan_window_key(
+            scan_idxs[best_row],
+            center_mzs,
+            isolation_widths,
+        )
+        window_mw = 0f0
         @inbounds for k in 0:(group_len - 1)
-            row = perm[group_start + k]
-            s = scores[row]
-            if s > best_s
-                best_s = s
-                best_row = row
-            end
-            if weights !== nothing
-                w = weights[row]
-                if w > mw
-                    mw = w
-                end
-            end
-        end
-
-        # --- Sub-pass 1b (Method 1: score-margin 0.1): among scans scoring
-        # within 0.1 of the max score, pick the highest-weight one. Falls back
-        # to the max-score row (best_row) when only that row qualifies. ---
-        if weights !== nothing
-            score_threshold = best_s - 0.1f0
-            best_w = typemin(Float32)
-            @inbounds for k in 0:(group_len - 1)
-                row = perm[group_start + k]
-                scores[row] >= score_threshold || continue
-                w = weights[row]
-                if w > best_w
-                    best_w = w
-                    best_row = row
-                end
-            end
-        end
-
-        selected_window_key = use_window_groups ?
-            _scan_window_key(scan_idxs[best_row], center_mzs, isolation_widths) :
-            (0f0, 0f0)
-        window_mw = mw
-        if use_window_groups && weights !== nothing
-            window_mw = 0f0
-            @inbounds for k in 0:(group_len - 1)
-                row = perm[group_start + k]
-                _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
-                w = weights[row]
-                if w > window_mw
-                    window_mw = w
-                end
+            row = group_start + k
+            _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+            weight = weights[row]
+            if weight > window_mw
+                window_mw = weight
             end
         end
 
@@ -1450,126 +1422,100 @@ function select_best_per_precursor!(
         # --- Sub-pass 2: FWHM bounds. irt_fwhm is a LGBM feature;
         # n_above_hm + rt_fwhm are not LGBM features but are still consumed
         # by prescore_aggregation.jl. ---
-        if compute_fwhm
-            half_max = 0.5f0 * window_mw
-            irt_lo = typemax(Float32)
-            irt_hi = typemin(Float32)
-            rt_lo = typemax(Float32)
-            rt_hi = typemin(Float32)
-            n_hm = UInt16(0)
+        half_max = 0.5f0 * window_mw
+        irt_lo = typemax(Float32)
+        irt_hi = typemin(Float32)
+        rt_lo = typemax(Float32)
+        rt_hi = typemin(Float32)
+        n_hm = UInt16(0)
 
-            @inbounds for k in 0:(group_len - 1)
-                row = perm[group_start + k]
-                if use_window_groups
-                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
-                end
-                weights[row] >= half_max || continue
-                n_hm += UInt8(1)
-                irt = irt_obs[row]
-                irt_lo = min(irt_lo, irt)
-                irt_hi = max(irt_hi, irt)
-                if compute_rt
-                    rt = rt_vals[row]
-                    rt_lo = min(rt_lo, rt)
-                    rt_hi = max(rt_hi, rt)
-                end
-            end
-
-            push!(out_irt_fwhm, n_hm > 0 ? irt_hi - irt_lo : 0f0)
-            push!(out_n_above_hm, n_hm)
-            if out_rt_fwhm !== nothing
-                push!(out_rt_fwhm, n_hm > 0 ? rt_hi - rt_lo : 0f0)
-            end
+        @inbounds for k in 0:(group_len - 1)
+            row = group_start + k
+            _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+            weights[row] >= half_max || continue
+            n_hm += UInt8(1)
+            irt = irt_obs[row]
+            irt_lo = min(irt_lo, irt)
+            irt_hi = max(irt_hi, irt)
+            rt = rt_vals[row]
+            rt_lo = min(rt_lo, rt)
+            rt_hi = max(rt_hi, rt)
         end
+
+        push!(out_irt_fwhm, n_hm > 0 ? irt_hi - irt_lo : 0f0)
+        push!(out_n_above_hm, n_hm)
+        push!(out_rt_fwhm, n_hm > 0 ? rt_hi - rt_lo : 0f0)
 
         # --- Sub-pass 3: smoothness (squared second-derivative of weight chrom) ---
-        if out_smoothness !== nothing
-            smooth_len = group_len
-            if use_window_groups
-                smooth_len = 0
-                @inbounds for k in 0:(group_len - 1)
-                    row = perm[group_start + k]
-                    _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
-                    smooth_len += 1
-                end
-            end
-            if length(smooth_w_buf) < smooth_len
-                resize!(smooth_w_buf,  smooth_len)
-                resize!(smooth_rt_buf, smooth_len)
-                resize!(smooth_ord_buf, smooth_len)
-            end
-            @inbounds let j = 0
-                for k in 0:(group_len - 1)
-                    row = perm[group_start + k]
-                    if use_window_groups
-                        _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
-                    end
-                    j += 1
-                    smooth_w_buf[j] = weights[row]
-                    smooth_rt_buf[j] = rt_vals[row]
-                    smooth_ord_buf[j] = j
-                end
-            end
-            sort!(view(smooth_ord_buf, 1:smooth_len), by = ki -> smooth_rt_buf[ki])
-            # Compute the roughness sum
-            rough = 0f0
-            if window_mw > 0f0
-                if smooth_len == 1
-                    # Single point — original code: rough = (−2w/w_apex)² = 4
-                    rough = 4f0
-                else
-                    @inbounds for k in 1:smooth_len
-                        ki = smooth_ord_buf[k]
-                        w_i = smooth_w_buf[ki]
-                        if k == 1
-                            ki_r = smooth_ord_buf[k+1]
-                            dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
-                            d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
-                            d_l = dt_r > 0 ? (-w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / window_mw)^2
-                        elseif k == smooth_len
-                            ki_l = smooth_ord_buf[k-1]
-                            dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
-                            d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
-                            d_r = dt_l > 0 ? (-w_i) / dt_l : 0f0
-                            rough += ((d_l + d_r) / window_mw)^2
-                        else
-                            ki_l = smooth_ord_buf[k-1]
-                            ki_r = smooth_ord_buf[k+1]
-                            dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
-                            dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
-                            d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
-                            d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
-                            rough += ((d_l + d_r) / window_mw)^2
-                        end
-                    end
-                end
-            end
-            push!(out_smoothness, rough)
+        smooth_len = 0
+        @inbounds for k in 0:(group_len - 1)
+            row = group_start + k
+            _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+            smooth_len += 1
         end
+        if length(smooth_w_buf) < smooth_len
+            resize!(smooth_w_buf,  smooth_len)
+            resize!(smooth_rt_buf, smooth_len)
+            resize!(smooth_ord_buf, smooth_len)
+        end
+        @inbounds let j = 0
+            for k in 0:(group_len - 1)
+                row = group_start + k
+                _scan_window_key(scan_idxs[row], center_mzs, isolation_widths) == selected_window_key || continue
+                j += 1
+                smooth_w_buf[j] = weights[row]
+                smooth_rt_buf[j] = rt_vals[row]
+                smooth_ord_buf[j] = j
+            end
+        end
+        sort!(view(smooth_ord_buf, 1:smooth_len), by = ki -> smooth_rt_buf[ki])
+        # Compute the roughness sum
+        rough = 0f0
+        if window_mw > 0f0
+            if smooth_len == 1
+                # Single point — original code: rough = (−2w/w_apex)² = 4
+                rough = 4f0
+            else
+                @inbounds for k in 1:smooth_len
+                    ki = smooth_ord_buf[k]
+                    w_i = smooth_w_buf[ki]
+                    if k == 1
+                        ki_r = smooth_ord_buf[k+1]
+                        dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
+                        d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
+                        d_l = dt_r > 0 ? (-w_i) / dt_r : 0f0
+                        rough += ((d_l + d_r) / window_mw)^2
+                    elseif k == smooth_len
+                        ki_l = smooth_ord_buf[k-1]
+                        dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
+                        d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
+                        d_r = dt_l > 0 ? (-w_i) / dt_l : 0f0
+                        rough += ((d_l + d_r) / window_mw)^2
+                    else
+                        ki_l = smooth_ord_buf[k-1]
+                        ki_r = smooth_ord_buf[k+1]
+                        dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
+                        dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
+                        d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
+                        d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
+                        rough += ((d_l + d_r) / window_mw)^2
+                    end
+                end
+            end
+        end
+        push!(out_smoothness, rough)
 
-        if out_best_rt !== nothing
-            push!(out_best_rt, rt_vals[best_row])
-        end
+        push!(out_best_rt, rt_vals[best_row])
     end  # while gi <= n
 
-    # Build result from selected rows
     result = psms[keep_rows, :]
 
     # Attach computed columns
-    if out_irt_fwhm !== nothing
-        result[!, :irt_fwhm] = out_irt_fwhm
-        result[!, :n_above_hm] = out_n_above_hm
-    end
-    if out_rt_fwhm !== nothing
-        result[!, :rt_fwhm] = out_rt_fwhm
-    end
-    if out_best_rt !== nothing
-        result[!, :best_rt] = out_best_rt
-    end
-    if out_smoothness !== nothing
-        result[!, :smoothness] = out_smoothness
-    end
+    result[!, :irt_fwhm] = out_irt_fwhm
+    result[!, :n_above_hm] = out_n_above_hm
+    result[!, :rt_fwhm] = out_rt_fwhm
+    result[!, :best_rt] = out_best_rt
+    result[!, :smoothness] = out_smoothness
 
     return result
 end
