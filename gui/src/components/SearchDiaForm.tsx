@@ -379,7 +379,7 @@ export function SearchDiaForm({
             <label style={LABEL}>MS data</label>
             <div style={{ ...SEG_TRACK, marginBottom: 10 }}>
               <button type="button" onClick={() => onParam('msDataMode', 'folder')} style={seg(!byFiles)}>
-                One folder
+                Folder
               </button>
               <button type="button" onClick={() => onParam('msDataMode', 'files')} style={seg(byFiles)}>
                 Chosen files
