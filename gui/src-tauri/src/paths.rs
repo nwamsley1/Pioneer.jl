@@ -165,6 +165,27 @@ pub fn inspect(path: &str) -> PathInfo {
     info
 }
 
+/// The `.arrow` files directly inside a folder, as full paths in name order.
+///
+/// What a per-file search of a folder fans out over: SearchDIA reads exactly
+/// the `.arrow` files at the top level of its ms_data directory, so this is
+/// the same set a folder-mode run would search as one experiment.
+pub fn list_arrow_files(dir: &str) -> Result<Vec<String>, String> {
+    let p = PathBuf::from(dir.trim());
+    if !p.is_dir() {
+        return Err(format!("{} is not a folder", p.display()));
+    }
+    let mut files: Vec<String> = std::fs::read_dir(&p)
+        .map_err(|e| format!("Could not read {}: {e}", p.display()))?
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| ms_extension_of(&entry.file_name().to_string_lossy()) == "arrow")
+        .map(|entry| entry.path().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
 /// Read a config.json, accepting either the file itself or a results folder
 /// containing one — which is what the "Load previous run" dialog offers.
 pub fn read_config(path: &str) -> Result<String, String> {

@@ -221,30 +221,46 @@ function MsFileList({
         </span>
       </div>
       {files.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 14,
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: '1px solid #EEF1F4',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
-              Search each file separately
-            </div>
-            <div style={{ ...HINT, marginTop: 2 }}>
-              {batch
-                ? 'One run per file, each with its own results folder and nothing shared between them.'
-                : 'One run over the whole list, sharing FDR and match-between-runs across it.'}
-            </div>
-          </div>
-          <Toggle on={batch} fieldKey="msDataBatch" onClick={onToggleBatch} />
-        </div>
+        <BatchToggle on={batch} scope="list" onToggle={onToggleBatch} />
       )}
+    </div>
+  )
+}
+
+/** Whether the MS data -- a chosen list or a folder -- is one experiment or
+ *  one run per file. */
+function BatchToggle({
+  on,
+  scope,
+  onToggle,
+}: {
+  on: boolean
+  scope: 'list' | 'folder'
+  onToggle: () => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 14,
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: '1px solid #EEF1F4',
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+          Search each file separately
+        </div>
+        <div style={{ ...HINT, marginTop: 2 }}>
+          {on
+            ? `One run per ${scope === 'folder' ? '.arrow file in the folder' : 'file'}, each with its own results folder and nothing shared between them.`
+            : `One run over the whole ${scope}, sharing FDR and match-between-runs across it.`}
+        </div>
+      </div>
+      <Toggle on={on} fieldKey="msDataBatch" onClick={onToggle} />
     </div>
   )
 }
@@ -363,7 +379,7 @@ export function SearchDiaForm({
             <label style={LABEL}>MS data</label>
             <div style={{ ...SEG_TRACK, marginBottom: 10 }}>
               <button type="button" onClick={() => onParam('msDataMode', 'folder')} style={seg(!byFiles)}>
-                One folder
+                Folder
               </button>
               <button type="button" onClick={() => onParam('msDataMode', 'files')} style={seg(byFiles)}>
                 Chosen files
@@ -377,15 +393,18 @@ export function SearchDiaForm({
                 onToggleBatch={onToggleMsBatch}
               />
             ) : (
-              <PathRow
-                label=""
-                fieldKey="msData"
-                value={params.msData}
-                placeholder="/path/to/ms/data"
-                note={notes.msData}
-                onChange={onParam}
-                onBrowse={() => onBrowse('msData')}
-              />
+              <>
+                <PathRow
+                  label=""
+                  fieldKey="msData"
+                  value={params.msData}
+                  placeholder="/path/to/ms/data"
+                  note={notes.msData}
+                  onChange={onParam}
+                  onBrowse={() => onBrowse('msData')}
+                />
+                <BatchToggle on={params.msDataBatch} scope="folder" onToggle={onToggleMsBatch} />
+              </>
             )}
           </div>
           <PathRow

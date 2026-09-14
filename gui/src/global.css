@@ -21,22 +21,21 @@
    near-black heading colour in every theme; tinting body text costs legibility
    for nothing.
 
-   Applied by setting data-theme on <html>. Charcoal is the default and lives in
+   Applied by setting data-theme on <html>. Navy is the default and lives in
    :root, so it needs no attribute and a failed restore lands on it rather than
    on an unstyled shell. Every other palette overrides from there.
    --------------------------------------------------------------------------- */
 :root {
-  /* Charcoal. Accent kept slightly blue rather than neutral grey: a pure-grey
-     Run button stops reading as the primary action. */
-  --pio-nav: #23262B;           /* sidebar + drawer surface */
-  --pio-nav-border: #14171A;
-  --pio-accent: #3D4A57;        /* primary action, toggles, links */
-  --pio-accent-lift: #52626F;   /* lighter end of the Run gradient */
-  --pio-accent-soft: #8496A6;   /* running indicator, active-nav rail */
-  --pio-accent-softer: #B8C6D2; /* second stripe of the barber pole */
-  --pio-accent-wash: rgba(132,150,166,0.16);
-  --pio-accent-wash-strong: rgba(132,150,166,0.22);
-  --pio-accent-shadow: rgba(61,74,87,0.34);
+  /* Navy. */
+  --pio-nav: #1B2A4A;           /* sidebar + drawer surface */
+  --pio-nav-border: #131F38;
+  --pio-accent: #2E4D7E;        /* primary action, toggles, links */
+  --pio-accent-lift: #3E62A0;   /* lighter end of the Run gradient */
+  --pio-accent-soft: #6E92D6;   /* running indicator, active-nav rail */
+  --pio-accent-softer: #9DBDF0; /* second stripe of the barber pole */
+  --pio-accent-wash: rgba(46,77,126,0.18);
+  --pio-accent-wash-strong: rgba(46,77,126,0.22);
+  --pio-accent-shadow: rgba(46,77,126,0.28);
 
   /* Foreground tiers on the nav surface. Shared by every dark palette; only a
      light theme needs to override them. */
@@ -55,16 +54,18 @@
   --pio-run-fg: #FFFFFF;
 }
 
-:root[data-theme='navy'] {
-  --pio-nav: #1B2A4A;
-  --pio-nav-border: #131F38;
-  --pio-accent: #2E4D7E;
-  --pio-accent-lift: #3E62A0;
-  --pio-accent-soft: #6E92D6;
-  --pio-accent-softer: #9DBDF0;
-  --pio-accent-wash: rgba(46,77,126,0.18);
-  --pio-accent-wash-strong: rgba(46,77,126,0.22);
-  --pio-accent-shadow: rgba(46,77,126,0.28);
+:root[data-theme='charcoal'] {
+  /* Accent kept slightly blue rather than neutral grey: a pure-grey Run
+     button stops reading as the primary action. */
+  --pio-nav: #23262B;
+  --pio-nav-border: #14171A;
+  --pio-accent: #3D4A57;
+  --pio-accent-lift: #52626F;
+  --pio-accent-soft: #8496A6;
+  --pio-accent-softer: #B8C6D2;
+  --pio-accent-wash: rgba(132,150,166,0.16);
+  --pio-accent-wash-strong: rgba(132,150,166,0.22);
+  --pio-accent-shadow: rgba(61,74,87,0.34);
 }
 
 :root[data-theme='burgundy'] {
