@@ -28,7 +28,7 @@
         "write_qc_plots": false
     },
     "maxLFQ": {
-        "run_to_run_normalization": false,
+        "run_to_run_normalization": true,
         "max_chunk_size_mb": 1024
     },
     "output": {
