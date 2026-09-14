@@ -96,6 +96,7 @@ include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_post
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
 include("./UnitTests/test_scoring_semisupervised.jl")
 include("./UnitTests/test_run_summary.jl")
+include("./UnitTests/test_file_name_labels.jl")
 
 # FileOperations pipeline
 include("./utils/FileOperations/pipeline/test_pipeline_filtering.jl")
