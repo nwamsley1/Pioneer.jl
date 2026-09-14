@@ -778,23 +778,26 @@ export default function App() {
 
   const info = (k: string): PathInfo => pathInfos[k] ?? EMPTY_PATH_INFO
 
-  /** The library a queued or running build/download is about to produce, so a
-   *  search that consumes it can be queued behind it rather than waiting for
-   *  the folder to appear. Most recently queued wins when there are several. */
-  const pendingLibrary = useMemo(() => {
+  /** The libraries the queued or running builds/downloads are about to
+   *  produce, most recently queued first, so a search that consumes one can be
+   *  queued behind it rather than waiting for the folder to appear. */
+  const pendingLibraries = useMemo(() => {
+    const out: string[] = []
     for (let i = jobs.length - 1; i >= 0; i--) {
       const j = jobs[i]
       if (j.status !== 'queued' && j.status !== 'running') continue
       if (j.snapshot.cmd !== 'buildspeclib' && j.snapshot.cmd !== 'downloadspeclib') continue
       const path = libraryOf(j)
-      if (path) return path
+      if (path) out.push(path)
     }
-    return null
+    return out
   }, [jobs])
+  const pendingLibrary = pendingLibraries[0] ?? null
 
-  // Fill an empty library field from that job. The Run handler already does
-  // this at the moment a build is queued; this also covers arriving at
-  // SearchDIA with the field cleared, or a build queued before it was.
+  // Fill an empty library field from the latest such job. The Run handler
+  // already does this at the moment a build is queued; this also covers
+  // arriving at SearchDIA with the field cleared, or a build queued before it
+  // was.
   useEffect(() => {
     if (!pendingLibrary) return
     setSearch((p) => (p.library.trim() ? p : { ...p, library: pendingLibrary }))
@@ -803,11 +806,11 @@ export default function App() {
   const searchNotes = useMemo(
     () => ({
       msData: msDataNote(search.msData, info('msData')),
-      library: pendingLibraryNote(search.library, info('library'), pendingLibrary),
+      library: pendingLibraryNote(search.library, info('library'), pendingLibraries),
       results: resultsNote(search.results, info('results')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [search.msData, search.library, search.results, pathInfos, pendingLibrary],
+    [search.msData, search.library, search.results, pathInfos, pendingLibraries],
   )
 
   const fastaNotes = useMemo(
@@ -1697,7 +1700,7 @@ export default function App() {
       : isDownload
         ? validateDownloadRun(download, downloadTargetExists)
         : isSearch
-          ? validateSearchRun(search, searchNotes, pendingLibrary)
+          ? validateSearchRun(search, searchNotes, pendingLibraries)
           : validateBuildRun(build, fastaNotes, libNote, calibNote)
     if (block) {
       setRunError(block.msg)

@@ -157,13 +157,23 @@ export function msDataNote(value: string, info: PathInfo): Note {
 export function pendingLibraryNote(
   value: string,
   info: PathInfo,
-  pendingLibrary: string | null,
+  pendingLibraries: string[],
 ): Note {
   const note = libraryNote(value, info)
   if (note.level !== 'error') return note
-  if (pendingLibrary === null || value.trim() !== pendingLibrary) return note
+  if (!isPendingLibrary(value, pendingLibraries)) return note
   if (info.exists) return note
   return { level: 'warn', msg: 'Being built by a queued run — this search will wait for it.' }
+}
+
+/** Whether `value` names a library a queued or running build/download is about
+ *  to produce. Compared with trailing separators dropped: the typed path and
+ *  the one derived from the producing job describe the same folder either
+ *  way, and a stray slash must not turn "wait for it" into "does not exist". */
+export function isPendingLibrary(value: string, pendingLibraries: string[]): boolean {
+  const norm = (p: string) => p.trim().replace(/[\\/]+$/, '')
+  const v = norm(value)
+  return v !== '' && pendingLibraries.some((p) => norm(p) === v)
 }
 
 /** A spectral library is a *directory* of Arrow/JLD2/JLS tables, not a single
@@ -313,8 +323,8 @@ export interface RunBlock {
 }
 
 /**
- * @param pendingLibrary Path a queued or running BuildSpecLib/DownloadSpecLib
- *   job will produce, or null when no such job is waiting.
+ * @param pendingLibraries Paths the queued or running BuildSpecLib/DownloadSpecLib
+ *   jobs will produce; empty when no such job is waiting.
  */
 export function validateSearchRun(
   values: {
@@ -330,7 +340,7 @@ export function validateSearchRun(
     minPeptides: string
   },
   notes: { msData: Note; library: Note; results: Note },
-  pendingLibrary: string | null = null,
+  pendingLibraries: string[] = [],
 ): RunBlock | null {
   // In file-list mode the folder field is unused and its note is meaningless:
   // what has to be there is at least one file. Everything below is shared --
@@ -366,11 +376,10 @@ export function validateSearchRun(
   // A library that is still being predicted is not a missing library. With a
   // build or download ahead of it in the queue, the search that consumes its
   // output can be queued behind it -- the folder does not exist while the
-  // search sits in the queue, and does by the time it starts. Only that one
-  // path earns the exemption: any other path that does not exist is still the
+  // search sits in the queue, and does by the time it starts. Only those
+  // paths earn the exemption: any other path that does not exist is still the
   // mistake it always was.
-  const awaitsPending =
-    pendingLibrary !== null && values.library.trim() === pendingLibrary
+  const awaitsPending = isPendingLibrary(values.library, pendingLibraries)
 
   if (!awaitsPending) {
     if (!values.library.trim()) {
