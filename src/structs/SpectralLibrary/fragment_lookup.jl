@@ -3,7 +3,7 @@
 # A LibraryFragmentLookup maps precursor IDs to their fragment ions.
 # Two concrete types:
 # - StandardFragmentLookup: fixed intensity (DetailedFrag)
-# - SplineFragmentLookup: spline-interpolated intensity (SplineDetailedFrag)
+# - SplineFragmentLookup: spline-interpolated intensity (SplineCompactFrag)
 #
 # NceModel predicts normalized collision energy from precursor m/z and charge.
 
@@ -22,19 +22,6 @@ getFrag(lfp::StandardFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::StandardFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} =
     range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
-
-function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
-    return ConstantType()
-end
-function getSplineData(lfp::StandardFragmentLookup)
-    return ConstantType()
-end
-function getSplineData(lfp::StandardFragmentLookup, nce_model::NceModel{T}, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
-    return ConstantType()
-end
-function getSplineData(lfp::StandardFragmentLookup, nce_model::NceModel{T}) where {T<:AbstractFloat}
-    return ConstantType()
-end
 
 # ============================================================================
 # NceModel — collision energy prediction
@@ -61,26 +48,63 @@ end
 # SplineFragmentLookup (spline-interpolated intensity)
 # ============================================================================
 
-if !@isdefined(SplineFragmentLookup)
 struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
     frags::Vector{SplineCompactFrag{N,T}}
     prec_frag_ranges::Vector{UInt64}
     knots::NTuple{M, T}
-    degree::Int64
-end
 end
 
-getDegree(lfp::SplineFragmentLookup) = lfp.degree
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
 getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} =
     range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
-function getSplineData(lfp::SplineFragmentLookup{N,M,T}, nce_model::NceModel{T}, prec_charge::UInt8, prec_mz::T) where {N,M,T<:AbstractFloat}
-    return SplineType(getKnots(lfp), nce_model(prec_mz, prec_charge), getDegree(lfp))
+# ============================================================================
+# Prepared spline interpolation data
+# ============================================================================
+
+struct ConstantSplineIntensityModel{T<:AbstractFloat}
+    data::PreparedSplineFractions{T}
 end
 
-function getSplineData(lfp::SplineFragmentLookup{N,M,T}, nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
-    return SplineType(getKnots(lfp), nce_model(), getDegree(lfp))
+struct DynamicSplineIntensityModel{M,K}
+    nce_model::M
+    knots::K
+end
+
+struct BinnedSplineIntensityModel{M,T<:AbstractFloat}
+    nce_model::M
+    data::Vector{PreparedSplineFractions{T}}
+    default_data::PreparedSplineFractions{T}
+end
+
+prepare_fragment_intensity_model(
+    ::StandardFragmentLookup, ::NceModel) = ConstantType()
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, nce_model::NceModel)
+    return DynamicSplineIntensityModel(nce_model, getKnots(lookup))
+end
+
+@inline getSplineData(
+    ::StandardFragmentLookup, intensity_data::ConstantType,
+    ::UInt8, ::AbstractFloat) = intensity_data
+
+@inline getSplineData(
+    ::SplineFragmentLookup, model::ConstantSplineIntensityModel,
+    ::UInt8, ::AbstractFloat) = model.data
+
+@inline function getSplineData(
+    ::SplineFragmentLookup, model::DynamicSplineIntensityModel,
+        prec_charge::UInt8, prec_mz::AbstractFloat)
+    nce = model.nce_model(prec_mz, prec_charge)
+    return prepare_spline_fractions(nce, model.knots)
+end
+
+@inline function getSplineData(
+        ::SplineFragmentLookup, model::BinnedSplineIntensityModel,
+        prec_charge::UInt8, prec_mz::AbstractFloat)
+    slot = nce_cache_slot(model.nce_model, prec_mz, prec_charge)
+    return slot == 0 ? model.default_data : @inbounds(model.data[slot])
 end

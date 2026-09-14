@@ -127,6 +127,18 @@ else
 end
 return base + f.charge_slope * charge
 end
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::PiecewiseNceModel)
+    # PiecewiseNceModel(nce) is the constant model used for the NCE sweep and
+    # as the pre-calibration default. All precursor m/z values are positive.
+    if model.breakpoint == zero(model.breakpoint) &&
+            model.charge_slope == zero(model.charge_slope)
+        return ConstantSplineIntensityModel(
+            prepare_spline_fractions(model.right_value, getKnots(lookup)))
+    end
+    return DynamicSplineIntensityModel(model, getKnots(lookup))
+end
  
  # Add method for vectors
  function (f::PiecewiseNceModel)(x::AbstractVector, charge::AbstractVector)
@@ -151,7 +163,8 @@ struct BinnedMedianNceModel{T<:AbstractFloat} <: NceModel{T}
     default_nce::T
 end
 
-function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
+@inline function nce_cache_slot(
+        m::BinnedMedianNceModel{T}, mz::AbstractFloat, charge::Integer) where {T}
     c = Int(charge)
     if c < 1 || c > 6 || m.offsets[c] == 0x00
         best_c = 0
@@ -164,15 +177,28 @@ function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where 
                 best_c = k
             end
         end
-        best_c == 0 && return m.default_nce
+        best_c == 0 && return 0
         c = best_c
     end
     nb = Int(m.n_bins[c])
     idx = clamp(floor(Int, (T(mz) - m.mz_min[c]) / m.bin_width[c]) + 1, 1, nb)
-    return m.medians[Int(m.offsets[c]) + idx - 1]
+    return Int(m.offsets[c]) + idx - 1
+end
+
+function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
+    slot = nce_cache_slot(m, mz, charge)
+    return slot == 0 ? m.default_nce : @inbounds(m.medians[slot])
 end
 
 (m::BinnedMedianNceModel)() = m.default_nce
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::BinnedMedianNceModel)
+    knots = getKnots(lookup)
+    data = [prepare_spline_fractions(nce, knots) for nce in model.medians]
+    default_data = prepare_spline_fractions(model.default_nce, knots)
+    return BinnedSplineIntensityModel(model, data, default_data)
+end
 
 function (m::BinnedMedianNceModel)(x::AbstractVector, charge::AbstractVector)
     return map((xi, ci) -> m(xi, ci), x, charge)

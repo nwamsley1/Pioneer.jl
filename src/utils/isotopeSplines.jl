@@ -344,10 +344,9 @@ end
 #############################################################################
 # getFragIsotopes! — normalised fragment isotope intensities
 #
-# Three method overloads:
+# Two method overloads:
 #   1. (isotopes, iso_splines, prec_mz, ..., frag::LibraryFragmentIon, pset)
-#   2. (isotopes, iso_splines, prec_mz, ..., frag::SplineDetailedFrag, knots, nce, pset)
-#   3. (frag_isotopes, precursor_transmission, iso_splines, ..., frag::LibraryFragmentIon)
+#   2. (frag_isotopes, precursor_transmission, iso_splines, ..., frag::LibraryFragmentIon)
 #############################################################################
 
 """
@@ -365,33 +364,6 @@ function getFragIsotopes!(isotopes::Vector{Float32},
                             prec_isotope_set::Tuple{Int64, Int64})
     fill!(isotopes, zero(eltype(isotopes)))
     total_fragment_intensity = frag.intensity
-
-    getFragAbundance!(isotopes, iso_splines, prec_mz, prec_charge,
-                      prec_sulfur_count, frag, prec_isotope_set)
-
-    iso_sum = sum(isotopes)
-    @inbounds @fastmath for i in reverse(range(1, length(isotopes)))
-        isotopes[i] = total_fragment_intensity*isotopes[i]/iso_sum
-    end
-end
-
-"""
-    getFragIsotopes!(isotopes, iso_splines, prec_mz, prec_charge, prec_sulfur_count, frag::SplineDetailedFrag, knots, nce, prec_isotope_set)
-
-Variant for `SplineDetailedFrag`: intensity is evaluated from the spline model
-at the given NCE rather than taken from a stored field.
-"""
-function getFragIsotopes!(isotopes::Vector{Float32},
-                            iso_splines::IsotopeSplineModel,
-                            prec_mz::Float32,
-                            prec_charge::UInt8,
-                            prec_sulfur_count::UInt8,
-                            frag::SplineDetailedFrag{N, Float32},
-                            knots::NTuple{M, Float32},
-                            nce::Float32,
-                            prec_isotope_set::Tuple{Int64, Int64}) where {M, N}
-    fill!(isotopes, zero(eltype(isotopes)))
-    total_fragment_intensity = getIntensity(frag, knots, 3, nce)
 
     getFragAbundance!(isotopes, iso_splines, prec_mz, prec_charge,
                       prec_sulfur_count, frag, prec_isotope_set)

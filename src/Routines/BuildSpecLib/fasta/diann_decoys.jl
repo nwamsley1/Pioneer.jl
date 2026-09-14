@@ -281,7 +281,7 @@ function apply_diann_decoy_style!(lib_path::String)
         else
             error("spline_knots file not found in $lib_path")
         end
-        temp_lookup = SplineFragmentLookup(all_new_frags, new_pid_to_fid, Tuple(spl_knots), 3)
+        temp_lookup = SplineFragmentLookup(all_new_frags, new_pid_to_fid, Tuple(spl_knots))
         temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
     else
         temp_lookup = StandardFragmentLookup(all_new_frags, new_pid_to_fid)

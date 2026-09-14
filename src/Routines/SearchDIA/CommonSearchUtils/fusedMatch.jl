@@ -782,7 +782,7 @@ function run_fused!(
     isotopes_buf::Vector{Float32},
     prec_trans_buf::Vector{Float32},
     ion_list::LibraryFragmentLookup,
-    nce_model::NceModel{Float32},
+    intensity_model,
     precursors_passed::Vector{UInt32},
     prec_range::AbstractVector{Int64},
     prec_mzs::AbstractArray{Float32},
@@ -836,7 +836,7 @@ function run_fused!(
         end
 
         prec_sulfur = prec_sulfur_counts[prec_idx]
-        spline_data = getSplineData(ion_list, nce_model, prec_charge, prec_mz)
+        spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz)
 
         # Outer iso-pass loop: 1 iteration for FusedStandard (compiler
         # removes the wrapper), 3 for FusedQuadEst (one pass per isotope

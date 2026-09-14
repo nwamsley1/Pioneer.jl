@@ -186,10 +186,11 @@ end
 # Thin wrapper: invoke run_fused! with all the fixture's args.
 function call_run_fused!(fx; kwargs...)
     f = merge(fx, values(kwargs))
+    intensity_model = Pioneer.prepare_fragment_intensity_model(f.ion_list, f.nce_model)
     return run_fused!(
         f.kind, f.Hs, f.unscored_psms, f.id_to_col, f.scratch,
         f.scan_corrected_mz, f.scan_obs_low, f.scan_obs_high, f.peak_mz_len,
-        f.isotopes_buf, f.prec_trans_buf, f.ion_list, f.nce_model,
+        f.isotopes_buf, f.prec_trans_buf, f.ion_list, intensity_model,
         f.precursors_passed, f.prec_range,
         f.prec_mzs, f.prec_charges, f.prec_sulfur_counts, f.prec_irts,
         f.iso_splines, f.qfunc, f.mem, f.scan_int,
@@ -933,8 +934,8 @@ end
         UInt8(2), UInt8(5), prec_charge, UInt8(1), UInt8(1))
     knots = (10f0, 10f0, 10f0, 10f0, 50f0, 50f0, 50f0, 50f0)
     intensity_cases = ((constant_frag, Pioneer.ConstantType()),
-        (spline_frag, Pioneer.SplineType(knots, 20f0, 3)),
-        (spline_frag, Pioneer.SplineType(knots, 40f0, 3)))
+        (spline_frag, Pioneer.prepare_spline_fractions(20f0, knots)),
+        (spline_frag, Pioneer.prepare_spline_fractions(40f0, knots)))
     @test Pioneer.getIntensity(spline_frag, intensity_cases[2][2]) !=
         Pioneer.getIntensity(spline_frag, intensity_cases[3][2])
 
@@ -1012,7 +1013,7 @@ end
                      Float32(f.intensity) * 0.8f0, Float32(f.intensity) * 1.5f0),
                     f.packed_a, f.packed_b) for f in fx.ion_list.frags]
                 knots = (10f0, 10f0, 10f0, 10f0, 50f0, 50f0, 50f0, 50f0)
-                lookup = Pioneer.SplineFragmentLookup(spline_frags, UInt64[1, 4], knots, 3)
+                lookup = Pioneer.SplineFragmentLookup(spline_frags, UInt64[1, 4], knots)
                 fx = merge(fx, (ion_list = lookup,))
             end
             @test call_run_fused!(fx) == (count + 1, 2count - 1)
@@ -1024,7 +1025,9 @@ end
             @test h.rowval[matched] == UInt32.(1:count + 1)
             @test h.x[matched] == Float32.(100:100:100 * (count + 1))
 
-            intensity_data = Pioneer.getSplineData(fx.ion_list, fx.nce_model,
+            intensity_model = Pioneer.prepare_fragment_intensity_model(
+                fx.ion_list, fx.nce_model)
+            intensity_data = Pioneer.getSplineData(fx.ion_list, intensity_model,
                 fx.prec_charges[1], fx.prec_mzs[1])
             for (rank, frag) in enumerate(fx.ion_list.frags)
                 entries = [i for i in 1:h.n_vals if Pioneer.rank_at(h, i) == rank]

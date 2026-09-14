@@ -448,14 +448,14 @@ end
 function _wide_top_fragment_idxs(
     frag_lookup::LibraryFragmentLookup,
     frag_list,
-    nce_model,
+    intensity_model,
     pid::UInt32,
     prec_charge::UInt8,
     prec_mz::Float32,
 )
     frag_idxs = zeros(UInt64, 8)
     pred_intensities = fill(-Inf32, 8)
-    spline_data = getSplineData(frag_lookup, nce_model, prec_charge, prec_mz)
+    spline_data = getSplineData(frag_lookup, intensity_model, prec_charge, prec_mz)
     frag_range = getPrecFragRange(frag_lookup, pid)
     @inbounds for frag_idx in frag_range
         frag = frag_list[Int(frag_idx)]
@@ -779,6 +779,7 @@ function add_wide_window_features_to_table!(
     prec_mzs = getMz(precursors)
     prec_charges = getCharge(precursors)
     frag_list = getFragments(frag_lookup)
+    intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
     columns = (
         ms1_candidate = flanking_ms1_m0_candidate_fraction,
         frag_candidate = flanking_frag_candidate_fraction,
@@ -832,7 +833,7 @@ function add_wide_window_features_to_table!(
         fragment_idxs = _wide_top_fragment_idxs(
             frag_lookup,
             frag_list,
-            nce_model,
+            intensity_model,
             pid,
             prec_charge,
             prec_mz,

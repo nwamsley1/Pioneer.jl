@@ -1621,6 +1621,7 @@ function build_chromatograms(
     prec_sulfur_arr = getSulfurCount(precursors)
     prec_irt_arr = getIrt(precursors)
     frag_lookup = getFragmentLookupTable(spec_lib)
+    intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
 
     kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
 
@@ -1700,7 +1701,7 @@ function build_chromatograms(
             Hs, unscored_psms, id_to_col, fused_scratch,
             corr_mz, obs_low, obs_high, peak_mz_len,
             isotopes_buf, prec_trans_buf,
-            frag_lookup, nce_model,
+            frag_lookup, intensity_model,
             precs_temp, 1:prec_temp_size,
             prec_mz_arr, prec_charge_arr, prec_sulfur_arr, prec_irt_arr,
             getIsoSplines(search_data), quad_func, mass_error_model,

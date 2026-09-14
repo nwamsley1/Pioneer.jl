@@ -405,12 +405,13 @@ function fit_nce_from_psms!(
     t_nce = time()
     all_results = map(nce_grid) do nce_val
         nce_model = PiecewiseNceModel(nce_val)
+        intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                nce_model, qtm, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm, mem, rt_to_irt, irt_tol)
         end
         result = vcat(fetch.(tasks)...)
         if !isempty(result)

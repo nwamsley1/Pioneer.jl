@@ -113,8 +113,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             library_fragment_lookup_table = SplineFragmentLookup(
                 detailed_frags,
                 prec_frag_ranges,
-                Tuple(spl_knots),
-                3
+                Tuple(spl_knots)
             )
         catch e
             @user_warn "Could not load spline_knots"
