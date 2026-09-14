@@ -312,6 +312,12 @@ export default function App() {
   const [uninstalling, setUninstalling] = useState(false)
   const [uninstallError, setUninstallError] = useState('')
   const [viewJobId, setViewJobId] = useState<string | null>(null)
+  /** The log drawer follows the active job: when one run finishes and the
+   *  next starts, the view moves with it. Clicking a *different* job pins the
+   *  view there until the active job is clicked again (or the pinned job is
+   *  deleted). A ref, because the scheduler effect reads it without wanting
+   *  to re-run on every pin change. */
+  const pinnedJobId = useRef<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
   const [confirmCancel, setConfirmCancel] = useState(false)
@@ -936,6 +942,10 @@ export default function App() {
 
     startedIds.current.add(next.id)
     const appLine = (text: string): LogLine => ({ text, stream: 'app', transient: false })
+
+    // Follow the job that is now active, unless the user has pinned the view
+    // to another one.
+    if (pinnedJobId.current === null) setViewJobId(next.id)
 
     setJobs((prev) =>
       prev.map((j) =>
@@ -1636,8 +1646,14 @@ export default function App() {
       // kept, so a workflow tab still gives back the work in progress.
       const first = added[0].id
       setInspectingJobId((current) => (current ? first : null))
-      setViewJobId(first)
-      setDrawerOpen(true)
+      // With nothing running the new job starts at once, so show it. With a
+      // run in progress the drawer stays on that run: queuing more work is
+      // not a reason to lose sight of the log being watched.
+      if (!jobs.some((j) => j.status === 'running')) {
+        pinnedJobId.current = null
+        setViewJobId(first)
+        setDrawerOpen(true)
+      }
     }
     setRunError(failure)
   }
@@ -1854,6 +1870,9 @@ export default function App() {
         onViewJob={(id) => {
           const job = jobs.find((j) => j.id === id)
           if (job) inspectJob(job)
+          // Clicking the active job means "follow along"; any other job pins
+          // the view there.
+          pinnedJobId.current = job?.status === 'running' ? null : id
           if (drawerOpen && viewJobId === id) setDrawerOpen(false)
           else {
             setViewJobId(id)
@@ -2125,6 +2144,7 @@ export default function App() {
               if (kind === 'delete') {
                 // Also from the store, or the next read brings it back.
                 backend.historyDelete(id).catch(() => undefined)
+                if (pinnedJobId.current === id) pinnedJobId.current = null
                 setJobs((prev) => {
                   const rest = prev.filter((j) => j.id !== id)
                   if (viewJobId === id) {
