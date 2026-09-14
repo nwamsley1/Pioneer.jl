@@ -1560,15 +1560,34 @@ export default function App() {
         return
       }
       added.push(makeJob(id, runNo, resolveRunName(jobName, taken), { ...search, msData }))
-    } else if (isSearch && search.msDataMode === 'files') {
+    } else if (isSearch && (search.msDataMode === 'files' || search.msDataBatch)) {
       // One run per file. Pioneer has no way to be handed a list -- it takes a
       // directory and searches everything in it -- so each run gets a directory
       // of its own holding a single link to its file, plus a results folder
       // named after that file. Together those are what "search these
       // separately" means: no shared FDR, no match-between-runs across files
       // that are meant to be compared, and one output tree per file.
+      //
+      // A folder searched separately fans out over the .arrow files inside it
+      // -- the same set a folder-mode run would have searched as one.
+      let files = search.msDataFiles
+      if (search.msDataMode === 'folder') {
+        try {
+          // The folder field also accepts a single file; that is a batch of one.
+          files = info('msData').is_file
+            ? [search.msData.trim()]
+            : await backend.listArrowFiles(search.msData)
+        } catch (e) {
+          setRunError(String(e))
+          return
+        }
+        if (!files.length) {
+          setRunError('No .arrow files in that folder.')
+          return
+        }
+      }
       const base = resolveRunName(jobName, taken)
-      for (const file of search.msDataFiles) {
+      for (const file of files) {
         const stem = fileStem(file)
         const { id, runNo } = await allocate()
         let msData: string

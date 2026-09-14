@@ -70,6 +70,11 @@ export const readConfig = (path: string): Promise<string> => invoke('read_config
 export const stageFiles = (jobId: string, subdir: string, files: string[]): Promise<string> =>
   invoke('stage_files', { jobId, subdir, files })
 
+/** The `.arrow` files directly inside a folder, full paths in name order: what
+ *  a folder searched file-by-file fans out over. */
+export const listArrowFiles = (dir: string): Promise<string[]> =>
+  invoke('list_arrow_files', { dir })
+
 /** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
  *  Captured rather than streamed: it is data, not run output. */
 export const listSpecLibs = (repo?: string): Promise<string> =>
