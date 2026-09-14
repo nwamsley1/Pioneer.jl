@@ -92,6 +92,103 @@ export const KOINA_MODS: Record<string, KoinaMod[]> = {
   prosit_2025_40ptm: PTM_MODS,
 }
 
+/** Fragment models that can predict an unmodified cysteine. Every other model
+ *  was trained with cysteine carbamidomethylated, so for them the alkylation
+ *  is pinned (see requiresFixedAlkylation). Mirrors `free_cys` in
+ *  MODEL_CONFIGS (src/Pioneer.jl): the Prosit 2025 40-PTM model card says it
+ *  was trained on peptides with free cysteine side chains. */
+const FREE_CYS_MODELS = new Set(['prosit_2025_40ptm'])
+
+/** A retention-time model, selectable independently of the fragment model.
+ *  Mirrors RT_MODEL_CONFIGS in src/Pioneer.jl; keep the two in step. */
+export interface RtModel {
+  id: string
+  label: string
+  note: string
+  /** What it was trained on, in the same shape as a fragment model's list. */
+  mods: KoinaMod[]
+  /** Whether an unmodified cysteine is something it can predict. */
+  freeCys: boolean
+}
+
+// Chronologer's published 17 modification types (searlelab/chronologer
+// README), in UNIMOD terms. Masses as in UNIMOD, so a row is a real record.
+const CHRONOLOGER_MODS: KoinaMod[] = [
+  { unimod: 4, label: 'Carbamidomethyl', mass: 57.021464, sites: ['C'] },
+  { unimod: 35, label: 'Oxidation', mass: 15.994915, sites: ['M'] },
+  { unimod: 21, label: 'Phospho', mass: 79.966331, sites: ['S', 'T', 'Y'] },
+  { unimod: 1, label: 'Acetyl', mass: 42.010565, sites: ['K'] },
+  { unimod: 64, label: 'Succinyl', mass: 100.016044, sites: ['K'] },
+  { unimod: 121, label: 'GG', mass: 114.042927, sites: ['K'] },
+  { unimod: 34, label: 'Methyl', mass: 14.01565, sites: ['K', 'R'] },
+  { unimod: 36, label: 'Dimethyl', mass: 28.0313, sites: ['K', 'R'] },
+  { unimod: 37, label: 'Trimethyl', mass: 42.04695, sites: ['K'] },
+  { unimod: 739, label: 'TMT', mass: 224.152478, sites: ['K'] },
+  { unimod: 737, label: 'TMT6plex', mass: 229.162932, sites: ['K'] },
+  { unimod: 27, label: 'Glu->pyro-Glu', mass: -18.010565, sites: ['E'] },
+  { unimod: 28, label: 'Gln->pyro-Glu', mass: -17.026549, sites: ['Q'] },
+  { unimod: 26, label: 'Pyro-carbamidomethyl', mass: 39.994915, sites: ['C'] },
+]
+
+export const RT_MODELS: RtModel[] = [
+  {
+    id: 'chronologer',
+    label: 'Chronologer',
+    note: 'Hydrophobic index (% acetonitrile); 17 common modifications.',
+    mods: CHRONOLOGER_MODS,
+    // Plain C is its own residue token in Chronologer's alphabet.
+    freeCys: true,
+  },
+  {
+    id: 'prosit_2024_irt_ptm',
+    label: 'Prosit 2024 iRT (PTM)',
+    note: 'Prosit iRT scale; the PTM vocabulary of the Prosit PTM fragment models.',
+    mods: PTM_MODS,
+    freeCys: true,
+  },
+]
+
+export const DEFAULT_RT_MODEL = 'chronologer'
+
+export function rtModelById(id: string): RtModel {
+  return RT_MODELS.find((m) => m.id === id) ?? RT_MODELS[0]
+}
+
+/** The residues of `pattern` on which the RT model cannot predict this
+ *  modification: empty when the row is fully supported. An accession the
+ *  model has no entry for is unsupported on every residue. */
+export function rtUnsupportedResidues(rtId: string, name: string, pattern: string): string[] {
+  const id = unimodId(name)
+  const def = id === null ? null : rtModelById(rtId).mods.find((m) => m.unimod === id)
+  const residues = residuesOf(pattern)
+  return def ? residues.filter((r) => !def.sites.includes(r)) : residues
+}
+
+/** No fixed modification covers cysteine: the library will carry it
+ *  unmodified, which only some models can predict. */
+export function isFreeCys(fixed: { pattern: string }[]): boolean {
+  return !fixed.some((m) => residuesOf(m.pattern).includes(REQUIRED_FIXED_SITE))
+}
+
+/** Whether the fragment model can predict an unmodified cysteine. */
+export function modelAllowsFreeCys(modelId: string): boolean {
+  return FREE_CYS_MODELS.has(modelId)
+}
+
+/** The RT models that accept every selected modification and, if cysteine
+ *  is left unmodified, free cysteine -- what a "switch to" hint can offer. */
+export function rtModelsAccepting(
+  fixed: { name: string; pattern: string }[],
+  variable: { name: string; pattern: string }[],
+): RtModel[] {
+  const freeCys = isFreeCys(fixed)
+  return RT_MODELS.filter(
+    (rt) =>
+      (!freeCys || rt.freeCys) &&
+      [...fixed, ...variable].every((m) => rtUnsupportedResidues(rt.id, m.name, m.pattern).length === 0),
+  )
+}
+
 export function modsForModel(modelId: string): KoinaMod[] {
   return KOINA_MODS[modelId] ?? BASE_MODS
 }
@@ -143,28 +240,22 @@ export function siteAllowed(mod: KoinaMod, pattern: string): boolean {
 
 /** UNIMOD 4 on C, Carbamidomethyl.
  *
- *  Every Koina model currently supported is trained on alkylated cysteine, so
- *  the C site is not a choice: always fixed, never variable. A library built
- *  without it does not match what the model predicts, and the mismatch is
- *  silent -- the search simply finds less.
+ *  Most Koina models are trained on alkylated cysteine, so for them the C site
+ *  is not a choice: always fixed, never variable. A library built without it
+ *  does not match what the model predicts, and the mismatch is silent -- the
+ *  search simply finds less. A model in FREE_CYS_MODELS can predict an
+ *  unmodified cysteine, and for it the row is an ordinary, removable one.
  *
  *  The pin is on the *site*, not the modification. Models whose UNIMOD 4 also
  *  covers K leave K entirely free: fixed, variable or absent, as the user
  *  likes. Multi-site mods are one row with a combined pattern, so "fixed on C
  *  and K" is the single fixed row carrying `[CK]` rather than a second row.
- *
- *  Kept here rather than in the form so a future model which does not want it
- *  opts out in one place.
  */
 export const REQUIRED_FIXED_UNIMOD = 4
 export const REQUIRED_FIXED_SITE = 'C'
 
-/** Models that require it. Currently all of them; named explicitly so adding a
- *  model is a decision rather than an inheritance. */
-const REQUIRES_FIXED_ALKYLATION = new Set(Object.keys(KOINA_MODS))
-
 export function requiresFixedAlkylation(modelId: string): boolean {
-  return REQUIRES_FIXED_ALKYLATION.has(modelId)
+  return !FREE_CYS_MODELS.has(modelId)
 }
 
 /** The residues a pattern names, `[CK]` -> `['C','K']`. */

@@ -12,6 +12,16 @@ import type {
   ModEntry,
   PathInfo,
 } from './types'
+import { predictionModelById } from './types'
+import {
+  findMod,
+  isFreeCys,
+  modelAllowsFreeCys,
+  rtModelById,
+  rtModelsAccepting,
+  rtUnsupportedResidues,
+  siteAllowed,
+} from './koinaMods'
 
 export interface NumSpec {
   label: string
@@ -451,6 +461,8 @@ export function validateBuildRun(
   }
   const conflict = modSiteConflict(p.fixedMods, p.variableMods)
   if (conflict) return { key: 'variableMods', msg: conflict }
+  const support = modelSupportBlock(p)
+  if (support) return support
   // Only when they are actually used: with auto-detection on these come from
   // the reference file and whatever is in the fields is ignored.
   if (!p.autoDetectFragBounds) {
@@ -468,6 +480,57 @@ export function validateBuildRun(
       for (const key of ['fragCeilingSlope', 'fragCeilingIntercept'] as const) {
         const err = numError(key, p[key])
         if (err) return { key, msg: `Fragment ceiling ${NUM_SPECS[key].label}: ${err}.` }
+      }
+    }
+  }
+  return null
+}
+
+/** A modification -- or an unmodified cysteine -- that the fragment model or
+ *  the retention-time model cannot predict. Mirrors `check_model_mod_support`
+ *  in Pioneer, which refuses the build on the same grounds; catching it here
+ *  keeps the refusal from arriving only after the run is queued. The message
+ *  names the two ways out: change the modifications, or switch model. */
+export function modelSupportBlock(p: BuildParams): RunBlock | null {
+  const frag = predictionModelById(p.predictionModel)
+  const rt = rtModelById(p.rtModel)
+  const alt = rtModelsAccepting(p.fixedMods, p.variableMods).filter((m) => m.id !== rt.id)
+  const orSwitch = alt.length
+    ? ` Remove it, or switch the retention-time model to ${alt.map((m) => m.label).join(' or ')}.`
+    : ' Remove it: no retention-time model supports the whole selection.'
+  for (const [kind, mods] of [
+    ['fixed', p.fixedMods],
+    ['variable', p.variableMods],
+  ] as const) {
+    for (const m of mods) {
+      const label = m.label || m.name
+      const def = findMod(p.predictionModel, m.name)
+      if (def === null || !siteAllowed(def, m.pattern)) {
+        return {
+          key: `${kind}Mods`,
+          msg: `${frag.label} cannot predict ${label}${def ? ` on ${m.pattern}` : ''}. Remove it, or choose a fragment model that supports it.`,
+        }
+      }
+      const bad = rtUnsupportedResidues(p.rtModel, m.name, m.pattern)
+      if (bad.length) {
+        return {
+          key: 'rtModel',
+          msg: `${rt.label} cannot predict retention times for ${label} on ${bad.join(', ')}.${orSwitch}`,
+        }
+      }
+    }
+  }
+  if (isFreeCys(p.fixedMods)) {
+    if (!modelAllowsFreeCys(p.predictionModel)) {
+      return {
+        key: 'fixedMods',
+        msg: `${frag.label} assumes carbamidomethylated cysteine. Add Carbamidomethyl as a fixed modification on C, or choose a fragment model that predicts unmodified cysteine.`,
+      }
+    }
+    if (!rt.freeCys) {
+      return {
+        key: 'rtModel',
+        msg: `${rt.label} cannot predict retention times for unmodified cysteine. Add Carbamidomethyl on C, or switch the retention-time model.`,
       }
     }
   }
