@@ -288,11 +288,14 @@ function summarize_results!(
     )
 
     # Concatenate chunks into a final Arrow file-format export for QC plots.
+    # The per-run summary is accumulated from the same chunks on this pass.
     @debug_l1 "Concatenating chunks to precursors_long.arrow..."
+    run_stats = [RunSummaryStats(name) for name in all_file_names]
     isfile(precursors_long_path) && rm(precursors_long_path)
     open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
         for chunk_ref in chunk_refs
             let tbl = Arrow.Table(file_path(chunk_ref))
+                accumulate_run_summary!(run_stats, tbl)
                 # Dictionary-encode the repeated string columns here, at the final write only --
                 # see OUTPUT_DICT_ENCODED_COLUMNS. -14.3% on this file, values unchanged.
                 Arrow.write(arrow_writer, dict_encode_output_columns(
@@ -305,6 +308,11 @@ function summarize_results!(
     end
     chunk_refs = nothing
     GC.gc()
+
+    @user_info "Writing run summary..."
+    add_protein_group_counts!(run_stats, DataFrame(Arrow.Table(protein_long_path)), all_file_names)
+    write_run_summary(joinpath(getDataOutDir(search_context), "run_summary.tsv"),
+                      run_stats, search_context)
 
     @user_info "Creating QC plots..."
     # Create QC plots
