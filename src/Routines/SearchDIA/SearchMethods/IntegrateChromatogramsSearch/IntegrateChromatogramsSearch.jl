@@ -719,7 +719,7 @@ function summarize_results!(
             min_pep_points_per_bin = params.pep_bin_size,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
             merged_path = joinpath(
-                getDataOutDir(search_context),
+                getDataOutDir(search_context), "temp_data",
                 "merged_quant.arrow",
             ),
             pre_mbr_qval_spline =

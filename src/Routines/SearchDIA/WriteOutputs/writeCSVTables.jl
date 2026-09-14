@@ -190,6 +190,23 @@ function getModifiedSequence(
 end
 
 """
+    _n_distinct_precursors(peptide_lists) -> Int
+
+Number of distinct precursor ids across the per-run `peptides` lists of one
+protein group. Missing rows/entries are skipped.
+"""
+function _n_distinct_precursors(peptide_lists::AbstractVector)
+    seen = Set{UInt32}()
+    for pep in peptide_lists
+        ismissing(pep) && continue
+        for pid in pep
+            ismissing(pid) || push!(seen, pid)
+        end
+    end
+    return length(seen)
+end
+
+"""
     _extend_batch_to_group_end(keys, batch_end_idx, n_rows) -> Int
 
 Walk `batch_end_idx` forward while `keys` keeps repeating, so a batch never splits one precursor
@@ -830,6 +847,18 @@ function writeProteinGroupsCSV(
         :abundance,
     ])
     select!(protein_groups_long, long_columns)
+
+    # Order protein groups by total distinct precursors across runs (most first),
+    # then global_pg_score, so both tables lead with the best-supported groups.
+    # The group key must stay contiguous for the wide-format batching below.
+    group_key = enabled_output_columns(output_schema_policy, :protein_groups,
+                                       Symbol[:species, :protein, :target, :entrap_id])
+    totals = combine(groupby(protein_groups_long, group_key),
+                     :peptides => _n_distinct_precursors => :n_precursors_total)
+    leftjoin!(protein_groups_long, totals, on = group_key, matchmissing = :equal)
+    protein_groups_long = sort(protein_groups_long,
+        [order(:n_precursors_total, rev = true), order(:global_pg_score, rev = true), group_key...])
+    select!(protein_groups_long, Not(:n_precursors_total))
 
     sorted_columns = vcat(wide_columns, file_names)
     protein_col = protein_groups_long[!, :protein]

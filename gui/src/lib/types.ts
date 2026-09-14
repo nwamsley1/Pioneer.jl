@@ -102,7 +102,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   nIsotopes: '2',
   nce: '26',
   minPeptides: '1',
-  runToRunNorm: false,
+  runToRunNorm: true,
   matchBetweenRuns: true,
   debugLogging: false,
 }

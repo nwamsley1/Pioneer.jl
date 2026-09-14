@@ -12,7 +12,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 * **`search.n_isotopes`** — number of fragment isotopes used in matching (default `2`, M and M+1). Set `1` for non-Altimeter libraries that do not model M+1 intensities (Prosit, UniSpec).
 * **`acquisition.nce`** — initial NCE guess for the pre-search before NCE tuning (default `26`, suitable for Thermo Orbitrap/Astral). If the auto-fitted NCE in the QC plot is far from this value, re-run with a closer guess.
 * **`optimization.machine_learning.max_psm_memory_mb`** — memory budget for in-memory LightGBM training (default `2000` MB). Raise on workstations with more RAM; lower to force the out-of-memory path earlier.
-* **`maxLFQ.run_to_run_normalization`** — apply between-run median-spline normalization to peak areas (default `false`). Turn on when systemic between-run intensity bias is expected.
+* **`maxLFQ.run_to_run_normalization`** — apply between-run median-spline normalization to peak areas (default `true`). Turn off when between-run intensity differences are biological rather than systematic.
 
 ### Global
 
@@ -58,7 +58,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `maxLFQ.run_to_run_normalization` | Bool | `false` | Apply between-run median-spline normalization to peak areas. |
+| `maxLFQ.run_to_run_normalization` | Bool | `true` | Apply between-run median-spline normalization to peak areas. |
 | `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during MaxLFQ. |
 
 ### Output
