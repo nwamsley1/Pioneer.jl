@@ -38,7 +38,7 @@ const ZT_PROFILE_FEATURES = Symbol[
 ]
 
 """
-    _zt_local_triangle_fit(w, k, bin_step, delta0, h_file; lim = 4) -> (h_ratio, r2)
+    _zt_local_triangle_fit(w, k, bin_step, delta0, h_file; lim) -> (h_ratio, r2)
 
 The SAME estimator QuadTuningSearch uses per meta-scan (`w = a - b*|Δ|`, `h = a/b`), applied
 to one collapsed profile: bins with weight > 0 and |Δ| <= `lim` Da, where Δ is the bin's offset
@@ -367,7 +367,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(f_tri_cos, cosv)
             push!(f_entropy, entv)
             push!(f_tri_pcor, _frag_pcor(w, tri))
-            hr, r2 = _zt_local_triangle_fit(w, k, geom.bin_step, pm - cmzs[c], h_file)
+            hr, r2 = _zt_local_triangle_fit(w, k, geom.bin_step, pm - cmzs[c], h_file;
+                                            lim = zt_fit_limit_da(h_file))
             push!(f_fit_hr, hr); push!(f_fit_r2, r2)
 
             # ---- within-metascan shape features (fragment profile vs weight profile) ----

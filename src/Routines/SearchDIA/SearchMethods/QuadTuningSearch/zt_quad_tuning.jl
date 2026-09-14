@@ -123,9 +123,24 @@ crossing, so it need not observe it: fitting only ±2 bins of a 6-bin profile st
 +8%, which is why a too-small `metascan_k` can still reveal that it should be larger.
 """
 function fit_zt_triangle_from_psms(psms::DataFrame, spectra::MassSpecData, precursors,
-                                   geom::ZTGeometry;
-                                   iso_splines = nothing,
-                                   fit_limit_da::Float32 = 4.0f0,
+                                   geom::ZTGeometry; iso_splines = nothing, kwargs...)
+    # Two passes: the first fits the core of the geometry's own estimate of h (half the
+    # expansion span); the second refits over +/-h/2 of that result, so the fitted fraction of
+    # the profile is the same on every method (see ZT_FIT_CORE_FRACTION).
+    fit1, hist = _fit_zt_triangle_core(psms, spectra, precursors, geom;
+                                       iso_splines = iso_splines,
+                                       fit_limit_da = zt_fit_limit_da(geom), kwargs...)
+    fit1 === nothing && return nothing, hist
+    fit2, hist2 = _fit_zt_triangle_core(psms, spectra, precursors, geom;
+                                        iso_splines = iso_splines,
+                                        fit_limit_da = zt_fit_limit_da(fit1.h), kwargs...)
+    return fit2 === nothing ? (fit1, hist) : (fit2, hist2)
+end
+
+function _fit_zt_triangle_core(psms::DataFrame, spectra::MassSpecData, precursors,
+                               geom::ZTGeometry;
+                               iso_splines = nothing,
+                               fit_limit_da::Float32,
                                    min_bins::Int = 5,
                                    min_pts::Int = 4,
                                    min_metascans::Int = 25)
@@ -225,7 +240,7 @@ function plot_zt_triangle(fit::ZTQuadFitResult, psms::DataFrame, spectra::MassSp
                 empty!(xs); empty!(ys)
                 for t in i:(j-1)
                     d = cmzs[scn[ord[t]]] - μ
-                    isfinite(d) && abs(d) <= 4.0f0 && (push!(xs, abs(d)); push!(ys, wt[ord[t]]))
+                    isfinite(d) && abs(d) <= zt_fit_limit_da(fit.h) && (push!(xs, abs(d)); push!(ys, wt[ord[t]]))
                 end
                 nx = length(xs)
                 if nx >= 4

@@ -64,6 +64,30 @@ function zt_metascan_k_is_derived(params)
     return !(hasproperty(acq, :metascan_k) && Int(acq.metascan_k) > 0)
 end
 
+"""
+Fraction of the transmission half-base `h` used by the per-meta-scan triangle regression: the
+fit sees only |Δ| <= `ZT_FIT_CORE_FRACTION * h` and extrapolates to the zero crossing. The
+empirical medians sit above a triangle in the core and below it in the tails (the profile is
+closer to Gaussian), so the tails would drag the slope; but too small a core sees only the
+convex apex and the slope comes out too shallow. Expressed as a fraction of h, not in Da or
+bins, so every method fits the same part of its own profile.
+
+Measured (A_REP1, both methods, k configured = 6):
+- 5 Da:  0.62 h (= the validated 4.0 Da window) -> h 6.48, k_implied 6, R² 0.92;
+         0.50 h -> h 6.65, k_implied 7, R² 0.89, -78 precursors.
+- 10 Da: 0.31 h (a fixed 4 Da) -> h 13.59, k_implied 7, R² 0.905, IQR 3.3 Da;
+         0.50 h -> h 12.75, k_implied 6, R² 0.937.
+0.62 keeps ~4 bins per side on both methods. Before the fit exists, `h` is taken as the
+expansion span `metascan_k * bin_step` (the geometry's own estimate).
+"""
+const ZT_FIT_CORE_FRACTION = 0.62f0
+
+"""Fit half-width in Da before any fit exists: half the expansion span."""
+zt_fit_limit_da(g::ZTGeometry) = ZT_FIT_CORE_FRACTION * Float32(g.metascan_k) * g.bin_step
+
+"""Fit half-width in Da once `h` is known."""
+zt_fit_limit_da(h::Real) = ZT_FIT_CORE_FRACTION * Float32(h)
+
 """Number of complete cycles sampled by `detect_zt_geometry`."""
 const ZT_GEOM_SAMPLE_CYCLES = 8
 
