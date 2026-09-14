@@ -125,7 +125,12 @@ function qcPlots(
     # Get q-value column name
     qval_col = :qval
 
-    short_fnames = shortenFileNames(parsed_fnames)
+    # Plot labels drop the tokens every run shares (and abbreviate what is
+    # left); the tables keep the full names, so the two are mapped here once
+    # and every chunk below looks its labels up rather than re-deriving them
+    # from a subset of the runs.
+    label_of = Dict(zip(parsed_fnames, shortenFileNames(distinguishingFileNames(parsed_fnames))))
+    short_fnames = [label_of[f] for f in parsed_fnames]
     #grouped_precursors = groupby(best_psms, :file_name)
     #grouped_protein_groups = groupby(protein_quant, :file_name)
     #Number of files to parse
@@ -226,7 +231,7 @@ function qcPlots(
             stop = min(n * n_files_per_plot, length(fnames))
 
             chunk_fnames = fnames[start:stop]
-            chunk_short_names = shortenFileNames(chunk_fnames)
+            chunk_short_names = [label_of[f] for f in chunk_fnames]
 
             p = Plots.plot(title = "Precursor Abundance by Rank",
                 xlabel = "Log2(precursor rank)",
@@ -305,14 +310,15 @@ function qcPlots(
             layout = (1, 1)
         )
 
+        successful_labels = [label_of[f] for f in successful_files]
         Plots.bar!(
             p,
-            successful_files,
+            successful_labels,
             successful_ids,
             subplot = 1,
             texts = _bar_value_texts(successful_ids),
             xrotation = 45,
-            bottom_margin = _bar_bottom_margin(successful_files),
+            bottom_margin = _bar_bottom_margin(successful_labels),
             left_margin = 5Plots.mm,
         )
 
@@ -423,7 +429,7 @@ function qcPlots(
 
             chunk_fnames = successful_fnames[start:stop]
             chunk_ids = [protein_fname_to_id[fname] for fname in chunk_fnames]
-            chunk_short_names = shortenFileNames(chunk_fnames)
+            chunk_short_names = [label_of[f] for f in chunk_fnames]
 
             p = Plots.plot(title = "Protein Group ID's per File", legend = :none, layout = (1, 1))
 
@@ -523,7 +529,7 @@ function qcPlots(
 
             chunk_fnames = fnames[start:stop]
             chunk_rates = [fname_to_cleavage_rate[fname] for fname in chunk_fnames]
-            chunk_short_names = shortenFileNames(chunk_fnames)
+            chunk_short_names = [label_of[f] for f in chunk_fnames]
 
             p = Plots.plot(title = "Missed Cleavage Percentage", legend = :none, layout = (1, 1))
 
