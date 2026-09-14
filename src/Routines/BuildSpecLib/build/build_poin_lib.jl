@@ -212,7 +212,7 @@ function buildPionLib(spec_lib_path::String,
     else
         error("spline_knots file not found in $spec_lib_path")
     end
-    temp_lookup = SplineFragmentLookup(detailed_frags, pid_to_fid, Tuple(spl_knots), 3)
+    temp_lookup = SplineFragmentLookup(detailed_frags, pid_to_fid, Tuple(spl_knots))
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())

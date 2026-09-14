@@ -1,8 +1,7 @@
 # Unit tests for B-spline evaluation (src/utils/ML/libraryBSpline.jl).
 #
-# Validates the iterative de Boor algorithm (splevl) against the original
-# recursive Cox-de Boor implementation that it replaced (22x speedup).
-# The recursive version serves as a reference oracle.
+# Validates prepared, unrolled de Boor evaluation against a recursive
+# Cox-de Boor reference oracle.
 #
 # Run standalone: julia --project=. test/UnitTests/test_bspline.jl
 # Run via suite:  julia --project=. test/runtests.jl
@@ -10,7 +9,6 @@
 if !@isdefined(Pioneer)
     using Test
     using Pioneer
-    using StaticArrays
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -48,6 +46,9 @@ const TEST_KNOTS = (6.0f0, 13.0f0, 20.0f0, 27.0f0, 34.0f0, 41.0f0, 48.0f0, 55.0f
 const TEST_COEFFS = (1.6181915f-6, 7.382022f-6, 7.887343f-5, 0.00023642876f0)
 const TEST_DEGREE = 3
 
+eval_spline(x, knots, coefficients) = Pioneer.splevl_prepared(
+    coefficients, Pioneer.prepare_spline_fractions(x, knots))
+
 @testset "B-Spline (de Boor)" begin
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -57,8 +58,8 @@ const TEST_DEGREE = 3
 @testset "interior points" begin
     for x in Float32[10.0, 16.5, 23.5, 30.5, 37.5, 44.5, 51.5]
         v_ref = splevl_recursive(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        v_deb = Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        @test v_deb ≈ v_ref atol=eps(Float32)
+        observed = eval_spline(x, TEST_KNOTS, TEST_COEFFS)
+        @test observed ≈ v_ref atol=eps(Float32)
     end
 end
 
@@ -69,8 +70,8 @@ end
 @testset "knot positions" begin
     for x in Float32.(TEST_KNOTS)
         v_ref = splevl_recursive(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        v_deb = Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        @test v_deb ≈ v_ref atol=eps(Float32)
+        observed = eval_spline(x, TEST_KNOTS, TEST_COEFFS)
+        @test observed ≈ v_ref atol=eps(Float32)
     end
 end
 
@@ -81,8 +82,8 @@ end
 @testset "boundaries and outside range" begin
     for x in Float32[5.0, 5.99, 6.01, 54.99, 55.0, 55.01, 60.0]
         v_ref = splevl_recursive(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        v_deb = Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        @test v_deb ≈ v_ref atol=eps(Float32)
+        observed = eval_spline(x, TEST_KNOTS, TEST_COEFFS)
+        @test observed ≈ v_ref atol=eps(Float32)
     end
 end
 
@@ -95,9 +96,9 @@ end
         for offset in [eps(Float32), -eps(Float32), 10*eps(Float32)]
             x = Float32(ki) + offset
             v_ref = splevl_recursive(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-            v_deb = Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
+            observed = eval_spline(x, TEST_KNOTS, TEST_COEFFS)
             # Allow 2 ULP: different evaluation order causes ≤1.5 ULP rounding
-            @test v_deb ≈ v_ref atol=2*eps(Float32)
+            @test observed ≈ v_ref atol=2*eps(Float32)
         end
     end
 end
@@ -111,8 +112,8 @@ end
     for i in 0:200
         x = Float32(5.0 + 51.0 * i / 200)
         v_ref = splevl_recursive(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        v_deb = Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE)
-        max_diff = max(max_diff, abs(v_ref - v_deb))
+        observed = eval_spline(x, TEST_KNOTS, TEST_COEFFS)
+        max_diff = max(max_diff, abs(v_ref - observed))
     end
     @test max_diff <= eps(Float32)
 end
@@ -134,8 +135,8 @@ end
         for i in 0:100
             x = Float32(5.0 + 50.0 * i / 100)
             v_ref = splevl_recursive(x, TEST_KNOTS, coeffs, TEST_DEGREE)
-            v_deb = Pioneer.splevl(x, TEST_KNOTS, coeffs, TEST_DEGREE)
-            max_diff = max(max_diff, abs(v_ref - v_deb))
+            observed = eval_spline(x, TEST_KNOTS, coeffs)
+            max_diff = max(max_diff, abs(v_ref - observed))
         end
         @test max_diff <= 2 * eps(Float32)
     end
@@ -146,9 +147,9 @@ end
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @testset "zero outside domain" begin
-    @test Pioneer.splevl(0.0f0, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE) == 0.0f0
-    @test Pioneer.splevl(100.0f0, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE) == 0.0f0
-    @test Pioneer.splevl(-10.0f0, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE) == 0.0f0
+    @test eval_spline(0.0f0, TEST_KNOTS, TEST_COEFFS) == 0.0f0
+    @test eval_spline(100.0f0, TEST_KNOTS, TEST_COEFFS) == 0.0f0
+    @test eval_spline(-10.0f0, TEST_KNOTS, TEST_COEFFS) == 0.0f0
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -158,8 +159,80 @@ end
 @testset "non-negative output" begin
     for i in 0:100
         x = Float32(5.0 + 50.0 * i / 100)
-        @test Pioneer.splevl(x, TEST_KNOTS, TEST_COEFFS, TEST_DEGREE) >= 0.0f0
+        @test eval_spline(x, TEST_KNOTS, TEST_COEFFS) >= 0.0f0
     end
+end
+
+@testset "prepared fragment spline evaluation" begin
+    coeff_sets = (
+        TEST_COEFFS,
+        (1.0f0, 0.0f0, 0.0f0, 0.0f0),
+        (0.0f0, 1.0f0, 1.0f0, 0.0f0),
+        (1.0f-8, 1.0f0, 1.0f-8, 1.0f0),
+    )
+    for x in range(6f0, prevfloat(55f0), length=201)
+        fractions = Pioneer.prepare_spline_fractions(x, TEST_KNOTS)
+        for coeffs in coeff_sets
+            expected = splevl_recursive(x, TEST_KNOTS, coeffs, TEST_DEGREE)
+            @test Pioneer.splevl_prepared(coeffs, fractions) ≈ expected atol=2eps(Float32)
+        end
+    end
+
+    outside = Pioneer.prepare_spline_fractions(100f0, TEST_KNOTS)
+    @test Pioneer.splevl_prepared(TEST_COEFFS, outside) == 0f0
+
+    repeated_knots = (10f0, 10f0, 10f0, 10f0, 50f0, 50f0, 50f0, 50f0)
+    for x in (10f0, 20f0, 30f0, prevfloat(50f0)), coeffs in coeff_sets
+        expected = splevl_recursive(x, repeated_knots, coeffs, TEST_DEGREE)
+        prepared = Pioneer.prepare_spline_fractions(x, repeated_knots)
+        @test Pioneer.splevl_prepared(coeffs, prepared) ≈ expected atol=2eps(Float32)
+    end
+end
+
+@testset "prepared fragment intensity models" begin
+    lookup = Pioneer.SplineFragmentLookup(
+        Pioneer.SplineCompactFrag{4,Float32}[], UInt64[1], TEST_KNOTS)
+
+    function test_model(model, mzs_and_charges)
+        prepared_model = Pioneer.prepare_fragment_intensity_model(lookup, model)
+        for (mz, charge) in mzs_and_charges
+            prepared = Pioneer.getSplineData(lookup, prepared_model, charge, mz)
+            expected = Pioneer.prepare_spline_fractions(model(mz, charge), TEST_KNOTS)
+            @test isequal(prepared, expected)
+        end
+    end
+
+    constant_model = Pioneer.PiecewiseNceModel(30f0)
+    test_model(constant_model, ((400f0, UInt8(2)), (900f0, UInt8(4))))
+
+    dynamic_model = Pioneer.PiecewiseNceModel(500f0, 0.01f0, 20f0, 25f0, 1f0)
+    test_model(dynamic_model, ((400f0, UInt8(2)), (600f0, UInt8(3))))
+
+    binned_model = Pioneer.BinnedMedianNceModel{Float32}(
+        Float32[20, 22, 30, 32],
+        (0x01, 0x03, 0x00, 0x00, 0x00, 0x00),
+        (0x02, 0x02, 0x00, 0x00, 0x00, 0x00),
+        (300f0, 300f0, 0f0, 0f0, 0f0, 0f0),
+        (200f0, 200f0, 0f0, 0f0, 0f0, 0f0),
+        27f0,
+    )
+    test_model(binned_model, (
+        (250f0, UInt8(1)),
+        (550f0, UInt8(1)),
+        (250f0, UInt8(2)),
+        (550f0, UInt8(2)),
+        (400f0, UInt8(3)),
+    ))
+
+    empty_binned_model = Pioneer.BinnedMedianNceModel{Float32}(
+        Float32[],
+        ntuple(_ -> 0x00, 6),
+        ntuple(_ -> 0x00, 6),
+        ntuple(_ -> 0f0, 6),
+        ntuple(_ -> 0f0, 6),
+        27f0,
+    )
+    test_model(empty_binned_model, ((400f0, UInt8(2)),))
 end
 
 end # top-level testset

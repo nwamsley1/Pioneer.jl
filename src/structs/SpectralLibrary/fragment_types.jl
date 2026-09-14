@@ -70,14 +70,16 @@ struct ConstantType <: IntensityDataType end
 
 abstract type NceModel{T<:AbstractFloat} end
 
-struct SplineType{M,T<:AbstractFloat} <: IntensityDataType
-    knots::NTuple{M, T}
-    nce::T
-    degree::Int64
+"""
+The knot span and six de Boor interpolation fractions for one NCE value.
+These values depend only on the shared spline knots and NCE, so every fragment
+evaluated at that NCE can reuse them without changing the arithmetic applied to
+its four coefficients.
+"""
+struct PreparedSplineFractions{T<:AbstractFloat} <: IntensityDataType
+    span::UInt8
+    alpha::NTuple{6,T}
 end
-getNCE(st::SplineType) = st.nce
-getKnots(st::SplineType) = st.knots
-getDegree(st::SplineType) = st.degree
 
 # ============================================================================
 # CompactFrag — packed transition struct for search pipeline (16 bytes)
@@ -193,8 +195,9 @@ end
 @inline getRank(f::SplineCompactFrag)        = UInt8((f.packed_b >> 6) & 0x1f)
 @inline getIonType(f::SplineCompactFrag) = UInt16(0)
 
-function getIntensity(pf::SplineCompactFrag{N, T}, intensity_type::SplineType{M, T}) where {M, N, T<:AbstractFloat}
-    return splevl(getNCE(intensity_type), getKnots(intensity_type), pf.intensity, getDegree(intensity_type))::T
+@inline function getIntensity(
+        pf::SplineCompactFrag{4,T}, intensity_type::PreparedSplineFractions{T}) where {T<:AbstractFloat}
+    return splevl_prepared(pf.intensity, intensity_type)::T
 end
 
 SplineCompactFrag{N,T}() where {N,T<:AbstractFloat} = SplineCompactFrag(
@@ -294,10 +297,6 @@ end
 
 ArrowTypes.arrowname(::Type{SplineDetailedFrag{4, Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:SplineDetailedFrag}) = DetailedFrag
-
-function getIntensity(pf::SplineDetailedFrag{N, T}, intensity_type::SplineType{M, T}) where {M, N, T<:AbstractFloat}
-    return splevl(getNCE(intensity_type), getKnots(intensity_type), pf.intensity, getDegree(intensity_type))::T
-end
 
 SplineDetailedFrag{N,T}() where {N,T<:AbstractFloat} = SplineDetailedFrag(
     zero(UInt32), zero(T), NTuple{N, T}(undef), zero(UInt16),

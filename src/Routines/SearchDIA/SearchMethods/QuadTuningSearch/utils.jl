@@ -763,14 +763,14 @@ function _quad_process_scan!(
     weights::Vector{Float32},
     precursor_weights::AbstractPrecursorMap{Float32},
     residuals::Vector{Float32},
-    scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}
+    scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
+    intensity_model,
 )
     scan_idx ∉ scan_idxs && return
 
     msn = getMsOrder(spectra, scan_idx)
     msn ∉ params.spec_order && return
 
-    nce_model = getNceModel(search_context, ms_file_idx)
     mem       = getMassErrorModel(search_context, ms_file_idx)
     spec_lib  = getSpecLib(search_context)
     ion_list  = getFragmentLookupTable(spec_lib)
@@ -811,7 +811,7 @@ function _quad_process_scan!(
         Hs, getTuningUnscoredPsms(search_data), id_to_col, fused_scratch,
         corr_mz, obs_low, obs_high, peak_mz_len,
         isotopes_buf, prec_trans_buf,
-        ion_list, nce_model,
+        ion_list, intensity_model,
         precs_vec, 1:length(precs_vec),
         prec_mzs, prec_charges, prec_sulfs, prec_irts,
         getIsoSplines(search_data), quad_fn, mem,
@@ -906,6 +906,9 @@ function perform_quad_transmission_search(
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_idxs = Set(keys(scan_idx_to_prec_idx))
+    frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
+    intensity_model = prepare_fragment_intensity_model(
+        frag_lookup, getNceModel(search_context, ms_file_idx))
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -934,7 +937,8 @@ function perform_quad_transmission_search(
                     weights,
                     precursor_weights,
                     residuals,
-                    scan_idx_to_prec_idx
+                    scan_idx_to_prec_idx,
+                    intensity_model,
                 )
             end
             
@@ -1378,4 +1382,3 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
     )
     return fitted_params, initial_params
 end
-

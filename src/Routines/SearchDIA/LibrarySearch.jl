@@ -174,12 +174,13 @@ function library_search(
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
     t_deconv_start = time()
     all_results = map(nce_entries) do (nce_model, nce_tag)
+        intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                nce_model, qtm, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
