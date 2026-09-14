@@ -407,5 +407,19 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
         n_pg_rows   !== nothing && @user_print rpad("Protein-group rows (long):", 28) * "$n_pg_rows"
         @user_print rpad("Output directory:", 28) * "$out_dir"
     end
+    # Per-run identified vs quantified counts, from run_summary.tsv.
+    run_summary = joinpath(out_dir, "run_summary.tsv")
+    if isfile(run_summary)
+        rs = CSV.read(run_summary, DataFrame; select = [:file_name, :precursors_identified,
+            :precursors_quantified, :protein_groups_identified, :protein_groups_quantified])
+        @user_print "\nPer run (identified / quantified):"
+        @user_print repeat("-", 102)
+        @user_print rpad("File", 50) * lpad("Precursors", 24) * lpad("Protein groups", 24)
+        for r in eachrow(rs)
+            @user_print rpad(first(r.file_name, 49), 50) *
+                lpad("$(r.precursors_identified) / $(r.precursors_quantified)", 24) *
+                lpad("$(r.protein_groups_identified) / $(r.protein_groups_quantified)", 24)
+        end
+    end
     @user_print "\n" * repeat("=", 102)
 end

@@ -65,3 +65,28 @@ This sequence builds a predicted spectral library, converts vendor files to Arro
 `params-predict` and `params-search` create template JSON files. Edit these
 configurations to suit your experiment before running `predict` or `search`.
 See [Parameter Configuration](parameters.md) for a description of each option.
+
+## Per-run summary (`run_summary.tsv`)
+
+Every search writes `run_summary.tsv` next to the result tables: one row per
+raw file with QC metrics in the spirit of DIA-NN's `report.stats.tsv`.
+*Identified* counts everything passing the q-value threshold; *quantified* is
+the subset with a positive peak area (the same rule that blanks
+`peak_area` in the tables). All distribution statistics are medians over the
+identified precursors of that run.
+
+| Column | Description |
+|---|---|
+| `file_name` | Run name (raw file name without extension) |
+| `precursors_identified` / `precursors_quantified` | Target precursors passing FDR / with a positive `peak_area` |
+| `precursors_mbr` | Identified precursors recovered by match-between-runs |
+| `peptides_identified` | Distinct stripped sequences among identified precursors |
+| `protein_groups_identified` / `protein_groups_quantified` | Target protein groups for the run / with a positive abundance |
+| `total_peak_area`, `median_peak_area` | Sum and median of quantified precursor areas |
+| `median_normalization_factor` | Median `peak_area_normalized / peak_area` (empty when normalization is off) |
+| `median_irt_error` | Median absolute iRT prediction error |
+| `median_rt_fwhm` | Median RT span (min) of the scans at or above half the apex intensity; 0 when only the apex scan qualifies (fast gradients / few points per peak) |
+| `median_points_integrated` | Median number of scans integrated per peak |
+| `median_peptide_length`, `median_charge`, `median_missed_cleavages` | Peptide-property medians |
+| `ms2_mass_tol_low/high/unit`, `ms1_mass_tol_low/high/unit` | Fragment / precursor mass tolerance the search settled on (`ppm` or `Da` depending on the fitted model; MS1 empty when no MS1 model was fit) |
+| `gradient_length_min`, `n_ms1_scans`, `n_ms2_scans` | Run length (last retention time, minutes) and scan counts |

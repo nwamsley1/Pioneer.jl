@@ -16,6 +16,7 @@ using Pioneer: H2O, PROTON, C13_C12_MASS_DIFF
 using Pioneer: InterpolationTypeAlias
 using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
 using Pioneer: DEBUG_CONSOLE_LEVEL
+using Pioneer: RunSummaryStats, accumulate_run_summary!, add_protein_group_counts!
 using Pioneer: IsotopeSplineModel
 using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!
 using Pioneer: getHigh, Counter, IndexFragment
