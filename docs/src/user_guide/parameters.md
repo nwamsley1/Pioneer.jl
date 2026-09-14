@@ -145,6 +145,16 @@ Header-parsing regex patterns can be configured three ways:
 | `fixed_mods.{pattern, mass, name}` | [String], [Float], [String] | Cys carbamidomethyl (`Unimod:4`, +57.021464 Da) | Fixed modifications. |
 | `isotope_mod_groups` | [Object] | `[]` | Multiplexed labelling channels. |
 
+Modification names must be UNIMOD accessions (`Unimod:<id>`); they are sent to
+Koina verbatim. Before any prediction is requested, every fixed and variable
+modification (accession and residue) is checked against what the selected
+`prediction_model` **and** `rt_model` were trained on, and a build whose
+modifications either model cannot predict is refused — the error names the
+offending modifications and the models that would accept the whole selection.
+Leaving cysteine without a fixed modification means *unmodified cysteine*, which
+only `prosit_2025_40ptm` (fragments) and both retention-time models can
+predict; every other fragment model assumes carbamidomethyl-C.
+
 ### Collision Energy
 
 | Parameter | Type | Default | Description |
