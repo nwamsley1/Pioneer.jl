@@ -1405,9 +1405,28 @@ export function BuildSpecLibForm({
             ) : (
               <>
                 <strong style={{ fontWeight: 600 }}>Unmodified cysteine.</strong>{' '}
-                {selectedModel.label} assumes carbamidomethylated cysteine. Add
-                Carbamidomethyl as a fixed modification on C, or choose a fragment model
-                that predicts unmodified cysteine.
+                {selectedModel.label} assumes carbamidomethylated cysteine, so the build
+                is blocked. The retention-time model is not the issue — it is the
+                fragment model. Add Carbamidomethyl back as a fixed modification on C, or{' '}
+                {PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="pio-link-underline"
+                    onClick={() => onParam('predictionModel', m.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                      font: "600 12px 'IBM Plex Sans'",
+                      color: '#B91C1C',
+                    }}
+                  >
+                    switch the fragment model to {m.label}
+                  </button>
+                ))}
+                , which was trained on free cysteine.
               </>
             )}
           </div>

@@ -12,7 +12,7 @@ import type {
   ModEntry,
   PathInfo,
 } from './types'
-import { predictionModelById } from './types'
+import { PREDICTION_MODELS, predictionModelById } from './types'
 import {
   findMod,
   isFreeCys,
@@ -524,7 +524,7 @@ export function modelSupportBlock(p: BuildParams): RunBlock | null {
     if (!modelAllowsFreeCys(p.predictionModel)) {
       return {
         key: 'fixedMods',
-        msg: `${frag.label} assumes carbamidomethylated cysteine. Add Carbamidomethyl as a fixed modification on C, or choose a fragment model that predicts unmodified cysteine.`,
+        msg: `${frag.label} assumes carbamidomethylated cysteine (the retention-time model is not the issue). Add Carbamidomethyl as a fixed modification on C, or switch the fragment model to ${PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => m.label).join(' or ')}.`,
       }
     }
     if (!rt.freeCys) {
