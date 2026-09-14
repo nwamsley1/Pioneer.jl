@@ -432,6 +432,18 @@ function process_file!(
         mode = "coarse(b1,k3,k5)"
     end
 
+    # EXPERIMENT (PIONEER_BITVEC_MIN_BITS, off by default): floor on pattern weight.
+    # Lowering min_excess_rate to admit weak patterns is dominated by the count_ones==3 class,
+    # which carries 1.96M counts on A_REP1 (3x the k=4 class, 12x k=5) at a 0.18% target excess
+    # -- ~70% of the added emission volume for little signal. This caps weight without touching
+    # the rate, so the informative k>=4 admissions are kept.
+    _min_bits = something(tryparse(Int, get(ENV, "PIONEER_BITVEC_MIN_BITS", "")), 0)
+    if _min_bits > 0
+        @inbounds for p in 0:255
+            count_ones(UInt8(p)) < _min_bits && (filter_table[p + 1] = false)
+        end
+    end
+
     setBitVecFilter!(search_context, ms_file_idx, filter_table)
     n_pass = count(filter_table)
     elapsed = round(time() - t_start, digits=2)

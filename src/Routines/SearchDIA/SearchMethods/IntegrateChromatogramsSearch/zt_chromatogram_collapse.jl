@@ -60,6 +60,20 @@ is lowest and interference proportionally largest.
 struct TriangleMetascan <: MetascanReduction end
 
 """
+Triangle-weighted SUM over only the innermost `±half_width` bins, with the triangle still shaped
+by the full `k` — so the weight at the window edge is `1 - half_width/(k+1)` (0.714 at ±2 for
+k=6), NOT zero. Keeps the high-transmission core and discards the outer bins entirely, where
+transmission is lowest (~8% at ±6 on a 6.3 Da FWHM) and interference is proportionally worst.
+
+A sum rather than a normalized mean, so it stays on the same footing as `SumMetascan`: the weight
+total depends only on which bins are present, which is constant per precursor across runs, so
+ratios are preserved.
+"""
+struct TriangleWindowMetascan <: MetascanReduction
+    half_width::Int
+end
+
+"""
     reduce_metascan(reduction, intensities, offsets, k) -> Float32
 
 Reduce one cycle's metascan bins to a single value. `offsets[i]` is the bin's scan-index offset
@@ -84,6 +98,20 @@ end
         den += t
     end
     return den > 0f0 ? num / den : 0f0
+end
+
+@inline function reduce_metascan(r::TriangleWindowMetascan, intensities::AbstractVector{Float32},
+                                 offsets::AbstractVector{Int}, k::Int)
+    kf = Float32(k + 1)
+    hw = r.half_width
+    s = zero(Float32)
+    @inbounds for i in eachindex(intensities)
+        o = offsets[i]
+        if abs(o) <= hw
+            s += max(0f0, 1f0 - abs(Float32(o)) / kf) * intensities[i]
+        end
+    end
+    return s
 end
 
 """

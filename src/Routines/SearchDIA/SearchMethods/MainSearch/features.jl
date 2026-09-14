@@ -215,6 +215,22 @@ const PRESCORE_FEATURES = [
     # 2026-05-21: min_* features removed (added 2026-05-20, ~+1% IDs not
     # worth the compute cost).
 
+    # Scanning-quad (ZT) meta-scan features. Computed by collapse_to_metascans at
+    # MainSearch.jl:391 -- i.e. BEFORE this model trains at :429 -- so they are already in the
+    # table; only this list gated their use. Absent on every non-ZT dataset and dropped by the
+    # hasproperty filter in scoring.jl:156, so listing them here is inert elsewhere.
+    #
+    # Two orthogonal axes (measured r = 0.015-0.136 between matched pairs over 5.46M meta-PSMs):
+    # the weight profile across BINS within one cycle, and each fragment's intensity tracking
+    # that profile. The across-cycle counterparts are develop's own features, listed above.
+    :zt_tri_cosine, :zt_tri_pcor, :zt_entropy,
+    :frag_corr_strength_shape,
+    :frag_corr_effective_n_shape,
+    :frag_corr_best_shape,
+    :frag_apex_dispersion_shape,
+    :n_correlated_fragments_shape,
+    :n_correlated_fragments_bitvec_rank_shape,
+
     # Neighborhood (windowed PSM-quality) family DROPPED 2026-05-18:
     # best_max_residual_3scan, best_gof_5scan, best_manhattan_5scan,
     # best_max_residual_5scan, irt_dist_best_gof_5scan,

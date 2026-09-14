@@ -165,6 +165,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     prec_mz::Vector{Float32} = Vector{Float32}(getMz(precursors))
     cmzs::Vector{Float32} = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
     hws::Vector{Float32}  = Float32.(coalesce.(getIsolationWidthMzs(spectra), NaN32))
+    cycles::Vector{UInt32} = UInt32.(getCycleIdxs(spectra))
 
     # Sort by (precursor_idx, scan_idx) so a precursor's meta-scan bins become contiguous
     # rows. Both keys are UInt32, so pack them into one UInt64: identical lexicographic
@@ -196,6 +197,20 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         ntuple(_ -> Float32[], 8)
     rank_weights = _fragment_rank_weights(8)
 
+    # Per-bin fitted (deconvolved) and shadow (raw observed) spectra. References only -- the 8
+    # frag columns above are permuted for locality, but permuting 16 more would cost ~3.8 GB, so
+    # these are indexed as fit_cols[b][perm[rr]] inside the <=13-row inner loop instead.
+    _have_fs = all(r -> hasproperty(psms, Symbol("fitted_frag$(r)_int")) &&
+                        hasproperty(psms, Symbol("shadow_frag$(r)_int")), 1:8)
+    fit_cols::NTuple{8,Vector{Float32}} = _have_fs ?
+        ntuple(r -> psms[!, Symbol("fitted_frag$(r)_int")]::Vector{Float32}, 8) :
+        ntuple(_ -> Float32[], 8)
+    shd_cols::NTuple{8,Vector{Float32}} = _have_fs ?
+        ntuple(r -> psms[!, Symbol("shadow_frag$(r)_int")]::Vector{Float32}, 8) :
+        ntuple(_ -> Float32[], 8)
+    accf = zeros(Float32, 8)
+    accs = zeros(Float32, 8)
+
     # Reusable per-center scratch — nothing here outlives one iteration.
     w       = zeros(Float32, L)
     Fbuf    = [zeros(Float32, L) for _ in 1:8]
@@ -211,6 +226,10 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     f_tri_pcor = Float32[]; sizehint!(f_tri_pcor, hint)
     sh_str  = Float32[];    sh_effn = Float32[]; sh_best = Float32[]
     sh_disp = Float32[];    sh_n70  = UInt8[];   sh_rank = UInt16[]
+    out_fit = ntuple(_ -> Float32[], 8)
+    out_shd = ntuple(_ -> Float32[], 8)
+
+    blk_centers = Int[]                       # center rows of one precursor's meta-scans
 
     i = 1
     @inbounds while i <= n
@@ -218,9 +237,52 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         while i <= n && pid[i] == pid[j0]; i += 1; end
         blk_lo, blk_hi = j0, i - 1
         pm = prec_mz[pid[j0]]
-        for r in blk_lo:blk_hi
+        # ---- pick the center row of each meta-scan, one cycle at a time ----
+        # Preferred (unchanged): a bin whose recorded isolation window contains the precursor
+        # m/z. Added fallback: when NO bin of that cycle contains it, re-anchor to the bin
+        # nearest the precursor m/z rather than discarding the whole meta-scan.
+        #
+        # The old behaviour dropped 41.1% of (precursor, cycle) groups and 26.2% of deconvolved
+        # rows on Sciex ZT A_REP1, with essentially no target/decoy discrimination (49.9% vs
+        # 48.5% decoy) -- the discard is a geometric accident, because NNLS routinely zeroes a
+        # precursor at its own center bin (22% of expanded bins fall below the 1e-6 weight
+        # floor). For the dropped groups the nearest surviving bin is a median of 1.46 Da off
+        # center, ~86% transmission at the measured 6.3 Da FWHM, so the meta-scan is still
+        # physically meaningful. Measured: +394 precursors, +46 protein groups on A_REP1.
+        empty!(blk_centers)
+        rr0 = blk_lo
+        while rr0 <= blk_hi
+            cy0 = cycles[Int(scn[rr0])]
+            rr1 = rr0
+            while rr1 < blk_hi && cycles[Int(scn[rr1 + 1])] == cy0
+                rr1 += 1
+            end
+            n_contained = 0
+            for r in rr0:rr1
+                c = Int(scn[r])
+                if abs(pm - cmzs[c]) <= hws[c] / 2
+                    push!(blk_centers, r)
+                    n_contained += 1
+                end
+            end
+            if n_contained == 0
+                rbest = 0
+                dbest = Inf32
+                for r in rr0:rr1
+                    c = Int(scn[r])
+                    d = abs(pm - cmzs[c])
+                    if d < dbest            # NaN center m/z never wins: keeps MS1 rows out
+                        dbest = d
+                        rbest = r
+                    end
+                end
+                rbest != 0 && push!(blk_centers, rbest)
+            end
+            rr0 = rr1 + 1
+        end
+
+        for r in blk_centers
             c = Int(scn[r])
-            (abs(pm - cmzs[c]) <= hws[c] / 2) || continue
 
             fill!(w, 0f0)
             if _have_frags
@@ -229,6 +291,9 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             # Bins are ~contiguous rows around r (sorted by scan); scan a small window and bin
             # by scan-index offset. ±L rather than ±k, because a precursor need not have a row
             # in every bin of its meta-scan.
+            if _have_fs
+                fill!(accf, 0f0); fill!(accs, 0f0)
+            end
             lo = max(blk_lo, r - L); hi = min(blk_hi, r + L)
             for rr in lo:hi
                 d = Int(scn[rr]) - c
@@ -237,6 +302,20 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
                     if _have_frags
                         for b in 1:8; Fbuf[b][d+k+1] += fcols[b][rr]; end
                     end
+                    if _have_fs
+                        # Matched filter: weight each bin by its expected transmission.
+                        tw = tri[d+k+1]
+                        oi = perm[rr]
+                        for b in 1:8
+                            accf[b] += tw * fit_cols[b][oi]
+                            accs[b] += tw * shd_cols[b][oi]
+                        end
+                    end
+                end
+            end
+            if _have_fs
+                for b in 1:8
+                    push!(out_fit[b], accf[b]); push!(out_shd[b], accs[b])
                 end
             end
 
@@ -300,5 +379,18 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     meta[!, :frag_apex_dispersion_shape]               = sh_disp
     meta[!, :n_correlated_fragments_shape]             = sh_n70
     meta[!, :n_correlated_fragments_bitvec_rank_shape] = sh_rank
+
+    # Replace the anchor bin's fitted/shadow spectra with transmission-weighted sums over the
+    # whole meta-scan. `smoothed_2d_shadow_hellinger` (scoring.jl:1152) then contrasts integrated
+    # spectra rather than single-bin ones. Hellinger is invariant to a common scale on both
+    # vectors, so only the conditioning changes. Motivation: DIA-NN-only misses carry 4.73 of 8
+    # ranks at the anchor bin vs 6.90 across the whole meta-scan (controls 5.38 -> 7.20), and 82%
+    # of a precursor's fragments are intermittent across the bins of one meta-scan.
+    if _have_fs
+        for b in 1:8
+            meta[!, Symbol("fitted_frag$(b)_int")] = out_fit[b]
+            meta[!, Symbol("shadow_frag$(b)_int")] = out_shd[b]
+        end
+    end
     return meta
 end
