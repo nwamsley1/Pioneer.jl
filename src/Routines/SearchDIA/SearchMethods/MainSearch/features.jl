@@ -224,6 +224,7 @@ const PRESCORE_FEATURES = [
     # the weight profile across BINS within one cycle, and each fragment's intensity tracking
     # that profile. The across-cycle counterparts are develop's own features, listed above.
     :zt_tri_cosine, :zt_tri_pcor, :zt_entropy,
+    :zt_fit_h_ratio, :zt_fit_r2,
     :frag_corr_strength_shape,
     :frag_corr_effective_n_shape,
     :frag_corr_best_shape,

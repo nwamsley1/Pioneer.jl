@@ -33,7 +33,45 @@ measured below 400 and are not computed.
 const ZT_PROFILE_FEATURES = Symbol[
     :zt_tri_cosine,   # cosine of the weight profile against an ideal triangle template
     :zt_entropy,      # Shannon entropy of the normalized profile
+    :zt_fit_h_ratio,  # per-meta-scan triangle half-base (a/b) over the file's fitted h; 0 if unfit
+    :zt_fit_r2,       # R² of that per-meta-scan linear fit; 0 if unfit
 ]
+
+"""
+    _zt_local_triangle_fit(w, k, bin_step, delta0, h_file; lim = 4) -> (h_ratio, r2)
+
+The SAME estimator QuadTuningSearch uses per meta-scan (`w = a - b*|Δ|`, `h = a/b`), applied
+to one collapsed profile: bins with weight > 0 and |Δ| <= `lim` Da, where Δ is the bin's offset
+from the precursor m/z (`delta0` = precursor m/z minus the anchor bin's centre). Returns the
+local half-base relative to the file's fitted `h_file` (clamped to [0, 4]) and the fit R².
+Zero when fewer than 4 usable bins or the slope has the wrong sign.
+"""
+@inline function _zt_local_triangle_fit(w::Vector{Float32}, k::Int, bin_step::Float32,
+                                        delta0::Float32, h_file::Float32; lim::Float32 = 4f0)
+    h_file > 0f0 || return (0f0, 0f0)
+    n = 0; sx = 0f0; sy = 0f0; sxx = 0f0; sxy = 0f0
+    @inbounds for t in 1:(2k + 1)
+        y = w[t]; y > 0f0 || continue
+        x = abs(Float32(t - k - 1) * bin_step - delta0)
+        x <= lim || continue
+        n += 1; sx += x; sy += y; sxx += x * x; sxy += x * y
+    end
+    n >= 4 || return (0f0, 0f0)
+    den = n * sxx - sx * sx
+    den > 0f0 || return (0f0, 0f0)
+    b = -(n * sxy - sx * sy) / den
+    a = (sy + b * sx) / n
+    (a > 0f0 && b > 0f0) || return (0f0, 0f0)
+    ym = sy / n; ssr = 0f0; sst = 0f0
+    @inbounds for t in 1:(2k + 1)
+        y = w[t]; y > 0f0 || continue
+        x = abs(Float32(t - k - 1) * bin_step - delta0)
+        x <= lim || continue
+        pr = a - b * x; ssr += (y - pr)^2; sst += (y - ym)^2
+    end
+    r2 = sst > 0f0 ? max(0f0, 1f0 - ssr / sst) : 0f0
+    return (clamp((a / b) / h_file, 0f0, 4f0), r2)
+end
 
 """
 Within-metascan (shape) fragment features: across the 2k+1 bins of ONE cycle, how well does
@@ -224,6 +262,9 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     f_tri_cos  = Float32[]; sizehint!(f_tri_cos, hint)
     f_entropy  = Float32[]; sizehint!(f_entropy, hint)
     f_tri_pcor = Float32[]; sizehint!(f_tri_pcor, hint)
+    f_fit_hr   = Float32[]; sizehint!(f_fit_hr, hint)
+    f_fit_r2   = Float32[]; sizehint!(f_fit_r2, hint)
+    h_file = geom.template_h > 0f0 ? geom.template_h : geom.transmission_fwhm
     sh_str  = Float32[];    sh_effn = Float32[]; sh_best = Float32[]
     sh_disp = Float32[];    sh_n70  = UInt8[];   sh_rank = UInt16[]
     out_fit = ntuple(_ -> Float32[], 8)
@@ -326,6 +367,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(f_tri_cos, cosv)
             push!(f_entropy, entv)
             push!(f_tri_pcor, _frag_pcor(w, tri))
+            hr, r2 = _zt_local_triangle_fit(w, k, geom.bin_step, pm - cmzs[c], h_file)
+            push!(f_fit_hr, hr); push!(f_fit_r2, r2)
 
             # ---- within-metascan shape features (fragment profile vs weight profile) ----
             str = 0f0; effn = 0f0; best = 0f0; disp = 0f0; n70 = UInt8(0); rnk = UInt16(0)
@@ -373,6 +416,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     meta[!, :zt_tri_cosine] = f_tri_cos
     meta[!, :zt_entropy]    = f_entropy
     meta[!, :zt_tri_pcor]   = f_tri_pcor
+    meta[!, :zt_fit_h_ratio] = f_fit_hr
+    meta[!, :zt_fit_r2]      = f_fit_r2
     meta[!, :frag_corr_strength_shape]                 = sh_str
     meta[!, :frag_corr_effective_n_shape]              = sh_effn
     meta[!, :frag_corr_best_shape]                     = sh_best

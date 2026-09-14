@@ -114,6 +114,10 @@ const ADVANCED_FEATURE_SET = [
     :zt_tri_pcor,
     :zt_tri_cosine,
     :zt_entropy,
+    # Per-meta-scan triangle fit (same estimator as QuadTuningSearch): local half-base relative
+    # to the file's fitted h, and the fit R².
+    :zt_fit_h_ratio,
+    :zt_fit_r2,
     # ZT across-cycle (elution) features are NOT listed separately: for ZT they ARE the develop
     # chromatogram features above (frag_corr_strength, ms1_corr_*, n_scans, ...), recomputed on
     # the collapsed one-point-per-cycle meta trace.
