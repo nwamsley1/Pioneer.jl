@@ -416,7 +416,9 @@ function process_file!(
     end
     # DEV HOOK (PIONEER_CHROM_DUMP_DIR=<dir>): write the deconvolved weights with RT and
     # (packet data) frame / IM-scan coordinates before integration reorders them.
-    # PIONEER_CHROM_DUMP_ONLY=1 additionally skips integration (peak_area stays 0).
+    # PIONEER_CHROM_DUMP_ONLY=1 additionally skips integration (peak_area stays 0) and the
+    # MBR tail, so it needs match_between_runs = false (the MBR finalize step requires the
+    # integrated-weight columns).
     let dump_dir = get(ENV, "PIONEER_CHROM_DUMP_DIR", "")
         if !isempty(dump_dir)
             dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
