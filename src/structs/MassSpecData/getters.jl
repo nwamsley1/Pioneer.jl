@@ -137,6 +137,10 @@ getMsOrders(ms_data::NonIonMobilityData{T}) where T =
 getImScans(::MassSpecData) = nothing
 getImScans(ms_data::NonIonMobilityData) =
     hasproperty(ms_data.data, :imScan) ? ms_data.data[:imScan] : nothing
+# TIMS frame id per row (timsTOF packet files carry a `frameId` column); `nothing` otherwise.
+getFrameIds(::MassSpecData) = nothing
+getFrameIds(ms_data::NonIonMobilityData) =
+    hasproperty(ms_data.data, :frameId) ? ms_data.data[:frameId] : nothing
 # Per-scan collision energy in eV (timsTOF packets carry the ramp value; mzML-converted
 # files store 0). 0 when the column is absent. Read once per scan, not per precursor.
 getCollisionEnergyEvs(ms_data::NonIonMobilityData) =

@@ -99,6 +99,8 @@ index on high-confidence target PSMs (score > `min_prob`) via `fit_im_lines`, an
 than `min_calib` calibration PSMs use the pooled line. When the file has no IM scan
 column or the library no mobility predictions, `im_error` is 0 everywhere — the column
 always exists because ScoringSearch takes its feature list from the first file's schema.
+Returns the fitted lines (`Dict{Int, NTuple{3,Float32}}`, empty when nothing was fit) so
+the caller can store them on the SearchContext for downstream stages.
 """
 function add_im_error!(
     best_psms::DataFrame,
@@ -115,7 +117,7 @@ function add_im_error!(
     im_lib = getInvIonMobility(precursors)
     if im_scans === nothing || im_lib === nothing || n == 0
         best_psms[!, :im_error] = im_error
-        return nothing
+        return Dict{Int, NTuple{3, Float32}}()
     end
     scan = Float32[Float32(im_scans[si]) for si in best_psms[!, :scan_idx]]
     pred = Float32[Float32(im_lib[pid]) for pid in best_psms[!, :precursor_idx]]
@@ -125,7 +127,7 @@ function add_im_error!(
     if isempty(models)
         @debug_l1 "IM calibration (file $ms_file_idx): fewer than $min_calib high-confidence PSMs, im_error = 0"
         best_psms[!, :im_error] = im_error
-        return nothing
+        return models
     end
     pooled = models[0]
     @inbounds for i in 1:n
@@ -138,7 +140,7 @@ function add_im_error!(
         @debug_l1 "  IM line " * (z == 0 ? "pooled" : "z=$z") * " (file $ms_file_idx): pred 1/K0 = " *
                   "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $n_z"
     end
-    return nothing
+    return models
 end
 
 """
