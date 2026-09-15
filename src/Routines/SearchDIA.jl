@@ -257,6 +257,12 @@ function SearchDIA(params_path::String)
             rss_after = peak_rss()
             timings[name] = search_timing
             rss_deltas[name] = (rss_after - rss_before) / (1024^3)
+            # Dev hook: PIONEER_STOP_AFTER="<phase name>" ends the pipeline after
+            # that phase; models, temp files and QC plots produced so far are kept.
+            if get(ENV, "PIONEER_STOP_AFTER", "") == name
+                @user_info "PIONEER_STOP_AFTER=\"$name\": stopping the pipeline here"
+                break
+            end
         end
 
         # === Generate performance report ===
