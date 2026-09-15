@@ -132,5 +132,10 @@ getIsolationWidthMzs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.data[:isolationWidthMz]::_MSDataCol{Union{Missing,T},T}
 getMsOrders(ms_data::NonIonMobilityData{T}) where T =
     ms_data.data[:msOrder]::_MSDataCol{UInt8,UInt8}
+# Ion-mobility scan index per row (timsTOF packet files carry an `imScan` column);
+# `nothing` for files without one. Not a hot-path accessor.
+getImScans(::MassSpecData) = nothing
+getImScans(ms_data::NonIonMobilityData) =
+    hasproperty(ms_data.data, :imScan) ? ms_data.data[:imScan] : nothing
 getCycleIdxs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.cycle_idxs === nothing ? ms_data.data[:cycle_idx] : ms_data.cycle_idxs

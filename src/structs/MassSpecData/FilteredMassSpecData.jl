@@ -179,6 +179,92 @@ function get_ms2_scan_priority_order(spectra::MassSpecData)
     return create_priority_order(all_sorted_scans, bin_starts, bin_ends)
 end
 
+"""
+    get_ms2_scan_priority_order_im(spectra::MassSpecData, n_im_bins::Int) -> Vector{Int32}
+
+Ion-mobility (packet) variant of `get_ms2_scan_priority_order`, modelled on the
+scanning-quad `get_ms2_scan_priority_order_q1` of feat/zt-scanning-v2. Same outer
+round-robin over `SCAN_PRIORITY_N_RT_BINS` RT bins, but each RT bin keeps its own
+rotation over (isolation window × IM bin) cells and a visit returns the highest-TIC
+undrawn packet of the NEXT cell. No cell is revisited until every other non-empty
+cell of that RT bin has given a packet.
+
+Why: a packet is one IM scan of one frame. TIC-first within an RT bin draws the densest
+scan of the densest frame and then its neighbouring scans, which hold the same precursors
+(measured: 1,641 tuning PSMs from 246 precursors), and the densest isolation window
+dominates. Rotating over windows spreads draws over all windows; rotating over IM bins
+puts consecutive draws for one window at least one IM bin apart, beyond the ~25-scan
+mobility peak width.
+
+Window identity is the distinct `centerMz` values (typically 24–64 for diaPASEF); if
+there are more than 64 distinct centres they are binned into 32 equal-width m/z bins.
+Exactly sized throughout; no push!.
+"""
+function get_ms2_scan_priority_order_im(spectra::MassSpecData, n_im_bins::Int)
+    n_rt = SCAN_PRIORITY_N_RT_BINS
+    rt_bins, _, _, _ = compute_rt_bins(spectra, n_rt)
+    ms_orders = getMsOrders(spectra)
+    cmz = getCenterMzs(spectra)
+    tics = getTICs(spectra)
+    im_scans = getImScans(spectra)
+    ms2 = Int32[i for i in 1:length(spectra) if ms_orders[i] == 2 && !ismissing(cmz[i])]
+    n = length(ms2)
+    n == 0 && return Int32[]
+    # Window index per scan: distinct isolation centres, or 32 m/z bins if there are too many.
+    centres = sort!(unique(Float32[Float32(cmz[i]) for i in ms2]))
+    win_id = zeros(Int32, length(spectra))
+    if length(centres) <= 64
+        n_win = length(centres)
+        win_lookup = Dict{Float32,Int32}(c => Int32(k) for (k, c) in enumerate(centres))
+        @inbounds for i in ms2; win_id[i] = win_lookup[Float32(cmz[i])]; end
+    else
+        n_win = 32
+        mz_lo = first(centres); mz_w = max(last(centres) - mz_lo, eps(Float32)) / n_win
+        @inbounds for i in ms2; win_id[i] = Int32(clamp(ceil(Int, (Float32(cmz[i]) - mz_lo) / mz_w), 1, n_win)); end
+    end
+    s_lo = minimum(Int(im_scans[i]) for i in ms2); s_hi = maximum(Int(im_scans[i]) for i in ms2)
+    s_w = max(s_hi - s_lo + 1, 1) / n_im_bins
+    im_of(i) = clamp(floor(Int, (Int(im_scans[i]) - s_lo) / s_w) + 1, 1, n_im_bins)
+    n_sub = n_win * n_im_bins
+    cell(i) = (Int(rt_bins[i]) - 1) * n_sub + (Int(win_id[i]) - 1) * n_im_bins + im_of(i)   # 1-based, RT-major
+    ncell = n_rt * n_sub
+    # counting sort into cells
+    counts = zeros(Int32, ncell)
+    @inbounds for i in ms2; counts[cell(i)] += 1; end
+    starts = Vector{Int32}(undef, ncell + 1); starts[1] = 1
+    @inbounds for c in 1:ncell; starts[c + 1] = starts[c] + counts[c]; end
+    sorted = Vector{Int32}(undef, n)
+    fill!(counts, 0)
+    @inbounds for i in ms2
+        c = cell(i); sorted[starts[c] + counts[c]] = i; counts[c] += 1
+    end
+    @inbounds for c in 1:ncell
+        lo, hi = starts[c], starts[c + 1] - 1
+        lo < hi && sort!(view(sorted, lo:hi), by = idx -> tics[idx], rev = true)
+    end
+    # emit: outer pass over RT bins, per-RT-bin cursor over its (window, IM) cells
+    pos = copy(starts)                       # next undrawn packet per cell
+    cursor = ones(Int, n_rt)
+    out = Vector{Int32}(undef, n)
+    w = 1
+    while w <= n
+        for r in 1:n_rt
+            base = (r - 1) * n_sub
+            for _ in 1:n_sub                         # find the next non-empty cell of this RT bin
+                q = cursor[r]
+                cursor[r] = q == n_sub ? 1 : q + 1
+                c = base + q
+                if pos[c] < starts[c + 1]
+                    out[w] = sorted[pos[c]]; pos[c] += 1; w += 1
+                    break
+                end
+            end
+            w > n && break
+        end
+    end
+    return out
+end
+
 # ============================================================================
 # Constructor
 # ============================================================================
