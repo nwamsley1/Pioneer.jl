@@ -134,8 +134,9 @@ function add_im_error!(
     end
     best_psms[!, :im_error] = im_error
     for (z, (a, b, s)) in sort(collect(models))
+        n_z = z == 0 ? count(calib) : count(i -> calib[i] && Int(charge[i]) == z, eachindex(calib))
         @debug_l1 "  IM line " * (z == 0 ? "pooled" : "z=$z") * " (file $ms_file_idx): pred 1/K0 = " *
-                  "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $(count(calib))"
+                  "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $n_z"
     end
     return nothing
 end
