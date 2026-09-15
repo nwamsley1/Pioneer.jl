@@ -163,7 +163,7 @@ TEMPORARY (Stage 2 bring-up). When `PIONEER_ZT_DUMP_PRECOLLAPSE=<dir>` is set, w
 benchmarked and validated against real input outside a full search. Inert when unset; remove
 once Stage 2 is verified.
 """
-function _zt_dump_precollapse(psms::DataFrame, search_context, ms_file_idx)
+function _zt_dump_precollapse(psms::DataFrame, search_context, ms_file_idx; chunk::Int = 0)
     dir = get(ENV, "PIONEER_ZT_DUMP_PRECOLLAPSE", "")
     isempty(dir) && return nothing
     cols = Symbol[:precursor_idx, :scan_idx, :weight]
@@ -172,7 +172,8 @@ function _zt_dump_precollapse(psms::DataFrame, search_context, ms_file_idx)
         hasproperty(psms, c) && push!(cols, c)
     end
     mkpath(dir)
-    path = joinpath(dir, "precollapse_file$(ms_file_idx).arrow")
+    path = joinpath(dir, chunk > 0 ? "precollapse_file$(ms_file_idx)_chunk$(chunk).arrow" :
+                                     "precollapse_file$(ms_file_idx).arrow")
     writeArrow(path, psms[!, cols])
     @user_info "ZT: dumped $(nrow(psms)) pre-collapse rows, $(length(cols)) cols -> $path"
     return nothing

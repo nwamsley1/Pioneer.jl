@@ -321,30 +321,6 @@ end
 # ============================================================================
 
 """
-    zt_cycle_scan_ranges(spectra) -> Vector{UnitRange{Int}}
-
-Contiguous MS2 scan ranges, one per acquisition cycle, in scan order.
-"""
-function zt_cycle_scan_ranges(spectra::MassSpecData)
-    cycles = getCycleIdxs(spectra)
-    n = length(spectra)
-    out = UnitRange{Int}[]
-    i = 1
-    while i <= n
-        if getMsOrder(spectra, i) != 2
-            i += 1; continue
-        end
-        c = cycles[i]; j = i
-        while j + 1 <= n && getMsOrder(spectra, j + 1) == 2 && cycles[j + 1] == c
-            j += 1
-        end
-        push!(out, i:j)
-        i = j + 1
-    end
-    return out
-end
-
-"""
     zt_count_fittable_metascans(psms, spectra, min_bins) -> Int
 
 Number of (precursor, cycle) groups with at least `min_bins` rows — the support the triangle

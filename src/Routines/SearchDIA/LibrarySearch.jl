@@ -58,6 +58,8 @@ function library_search(
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
     max_peaks::Int = 0,
+    zt_chunk_candidates::Int = 0,
+    zt_reduce = nothing,
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
@@ -128,13 +130,7 @@ function library_search(
         # Use provided scan indices, filter to valid MS2 scans
         all_scan_idxs = filter(si -> si > 0 && si <= length(spectra) &&
             getMsOrder(spectra, si) ∈ getSpecOrder(params), Int.(scan_indices))
-        # Partition provided scans evenly across threads
-        n_threads = Threads.nthreads()
-        thread_tasks = [(i, Int[]) for i in 1:n_threads]
-        for (idx, si) in enumerate(all_scan_idxs)
-            push!(thread_tasks[mod1(idx, n_threads)][2], si)
-        end
-        filter!(tt -> !isempty(last(tt)), thread_tasks)
+        thread_tasks = _round_robin_tasks(all_scan_idxs, Threads.nthreads())
     end
 
     isempty(all_scan_idxs) && return _empty_scored_psms(search_data, params)
@@ -235,7 +231,7 @@ function library_search(
         _dq = getQuadTransmissionFunction(qtm_deconv, _c, zt_geom.nominal_width)
         _fw = (getPrecMaxBound(_fq) - getPrecMinBound(_fq)) / 2
         _dw = (getPrecMaxBound(_dq) - getPrecMinBound(_dq)) / 2
-        @user_info "ZT candidacy (k=$zt_k): $n_emitted emitted -> $n_center center -> " *
+        @debug_l1 "ZT candidacy (k=$zt_k): $n_emitted emitted -> $n_center center -> " *
                    "$(length(precursors_passed)) expanded; candidacy box +/-$(round(_fw, digits=2)) Da, " *
                    "deconv box +/-$(round(_dw, digits=2)) Da (expansion span +/-" *
                    "$(round(Float32(zt_k) * zt_geom.bin_step, digits=2)) Da)"
@@ -253,9 +249,17 @@ function library_search(
     # (selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse!).
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
     t_deconv_start = time()
-    all_results = map(nce_entries) do (nce_model, nce_tag)
+    # DIAGNOSTIC (PIONEER_PROFILE_DECONV=1, main search only): sample the threaded deconv with
+    # Julia's Profile and write a flat self-time profile to the output dir, so the run_fused!
+    # match/design-matrix build can be separated from the solver. Adds sampling overhead when on.
+    _prof_deconv = (params isa MainSearchParameters) && get(ENV, "PIONEER_PROFILE_DECONV", "0") != "0"
+    if _prof_deconv
+        Profile.clear()
+        Profile.init(n = 200_000_000, delay = 0.001)
+    end
+    _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
-        tasks = map(thread_tasks) do thread_task
+        tasks = map(tt) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
@@ -279,6 +283,49 @@ function library_search(
             result[!, :nce] .= nce_tag
         end
         return result
+    end
+    # --- 3b. Scanning-quad chunked deconvolution (MainSearch only, zt_chunk_candidates > 0) ---
+    # The fragment index + expansion above ran ONCE over the whole file, so every scan's
+    # candidate count is exact. Cycles are grouped into chunks of ~zt_chunk_candidates
+    # candidates (cycle-aligned: expansion and the meta-scan collapse never cross a cycle),
+    # each chunk is deconvolved with segment-major thread tasks and handed to `zt_reduce`,
+    # which returns the reduced (collapsed) table. Only the reduced tables accumulate, so the
+    # raw per-bin rows of one chunk are the peak, never the whole file's.
+    if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
+        chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
+                                               zt_chunk_candidates)
+        reduced = DataFrame(); n_raw_total = 0; max_raw = 0
+        for (ci, chunk) in enumerate(chunks)
+            t_c = time()
+            n_cand = zt_candidate_count(chunk, scan_to_prec_idx)
+            tt = zt_thread_tasks(chunk, zt_k, Threads.nthreads())
+            raw_all = _deconv_body(tt)
+            raw = length(raw_all) == 1 ? raw_all[1] : vcat(raw_all...)
+            t_d = time() - t_c
+            n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
+            part = zt_reduce(raw, ci)
+            raw = nothing
+            reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
+            @user_info "ZT chunk $ci/$(length(chunks)): $(length(chunk)) cycles, " *
+                       "$(sum(length, chunk)) scans, $n_cand candidates -> $n_raw raw rows " *
+                       "(deconv $(round(t_d; digits=1))s) -> $(nrow(part)) reduced " *
+                       "(reduce $(round(time() - t_c - t_d; digits=1))s); cumulative $(nrow(reduced))"
+        end
+        t_deconv = time() - t_deconv_start
+        @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
+                   "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
+                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed))"
+        return reduced
+    end
+
+    all_results = _prof_deconv ? (Profile.@profile _deconv_body(thread_tasks)) : _deconv_body(thread_tasks)
+    if _prof_deconv
+        _pp = joinpath(getDataOutDir(search_context), "deconv_profile_$(ms_file_idx).txt")
+        open(_pp, "w") do io
+            Profile.print(IOContext(io, :displaysize => (100000, 320));
+                          format = :flat, sortedby = :count, mincount = 20)
+        end
+        @user_info "Deconv flat profile saved to $_pp"
     end
     t_deconv = time() - t_deconv_start
 
@@ -864,4 +911,20 @@ end
 
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
+end
+
+
+"""Strided round-robin scan partition, exactly sized (no push!)."""
+function _round_robin_tasks(all_scan_idxs::Vector{Int}, n_threads::Int)
+    n = length(all_scan_idxs)
+    T = min(n_threads, max(n, 1))
+    tasks = [(t, Vector{Int}(undef, length(t:T:n))) for t in 1:T]
+    @inbounds for t in 1:T
+        v = last(tasks[t]); p = 1
+        for i in t:T:n
+            v[p] = all_scan_idxs[i]; p += 1
+        end
+    end
+    filter!(tt -> !isempty(last(tt)), tasks)
+    return tasks
 end

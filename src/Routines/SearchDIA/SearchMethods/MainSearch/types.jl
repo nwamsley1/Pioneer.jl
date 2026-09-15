@@ -114,7 +114,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            PoissonMMSolver(),  # OLS / Lasso / AdaptiveLasso paths retained in git history
+            # EXPERIMENT (PIONEER_MAINSEARCH_SOLVER=ols): the PoissonMM solve is ~60% of the fused
+            # deconvolution loop (flat profile, ZT 5 Da A_REP1, 2026-09-14). Default unchanged.
+            (get(ENV, "PIONEER_MAINSEARCH_SOLVER", "pmm") == "ols" ? OLSSolver() : PoissonMMSolver()),
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 

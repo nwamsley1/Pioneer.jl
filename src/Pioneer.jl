@@ -17,6 +17,7 @@
 
 module Pioneer
 
+using Profile
 using Arrow, ArrowTypes, ArgParse, Dates
 import AcceleratedKernels
 using Base64

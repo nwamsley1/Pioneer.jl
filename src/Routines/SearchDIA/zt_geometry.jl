@@ -88,6 +88,116 @@ zt_fit_limit_da(g::ZTGeometry) = ZT_FIT_CORE_FRACTION * Float32(g.metascan_k) * 
 """Fit half-width in Da once `h` is known."""
 zt_fit_limit_da(h::Real) = ZT_FIT_CORE_FRACTION * Float32(h)
 
+"""
+Target candidates (precursor x scan pairs after expansion) per main-search chunk on a
+scanning-quad file. Exact, not predicted: the fragment index + expansion run once over the whole
+file before chunking. Rows are 0.13-0.26 of candidates on the ZT files seen, so 60M candidates
+is ~10-15M raw rows per chunk. nano15 (634M candidates, 164M rows in one pass) swapped a 48 GB
+machine. `PIONEER_ZT_CHUNK_CANDIDATES` overrides it for tuning.
+"""
+const ZT_CHUNK_CANDIDATES_DEFAULT = 60_000_000
+zt_chunk_candidates() = something(tryparse(Int, get(ENV, "PIONEER_ZT_CHUNK_CANDIDATES", "")),
+                                  ZT_CHUNK_CANDIDATES_DEFAULT)
+
+"""
+    zt_cycle_scan_ranges(spectra) -> Vector{UnitRange{Int}}
+
+Contiguous MS2 scan ranges, one per acquisition cycle, in scan order.
+"""
+function zt_cycle_scan_ranges(spectra::MassSpecData)
+    cycles = getCycleIdxs(spectra)
+    n = length(spectra)
+    out = UnitRange{Int}[]
+    i = 1
+    while i <= n
+        if getMsOrder(spectra, i) != 2
+            i += 1; continue
+        end
+        c = cycles[i]; j = i
+        while j + 1 <= n && getMsOrder(spectra, j + 1) == 2 && cycles[j + 1] == c
+            j += 1
+        end
+        push!(out, i:j)
+        i = j + 1
+    end
+    return out
+end
+
+"""
+    zt_candidate_count(cycle_ranges, scan_to_prec_idx) -> Int
+
+Exact number of (precursor, scan) candidates in the given cycles, from the per-scan ranges the
+fragment index + expansion produced.
+"""
+function zt_candidate_count(cycle_ranges::Vector{UnitRange{Int}},
+                            scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}})
+    n = 0
+    @inbounds for r in cycle_ranges, si in r
+        rng = scan_to_prec_idx[si]
+        ismissing(rng) || (n += length(rng))
+    end
+    return n
+end
+
+"""
+    zt_cycle_chunks_by_candidates(ranges, scan_to_prec_idx, target) -> Vector{Vector{UnitRange{Int}}}
+
+Group consecutive cycles into chunks of >= `target` candidates. Every chunk boundary is a cycle
+boundary, so no meta-scan is split: candidate expansion and the collapse are both confined to
+one cycle. Dense elution regions get many small chunks, empty regions one large chunk.
+"""
+function zt_cycle_chunks_by_candidates(ranges::Vector{UnitRange{Int}},
+                                       scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+                                       target::Int)
+    chunks = Vector{Vector{UnitRange{Int}}}()
+    cur = UnitRange{Int}[]; acc = 0
+    for r in ranges
+        push!(cur, r); acc += zt_candidate_count([r], scan_to_prec_idx)
+        if acc >= target
+            push!(chunks, cur); cur = UnitRange{Int}[]; acc = 0
+        end
+    end
+    isempty(cur) || push!(chunks, cur)
+    return chunks
+end
+
+"""
+    zt_thread_tasks(cycle_ranges, k, n_threads) -> Vector{Tuple{Int, Vector{Int}}}
+
+Deal one chunk's cycles to threads so that at any moment every thread is working the SAME m/z
+segment of the ramp, on different cycles. Segment width is one meta-scan (2k+1 bins). Thread t
+owns cycles t, t+T, t+2T, ... and walks them segment-major: segment 1 of each of its cycles, then
+segment 2, and so on. All threads therefore touch the same precursors' library entries at the
+same time (cache locality), and each thread processes a full meta-scan width consecutively (what
+a warm-started solver and per-precursor template reuse will need). Per-thread vectors are exactly
+sized up front; nothing grows.
+"""
+function zt_thread_tasks(cycle_ranges::Vector{UnitRange{Int}}, k::Int, n_threads::Int)
+    C = length(cycle_ranges)
+    W = 2k + 1
+    T = min(n_threads, C)
+    counts = zeros(Int, T)
+    @inbounds for c in 1:C
+        counts[mod1(c, T)] += length(cycle_ranges[c])
+    end
+    tasks = [(t, Vector{Int}(undef, counts[t])) for t in 1:T]
+    pos = ones(Int, T)
+    L = maximum(length, cycle_ranges)
+    S = cld(L, W)
+    @inbounds for s in 1:S, c in 1:C
+        r = cycle_ranges[c]
+        lo = first(r) + (s - 1) * W
+        hi = min(lo + W - 1, last(r))
+        lo > hi && continue
+        t = mod1(c, T); v = last(tasks[t]); p = pos[t]
+        for si in lo:hi
+            v[p] = si; p += 1
+        end
+        pos[t] = p
+    end
+    return tasks
+end
+
 """Number of complete cycles sampled by `detect_zt_geometry`."""
 const ZT_GEOM_SAMPLE_CYCLES = 8
 
