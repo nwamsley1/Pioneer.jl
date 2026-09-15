@@ -219,7 +219,8 @@ function process_huber_calibration_scans!(
             scan_int, 0f0, Float32(Inf),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             chrom_params.n_frag_isotopes,
-            chrom_params.isotope_err_bounds,
+            chrom_params.isotope_err_bounds;
+            scan_ev = getCollisionEnergyEv(spectra, scan_idx),
         )
 
         if nmatches > 2

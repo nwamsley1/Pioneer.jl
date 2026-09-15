@@ -818,7 +818,8 @@ function _quad_process_scan!(
         scan_int, 0f0, Float32(Inf),           # scan_irt / irt_tol — skipped by kind
         (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
         4,                                      # n_frag_isotopes — overridden to 0:3 via max_frag_iso_idx(FusedQuadEst)
-        (UInt8(0), UInt8(0))                    # isotope_err_bounds — skipped by kind
+        (UInt8(0), UInt8(0));                   # isotope_err_bounds — skipped by kind
+        scan_ev = getCollisionEnergyEv(spectra, scan_idx)
     )
 
     nmatches ≤ 2 && (reset!(id_to_col); reset!(Hs); return)

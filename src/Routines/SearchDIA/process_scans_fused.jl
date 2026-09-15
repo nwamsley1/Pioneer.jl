@@ -113,7 +113,8 @@ function process_scans_fused!(
                 frag_mz_bounds, n_frag_isotopes,
                 isotope_err_bounds;
                 m_rank = last(getMinTopNofM(params)),
-                scan_idx = Int64(scan_idx)
+                scan_idx = Int64(scan_idx),
+                scan_ev = getCollisionEnergyEv(spectra, scan_idx)
             )
             if nmatches ≤ 2
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)

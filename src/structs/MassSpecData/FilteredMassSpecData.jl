@@ -33,6 +33,7 @@ mutable struct FilteredMassSpecData{T<:AbstractFloat} <: MassSpecData
     low_mzs::Vector{T}
     high_mzs::Vector{T}
     isolation_width_mzs::Vector{T}
+    collision_energy_evs::Vector{T}   # per-scan collision energy (eV); 0 when unknown
 
     # Index mapping: filtered index → original scan index
     original_scan_indices::Vector{UInt32}
@@ -322,6 +323,7 @@ function FilteredMassSpecData(
     low_mzs = Vector{T}(undef, n_sampled)
     high_mzs = Vector{T}(undef, n_sampled)
     isolation_width_mzs = Vector{T}(undef, n_sampled)
+    collision_energy_evs = Vector{T}(undef, n_sampled)
 
     indices_buffer = topn !== nothing ? Vector{Int}(undef, 10000) : Int[]
 
@@ -353,6 +355,7 @@ function FilteredMassSpecData(
         low_mzs[i] = T(getLowMz(original, oi))
         high_mzs[i] = T(getHighMz(original, oi))
         isolation_width_mzs[i] = T(coalesce(getIsolationWidthMz(original, oi), zero(T)))
+        collision_energy_evs[i] = T(getCollisionEnergyEv(original, oi))
     end
 
     return FilteredMassSpecData{T}(
@@ -360,7 +363,7 @@ function FilteredMassSpecData(
         scan_headers, scan_numbers, base_peak_mzs, base_peak_intensities,
         injection_times, retention_times, precursor_mzs, isolation_widths,
         precursor_charges, ms_orders, cycle_idxs, center_mzs, TICs,
-        low_mzs, high_mzs, isolation_width_mzs,
+        low_mzs, high_mzs, isolation_width_mzs, collision_energy_evs,
         scan_indices_to_sample, original, topn, min_intensity_typed,
         max_scans, target_ms_order, rng, scan_priority_order,
         Int32(n_sampled), rt_bin_assignments, n_rt_bins,
@@ -442,6 +445,7 @@ getCenterMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_da
 getTIC(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.TICs[scan_idx]
 getLowMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.low_mzs[scan_idx]
 getHighMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.high_mzs[scan_idx]
+getCollisionEnergyEv(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = Float32(ms_data.collision_energy_evs[scan_idx])
 
 # ============================================================================
 # MassSpecData Interface — Plural/Batch Getters
@@ -518,6 +522,7 @@ function Base.append!(
         push!(filtered.low_mzs, T(getLowMz(original, oi)))
         push!(filtered.high_mzs, T(getHighMz(original, oi)))
         push!(filtered.isolation_width_mzs, T(coalesce(getIsolationWidthMz(original, oi), zero(T))))
+        push!(filtered.collision_energy_evs, T(getCollisionEnergyEv(original, oi)))
         push!(filtered.original_scan_indices, oi)
     end
 

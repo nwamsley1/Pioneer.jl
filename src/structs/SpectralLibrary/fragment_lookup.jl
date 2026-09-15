@@ -87,24 +87,30 @@ function prepare_fragment_intensity_model(
     return DynamicSplineIntensityModel(nce_model, getKnots(lookup))
 end
 
+# The fifth argument is the scan's collision energy in eV (0 when unknown). Only
+# collision-energy-keyed NCE models (CeBinnedNceModel) use it; the four-argument
+# form passes 0 for callers without a scan.
+@inline getSplineData(lookup::LibraryFragmentLookup, model, prec_charge::UInt8, prec_mz::AbstractFloat) =
+    getSplineData(lookup, model, prec_charge, prec_mz, 0f0)
+
 @inline getSplineData(
     ::StandardFragmentLookup, intensity_data::ConstantType,
-    ::UInt8, ::AbstractFloat) = intensity_data
+    ::UInt8, ::AbstractFloat, ::AbstractFloat) = intensity_data
 
 @inline getSplineData(
     ::SplineFragmentLookup, model::ConstantSplineIntensityModel,
-    ::UInt8, ::AbstractFloat) = model.data
+    ::UInt8, ::AbstractFloat, ::AbstractFloat) = model.data
 
 @inline function getSplineData(
     ::SplineFragmentLookup, model::DynamicSplineIntensityModel,
-        prec_charge::UInt8, prec_mz::AbstractFloat)
-    nce = model.nce_model(prec_mz, prec_charge)
+        prec_charge::UInt8, prec_mz::AbstractFloat, scan_ev::AbstractFloat)
+    nce = model.nce_model(prec_mz, prec_charge, scan_ev)
     return prepare_spline_fractions(nce, model.knots)
 end
 
 @inline function getSplineData(
         ::SplineFragmentLookup, model::BinnedSplineIntensityModel,
-        prec_charge::UInt8, prec_mz::AbstractFloat)
-    slot = nce_cache_slot(model.nce_model, prec_mz, prec_charge)
+        prec_charge::UInt8, prec_mz::AbstractFloat, scan_ev::AbstractFloat)
+    slot = nce_cache_slot(model.nce_model, prec_mz, prec_charge, scan_ev)
     return slot == 0 ? model.default_data : @inbounds(model.data[slot])
 end

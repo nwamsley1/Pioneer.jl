@@ -57,6 +57,7 @@ getIsolationWidthMz(data::IndexedMassSpecData, vi::Integer) = getIsolationWidthM
 getCenterMz(data::IndexedMassSpecData, vi::Integer) = getCenterMz(data.original_data, get_actual_index(data, vi))
 getLowMz(data::IndexedMassSpecData, vi::Integer) = getLowMz(data.original_data, get_actual_index(data, vi))
 getHighMz(data::IndexedMassSpecData, vi::Integer) = getHighMz(data.original_data, get_actual_index(data, vi))
+getCollisionEnergyEv(data::IndexedMassSpecData, vi::Integer) = getCollisionEnergyEv(data.original_data, get_actual_index(data, vi))
 
 # ============================================================================
 # Plural Getters (construct arrays from mapped indices)
