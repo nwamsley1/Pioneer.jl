@@ -249,6 +249,9 @@ function library_search(
     # (selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse!).
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
     t_deconv_start = time()
+    if params isa MainSearchParameters
+        DECONV_SOLVES[] = 0; DECONV_ITERS[] = 0
+    end
     # DIAGNOSTIC (PIONEER_PROFILE_DECONV=1, main search only): sample the threaded deconv with
     # Julia's Profile and write a flat self-time profile to the output dir, so the run_fused!
     # match/design-matrix build can be separated from the solver. Adds sampling overhead when on.
@@ -314,7 +317,8 @@ function library_search(
         t_deconv = time() - t_deconv_start
         @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
                    "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
-                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed))"
+                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed)); " *
+                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
         return reduced
     end
 
@@ -338,10 +342,11 @@ function library_search(
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
-        @debug_l1 "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
+        @user_info "library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
                    "deconv=$(round(t_deconv, digits=2))s  " *
                    "vcat=$(round(t_vcat, digits=2))s  " *
-                   "candidates=$(length(get_precursors(prec_index)))"
+                   "candidates=$(length(get_precursors(prec_index))); " *
+                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
     end
 
     return result

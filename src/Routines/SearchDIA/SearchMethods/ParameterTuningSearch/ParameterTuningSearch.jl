@@ -313,6 +313,13 @@ function accumulate_psms!(
                              scored_tmp[!,:q_value]; fdr_scale_factor=fdr_scale)
                 filter!(row -> row.q_value::Float16 <= fdr_threshold, scored_tmp)
                 filter!(row -> row.target::Bool, scored_tmp)
+                # Cap PSMs per precursor BEFORE counting convergence, so a few persistent ions
+                # cannot satisfy the target on their own. Measured on a 54-min nano ZT file
+                # (13-min elution window): 723 of 1,311 tuning PSMs came from 41 precursors in
+                # the wash, three peptides alone gave 613, and the mass-error / intensity-bias
+                # models were fit on their fragments (m/z stripes, tail curvature). The RT model
+                # already used this cap; the mass-error model now sees the same capped set.
+                scored_tmp = filter_top_psms_per_precursor(scored_tmp, TUNING_MAX_PSMS_PER_PRECURSOR)
                 n_passing = nrow(scored_tmp)
                 scored_psms = scored_tmp
             end
@@ -630,6 +637,22 @@ function process_file!(
                 get_matched_fragments(spectra, scored_psms, search_context, params, ms_file_idx) :
                 MassErrSample[]
             n_frags = length(frags)
+            # DIAGNOSTIC (PIONEER_TUNING_DUMP_DIR): dump the phase's scored PSMs and matched
+            # fragments so the sampling (which precursors, scans, RT, m/z) can be inspected offline.
+            let _dd = get(ENV, "PIONEER_TUNING_DUMP_DIR", "")
+                if !isempty(_dd) && n_passing > 0
+                    mkpath(_dd)
+                    _pm = getMz(getPrecursors(getSpecLib(search_context)))
+                    _keep = intersect([:precursor_idx, :scan_idx, :rt, :prob, :charge, :target],
+                                      Symbol.(names(scored_psms)))
+                    _ps = scored_psms[!, _keep]
+                    _ps[!, :prec_mz] = Float32[_pm[i] for i in _ps.precursor_idx]
+                    _ps[!, :center_mz] = Float32.(coalesce.(getCenterMzs(spectra)[_ps.scan_idx], NaN32))
+                    writeArrow(joinpath(_dd, "tuning_psms_file$(ms_file_idx)_phase$(phase_idx).arrow"), _ps)
+                    _fr = DataFrame([f => getfield.(frags, f) for f in fieldnames(MassErrSample)])
+                    writeArrow(joinpath(_dd, "tuning_frags_file$(ms_file_idx)_phase$(phase_idx).arrow"), _fr)
+                end
+            end
 
             if phase_idx == 1
                 # Phase 1: fit scout calibration model

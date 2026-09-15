@@ -21,6 +21,7 @@ const ZT_QUAD_TARGET_METASCANS = Int64(2000)
 const ZT_QUAD_MIN_METASCANS    = Int64(100)
 
 const TUNING_MIN_SAMPLES = Int64(1200)          # PSM target for collection phase
+const TUNING_MAX_PSMS_PER_PRECURSOR = 3         # cap per precursor before counting convergence
 const TUNING_MAX_PRESEARCH_ITERS = Int64(10)
 const TUNING_MAX_Q_VALUE = Float32(0.01)
 const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter for wide scout

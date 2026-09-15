@@ -116,18 +116,25 @@ Post-design-matrix processing. Returns `true` if scoring should proceed.
 function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::MainSearchParameters)
     weights = getTempWeights(search_data)
     initialize_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
-    converged = first(solve_deconvolution!(
+    converged, n_iter = solve_deconvolution!(
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
         params.max_iter_outer, params.max_diff
-    ))
+    )
+    # Diagnostic tally (main search): solves and outer iterations, reported per library_search.
+    Threads.atomic_add!(DECONV_SOLVES, 1)
+    Threads.atomic_add!(DECONV_ITERS, Int(n_iter))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
         zero_negligible_weights!(weights, Hs.n)
     end
     return converged
 end
+
+"""Main-search deconvolution tallies (solves, outer iterations); reset and logged by library_search."""
+const DECONV_SOLVES = Threads.Atomic{Int}(0)
+const DECONV_ITERS  = Threads.Atomic{Int}(0)
 
 function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::ParameterTuningSearchParameters)
     weights = getTempWeights(search_data)
