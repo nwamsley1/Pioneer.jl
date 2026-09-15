@@ -1708,7 +1708,8 @@ function build_chromatograms(
             scan_int, 0f0, Float32(Inf),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             params.n_frag_isotopes,
-            params.isotope_err_bounds)
+            params.isotope_err_bounds;
+            scan_ev = getCollisionEnergyEv(spectra, scan_idx))
 
         if nmatches > 2
             # Resize weight buffers for new columns.

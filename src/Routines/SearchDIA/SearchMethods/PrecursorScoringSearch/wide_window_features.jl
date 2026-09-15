@@ -452,10 +452,11 @@ function _wide_top_fragment_idxs(
     pid::UInt32,
     prec_charge::UInt8,
     prec_mz::Float32,
+    scan_ev::Float32,
 )
     frag_idxs = zeros(UInt64, 8)
     pred_intensities = fill(-Inf32, 8)
-    spline_data = getSplineData(frag_lookup, intensity_model, prec_charge, prec_mz)
+    spline_data = getSplineData(frag_lookup, intensity_model, prec_charge, prec_mz, scan_ev)
     frag_range = getPrecFragRange(frag_lookup, pid)
     @inbounds for frag_idx in frag_range
         frag = frag_list[Int(frag_idx)]
@@ -837,6 +838,7 @@ function add_wide_window_features_to_table!(
             pid,
             prec_charge,
             prec_mz,
+            getCollisionEnergyEv(spectra, scan_idxs[group_start]),
         )
         n_frags, sorted_ranks, sorted_targets, sorted_lows, sorted_highs =
             _wide_group_fragment_windows(fragment_idxs, frag_list, frag_mem)

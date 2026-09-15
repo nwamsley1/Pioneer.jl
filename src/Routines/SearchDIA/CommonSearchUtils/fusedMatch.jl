@@ -799,7 +799,8 @@ function run_fused!(
     n_frag_isotopes::Int64,
     isotope_err_bounds::Tuple{I, I};
     m_rank::Int64 = 3,
-    scan_idx::Int64 = 0   # for blacklist lookup; 0 disables
+    scan_idx::Int64 = 0,   # for blacklist lookup; 0 disables
+    scan_ev::Float32 = 0f0 # scan collision energy (eV) for CE-keyed NCE models; 0 = unknown
 ) where {K<:FusedSearchKind, I<:Integer}
 
     reset!(Hs)
@@ -836,7 +837,7 @@ function run_fused!(
         end
 
         prec_sulfur = prec_sulfur_counts[prec_idx]
-        spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz)
+        spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz, scan_ev)
 
         # Outer iso-pass loop: 1 iteration for FusedStandard (compiler
         # removes the wrapper), 3 for FusedQuadEst (one pass per isotope

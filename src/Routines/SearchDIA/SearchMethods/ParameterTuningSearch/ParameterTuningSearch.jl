@@ -454,18 +454,32 @@ function fit_nce_from_psms!(
         end
     end
 
-    # Fit NCE model
-    nce_model = fit_binned_median_nce(
-        best_nce[!, :prec_mz],
-        best_nce[!, :nce],
-        best_nce[!, :charge],
-        Float32(median(nce_grid)))
+    # Fit NCE model. Files whose scans carry a collision energy (timsTOF packets: an
+    # eV ramp along ion mobility) are binned on the Thermo-normalised nominal NCE of
+    # each precursor's scan eV instead of on precursor m/z (see CeBinnedNceModel).
+    scan_evs = Float32[getCollisionEnergyEv(spectra, si) for si in best_nce[!, :scan_idx]]
+    use_ce = count(>(0f0), scan_evs) >= 50
+    nce_model = if use_ce
+        fit_ce_binned_median_nce(scan_evs, best_nce[!, :prec_mz], best_nce[!, :nce],
+                                 best_nce[!, :charge], Float32(median(nce_grid)))
+    else
+        fit_binned_median_nce(best_nce[!, :prec_mz], best_nce[!, :nce],
+                              best_nce[!, :charge], Float32(median(nce_grid)))
+    end
 
     setNceModel!(search_context, ms_file_idx, nce_model)
 
     n_precs = nrow(best_nce)
     charges = sort(unique(best_nce[!, :charge]))
-    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)"
+    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)" *
+              (use_ce ? "; binned on scan collision energy (nominal NCE)" : "; binned on precursor m/z")
+
+    # Plot x axis and the bin table: nominal NCE for the CE-keyed model, else m/z.
+    x_vals = use_ce ?
+        Float32[nominal_nce(scan_evs[i], best_nce[i, :prec_mz], best_nce[i, :charge]) for i in 1:nrow(best_nce)] :
+        best_nce[!, :prec_mz]
+    bins_model = use_ce ? nce_model.inner : nce_model
+    x_label = use_ce ? "Nominal NCE (scan eV × 500 / (m/z × f(z)))" : "Precursor m/z"
 
     # Generate per-charge diagnostic plots
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
@@ -474,27 +488,27 @@ function fit_nce_from_psms!(
         mask = best_nce[!, :charge] .== charge
         n_c = count(mask)
         n_c < 10 && continue
-        charge_mz = best_nce[mask, :prec_mz]
+        charge_mz = x_vals[mask]
         charge_nce = best_nce[mask, :nce]
         ci = Int(UInt8(charge))
 
         # Get the bin edges from the fitted model
-        has_bins = ci >= 1 && ci <= 6 && nce_model.offsets[ci] != 0x00
+        has_bins = ci >= 1 && ci <= 6 && bins_model.offsets[ci] != 0x00
         if has_bins
-            nb = Int(nce_model.n_bins[ci])
-            bw = Float64(nce_model.bin_width[ci])
-            mz_lo = Float64(nce_model.mz_min[ci])
+            nb = Int(bins_model.n_bins[ci])
+            bw = Float64(bins_model.bin_width[ci])
+            mz_lo = Float64(bins_model.mz_min[ci])
             bin_edges = [mz_lo + (b - 1) * bw for b in 1:nb+1]
-            bin_medians = [Float64(nce_model.medians[Int(nce_model.offsets[ci]) + b - 1]) for b in 1:nb]
+            bin_medians = [Float64(bins_model.medians[Int(bins_model.offsets[ci]) + b - 1]) for b in 1:nb]
         else
             nb = 1
             mz_lo_f, mz_hi_f = extrema(charge_mz)
             bin_edges = [Float64(mz_lo_f), Float64(mz_hi_f) + 1.0]
-            bin_medians = [Float64(nce_model(median(charge_mz), charge))]
+            bin_medians = [Float64(bins_model(median(charge_mz), charge))]
         end
 
         p = Plots.plot(
-            xlabel = "Precursor m/z", ylabel = "Best NCE",
+            xlabel = x_label, ylabel = "Best NCE",
             title = _split_title(parsed_fname, "NCE +$(charge)") *
                     "\nn=$n_c, $(nb) bins, $(length(nce_grid)) grid pts",
             size = (900, 900), topmargin = 15Plots.mm,
