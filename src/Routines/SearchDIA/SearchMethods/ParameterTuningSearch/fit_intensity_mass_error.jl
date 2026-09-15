@@ -926,6 +926,10 @@ function fit_intensity_mass_error_model(
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
     k_emp = Float32(quantile(normalized_residuals, EMPK_QUANTILE))
     k = clamp(k_emp, EMPK_MIN_K, EMPK_CLAMP_HI)
+    # EXPERIMENT (PIONEER_MASSERR_K=<k>): pin the coverage multiplier for tolerance sweeps.
+    let _k = tryparse(Float32, get(ENV, "PIONEER_MASSERR_K", ""))
+        _k !== nothing && (k = _k)
+    end
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.

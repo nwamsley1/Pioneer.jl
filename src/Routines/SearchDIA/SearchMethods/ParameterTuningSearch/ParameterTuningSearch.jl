@@ -319,7 +319,9 @@ function accumulate_psms!(
                 # the wash, three peptides alone gave 613, and the mass-error / intensity-bias
                 # models were fit on their fragments (m/z stripes, tail curvature). The RT model
                 # already used this cap; the mass-error model now sees the same capped set.
-                scored_tmp = filter_top_psms_per_precursor(scored_tmp, TUNING_MAX_PSMS_PER_PRECURSOR)
+                scored_tmp = filter_top_psms_per_precursor(scored_tmp,
+                    something(tryparse(Int, get(ENV, "PIONEER_TUNING_MAX_PER_PREC", "")),
+                              TUNING_MAX_PSMS_PER_PRECURSOR))   # env: sweep the cap
                 n_passing = nrow(scored_tmp)
                 scored_psms = scored_tmp
             end
