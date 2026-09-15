@@ -30,6 +30,25 @@
         charge = UInt8[2, 3, 2, 1, 1, 1, 2],
         missed_cleavage = UInt8[0, 0, 1, 0, 0, 0, 0],
     )
+    @testset "Arrow record batches" begin
+        mktempdir() do dir
+            for normalized in (false, true), mbr in (false, true)
+                rows = DataFrame(chunk)
+                normalized || select!(rows, Not(:peak_area_normalized))
+                mbr || select!(rows, Not(:mbr_recovered))
+                path = joinpath(dir, "summary_$(normalized)_$(mbr).arrow")
+                open(Arrow.Writer, path; file=true) do writer
+                    Arrow.write(writer, rows[1:3, :])
+                    Arrow.write(writer, rows[4:end, :])
+                end
+                @test length(collect(Arrow.Stream(path))) == 2
+                expected = accumulate_run_summary!([RunSummaryStats("a"), RunSummaryStats("b")], rows)
+                actual = accumulate_run_summary!([RunSummaryStats("a"), RunSummaryStats("b")], Arrow.Table(path))
+                @test all(isequal(getfield(actual[i], field), getfield(expected[i], field))
+                          for i in eachindex(expected), field in fieldnames(RunSummaryStats))
+            end
+        end
+    end
     stats = [RunSummaryStats("a"), RunSummaryStats("b")]
     accumulate_run_summary!(stats, chunk)
     # A second chunk must fold into the same accumulators.
