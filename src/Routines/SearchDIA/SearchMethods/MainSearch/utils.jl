@@ -53,6 +53,94 @@ function recalibrate_rt!(
 end
 
 """
+    fit_im_lines(scan, pred, charge, calib; min_calib=100)
+
+Per-charge ion-mobility calibration lines. For the calibration rows (`calib`), fits
+library-predicted 1/K0 = a + b * packet IM scan index by least squares, once pooled
+over all charges (key 0) and once per charge with at least `min_calib` rows, with
+sigma = 1.4826 * MAD of the residuals (floored at 1e-4). Returns a
+`Dict{Int, NTuple{3,Float32}}` of (a, b, sigma); empty when the pooled set is too small.
+"""
+function fit_im_lines(
+    scan::AbstractVector{Float32},
+    pred::AbstractVector{Float32},
+    charge::AbstractVector,
+    calib::AbstractVector{Bool};
+    min_calib::Int = 100
+)
+    models = Dict{Int, NTuple{3, Float32}}()
+    function fit(idx)
+        x = scan[idx]; y = pred[idx]
+        xm = mean(x); ym = mean(y)
+        vx = sum((x .- xm) .^ 2)
+        b = vx > 0 ? sum((x .- xm) .* (y .- ym)) / vx : 0f0
+        a = ym - b * xm
+        r = y .- (a .+ b .* x)
+        s = 1.4826f0 * median(abs.(r .- median(r)))
+        return (Float32(a), Float32(b), max(Float32(s), 1f-4))
+    end
+    all_idx = findall(calib)
+    length(all_idx) < min_calib && return models
+    models[0] = fit(all_idx)
+    for z in unique(charge[all_idx])
+        idx = findall(i -> calib[i] && charge[i] == z, eachindex(calib))
+        length(idx) >= min_calib && (models[Int(z)] = fit(idx))
+    end
+    return models
+end
+
+"""
+    add_im_error!(best_psms, scores, spectra, precursors, ms_file_idx; min_prob=0.9, min_calib=100)
+
+Per-file ion-mobility calibration after initial LightGBM scoring (ion-mobility packet
+data). Fits per-charge lines of library-predicted 1/K0 against the packet's IM scan
+index on high-confidence target PSMs (score > `min_prob`) via `fit_im_lines`, and writes
+`im_error` = |predicted 1/K0 - line(scan)| / sigma for every row. Charges with fewer
+than `min_calib` calibration PSMs use the pooled line. When the file has no IM scan
+column or the library no mobility predictions, `im_error` is 0 everywhere — the column
+always exists because ScoringSearch takes its feature list from the first file's schema.
+"""
+function add_im_error!(
+    best_psms::DataFrame,
+    scores::Vector{Float32},
+    spectra::MassSpecData,
+    precursors,
+    ms_file_idx::Int64;
+    min_prob::Float32 = 0.9f0,
+    min_calib::Int = 100
+)
+    n = nrow(best_psms)
+    im_error = zeros(Float32, n)
+    im_scans = getImScans(spectra)
+    im_lib = getInvIonMobility(precursors)
+    if im_scans === nothing || im_lib === nothing || n == 0
+        best_psms[!, :im_error] = im_error
+        return nothing
+    end
+    scan = Float32[Float32(im_scans[si]) for si in best_psms[!, :scan_idx]]
+    pred = Float32[Float32(im_lib[pid]) for pid in best_psms[!, :precursor_idx]]
+    charge = best_psms[!, :charge]
+    calib = (scores .> min_prob) .& best_psms[!, :target]
+    models = fit_im_lines(scan, pred, charge, calib; min_calib = min_calib)
+    if isempty(models)
+        @debug_l1 "IM calibration (file $ms_file_idx): fewer than $min_calib high-confidence PSMs, im_error = 0"
+        best_psms[!, :im_error] = im_error
+        return nothing
+    end
+    pooled = models[0]
+    @inbounds for i in 1:n
+        a, b, s = get(models, Int(charge[i]), pooled)
+        im_error[i] = abs(pred[i] - (a + b * scan[i])) / s
+    end
+    best_psms[!, :im_error] = im_error
+    for (z, (a, b, s)) in sort(collect(models))
+        @debug_l1 "  IM line " * (z == 0 ? "pooled" : "z=$z") * " (file $ms_file_idx): pred 1/K0 = " *
+                  "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $(count(calib))"
+    end
+    return nothing
+end
+
+"""
     compute_rt_binned_tolerance!(search_context, rt_binned_tol, ms_data, n_files)
 
 Store an RTBinnedTolerance for each non-failed file.

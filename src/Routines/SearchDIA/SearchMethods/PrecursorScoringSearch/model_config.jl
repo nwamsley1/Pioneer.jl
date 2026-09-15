@@ -81,6 +81,9 @@ const ADVANCED_FEATURE_SET = [
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
+    # Ion-mobility residual (sigma units) from MainSearch's per-file mobility
+    # calibration; 0 on files without mobility data (see add_im_error!).
+    :im_error,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
