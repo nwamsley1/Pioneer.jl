@@ -618,6 +618,14 @@ function process_file!(
                 label = phase.label)
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
+            # Dev hook: PIONEER_TUNING_DUMP_PSMS="<dir>" writes each phase's
+            # scored PSMs (otherwise memory-only) for inspection.
+            dump_dir = get(ENV, "PIONEER_TUNING_DUMP_PSMS", "")
+            if !isempty(dump_dir) && n_passing > 0
+                mkpath(dump_dir)
+                Arrow.write(joinpath(dump_dir,
+                    "$(parsed_fname)_$(replace(lowercase(phase.label), ' ' => '_'))_psms.arrow"), scored_psms)
+            end
 
             # Extract fragments and fit model
             frags = n_passing > 0 ?
