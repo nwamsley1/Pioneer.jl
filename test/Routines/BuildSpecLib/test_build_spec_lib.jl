@@ -432,7 +432,8 @@ end
         # small peptides by their m/z values
         
         missed_cleavage_tests = [
-            (mc=1, expected_peptides=9),  # 5 base + 4 with 1 mc
+            # 5 base + 4 with 1 mc, + 2 N-terminal Met-excised forms (CMK, CMKALYK)
+            (mc=1, expected_peptides=11),
             #(mc=2, expected_peptides=12), # Above + 3 with 2 mc
             #(mc=3, expected_peptides=14), # Above + 2 with 3 mc
         ]
