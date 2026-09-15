@@ -740,12 +740,35 @@ const ModelPeptideLength = Union{Nothing, @NamedTuple{min::Int, max::Int}}
 # `fragmentation_type`: nothing for models taking no fragmentation input; a string
 # ("HCD"/"CID") for the PTM models that require the extra `fragmentation_types`
 # Koina input. prepare_koina_batch reads it and sends the input iff it is set.
+#
+# `supported_mods` / `free_cys`: what the model was trained on, checked against
+# a build's fixed and variable modifications by check_model_mod_support before
+# any prediction is requested. A modification a model never saw is not refused
+# by Koina -- it predicts something -- so the library would silently be wrong.
+# Keyed by UNIMOD accession; the value is the residues it may sit on, with 'n'
+# standing for the peptide N-terminus. `free_cys` says whether an unmodified
+# cysteine is something the model can predict: every model here except the
+# Prosit 40-PTM family assumes cysteine is carbamidomethylated, so a build with
+# no fixed modification on C must be refused for them.
+const ModSupport = Dict{Int, String}
+const BASE_MODS = ModSupport(4 => "C", 35 => "M")
+# The Prosit PTM vocabulary (2024 PTMs_gl / 2025 40PTM). Mirrors PTM_MODS in
+# gui/src/lib/koinaMods.ts; keep the two in step.
+const PROSIT_PTM_MODS = ModSupport(
+    1 => "K", 4 => "CK", 7 => "NQR", 21 => "STYH", 27 => "E", 28 => "Q",
+    34 => "KRDECHILNQ", 35 => "MWCHKP", 36 => "KR", 37 => "K", 43 => "ST",
+    56 => "K", 58 => "K", 59 => "K", 121 => "K", 214 => "K", 312 => "C",
+    535 => "K", 730 => "K", 737 => "K", 1263 => "K", 1289 => "K", 1293 => "K",
+    1848 => "K", 1990 => "K", 2016 => "K", 2062 => "C",
+)
 const MODEL_CONFIGS = Dict{String, @NamedTuple{
     annotation_type::FragAnnotation,
     model_type::KoinaModelType,
     instruments::Set,
     fragmentation_type::Union{Nothing, String},
     peptide_length::ModelPeptideLength,
+    supported_mods::ModSupport,
+    free_cys::Bool,
 }}(
     # peptide_length probed directly against Koina's
     # Altimeter_2024_splines_index: a 40-mer is accepted and a 41-mer is
@@ -765,6 +788,8 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
         instruments = Set([]),
         fragmentation_type = nothing,
         peptide_length = (min = 1, max = 40),
+        supported_mods = BASE_MODS,
+        free_cys = false,
     ),
     # Prosit models. All three are instrument-agnostic scalar-intensity models:
     # fixed fragment intensities at one collision energy, no NCE spline.
@@ -779,6 +804,8 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
         instruments = Set([]),
         fragmentation_type = nothing,
         peptide_length = (min = 7, max = 30),
+        supported_mods = BASE_MODS,
+        free_cys = false,
     ),
     "prosit_2024_ptm" => (
         annotation_type = GenericFragAnnotation("y1+1"),
@@ -786,6 +813,10 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
         instruments = Set([]),
         fragmentation_type = "HCD",
         peptide_length = (min = 7, max = 30),
+        supported_mods = PROSIT_PTM_MODS,
+        # Its model card does not claim free-cysteine training; only the 2025
+        # 40-PTM card does.
+        free_cys = false,
     ),
     # Prosit 2025 40-PTM: format-identical drop-in for prosit_2024_ptm (same
     # y1+1 annotation, same mz/intensity outputs), with a wider PTM vocabulary.
@@ -795,16 +826,63 @@ const MODEL_CONFIGS = Dict{String, @NamedTuple{
         instruments = Set([]),
         fragmentation_type = "HCD",
         peptide_length = (min = 7, max = 30),
+        supported_mods = PROSIT_PTM_MODS,
+        # Koina model card: "trained on peptides containing free cysteine side
+        # chains".
+        free_cys = true,
     ),
 )
 
 
 const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
+    "prosit_2024_irt_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_irt_PTMs_gl/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
     "prosit_2025_40ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2025_intensity_40PTM/infer",
+)
+
+# Retention-time models, selected by `library_params.rt_model`. Every one takes
+# the same single `peptide_sequences` input as the fragment models (sequence with
+# `[UNIMOD:n]` modifications), so the request is built once and only the
+# endpoint and the name of the output tensor differ.
+#
+# `output`: the output tensor the model returns its prediction in -- Chronologer
+# reports `rt` (a hydrophobic index, %ACN), the Prosit models `irt`. The search
+# treats either as an arbitrary monotone iRT scale: per-file RT<->iRT splines and
+# data-driven tolerances absorb the difference, so nothing downstream depends
+# on which was used.
+#
+# `supported_mods` / `free_cys` as for MODEL_CONFIGS.
+const DEFAULT_RT_MODEL = "chronologer"
+const RT_MODEL_CONFIGS = Dict{String, @NamedTuple{
+    output::Symbol,
+    supported_mods::ModSupport,
+    free_cys::Bool,
+}}(
+    "chronologer" => (
+        output = :rt,
+        # The 17 modifications of the Chronologer README (searlelab/chronologer),
+        # in UNIMOD terms: Carbamidomethyl, Oxidation, Phospho, Acetyl (K and
+        # N-term), Succinyl, GlyGly, mono/di/tri-methyl, TMT0/TMT10 (K and
+        # N-term), pyro-Glu from E and Q, and cyclized S-carbamidomethyl-Cys.
+        supported_mods = ModSupport(
+            4 => "C", 35 => "M", 21 => "STY", 1 => "Kn", 64 => "K", 121 => "K",
+            34 => "KR", 36 => "KR", 37 => "K", 739 => "Kn", 737 => "Kn",
+            27 => "E", 28 => "Q", 26 => "C",
+        ),
+        # Plain C is its own residue token in Chronologer's alphabet
+        # (chronologer_utils/masses.py), distinct from carbamidomethyl-C.
+        free_cys = true,
+    ),
+    "prosit_2024_irt_ptm" => (
+        output = :irt,
+        supported_mods = PROSIT_PTM_MODS,
+        # Sibling of the Prosit PTM fragment models; taken to share their
+        # free-cysteine coverage.
+        free_cys = true,
+    ),
 )
 
 function __init__()

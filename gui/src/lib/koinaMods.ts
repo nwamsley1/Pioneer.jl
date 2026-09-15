@@ -92,6 +92,104 @@ export const KOINA_MODS: Record<string, KoinaMod[]> = {
   prosit_2025_40ptm: PTM_MODS,
 }
 
+/** Fragment models that can predict an unmodified cysteine. Every other model
+ *  was trained with cysteine carbamidomethylated, so a build that leaves C
+ *  unmodified on one of them is refused (modelSupportBlock in validate.ts).
+ *  Mirrors `free_cys` in MODEL_CONFIGS (src/Pioneer.jl): the Prosit 2025
+ *  40-PTM model card says it was trained on peptides with free cysteine side
+ *  chains. */
+const FREE_CYS_MODELS = new Set(['prosit_2025_40ptm'])
+
+/** A retention-time model, selectable independently of the fragment model.
+ *  Mirrors RT_MODEL_CONFIGS in src/Pioneer.jl; keep the two in step. */
+export interface RtModel {
+  id: string
+  label: string
+  note: string
+  /** What it was trained on, in the same shape as a fragment model's list. */
+  mods: KoinaMod[]
+  /** Whether an unmodified cysteine is something it can predict. */
+  freeCys: boolean
+}
+
+// Chronologer's published 17 modification types (searlelab/chronologer
+// README), in UNIMOD terms. Masses as in UNIMOD, so a row is a real record.
+const CHRONOLOGER_MODS: KoinaMod[] = [
+  { unimod: 4, label: 'Carbamidomethyl', mass: 57.021464, sites: ['C'] },
+  { unimod: 35, label: 'Oxidation', mass: 15.994915, sites: ['M'] },
+  { unimod: 21, label: 'Phospho', mass: 79.966331, sites: ['S', 'T', 'Y'] },
+  { unimod: 1, label: 'Acetyl', mass: 42.010565, sites: ['K'] },
+  { unimod: 64, label: 'Succinyl', mass: 100.016044, sites: ['K'] },
+  { unimod: 121, label: 'GG', mass: 114.042927, sites: ['K'] },
+  { unimod: 34, label: 'Methyl', mass: 14.01565, sites: ['K', 'R'] },
+  { unimod: 36, label: 'Dimethyl', mass: 28.0313, sites: ['K', 'R'] },
+  { unimod: 37, label: 'Trimethyl', mass: 42.04695, sites: ['K'] },
+  { unimod: 739, label: 'TMT', mass: 224.152478, sites: ['K'] },
+  { unimod: 737, label: 'TMT6plex', mass: 229.162932, sites: ['K'] },
+  { unimod: 27, label: 'Glu->pyro-Glu', mass: -18.010565, sites: ['E'] },
+  { unimod: 28, label: 'Gln->pyro-Glu', mass: -17.026549, sites: ['Q'] },
+  { unimod: 26, label: 'Pyro-carbamidomethyl', mass: 39.994915, sites: ['C'] },
+]
+
+export const RT_MODELS: RtModel[] = [
+  {
+    id: 'chronologer',
+    label: 'Chronologer',
+    note: 'Hydrophobic index (% acetonitrile); 17 common modifications.',
+    mods: CHRONOLOGER_MODS,
+    // Plain C is its own residue token in Chronologer's alphabet.
+    freeCys: true,
+  },
+  {
+    id: 'prosit_2024_irt_ptm',
+    label: 'Prosit 2024 iRT (PTM)',
+    note: 'Prosit iRT scale; the PTM vocabulary of the Prosit PTM fragment models.',
+    mods: PTM_MODS,
+    freeCys: true,
+  },
+]
+
+export const DEFAULT_RT_MODEL = 'chronologer'
+
+export function rtModelById(id: string): RtModel {
+  return RT_MODELS.find((m) => m.id === id) ?? RT_MODELS[0]
+}
+
+/** The residues of `pattern` on which the RT model cannot predict this
+ *  modification: empty when the row is fully supported. An accession the
+ *  model has no entry for is unsupported on every residue. */
+export function rtUnsupportedResidues(rtId: string, name: string, pattern: string): string[] {
+  const id = unimodId(name)
+  const def = id === null ? null : rtModelById(rtId).mods.find((m) => m.unimod === id)
+  const residues = residuesOf(pattern)
+  return def ? residues.filter((r) => !def.sites.includes(r)) : residues
+}
+
+/** No fixed modification covers cysteine: the library will carry it
+ *  unmodified, which only some models can predict. */
+export function isFreeCys(fixed: { pattern: string }[]): boolean {
+  return !fixed.some((m) => residuesOf(m.pattern).includes(REQUIRED_FIXED_SITE))
+}
+
+/** Whether the fragment model can predict an unmodified cysteine. */
+export function modelAllowsFreeCys(modelId: string): boolean {
+  return FREE_CYS_MODELS.has(modelId)
+}
+
+/** The RT models that accept every selected modification and, if cysteine
+ *  is left unmodified, free cysteine -- what a "switch to" hint can offer. */
+export function rtModelsAccepting(
+  fixed: { name: string; pattern: string }[],
+  variable: { name: string; pattern: string }[],
+): RtModel[] {
+  const freeCys = isFreeCys(fixed)
+  return RT_MODELS.filter(
+    (rt) =>
+      (!freeCys || rt.freeCys) &&
+      [...fixed, ...variable].every((m) => rtUnsupportedResidues(rt.id, m.name, m.pattern).length === 0),
+  )
+}
+
 export function modsForModel(modelId: string): KoinaMod[] {
   return KOINA_MODS[modelId] ?? BASE_MODS
 }
@@ -141,49 +239,18 @@ export function siteAllowed(mod: KoinaMod, pattern: string): boolean {
   return residues.length > 0 && [...residues].every((c) => mod.sites.includes(c))
 }
 
-/** UNIMOD 4 on C, Carbamidomethyl.
- *
- *  Every Koina model currently supported is trained on alkylated cysteine, so
- *  the C site is not a choice: always fixed, never variable. A library built
- *  without it does not match what the model predicts, and the mismatch is
- *  silent -- the search simply finds less.
- *
- *  The pin is on the *site*, not the modification. Models whose UNIMOD 4 also
- *  covers K leave K entirely free: fixed, variable or absent, as the user
- *  likes. Multi-site mods are one row with a combined pattern, so "fixed on C
- *  and K" is the single fixed row carrying `[CK]` rather than a second row.
- *
- *  Kept here rather than in the form so a future model which does not want it
- *  opts out in one place.
- */
+/** UNIMOD 4 on C, Carbamidomethyl: what most Koina models assume every
+ *  cysteine carries. It is not pinned -- the row can always be removed -- but
+ *  leaving cysteine unmodified is then something the selected models must be
+ *  able to predict (see modelAllowsFreeCys / RtModel.freeCys), and the build
+ *  validation refuses the run until it is: add the modification back, or
+ *  choose a model trained on free cysteine. */
 export const REQUIRED_FIXED_UNIMOD = 4
 export const REQUIRED_FIXED_SITE = 'C'
-
-/** Models that require it. Currently all of them; named explicitly so adding a
- *  model is a decision rather than an inheritance. */
-const REQUIRES_FIXED_ALKYLATION = new Set(Object.keys(KOINA_MODS))
-
-export function requiresFixedAlkylation(modelId: string): boolean {
-  return REQUIRES_FIXED_ALKYLATION.has(modelId)
-}
 
 /** The residues a pattern names, `[CK]` -> `['C','K']`. */
 function residuesOf(pattern: string): string[] {
   return [...pattern.replace(/[[\]]/g, '')]
-}
-
-function isAlkylation(name: string): boolean {
-  return unimodId(name) === REQUIRED_FIXED_UNIMOD
-}
-
-/** True for the one fixed row the model pins: UNIMOD 4 covering C. It may also
- *  cover K -- that is still the pinned row, and still not removable. */
-export function isRequiredFixedMod(modelId: string, name: string, pattern: string): boolean {
-  return (
-    requiresFixedAlkylation(modelId) &&
-    isAlkylation(name) &&
-    residuesOf(pattern).includes(REQUIRED_FIXED_SITE)
-  )
 }
 
 /** Residues already taken by the fixed modifications.
@@ -198,80 +265,52 @@ export function occupiedResidues(fixed: { name: string; pattern: string }[]): Se
   return taken
 }
 
-/** Site choices permitted for one row.
- *
- *  A fixed alkylation row must keep C. A variable row may not name any residue
- *  a fixed modification already holds — which covers C automatically, since the
- *  alkylation row is always present, so that case needs no rule of its own. */
+/** Site choices permitted for one row: a variable row may not name any residue
+ *  a fixed modification already holds. */
 export function allowedSiteValues(
-  modelId: string,
+  _modelId: string,
   kind: 'fixed' | 'variable',
-  name: string,
+  _name: string,
   values: string[],
   occupied: Set<string> = new Set(),
 ): string[] {
-  if (kind === 'fixed') {
-    if (requiresFixedAlkylation(modelId) && isAlkylation(name)) {
-      return values.filter((v) => residuesOf(v).includes(REQUIRED_FIXED_SITE))
-    }
-    return values
-  }
+  if (kind === 'fixed') return values
   return values.filter((v) => !residuesOf(v).some((r) => occupied.has(r)))
 }
 
-/** The site a newly added row should start on: C for a fixed alkylation row,
- *  and the first site that is not C for a variable one. */
+/** The site a newly added row should start on: the conventional site for a
+ *  fixed row, and the first site not held by a fixed modification for a
+ *  variable one. */
 export function initialSite(
-  modelId: string,
+  _modelId: string,
   kind: 'fixed' | 'variable',
   mod: KoinaMod,
   occupied: Set<string> = new Set(),
 ): string | null {
-  if (kind === 'fixed') {
-    if (requiresFixedAlkylation(modelId) && mod.unimod === REQUIRED_FIXED_UNIMOD) {
-      return REQUIRED_FIXED_SITE
-    }
-    return mod.sites[0] ?? null
-  }
+  if (kind === 'fixed') return mod.sites[0] ?? null
   const free = mod.sites.filter((site) => !occupied.has(site))
   // null means every site this model allows is already held by a fixed
   // modification, so there is no variable form of it left to add.
   return free.length ? free[0] : null
 }
 
-/** Force the rule onto a pair of mod lists: exactly one fixed row covering C,
- *  and no variable row that names C.
+/** Keep the variable rows off the residues the fixed rows hold.
  *
  *  Applied wherever the lists can change from outside the mod editor -- a model
- *  switch, a loaded config -- so the invariant cannot be dodged by a route that
- *  bypasses the UI. A fixed row already covering C keeps its pattern, so `[CK]`
- *  survives; one that covers only K gains C rather than being replaced, since
- *  dropping it would silently discard a modification the user chose.
+ *  switch, a loaded config, a widened fixed site -- because a loaded or
+ *  hand-written config can put oxidation on a cysteine that carbamidomethyl
+ *  already occupies, which Pioneer rejects outright. Nothing is added: which
+ *  fixed modifications a library carries is the user's choice, and a missing
+ *  one the models need is reported by the build validation instead.
  */
 export function enforceRequiredMods(
-  modelId: string,
+  _modelId: string,
   fixed: { pattern: string; label: string; name: string; mass: string }[],
   variable: { pattern: string; label: string; name: string; mass: string }[],
 ) {
-  if (!requiresFixedAlkylation(modelId)) return { fixed, variable }
-
-  const existing = fixed.filter((m) => isAlkylation(m.name))
-  const rest = fixed.filter((m) => !isAlkylation(m.name))
-  let required: { pattern: string; label: string; name: string; mass: string }
-  if (existing.length === 0) {
-    required = modEntry(modelId, REQUIRED_FIXED_UNIMOD)
-  } else {
-    const sites = new Set(existing.flatMap((m) => residuesOf(m.pattern)))
-    sites.add(REQUIRED_FIXED_SITE)
-    required = { ...existing[0], pattern: sitePattern([...sites].sort()) }
-  }
-
-  const taken = occupiedResidues([required, ...rest])
+  const taken = occupiedResidues(fixed)
   return {
-    fixed: [required, ...rest],
-    // Every residue held by a fixed modification is stripped, not just C: a
-    // loaded or hand-written config can put oxidation on a cysteine that
-    // carbamidomethyl already occupies, which Pioneer rejects outright.
+    fixed,
     variable: variable.flatMap((m) => {
       const free = residuesOf(m.pattern).filter((r) => !taken.has(r))
       // Nothing survives, so the row described only occupied residues.

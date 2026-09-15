@@ -8,12 +8,17 @@ import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { HEADER_PRESETS } from '../lib/fasta'
 import {
+  RT_MODELS,
   findMod,
   allowedSiteValues,
   initialSite,
-  isRequiredFixedMod,
+  isFreeCys,
+  modelAllowsFreeCys,
   modsForModel,
   occupiedResidues,
+  rtModelById,
+  rtModelsAccepting,
+  rtUnsupportedResidues,
   siteAllowed,
   siteOptions,
   unimodId,
@@ -123,6 +128,7 @@ function ModTable({
   mods,
   modelId,
   modelLabel,
+  rtModelId,
   note,
   onField,
   onRemove,
@@ -134,6 +140,7 @@ function ModTable({
   mods: ModEntry[]
   modelId: string
   modelLabel: string
+  rtModelId: string
   note: string
   onField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemove: (kind: 'fixed' | 'variable', idx: number) => void
@@ -197,19 +204,27 @@ function ModTable({
           // every one of them, so the variable one lands on top. Pioneer rejects
           // the config, so this has to be visible while it is being made.
           const clash = [...modPatternResidues(m.pattern)].filter((r) => conflicts.has(r))
+          // The retention-time model has its own vocabulary: a modification the
+          // fragment model predicts may still have no retention time. Pioneer
+          // refuses the build, so it is marked here, where it can be fixed.
+          const rtBad = rtUnsupportedResidues(rtModelId, m.name, m.pattern)
           const warn = bad
             ? `${modelLabel} does not accept ${m.label || m.name || 'this modification'}${
                 def ? ` on ${m.pattern}` : ''
-              }. Koina will reject the build.`
+              }. Pioneer will refuse the build.`
             : clash.length
               ? `${clash.sort().join(', ')} is claimed by both a fixed and a variable ` +
                 `modification. A fixed one takes every matching residue, so the variable ` +
                 `one would land on top of it. Remove one, or narrow a site.`
-              : undefined
-          // Red for the conflict, which stops the build; the existing amber
-          // stays for a modification this model merely does not accept.
-          const line = clash.length ? '#E5484D' : bad ? '#B45309' : null
-          const ink = clash.length ? '#C0392B' : bad ? '#B45309' : null
+              : rtBad.length
+                ? `${rtModelById(rtModelId).label} cannot predict retention times for ` +
+                  `${m.label || m.name} on ${rtBad.join(', ')}. Remove it, or switch the ` +
+                  `retention-time model.`
+                : undefined
+          // Red for anything that stops the build.
+          const stops = clash.length > 0 || bad || rtBad.length > 0
+          const line = stops ? '#E5484D' : null
+          const ink = stops ? '#C0392B' : null
           return (
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }} title={warn}>
               {def ? (
@@ -285,14 +300,7 @@ function ModTable({
               >
                 {m.mass || '—'}
               </div>
-              {kind === 'fixed' && isRequiredFixedMod(modelId, m.name, m.pattern) ? (
-                // No control at all rather than a disabled one: there is no
-                // state in which this becomes removable, and a greyed button
-                // invites hunting for the condition that enables it.
-                <div style={{ width: 21, flex: 'none' }} title="Required by this model" />
-              ) : (
-                removeBtn(() => onRemove(kind, i), 'Remove', 21)
-              )}
+              {removeBtn(() => onRemove(kind, i), 'Remove', 21)}
             </div>
           )
         })}
@@ -387,6 +395,24 @@ export function BuildSpecLibForm({
   onAddMod,
 }: Props) {
   const selectedModel = predictionModelById(params.predictionModel)
+  const selectedRtModel = rtModelById(params.rtModel)
+  /** The selected models that cannot predict an unmodified cysteine, when the
+   *  fixed modifications leave it unmodified. Empty means nothing to say. */
+  const freeCysOffenders = isFreeCys(params.fixedMods)
+    ? [
+        ...(modelAllowsFreeCys(params.predictionModel) ? [] : [selectedModel.label]),
+        ...(selectedRtModel.freeCys ? [] : [selectedRtModel.label]),
+      ]
+    : []
+  /** "Phospho on S, T" for each modification the RT model cannot predict, and
+   *  the RT models that would take the whole selection instead. */
+  const rtProblems = [...params.fixedMods, ...params.variableMods].flatMap((m) => {
+    const bad = rtUnsupportedResidues(params.rtModel, m.name, m.pattern)
+    return bad.length ? [`${m.label || m.name} on ${bad.join(', ')}`] : []
+  })
+  const rtAlternatives = rtModelsAccepting(params.fixedMods, params.variableMods).filter(
+    (m) => m.id !== params.rtModel,
+  )
 
   // Mirrors clamp_digest_length_to_model on the Julia side. Shown only when the
   // requested range actually exceeds the model's, so the note appears exactly
@@ -1044,6 +1070,83 @@ export function BuildSpecLibForm({
             </>
           )}
         </div>
+
+        <h2 style={{ ...H2, margin: '18px 0 5px' }}>Retention time prediction</h2>
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
+          Which model predicts retention times. Each knows a different set of
+          modifications, so the choice has to cover every modification below.
+        </p>
+        <select
+          data-key="rtModel"
+          value={params.rtModel}
+          onChange={(e) => onParam('rtModel', e.target.value)}
+          style={{
+            width: '100%',
+            padding: '9px 36px 9px 11px',
+            border: `1px solid ${rtProblems.length ? '#E5484D' : '#CBD2DA'}`,
+            borderRadius: 9,
+            font: "600 12.5px 'IBM Plex Sans'",
+            color: '#1D2939',
+            background: `#FFFFFF ${CHEVRON}`,
+            backgroundSize: '16px 16px',
+            cursor: 'pointer',
+            outline: 'none',
+            appearance: 'none',
+            WebkitAppearance: 'none',
+          }}
+        >
+          {RT_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <div style={{ marginTop: 9, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+          {selectedRtModel.note}
+        </div>
+        {rtProblems.length > 0 && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: '#B91C1C',
+            }}
+          >
+            {selectedRtModel.label} cannot predict retention times for{' '}
+            {rtProblems.join('; ')}.{' '}
+            {rtAlternatives.length ? (
+              <>
+                Remove them, or{' '}
+                {rtAlternatives.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="pio-link-underline"
+                    onClick={() => onParam('rtModel', m.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                      font: "600 12px 'IBM Plex Sans'",
+                      color: '#B91C1C',
+                    }}
+                  >
+                    switch to {m.label}
+                  </button>
+                ))}
+                .
+              </>
+            ) : (
+              'No retention-time model supports the whole selection — remove them.'
+            )}
+          </div>
+        )}
       </section>
 
       <section style={CARD}>
@@ -1281,11 +1384,49 @@ export function BuildSpecLibForm({
           mods={params.fixedMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
+          rtModelId={params.rtModel}
           note={modNote.fixed}
           onField={onModField}
           onRemove={onRemoveMod}
           onAdd={onAddMod}
         />
+        {freeCysOffenders.length > 0 && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: '#B91C1C',
+            }}
+          >
+            Unmodified cysteine needs a fragment model and a retention-time model
+            trained on it — {freeCysOffenders.join(' and ')} {freeCysOffenders.length > 1 ? 'are' : 'is'} not.
+            {!modelAllowsFreeCys(params.predictionModel) &&
+              PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="pio-link-underline"
+                  onClick={() => onParam('predictionModel', m.id)}
+                  style={{
+                    marginLeft: 6,
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    font: "600 12px 'IBM Plex Sans'",
+                    color: '#B91C1C',
+                  }}
+                >
+                  Switch to {m.label}
+                </button>
+              ))}
+          </div>
+        )}
         <div style={{ height: 18 }} />
         {isPrositModel(params.predictionModel) &&
           unlocalizedMods(params.variableMods).length > 0 && (
@@ -1314,6 +1455,7 @@ export function BuildSpecLibForm({
           mods={params.variableMods}
           modelId={params.predictionModel}
           modelLabel={selectedModel.label}
+          rtModelId={params.rtModel}
           note={modNote.variable}
           onField={onModField}
           onRemove={onRemoveMod}

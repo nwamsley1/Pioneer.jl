@@ -145,6 +145,16 @@ Header-parsing regex patterns can be configured three ways:
 | `fixed_mods.{pattern, mass, name}` | [String], [Float], [String] | Cys carbamidomethyl (`Unimod:4`, +57.021464 Da) | Fixed modifications. |
 | `isotope_mod_groups` | [Object] | `[]` | Multiplexed labelling channels. |
 
+Modification names must be UNIMOD accessions (`Unimod:<id>`); they are sent to
+Koina verbatim. Before any prediction is requested, every fixed and variable
+modification (accession and residue) is checked against what the selected
+`prediction_model` **and** `rt_model` were trained on, and a build whose
+modifications either model cannot predict is refused — the error names the
+offending modifications and the models that would accept the whole selection.
+Leaving cysteine without a fixed modification means *unmodified cysteine*, which
+only `prosit_2025_40ptm` (fragments) and both retention-time models can
+predict; every other fragment model assumes carbamidomethyl-C.
+
 ### Collision Energy
 
 | Parameter | Type | Default | Description |
@@ -160,6 +170,13 @@ Header-parsing regex patterns can be configured three ways:
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
+
+### Prediction Models
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
+| `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
 
 ### Top-level
 
