@@ -500,8 +500,9 @@ function process_search_results!(
     # Ion-mobility calibration (packet data): per-charge library 1/K0 vs packet IM
     # scan line from high-confidence PSMs; writes :im_error (sigma units) for every
     # row, zeros when the file or library carries no mobility data.
-    add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
-                  getPrecursors(getSpecLib(search_context)), ms_file_idx)
+    im_models = add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
+                              getPrecursors(getSpecLib(search_context)), ms_file_idx)
+    setImModel!(search_context, ms_file_idx, im_models)
     t_recal = time()
 
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(

@@ -1405,16 +1405,81 @@ function withinQuadrupoleBounds(
     return mz_low ≤ prec_mz ≤ mz_high
 end
 
+# Ion-mobility gate width for chromatogram extraction, in sigma units of the per-charge
+# IM line (MainSearch's add_im_error!). Dev override: PIONEER_CHROM_IM_SIGMA.
+const CHROM_IM_TOL_SIGMA = 3.0f0
+chrom_im_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SIGMA", "")), CHROM_IM_TOL_SIGMA))
+# Dev override of the per-precursor RT window (minutes) in chromatogram extraction; 0 = off.
+chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_RT_TOL", "")), 0f0))
+
+# im_lines_by_charge(model) -> Vector{NTuple{3,Float32}}
+# Charge-indexed (a, b, sigma) lines from a per-file IM model Dict (key 0 = pooled, other
+# keys = charge). Charges without their own line get the pooled one; charges above the
+# vector length fall back to entry 1 at the call site. Empty when the model is empty.
+function im_lines_by_charge(model::Dict{Int, NTuple{3, Float32}})
+    isempty(model) && return NTuple{3, Float32}[]
+    pooled = get(model, 0, first(values(model)))
+    zmax = max(8, maximum(keys(model)))
+    return NTuple{3, Float32}[get(model, z, pooled) for z in 1:zmax]
+end
+
+# dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
+# Dev hook (PIONEER_CHROM_DUMP_DIR): writes every deconvolved (precursor, scan) weight
+# with its RT and, for packet data, the packet's frame id and IM scan index, to
+# <dump_dir>/<file>_chrom_weights.arrow, and the per-file IM lines (charge 0 = pooled) to
+# <dump_dir>/<file>_im_model.arrow.
+function dump_chromatogram_weights(
+    dump_dir::AbstractString,
+    chromatograms::DataFrame,
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    mkpath(dump_dir)
+    fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    scan_idxs = chromatograms[!, :scan_idx]
+    im_scans = getImScans(spectra)
+    frame_ids = getFrameIds(spectra)
+    cycle_idxs = getCycleIdxs(spectra)
+    out = DataFrame(
+        precursor_idx = chromatograms[!, :precursor_idx],
+        scan_idx = scan_idxs,
+        rt = chromatograms[!, :rt],
+        weight = chromatograms[!, :intensity],
+        cycle_idx = UInt32[UInt32(cycle_idxs[s]) for s in scan_idxs],
+        frame_id = frame_ids === nothing ? zeros(Int32, length(scan_idxs)) : Int32[Int32(frame_ids[s]) for s in scan_idxs],
+        im_scan = im_scans === nothing ? zeros(UInt16, length(scan_idxs)) : UInt16[UInt16(im_scans[s]) for s in scan_idxs],
+    )
+    if hasproperty(chromatograms, :precursor_fraction_transmitted)
+        out[!, :precursor_fraction_transmitted] = chromatograms[!, :precursor_fraction_transmitted]
+    end
+    Arrow.write(joinpath(dump_dir, fname * "_chrom_weights.arrow"), out)
+    model = getImModel(search_context, ms_file_idx)
+    zs = sort(collect(keys(model)))
+    Arrow.write(joinpath(dump_dir, fname * "_im_model.arrow"), DataFrame(
+        charge = zs,
+        a = Float32[model[z][1] for z in zs],
+        b = Float32[model[z][2] for z in zs],
+        sigma = Float32[model[z][3] for z in zs],
+    ))
+    @user_info "Chromatogram weight dump: $(nrow(out)) rows for $(length(unique(out.precursor_idx))) precursors -> $(joinpath(dump_dir, fname * "_chrom_weights.arrow"))"
+    return nothing
+end
+
 """
     collect_rt_window_precursors!(precs_temp, rt_index, rt_start_idx, rt_stop_idx,
                                    precursors_passing, prec_mzs, prec_charges,
                                    prec_sulfur_counts, iso_splines, quad_func,
                                    precursor_transmission, isotope_err_bounds,
                                    min_fraction_transmitted, precursor_rt_map,
-                                   scan_rt, rt_binned_tol, rt_tol_fallback) -> Int
+                                   scan_rt, rt_binned_tol, rt_tol_fallback,
+                                   [im_scan, im_lib, im_lines, im_tol_sigma]) -> Int
 
 Walk the RT-bin range, applying quad-window, precursors_passing allowlist,
 per-precursor RT, isotope_err_bounds, and min_fraction_transmitted filters.
+With `im_lines` non-empty (ion-mobility packet data) also drops precursors whose
+library 1/K0 (`im_lib`) is more than `im_tol_sigma` sigma from the per-charge line
+evaluated at the packet's `im_scan`.
 Writes the surviving precursor ids into `precs_temp[1:n]` and returns `n`.
 
 Extracted from the classic `RTIndexedTransitionSelection` path so
@@ -1437,11 +1502,20 @@ function collect_rt_window_precursors!(
     precursor_rt_map::Union{Dict{UInt32, Float32}, Nothing},
     scan_rt::Float32,
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
-    rt_tol_fallback::Float32) where {I<:Integer}
+    rt_tol_fallback::Float32,
+    im_scan::Float32 = 0f0,
+    im_lib::AbstractVector{Float32} = Float32[],
+    im_lines::Vector{NTuple{3, Float32}} = NTuple{3, Float32}[],
+    im_tol_sigma::Float32 = 0f0) where {I<:Integer}
 
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     size = 0
     has_rt_filter = precursor_rt_map !== nothing
+    # Ion-mobility gate (packet data): keep a precursor only when its library 1/K0 lies
+    # within im_tol_sigma * sigma of the per-charge line evaluated at this packet's IM
+    # scan. Inactive (im_lines empty) for files without mobility data.
+    has_im_filter = !isempty(im_lines)
+    n_im_lines = length(im_lines)
 
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
@@ -1450,6 +1524,12 @@ function collect_rt_window_precursors!(
         for i in start:stop
             prec_idx = first(precs[i])
             (!isnothing(precursors_passing) && prec_idx ∉ precursors_passing) && continue
+
+            if has_im_filter
+                z = Int(prec_charges[prec_idx])
+                a, b, s = im_lines[z <= n_im_lines ? z : 1]
+                abs(im_lib[prec_idx] - (a + b * im_scan)) > im_tol_sigma * s && continue
+            end
 
             if has_rt_filter
                 prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
@@ -1623,6 +1703,21 @@ function build_chromatograms(
     frag_lookup = getFragmentLookupTable(spec_lib)
     intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
 
+    # Ion-mobility gate inputs (packet data only): per-charge lines from MainSearch's
+    # calibration, indexed by charge (pooled line fills charges without their own), and
+    # the library 1/K0 column. Both empty when the file or library has no mobility data.
+    im_scans = getImScans(spectra)
+    im_lib_col = getInvIonMobility(precursors)
+    im_lines = (im_scans === nothing || im_lib_col === nothing) ?
+        NTuple{3, Float32}[] : im_lines_by_charge(getImModel(search_context, ms_file_idx))
+    im_lib = isempty(im_lines) ? Float32[] : Float32.(im_lib_col)
+    im_tol_sigma = chrom_im_tol_sigma()
+    # Dev override of the per-precursor RT tolerance (minutes): PIONEER_CHROM_RT_TOL.
+    rt_tol_override = chrom_rt_tol_override()
+    if rt_tol_override > 0f0
+        rt_binned_tol = nothing
+    end
+
     kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
 
     for scan_idx in scan_range
@@ -1631,6 +1726,7 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
+        im_scan = isempty(im_lines) ? 0f0 : Float32(im_scans[scan_idx])
         # The total ion current is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
         #
@@ -1648,7 +1744,9 @@ function build_chromatograms(
             @inbounds scan_tic[scan_idx] = Float32(getTIC(spectra, scan_idx))
         end
 
-        if rt_binned_tol !== nothing
+        if rt_tol_override > 0f0
+            rt_tol_local = rt_tol_override
+        elseif rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
         else
             h = 0.1f0
@@ -1680,7 +1778,8 @@ function build_chromatograms(
             precursors_passing, prec_mz_arr, prec_charge_arr, prec_sulfur_arr,
             getIsoSplines(search_data), quad_func, prec_trans_buf,
             params.isotope_err_bounds, params.min_fraction_transmitted,
-            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local)
+            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local,
+            im_scan, im_lib, im_lines, im_tol_sigma)
 
         if prec_temp_size == 0
             reset!(id_to_col); reset!(Hs)

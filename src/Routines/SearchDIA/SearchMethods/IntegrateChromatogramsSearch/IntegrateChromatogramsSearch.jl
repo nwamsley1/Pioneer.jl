@@ -414,6 +414,19 @@ function process_file!(
         MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
         _st = time(); _sa = Base.gc_bytes()
     end
+    # DEV HOOK (PIONEER_CHROM_DUMP_DIR=<dir>): write the deconvolved weights with RT and
+    # (packet data) frame / IM-scan coordinates before integration reorders them.
+    # PIONEER_CHROM_DUMP_ONLY=1 additionally skips integration (peak_area stays 0).
+    let dump_dir = get(ENV, "PIONEER_CHROM_DUMP_DIR", "")
+        if !isempty(dump_dir)
+            dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
+            if get(ENV, "PIONEER_CHROM_DUMP_ONLY", "0") == "1"
+                chromatograms = nothing
+                results.psms[] = passing_psms
+                return results
+            end
+        end
+    end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
     if _sdiag
         MBR_STEP_DIAG[:sort_bytes] += Base.gc_bytes() - _sa
