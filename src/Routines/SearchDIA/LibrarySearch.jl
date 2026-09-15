@@ -30,6 +30,35 @@
 _empty_scored_psms(search_data, params) =
     DataFrame(@view(get_scored_psms(first(search_data), params)[1:0]))
 
+# Dev diagnostic (PIONEER_INDEX_DUMP_DIR): write the fragment-index candidates of every
+# `stride`-th scan (by scan index) to `<dump_dir>/index_candidates_file<ms_file_idx>.arrow`
+# with columns scan_idx, precursor_idx, index_score.
+function _dump_index_candidates(dump_dir::String, ms_file_idx::Int64, all_scan_idxs::Vector{Int},
+                                scan_to_prec_idx, precursors_passed, scores_passed, stride::Int)
+    # The partitioned index search returns an empty score vector; scores are written
+    # only if a future variant populates it.
+    has_scores = length(scores_passed) == length(precursors_passed) && !isempty(scores_passed)
+    scan_col = Int32[]; prec_col = UInt32[]; score_col = UInt8[]
+    n_scans = 0
+    for scan in all_scan_idxs
+        scan % stride == 0 || continue
+        n_scans += 1
+        r = scan_to_prec_idx[scan]
+        ismissing(r) && continue
+        for k in r
+            push!(scan_col, Int32(scan)); push!(prec_col, UInt32(precursors_passed[k]))
+            has_scores && push!(score_col, UInt8(scores_passed[k]))
+        end
+    end
+    mkpath(dump_dir)
+    path = joinpath(dump_dir, "index_candidates_file$(ms_file_idx).arrow")
+    tbl = has_scores ? (scan_idx = scan_col, precursor_idx = prec_col, index_score = score_col) :
+                       (scan_idx = scan_col, precursor_idx = prec_col)
+    Arrow.write(path, tbl; metadata = Dict("stride" => string(stride), "n_scans_dumped" => string(n_scans)))
+    @user_info "Index candidate dump: $(length(scan_col)) candidates from $n_scans scans (stride $stride) -> $path"
+    return nothing
+end
+
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
 
@@ -150,6 +179,17 @@ function library_search(
         score_filter = score_filter, max_peaks = max_peaks,
         scratch = getFragIndexScratch(search_context))
     t_frag = time() - t_frag_start
+
+    # Dev hook: PIONEER_INDEX_DUMP_DIR="<dir>" writes the fragment-index candidates
+    # (scan_idx, precursor_idx, index score) of every PIONEER_INDEX_DUMP_STRIDE-th scan
+    # (default 50) of the MainSearch full-file pass, before candidate scoring.
+    let dump_dir = get(ENV, "PIONEER_INDEX_DUMP_DIR", "")
+        if !isempty(dump_dir) && params isa MainSearchParameters
+            stride = something(tryparse(Int, get(ENV, "PIONEER_INDEX_DUMP_STRIDE", "")), 50)
+            _dump_index_candidates(dump_dir, ms_file_idx, all_scan_idxs, scan_to_prec_idx,
+                                   precursors_passed, scores_passed, stride)
+        end
+    end
 
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
