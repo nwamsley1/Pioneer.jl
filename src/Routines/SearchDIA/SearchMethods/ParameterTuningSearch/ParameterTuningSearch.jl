@@ -594,7 +594,10 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        scan_priority = get_ms2_scan_priority_order(spectra)
+        # Scanning-quad files: Q1-stratified order (see get_ms2_scan_priority_order_q1).
+        scan_priority = getZTGeometry(search_context, ms_file_idx) === nothing ?
+            get_ms2_scan_priority_order(spectra) :
+            get_ms2_scan_priority_order_q1(spectra, TUNING_ZT_Q1_BINS)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true
