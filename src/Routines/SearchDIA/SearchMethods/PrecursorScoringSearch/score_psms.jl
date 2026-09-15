@@ -16,10 +16,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #==========================================================
-PSM scoring (experiment-wide LightGBM, identical to MainSearch's per-file
-classifier). Both stages call `train_psm_classifier_with_fallback`
-(MainSearch/scoring.jl), so they share hyperparameters, the 2-fold CV split,
-and the low-data probit fallback.
+PSM scoring uses a fixed experiment-wide training pool with the existing
+2-fold CV assignments. Both MBR modes fit and select LightGBM models on the
+pool, then stream predictions over every source file.
 ==========================================================#
 
 """
@@ -28,10 +27,10 @@ and the low-data probit fallback.
                                     q_value_threshold, force_oom;
                                     match_between_runs=true)
 
-Score PSMs experiment-wide with the same LightGBM classifier the per-file
-MainSearch uses (`SHARED_LGBM_HP` in `MainSearch/scoring.jl`). Loads PSMs
-into memory, calls the shared training helper, and writes `:trace_prob` back
-to the per-file Arrow files.
+Score PSMs with `SCORING_LGBM_HP` from `MainSearch/scoring.jl`. Select and
+load a representative pool once, fit semi-supervised models using pool OOF
+scores, then write selected-model predictions back to every per-file Arrow
+table. Final FDR calculation over the experiment happens downstream.
 
 # Arguments
 - `second_pass_folder`: Folder containing the per-file second-pass PSM
@@ -42,9 +41,8 @@ to the per-file Arrow files.
   `:accession_numbers` column is added later by `process_final_psms!`, not here.
 - `fragment_lookup`: Retained in the internal calling convention; integrated
   MBR evidence is built later during chromatogram integration.
-- `max_psms_in_memory`: Memory budget; surfaced for backward compatibility,
-  currently unused (in-memory always; per-fold sub-sampling inside the
-  shared helper handles large datasets).
+- `max_psms_in_memory`: Retained for backward compatibility; currently unused.
+  The training pool is capped by `SCORING_LGBM_MAX_TRAIN` per CV fold.
 - `q_value_threshold`: Surfaced for backward compatibility; currently unused.
 - `force_oom`: Surfaced for backward compatibility; ignored.
 
@@ -62,7 +60,7 @@ function score_precursor_isotope_traces(
     match_between_runs::Bool = true,
 )
     # MBR-on freezes OOF and in-fold Pass-1 scores for later integrated
-    # transfer rescoring. MBR-off keeps the legacy in-memory path.
+    # transfer rescoring. MBR-off uses the same pool and needs only OOF scores.
     if match_between_runs
         return _score_precursor_isotope_traces_mbr(file_paths, precursors)
     else
@@ -106,14 +104,7 @@ function _score_precursor_isotope_traces_mbr(
     return nothing
 end
 
-# Legacy in-memory path used only when match_between_runs = false. Kept for
-# small / non-MBR runs where the full best_psms easily fits in memory.
-# Pass-1 sidecar merge. After `train_and_predict_pass1_oom!` has written each
-# file's `.pass1_sidecar.arrow` (OOF `trace_prob_prepass`), fold the Pass-1 scores
-# into each main file ONE FILE AT A TIME — the full experiment is never materialised.
-# Reproduces the exact output columns the legacy in-memory path wrote:
-# `:decoy`, `:trace_prob_prepass`, `:trace_prob` (= prepass),
-# `:mbr_recovered` (= false).
+# Merge Pass-1 scores into the main Arrow tables one file at a time.
 function _merge_pass1_into_main!(
     file_paths::Vector{String},
     precursors::LibraryPrecursors;
@@ -134,12 +125,7 @@ function _merge_pass1_into_main!(
              main.scan_idx[i]      == pass1.scan_idx[i]) ||
                 error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
         end
-        # :accession_numbers deliberately NOT added here. It was materialised per PSM row at this point
-        # and then overwritten wholesale by process_final_psms! (IntegrateChromatogramsSearch/utils.jl),
-        # so the early copy was carried through every intermediate read/write in between -- the MBR
-        # feature pass, merge_recoveries, and the finalize materialise -- and then discarded. Protein
-        # inference does not need it either: ProteinInferenceSearch reads getAccessionNumbers(precursors)
-        # and indexes by precursor_idx (utils.jl:157/175/423) rather than using the table column.
+        # Accession metadata is added by process_final_psms! after integration.
         main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
         if hasproperty(pass1, :trace_prob_infold)
@@ -156,10 +142,8 @@ function _merge_pass1_into_main!(
 end
 
 # MBR-off path. Streams Pass-1 LightGBM over the per-file Arrow tables via the same
-# OOM trainer the MBR path uses, instead of materialising the whole experiment into
-# one in-memory DataFrame (the legacy path's peak-RSS cost). ID-equivalent — not
-# bit-identical — to the legacy path: the OOM trainer reservoir-samples for training,
-# so scores differ in the last bits, but the full experiment is never held in RAM.
+# fixed-pool trainer the MBR path uses. Both model training and selection use
+# the representative pool; all source rows are scored after model selection.
 function _score_precursor_isotope_traces_no_mbr(
     second_pass_folder::String,
     file_paths::Vector{String},
