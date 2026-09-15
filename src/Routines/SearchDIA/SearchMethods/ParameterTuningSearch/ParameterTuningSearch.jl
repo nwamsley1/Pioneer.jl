@@ -444,6 +444,15 @@ function fit_nce_from_psms!(
     # Keep best NCE per precursor (highest gof — deconvolution goodness of fit)
     sort!(nce_psms, :gof, rev=true)
     best_nce = combine(groupby(nce_psms, :precursor_idx), first)
+    # Dev hook (shares PIONEER_TUNING_DUMP_PSMS): the per-precursor best grid NCE
+    # with its scan, so alternative NCE models can be evaluated offline.
+    let dump_dir = get(ENV, "PIONEER_TUNING_DUMP_PSMS", "")
+        if !isempty(dump_dir)
+            mkpath(dump_dir)
+            keep = intersect([:precursor_idx, :scan_idx, :prec_mz, :charge, :nce, :gof], Symbol.(names(best_nce)))
+            Arrow.write(joinpath(dump_dir, "$(getParsedFileName(search_context, ms_file_idx))_best_nce.arrow"), best_nce[!, keep])
+        end
+    end
 
     # Fit NCE model
     nce_model = fit_binned_median_nce(
