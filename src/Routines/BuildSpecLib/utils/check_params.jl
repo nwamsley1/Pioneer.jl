@@ -195,6 +195,22 @@ function check_params_bsp(json_string::String)
     # Optional. Absent means flat bounds, which is what every params file
     # written before this key existed expects.
     parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
+    # Optional. Precursor-m/z partition width (Da) of the fragment index; 5 Da
+    # is the historical hardcoded value. Wider partitions suit wide isolation
+    # windows (e.g. 25 Da diaPASEF).
+    if haskey(library_params, "prec_partition_width")
+        check_param(library_params, "prec_partition_width", Real)
+        library_params["prec_partition_width"] > 0 || throw(InvalidParametersError(
+            "prec_partition_width must be > 0", library_params))
+    end
+    # Optional. Koina ion-mobility (CCS) model; empty or absent skips the
+    # prediction and the library has no `ccs` / `inv_ion_mobility` columns.
+    im_model = get(library_params, "im_model", "")
+    if !(im_model isa String) || !(isempty(im_model) || im_model in IM_MODEL_NAMES)
+        throw(InvalidParametersError(
+            "im_model must be one of: $(join(sort(collect(IM_MODEL_NAMES)), ", ")) (or empty)",
+            library_params))
+    end
     # `instrument_type` and `prediction_model` are no longer schema fields:
     # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
     # endpoint isn't instrument-parameterized.
