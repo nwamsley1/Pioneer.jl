@@ -81,6 +81,53 @@ function predict_rt_koina(chronologer_table::DataFrame)::Vector{Float32}
 end
 
 """
+    predict_ion_mobility(in_path, out_path, im_model)
+
+Read the precursor table at `in_path`, add `ccs` (Å², from the Koina model
+`im_model`) and `inv_ion_mobility` (1/K0, Vs/cm²) columns, and write it to
+`out_path`. Written to a new file rather than in place for the same reason
+`predict_retention_times` is: the input Arrow file may still be mmap-locked.
+"""
+function predict_ion_mobility(in_path::String, out_path::String, im_model::String)
+    table = DataFrame(Tables.columntable(Arrow.Table(in_path)))
+    ccs = predict_ccs_koina(table, im_model)
+    table[!, :ccs] = ccs
+    table[!, :inv_ion_mobility] =
+        ccs_to_inv_ion_mobility.(ccs, table.precursor_charge, table.mz)
+    Arrow.write(out_path, table)
+    return
+end
+
+"""
+Helper function to predict CCS values using a Koina ion-mobility model.
+"""
+function predict_ccs_koina(table::DataFrame, im_model::String)::Vector{Float32}
+    model = IonMobilityModel(im_model)
+    batches = prepare_koina_batch(model, table, batch_size=1000)
+    results = make_koina_batch_requests(batches, KOINA_URLS[im_model])
+    ccs = Float32[]
+    for result in results
+        append!(ccs, parse_koina_batch(model, result).fragments.ccs)
+    end
+    length(ccs) == nrow(table) || error(
+        "ion-mobility model $im_model returned $(length(ccs)) values for $(nrow(table)) precursors")
+    return ccs
+end
+
+"""
+    ccs_to_inv_ion_mobility(ccs, charge, mz)
+
+Mason–Schamp conversion as used by AlphaPeptDeep for Bruker timsTOF data
+(N2 drift gas, 28 Da): `1/K0 = CCS · sqrt(μ) / (z · 1059.62245)`, where
+`μ = M·28/(M+28)` is the reduced mass of the ion (`M = mz·z`) and N2.
+"""
+function ccs_to_inv_ion_mobility(ccs::Real, charge::Integer, mz::Real)::Float32
+    M = Float64(mz) * charge
+    μ = M * 28.0 / (M + 28.0)
+    return Float32(Float64(ccs) * sqrt(μ) / (charge * 1059.62245))
+end
+
+"""
 Helper function to predict RTs using local Chronologer installation.
 """
 function predict_rt_local(chronologer_out_path::String)

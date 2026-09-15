@@ -29,7 +29,14 @@ struct SplineCoefficientModel <: KoinaModelType
 end
 
 struct RetentionTimeModel <: KoinaModelType
-    name::String 
+    name::String
+end
+
+# Ion-mobility (CCS) model. Inputs are `peptide_sequences` + `precursor_charges`,
+# the single output tensor is `ccs` (Å²). CCS is converted to 1/K0 downstream
+# (chronologer_predict.jl) from the precursor m/z and charge.
+struct IonMobilityModel <: KoinaModelType
+    name::String
 end
 
 abstract type FragAnnotation end

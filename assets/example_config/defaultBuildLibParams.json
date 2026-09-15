@@ -58,12 +58,15 @@
 
     "comment_library": "=== Library m/z bounds ===",
     "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
+    "comment_library_index": "=== prec_partition_width: precursor-m/z partition width (Da) of the fragment index. im_model: Koina ion-mobility model ('alphapept_ccs' or 'im2deep') adding ccs / inv_ion_mobility precursor columns; empty skips it ===",
     "library_params": {
         "auto_detect_frag_bounds": true,
         "frag_mz_min": 150.0,
         "frag_mz_max": 2020.0,
         "prec_mz_min": 390.0,
-        "prec_mz_max": 1010.0
+        "prec_mz_max": 1010.0,
+        "prec_partition_width": 5.0,
+        "im_model": ""
     },
 
     "comment_processing": "=== Processing settings ===",
