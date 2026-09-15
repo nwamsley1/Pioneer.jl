@@ -307,12 +307,20 @@ function accumulate_psms!(
                              scored_tmp[!,:q_value]; fdr_scale_factor=fdr_scale)
                 filter!(row -> row.q_value::Float16 <= fdr_threshold, scored_tmp)
                 filter!(row -> row.target::Bool, scored_tmp)
-                n_passing = nrow(scored_tmp)
+                # Cap PSMs per precursor before counting convergence (ported from
+                # feat/zt-scanning-v2): a few persistent ions cannot satisfy the target
+                # on their own. On ion-mobility packet data one precursor yields ~7
+                # PSMs in adjacent IM scans, so the target is counted in unique
+                # precursors; the capped PSMs (up to 3 per precursor) still feed the fits.
+                scored_tmp = filter_top_psms_per_precursor(scored_tmp,
+                    something(tryparse(Int, get(ENV, "PIONEER_TUNING_MAX_PER_PREC", "")),
+                              TUNING_MAX_PSMS_PER_PRECURSOR))   # env: sweep the cap
+                n_passing = length(unique(scored_tmp.precursor_idx))
                 scored_psms = scored_tmp
             end
 
             @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, " *
-                       "$(n_passing) at $(round(Float64(fdr_threshold)*100, digits=1))% FDR"
+                       "$(n_passing) precursors ($(nrow(scored_psms)) PSMs) at $(round(Float64(fdr_threshold)*100, digits=1))% FDR"
 
             if n_passing >= target_psms
                 break
@@ -581,7 +589,12 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        scan_priority = get_ms2_scan_priority_order(spectra)
+        # Ion-mobility packet files: stratify within each RT bin over (isolation
+        # window, IM bin) so adjacent-scan duplicates of one precursor and one
+        # dense window cannot dominate (see get_ms2_scan_priority_order_im).
+        scan_priority = getImScans(spectra) === nothing ?
+            get_ms2_scan_priority_order(spectra) :
+            get_ms2_scan_priority_order_im(spectra, TUNING_IM_BINS)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true

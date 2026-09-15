@@ -15,7 +15,9 @@ const TUNING_INTENSITY_FILTER_QUANTILE = Float32(0.5)
 
 # ParameterTuningSearch-specific
 const TUNING_FRAG_ERR_QUANTILE = Float32(0.01)
-const TUNING_MIN_SAMPLES = Int64(1200)          # PSM target for collection phase
+const TUNING_MIN_SAMPLES = Int64(1200)          # unique-precursor target for collection phase
+const TUNING_MAX_PSMS_PER_PRECURSOR = 3         # cap per precursor before counting convergence (ported from feat/zt-scanning-v2)
+const TUNING_IM_BINS = 8                        # ion-mobility files: IM bins per (RT bin, isolation window) in the scan priority order
 const TUNING_MAX_PRESEARCH_ITERS = Int64(10)
 const TUNING_MAX_Q_VALUE = Float32(0.01)
 const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter for wide scout
