@@ -248,6 +248,37 @@ function library_search(
         _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed, spectra)
     end
 
+    if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
+        # EXPERIMENT (PIONEER_ZT_EVEN_BINS=1): after expansion, deconvolve only every second MS2
+        # scan of each cycle (even position within the cycle). Halves the solves; the collapse
+        # still sees ~half the bins of every meta-scan. Candidate sets are untouched.
+        # PIONEER_ZT_EVEN_BINS=1 drops every odd-position scan. PIONEER_ZT_EVEN_BINS=core:<c>
+        # keeps every scan whose cycle position is within c bins of ANY precursor's own bin —
+        # approximated here by keeping the scan if it is within c of a scan that a candidate
+        # anchors on. Simpler proxy used: keep odd scans too when (pos mod 2k+1) is within c of
+        # the meta-scan centre. Since meta-scans are not aligned to cycle positions, the
+        # practical variant is: drop odd scans only where the bin is >= c from the precursor
+        # m/z for ALL its candidates — too costly to evaluate here. So "core:<c>" instead thins
+        # the OUTER bins by candidate: for each dropped odd scan, candidates whose precursor m/z
+        # lies within c bins of that scan's centre are moved back in (kept). See _zt_thin_bins!.
+        _mode = get(ENV, "PIONEER_ZT_EVEN_BINS", "0")
+        begin
+            if _mode == "1"
+                _dropped = 0
+                for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r)
+                    if isodd(pos) && !ismissing(scan_to_prec_idx[si])
+                        scan_to_prec_idx[si] = missing; _dropped += 1
+                    end
+                end
+                @user_info "ZT even-bins experiment: dropped $_dropped odd-position MS2 scans from deconvolution"
+            elseif startswith(_mode, "core:")
+                _c = parse(Int, _mode[6:end])
+                precursors_passed = _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra,
+                                                         getMz(precursors), zt_geom, _c)
+            end
+        end
+    end
+
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -985,4 +1016,39 @@ function _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed::Vector
                "candidates (present in previous bin) = $(round(100 * tot_inter / tot_b; digits=1))% " *
                "(median $(round(100 * q(0.5); digits=1))%, p10 $(round(100 * q(0.1); digits=1))%); " *
                "Jaccard = $(round(100 * tot_inter / tot_union; digits=1))%"
+end
+
+
+"""
+    _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra, prec_mzs, geom, c)
+
+EXPERIMENT: on odd-position scans of each cycle, keep only the candidates whose precursor m/z
+lies within `c` bins of the scan centre (the core of their meta-scan); drop the rest. Even scans
+are untouched. So every meta-scan keeps all bins within ±c of its centre and every second bin
+outside. Rebuilds `precursors_passed` and reindexes in place (mirrors filter_low_scan_candidates!).
+"""
+function _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed::Vector{UInt32}, spectra::MassSpecData,
+                              prec_mzs::AbstractVector{Float32}, geom::ZTGeometry, c::Int)
+    cmzs = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
+    lim = Float32(c) * geom.bin_step + geom.bin_step / 2
+    odd = falses(length(spectra))
+    for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r); isodd(pos) && (odd[si] = true); end
+    new_passed = UInt32[]; sizehint!(new_passed, length(precursors_passed))
+    n_before = length(precursors_passed)
+    @inbounds for si in eachindex(scan_to_prec_idx)
+        rng = scan_to_prec_idx[si]; ismissing(rng) && continue
+        start = length(new_passed) + 1
+        if odd[si]
+            cm = cmzs[si]
+            for i in rng
+                pid = precursors_passed[i]
+                abs(prec_mzs[pid] - cm) <= lim && push!(new_passed, pid)
+            end
+        else
+            for i in rng; push!(new_passed, precursors_passed[i]); end
+        end
+        scan_to_prec_idx[si] = length(new_passed) >= start ? (start:length(new_passed)) : missing
+    end
+    @user_info "ZT thin-outer-bins experiment (core ±$c): candidates $n_before -> $(length(new_passed))"
+    return new_passed
 end
