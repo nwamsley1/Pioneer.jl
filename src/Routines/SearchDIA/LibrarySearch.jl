@@ -261,9 +261,15 @@ function library_search(
         # m/z for ALL its candidates — too costly to evaluate here. So "core:<c>" instead thins
         # the OUTER bins by candidate: for each dropped odd scan, candidates whose precursor m/z
         # lies within c bins of that scan's centre are moved back in (kept). See _zt_thin_bins!.
-        _mode = get(ENV, "PIONEER_ZT_EVEN_BINS", "0")
+        # Default on scanning-quad files: thin the outer bins (core ±2). Measured on 5 Da A_REP1:
+        # −20% main search for −0.7% precursors (29,635 -> 29,420); the outer bins of a
+        # meta-scan carry <40% transmission and every second one is enough for the collapse.
+        # PIONEER_ZT_EVEN_BINS=0 restores all bins; =1 or core:<c> select other variants.
+        _mode = get(ENV, "PIONEER_ZT_EVEN_BINS", "core:2")
         begin
-            if _mode == "1"
+            if _mode == "0"
+                # all bins
+            elseif _mode == "1"
                 _dropped = 0
                 for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r)
                     if isodd(pos) && !ismissing(scan_to_prec_idx[si])
