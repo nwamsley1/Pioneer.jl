@@ -245,6 +245,21 @@ function process_file!(
             return results
         end
         window_width = first(window_widths)
+
+        # Ion-mobility packet data (timsTOF): a packet is one IM scan of one frame, so its
+        # precursor isotope ratios are far too noisy for a transmission fit (E. coli 50 ng:
+        # pure scatter over the whole 25 Da window). Take the reported isolation window at
+        # face value instead.
+        if getImScans(spectra) !== nothing
+            @user_info "QuadTuning [$file_name]: ion-mobility packet data, using the reported $(window_width) m/z isolation window as a square transmission model"
+            square_model = SquareQuadModel(0.0f0)
+            setQuadModel(results, square_model)
+            fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+            push!(results.quad_plot_objects, plot_quad_model(square_model, window_width, results, fname))
+            push!(results.per_file_models, (getParsedFileName(search_context, ms_file_idx), square_model, Float64(window_width)))
+            return results
+        end
+
         # Build scan priority index (metadata only, no peak data)
         scan_index = build_quad_scan_priority_index(spectra)
 
@@ -360,8 +375,9 @@ function summarize_results!(
             overlay = plot(title="Per-file quad transmission — Razo LM$title_suffix",
                            xlabel="m/z offset", ylabel="transmission",
                            legend=:outertopright, size=(800, 500))
-            for (name, model, _) in results.per_file_models[lo:hi]
-                f = getQuadTransmissionFunction(model, 0.0f0, 2.0f0)
+            for (name, model, w) in results.per_file_models[lo:hi]
+                # Razo edges are absolute (width ignored); the square model needs the real width.
+                f = getQuadTransmissionFunction(model, 0.0f0, Float32(w))
                 plot!(overlay, plot_bins, f.(plot_bins), lw=1.5, alpha=0.6, label=name)
             end
             push!(results.quad_plot_objects, overlay)
