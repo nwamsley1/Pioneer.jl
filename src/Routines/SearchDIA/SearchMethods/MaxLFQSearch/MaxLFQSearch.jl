@@ -143,6 +143,33 @@ function reset_results!(::MaxLFQSearchResults)
 end
 
 """
+    write_precursor_long_arrow(path, chunk_refs, file_names, policy; run_to_run_normalization)
+
+Stream precursor chunks into the final Arrow export and return per-run summary
+accumulators. Keep strings unencoded so later chunks can introduce new values
+without overflowing a dictionary index type chosen from the first chunk.
+"""
+function write_precursor_long_arrow(
+    path::String, chunk_refs, file_names::Vector{String}, policy::OutputSchemaPolicy;
+    run_to_run_normalization::Bool,
+)
+    run_stats = [RunSummaryStats(name) for name in file_names]
+    isfile(path) && rm(path)
+    open(Arrow.Writer, path; file=true) do writer
+        for chunk_ref in chunk_refs
+            let tbl = Arrow.Table(file_path(chunk_ref))
+                accumulate_run_summary!(run_stats, tbl)
+                Arrow.write(writer, drop_uncomputed_normalized(
+                    blank_unquantified_areas(enabled_output_table(policy, :precursors, tbl)),
+                    run_to_run_normalization,
+                ))
+            end
+        end
+    end
+    return run_stats
+end
+
+"""
 Perform MaxLFQ analysis across all files.
 """
 function summarize_results!(
@@ -290,22 +317,10 @@ function summarize_results!(
     # Concatenate chunks into a final Arrow file-format export for QC plots.
     # The per-run summary is accumulated from the same chunks on this pass.
     @debug_l1 "Concatenating chunks to precursors_long.arrow..."
-    run_stats = [RunSummaryStats(name) for name in all_file_names]
-    isfile(precursors_long_path) && rm(precursors_long_path)
-    open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
-        for chunk_ref in chunk_refs
-            let tbl = Arrow.Table(file_path(chunk_ref))
-                accumulate_run_summary!(run_stats, tbl)
-                # Dictionary-encode the repeated string columns here, at the final write only --
-                # see OUTPUT_DICT_ENCODED_COLUMNS. -14.3% on this file, values unchanged.
-                Arrow.write(arrow_writer, dict_encode_output_columns(
-                    drop_uncomputed_normalized(
-                        blank_unquantified_areas(
-                            enabled_output_table(output_schema_policy, :precursors, tbl)),
-                        params.run_to_run_normalization)))
-            end
-        end
-    end
+    run_stats = write_precursor_long_arrow(
+        precursors_long_path, chunk_refs, all_file_names, output_schema_policy;
+        run_to_run_normalization = params.run_to_run_normalization,
+    )
     chunk_refs = nothing
     GC.gc()
 
