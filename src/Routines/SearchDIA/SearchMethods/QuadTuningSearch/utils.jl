@@ -1090,7 +1090,8 @@ function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float6
     half_width = padding + window_width/2
     plot_bins = LinRange(-half_width, half_width, 200)
 
-    quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
+    # Razo edges are absolute (width ignored); the square model needs the real window width.
+    quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, Float32(window_width))
     fit_label = quad_model isa RazoQuadModel ? "Razo (LM)" :
         "$(nameof(typeof(quad_model))) (fallback)"
 
