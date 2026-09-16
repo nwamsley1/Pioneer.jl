@@ -142,27 +142,58 @@ function reset_results!(::MaxLFQSearchResults)
     return nothing
 end
 
+function precursor_output_string_pools(chunk_refs, policy::OutputSchemaPolicy)
+    distinct_values = Dict{Symbol, Set}()
+    for chunk_ref in chunk_refs
+        let tbl = Arrow.Table(file_path(chunk_ref))
+            for name in (:file_name, :species, :structural_mods)
+                output_column_enabled(policy, :precursors, name) || continue
+                hasproperty(tbl, name) || continue
+                column = Tables.getcolumn(tbl, name)
+                values = get!(distinct_values, name) do
+                    Set{eltype(column)}()
+                end
+                foreach(value -> push!(values, value), column)
+            end
+        end
+    end
+    return Dict(name => PooledArray(sort!(collect(values)); signed=true, compress=true)
+                for (name, values) in distinct_values)
+end
+
+function encode_precursor_output_strings(columns::NamedTuple, pools)
+    return NamedTuple{keys(columns)}(map(keys(columns)) do name
+        column = getproperty(columns, name)
+        haskey(pools, name) || return column
+        # Retain the full pool so Arrow sizes indices for all chunks from the start.
+        pooled_column = pools[name][Int[]]
+        append!(pooled_column, column)
+        return Arrow.DictEncode(pooled_column)
+    end)
+end
+
 """
     write_precursor_long_arrow(path, chunk_refs, file_names, policy; run_to_run_normalization)
 
 Stream precursor chunks into the final Arrow export and return per-run summary
-accumulators. Keep strings unencoded so later chunks can introduce new values
-without overflowing a dictionary index type chosen from the first chunk.
+accumulators. Prebuild string dictionaries so their indices fit every chunk.
 """
 function write_precursor_long_arrow(
     path::String, chunk_refs, file_names::Vector{String}, policy::OutputSchemaPolicy;
     run_to_run_normalization::Bool,
 )
     run_stats = [RunSummaryStats(name) for name in file_names]
+    pools = precursor_output_string_pools(chunk_refs, policy)
     isfile(path) && rm(path)
     open(Arrow.Writer, path; file=true) do writer
         for chunk_ref in chunk_refs
             let tbl = Arrow.Table(file_path(chunk_ref))
                 accumulate_run_summary!(run_stats, tbl)
-                Arrow.write(writer, drop_uncomputed_normalized(
+                columns = drop_uncomputed_normalized(
                     blank_unquantified_areas(enabled_output_table(policy, :precursors, tbl)),
                     run_to_run_normalization,
-                ))
+                )
+                Arrow.write(writer, encode_precursor_output_strings(columns, pools))
             end
         end
     end
