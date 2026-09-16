@@ -144,6 +144,73 @@ function add_im_error!(
 end
 
 """
+    plot_im_calibration(best_psms, scores, spectra, precursors, models, fname; min_prob=0.9)
+
+QC plots for the per-file ion-mobility calibration (`add_im_error!`): page 1 scatters the
+calibration PSMs (score > `min_prob`, target) as packet IM scan vs library 1/K0 per charge
+with the fitted lines and +/- 3 sigma bands; page 2 overlays per-charge residual histograms
+of the calibration targets and of all decoys. Returns a vector of two plots.
+"""
+function plot_im_calibration(
+    best_psms::DataFrame,
+    scores::AbstractVector{Float32},
+    spectra::MassSpecData,
+    precursors,
+    models::Dict{Int, NTuple{3, Float32}},
+    fname::AbstractString;
+    min_prob::Float32 = 0.9f0
+)
+    im_scans = getImScans(spectra)
+    im_lib = getInvIonMobility(precursors)
+    scan = Float64[im_scans[si] for si in best_psms[!, :scan_idx]]
+    pred = Float64[im_lib[pid] for pid in best_psms[!, :precursor_idx]]
+    charge = Int.(best_psms[!, :charge])
+    target = best_psms[!, :target]
+    calib = (scores .> min_prob) .& target
+    pooled = models[0]
+    colors = Dict(1 => :gray, 2 => :steelblue, 3 => :darkorange, 4 => :seagreen, 5 => :purple)
+    zs = sort(unique(charge[calib]))
+    xs = range(minimum(scan), maximum(scan); length = 100)
+
+    p1 = plot(xlabel = "packet IM scan", ylabel = "library 1/K0",
+              title = "$fname\nIM calibration on targets with prob > $min_prob (dashed: +/- 3 sigma)",
+              titlefontsize = 9, legend = :topright, legendfontsize = 7)
+    for z in zs
+        idx = findall(calib .& (charge .== z))
+        a, b, s = get(models, z, pooled)
+        col = get(colors, z, :black)
+        own = haskey(models, z) ? "" : " (pooled line)"
+        scatter!(p1, scan[idx], pred[idx], ms = 1.5, ma = 0.25, msw = 0, color = col,
+                 label = "z=$z n=$(length(idx))$own")
+        plot!(p1, xs, a .+ b .* xs, color = col, lw = 2,
+              label = "z=$z: $(round(a, digits = 4)) + ($(round(b, digits = 6)))*scan, sigma $(round(s, digits = 4))")
+        plot!(p1, xs, a .+ b .* xs .+ 3s, color = col, ls = :dash, lw = 1, label = "")
+        plot!(p1, xs, a .+ b .* xs .- 3s, color = col, ls = :dash, lw = 1, label = "")
+    end
+
+    panels = Plots.Plot[]
+    for z in zs
+        a, b, s = get(models, z, pooled)
+        resid(idx) = pred[idx] .- (a .+ b .* scan[idx])
+        r_t = resid(findall(calib .& (charge .== z)))
+        r_d = resid(findall(.!target .& (charge .== z)))
+        lim = 6s
+        p = plot(xlabel = "library 1/K0 - line (1/K0)", ylabel = "density", title = "z=$z",
+                 titlefontsize = 9, legendfontsize = 7, xlims = (-lim, lim))
+        histogram!(p, clamp.(r_t, -lim, lim), bins = 60, normalize = :pdf, alpha = 0.6, color = :steelblue,
+                   lc = :match, label = "targets prob > $min_prob (n=$(length(r_t)))")
+        isempty(r_d) || histogram!(p, clamp.(r_d, -lim, lim), bins = 60, normalize = :pdf, alpha = 0.5,
+                                   color = :firebrick, lc = :match, label = "decoys, all (n=$(length(r_d)))")
+        vline!(p, [-3s, 3s], color = :black, ls = :dash, label = "")
+        push!(panels, p)
+    end
+    p2 = plot(panels..., layout = (1, length(panels)), size = (420 * length(panels), 380),
+              plot_title = "$fname: IM residuals", plot_titlefontsize = 9,
+              left_margin = 8 * Plots.mm, bottom_margin = 6 * Plots.mm)
+    return Plots.Plot[p1, p2]
+end
+
+"""
     compute_rt_binned_tolerance!(search_context, rt_binned_tol, ms_data, n_files)
 
 Store an RTBinnedTolerance for each non-failed file.
