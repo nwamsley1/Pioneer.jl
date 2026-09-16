@@ -89,7 +89,11 @@ function set_rt_to_irt_model!(
     setRtIrtMap!(search_context, model[1], ms_file_idx)
     
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA
+    # Dev override: PIONEER_TUNING_IRT_TOL_MULT scales the iRT window used by the main search's candidate
+    # selection (default 3 x MAD of the tuning RT fit).
+    tol_mult = Float32(something(tryparse(Float32, get(ENV, "PIONEER_TUNING_IRT_TOL_MULT", "")), 1.0f0))
+    getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA * tol_mult
+    @debug_l1 "  Tuning iRT tolerance for the main search: $(round(getIrtErrors(search_context)[ms_file_idx], digits = 3)) (MAD $(round(model[4], digits = 3)) x $(TUNING_IRT_TOL_SIGMA) x $tol_mult)"
 end
 
 
