@@ -21,10 +21,12 @@
 Load only the columns needed for run-level protein-model fitting from
 protein-group files. This avoids materializing string-heavy output columns like
 `peptide_list` that are not used by the model.
+Optional `row_indices` are sorted row positions across the concatenated files.
 """
 function load_run_level_protein_training_rows(
     pg_refs::Vector{ProteinGroupFileReference};
-    include_qc_plot_columns::Bool = false
+    include_qc_plot_columns::Bool = false,
+    row_indices::Union{Nothing, AbstractVector{Int}} = nothing,
 )
     columns_to_load = Symbol[
         :protein_name,
@@ -38,6 +40,8 @@ function load_run_level_protein_training_rows(
     unique!(columns_to_load)
 
     all_protein_groups = DataFrame()
+    row_offset = 0
+    sample_start = 1
     for pg_ref in pg_refs
         pg_path = file_path(pg_ref)
         isfile(pg_path) || continue
@@ -50,9 +54,18 @@ function load_run_level_protein_training_rows(
         missing_columns = [col for col in columns_to_load if !(col in available_columns)]
         isempty(missing_columns) || error("Protein group file $pg_path is missing required columns: $missing_columns")
 
+        rows = if row_indices === nothing
+            nothing
+        else
+            sample_end = searchsortedlast(row_indices, row_offset + n_rows)
+            selected = row_indices[sample_start:sample_end] .- row_offset
+            sample_start = sample_end + 1
+            selected
+        end
+        row_offset += n_rows
         chunk_df = DataFrame()
         for col in columns_to_load
-            chunk_df[!, col] = collect(tbl[col])
+            chunk_df[!, col] = rows === nothing ? collect(tbl[col]) : tbl[col][rows]
         end
 
         if ncol(all_protein_groups) == 0
@@ -75,7 +88,7 @@ a negative training label.
 """
 function prepare_run_level_protein_training_rows(
     actual::DataFrame,
-    counterfactual_shadows::DataFrame,
+    counterfactual_shadows::AbstractDataFrame,
 )
     prepared_actual = copy(actual)
     n_actual = nrow(prepared_actual)
@@ -98,7 +111,7 @@ function prepare_run_level_protein_training_rows(
         "Counterfactual shadow protein rows are missing columns: " *
         string(missing_columns),
     )
-    prepared_shadows = select(copy(counterfactual_shadows), actual_columns)
+    prepared_shadows = select(counterfactual_shadows, actual_columns)
     prepared_shadows[!, :training_label] =
         falses(nrow(prepared_shadows))
     prepared_shadows[!, :protein_shadow_negative] =
@@ -112,6 +125,49 @@ function prepare_run_level_protein_training_rows(
 end
 
 """
+    load_run_level_protein_training_pool(pg_refs, shadows, max_rows; kwargs...)
+
+Sample at most `max_rows` from actual and shadow rows together, then load only
+their training columns. The fixed pool preserves source order and original
+protein identities; shadows keep negative training labels.
+"""
+function load_run_level_protein_training_pool(
+    pg_refs::Vector{ProteinGroupFileReference},
+    shadows::DataFrame,
+    max_rows::Int;
+    include_qc_plot_columns::Bool = false,
+    rng::AbstractRNG = MersenneTwister(1776),
+)
+    max_rows > 0 || throw(ArgumentError("Protein training pool size must be positive"))
+    n_actual = sum(ref -> exists(ref) ? row_count(ref) : 0, pg_refs; init = 0)
+    n_total = n_actual + nrow(shadows)
+    actual_indices = nothing
+    sampled_shadows = shadows
+    if n_total > max_rows
+        # Reservoir stores only final row positions, never discarded features.
+        selected = collect(1:max_rows)
+        for row in (max_rows + 1):n_total
+            slot = rand(rng, 1:row)
+            slot <= max_rows && (selected[slot] = row)
+        end
+        sort!(selected)
+        last_actual = searchsortedlast(selected, n_actual)
+        actual_indices = @view selected[1:last_actual]
+        shadow_indices = selected[(last_actual + 1):end] .- n_actual
+        sampled_shadows = view(shadows, shadow_indices, :)
+        @debug_l1 "Run-level protein training pool: sampled $max_rows / $n_total rows " *
+                  "(actual=$last_actual, shadows=$(length(shadow_indices))); " *
+                  "training metrics describe the pool; every actual row will be scored"
+    end
+    actual = load_run_level_protein_training_rows(
+        pg_refs;
+        include_qc_plot_columns = include_qc_plot_columns,
+        row_indices = actual_indices,
+    )
+    return prepare_run_level_protein_training_rows(actual, sampled_shadows)
+end
+
+"""
     perform_run_level_protein_scoring(pg_refs::Vector{ProteinGroupFileReference},
                                       max_in_memory_rows::Int64,
                                       qc_folder::String,
@@ -122,7 +178,7 @@ Fit and apply the run-level protein model.
 
 # Arguments
 - `pg_refs`: Vector of protein group file references
-- `max_in_memory_rows`: Maximum number of protein-group rows allowed in memory
+- `max_in_memory_rows`: Cap on training rows, including counterfactual shadows
 - `qc_folder`: Folder for QC plots
 - `precursors`: Library precursors
 - `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
@@ -142,27 +198,12 @@ function perform_run_level_protein_scoring(
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
-    total_protein_groups = 0
-    for ref in pg_refs
-        if exists(ref)
-            total_protein_groups += row_count(ref)
-        end
-    end
-    total_protein_groups += nrow(counterfactual_shadow_protein_groups)
-
     max_protein_groups_in_memory_limit = max(max_in_memory_rows, 100_000)
-
-    if total_protein_groups > max_protein_groups_in_memory_limit
-        error("Run-level protein scoring does not support out-of-memory fitting. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
-    end
-
-    actual_protein_groups = load_run_level_protein_training_rows(
-        pg_refs;
-        include_qc_plot_columns = write_qc_plots
-    )
-    prepared = prepare_run_level_protein_training_rows(
-        actual_protein_groups,
+    prepared = load_run_level_protein_training_pool(
+        pg_refs,
         counterfactual_shadow_protein_groups,
+        max_protein_groups_in_memory_limit;
+        include_qc_plot_columns = write_qc_plots,
     )
     all_protein_groups = prepared.rows
     @debug_l1 "Run-level protein training controls: " *

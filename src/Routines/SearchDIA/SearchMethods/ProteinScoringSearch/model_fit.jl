@@ -355,6 +355,11 @@ function fit_protein_lightgbm_semisupervised(
         initial_labels;
         positive_label = true,
     )
+    # Retained iterations need only trees, not native training datasets.
+    if model_current.booster !== nothing
+        model_current.booster.booster = deepcopy(model_current.booster.booster)
+        GC.gc()
+    end
     _log_protein_lightgbm_feature_importance(
         model_current,
         1;
@@ -506,6 +511,10 @@ function fit_protein_lightgbm_semisupervised(
             ss.labels;
             positive_label = true,
         )
+        if model_current.booster !== nothing
+            model_current.booster.booster = deepcopy(model_current.booster.booster)
+            GC.gc()
+        end
         _log_protein_lightgbm_feature_importance(
             model_current,
             next_iteration;
