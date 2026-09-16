@@ -1,5 +1,7 @@
 @testset "Precursor Arrow export across growing string dictionaries" begin
-    for (nrows, first_chunk_rows, normalized) in ((1_000, 2, true), (33_000, 128, false))
+    cases = ((1_000, 2, true, false, Int16), (33_000, 128, false, false, Int32),
+             (8, 2, false, true, Int8))
+    for (nrows, first_chunk_rows, normalized, all_missing_mods, index_type) in cases
         @testset "$nrows distinct file names" begin
             mktempdir() do dir
                 file_names = ["run_$i" for i in 1:nrows]
@@ -9,7 +11,7 @@
                     file_name = file_names,
                     species = [isodd(i) ? "human" : "mouse" for i in 1:nrows],
                     structural_mods = Union{Missing, String}[
-                        i <= 2 || i == 500 ? missing : "mod_$i" for i in 1:nrows],
+                        all_missing_mods || i <= 2 || i == 500 ? missing : "mod_$i" for i in 1:nrows],
                     sequence = ["PEPTIDE_$i" for i in 1:nrows],
                     target = [i != 3 for i in 1:nrows],
                     peak_area = Float32[i % 5 == 0 ? 0 : i for i in 1:nrows],
@@ -38,6 +40,14 @@
                 output = joinpath(dir, "precursors_long.arrow")
                 stats = Pioneer.write_precursor_long_arrow(output, refs, file_names, policy;
                     run_to_run_normalization = normalized)
+                for batch in Arrow.Stream(output)
+                    for (name, expected_type) in ((:file_name, index_type), (:species, Int8),
+                            (:structural_mods, all_missing_mods ? Int8 : index_type))
+                        column = Tables.getcolumn(batch, name)
+                        @test column isa Arrow.DictEncoded
+                        @test eltype(column.indices) == expected_type
+                    end
+                end
                 actual = DataFrame(Arrow.Table(output))
                 expected = select(rows, Not(:isotopic_mods))
                 for name in (:peak_area, :peak_area_normalized)
@@ -56,6 +66,23 @@
                 @test stats[3].precursors_identified == 0
                 @test stats[1].total_peak_area == 1.0
                 @test stats[1].normalization_factors == Float32[2]
+
+                if nrows == 1_000
+                    repeated_refs = Pioneer.PSMFileReference[]
+                    for (chunk, ref) in enumerate(refs)
+                        path = joinpath(dir, "repeated_$chunk.arrow")
+                        repeated = repeat(DataFrame(Arrow.Table(Pioneer.file_path(ref))); outer=10)
+                        Arrow.write(path, repeated)
+                        push!(repeated_refs, Pioneer.PSMFileReference(path))
+                    end
+                    encoded_path = joinpath(dir, "repeated_encoded.arrow")
+                    Pioneer.write_precursor_long_arrow(encoded_path, repeated_refs, file_names, policy;
+                        run_to_run_normalization = normalized)
+                    plain_path = joinpath(dir, "repeated_plain.arrow")
+                    plain_columns = map(collect, Tables.columntable(Arrow.Table(encoded_path)))
+                    Arrow.write(plain_path, plain_columns)
+                    @test filesize(encoded_path) < filesize(plain_path)
+                end
             end
         end
     end

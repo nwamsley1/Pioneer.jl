@@ -35,6 +35,7 @@ using Measures
 using NumericalIntegration
 using Optim
 using Plots, Polynomials, ProgressBars, Printf
+using PooledArrays: PooledArray
 using Tables
 using StatsPlots, SentinelArrays
 using Random
