@@ -289,6 +289,7 @@ function process_file!(
 
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
+    PMM_INNER_ITER[] = something(tryparse(Int64, get(ENV, "PIONEER_PMM_INNER", "")), Int64(5))
 
     # Scanning-quad: search in cycle-aligned chunks and collapse each to meta-PSMs before the
     # next, so the per-file deconvolved table is never resident whole (see _zt_chunked_main_search).
@@ -369,18 +370,27 @@ function _zt_chunked_main_search(spectra::MassSpecData, search_context::SearchCo
                                  geom::ZTGeometry)
     precursors = getPrecursors(getSpecLib(search_context))
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+    t_sc = 0.0; t_ms1 = 0.0; t_col = 0.0
     reduce_chunk = (raw::DataFrame, ci::Int) -> begin
         nrow(raw) == 0 && return raw
-        @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
-        @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
+        t_sc  += @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
+        t_ms1 += @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
         _zt_dump_precollapse(raw, search_context, ms_file_idx; chunk = ci)
-        @alloc_bucket "metascan_collapse" collapse_to_metascans(
+        t_col += @elapsed part = @alloc_bucket "metascan_collapse" collapse_to_metascans(
             raw, spectra, precursors, geom; bitvec_rank_table = bitvec_rank_table)
+        part
     end
-    return @alloc_bucket "library_search (deconv)" library_search(
+    ZT_REDUCE_TIMES[] = (0.0, 0.0, 0.0)
+    out = @alloc_bucket "library_search (deconv)" library_search(
         spectra, search_context, params, ms_file_idx;
         zt_chunk_candidates = zt_chunk_candidates(), zt_reduce = reduce_chunk)
+    @user_info "ZT reduce breakdown: scan_competition=$(round(t_sc; digits=1))s  " *
+               "ms1_lookup=$(round(t_ms1; digits=1))s  collapse=$(round(t_col; digits=1))s"
+    return out
 end
+
+"""Placeholder kept for symmetry with other per-stage tallies; the reduce timers are local."""
+const ZT_REDUCE_TIMES = Ref((0.0, 0.0, 0.0))
 
 """
 Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.

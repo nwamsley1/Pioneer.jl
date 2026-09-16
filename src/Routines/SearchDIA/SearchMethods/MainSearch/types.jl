@@ -118,7 +118,8 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             # deconvolution loop (flat profile, ZT 5 Da A_REP1, 2026-09-14). Default unchanged.
             (get(ENV, "PIONEER_MAINSEARCH_SOLVER", "pmm") == "ols" ? OLSSolver() : PoissonMMSolver()),
             DECONV_MAX_ITER,          # max_iter_outer
-            DECONV_CONVERGENCE_TOL,   # max_diff
+            # EXPERIMENT (PIONEER_DECONV_TOL): relative convergence threshold sweep. Default unchanged.
+            something(tryparse(Float32, get(ENV, "PIONEER_DECONV_TOL", "")), DECONV_CONVERGENCE_TOL),   # max_diff
 
             Int64(0),   # min_y_count hardcoded
             Float32(0), # min_spectral_contrast hardcoded

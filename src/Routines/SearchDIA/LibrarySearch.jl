@@ -241,6 +241,13 @@ function library_search(
                        "expanded candidates in outer bins will get zero transmission." 
     end
 
+    # DIAGNOSTIC (PIONEER_ZT_OVERLAP=1, main search): candidate-set overlap between consecutive
+    # bins of a cycle after expansion — the template-reuse opportunity. Candidates are sorted
+    # within each scan, so overlap is a linear merge.
+    if zt_meta && zt_k > 0 && get(ENV, "PIONEER_ZT_OVERLAP", "0") != "0" && params isa MainSearchParameters
+        _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed, spectra)
+    end
+
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -302,7 +309,7 @@ function library_search(
             t_c = time()
             n_cand = zt_candidate_count(chunk, scan_to_prec_idx)
             tt = zt_thread_tasks(chunk, zt_k, Threads.nthreads())
-            raw_all = _deconv_body(tt)
+            raw_all = _prof_deconv ? (Profile.@profile _deconv_body(tt)) : _deconv_body(tt)
             raw = length(raw_all) == 1 ? raw_all[1] : vcat(raw_all...)
             t_d = time() - t_c
             n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
@@ -315,6 +322,14 @@ function library_search(
                        "(reduce $(round(time() - t_c - t_d; digits=1))s); cumulative $(nrow(reduced))"
         end
         t_deconv = time() - t_deconv_start
+        if _prof_deconv
+            _pp = joinpath(getDataOutDir(search_context), "deconv_profile_$(ms_file_idx).txt")
+            open(_pp, "w") do io
+                Profile.print(IOContext(io, :displaysize => (100000, 320));
+                              format = :flat, sortedby = :count, mincount = 20)
+            end
+            @user_info "Deconv flat profile (all chunks) saved to $_pp"
+        end
         @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
                    "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
                    "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed)); " *
@@ -932,4 +947,42 @@ function _round_robin_tasks(all_scan_idxs::Vector{Int}, n_threads::Int)
     end
     filter!(tt -> !isempty(last(tt)), tasks)
     return tasks
+end
+
+
+"""
+    _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed, spectra)
+
+For every pair of consecutive MS2 scans in the same cycle, count |A ∩ B| against |A|, |B|.
+Reports the mean fraction of a bin's candidates already present in the previous bin (what a
+per-thread template cache could reuse) and the mean Jaccard. Diagnostic only.
+"""
+function _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed::Vector{UInt32},
+                                     spectra::MassSpecData)
+    cyc = getCycleIdxs(spectra); n = length(spectra)
+    tot_b = 0; tot_inter = 0; tot_union = 0; npairs = 0
+    reuse_fracs = Float64[]
+    @inbounds for si in 2:n
+        (getMsOrder(spectra, si) == 2 && getMsOrder(spectra, si - 1) == 2 && cyc[si] == cyc[si - 1]) || continue
+        ra = scan_to_prec_idx[si - 1]; rb = scan_to_prec_idx[si]
+        (ismissing(ra) || ismissing(rb)) && continue
+        ia = first(ra); ib = first(rb); inter = 0
+        while ia <= last(ra) && ib <= last(rb)
+            a = precursors_passed[ia]; b = precursors_passed[ib]
+            if a == b; inter += 1; ia += 1; ib += 1
+            elseif a < b; ia += 1
+            else; ib += 1
+            end
+        end
+        nb = length(rb); na = length(ra)
+        tot_b += nb; tot_inter += inter; tot_union += na + nb - inter; npairs += 1
+        push!(reuse_fracs, inter / nb)
+    end
+    npairs == 0 && return
+    sort!(reuse_fracs)
+    q(p) = reuse_fracs[clamp(round(Int, p * length(reuse_fracs)), 1, length(reuse_fracs))]
+    @user_info "ZT adjacent-bin candidate overlap: $npairs pairs; reusable fraction of a bin's " *
+               "candidates (present in previous bin) = $(round(100 * tot_inter / tot_b; digits=1))% " *
+               "(median $(round(100 * q(0.5); digits=1))%, p10 $(round(100 * q(0.1); digits=1))%); " *
+               "Jaccard = $(round(100 * tot_inter / tot_union; digits=1))%"
 end

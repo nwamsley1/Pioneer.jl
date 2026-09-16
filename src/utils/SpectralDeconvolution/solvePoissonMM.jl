@@ -16,6 +16,9 @@
 abstract type DeconvolutionSolver end
 struct OLSSolver <: DeconvolutionSolver end
 struct PoissonMMSolver <: DeconvolutionSolver end
+# EXPERIMENT (PIONEER_PMM_INNER): inner coordinate-descent iterations per outer pass; set once at
+# search start by MainSearch. Default 5 (the former hard-coded value).
+const PMM_INNER_ITER = Ref{Int64}(5)
 
 # Iterated adaptive LASSO with non-negativity, OLS loss. Parameters:
 #   λ_rel  ∈ (0, 1)  — fraction of the unpenalized λ_max that becomes λ_eff
@@ -271,5 +274,5 @@ function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_
     end
     initObserved!(y, Hs)
     initMu!(μ, Hs, w)
-    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv)
+    return solvePoissonMM_fast!(Hs, μ, y, w, max_iter, conv; max_inner_iter = PMM_INNER_ITER[])
 end
