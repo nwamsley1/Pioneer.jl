@@ -422,6 +422,18 @@ function process_file!(
     let dump_dir = get(ENV, "PIONEER_CHROM_DUMP_DIR", "")
         if !isempty(dump_dir)
             dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
+            # PIONEER_CHROM_ALT_FILES=<arrow>[,<arrow>...]: extract the same passing precursors
+            # (same models, RT index and allowlist) from other conversions of this run, e.g.
+            # different ion-mobility binnings, and dump each under <dump_dir>/<file basename>/.
+            for alt_path in filter(!isempty, split(get(ENV, "PIONEER_CHROM_ALT_FILES", ""), ','))
+                alt = BasicMassSpecData(String(alt_path))
+                tag = replace(basename(String(alt_path)), r"(\.zstd)?\.arrow$" => "")
+                @user_info "Chromatogram weight dump: alternate file $tag ($(length(alt)) scans)"
+                alt_chroms, _ = extract_chromatograms(alt, passing_psms, rt_index, search_context, params, ms_file_idx, MS2CHROM())
+                dump_chromatogram_weights(joinpath(dump_dir, tag), alt_chroms, alt, search_context, ms_file_idx)
+                alt_chroms = nothing; alt = nothing
+                GC.gc()
+            end
             if get(ENV, "PIONEER_CHROM_DUMP_ONLY", "0") == "1"
                 chromatograms = nothing
                 results.psms[] = passing_psms
