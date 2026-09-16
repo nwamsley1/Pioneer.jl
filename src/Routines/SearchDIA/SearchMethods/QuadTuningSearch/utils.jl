@@ -1085,7 +1085,8 @@ Saves plot to quad_plot_dir/quad_models directory.
 
 function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float64,
                           results::QuadTuningSearchResults, fname::String;
-                          initial_model::Union{Nothing, RazoQuadModel} = nothing)
+                          initial_model::Union{Nothing, RazoQuadModel} = nothing,
+                          note::String = "fallback")
     padding = 2
     half_width = padding + window_width/2
     plot_bins = LinRange(-half_width, half_width, 200)
@@ -1093,13 +1094,13 @@ function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float6
     # Razo edges are absolute (width ignored); the square model needs the real window width.
     quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, Float32(window_width))
     fit_label = quad_model isa RazoQuadModel ? "Razo (LM)" :
-        "$(nameof(typeof(quad_model))) (fallback)"
+        "$(nameof(typeof(quad_model))) ($note)"
 
     title_str = if quad_model isa RazoQuadModel
         p_ = quad_model.params
         "$fname\nRazo: al=$(round(p_.al,digits=2)) ar=$(round(p_.ar,digits=2)) bl=$(round(p_.bl,digits=1)) br=$(round(p_.br,digits=1))"
     else
-        "$fname (fallback)"
+        "$fname ($note)"
     end
     p = plot(plot_bins, quad_func.(plot_bins), lw=2, alpha=0.85, color=:navy,
              title=title_str, titlefontsize=8, label=fit_label, xlabel="m/z offset",
