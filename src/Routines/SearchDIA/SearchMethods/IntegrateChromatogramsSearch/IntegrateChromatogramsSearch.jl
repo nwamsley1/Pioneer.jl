@@ -402,12 +402,26 @@ function process_file!(
         # EXPERIMENT (PIONEER_ZT_CHROM_TRIWIN=<half_width>, unset = current SumMetascan):
         # triangle-weighted sum over only the innermost +/-half_width bins, triangle shaped by
         # the full k so the window edge keeps a real weight (0.714 at +/-2 for k=6).
+        # PIONEER_ZT_CHROM_REDUCE=sum|triwin:<hw>|matched (default sum). "matched" uses the
+        # per-file fitted triangle (geom.template_h); falls back to sum when no fit exists.
+        # Default "matched" (2026-09-17, 3A+3B 5 Da): vs sum, per-precursor log2(A/B) MAD
+        # 0.18/0.21/0.31 -> 0.17/0.18/0.27 (H/Y/E), CVs -0.5 pt, medians unchanged; equals
+        # triwin:2 on precision but is invariant to which bins are present.
+        _mode = get(ENV, "PIONEER_ZT_CHROM_REDUCE", "matched")
         _twin = something(tryparse(Int, get(ENV, "PIONEER_ZT_CHROM_TRIWIN", "")), 0)
-        _red = _twin > 0 ? TriangleWindowMetascan(_twin) : SumMetascan()
+        _red = if _mode == "matched" && _zt_geom.template_h > 0f0
+            MatchedFilterMetascan(_zt_geom.template_h / _zt_geom.bin_step)
+        elseif startswith(_mode, "triwin:")
+            TriangleWindowMetascan(parse(Int, _mode[8:end]))
+        elseif _twin > 0
+            TriangleWindowMetascan(_twin)
+        else
+            SumMetascan()
+        end
         chromatograms = collapse_chromatograms_to_metascans(
             chromatograms, spectra, getPrecursors(getSpecLib(search_context)),
             Int(_zt_geom.metascan_k); reduction = _red)
-        @user_info "ZT chromatogram collapse (k=$(_zt_geom.metascan_k)): " *
+        @user_info "ZT chromatogram collapse (k=$(_zt_geom.metascan_k), $(typeof(_red))): " *
                    "$_n_pre -> $(nrow(chromatograms)) points"
     end
 

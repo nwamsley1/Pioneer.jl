@@ -74,6 +74,19 @@ struct TriangleWindowMetascan <: MetascanReduction
 end
 
 """
+Matched filter with the MEASURED transmission profile: bin weights `T_j = max(0, 1 - |j·S| / h)`
+from the per-file fitted triangle (`h` in Da, `S` the bin step), estimate
+`a = Σ T_j·w_j / Σ T_j²` — the least-squares abundance given `w_j ≈ a·T_j + noise`. Unlike the
+sums it is invariant to WHICH bins are present (a missing bin drops out of both sums), and it
+weights bins by their expected signal, so low-transmission outer bins contribute little. Scaled
+by `Σ T_j` over the full ±k so the result is on the same footing as `SumMetascan` (total
+transmitted signal), which keeps the downstream intensity scale unchanged.
+"""
+struct MatchedFilterMetascan <: MetascanReduction
+    h_over_step::Float32          # fitted h / bin_step
+end
+
+"""
     reduce_metascan(reduction, intensities, offsets, k) -> Float32
 
 Reduce one cycle's metascan bins to a single value. `offsets[i]` is the bin's scan-index offset
@@ -112,6 +125,20 @@ end
         end
     end
     return s
+end
+
+@inline function reduce_metascan(r::MatchedFilterMetascan, intensities::AbstractVector{Float32},
+                                 offsets::AbstractVector{Int}, k::Int)
+    num = zero(Float32); den = zero(Float32); tsum = zero(Float32)
+    @inbounds for i in eachindex(intensities)
+        t = max(0f0, 1f0 - abs(Float32(offsets[i])) / r.h_over_step)
+        num += t * intensities[i]
+        den += t * t
+    end
+    @inbounds for j in -k:k
+        tsum += max(0f0, 1f0 - abs(Float32(j)) / r.h_over_step)
+    end
+    return den > 0f0 ? (num / den) * tsum : 0f0
 end
 
 """
