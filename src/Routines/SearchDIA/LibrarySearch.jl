@@ -296,6 +296,10 @@ function library_search(
     if params isa MainSearchParameters
         DECONV_SOLVES[] = 0; DECONV_ITERS[] = 0
         PMM_STATS_ON[] = haskey(ENV, "PIONEER_PMM_STATS")
+        PMM_DUMP_DIR[] = get(ENV, "PIONEER_PMM_DUMP_DIR", "")
+        PMM_DUMP_EVERY[] = isempty(PMM_DUMP_DIR[]) ? 0 :
+            something(tryparse(Int, get(ENV, "PIONEER_PMM_DUMP_EVERY", "")), 500)
+        PMM_DUMP_EVERY[] > 0 && mkpath(PMM_DUMP_DIR[])
         PMM_STAT_VISITS[] = 0; PMM_STAT_ZERO_VISITS[] = 0; PMM_STAT_NNZ[] = 0; PMM_STAT_COLS[] = 0; PMM_STAT_ZERO_END[] = 0
     end
     # DIAGNOSTIC (PIONEER_PROFILE_DECONV=1, main search only): sample the threaded deconv with

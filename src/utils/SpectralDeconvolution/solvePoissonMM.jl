@@ -19,6 +19,7 @@ struct PoissonMMSolver <: DeconvolutionSolver end
 # EXPERIMENT (PIONEER_PMM_INNER): inner coordinate-descent iterations per outer pass; set once at
 # search start by MainSearch. Default 5 (the former hard-coded value).
 const PMM_INNER_ITER = Ref{Int64}(5)
+
 # DIAGNOSTIC (PIONEER_PMM_STATS=1): active-set potential — column visits where the weight is
 # zero before and after (wasted work), nonzeros touched, columns at zero at exit.
 const PMM_STATS_ON = Ref(false)
@@ -218,8 +219,11 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
                     end
                 else
                     # ── Just update μ (converged or last inner iteration) ──
-                    @inbounds @fastmath for i in col_start:col_end
-                        μ[rowval[i]] += nzval[i] * delta
+                    # A zero step adds nothing to μ: skip the pass (bit-identical).
+                    if !iszero(delta)
+                        @inbounds @fastmath for i in col_start:col_end
+                            μ[rowval[i]] += nzval[i] * delta
+                        end
                     end
                     break
                 end
