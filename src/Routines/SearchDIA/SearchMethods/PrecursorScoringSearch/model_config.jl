@@ -86,6 +86,8 @@ const ADVANCED_FEATURE_SET = [
     :im_error,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
+    # Ion-mobility apex offsets (IM scans; 0 without mobility data, -1 = undefined).
+    :ms1_apex_offset_im, :ms1_apex_offset_im_cycle, :ms1_weight_apex_to_m0_apex_im,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
     :ms1_isotope_dotp_m0_m1_m2,
