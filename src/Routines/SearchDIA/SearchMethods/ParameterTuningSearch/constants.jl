@@ -23,6 +23,19 @@ const TUNING_MAX_Q_VALUE = Float32(0.01)
 const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter for wide scout
 const TUNING_MAX_FRAGS_FOR_MASS_ERR = UInt8(3)  # Fragments per PSM for mass error estimation
 const TUNING_MIN_COLLECT_SCANS = Int64(5000)    # Minimum initial scan estimate for collection
+# Second-order stopping (accumulate_psms!): the scan-priority order draws the richest scans first, so the
+# marginal yield of each batch decays. Once the decay is established, the yield of ALL remaining scans is
+# bounded by a geometric series; if that bound cannot reach the target, the tier backs off immediately
+# instead of extrapolating the cumulative rate to the end of the file. Dev flag: PIONEER_TUNING_SECOND_ORDER=0
+# restores the cumulative-rate rule (read at call time, never at load: a load-time constant would be baked
+# into the precompile cache by whichever process compiled it).
+tuning_second_order() = get(ENV, "PIONEER_TUNING_SECOND_ORDER", "1") != "0"
+# Convergence unit per phase. The scout counts PSM rows (its only output is the outer m/z tolerance, which
+# 500-1,000 PSMs from the richest scans pin down as well as thousands from the whole file). Collection keeps the
+# best TUNING_MAX_PSMS_PER_PRECURSOR PSMs per precursor and counts the remaining rows, so a few persistent ions
+# cannot fill the target on their own (breadth for the RT / mass fits) without demanding 1,200 distinct precursors.
+# PIONEER_TUNING_MAX_PER_PREC overrides the collection cap (0 = rows, no cap); read at call time.
+tuning_collection_cap() = something(tryparse(Int, get(ENV, "PIONEER_TUNING_MAX_PER_PREC", "")), TUNING_MAX_PSMS_PER_PRECURSOR)
 const TUNING_CALIBRATION_BIN_SIZE = Int64(200)  # Equal-count bins for mass-error calibration summaries
 const TUNING_MZ_BIAS_BIN_SIZE = Int64(100)      # Denser bins for m/z-dependent bias medians
 const TUNING_MZ_BIAS_KNOTS = Int64(24)          # Knots for binned m/z-dependent bias spline

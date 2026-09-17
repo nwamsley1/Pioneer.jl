@@ -263,7 +263,8 @@ function accumulate_psms!(
     score_tiers = TUNING_SCORE_TIERS,
     n_required_top::Int = TUNING_N_REQUIRED_TOP,
     fdr_threshold::Float16 = Float16(0.01),
-    label::String = "accumulate"
+    label::String = "accumulate",
+    max_per_precursor::Int = 0      # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -272,6 +273,10 @@ function accumulate_psms!(
     scored_psms = DataFrame()
     n_passing = 0
     total_scans_used = 0
+    second_order = tuning_second_order()
+    t_phase = time()
+    end_reason = "exhausted all tiers"
+    n_prec = 0; n_capped = 0
 
     for (tier_idx, score) in enumerate(score_tiers)
         setMassErrorModel!(search_context, ms_file_idx, mass_model)
@@ -283,8 +288,12 @@ function accumulate_psms!(
         raw_psms = DataFrame()
         prev = 0
         n_passing = 0
-        # First tier: start at initial_scans. Subsequent: start at max_scans.
-        scan_target = tier_idx == 1 ? min(initial_scans, max_scans) : max_scans
+        # Second-order stopping state: the previous checkpoint and the previous batch's marginal rate.
+        prev_scans = 0; prev_passing = 0; prev_marginal = -1.0
+        # First tier: start at initial_scans. Subsequent tiers: start at max_scans under the
+        # cumulative-rate rule (one batch, no checkpoints); with second-order stopping every tier
+        # grows from initial_scans so the decay check can end it early too.
+        scan_target = (tier_idx == 1 || second_order) ? min(initial_scans, max_scans) : max_scans
 
         while prev < max_scans
             batch_indices = all_scan_indices[(prev+1):scan_target]
@@ -311,22 +320,25 @@ function accumulate_psms!(
                              scored_tmp[!,:q_value]; fdr_scale_factor=fdr_scale)
                 filter!(row -> row.q_value::Float16 <= fdr_threshold, scored_tmp)
                 filter!(row -> row.target::Bool, scored_tmp)
-                # Cap PSMs per precursor before counting convergence (ported from
-                # feat/zt-scanning-v2): a few persistent ions cannot satisfy the target
-                # on their own. On ion-mobility packet data one precursor yields ~7
-                # PSMs in adjacent IM scans, so the target is counted in unique
-                # precursors; the capped PSMs (up to 3 per precursor) still feed the fits.
-                scored_tmp = filter_top_psms_per_precursor(scored_tmp,
-                    something(tryparse(Int, get(ENV, "PIONEER_TUNING_MAX_PER_PREC", "")),
-                              TUNING_MAX_PSMS_PER_PRECURSOR))   # env: sweep the cap
-                n_passing = length(unique(scored_tmp.precursor_idx))
+                n_before = nrow(scored_tmp)
+                if max_per_precursor > 0
+                    # Keep the best k PSMs per precursor (by prob) and count the remaining rows: a few
+                    # persistent ions cannot fill the target on their own (on packet data one precursor
+                    # yields ~7 adjacent-slice PSMs), but the target does not demand distinct precursors.
+                    scored_tmp = filter_top_psms_per_precursor(scored_tmp, max_per_precursor)
+                end
+                n_passing = nrow(scored_tmp)
+                n_capped = n_before - n_passing
+                n_prec = length(unique(scored_tmp.precursor_idx))
                 scored_psms = scored_tmp
             end
 
-            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, " *
-                       "$(n_passing) precursors ($(nrow(scored_psms)) PSMs) at $(round(Float64(fdr_threshold)*100, digits=1))% FDR"
+            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, $(n_passing) PSMs at " *
+                       "$(round(Float64(fdr_threshold)*100, digits=1))% FDR ($(n_prec) precursors" *
+                       (max_per_precursor > 0 ? ", $(n_capped) removed by the $(max_per_precursor)/precursor cap" : "") * ")"
 
             if n_passing >= target_psms
+                end_reason = "converged at score≥$(score)"
                 break
             end
 
@@ -334,6 +346,25 @@ function accumulate_psms!(
             scans_remaining = max_scans - prev
             scans_remaining <= 0 && break
             rate = n_passing / max(prev, 1)
+            # Second-order: marginal yield of the last batch vs the batch before. If it is decaying,
+            # the most the remaining scans can add is dn * d / (1 - d) (geometric tail); if even that
+            # cannot reach the target, further search at this tier is wasted -> back off now.
+            if second_order
+                ds = prev - prev_scans; dn = n_passing - prev_passing
+                marginal = ds > 0 ? dn / ds : 0.0
+                if prev_marginal > 0 && marginal < prev_marginal
+                    d = marginal / prev_marginal
+                    tail_max = dn * d / (1 - d)
+                    if n_passing + tail_max < target_psms
+                        @debug_l1 "  $(label) (score≥$(score)): marginal yield decaying (" *
+                                   "$(round(1000 * prev_marginal, digits=2)) -> $(round(1000 * marginal, digits=2)) per 1k scans, " *
+                                   "tail bound +$(round(Int, tail_max)) < $(target_psms - n_passing) needed), backing off early"
+                        end_reason = "score≥$(score) backed off early at $(prev) scans"
+                        break
+                    end
+                end
+                prev_scans = prev; prev_passing = n_passing; prev_marginal = marginal
+            end
             additional = if rate > 0
                 remaining = target_psms - n_passing
                 clamp(ceil(Int, remaining / rate * 1.5), 1, scans_remaining)
@@ -356,6 +387,10 @@ function accumulate_psms!(
     delete!(search_context.bitvec_filter, ms_file_idx)
 
     converged = n_passing >= target_psms
+    @debug_l1 "  $(label) summary: $(converged ? "CONVERGED" : "NOT converged") — $(end_reason); " *
+               "$(total_scans_used) of $(max_scans) scans searched, $(n_passing) PSMs from $(n_prec) precursors " *
+               "(target $(target_psms), unit = " * (max_per_precursor > 0 ? "rows after best-$(max_per_precursor)/precursor cap" : "rows") *
+               "), $(round(time() - t_phase, digits=2))s"
     rate = n_passing / max(total_scans_used, 1)
     return converged, scored_psms, total_scans_used, rate
 end
@@ -642,6 +677,7 @@ function process_file!(
              initial_scans = Int64(TUNING_MIN_COLLECT_SCANS),
              max_peaks = 0),
         )
+        phase_caps = (0, tuning_collection_cap())   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
         for (phase_idx, phase) in enumerate(phases)
@@ -655,7 +691,8 @@ function process_file!(
                 target_psms = phase.target_psms,
                 initial_scans = phase.initial_scans,
                 max_peaks = phase.max_peaks,
-                label = phase.label)
+                label = phase.label,
+                max_per_precursor = phase_caps[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
             # Dev hook: PIONEER_TUNING_DUMP_PSMS="<dir>" writes each phase's
