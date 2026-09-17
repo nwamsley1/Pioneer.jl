@@ -169,6 +169,7 @@ function library_search(
     #     pprof(out = prof_path, web = false)
     #     @user_info "Fragment index profile saved to $prof_path\n"
     #
+    _mb0 = Base.gc_bytes(); _ml0 = Base.gc_live_bytes()
     precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
         Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
@@ -176,6 +177,7 @@ function library_search(
         score_filter = score_filter, max_peaks = max_peaks,
         scratch = getFragIndexScratch(search_context))
     t_frag = time() - t_frag_start
+    _mb1 = Base.gc_bytes(); _ml1 = Base.gc_live_bytes()
 
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
@@ -219,10 +221,17 @@ function library_search(
                                   all_scan_idxs, getMz(precursors))
         end
         n_center = length(precursors_passed)
+        _mb2 = Base.gc_bytes(); _ml2 = Base.gc_live_bytes()
         if zt_k > 0
             precursors_passed = expand_to_metascans!(
                 scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, zt_k)
         end
+        _mb3 = Base.gc_bytes(); _ml3 = Base.gc_live_bytes()
+        params isa MainSearchParameters && @user_info "ZT candidate build memory (alloc / live-after): " *
+            "frag index $(round((_mb1-_mb0)/1e9; digits=2)) / $(round(_ml1/1e9; digits=2)) GB; " *
+            "re-anchor $(round((_mb2-_mb1)/1e9; digits=2)) / $(round(_ml2/1e9; digits=2)) GB; " *
+            "expand $(round((_mb3-_mb2)/1e9; digits=2)) / $(round(_ml3/1e9; digits=2)) GB; " *
+            "expanded candidates $(length(precursors_passed)) = $(round(4*length(precursors_passed)/1e9; digits=2)) GB"
         # Report the boxes by INTERROGATING the models actually in use, never by recomputing
         # what they were meant to be — a log that restates intent cannot catch a model that
         # something else overwrote.
@@ -347,7 +356,19 @@ function library_search(
     if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
         chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
                                                zt_chunk_candidates)
-        reduced = DataFrame(); n_raw_total = 0; max_raw = 0
+        # EXPERIMENT (PIONEER_ZT_GC=1): full collection after the expansion scratch is dead and
+        # after each chunk's raw table is reduced, so the resident set tracks live data.
+        _zt_gc = get(ENV, "PIONEER_ZT_GC", "0") != "0"
+        _zt_gc && GC.gc()
+        # EXPERIMENT (PIONEER_ZT_SPILL=1): write each chunk's reduced table to Arrow under the
+        # run's temp_data and read all of them back ONCE at the end into an exactly sized table,
+        # instead of append!-ing in memory (column vectors grow by doubling, so the accumulating
+        # table peaked at ~2x its final size while a chunk's raw table was also in flight).
+        _spill = get(ENV, "PIONEER_ZT_SPILL", "0") != "0"
+        _spill_dir = joinpath(getDataOutDir(search_context), "temp_data", "zt_chunks_$(ms_file_idx)")
+        _spill && (mkpath(_spill_dir); foreach(f -> rm(joinpath(_spill_dir, f)), readdir(_spill_dir)))
+        _spill_paths = String[]
+        reduced = DataFrame(); n_raw_total = 0; max_raw = 0; n_reduced = 0
         for (ci, chunk) in enumerate(chunks)
             t_c = time()
             n_cand = zt_candidate_count(chunk, scan_to_prec_idx)
@@ -357,12 +378,25 @@ function library_search(
             t_d = time() - t_c
             n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
             part = zt_reduce(raw, ci)
-            raw = nothing
-            reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
+            raw = nothing; raw_all = nothing
+            n_reduced += nrow(part)
+            if _spill
+                _pp = joinpath(_spill_dir, "chunk_$(lpad(ci, 3, '0')).arrow")
+                nrow(part) > 0 && (writeArrow(_pp, part); push!(_spill_paths, _pp))
+                part = nothing
+            else
+                reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
+            end
+            _zt_gc && GC.gc()
             @user_info "ZT chunk $ci/$(length(chunks)): $(length(chunk)) cycles, " *
                        "$(sum(length, chunk)) scans, $n_cand candidates -> $n_raw raw rows " *
-                       "(deconv $(round(t_d; digits=1))s) -> $(nrow(part)) reduced " *
-                       "(reduce $(round(time() - t_c - t_d; digits=1))s); cumulative $(nrow(reduced))"
+                       "(deconv $(round(t_d; digits=1))s) -> reduced (reduce $(round(time() - t_c - t_d; digits=1))s); " *
+                       "cumulative $n_reduced"
+        end
+        if _spill && !isempty(_spill_paths)
+            GC.gc()
+            reduced = DataFrame(Tables.columntable(Arrow.Table(_spill_paths)))
+            foreach(rm, _spill_paths)
         end
         t_deconv = time() - t_deconv_start
         if _prof_deconv
@@ -695,9 +729,11 @@ Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
 `filter_low_scan_candidates!`). Returns the new `precursors_passed`. Candidates are sorted within
 each scan.
 
-Threaded over contiguous chunks of `all_scan_idxs`. **The parallel phase is strictly read-only on
-`scan_to_prec_idx`; every write happens in the serial phase after it.** A scan's neighbours must
-be read as they were BEFORE any expansion, so the two phases cannot be fused.
+Three parallel phases over scans, each writing only its own scan's slot; `scan_to_prec_idx` is
+read as it was BEFORE expansion and rewritten only in the final serial phase. Exact per-scan
+counts are computed first so the output is allocated ONCE at its final size: the previous
+per-thread append!-grown buffers plus a concatenation copy allocated 14.8 GB and held ~7 GB live
+to produce a 2.6 GB result on EV1109 (647M candidates).
 """
 function expand_to_metascans!(
     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
@@ -710,66 +746,76 @@ function expand_to_metascans!(
     n     = length(all_scan_idxs)
     nspec = length(spectra)
 
-    # Contiguous chunks, assigned in order, so concatenating buffers in chunk order
-    # reproduces scan order.
-    nchunks = min(Threads.nthreads(), n)
-    bounds  = [(n * (t - 1)) ÷ nchunks + 1 for t in 1:(nchunks + 1)]
-    bounds[end] = n + 1
+    # --- Phase 1 (parallel, read-only): exact per-scan counts. After re-anchoring each precursor
+    # occupies exactly one bin per cycle, so the neighbour union has no duplicates and its size
+    # is the plain sum of neighbour range lengths. (Dedup below is kept as a guard; if it ever
+    # removes anything the scan's range is simply shorter — gaps in the array are never read.)
+    counts = Vector{Int64}(undef, n)
+    Threads.@threads for i in 1:n
+        si = all_scan_idxs[i]
+        ci = getCycleIdx(spectra, si)
+        c = 0
+        @inbounds for j in -k:k
+            sj = si + j
+            (sj < 1 || sj > nspec) && continue
+            getMsOrder(spectra, sj) == 2 || continue
+            getCycleIdx(spectra, sj) == ci || continue
+            rng = scan_to_prec_idx[sj]
+            ismissing(rng) || (c += length(rng))
+        end
+        counts[i] = c
+    end
 
-    counts   = Vector{Int32}(undef, n)
-    out_bufs = Vector{Vector{UInt32}}(undef, nchunks)
+    # --- Phase 2 (serial): exact prefix offsets, one allocation of the final size ---
+    offsets = Vector{Int64}(undef, n + 1)
+    offsets[1] = 0
+    @inbounds for i in 1:n
+        offsets[i + 1] = offsets[i] + counts[i]
+    end
+    total = offsets[n + 1]
+    new_precursors = Vector{UInt32}(undef, total)
 
-    # --- Phase 1: gather + dedup (parallel, READ-ONLY on scan_to_prec_idx) ---
-    Threads.@threads for t in 1:nchunks
-        lo, hi  = bounds[t], bounds[t + 1] - 1
-        buf     = UInt32[]
-        scratch = UInt32[]
-        @inbounds for i in lo:hi
-            si = all_scan_idxs[i]
-            ci = getCycleIdx(spectra, si)
-            empty!(scratch)
-            for j in -k:k
-                sj = si + j
-                (sj < 1 || sj > nspec) && continue
-                getMsOrder(spectra, sj) == 2 || continue
-                getCycleIdx(spectra, sj) == ci || continue
-                rng = scan_to_prec_idx[sj]
-                ismissing(rng) && continue
-                for r in rng
-                    push!(scratch, precursors_passed[r])
+    # --- Phase 3 (parallel, disjoint slots): gather each scan's union in place, sort, dedup ---
+    # Reads scan_to_prec_idx as it was BEFORE expansion (not yet rewritten), writes only its
+    # own slot of new_precursors. Sorting is in place (no scratch).
+    new_counts = Vector{Int64}(undef, n)
+    Threads.@threads for i in 1:n
+        si = all_scan_idxs[i]
+        ci = getCycleIdx(spectra, si)
+        lo = offsets[i] + 1
+        p = lo
+        @inbounds for j in -k:k
+            sj = si + j
+            (sj < 1 || sj > nspec) && continue
+            getMsOrder(spectra, sj) == 2 || continue
+            getCycleIdx(spectra, sj) == ci || continue
+            rng = scan_to_prec_idx[sj]
+            ismissing(rng) && continue
+            for r in rng
+                new_precursors[p] = precursors_passed[r]; p += 1
+            end
+        end
+        m = p - lo
+        if m > 1
+            v = @view new_precursors[lo:(p - 1)]
+            sort!(v; alg = QuickSort)
+            w = 1
+            @inbounds for t in 2:m
+                if v[t] != v[w]
+                    w += 1
+                    v[w] = v[t]
                 end
             end
-            m = _sort_dedup!(scratch)
-            counts[i] = Int32(m)
-            m > 0 && append!(buf, @view scratch[1:m])
+            m = w
         end
-        out_bufs[t] = buf
+        new_counts[i] = m
     end
 
-    # --- Phase 2: concatenate and reindex (serial) ---
-    total = 0
-    @inbounds for i in 1:n
-        total += counts[i]
-    end
-    new_precursors = Vector{UInt32}(undef, total)
-    pos = 1
-    @inbounds for t in 1:nchunks
-        buf = out_bufs[t]
-        isempty(buf) && continue
-        copyto!(new_precursors, pos, buf, 1, length(buf))
-        pos += length(buf)
-    end
-
-    off = 0
+    # --- Phase 4 (serial): reindex ---
     @inbounds for i in 1:n
         si = all_scan_idxs[i]
-        c  = Int(counts[i])
-        if c == 0
-            scan_to_prec_idx[si] = missing
-        else
-            scan_to_prec_idx[si] = (off + 1):(off + c)
-            off += c
-        end
+        c  = new_counts[i]
+        scan_to_prec_idx[si] = c == 0 ? missing : (offsets[i] + 1):(offsets[i] + c)
     end
     return new_precursors
 end

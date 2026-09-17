@@ -95,7 +95,7 @@ file before chunking. Rows are 0.13-0.26 of candidates on the ZT files seen, so 
 is ~10-15M raw rows per chunk. nano15 (634M candidates, 164M rows in one pass) swapped a 48 GB
 machine. `PIONEER_ZT_CHUNK_CANDIDATES` overrides it for tuning.
 """
-const ZT_CHUNK_CANDIDATES_DEFAULT = 60_000_000
+const ZT_CHUNK_CANDIDATES_DEFAULT = 30_000_000   # 60M -> 30M (2026-09-17): chunk plateau 26.9 -> 22.5 GB on EV1109, no time cost
 zt_chunk_candidates() = something(tryparse(Int, get(ENV, "PIONEER_ZT_CHUNK_CANDIDATES", "")),
                                   ZT_CHUNK_CANDIDATES_DEFAULT)
 

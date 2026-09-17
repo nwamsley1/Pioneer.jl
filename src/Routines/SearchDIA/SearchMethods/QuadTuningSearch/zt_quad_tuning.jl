@@ -100,8 +100,12 @@ end
 """
     ZTQuadFitResult
 
-Per-file triangle fit. `h` is apex-to-zero half-width in Da; `k_implied = round(h / bin_step)`
-is the physically implied meta-scan expansion half-width.
+Per-file triangle fit. `h` is apex-to-zero half-width in Da; `k_implied = floor(h / bin_step)`
+is the physically implied meta-scan expansion half-width: every bin whose centre lies inside the
+fitted base. Floor, not round — h/bin_step sits at 6.4-6.6 on every 5 Da method measured, so
+rounding flipped k between 6 and 7 across replicates of ONE method (EV1109 six-file run:
+five files at 7, one at 6) and with fit-window changes. The outermost bin at 6.5-7 bins carries
+<8% transmission; k=6 is the measured optimum on 5 Da (k=5 loses protein groups).
 """
 struct ZTQuadFitResult
     h::Float32
@@ -201,7 +205,7 @@ function _fit_zt_triangle_core(psms::DataFrame, spectra::MassSpecData, precursor
     q(p) = hs[clamp(round(Int, p*length(hs)), 1, length(hs))]
     h = q(0.5)
     return ZTQuadFitResult(h, q(0.25), q(0.75), median(r2s), length(hs),
-                           max(1, round(Int, h / geom.bin_step))), hist
+                           max(1, floor(Int, h / geom.bin_step))), hist
 end
 
 """

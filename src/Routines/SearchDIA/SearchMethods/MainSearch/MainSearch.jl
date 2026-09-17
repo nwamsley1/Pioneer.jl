@@ -384,6 +384,10 @@ function _zt_chunked_main_search(spectra::MassSpecData, search_context::SearchCo
     out = @alloc_bucket "library_search (deconv)" library_search(
         spectra, search_context, params, ms_file_idx;
         zt_chunk_candidates = zt_chunk_candidates(), zt_reduce = reduce_chunk)
+    # The whole-file candidate index and its expansion scratch are dead once the chunked
+    # search returns; collect them before the meta-PSM table is permuted and featurised, which
+    # is where the resident set peaks on ZT files (measured: EV1109 29.8 GB at that point).
+    GC.gc()
     @user_info "ZT reduce breakdown: scan_competition=$(round(t_sc; digits=1))s  " *
                "ms1_lookup=$(round(t_ms1; digits=1))s  collapse=$(round(t_col; digits=1))s"
     return out
@@ -460,6 +464,7 @@ function process_search_results!(
                    "meta-PSMs in $(round(t_collapse; digits=1))s"
     end
 
+    _lv0 = Base.gc_live_bytes()
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
@@ -490,6 +495,7 @@ function process_search_results!(
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
+    _lv1 = Base.gc_live_bytes()
     t_lgbm_start = time()
     refinement_psms, lgbm_timings, lgbm_predictor =
         @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
@@ -497,6 +503,11 @@ function process_search_results!(
             results.lgbm_buffers,
         )
     t_lgbm_end = time()
+    _lv2 = Base.gc_live_bytes()
+    haskey(ENV, "PIONEER_ZT_COLLAPSE_PROF") && @user_info "post-collapse live heap: " *
+        "start $(round(_lv0/1e9; digits=1)) GB -> after chromatogram features $(round(_lv1/1e9; digits=1)) GB " *
+        "(+$(round((_lv1-_lv0)/1e9; digits=1))) -> after LightGBM train $(round(_lv2/1e9; digits=1)) GB " *
+        "(+$(round((_lv2-_lv1)/1e9; digits=1))); table $(nrow(psms)) rows x $(ncol(psms)) cols"
 
     # Refine predicted iRTs with out-of-fold correction models. The correction
     # changes iRT-dependent features for every candidate PSM, so reapply the
