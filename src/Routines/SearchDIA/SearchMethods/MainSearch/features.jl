@@ -175,6 +175,9 @@ const PRESCORE_FEATURES = [
     # MS1 features (chromatogram-correlations dropped, only m0_corr kept)
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
+    # Ion-mobility apex offsets (IM scans; 0 on files without mobility data,
+    # -1 = undefined). See _add_ms1_chromatogram_features!.
+    :ms1_apex_offset_im, :ms1_apex_offset_im_cycle, :ms1_weight_apex_to_m0_apex_im,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
     :ms1_isotope_dotp_m0_m1_m2,
@@ -978,7 +981,11 @@ function add_chromatogram_features!(
                 getIsolationWidthMzs(spectra),
             )) :
         nothing
-    t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
+    # Ion-mobility apex features need the scan -> IM scan / cycle maps (packet or slice data only).
+    im_scans   = spectra === nothing ? nothing : getImScans(spectra)
+    cycle_idxs = im_scans === nothing ? nothing : getCycleIdxs(spectra)
+    t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(
+        psms; groups=groups, im_scans=im_scans, cycle_idxs=cycle_idxs)
     t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(
         psms; groups=groups, bitvec_rank_table=bitvec_rank_table)
     @debug_l1 "  chrom-feature passes (n_psms=$n): " *
@@ -1004,14 +1011,31 @@ populated by the deconv pipeline + Phase 1 MS1 lookup. Adds:
   scan is from the M0 elution apex.
 - `ms1_weight_apex_to_m0_apex_irt` — |arg-irt-max(weight) − arg-irt-max(M0)|;
   agreement between MS2 and MS1 apex location. Real: 0; chimeric: large.
+
+Ion-mobility analogues (IM scan units; only when `im_scans`/`cycle_idxs` are given,
+i.e. packet or slice data, zeros otherwise). Mobility is a property of the ion and
+constant over its elution, so every real PSM sits at the M0 apex mobility whatever
+its cycle, while false candidates scatter over the window's mobility range.
+`-1` marks an undefined value: no M0 signal anywhere for the precursor, or a
+within-cycle offset for a PSM that is the only candidate in its cycle.
+
+- `ms1_apex_offset_im` — |this_psm_im − im(arg-max M0 over all the precursor's PSMs)|.
+- `ms1_apex_offset_im_cycle` — same against the M0 apex among the PSMs of this
+  PSM's own cycle.
+- `ms1_weight_apex_to_m0_apex_im` — |im(arg-max weight) − im(arg-max M0)|.
 """
 function _add_ms1_chromatogram_features!(psms::DataFrame;
-        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
+        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
+        im_scans::Union{Nothing, AbstractVector} = nothing,
+        cycle_idxs::Union{Nothing, AbstractVector} = nothing)
     n = nrow(psms)
     psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
     psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
     psms[!, :ms1_apex_offset_irt]           = zeros(Float32, n)
     psms[!, :ms1_weight_apex_to_m0_apex_irt]= zeros(Float32, n)
+    psms[!, :ms1_apex_offset_im]            = zeros(Float32, n)
+    psms[!, :ms1_apex_offset_im_cycle]      = zeros(Float32, n)
+    psms[!, :ms1_weight_apex_to_m0_apex_im] = zeros(Float32, n)
     n == 0 && return
 
     # Required columns
@@ -1025,6 +1049,9 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
     m1   = psms.ms1_m1_intensity
     w    = psms.weight
     irt  = psms.irt_obs
+    has_im = im_scans !== nothing && cycle_idxs !== nothing && hasproperty(psms, :scan_idx)
+    psm_im  = has_im ? Float32[Float32(im_scans[Int(s)]) for s in psms.scan_idx] : Float32[]
+    psm_cyc = has_im ? Int32[Int32(cycle_idxs[Int(s)]) for s in psms.scan_idx] : Int32[]
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally.
@@ -1042,6 +1069,8 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
     vm1_scratch  = [Float32[] for _ in 1:nthr]
     vw_scratch   = [Float32[] for _ in 1:nthr]
     virt_scratch = [Float32[] for _ in 1:nthr]
+    vim_scratch  = [Float32[] for _ in 1:nthr]
+    vcyc_scratch = [Int32[] for _ in 1:nthr]
 
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
@@ -1096,6 +1125,44 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
                 out_m01[i_orig]  = c_m01
                 out_aoff[i_orig] = abs(v_irt[k] - irt_apex_m0)
                 out_w2m0[i_orig] = weight_apex_to_m0
+            end
+
+            # Ion-mobility apex features (see docstring). -1 = undefined.
+            if has_im
+                v_im  = vim_scratch[tid];  resize!(v_im, npts)
+                v_cyc = vcyc_scratch[tid]; resize!(v_cyc, npts)
+                for k in 1:npts
+                    i_orig = perm[i_start + k - 1]
+                    v_im[k]  = psm_im[i_orig]
+                    v_cyc[k] = psm_cyc[i_orig]
+                end
+                out_im   = psms.ms1_apex_offset_im::Vector{Float32}
+                out_imc  = psms.ms1_apex_offset_im_cycle::Vector{Float32}
+                out_w2im = psms.ms1_weight_apex_to_m0_apex_im::Vector{Float32}
+                if vmax_m0 > 0f0
+                    im_apex_m0 = v_im[ai_m0]
+                    w2m0_im    = abs(v_im[ai_w] - im_apex_m0)
+                    for k in 1:npts
+                        # M0 apex among the PSMs of this PSM's cycle (first occurrence on
+                        # ties) and how many PSMs share the cycle. npts is small (median
+                        # ~20), so the quadratic scan is cheaper than sorting per precursor.
+                        cyc = v_cyc[k]; ai_c = 0; vmax_c = 0f0; n_c = 0
+                        for j in 1:npts
+                            v_cyc[j] == cyc || continue
+                            n_c += 1
+                            if v_m0[j] > vmax_c; vmax_c = v_m0[j]; ai_c = j; end
+                        end
+                        i_orig = perm[i_start + k - 1]
+                        out_im[i_orig]   = abs(v_im[k] - im_apex_m0)
+                        out_imc[i_orig]  = (n_c > 1 && ai_c > 0) ? abs(v_im[k] - v_im[ai_c]) : -1f0
+                        out_w2im[i_orig] = w2m0_im
+                    end
+                else
+                    for k in 1:npts
+                        i_orig = perm[i_start + k - 1]
+                        out_im[i_orig] = -1f0; out_imc[i_orig] = -1f0; out_w2im[i_orig] = -1f0
+                    end
+                end
             end
         end
     end
