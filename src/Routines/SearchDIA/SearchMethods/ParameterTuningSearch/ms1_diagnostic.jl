@@ -60,32 +60,10 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
     n = nrow(psms)
     n == 0 && return Float32[]
 
-    n_scans = length(spectra)
-    ms1_scan_idxs = Int[]
-    ms1_scan_rts  = Float32[]
-    for s in 1:n_scans
-        if getMsOrder(spectra, s) == 1
-            push!(ms1_scan_idxs, s)
-            push!(ms1_scan_rts,  Float32(getRetentionTime(spectra, s)))
-        end
-    end
-    isempty(ms1_scan_idxs) && return Float32[]
-
-    n_ms1 = length(ms1_scan_rts)
-    scan_to_ms1 = Vector{Int32}(undef, n_scans)
-    @inbounds for s in 1:n_scans
-        scan_rt = Float32(getRetentionTime(spectra, s))
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        scan_to_ms1[s] = if pos == 1
-            Int32(ms1_scan_idxs[1])
-        elseif pos > n_ms1
-            Int32(ms1_scan_idxs[end])
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            d_before <= d_after ? Int32(ms1_scan_idxs[pos-1]) : Int32(ms1_scan_idxs[pos])
-        end
-    end
+    # Nearest MS1 scan per scan (nearest MS1 frame at the row's own mobility on ion-mobility data);
+    # shared with MainSearch's add_ms1_lookup_features!.
+    scan_to_ms1 = build_scan_to_ms1(spectra)
+    all(iszero, scan_to_ms1) && return Float32[]
 
     precursors  = getPrecursors(getSpecLib(search_context))
     prec_mzs     = getMz(precursors)

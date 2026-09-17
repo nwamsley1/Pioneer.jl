@@ -608,6 +608,54 @@ function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
     )
 end
 
+"""
+    build_scan_to_ms1(spectra) -> Vector{Int32}
+
+The MS1 scan to read for every scan of the file (0 everywhere when the file has no MS1 scans).
+Plain files: the nearest MS1 scan by RT. Ion-mobility packet / slice files (`imScan` column): the
+row of the nearest MS1 frame (by RT) whose IM scan is nearest to the scan's own, so a precursor is
+looked up at its own mobility. The nearest-RT rule on such files lands on whichever slice of the
+previous MS1 frame is last in time, i.e. the wrong mobility for almost every precursor (measured:
+MS1 features populated for 2.8% of confident PSMs on a 250 pg timsTOF file).
+"""
+function build_scan_to_ms1(spectra)
+    n_scans = length(spectra)
+    ms1 = Int32[s for s in 1:n_scans if getMsOrder(spectra, s) == 1]
+    scan_to_ms1 = zeros(Int32, n_scans)
+    isempty(ms1) && return scan_to_ms1
+    im_scans = getImScans(spectra)
+    nearest(v, x, lo, hi) = begin                     # index in lo:hi of the value of sorted v nearest to x
+        j = searchsortedfirst(view(v, lo:hi), x) + lo - 1
+        j <= lo ? lo : j > hi ? hi : (abs(v[j-1] - x) <= abs(v[j] - x) ? j - 1 : j)
+    end
+    if im_scans === nothing
+        rts = Float32[Float32(getRetentionTime(spectra, s)) for s in ms1]
+        @inbounds for s in 1:n_scans
+            scan_to_ms1[s] = ms1[nearest(rts, Float32(getRetentionTime(spectra, s)), 1, length(ms1))]
+        end
+        return scan_to_ms1
+    end
+    # MS1 rows grouped into frames (consecutive MS1 rows sharing a frame id, or a cycle without one)
+    frame_ids = getFrameIds(spectra)
+    cyc = getCycleIdxs(spectra)
+    frame_key(s) = frame_ids === nothing ? Int(cyc[s]) : Int(frame_ids[s])
+    f_start = Int[]; f_rt = Float32[]
+    prev = typemin(Int)
+    for (k, s) in enumerate(ms1)
+        if frame_key(s) != prev
+            push!(f_start, k); push!(f_rt, Float32(getRetentionTime(spectra, s))); prev = frame_key(s)
+        end
+    end
+    push!(f_start, length(ms1) + 1)
+    ms1_im = Int32[Int32(im_scans[s]) for s in ms1]     # ascending within a frame
+    @inbounds for s in 1:n_scans
+        f = nearest(f_rt, Float32(getRetentionTime(spectra, s)), 1, length(f_rt))
+        k = nearest(ms1_im, Int32(im_scans[s]), f_start[f], f_start[f + 1] - 1)
+        scan_to_ms1[s] = ms1[k]
+    end
+    return scan_to_ms1
+end
+
 # Per-scan-run worker. The input PSM table is contiguous by :scan_idx at this
 # point in MainSearch, so each run shares one nearest MS1 scan and one MS2
 # isolation window. That lets us compute window intensity/noise once per scan
@@ -844,38 +892,13 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :scan_prec_mz_n_precursors] = zeros(UInt16, n)
     n == 0 && return
 
-    # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
+    # 1. `scan_to_ms1[scan_id]` = the MS1 scan to read for each scan, once per file (nearest by RT;
+    #    on ion-mobility data the nearest MS1 frame at the row's own mobility, see build_scan_to_ms1).
     n_scans = length(spectra)
-    ms1_scan_idxs = Int[]
-    ms1_scan_rts  = Float32[]
-    for s in 1:n_scans
-        if getMsOrder(spectra, s) == 1
-            push!(ms1_scan_idxs, s)
-            push!(ms1_scan_rts, Float32(getRetentionTime(spectra, s)))
-        end
-    end
-    if isempty(ms1_scan_idxs)
+    scan_to_ms1 = build_scan_to_ms1(spectra)
+    if all(iszero, scan_to_ms1)
         @debug_l1 "add_ms1_lookup_features!: no MS1 scans found, features all zero"
         return
-    end
-
-    # 1b. Precompute `scan_to_ms1[scan_id]` = nearest MS1 scan id, once per
-    # file. Replaces a per-PSM `getRetentionTime` + `searchsortedfirst` (was
-    # ~1-1.5 s/file on Astral) with a single array indexing per PSM.
-    n_ms1 = length(ms1_scan_rts)
-    scan_to_ms1 = Vector{Int32}(undef, n_scans)
-    @inbounds for s in 1:n_scans
-        scan_rt = Float32(getRetentionTime(spectra, s))
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        scan_to_ms1[s] = if pos == 1
-            Int32(ms1_scan_idxs[1])
-        elseif pos > n_ms1
-            Int32(ms1_scan_idxs[end])
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            d_before <= d_after ? Int32(ms1_scan_idxs[pos-1]) : Int32(ms1_scan_idxs[pos])
-        end
     end
 
     scan_window_low = fill(Inf32, n_scans)
