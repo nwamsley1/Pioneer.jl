@@ -179,6 +179,26 @@ function _zt_dump_precollapse(psms::DataFrame, search_context, ms_file_idx; chun
     return nothing
 end
 
+"""Per-thread scratch and output vectors for `collapse_to_metascans` (blocks are independent)."""
+struct _CollapseOut
+    w::Vector{Float32}; Fbuf::Vector{Vector{Float32}}; cfw::Vector{Float32}; has_sig::BitVector
+    apx::Vector{Float32}; accf::Vector{Float32}; accs::Vector{Float32}; blk_centers::Vector{Int}
+    center_rows::Vector{Int}
+    f_tri_cos::Vector{Float32}; f_entropy::Vector{Float32}; f_tri_pcor::Vector{Float32}
+    f_fit_hr::Vector{Float32}; f_fit_r2::Vector{Float32}
+    sh_str::Vector{Float32}; sh_effn::Vector{Float32}; sh_best::Vector{Float32}
+    sh_disp::Vector{Float32}; sh_n70::Vector{UInt8}; sh_rank::Vector{UInt16}
+    out_fit::NTuple{8, Vector{Float32}}; out_shd::NTuple{8, Vector{Float32}}
+end
+function _CollapseOut(L::Int, hint::Int)
+    sh(v) = (sizehint!(v, hint); v)
+    _CollapseOut(zeros(Float32, L), [zeros(Float32, L) for _ in 1:8], zeros(Float32, 8), falses(8),
+                 Float32[], zeros(Float32, 8), zeros(Float32, 8), Int[],
+                 sh(Int[]), sh(Float32[]), sh(Float32[]), sh(Float32[]), sh(Float32[]), sh(Float32[]),
+                 sh(Float32[]), sh(Float32[]), sh(Float32[]), sh(Float32[]), sh(UInt8[]), sh(UInt16[]),
+                 ntuple(_ -> sh(Float32[]), 8), ntuple(_ -> sh(Float32[]), 8))
+end
+
 """
     collapse_to_metascans(psms, spectra, precursors, k; bitvec_rank_table = nothing) -> DataFrame
 
@@ -209,6 +229,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     # Sort by (precursor_idx, scan_idx) so a precursor's meta-scan bins become contiguous
     # rows. Both keys are UInt32, so pack them into one UInt64: identical lexicographic
     # order, a single integer compare rather than a tuple built per comparison.
+    _prof = haskey(ENV, "PIONEER_ZT_COLLAPSE_PROF")
+    _t0 = time(); _b0 = Base.gc_bytes(); _g0 = Base.gc_time_ns()
     pid0 = psms[!, :precursor_idx]::Vector{UInt32}
     scn0 = psms[!, :scan_idx]::Vector{UInt32}
     sortkeys = Vector{UInt64}(undef, n)
@@ -235,6 +257,7 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         ntuple(r -> _permute_f32(psms[!, Symbol("frag$(r)_int")], perm), 8) :
         ntuple(_ -> Float32[], 8)
     rank_weights = _fragment_rank_weights(8)
+    _t1 = time(); _b1 = Base.gc_bytes(); _g1 = Base.gc_time_ns()
 
     # Per-bin fitted (deconvolved) and shadow (raw observed) spectra. References only -- the 8
     # frag columns above are permuted for locality, but permuting 16 more would cost ~3.8 GB, so
@@ -250,33 +273,36 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     accf = zeros(Float32, 8)
     accs = zeros(Float32, 8)
 
-    # Reusable per-center scratch — nothing here outlives one iteration.
-    w       = zeros(Float32, L)
-    Fbuf    = [zeros(Float32, L) for _ in 1:8]
-    cfw     = zeros(Float32, 8)
-    has_sig = falses(8)
-    apx     = Float32[]
-
-    # Per-center outputs (scalars only; the profile is never retained).
-    hint = n ÷ L + 1
-    center_rows = Int[];    sizehint!(center_rows, hint)
-    f_tri_cos  = Float32[]; sizehint!(f_tri_cos, hint)
-    f_entropy  = Float32[]; sizehint!(f_entropy, hint)
-    f_tri_pcor = Float32[]; sizehint!(f_tri_pcor, hint)
-    f_fit_hr   = Float32[]; sizehint!(f_fit_hr, hint)
-    f_fit_r2   = Float32[]; sizehint!(f_fit_r2, hint)
+    # ---- block boundaries (one block = one precursor's rows) ----
+    blk_starts = Int[]; sizehint!(blk_starts, n ÷ (2k + 1) + 1)
+    let i = 1
+        @inbounds while i <= n
+            push!(blk_starts, i); p0 = pid[i]
+            while i <= n && pid[i] == p0; i += 1; end
+        end
+    end
+    push!(blk_starts, n + 1)
+    n_blocks = length(blk_starts) - 1
     h_file = geom.template_h > 0f0 ? geom.template_h : geom.transmission_fwhm
-    sh_str  = Float32[];    sh_effn = Float32[]; sh_best = Float32[]
-    sh_disp = Float32[];    sh_n70  = UInt8[];   sh_rank = UInt16[]
-    out_fit = ntuple(_ -> Float32[], 8)
-    out_shd = ntuple(_ -> Float32[], 8)
 
-    blk_centers = Int[]                       # center rows of one precursor's meta-scans
+    # ---- per-thread scratch and outputs; blocks are independent, output order is block order ----
+    nth = max(1, min(Threads.nthreads(), n_blocks))
+    bounds = [(n_blocks * (t - 1)) ÷ nth + 1 for t in 1:(nth + 1)]; bounds[end] = n_blocks + 1
+    outs = [_CollapseOut(L, n ÷ nth ÷ L + 16) for _ in 1:nth]
 
-    i = 1
-    @inbounds while i <= n
-        j0 = i
-        while i <= n && pid[i] == pid[j0]; i += 1; end
+    Threads.@threads for t in 1:nth
+        o = outs[t]
+        # `local`: these names are reassigned after the loop for the concatenated results, and a
+        # plain assignment here would write the shared outer variable from every thread.
+        local w = o.w; local Fbuf = o.Fbuf; local cfw = o.cfw; local has_sig = o.has_sig; local apx = o.apx
+        local accf = o.accf; local accs = o.accs; local center_rows = o.center_rows
+        local f_tri_cos = o.f_tri_cos; local f_entropy = o.f_entropy; local f_tri_pcor = o.f_tri_pcor
+        local f_fit_hr = o.f_fit_hr; local f_fit_r2 = o.f_fit_r2
+        local sh_str = o.sh_str; local sh_effn = o.sh_effn; local sh_best = o.sh_best
+        local sh_disp = o.sh_disp; local sh_n70 = o.sh_n70; local sh_rank = o.sh_rank
+        local out_fit = o.out_fit; local out_shd = o.out_shd; local blk_centers = o.blk_centers
+    @inbounds for _blk in bounds[t]:(bounds[t + 1] - 1)
+        j0 = blk_starts[_blk]; i = blk_starts[_blk + 1]
         blk_lo, blk_hi = j0, i - 1
         pm = prec_mz[pid[j0]]
         # ---- pick the center row of each meta-scan, one cycle at a time ----
@@ -411,8 +437,17 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             push!(sh_str, str);   push!(sh_effn, effn); push!(sh_best, best)
             push!(sh_disp, disp); push!(sh_n70, n70);   push!(sh_rank, rnk)
         end
-    end
+    end  # blocks
+    end  # threads
 
+    _t2 = time(); _b2 = Base.gc_bytes(); _g2 = Base.gc_time_ns()
+    cat(f) = reduce(vcat, (f(o) for o in outs))
+    center_rows = cat(o -> o.center_rows)
+    f_tri_cos = cat(o -> o.f_tri_cos); f_entropy = cat(o -> o.f_entropy); f_tri_pcor = cat(o -> o.f_tri_pcor)
+    f_fit_hr = cat(o -> o.f_fit_hr); f_fit_r2 = cat(o -> o.f_fit_r2)
+    sh_str = cat(o -> o.sh_str); sh_effn = cat(o -> o.sh_effn); sh_best = cat(o -> o.sh_best)
+    sh_disp = cat(o -> o.sh_disp); sh_n70 = cat(o -> o.sh_n70); sh_rank = cat(o -> o.sh_rank)
+    out_fit = ntuple(b -> cat(o -> o.out_fit[b]), 8); out_shd = ntuple(b -> cat(o -> o.out_shd[b]), 8)
     # center_rows are positions in the PERMED order; map back to original psms rows.
     meta = psms[perm[center_rows], :]
     meta[!, :zt_tri_cosine] = f_tri_cos
@@ -438,6 +473,14 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             meta[!, Symbol("fitted_frag$(b)_int")] = out_fit[b]
             meta[!, Symbol("shadow_frag$(b)_int")] = out_shd[b]
         end
+    end
+    if _prof
+        _t3 = time(); _b3 = Base.gc_bytes(); _g3 = Base.gc_time_ns()
+        _s(a, b) = round(b - a; digits=2); _gb(a, b) = round((b - a) / 1e9; digits=2); _gs(a, b) = round((b - a) / 1e9; digits=2)
+        @user_info "ZT collapse profile: n=$n rows, $(length(center_rows)) centers | " *
+                   "sort+gather $(_s(_t0,_t1))s alloc $(_gb(_b0,_b1))GB gc $(_gs(_g0,_g1))s | " *
+                   "center loop $(_s(_t1,_t2))s alloc $(_gb(_b1,_b2))GB gc $(_gs(_g1,_g2))s | " *
+                   "row gather + columns $(_s(_t2,_t3))s alloc $(_gb(_b2,_b3))GB gc $(_gs(_g2,_g3))s"
     end
     return meta
 end

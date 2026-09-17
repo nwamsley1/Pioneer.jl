@@ -19,6 +19,12 @@ struct PoissonMMSolver <: DeconvolutionSolver end
 # EXPERIMENT (PIONEER_PMM_INNER): inner coordinate-descent iterations per outer pass; set once at
 # search start by MainSearch. Default 5 (the former hard-coded value).
 const PMM_INNER_ITER = Ref{Int64}(5)
+# DIAGNOSTIC (PIONEER_PMM_STATS=1): active-set potential — column visits where the weight is
+# zero before and after (wasted work), nonzeros touched, columns at zero at exit.
+const PMM_STATS_ON = Ref(false)
+const PMM_STAT_VISITS = Threads.Atomic{Int}(0); const PMM_STAT_ZERO_VISITS = Threads.Atomic{Int}(0)
+const PMM_STAT_NNZ = Threads.Atomic{Int}(0); const PMM_STAT_COLS = Threads.Atomic{Int}(0)
+const PMM_STAT_ZERO_END = Threads.Atomic{Int}(0)
 
 # Iterated adaptive LASSO with non-negativity, OLS loss. Parameters:
 #   λ_rel  ∈ (0, 1)  — fraction of the unpenalized λ_max that becomes λ_eff
@@ -148,6 +154,7 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
 
     iter = 0
     converged = false
+    _pmm_visits = 0; _pmm_zero_visits = 0; _pmm_nnz = 0
     while iter < max_iter_outer
         _diff = T(0)
         weight_floor = iter >= 5 ? max_weight * T(1e-4) : T(0)
@@ -157,6 +164,7 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
             col_start = colptr[col]
             col_end   = colptr[col + 1] - 1
             X_before  = X₁[col]
+            PMM_STATS_ON[] && (_pmm_visits += 1; _pmm_nnz += col_end - col_start + 1)
 
             # ── Initial derivative computation (Float64 accumulators) ──
             L1 = 0.0
@@ -219,6 +227,7 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
 
             # ── Convergence tracking ──
             δx = abs(X₁[col] - X_before)
+            PMM_STATS_ON[] && iszero(X_before) && iszero(X₁[col]) && (_pmm_zero_visits += 1)
             if X₁[col] > max_weight
                 max_weight = X₁[col]
             end
@@ -235,6 +244,13 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
             break
         end
         iter += 1
+    end
+
+    if PMM_STATS_ON[]
+        Threads.atomic_add!(PMM_STAT_VISITS, _pmm_visits); Threads.atomic_add!(PMM_STAT_ZERO_VISITS, _pmm_zero_visits)
+        Threads.atomic_add!(PMM_STAT_NNZ, _pmm_nnz); Threads.atomic_add!(PMM_STAT_COLS, Int(ncols))
+        _nz_end = 0; @inbounds for j in 1:ncols; iszero(X₁[j]) && (_nz_end += 1); end
+        Threads.atomic_add!(PMM_STAT_ZERO_END, _nz_end)
     end
 
     # ── Unscale: restore y and weights to original magnitude ──

@@ -295,6 +295,8 @@ function library_search(
     t_deconv_start = time()
     if params isa MainSearchParameters
         DECONV_SOLVES[] = 0; DECONV_ITERS[] = 0
+        PMM_STATS_ON[] = haskey(ENV, "PIONEER_PMM_STATS")
+        PMM_STAT_VISITS[] = 0; PMM_STAT_ZERO_VISITS[] = 0; PMM_STAT_NNZ[] = 0; PMM_STAT_COLS[] = 0; PMM_STAT_ZERO_END[] = 0
     end
     # DIAGNOSTIC (PIONEER_PROFILE_DECONV=1, main search only): sample the threaded deconv with
     # Julia's Profile and write a flat self-time profile to the output dir, so the run_fused!
@@ -371,6 +373,13 @@ function library_search(
                    "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
                    "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed)); " *
                    "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
+        if PMM_STATS_ON[]
+            @user_info "PMM stats: $(PMM_STAT_COLS[]) columns over $(DECONV_SOLVES[]) solves " *
+                       "(mean $(round(PMM_STAT_COLS[] / max(DECONV_SOLVES[],1); digits=0))/solve), " *
+                       "$(round(100 * PMM_STAT_ZERO_END[] / max(PMM_STAT_COLS[],1); digits=1))% at zero at exit; " *
+                       "$(PMM_STAT_VISITS[]) column-visits, $(round(100 * PMM_STAT_ZERO_VISITS[] / max(PMM_STAT_VISITS[],1); digits=1))% zero->zero; " *
+                       "mean nnz/column $(round(PMM_STAT_NNZ[] / max(PMM_STAT_VISITS[],1); digits=1))"
+        end
         return reduced
     end
 
