@@ -194,6 +194,9 @@ const PRESCORE_FEATURES = [
     :n_correlated_fragments_bitvec_rank,
     :frag_corr_strength,
     :frag_corr_effective_n,
+    # Ion-mobility slice data: PSMs of the precursor at the same retention time (other mobility
+    # slices) and frag_corr_effective_n per mobility slice; constant on files without mobility.
+    :n_scans_in_window, :frag_corr_effective_n_im,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -979,8 +982,10 @@ function add_chromatogram_features!(
             )) :
         nothing
     t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
+    # Ion-mobility slice data: the per-mobility fragment correlations need the scan -> IM scan map.
+    im_scans = spectra === nothing ? nothing : getImScans(spectra)
     t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(
-        psms; groups=groups, bitvec_rank_table=bitvec_rank_table)
+        psms; groups=groups, bitvec_rank_table=bitvec_rank_table, im_scans=im_scans)
     @debug_l1 "  chrom-feature passes (n_psms=$n): " *
                "groups=$(round(t_groups, digits=2))s  " *
                "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
@@ -1118,6 +1123,13 @@ computes:
 - `frag_corr_top3_weight`      Mean Pearson(rank-1..3 chrom, weight chrom)
 - `frag_apex_dispersion_irt`   Std-dev of arg-max iRT across the 8 fragments (real: tight; chimeric: wide)
 - `n_correlated_fragments`     Count of fragments with Pearson(frag, weight) > 0.7
+- `n_scans_in_window`          Number of this precursor's PSMs in the same cycle (and isolation
+                               window) as this PSM, i.e. at other ion-mobility slices of the same
+                               retention time. 1 on Thermo/Sciex data (one scan per window per cycle).
+- `frag_corr_effective_n_im`   `frag_corr_effective_n` recomputed separately for each ion-mobility
+                               slice value of the precursor (the fragment/weight traces across cycles
+                               at fixed mobility) and assigned to the PSMs of that slice. 0 for a
+                               slice with a single PSM and on files without mobility data.
 
 Validated 2026-05-10 to add ~+2,088 IDs at q≤.01 vs MS1-only baseline (Olsen
 Exploris one-file, entrap1, paired EFDR ~0.0107). Mechanism is the same as
@@ -1335,7 +1347,8 @@ end
 
 function _add_fragment_chromatogram_features!(psms::DataFrame;
         groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing,
-        bitvec_rank_table = nothing)
+        bitvec_rank_table = nothing,
+        im_scans::Union{Nothing, AbstractVector} = nothing)
     n = nrow(psms)
     # Only the features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
     # are computed and written. Earlier prototypes emitted many more outputs
@@ -1357,6 +1370,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # second pass and the Dict-build that classifier training would
     # otherwise do over ~14M rows).
     psms[!, :n_scans]                     = ones(UInt32, n)   # default 1 for single-PSM precs
+    psms[!, :n_scans_in_window]           = ones(UInt32, n)   # PSMs of the precursor in the same cycle
+    psms[!, :frag_corr_effective_n_im]    = zeros(Float32, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -1375,6 +1390,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
     n_scans_col = psms.n_scans::Vector{UInt32}
+    n_scans_win_col = psms.n_scans_in_window::Vector{UInt32}
+    has_cycle = hasproperty(psms, :cycle_idx)
+    cyc_col = has_cycle ? Int32[Int32(c) for c in psms.cycle_idx] : Int32[]
+    has_im = im_scans !== nothing && hasproperty(psms, :scan_idx)
+    psm_im = has_im ? Int32[Int32(im_scans[Int(s)]) for s in psms.scan_idx] : Int32[]
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
@@ -1399,6 +1419,12 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     cfw_scratch  = [Vector{Float32}(undef, 8) for _ in 1:nthr]
     vm0_scratch  = [Float32[] for _ in 1:nthr]
     apex_scratch = [Float32[] for _ in 1:nthr]
+    cyc_scratch  = [Int32[] for _ in 1:nthr]
+    im_scratch   = [Int32[] for _ in 1:nthr]
+    ord_scratch  = [Int[] for _ in 1:nthr]
+    Fs_scratch   = [[Float32[] for _ in 1:8] for _ in 1:nthr]
+    Ws_scratch   = [Float32[] for _ in 1:nthr]
+    cfws_scratch = [Vector{Float32}(undef, 8) for _ in 1:nthr]
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the output columns; all input arrays are read-only.
@@ -1415,6 +1441,19 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             len_u32 = UInt32(npts)
             for k in 0:(npts-1)
                 n_scans_col[perm[i_start + k]] = len_u32
+            end
+            # :n_scans_in_window — PSMs of this precursor sharing the row's cycle. Rows of a
+            # precursor arrive in scan order, so the cycle copy is already sorted (insertion
+            # sort is O(n) there and allocation-free).
+            if has_cycle && npts > 1
+                cyc = cyc_scratch[tid]; resize!(cyc, npts)
+                for k in 1:npts; cyc[k] = cyc_col[perm[i_start + k - 1]]; end
+                sort!(cyc; alg = Base.Sort.InsertionSort)
+                for k in 0:(npts-1)
+                    c = cyc_col[perm[i_start + k]]
+                    n_scans_win_col[perm[i_start + k]] =
+                        UInt32(searchsortedlast(cyc, c) - searchsortedfirst(cyc, c) + 1)
+                end
             end
             npts < 2 && continue
 
@@ -1485,6 +1524,38 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             end
             corr_rank = _bitvec_pattern_rank(bitvec_rank_table, corr_mask)
             corr_strength, corr_effective_n = _positive_corr_summary(c_fw, rank_weights)
+
+            # :frag_corr_effective_n_im — the same summary per ion-mobility slice value: the
+            # fragment/weight traces across the cycles of one slice (slice data only).
+            if has_im
+                v_im = im_scratch[tid]; resize!(v_im, npts)
+                for k in 1:npts; v_im[k] = psm_im[perm[i_start + k - 1]]; end
+                ord = ord_scratch[tid]; resize!(ord, npts)
+                sortperm!(ord, v_im; alg = Base.Sort.InsertionSort)
+                out_effn_im = psms.frag_corr_effective_n_im::Vector{Float32}
+                Fs = Fs_scratch[tid]; Ws = Ws_scratch[tid]; c_fws = cfws_scratch[tid]
+                a = 1
+                while a <= npts
+                    b = a
+                    while b < npts && v_im[ord[b + 1]] == v_im[ord[a]]; b += 1; end
+                    m = b - a + 1
+                    effn_im = 0f0
+                    if m >= 2
+                        resize!(Ws, m)
+                        for q in 1:m; Ws[q] = W[ord[a + q - 1]]; end
+                        for r in 1:8
+                            Fr = Fs[r]; resize!(Fr, m)
+                            for q in 1:m; Fr[q] = F[r][ord[a + q - 1]]; end
+                            c_fws[r] = maximum(Fr) > 0 ? _frag_pcor(Fr, Ws) : 0f0
+                        end
+                        effn_im = _positive_corr_summary(c_fws, rank_weights)[2]
+                    end
+                    for q in a:b
+                        out_effn_im[perm[i_start + ord[q] - 1]] = effn_im
+                    end
+                    a = b + 1
+                end
+            end
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
             # to the other top-8 fragments. 56 Pearson calls per precursor.
