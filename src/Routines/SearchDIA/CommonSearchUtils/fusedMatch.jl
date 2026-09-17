@@ -736,70 +736,6 @@ backing arrays if necessary. Stores only `nzval = pred_int` and
     return nothing
 end
 
-#==========================================================
-Scanning-quad fragment-template store (C1 template reuse)
-==========================================================#
-"""
-    FragTemplateStore
-
-Per-thread cache of the spectrum-independent part of `run_fused!`'s per-precursor work — the
-predicted fragment isotope intensities (`getFragIsotopes!` output) for each kept fragment — so a
-precursor seen again in the next bin of its meta-scan reads them back instead of recomputing.
-Adjacent bins share ~92% of their candidates on a scanning quad (measured), and candidates are
-sorted within a scan, so reuse is a two-cursor merge over the previous bin's sorted list: no
-hashing. Templates live in an append-only flat store that is reset whenever the thread's scan
-sequence breaks (non-consecutive scan index); a template is valid only while the precursor's
-isotope set is unchanged (checked per bin — it can differ at the deconvolution-box edge).
-Everything is preallocated once per call; overflow means "compute uncached", never an error.
-"""
-mutable struct FragTemplateStore
-    prev_prec::Vector{UInt32}
-    prev_tmpl::Vector{Int32}
-    prev_n::Int
-    cur_prec::Vector{UInt32}
-    cur_tmpl::Vector{Int32}
-    cur_n::Int
-    t_prec::Vector{UInt32}
-    t_off::Vector{Int32}
-    t_nfrag::Vector{Int32}
-    t_iso_lo::Vector{Int32}
-    t_iso_hi::Vector{Int32}
-    n_tmpl::Int
-    iso::Vector{Float32}
-    n_slot::Int
-    iso_cap::Int
-    frag_cap::Int
-    last_scan::Int
-    hits::Int
-    misses::Int
-end
-
-function FragTemplateStore(max_cand::Int, frag_cap::Int, iso_cap::Int)
-    tcap = max(4 * max_cand, 16)
-    return FragTemplateStore(
-        Vector{UInt32}(undef, tcap), Vector{Int32}(undef, tcap), 0,
-        Vector{UInt32}(undef, tcap), Vector{Int32}(undef, tcap), 0,
-        Vector{UInt32}(undef, tcap), Vector{Int32}(undef, tcap), Vector{Int32}(undef, tcap),
-        Vector{Int32}(undef, tcap), Vector{Int32}(undef, tcap), 0,
-        Vector{Float32}(undef, tcap * frag_cap * iso_cap), 0, iso_cap, frag_cap, -1, 0, 0)
-end
-
-@inline function reset_template_store!(s::FragTemplateStore)
-    s.prev_n = 0; s.cur_n = 0; s.n_tmpl = 0; s.n_slot = 0
-    return s
-end
-
-"""Begin a bin: the previous bin becomes the merge source. Resets if the scan sequence broke."""
-@inline function begin_bin!(s::FragTemplateStore, scan_idx::Int)
-    # No reset on a scan-sequence break: the next segment on this thread is the same m/z range
-    # in the next cycle and shares most precursors. The store resets only when it fills.
-    s.prev_prec, s.cur_prec = s.cur_prec, s.prev_prec
-    s.prev_tmpl, s.cur_tmpl = s.cur_tmpl, s.prev_tmpl
-    s.prev_n = s.cur_n; s.cur_n = 0
-    s.last_scan = scan_idx
-    return 1
-end
-
 """
     run_fused!(Hs, unscored_psms, id_to_col, scratch,
                corrected_peak_mz, peak_mz_len, isotopes_buf, prec_trans_buf,
@@ -863,13 +799,10 @@ function run_fused!(
     n_frag_isotopes::Int64,
     isotope_err_bounds::Tuple{I, I};
     m_rank::Int64 = 3,
-    scan_idx::Int64 = 0,   # for blacklist lookup; 0 disables
-    tstore::Union{Nothing, FragTemplateStore} = nothing
+    scan_idx::Int64 = 0   # for blacklist lookup; 0 disables
 ) where {K<:FusedSearchKind, I<:Integer}
 
     reset!(Hs)
-    use_tmpl = tstore !== nothing
-    jprev = use_tmpl ? begin_bin!(tstore, Int(scan_idx)) : 0
 
     fragments = getFragments(ion_list)
 
@@ -905,25 +838,6 @@ function run_fused!(
         prec_sulfur = prec_sulfur_counts[prec_idx]
         spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz)
 
-        # Template lookup: advance the merge cursor over the previous bin's sorted list.
-        tmpl = Int32(-1)
-        if use_tmpl
-            # Carry forward previous entries smaller than this candidate (they stay known:
-            # the merge list is the sorted UNION of everything seen since the last reset, so a
-            # template survives a sparse bin — with core thinning every second bin is sparse).
-            while jprev <= tstore.prev_n && tstore.prev_prec[jprev] < prec_idx
-                if tstore.cur_n < length(tstore.cur_prec)
-                    tstore.cur_n += 1
-                    tstore.cur_prec[tstore.cur_n] = tstore.prev_prec[jprev]
-                    tstore.cur_tmpl[tstore.cur_n] = tstore.prev_tmpl[jprev]
-                end
-                jprev += 1
-            end
-            if jprev <= tstore.prev_n && tstore.prev_prec[jprev] == prec_idx
-                tmpl = tstore.prev_tmpl[jprev]; jprev += 1
-            end
-        end
-
         # Outer iso-pass loop: 1 iteration for FusedStandard (compiler
         # removes the wrapper), 3 for FusedQuadEst (one pass per isotope
         # column, fitted as a separate design-matrix column).
@@ -949,50 +863,15 @@ function run_fused!(
 
             frag_range = getPrecFragRange(ion_list, prec_idx)
 
-            # Template state for this precursor (single iso pass on the standard kind).
-            tmpl_hit = false; tmpl_write = false; slot = 0; nkept = 0
-            if use_tmpl && n_passes == 1
-                if tmpl >= 0 && tstore.t_iso_lo[tmpl] == first(prec_isotope_set) &&
-                   tstore.t_iso_hi[tmpl] == last(prec_isotope_set)
-                    tmpl_hit = true; slot = Int(tstore.t_off[tmpl]); tstore.hits += 1
-                elseif max_iso_idx + 1 <= tstore.iso_cap
-                    if !(tstore.n_tmpl < length(tstore.t_prec) &&
-                         (tstore.n_slot + tstore.frag_cap) * tstore.iso_cap <= length(tstore.iso))
-                        reset_template_store!(tstore)      # full: start over (rest of bin misses)
-                        jprev = tstore.prev_n + 1
-                    end
-                    tmpl_write = true; slot = tstore.n_slot; tstore.misses += 1
-                end
-            end
-
             @inbounds for frag_idx in frag_range
                 frag = fragments[frag_idx]
                 rank = getRank(frag)
                 rank > rank_thr && continue
 
-                if tmpl_hit
-                    base = slot * tstore.iso_cap
-                    for k in frag_iso_idx_range
-                        isotopes_buf[k + 1] = tstore.iso[base + k + 1]
-                    end
-                    slot += 1
-                else
-                    getFragIsotopes!(
-                        prec_est, isotopes_buf, prec_trans_buf,
-                        prec_isotope_set, frag_iso_idx_range, iso_splines,
-                        prec_mz, prec_charge, prec_sulfur, frag, spline_data)
-                    if tmpl_write
-                        if nkept < tstore.frag_cap
-                            base = slot * tstore.iso_cap
-                            for k in frag_iso_idx_range
-                                tstore.iso[base + k + 1] = isotopes_buf[k + 1]
-                            end
-                            slot += 1; nkept += 1
-                        else
-                            tmpl_write = false
-                        end
-                    end
-                end
+                getFragIsotopes!(
+                    prec_est, isotopes_buf, prec_trans_buf,
+                    prec_isotope_set, frag_iso_idx_range, iso_splines,
+                    prec_mz, prec_charge, prec_sulfur, frag, spline_data)
                 trace_max_pred = capture_trace_intensity ?
                     fragment_trace_max_pred_intensity(isotopes_buf, frag_iso_idx_range, iso_scale) :
                     0f0
@@ -1056,37 +935,10 @@ function run_fused!(
                 lower = mono_landing
             end  # frag_idx
 
-            if use_tmpl && n_passes == 1
-                if tmpl_write
-                    t = tstore.n_tmpl + 1
-                    tstore.t_prec[t] = prec_idx; tstore.t_off[t] = Int32(tstore.n_slot)
-                    tstore.t_nfrag[t] = Int32(nkept)
-                    tstore.t_iso_lo[t] = Int32(first(prec_isotope_set))
-                    tstore.t_iso_hi[t] = Int32(last(prec_isotope_set))
-                    tstore.n_tmpl = t; tstore.n_slot += nkept
-                    tmpl = Int32(t)
-                end
-                if (tmpl_hit || tmpl_write) && tstore.cur_n < length(tstore.cur_prec)
-                    tstore.cur_n += 1
-                    tstore.cur_prec[tstore.cur_n] = prec_idx
-                    tstore.cur_tmpl[tstore.cur_n] = tmpl
-                end
-            end
-
             if col_started
                 entry, miss_row = finalize_column!(Hs, this_col, scratch, entry, miss_row)
             end
         end  # iso_pass
-    end
-
-    if use_tmpl
-        # Carry the tail of the previous list so the union is complete.
-        while jprev <= tstore.prev_n && tstore.cur_n < length(tstore.cur_prec)
-            tstore.cur_n += 1
-            tstore.cur_prec[tstore.cur_n] = tstore.prev_prec[jprev]
-            tstore.cur_tmpl[tstore.cur_n] = tstore.prev_tmpl[jprev]
-            jprev += 1
-        end
     end
 
     grow_colptr_if_needed!(Hs, Int(col))
