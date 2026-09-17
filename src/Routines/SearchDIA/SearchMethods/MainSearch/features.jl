@@ -195,8 +195,8 @@ const PRESCORE_FEATURES = [
     :frag_corr_strength,
     :frag_corr_effective_n,
     # Ion-mobility slice data: the precursor's PSMs at the same retention time (other mobility
-    # slices); 1 on files without mobility data.
-    :n_scans_in_window,
+    # slices) and this PSM's share of their weight; 1 on files without mobility data.
+    :n_scans_in_window, :weight_frac_in_cycle,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -1124,9 +1124,12 @@ computes:
 - `n_scans_in_window`          Number of this precursor's PSMs in the same cycle (and isolation
                                window) as this PSM, i.e. at other ion-mobility slices of the same
                                retention time. 1 on Thermo/Sciex data (one scan per window per cycle).
-                               2026-09-17, timsTOF slice data: +2.5% precursors at 1% FDR on a
-                               250 pg human file (9,670 -> 9,914); per-slice / per-cycle fragment
-                               correlations and within-cycle weight fractions carried no extra IDs.
+- `weight_frac_in_cycle`       This PSM's deconvolution weight over the sum of the precursor's
+                               weights in the same cycle: its share of the mobility profile at that
+                               retention time (1 when alone in the cycle, and on Thermo/Sciex data).
+                               2026-09-17, timsTOF 250 pg human at 1% FDR: none 9,670; slice count
+                               alone 9,724; slice count + weight fraction 9,914; per-slice / per-cycle
+                               fragment correlations and the weight/max ratio added nothing further.
 
 Validated 2026-05-10 to add ~+2,088 IDs at q≤.01 vs MS1-only baseline (Olsen
 Exploris one-file, entrap1, paired EFDR ~0.0107). Mechanism is the same as
@@ -1367,6 +1370,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # otherwise do over ~14M rows).
     psms[!, :n_scans]                     = ones(UInt32, n)   # default 1 for single-PSM precs
     psms[!, :n_scans_in_window]           = ones(UInt32, n)   # PSMs of the precursor in the same cycle
+    psms[!, :weight_frac_in_cycle]        = ones(Float32, n)  # weight / sum of the precursor's weights in the cycle
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -1386,6 +1390,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
     n_scans_col = psms.n_scans::Vector{UInt32}
     n_scans_win_col = psms.n_scans_in_window::Vector{UInt32}
+    wfrac_col = psms.weight_frac_in_cycle::Vector{Float32}
     has_cycle = hasproperty(psms, :cycle_idx)
     cyc_col = has_cycle ? Int32[Int32(c) for c in psms.cycle_idx] : Int32[]
 
@@ -1413,6 +1418,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     vm0_scratch  = [Float32[] for _ in 1:nthr]
     apex_scratch = [Float32[] for _ in 1:nthr]
     cyc_scratch  = [Int32[] for _ in 1:nthr]
+    cw_scratch   = [Float32[] for _ in 1:nthr]
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the output columns; all input arrays are read-only.
@@ -1430,17 +1436,30 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             for k in 0:(npts-1)
                 n_scans_col[perm[i_start + k]] = len_u32
             end
-            # :n_scans_in_window — PSMs of this precursor sharing the row's cycle. Rows of a
-            # precursor arrive in scan order, so the cycle copy is already sorted (insertion
-            # sort is O(n) there and allocation-free).
+            # :n_scans_in_window / :weight_frac_in_cycle — PSMs of this precursor sharing the
+            # row's cycle, and the row's share of their summed weight. Rows of a precursor arrive
+            # in scan order, so the cycle copy is nearly sorted (insertion sort is ~O(n) there and
+            # allocation-free); the per-cycle weight sum is a prefix sum over the sorted copy.
             if has_cycle && npts > 1
                 cyc = cyc_scratch[tid]; resize!(cyc, npts)
+                cw  = cw_scratch[tid];  resize!(cw, npts)
                 for k in 1:npts; cyc[k] = cyc_col[perm[i_start + k - 1]]; end
                 sort!(cyc; alg = Base.Sort.InsertionSort)
+                # cw[j] = summed weight of the cycle at sorted position j (one pass: accumulate into the
+                # run's first slot via binary search on the sorted keys, then read it back)
+                fill!(view(cw, 1:npts), 0f0)
                 for k in 0:(npts-1)
-                    c = cyc_col[perm[i_start + k]]
-                    n_scans_win_col[perm[i_start + k]] =
-                        UInt32(searchsortedlast(cyc, c) - searchsortedfirst(cyc, c) + 1)
+                    i_orig = perm[i_start + k]
+                    lo = searchsortedfirst(cyc, cyc_col[i_orig])
+                    cw[lo] += max(Float32(weight[i_orig]), 0f0)
+                end
+                for k in 0:(npts-1)
+                    i_orig = perm[i_start + k]
+                    c = cyc_col[i_orig]
+                    lo = searchsortedfirst(cyc, c); hi = searchsortedlast(cyc, c)
+                    n_scans_win_col[i_orig] = UInt32(hi - lo + 1)
+                    s = cw[lo]; w = max(Float32(weight[i_orig]), 0f0)
+                    wfrac_col[i_orig] = s > 0f0 ? w / s : 1f0
                 end
             end
             npts < 2 && continue

@@ -100,7 +100,7 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_strength,
     :frag_corr_effective_n,
     # Ion-mobility slice data (see _add_fragment_chromatogram_features!); 1 without mobility data.
-    :n_scans_in_window,
+    :n_scans_in_window, :weight_frac_in_cycle,
     :frag_corr_best_m0,
     :n_frags_detected_union,
     :n_frags_detected_intersection,
