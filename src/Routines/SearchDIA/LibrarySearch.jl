@@ -304,6 +304,11 @@ function library_search(
         Profile.clear()
         Profile.init(n = 200_000_000, delay = 0.001)
     end
+    # C1 template reuse: scanning-quad chunked path, flat deconvolution box only (the cached
+    # isotope intensities are bin-independent only when transmission is 0/1 over the set).
+    _zt_tmpl = zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing &&
+               qtm_deconv isa SquareQuadModel && get(ENV, "PIONEER_ZT_TEMPLATE_CACHE", "1") != "0"
+    _zt_tmpl && (ZT_TMPL_HITS[] = 0; ZT_TMPL_MISSES[] = 0)
     _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
         tasks = map(tt) do thread_task
@@ -311,7 +316,8 @@ function library_search(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol;
+                zt_template_cache = _zt_tmpl)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
@@ -370,7 +376,9 @@ function library_search(
         @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
                    "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
                    "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed)); " *
-                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
+                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters" *
+                   (_zt_tmpl ? "; template cache: $(ZT_TMPL_HITS[]) hits, $(ZT_TMPL_MISSES[]) misses " *
+                               "($(round(100 * ZT_TMPL_HITS[] / max(ZT_TMPL_HITS[] + ZT_TMPL_MISSES[], 1); digits=1))%)" : "")
         return reduced
     end
 

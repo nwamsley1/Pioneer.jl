@@ -18,6 +18,9 @@ The caller must have:
 1. Verified library m/z-sortedness (via `verify_mz_sorted`) — once per run.
 2. Set `params.use_fused_scan = true` (dispatch decision happens upstream).
 """
+const ZT_TMPL_HITS = Threads.Atomic{Int}(0)
+const ZT_TMPL_MISSES = Threads.Atomic{Int}(0)
+
 function process_scans_fused!(
     scan_range::Vector{Int64},
     spectra::MassSpecData,
@@ -31,7 +34,8 @@ function process_scans_fused!(
     qtm::QuadTransmissionModel,
     mem::AbstractMassErrorModel,
     rt_to_irt_spline,
-    irt_tol::AbstractFloat
+    irt_tol::AbstractFloat;
+    zt_template_cache::Bool = false
 ) where {P<:FragmentIndexSearchParameters, PI<:PrecursorIndex}
 
     Hs              = getHsFused(search_data)
@@ -62,6 +66,23 @@ function process_scans_fused!(
 
     last_val  = 0
     cycle_idxs = getCycleIdxs(spectra)
+
+    # Scanning-quad template store (C1): sized from this thread's largest candidate list and
+    # the library's largest fragment block. Allocated once per call (per thread per chunk).
+    tstore = if zt_template_cache
+        max_cand = 0
+        for si in scan_range
+            r = get_prec_range(prec_index, si)
+            ismissing(r) || (max_cand = max(max_cand, length(r)))
+        end
+        frag_cap = 0
+        for pid in 1:length(prec_mzs)
+            frag_cap = max(frag_cap, Int(length(getPrecFragRange(ion_list, pid))))
+        end
+        FragTemplateStore(Int(max_cand), Int(frag_cap), Int(n_frag_isotopes))
+    else
+        nothing
+    end
 
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
@@ -113,7 +134,8 @@ function process_scans_fused!(
                 frag_mz_bounds, n_frag_isotopes,
                 isotope_err_bounds;
                 m_rank = last(getMinTopNofM(params)),
-                scan_idx = Int64(scan_idx)
+                scan_idx = Int64(scan_idx),
+                tstore = tstore
             )
             if nmatches ≤ 2
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)
@@ -132,5 +154,8 @@ function process_scans_fused!(
         end
     end
 
+    if tstore !== nothing
+        Threads.atomic_add!(ZT_TMPL_HITS, tstore.hits); Threads.atomic_add!(ZT_TMPL_MISSES, tstore.misses)
+    end
     return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
 end
