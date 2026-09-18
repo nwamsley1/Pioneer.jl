@@ -156,7 +156,78 @@ per-scan deltas with an escape (4 B/peak, decoded into scratch at the scan visit
 MS1 (stride, or smoothing at load time from compact packets); (c) load-aware per-level cull. zstd Arrow is
 rejected: Arrow.jl decompresses whole buffers into RAM at open, so it trades disk for RSS.
 
-## 8. Workspace (outside the repo, Nathan's machine)
+## 8. The converter, rebuilt: `TimsSlices.jl` (2026-09-18)
+
+Decision (Nathan, 2026-09-18, `~/BrukerTims/PLAN_2026-09-18_reencoded_slices.md`): smooth and centroid **once**
+at conversion and write the result back in Bruker's own block layout (integer bins, per-slice deltas, byte planes,
+zstd per frame); the search decodes each frame on the fly (Phase 2, not started). Phase 1, the converter, is a
+standalone package `~/Projects/TimsSlices.jl` (plan: `PLAN_2026-09-18_converter.md`, also RIS NTW/); the
+algorithm is the prototype's, the implementation is new, and the two are held equal by a test.
+
+**Container `.tdfs/`** (`docs/format.md` in the package): `blocks.bin` (per frame: `u32 block_size, u32 n_words`,
+zstd of four byte planes of the word stream `[n_slices, count_j..., (bin_delta, intensity)...]`, accumulator
+0xFFFFFFFF as Bruker), `frames.arrow`, `slices.arrow` (one row per Pioneer scan with every column the search reads
+today), `meta.json` (calibration, parameters, thresholds). Fixed-point bins `round(k · bin)`, `k` = `bin_scale`.
+
+**Implementation**: raw input by positioned reads into per-thread buffers, per-thread zstd contexts, SIMD byte
+un-transpose (raw decode 3.7 ns/peak, of which zstd 2.7); IM step by a dense per-thread accumulator over the bin
+axis plus a bitmap of touched bins swept in order (no sort); m/z kernel by scattering each nonzero bin over the
+taps of a padded run buffer; centroiding as the prototype (left footprint edge tracked in the forward scan, apices
+searched only inside the run's input span — both proven equivalent); workers pull frames from a counter and hand
+results to an ordered writer through a bounded channel. Parameters: `im_sigma`/`ms1_im_sigma`, `kernel_extent`,
+`stride`/`ms1_stride`, `sum_scale`, `mz_sigma`, `centroid` (`wmean`/`gauss`/`none` = variant A), `max_half`,
+`cull_q`/`ms1_cull_q`/`split_cull`, `min_scans`, `bin_scale`, `int_scale`, `zstd_level`, `format`
+(`tdfs`/`arrow`/`both`), `frames`. `expand` turns a `.tdfs` back into the slice Arrow (byte-identical to
+`--format arrow`, tested), which is how the format was validated in the search before any Pioneer change.
+
+**Tests** (6,735; 15,663 with `TIMSSLICES_TEST_BIG=1`): synthetic codec/kernel/centroid/IM cases; HeLa raw-reader
+checksums; equivalence with the frozen prototype (HeLa two parameter sets, E. coli, 250 pg: identical bin positions,
+intensities within Float32 rounding on ~4 M centroids); container round trip through `expand`.
+
+**Whole-file numbers** (12 threads, i7-10700K; σ5, m/z σ3, stride 8, wmean, sum-scaled, integer bins):
+
+| file | cull | frames | centroids | wall | peak RSS | `.tdfs` | B/centroid | slice Arrow was |
+|---|---|---|---|---|---|---|---|---|
+| E. coli 50 ng | MS2 q0.05 | 8,636 | 930 M | 33 s | 2.9 GB | 1.86 GB | 2.0 | 7.7 GB |
+| human 250 pg | none | 15,052 | 1.72 G | 34 s | 2.3 GB | 3.56 GB | 2.1 | 14.3 GB |
+| human 50 ng | MS2 q0.05 | 15,049 | 2.11 G | 83 s | 3.6 GB | 4.30 GB | 2.0 | ~25 GB |
+
+(The prototype took ~2 min / ~4 min wall and tens of GB of RAM.) Single-thread per 250 pg MS1 frame (485 K raw
+peaks, 117 slices, 843 K centroids): decode 4 ms, IM 17 ms, m/z scatter 17 ms, centroid 46 ms, encode ~5 ms;
+the centroid footprint walk is the remaining hotspot. Peak RSS is per-thread scratch (~120 MB × threads), not file size.
+
+**Search-level validation** (`search/tdfs_validate.sh`: Arrow written from the quantised slices, searched through
+Precursor Scoring exactly as the σ3 prototype files were; `bin_scale` k = fixed-point bin resolution 1/k,
+`int_scale` = stored intensity resolution 1/scale; targets at 1% / 0.1% FDR):
+
+| file | prototype σ3 (Float32 m/z, float intensity) | k=256, int/16 | k=1 (integer bins), int/16 | k=2, int/16 | k=256, integer intensity |
+|---|---|---|---|---|---|
+| human 250 pg | 10,295 / 7,367 | 10,039 / 6,484 | **10,310 / 7,012** | 9,988 / 7,215 | 10,020 / 7,300 |
+| E. coli 50 ng | 15,346 / 13,110 | 15,406 / 13,241 | 15,233 / 13,269 | — | 15,239 / 13,142 |
+
+Two controls settle how to read this. Re-searching the prototype's own σ3 Arrow reproduced 10,295 / 7,367 and
+every intermediate count (5,717,699 deconvolution PSMs, 88,767 passing precursors); re-searching one of our files
+reproduced its numbers exactly too. **The search is deterministic, and the ±1.5% spread on the 250 pg file is the
+search reacting to sub-ppm input differences** (k=256 keeps positions to 0.02 ppm and intensities to 1/16 count
+and still lands 2.5% below the prototype, while integer bins land above it; MainSearch passing precursors swing
+88 K – 152 K between these near-identical inputs through the per-file LightGBM + PEP filter). At 50 ng the spread
+is ±0.7%. Conclusions: (a) **decision 4a: integer bins** (k=1) lose nothing measurable and are the smallest
+encoding; (b) intensities as plain integers drop the 2.3% of 250 pg centroids below 0.5 counts, which did not cost
+IDs here (10,020 vs 10,039 at k=256), but `int_scale` 16 keeps them for +0.45 B/centroid and is the safer default at
+low input — the search sees intensities divided back by the scale; (c) single-run comparisons cannot resolve
+encoding or parameter effects below ~3% at 250 pg, which also caps what the σ / cull sweeps could see.
+
+Bugs found by the validation and fixed: the Arrow bridge wrote the stored integer instead of intensity/`int_scale`
+(the Huber deconvolution and intensity features are not scale-invariant: passing precursors 98 K → 152 K); a
+centroid at the low m/z edge can sit at a slightly negative bin position (footprint below bin 0), which integer
+rounding hid and fixed-point storage rejected — now clamped; a failing worker left the ordered writer waiting on
+its channel forever — now the channel is closed with the error.
+
+**Next (Phase 2)**: `TdfSliceMassSpecData <: MassSpecData` over the `.tdfs` (mmap of `blocks.bin`, side table as
+columns, per-thread frame decode on first touch, views into the thread buffer), the caller audit for view lifetime,
+and the UInt32 column widening (§7 (d)) before the 50 ng file can be searched at all.
+
+## 9. Workspace (outside the repo, Nathan's machine)
 
 `~/BrukerTims/`: `pride/` (bundles), `arrow/` (converted files), `proto/` (converter, reader, ~40 analysis
 scripts; env `proto/Project.toml`), `search/` (configs, `run_many.jl` one-session driver, batch scripts,
