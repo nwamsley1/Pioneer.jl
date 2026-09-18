@@ -6,7 +6,10 @@
 function _write_mbr_pass1_sidecars_from_main!(
     file_paths::Vector{String},
 )
+    started = last_progress = time()
     n_written = 0
+    n_rows = 0
+    @debug_l1 "MBR Pass-1 sidecar preparation starting: files=$(length(file_paths))"
     for path in file_paths
         main = Arrow.Table(path)
         for column in (
@@ -30,7 +33,13 @@ function _write_mbr_pass1_sidecars_from_main!(
             ),
         )
         n_written += 1
+        n_rows += length(main.precursor_idx)
+        if time() - last_progress >= 60
+            @debug_l1 "MBR Pass-1 sidecar preparation: files=$n_written/$(length(file_paths)) rows=$n_rows elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "MBR Pass-1 sidecar preparation complete: files=$n_written rows=$n_rows elapsed=$(round(time() - started, digits=2))s"
     return n_written
 end
 
@@ -52,14 +61,17 @@ end
 function _stage_mbr_integration_inputs!(
     candidate_refs::Vector{PSMFileReference},
     output_folder::String,
-    donor_files::Dict{UInt32, Vector{Tuple{UInt32, Float32}}},
+    donor_files::Dict{UInt32, Tuple{UInt32, UInt32}},
     q_value_threshold::Float32,
 )
+    started = last_progress = time()
+    @debug_l1 "MBR integration input staging starting: files=$(length(candidate_refs))"
     mkpath(output_folder)
     refs = PSMFileReference[]
     n_rows = 0
     n_candidates = 0
-    for candidate_ref in candidate_refs
+    rows_processed = 0
+    for (file_idx, candidate_ref) in enumerate(candidate_refs)
         path = file_path(candidate_ref)
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing MBR Pass-1 sidecar at $pass1_path")
@@ -99,7 +111,13 @@ function _stage_mbr_integration_inputs!(
         writeArrow(staged_path * PASS1_SIDECAR_SUFFIX, pass1[keep, :])
         push!(refs, PSMFileReference(staged_path))
         n_rows += count(keep)
+        rows_processed += nrow(main)
+        if time() - last_progress >= 60
+            @debug_l1 "MBR integration input staging: files=$file_idx/$(length(candidate_refs)) rows=$rows_processed retained=$n_rows candidates=$n_candidates elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "MBR integration input staging complete: files=$(length(candidate_refs)) rows=$rows_processed retained=$n_rows candidates=$n_candidates elapsed=$(round(time() - started, digits=2))s"
     return (
         integration_refs = refs,
         n_rows = n_rows,
@@ -144,25 +162,36 @@ function prepare_postintegration_mbr!(
         donor_paths;
         donor_q_threshold = donor_q_threshold,
     )
+    phase_started = time()
+    @debug_l1 "MBR donor index starting: files=$(length(donor_paths)) score_floor=$(round(donor_score_floor, digits=4))"
     donor_files = _mbr_preintegration_donor_files(
         donor_paths,
         donor_score_floor,
     )
+    @debug_l1 "MBR donor index complete: precursors=$(length(donor_files)) elapsed=$(round(time() - phase_started, digits=2))s"
     staged = _stage_mbr_integration_inputs!(
         PSMFileReference[ref for ref in candidate_refs if exists(ref)],
         output_folder,
         donor_files,
         q_value_threshold,
     )
+    phase_started = last_progress = time()
+    @debug_l1 "MBR staging sidecar cleanup starting: files=$(length(candidate_paths))"
     staged_paths = Set(
         file_path(ref) for ref in staged.integration_refs
     )
-    for candidate_path in candidate_paths
-        candidate_path in staged_paths && continue
-        sidecar_path = candidate_path * PASS1_SIDECAR_SUFFIX
-        isfile(sidecar_path) &&
-            safeRm(sidecar_path; force = true)
+    for (file_idx, candidate_path) in enumerate(candidate_paths)
+        if !(candidate_path in staged_paths)
+            sidecar_path = candidate_path * PASS1_SIDECAR_SUFFIX
+            isfile(sidecar_path) &&
+                safeRm(sidecar_path; force = true)
+        end
+        if time() - last_progress >= 60
+            @debug_l1 "MBR staging sidecar cleanup: files=$file_idx/$(length(candidate_paths)) elapsed=$(round(time() - phase_started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "MBR staging sidecar cleanup complete: elapsed=$(round(time() - phase_started, digits=2))s"
     @debug_l1 "Post-integration MBR staging: donor score floor=" *
               "$(round(donor_score_floor, digits=4)), " *
               "rows=$(staged.n_rows), candidates=$(staged.n_candidates)"
