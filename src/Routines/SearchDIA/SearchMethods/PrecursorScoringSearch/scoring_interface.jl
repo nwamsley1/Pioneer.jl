@@ -102,7 +102,10 @@ end
 Per-file precursor probability aggregation (no MBR filtering).
 """
 function aggregate_per_file!(refs::Vector{PSMFileReference})
-    for ref in refs
+    started = last_progress = time()
+    rows_processed = 0
+    @debug_l1 "Precursor probability aggregation starting: files=$(length(refs))"
+    for (file_idx, ref) in enumerate(refs)
         df = load_with_sidecars(ref)
         _aggregate_trace_to_precursor_probs!(df)
         # Write only :prec_prob as a row-aligned sidecar instead of rewriting
@@ -111,7 +114,13 @@ function aggregate_per_file!(refs::Vector{PSMFileReference})
         side_path = file_path(ref) * ".prec_prob.sidecar.arrow"
         writeArrow(side_path, DataFrame(prec_prob = df.prec_prob))
         register_sidecar!(ref, side_path, [:prec_prob])
+        rows_processed += nrow(df)
+        if time() - last_progress >= 60
+            @debug_l1 "Precursor probability aggregation: files=$file_idx/$(length(refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "Precursor probability aggregation complete: files=$(length(refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
     return nothing
 end
 
@@ -192,18 +201,28 @@ function write_score_sidecars(
     columns::Vector{Symbol};
     temp_prefix::String = "sidecar"
 )
+    started = last_progress = time()
+    rows_processed = 0
+    @debug_l1 "Score sidecars ($temp_prefix) starting: files=$(length(refs)) columns=$(join(columns, ','))"
     sidecar_refs = PSMFileReference[]
-    for ref in refs
+    for (file_idx, ref) in enumerate(refs)
         # Use materialize_columns so columns are pulled from main OR any
         # registered sidecar (e.g. :prec_prob now lives in a sidecar after
         # aggregate_per_file!).
         df = ref isa PSMFileReference ? materialize_columns(ref, columns) :
              DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))[!, columns]
-        nrow(df) == 0 && continue
-        temp_path = tempname() * "_$(temp_prefix).arrow"
-        writeArrow(temp_path, df)
-        push!(sidecar_refs, PSMFileReference(temp_path))
+        if nrow(df) > 0
+            temp_path = tempname() * "_$(temp_prefix).arrow"
+            writeArrow(temp_path, df)
+            push!(sidecar_refs, PSMFileReference(temp_path))
+            rows_processed += nrow(df)
+        end
+        if time() - last_progress >= 60
+            @debug_l1 "Score sidecars ($temp_prefix): files=$file_idx/$(length(refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "Score sidecars ($temp_prefix) complete: files=$(length(refs)) nonempty=$(length(sidecar_refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
     return sidecar_refs
 end
 
@@ -248,30 +267,54 @@ function build_qvalue_spline_from_refs(
     fdr_scale_factor::Float32 = 1.0f0,
     temp_prefix::String = "sidecar"
 )
+    started = time()
+    context = "Score calibration ($temp_prefix, $score_col)"
     sidecar_refs = write_score_sidecars(refs, [score_col, :target]; temp_prefix=temp_prefix)
     isempty(sidecar_refs) && return nothing
+    n_rows = sum(row_count, sidecar_refs)
 
     try
+        phase_started = time()
+        @debug_l1 "$context sorting starting: files=$(length(sidecar_refs)) rows=$n_rows"
         sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
+        @debug_l1 "$context sorting complete: elapsed=$(round(time() - phase_started, digits=2))s"
+        phase_started = time()
+        @debug_l1 "$context merge starting: files=$(length(sidecar_refs)) rows=$n_rows"
         stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
                            batch_size=batch_size, reverse=[true, true])
+        @debug_l1 "$context merge complete: elapsed=$(round(time() - phase_started, digits=2))s"
     finally
+        phase_started = last_progress = time()
+        @debug_l1 "$context sidecar cleanup starting: files=$(length(sidecar_refs))"
         GC.gc(false)
-        for ref in sidecar_refs
+        for (file_idx, ref) in enumerate(sidecar_refs)
             safeRm(file_path(ref); force=true)
+            if time() - last_progress >= 60
+                @debug_l1 "$context sidecar cleanup: files=$file_idx/$(length(sidecar_refs)) elapsed=$(round(time() - phase_started, digits=2))s"
+                last_progress = time()
+            end
         end
+        @debug_l1 "$context sidecar cleanup complete: elapsed=$(round(time() - phase_started, digits=2))s"
     end
 
+    phase_started = time()
+    @debug_l1 "$context q-value interpolation starting: rows=$n_rows"
     qval_spline = get_qvalue_spline(merged_path, score_col, false;
         min_pep_points_per_bin=min_pep_points_per_bin,
         fdr_scale_factor=fdr_scale_factor)
+    @debug_l1 "$context q-value interpolation complete: elapsed=$(round(time() - phase_started, digits=2))s"
 
     pep_interp = if compute_pep
-        get_pep_interpolation(merged_path, score_col;
+        phase_started = time()
+        @debug_l1 "$context PEP interpolation starting: rows=$n_rows"
+        result = get_pep_interpolation(merged_path, score_col;
             fdr_scale_factor=fdr_scale_factor)
+        @debug_l1 "$context PEP interpolation complete: elapsed=$(round(time() - phase_started, digits=2))s"
+        result
     else
         nothing
     end
 
+    @debug_l1 "$context complete: files=$(length(refs)) rows=$n_rows elapsed=$(round(time() - started, digits=2))s"
     return (; qval_spline, pep_interp)
 end

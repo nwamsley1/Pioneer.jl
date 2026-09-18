@@ -385,6 +385,10 @@ function _stage_merge(
     reverse::Union{Bool,Vector{Bool}},
     batch_size::Int
 )
+    started = last_progress = time()
+    n_groups = cld(length(refs), max_fanin)
+    rows_processed = 0
+    @debug_l1 "Staged merge starting: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups max_fanin=$max_fanin"
     temp_dir = mktempdir()
     staged_refs = similar(refs, 0)
     for (i, batch) in enumerate(Iterators.partition(refs, max_fanin))
@@ -394,7 +398,13 @@ function _stage_merge(
             reverse, batch_size, max_fanin
         )
         push!(staged_refs, merged_ref)
+        rows_processed += row_count(merged_ref)
+        if time() - last_progress >= 60
+            @debug_l1 "Staged merge: keys=$(join(sort_keys, ',')) groups=$i/$n_groups rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "Staged merge complete: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
     return staged_refs
 end
 
@@ -485,6 +495,7 @@ function _stream_sorted_merge_nkey_impl(
     reverse_vec::Vector{Bool},
     batch_size::Int
 ) where {N, M}
+    started = last_progress = time()
     # Validate all files exist and have compatible schemas
     for ref in refs
         validate_exists(ref)
@@ -511,6 +522,7 @@ function _stream_sorted_merge_nkey_impl(
     end
     
     table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
+    total_rows = sum(table_sizes)
     table_indices = ones(Int64, length(tables))
     
     # Create type-stable batch DataFrame
@@ -558,6 +570,10 @@ function _stream_sorted_merge_nkey_impl(
             _write_batch_typed(output_path, batch_df, n_writes, batch_size)
             n_writes += 1
             row_idx = 1
+            if time() - last_progress >= 60
+                @debug_l1 "Sorted merge ($(basename(output_path))): keys=$(join(sort_keys, ',')) files=$(length(refs)) rows=$(n_writes * batch_size)/$total_rows elapsed=$(round(time() - started, digits=2))s"
+                last_progress = time()
+            end
         end
     end
     
@@ -574,6 +590,9 @@ function _stream_sorted_merge_nkey_impl(
     # Mark as sorted - heap-based merge maintains sort order for all cases
     mark_sorted!(output_ref, sort_keys...)
 
+    if time() - started >= 60
+        @debug_l1 "Sorted merge ($(basename(output_path))) complete: keys=$(join(sort_keys, ',')) files=$(length(refs)) rows=$total_rows elapsed=$(round(time() - started, digits=2))s"
+    end
     return output_ref
 end
 

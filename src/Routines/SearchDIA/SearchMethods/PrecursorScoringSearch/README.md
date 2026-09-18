@@ -21,8 +21,8 @@ match-between-runs (MBR) enabled or disabled. Implementation: `pass1_oom.jl`.
 After model selection, release the pool and score every source file once.
 Sidecars preserve row order and contain `precursor_idx`, `scan_idx`,
 `trace_prob_prepass` (OOF), and `trace_prob_infold` (NaN when MBR is disabled).
-`score_psms.jl` merges these scores into the main Arrow files. Experiment-wide
-FDR and integrated MBR processing run downstream.
+The scores are attached while merging each run's folds into a single Arrow
+file. Experiment-wide FDR and integrated MBR processing run downstream.
 
 Retained LightGBM models contain trees without training datasets. Training
 memory includes the pool, a temporary filtered subset, and native LightGBM
@@ -31,3 +31,5 @@ The pool cap controls training size; `max_psms_in_memory` is currently unused.
 
 Debug logs report sampling, per-fold fitting, pool prediction, q-value
 calculation, and final prediction timings, plus file progress every 100 files.
+Post-scoring logs time fold merging, cleanup, probability aggregation, score
+sorting/merging, and q-value/PEP calculation.
