@@ -394,6 +394,14 @@ function process_file!(
             end
         end
 
+        # EXPERIMENT (PIONEER_QUAD_SQUARE=<overhang Da>): ignore the fitted model and install a
+        # square transmission box (window ± overhang). Used to test deconvolved 1-Da ZT files.
+        let _sq = get(ENV, "PIONEER_QUAD_SQUARE", "")
+            if !isempty(_sq)
+                active_model = SquareQuadModel(parse(Float32, _sq))
+                @user_info "QuadTuning [$file_name]: PIONEER_QUAD_SQUARE set; installing SquareQuadModel(overhang=$_sq) instead of the fitted model"
+            end
+        end
         setQuadModel(results, active_model)
 
         # Per-file QC plots. Fallback files still get the SquareQuad transmission
