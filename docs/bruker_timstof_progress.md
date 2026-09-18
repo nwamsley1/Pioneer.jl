@@ -213,8 +213,8 @@ and still lands 2.5% below the prototype, while integer bins land above it; Main
 88 K – 152 K between these near-identical inputs through the per-file LightGBM + PEP filter). At 50 ng the spread
 is ±0.7%. Conclusions: (a) **decision 4a: integer bins** (k=1) lose nothing measurable and are the smallest
 encoding; (b) intensities as plain integers drop the 2.3% of 250 pg centroids below 0.5 counts, which did not cost
-IDs here (10,020 vs 10,039 at k=256), but `int_scale` 16 keeps them for +0.45 B/centroid and is the safer default at
-low input — the search sees intensities divided back by the scale; (c) single-run comparisons cannot resolve
+IDs here (10,020 vs 10,039 at k=256), but `int_scale` 16 keeps them for +0.45 B/centroid (~+20% file) and is the option to take if a
+low-input result ever hinges on them — the default stays 1, and a reader divides the stored value by the scale; (c) single-run comparisons cannot resolve
 encoding or parameter effects below ~3% at 250 pg, which also caps what the σ / cull sweeps could see.
 
 Bugs found by the validation and fixed: the Arrow bridge wrote the stored integer instead of intensity/`int_scale`
