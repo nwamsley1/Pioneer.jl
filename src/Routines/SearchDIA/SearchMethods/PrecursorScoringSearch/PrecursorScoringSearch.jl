@@ -499,8 +499,14 @@ function summarize_results!(
 
         # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         _pmark(:run_similarity)
+        phase_started = time()
+        @debug_l1 "Global precursor q-values starting: precursors=$(length(global_prob_dict))"
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        @debug_l1 "Global precursor q-values complete: elapsed=$(round(time() - phase_started, digits=2))s"
+        phase_started = time()
+        @debug_l1 "Global precursor PEP starting: precursors=$(length(global_prob_dict))"
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        @debug_l1 "Global precursor PEP complete: elapsed=$(round(time() - phase_started, digits=2))s"
         results.precursor_global_qval_dict[] = global_qval_dict
 
         # A4-A5: Reuse the frozen run-level q-value spline + PEP interpolation.
@@ -534,11 +540,14 @@ function summarize_results!(
                 (:global_qval, params.q_value_threshold),
                 (:qval, params.q_value_threshold),
             ])
+        phase_started = time()
+        @debug_l1 "Initial precursor q-value filter starting: files=$(length(annotated_refs))"
         passing_refs = apply_pipeline_batch(
             annotated_refs,
             initial_filter,
             passing_psms_folder,
         )
+        @debug_l1 "Initial precursor q-value filter complete: files=$(length(passing_refs)) rows=$(sum(row_count, passing_refs; init=0)) elapsed=$(round(time() - phase_started, digits=2))s"
     end
 
     if params.match_between_runs && !isempty(passing_refs)

@@ -93,6 +93,7 @@ include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_win
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_file_aware_decoys.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_empirical_spectra_hellinger.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_postintegration_pipeline.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_donor_availability.jl")
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
 include("./UnitTests/test_scoring_semisupervised.jl")
 include("./UnitTests/test_pass1_pool.jl")

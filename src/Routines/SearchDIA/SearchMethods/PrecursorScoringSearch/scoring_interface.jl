@@ -60,7 +60,10 @@ function _annotate_precursor_scores_via_sidecar!(
     qval_spline,
     pep_interp,
 )
-    for ref in refs
+    started = last_progress = time()
+    rows_processed = 0
+    @debug_l1 "Precursor score annotation starting: files=$(length(refs))"
+    for (file_idx, ref) in enumerate(refs)
         exists(ref) || continue
         cols = materialize_columns(ref, Symbol[:precursor_idx, :prec_prob])
         pids = cols[!, :precursor_idx]
@@ -92,7 +95,13 @@ function _annotate_precursor_scores_via_sidecar!(
             :pep => peps;
             tag = "precursor_scores",
         )
+        rows_processed += n
+        if time() - last_progress >= 60
+            @debug_l1 "Precursor score annotation: files=$file_idx/$(length(refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "Precursor score annotation complete: rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
     return refs
 end
 

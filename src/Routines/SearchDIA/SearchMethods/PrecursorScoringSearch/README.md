@@ -33,3 +33,7 @@ Debug logs report sampling, per-fold fitting, pool prediction, q-value
 calculation, and final prediction timings, plus file progress every 100 files.
 Post-scoring logs time fold merging, cleanup, probability aggregation, score
 sorting/merging, and q-value/PEP calculation.
+MBR preparation also logs annotation, initial filtering, donor-threshold
+calculation, donor indexing, and staging writes. Its eligibility index stores
+at most two distinct donor run IDs per precursor, enough to determine whether
+a donor exists outside any receiver run.

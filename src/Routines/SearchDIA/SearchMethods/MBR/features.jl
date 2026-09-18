@@ -106,9 +106,11 @@ function _mbr_donor_score_floor(
     require_initial_pass::Bool = false,
     q_value_threshold::Float32 = donor_q_threshold,
 )
+    started = last_progress = time()
+    @debug_l1 "MBR donor threshold collection starting: files=$(length(file_paths)) initial_pass=$require_initial_pass"
     scores = Float32[]
     targets = Bool[]
-    for path in file_paths
+    for (file_idx, path) in enumerate(file_paths)
         tbl = Arrow.Table(path)
         hasproperty(tbl, :trace_prob_prepass) ||
             error("MBR donor selection requires :trace_prob_prepass in $path")
@@ -125,50 +127,68 @@ function _mbr_donor_score_floor(
             push!(scores, Float32(tbl.trace_prob_prepass[row]))
             push!(targets, Bool(tbl.target[row]))
         end
+        if time() - last_progress >= 60
+            @debug_l1 "MBR donor threshold collection: files=$file_idx/$(length(file_paths)) rows=$(length(scores)) elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
+        end
     end
+    @debug_l1 "MBR donor threshold collection complete: rows=$(length(scores)) elapsed=$(round(time() - started, digits=2))s"
     isempty(scores) && return Inf32
+    started = time()
+    @debug_l1 "MBR donor threshold q-values starting: rows=$(length(scores))"
     qvalues = similar(scores)
     get_qvalues!(scores, targets, qvalues)
     eligible = targets .& (qvalues .<= donor_q_threshold)
-    return any(eligible) ? minimum(scores[eligible]) : Inf32
+    score_floor = any(eligible) ? minimum(scores[eligible]) : Inf32
+    @debug_l1 "MBR donor threshold q-values complete: score_floor=$score_floor elapsed=$(round(time() - started, digits=2))s"
+    return score_floor
+end
+
+function _collect_mbr_donor_files!(
+    donor_files::Dict{UInt32, Tuple{UInt32, UInt32}},
+    precursor_ids, file_ids, scores, score_floor::Float32,
+)
+    for (precursor_id, file_id, score) in zip(precursor_ids, file_ids, scores)
+        Float32(score) >= score_floor || continue
+        pid, file_idx = UInt32(precursor_id), UInt32(file_id)
+        donors = get!(donor_files, pid, (file_idx, file_idx))
+        # Two distinct runs suffice to find a donor outside any receiver run.
+        if donors[1] == donors[2] && file_idx != donors[1]
+            donor_files[pid] = (donors[1], file_idx)
+        end
+    end
+    return donor_files
 end
 
 function _mbr_preintegration_donor_files(
     file_paths::Vector{String},
     score_floor::Float32,
 )
-    donor_files = Dict{UInt32, Vector{Tuple{UInt32, Float32}}}()
-    for path in file_paths
+    donor_files = Dict{UInt32, Tuple{UInt32, UInt32}}()
+    started = last_progress = time()
+    rows_processed = 0
+    for (file_idx, path) in enumerate(file_paths)
         tbl = Arrow.Table(path)
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            score = Float32(tbl.trace_prob_prepass[row])
-            score >= score_floor || continue
-            pid = UInt32(tbl.precursor_idx[row])
-            file_idx = UInt32(tbl.ms_file_idx[row])
-            entries = get!(
-                () -> Tuple{UInt32, Float32}[],
-                donor_files,
-                pid,
-            )
-            existing = findfirst(entry -> entry[1] == file_idx, entries)
-            if existing === nothing
-                push!(entries, (file_idx, score))
-            elseif score > entries[existing][2]
-                entries[existing] = (file_idx, score)
-            end
+        _collect_mbr_donor_files!(
+            donor_files, tbl.precursor_idx, tbl.ms_file_idx, tbl.trace_prob_prepass, score_floor,
+        )
+        rows_processed += length(tbl.precursor_idx)
+        if time() - last_progress >= 60
+            @debug_l1 "MBR donor indexing: files=$file_idx/$(length(file_paths)) rows=$rows_processed precursors=$(length(donor_files)) elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
         end
     end
     return donor_files
 end
 
 @inline function _mbr_has_cross_run_donor(
-    donor_files::Dict{UInt32, Vector{Tuple{UInt32, Float32}}},
+    donor_files::Dict{UInt32, Tuple{UInt32, UInt32}},
     pid::UInt32,
     receiver_file::UInt32,
 )
     entries = get(donor_files, pid, nothing)
     entries === nothing && return false
-    return any(entry -> entry[1] != receiver_file, entries)
+    return entries[1] != receiver_file || entries[2] != receiver_file
 end
 
 function build_mbr_integrated_donor_dict(
