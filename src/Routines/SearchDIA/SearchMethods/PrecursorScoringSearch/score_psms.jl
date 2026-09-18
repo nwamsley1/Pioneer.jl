@@ -29,14 +29,13 @@ pool, then stream predictions over every source file.
 
 Score PSMs with `SCORING_LGBM_HP` from `MainSearch/scoring.jl`. Select and
 load a representative pool once, fit semi-supervised models using pool OOF
-scores, then write selected-model predictions back to every per-file Arrow
-table. Final FDR calculation over the experiment happens downstream.
+scores, then write selected-model predictions to row-aligned sidecars. These
+are attached when merging folds; experiment-wide FDR calculation follows.
 
 # Arguments
 - `second_pass_folder`: Folder containing the per-file second-pass PSM
   Arrow files (output of MainSearch's prescore filter step).
-- `file_paths`: Vector of per-file (or fold-split per-file) Arrow paths to
-  write the scored output back to.
+- `file_paths`: Vector of per-file (or fold-split per-file) Arrow inputs.
 - `precursors`: Library precursor metadata. Retained in the calling convention; the
   `:accession_numbers` column is added later by `process_final_psms!`, not here.
 - `fragment_lookup`: Retained in the internal calling convention; integrated
@@ -47,7 +46,7 @@ table. Final FDR calculation over the experiment happens downstream.
 - `force_oom`: Surfaced for backward compatibility; ignored.
 
 # Returns
-`nothing` (scores are written to file).
+`nothing` (scores are written to Pass-1 sidecars).
 """
 function score_precursor_isotope_traces(
     second_pass_folder::String,
@@ -100,32 +99,33 @@ function _score_precursor_isotope_traces_mbr(
         end
     end
 
-    _merge_pass1_into_main!(file_paths, precursors)
     return nothing
 end
 
-# Merge Pass-1 scores into the main Arrow tables one file at a time.
-function _merge_pass1_into_main!(
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors;
-    cleanup::Bool = true,
+"""
+    _merge_scored_folds!(fold_paths, merged_path)
+
+Attach Pass-1 predictions while merging one run's folds in input order. Return
+the row count and source paths for cleanup after the combined file is written.
+"""
+function _merge_scored_folds!(
+    fold_paths::Vector{String},
+    merged_path::String,
 )
-    for path in file_paths
+    fold_dfs = DataFrame[]
+    cleanup_paths = String[]
+    for path in fold_paths
+        isfile(path) || continue
         pass1_path = path * PASS1_SIDECAR_SUFFIX
-        isfile(pass1_path) || continue
-        # Materialise one file (Tables.columntable detaches from the mmap so the same
-        # path can be safely rewritten below).
-        main  = DataFrame(Tables.columntable(Arrow.Table(path)))
+        isfile(pass1_path) || error("Missing Pass-1 predictions for $path")
+        ref = PSMFileReference(path)
+        main = DataFrame(Tables.columntable(Arrow.Table(path)))
         pass1 = Arrow.Table(pass1_path)
         n = nrow(main)
         length(pass1.precursor_idx) == n ||
-            error("_merge_pass1_into_main!: row-count mismatch at $path")
-        @inbounds for i in 1:n
-            (main.precursor_idx[i] == pass1.precursor_idx[i] &&
-             main.scan_idx[i]      == pass1.scan_idx[i]) ||
-                error("_merge_pass1_into_main!: sidecar misaligned at row $i of $path")
-        end
-        # Accession metadata is added by process_final_psms! after integration.
+            error("Pass-1 row-count mismatch at $path")
+        (main.precursor_idx == pass1.precursor_idx && main.scan_idx == pass1.scan_idx) ||
+            error("Pass-1 sidecar misaligned at $path")
         main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
         if hasproperty(pass1, :trace_prob_infold)
@@ -134,11 +134,21 @@ function _merge_pass1_into_main!(
         end
         main[!, :trace_prob]         = main[!, :trace_prob_prepass]
         main[!, :mbr_recovered]      = falses(n)
-        pass1 = nothing; GC.gc(false)   # release sidecar mmap before rm + rewrite
-        writeArrow(path, main)
-        cleanup && safeRm(pass1_path; force=true)
+        for sidecar in ref.sidecars
+            table = Arrow.Table(sidecar.path)
+            for name in sidecar.cols
+                hasproperty(main, name) && continue
+                main[!, name] = collect(Tables.getcolumn(table, name))
+            end
+        end
+        push!(fold_dfs, main)
+        append!(cleanup_paths, (path, pass1_path))
+        append!(cleanup_paths, (sidecar.path for sidecar in ref.sidecars))
     end
-    return nothing
+    isempty(fold_dfs) && return nothing
+    combined = vcat(fold_dfs...)
+    writeArrow(merged_path, combined)
+    return (; rows = nrow(combined), cleanup_paths)
 end
 
 # MBR-off path. Streams Pass-1 LightGBM over the per-file Arrow tables via the same
@@ -172,7 +182,6 @@ function _score_precursor_isotope_traces_no_mbr(
         end
     end
 
-    _merge_pass1_into_main!(file_paths, precursors)
     return nothing
 end
 

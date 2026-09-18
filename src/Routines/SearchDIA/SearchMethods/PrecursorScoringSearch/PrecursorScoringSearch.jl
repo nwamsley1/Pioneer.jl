@@ -378,64 +378,48 @@ function summarize_results!(
         )
     end
     _pmark(:scoring)
-    #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
+    @debug_l1 "ScoringSearch Pass-1 scoring complete: $(round(step1_time, digits = 2))s"
 
-    # Step 1b: Merge fold files back into single files per MS run
-    # After ML scoring, we merge fold0 and fold1 files back together
-    # This simplifies downstream processing which expects one file per MS run
+    @debug_l1 "ScoringSearch prediction attachment and fold merge starting: runs=$(length(valid_file_data))"
+    merge_started = last_merge_log = time()
+    merged_rows = 0
     merged_psm_paths = String[]
     fold_paths_to_delete = String[]
-    for (idx, base_path) in valid_file_data
-        fold0_path = "$(base_path)_fold0.arrow"
-        fold1_path = "$(base_path)_fold1.arrow"
+    for (run_number, (idx, base_path)) in enumerate(valid_file_data)
         merged_path = "$(base_path).arrow"
-
-        # Collect data from both folds after Pass-1 scoring. The MBR-on and
-        # MBR-off paths both merge the frozen OOF score into the fold files
-        # before this step.
-        fold_dfs = DataFrame[]
-        fold_refs = PSMFileReference[]
-        function _load_fold(path)
-            ref = PSMFileReference(path)
-            push!(fold_refs, ref)
-            df = load_with_sidecars(ref)
-            if hasproperty(df, :trace_prob_prepass)
-                df[!, :trace_prob] = df[!, :trace_prob_prepass]
-            end
-            return df
-        end
-        isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
-        isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
-
-        if !isempty(fold_dfs)
-            # Merge and write combined file
-            combined_df = vcat(fold_dfs...)
-            writeArrow(merged_path, combined_df)
+        merged = _merge_scored_folds!(
+            ["$(base_path)_fold0.arrow", "$(base_path)_fold1.arrow"], merged_path,
+        )
+        if merged !== nothing
             push!(merged_psm_paths, merged_path)
-
-            # Update search context with merged path
+            append!(fold_paths_to_delete, merged.cleanup_paths)
+            merged_rows += merged.rows
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
-
-            # Collect fold file paths and their sidecars for batch deletion
-            for ref in fold_refs
-                fp = file_path(ref)
-                isfile(fp) && push!(fold_paths_to_delete, fp)
-                for s in ref.sidecars
-                    isfile(s.path) && push!(fold_paths_to_delete, s.path)
-                end
-            end
+        end
+        if run_number % 100 == 0 || time() - last_merge_log >= 60
+            @debug_l1 "ScoringSearch fold merge: runs=$run_number/$(length(valid_file_data)) " *
+                "rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s"
+            last_merge_log = time()
         end
     end
+    @debug_l1 "ScoringSearch prediction attachment and fold merge complete: " *
+        "runs=$(length(merged_psm_paths)) rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s"
 
     # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
+    @debug_l1 "ScoringSearch fold cleanup starting: files=$(length(fold_paths_to_delete))"
+    cleanup_started = time()
     GC.gc(false)
     for fpath in fold_paths_to_delete
         safeRm(fpath)
     end
+    @debug_l1 "ScoringSearch fold cleanup complete: $(round(time() - cleanup_started, digits = 2))s"
 
     # Create references for second pass PSMs (now using merged files)
+    @debug_l1 "ScoringSearch merged-file metadata starting: files=$(length(merged_psm_paths))"
+    metadata_started = time()
     second_pass_paths = merged_psm_paths
     second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
+    @debug_l1 "ScoringSearch merged-file metadata complete: $(round(time() - metadata_started, digits = 2))s"
 
     # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
     step2_time = @elapsed begin
