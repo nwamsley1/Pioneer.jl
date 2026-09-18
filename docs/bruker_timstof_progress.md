@@ -164,10 +164,15 @@ zstd per frame); the search decodes each frame on the fly (Phase 2, not started)
 standalone package `~/Projects/TimsSlices.jl` (plan: `PLAN_2026-09-18_converter.md`, also RIS NTW/); the
 algorithm is the prototype's, the implementation is new, and the two are held equal by a test.
 
-**Container `.tdfs/`** (`docs/format.md` in the package): `blocks.bin` (per frame: `u32 block_size, u32 n_words`,
-zstd of four byte planes of the word stream `[n_slices, count_j..., (bin_delta, intensity)...]`, accumulator
+**Container `.tdfs/`** (`docs/format.md` in the package; format version 2): `blocks.bin` (one zstd block per
+*slice*, a frame's slices contiguous: four byte planes of the `(bin_delta, intensity)` word stream, accumulator
 0xFFFFFFFF as Bruker), `frames.arrow`, `slices.arrow` (one row per Pioneer scan with every column the search reads
-today), `meta.json` (calibration, parameters, thresholds). Fixed-point bins `round(k · bin)`, `k` = `bin_scale`.
+today plus the slice's block offset and size), `meta.json` (calibration, parameters, thresholds). Fixed-point bins
+`round(k · bin)`, `k` = `bin_scale`. Per-slice rather than per-frame blocks (decided after the Phase 2 survey, see
+`PLAN_2026-09-18_phase2_reader.md`): +3% bytes on MS1 slices, +13% on MS2, ~6% of the file, decode 5 / 10 ns per
+centroid; in exchange any scan is readable on its own, so the reader needs no frame cache and Pioneer's thread
+batching (which changes frame almost every scan) stays untouched. A trained zstd dictionary recovered ~3% and was
+not adopted.
 
 **Implementation**: raw input by positioned reads into per-thread buffers, per-thread zstd contexts, SIMD byte
 un-transpose (raw decode 3.7 ns/peak, of which zstd 2.7); IM step by a dense per-thread accumulator over the bin
@@ -188,9 +193,11 @@ intensities within Float32 rounding on ~4 M centroids); container round trip thr
 
 | file | cull | frames | centroids | wall | peak RSS | `.tdfs` | B/centroid | slice Arrow was |
 |---|---|---|---|---|---|---|---|---|
-| E. coli 50 ng | MS2 q0.05 | 8,636 | 930 M | 33 s | 2.9 GB | 1.86 GB | 2.0 | 7.7 GB |
-| human 250 pg | none | 15,052 | 1.72 G | 34 s | 2.3 GB | 3.56 GB | 2.1 | 14.3 GB |
-| human 50 ng | MS2 q0.05 | 15,049 | 2.11 G | 83 s | 3.6 GB | 4.30 GB | 2.0 | ~25 GB |
+| E. coli 50 ng | MS2 q0.05 | 8,636 | 930 M | 33 s | 2.9 GB | 1.97 GB | 2.1 | 7.7 GB |
+| human 250 pg | none | 15,052 | 1.72 G | 32 s | 2.1 GB | 3.81 GB | 2.2 | 14.3 GB |
+| human 50 ng | MS2 q0.05 | 15,049 | 2.11 G | 67 s | 3.1 GB | 4.54 GB | 2.2 | ~25 GB |
+
+(Per-slice blocks, format version 2; the per-frame version was 1.86 / 3.56 / 4.30 GB.)
 
 (The prototype took ~2 min / ~4 min wall and tens of GB of RAM.) Single-thread per 250 pg MS1 frame (485 K raw
 peaks, 117 slices, 843 K centroids): decode 4 ms, IM 17 ms, m/z scatter 17 ms, centroid 46 ms, encode ~5 ms;
