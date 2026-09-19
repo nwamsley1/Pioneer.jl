@@ -577,7 +577,7 @@ function qcPlots(
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
             short_fname = short_fnames[id]  # Now correctly indexed
-            ms_table = BasicMassSpecData(ms_table_path)
+            ms_table = loadMassSpecData(ms_table_path)
             ms1_indices = findall(getMsOrders(ms_table) .== 1)
             rts  = [getRetentionTime(ms_table, i) for i in ms1_indices]
             tics = [getTIC(ms_table, i) for i in ms1_indices]
