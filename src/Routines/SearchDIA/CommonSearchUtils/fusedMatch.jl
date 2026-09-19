@@ -773,7 +773,7 @@ function run_fused!(
     kind::K,
     Hs::SparseArrayFused{UInt32, Float32},
     unscored_psms::AbstractVector{<:UnscoredPSM{Float32}},
-    id_to_col::AbstractPrecursorMap{UInt16},
+    id_to_col::AbstractPrecursorMap{UInt32},
     scratch::FusedScratch,
     scan_corrected_mz::Vector{Float32},
     scan_obs_low::Vector{Float32},
@@ -809,7 +809,7 @@ function run_fused!(
 
     n_peaks = peak_mz_len
     entry = 0
-    col = UInt16(0)
+    col = UInt32(0)
     miss_row = UInt32(n_peaks)
     nmatches = 0
     nmisses = 0
@@ -859,7 +859,7 @@ function run_fused!(
 
             reset_fused_scratch!(scratch)
             col_started = false
-            this_col = UInt16(0)
+            this_col = UInt32(0)
             lower = 1
 
             frag_range = getPrecFragRange(ion_list, prec_idx)
@@ -909,7 +909,7 @@ function run_fused!(
                         int_obs = ismissing(raw_int) ? 0f0 : Float32(raw_int)
 
                         if !col_started
-                            col += UInt16(1)
+                            col += UInt32(1)
                             this_col = col
                             id_to_col[match_column_id(kind, prec_idx, iso_pass)] = this_col
                             col_started = true
