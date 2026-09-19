@@ -117,6 +117,7 @@ function importScripts()
             "MassSpecData/getters.jl",
             "MassSpecData/FilteredMassSpecData.jl",
             "MassSpecData/IndexedMassSpecData.jl",
+            "MassSpecData/TdfsMassSpecData.jl",
             "ChromObject.jl",
             "Counter.jl",
             "Ion.jl",

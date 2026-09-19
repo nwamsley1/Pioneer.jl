@@ -147,7 +147,7 @@ struct ArrowTableReference <: MassSpecDataReference
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
-        file_paths = [arrow_path for arrow_path in file_paths if endswith(arrow_path, ".arrow")]
+        file_paths = [p for p in file_paths if endswith(p, ".arrow") || endswith(p, ".tdfs")]
         file_id_to_name = parseFileNames(file_paths)
         if length(file_id_to_name) != length(file_paths)
             file_id_to_name = ["" for x in 1:length(file_id_to_name)]
@@ -171,7 +171,7 @@ struct ArrowTableReference <: MassSpecDataReference
 
     # Internal constructor
     function ArrowTableReference(file_dir::String)
-        file_paths = [arrow_path for arrow_path in readdir(file_dir, join=true) if endswith(arrow_path, ".arrow")]
+        file_paths = [p for p in readdir(file_dir, join=true) if is_ms_data_path(p)]
         if length(file_paths) == 0
             @user_warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
@@ -360,7 +360,11 @@ end
 Interface Methods for Parameter Access
 ==========================================================#
 #MassSpecDataReference interface getters 
-getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = BasicMassSpecData(msdr.file_paths[ms_file_idx])
+getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = loadMassSpecData(msdr.file_paths[ms_file_idx])
+"Open an MS data file by its path: a `.tdfs` directory (TdfsMassSpecData) or an Arrow file (BasicMassSpecData)."
+loadMassSpecData(path::AbstractString) = is_tdfs_path(path) ? TdfsMassSpecData(String(path)) : BasicMassSpecData(String(path))
+"An MS data path Pioneer can open: `<name>.arrow` files and `<name>.tdfs` directories."
+is_ms_data_path(path::AbstractString) = (endswith(path, ".arrow") && isfile(path)) || is_tdfs_path(path)
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
