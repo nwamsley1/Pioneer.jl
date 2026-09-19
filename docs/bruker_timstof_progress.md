@@ -234,7 +234,44 @@ its channel forever — now the channel is closed with the error.
 columns, per-thread frame decode on first touch, views into the thread buffer), the caller audit for view lifetime,
 and the UInt32 column widening (§7 (d)) before the 50 ng file can be searched at all.
 
-## 9. Workspace (outside the repo, Nathan's machine)
+## 9. Phase 2: searching the `.tdfs` directly (branch `feat/tdfs-reader`, night of 2026-09-18)
+
+Plan: `~/BrukerTims/PLAN_2026-09-18_phase2_reader.md` (per-slice revision); step log: `PHASE2_LOG_2026-09-18.md`.
+
+**Design-matrix columns are UInt32** (were UInt16): `id_to_col`, `col` in `run_fused!`, `finalize_column!`,
+`SparsePrecMap`, `initialize_weights!` / `update_precursor_weights!`, `Score!`. Regression test with 70,000
+precursors in one scan (raised `BoundsError` at `colptr[0]` before). This unblocked the 50 ng file.
+
+**`TdfsMassSpecData <: MassSpecData`** (`src/structs/MassSpecData/TdfsMassSpecData.jl`): the slice table as plain
+columns, `blocks.bin` memory-mapped, `getMzArray` / `getIntensityArray` decode the scan's zstd block into the calling
+thread's scratch (one slice: ~5 µs MS2, 30–50 µs MS1) and return views, valid until that thread fetches a different
+scan. The scratch vectors are `Vector{Union{Missing,Float32}}` so the views satisfy the existing
+`AbstractArray{Union{Missing,Float32}}` signatures unchanged. Peak values are the expanded Arrow's bit for bit.
+`getPeakCount(s)` (every MassSpecData type) replaces the three length-only whole-column uses. The loader accepts
+`<name>.tdfs` directories next to `.arrow` files (`is_ms_data_path`, `loadMassSpecData`); the run summary reads
+the slice table. Tests: `test/UnitTests/test_tdfs_mass_spec_data.jl` (every getter equal to `BasicMassSpecData`
+on the same HeLa slices, in order, shuffled, from 4× threads; reference / `getMSData` dispatch).
+
+**Results** (same code, same content, through Precursor Scoring; `passing_psms` identical row for row in both):
+
+| file | input | 1% / 0.1% FDR | runtime | peak RSS | fragment index | deconv |
+|---|---|---|---|---|---|---|
+| human 250 pg | Arrow 13.8 GB | 10,090 / 7,452 | 207.9 s | 26.1 GB | 21.6 s | 9.5 s |
+| human 250 pg | `.tdfs` 3.8 GB | 10,090 / 7,452 | 213.3 s | 19.5 GB | 28.9 s | 10.0 s |
+| human 50 ng | Arrow 16 GB | 72,338 / 60,803 | 311.8 s | 50.2 GB | 56.2 s | 33.4 s |
+| human 50 ng | `.tdfs` 4.5 GB | 72,338 / 60,803 | 303.9 s | 44.2 GB | 62.8 s | 32.8 s |
+
+The only measurable cost is the fragment-index pass, whose partition-major loop fetches each scan once per
+partition it intersects (each slice decoded ~12×); everything else is within a second. On the 50 ng file the
+`.tdfs` run is faster overall. The full pipeline (all stages, all outputs, `run_summary.tsv`) ran on the 250 pg
+`.tdfs` in 325 s at 19 GB RSS: 10,090 precursors, 7,711 quantified, 2,107 protein groups. The 50 ng file had never
+been searched before tonight.
+
+**Open**: scan-major iteration (or a per-thread m/z cache) for `TdfsMassSpecData` in the fragment-index pass;
+`TimsSlices` as a git/registry dependency (it is a path dependency in the Manifest); the Arrow slice path stays
+supported and `expand` still produces it.
+
+## 10. Workspace (outside the repo, Nathan's machine)
 
 `~/BrukerTims/`: `pride/` (bundles), `arrow/` (converted files), `proto/` (converter, reader, ~40 analysis
 scripts; env `proto/Project.toml`), `search/` (configs, `run_many.jl` one-session driver, batch scripts,
