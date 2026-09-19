@@ -278,7 +278,7 @@ function initSimpleSearchContext(
         [MassErrSample() for _ in range(1, M)],            # mass_err_samples
         # id_to_col: reset per scan, ~5k active. Hint to 8k = 8192 next pow2,
         # avoids rehash on busy scans.
-        SparsePrecMap{UInt16}(sizehint=8192),
+        SparsePrecMap{UInt32}(sizehint=8192),
         iso_splines,
         [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),

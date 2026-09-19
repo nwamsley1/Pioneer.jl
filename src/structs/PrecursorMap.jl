@@ -21,7 +21,7 @@ storage used during DIA search.
 
 Two on-disk callers carry different lifecycle expectations:
 
-  * `id_to_col` (UInt16) — RESET between every scan. Live keys at any
+  * `id_to_col` (UInt32; was UInt16, which wrapped at 65,535 matched precursors in one scan — timsTOF MS1 slices exceed it) — RESET between every scan. Live keys at any
     moment are the precursors actually matched in the current scan
     (~5k for OlsenAstral). Dense storage wastes most of its
     n_precursors-sized backing array.
