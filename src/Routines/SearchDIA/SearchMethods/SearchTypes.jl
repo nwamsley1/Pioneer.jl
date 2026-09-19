@@ -206,7 +206,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     mass_err_samples::Vector{MassErrSample}
 
     # Indexing and scoring
-    id_to_col::SparsePrecMap{UInt16}
+    id_to_col::SparsePrecMap{UInt32}
     iso_splines::I
     
     # PSM scoring.
