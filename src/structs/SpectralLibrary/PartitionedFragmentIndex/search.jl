@@ -439,7 +439,7 @@ function searchFragmentIndexPartitionMajorHinted(
     # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
     est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
-    mz_buf_size = maximum(si -> length(getMzArray(spectra, all_scan_idxs[si])),
+    mz_buf_size = maximum(si -> getPeakCount(spectra, all_scan_idxs[si]),
                           1:n_scans; init=0)
     int_buf_size = max_peaks > 0 ? mz_buf_size : 0
 

@@ -51,7 +51,7 @@ function _add_psm_features!(psms::DataFrame,
     prec_enzymatic_termini = getNumEnzymaticTermini(precursors_lib)
     prec_num_var_mods = getNumVariableModifications(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
-    masses           = getMzArrays(spectra)
+    peak_counts      = getPeakCounts(spectra)
 
     N = nrow(psms)
 
@@ -109,7 +109,7 @@ function _add_psm_features!(psms::DataFrame,
             num_enzymatic_termini[i] = prec_enzymatic_termini[prec_idx]
             sequence_length[i]     = prec_length[prec_idx]
             prec_mzs[i]            = prec_mz[prec_idx]
-            spectrum_peak_count[i] = length(masses[scan_idx])
+            spectrum_peak_count[i] = peak_counts[scan_idx]
 
             # Lazy per-precursor Mox.
             if !_mox_computed[prec_idx]
