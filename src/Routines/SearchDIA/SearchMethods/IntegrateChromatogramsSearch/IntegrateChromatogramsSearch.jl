@@ -710,6 +710,7 @@ function summarize_results!(
             error("Post-integration MBR requires precursor-scoring results")
         _sumdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
         _sumt = time(); _suma = Base.gc_bytes()
+        @debug_l1 "Post-integration MBR starting: files=$(length(passing_paths))"
         summary = finalize_postintegration_mbr!(
             passing_paths,
             getPrecursors(getSpecLib(search_context));
@@ -752,6 +753,8 @@ function summarize_results!(
         ref_by_path = Dict{String, PSMFileReference}(
             file_path(r) => r for r in summary.mbr_refs
         )
+        rewrite_started = time()
+        @debug_l1 "Post-integration MBR final output rewrite starting: files=$(length(passing_paths))"
         for (ms_file_idx, path) in enumerate(
             getPassingPsms(getMSData(search_context)),
         )
@@ -811,6 +814,7 @@ function summarize_results!(
             ref === nothing || clear_sidecars!(ref; delete_files = true)
             _fin_rw_record!(_sumdiag, _rwa, _rwt)
         end
+        @debug_l1 "Post-integration MBR final output rewrite complete: files=$(length(passing_paths)) elapsed=$(round(time() - rewrite_started, digits=2))s"
         if _sumdiag
             # Covers finalize_postintegration_mbr! AND the process_final_psms! rewrite loop above,
             # which is a sixth full materialise-and-rewrite pass over every per-file table.

@@ -191,25 +191,101 @@ end
     return entries[1] != receiver_file || entries[2] != receiver_file
 end
 
+function _collect_mbr_integrated_donors!(
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    previous_files::Set{UInt32}, columns, frag_columns,
+    score_floor::Float32, q_value_threshold::Float32,
+)
+    positions = Dict{Tuple{UInt32, UInt32}, Int}()
+    current_files = Set{UInt32}()
+    @inbounds for row in 1:length(columns.precursor_idx)
+        _mbr_initial_pass(columns.qval[row], columns.global_qval[row], q_value_threshold) ||
+            continue
+        score = Float32(columns.trace_prob[row])
+        score >= score_floor || continue
+        pid = UInt32(columns.precursor_idx[row])
+        file_idx = UInt32(columns.ms_file_idx[row])
+        entries = get!(() -> _MBRDonorEntry[], donor_dict, pid)
+        key = (pid, file_idx)
+        position = get(positions, key, 0)
+        if position == 0 && file_idx in previous_files
+            existing = findfirst(donor -> donor.ms_file_idx == file_idx, entries)
+            position = existing === nothing ? 0 : existing
+        end
+        positions[key] = position == 0 ? length(entries) + 1 : position
+        push!(current_files, file_idx)
+        position != 0 && !(score > entries[position].trace_prob) && continue
+        irt_obs = Float32(columns.irt_obs[row])
+        donor = _MBRDonorEntry(
+            score, pid, Float32(columns.weight[row]), Float32(columns.explained[row]),
+            Float32(columns.irt_pred[row]) - irt_obs, irt_obs,
+            Float32(columns.n_scans[row]), _mbr_sqrt_tuple(frag_columns, row),
+            UInt8(columns.frag_mask[row]), UInt16(columns.frag_rank[row]), file_idx,
+        )
+        if position == 0
+            push!(entries, donor)
+        else
+            entries[position] = donor
+        end
+    end
+    union!(previous_files, current_files)
+    return donor_dict
+end
+
+@inline function _mbr_lower_weight(left::_MBRDonorEntry, right::_MBRDonorEntry)
+    left_weight = isfinite(left.weight) ? left.weight : Inf32
+    right_weight = isfinite(right.weight) ? right.weight : Inf32
+    return left_weight < right_weight ||
+        (left_weight == right_weight && left.trace_prob < right.trace_prob)
+end
+
+function _MBRDonorIndex(entries::Dict{UInt32, Vector{_MBRDonorEntry}})
+    lookups = Dict{UInt32, _MBRDonorLookup}()
+    files = Set{UInt32}()
+    for (pid, donors) in entries
+        length(donors) <= typemax(UInt32) || error("Too many donor runs for precursor $pid")
+        top = (UInt32(0), UInt32(0))
+        lowest = (UInt32(0), UInt32(0), UInt32(0))
+        for i in eachindex(donors)
+            donor = donors[i]
+            push!(files, donor.ms_file_idx)
+            position = UInt32(i)
+            if top[1] == 0 || donor.trace_prob > donors[top[1]].trace_prob
+                top = (position, top[1])
+            elseif top[2] == 0 || donor.trace_prob > donors[top[2]].trace_prob
+                top = (top[1], position)
+            end
+            if lowest[1] == 0 || _mbr_lower_weight(donor, donors[lowest[1]])
+                lowest = (position, lowest[1], lowest[2])
+            elseif lowest[2] == 0 || _mbr_lower_weight(donor, donors[lowest[2]])
+                lowest = (lowest[1], position, lowest[2])
+            elseif lowest[3] == 0 || _mbr_lower_weight(donor, donors[lowest[3]])
+                lowest = (lowest[1], lowest[2], position)
+            end
+        end
+        order = issorted(donors; by=donor -> donor.ms_file_idx) ? UInt32[] :
+            UInt32.(sortperm(donors; by=donor -> donor.ms_file_idx))
+        lookups[pid] = _MBRDonorLookup(order, top, lowest)
+    end
+    return _MBRDonorIndex(entries, lookups, sort!(collect(files)))
+end
+
 function build_mbr_integrated_donor_dict(
     file_paths::Vector{String},
     score_floor::Float32;
     q_value_threshold::Float32,
 )
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    for path in file_paths
+    previous_files = Set{UInt32}()
+    started = last_progress = time()
+    rows_processed = 0
+    for (file_position, path) in enumerate(file_paths)
         tbl = Arrow.Table(path)
         required = (
-            :precursor_idx,
-            :ms_file_idx,
-            :trace_prob_prepass,
-            :qval,
-            :global_qval,
-            :irt_pred,
-            MBR_INTEGRATED_WEIGHT_COLUMN,
+            :precursor_idx, :ms_file_idx, :trace_prob_prepass, :qval, :global_qval,
+            :irt_pred, MBR_INTEGRATED_WEIGHT_COLUMN,
             MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
-            MBR_INTEGRATED_APEX_IRT_COLUMN,
-            MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN,
+            MBR_INTEGRATED_APEX_IRT_COLUMN, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN,
             MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
             MBR_INTEGRATED_N_SCANS_COLUMN,
         )
@@ -217,61 +293,31 @@ function build_mbr_integrated_donor_dict(
             hasproperty(tbl, col) ||
                 error("Integrated MBR donor selection requires column $col in $path")
         end
-        frag_cols = ntuple(
-            rank -> getproperty(tbl, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]),
-            8,
+        columns = (
+            precursor_idx=tbl.precursor_idx, ms_file_idx=tbl.ms_file_idx,
+            trace_prob=tbl.trace_prob_prepass, qval=tbl.qval, global_qval=tbl.global_qval,
+            irt_pred=tbl.irt_pred, weight=getproperty(tbl, MBR_INTEGRATED_WEIGHT_COLUMN),
+            explained=getproperty(tbl, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN),
+            irt_obs=getproperty(tbl, MBR_INTEGRATED_APEX_IRT_COLUMN),
+            frag_mask=getproperty(tbl, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN),
+            frag_rank=getproperty(tbl, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN),
+            n_scans=getproperty(tbl, MBR_INTEGRATED_N_SCANS_COLUMN),
         )
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            qval = Float32(tbl.qval[row])
-            global_qval = Float32(tbl.global_qval[row])
-            score = Float32(tbl.trace_prob_prepass[row])
-            initial_pass =
-                isfinite(qval) && qval <= q_value_threshold &&
-                isfinite(global_qval) && global_qval <= q_value_threshold
-            initial_pass && score >= score_floor || continue
-
-            pid = UInt32(tbl.precursor_idx[row])
-            file_idx = UInt32(tbl.ms_file_idx[row])
-            integrated_frag_sqrt = _mbr_sqrt_tuple(frag_cols, row)
-            weight =
-                Float32(getproperty(tbl, MBR_INTEGRATED_WEIGHT_COLUMN)[row])
-            irt_obs =
-                Float32(getproperty(tbl, MBR_INTEGRATED_APEX_IRT_COLUMN)[row])
-            n_scans =
-                Float32(getproperty(tbl, MBR_INTEGRATED_N_SCANS_COLUMN)[row])
-            irt_pred = Float32(tbl.irt_pred[row])
-            donor = _MBRDonorEntry(
-                score,
-                pid,
-                weight,
-                Float32(getproperty(
-                    tbl,
-                    MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
-                )[row]),
-                irt_pred - irt_obs,
-                irt_obs,
-                n_scans,
-                integrated_frag_sqrt,
-                UInt8(getproperty(
-                    tbl,
-                    MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN,
-                )[row]),
-                UInt16(getproperty(
-                    tbl,
-                    MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
-                )[row]),
-                file_idx,
-            )
-            entries = get!(() -> _MBRDonorEntry[], donor_dict, pid)
-            existing = findfirst(entry -> entry.ms_file_idx == file_idx, entries)
-            if existing === nothing
-                push!(entries, donor)
-            elseif donor.trace_prob > entries[existing].trace_prob
-                entries[existing] = donor
-            end
+        frag_columns = ntuple(rank -> getproperty(tbl, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
+        _collect_mbr_integrated_donors!(
+            donor_dict, previous_files, columns, frag_columns, score_floor, q_value_threshold,
+        )
+        rows_processed += length(tbl.precursor_idx)
+        if time() - last_progress >= 60
+            @debug_l1 "Post-integration MBR donor collection: files=$file_position/$(length(file_paths)) rows=$rows_processed precursors=$(length(donor_dict)) elapsed=$(round(time() - started, digits=2))s"
+            last_progress = time()
         end
     end
-    return donor_dict
+    index_started = time()
+    @debug_l1 "Post-integration MBR donor lookup construction starting: precursors=$(length(donor_dict))"
+    index = _MBRDonorIndex(donor_dict)
+    @debug_l1 "Post-integration MBR donor lookup construction complete: elapsed=$(round(time() - index_started, digits=2))s"
+    return index
 end
 
 function _mbr_lod_thresholds(
@@ -411,6 +457,114 @@ end
     return worst
 end
 
+@inline function _mbr_donor_position(entries, lookup::_MBRDonorLookup, file_idx::UInt32)
+    low, high = 1, length(entries)
+    while low <= high
+        middle = (low + high) >>> 1
+        position = isempty(lookup.file_order) ? middle : Int(lookup.file_order[middle])
+        donor_file = entries[position].ms_file_idx
+        donor_file == file_idx && return position
+        if donor_file < file_idx
+            low = middle + 1
+        else
+            high = middle - 1
+        end
+    end
+    return 0
+end
+
+function _mbr_receiver_donors(index::_MBRDonorIndex, receiver_file::UInt32, atlas)
+    ranked = Tuple{Float32, UInt32}[
+        (_mbr_run_similarity(atlas, receiver_file, file_idx), file_idx)
+        for file_idx in index.file_ids if file_idx != receiver_file
+    ]
+    sort!(ranked; by=first, rev=true)
+    equal_similarity = isempty(ranked) || all(entry -> entry[1] == ranked[1][1], ranked)
+    finite_similarity = all(entry -> isfinite(entry[1]), ranked)
+    return _MBRReceiverDonors(index, receiver_file, ranked, equal_similarity, finite_similarity)
+end
+
+_mbr_receiver_donors(donors::Dict{UInt32, Vector{_MBRDonorEntry}}, ::UInt32, atlas) = donors
+
+@inline function _mbr_donor_in_file(index::_MBRDonorIndex, pid::UInt32, file_idx::UInt32)
+    entries = get(index.entries, pid, nothing)
+    entries === nothing && return nothing
+    position = _mbr_donor_position(entries, index.lookups[pid], file_idx)
+    return position == 0 ? nothing : entries[position]
+end
+
+@inline function _mbr_top_scoring_donor(index::_MBRDonorIndex, pid::UInt32, receiver_file::UInt32)
+    entries = get(index.entries, pid, nothing)
+    entries === nothing && return nothing
+    for position in index.lookups[pid].top_scores
+        position == 0 && continue
+        donor = entries[position]
+        donor.ms_file_idx != receiver_file && return donor
+    end
+    return nothing
+end
+
+@inline function _mbr_worst_alternate_donor(
+    index::_MBRDonorIndex, pid::UInt32, receiver_file::UInt32, best_donor::_MBRDonorEntry,
+)
+    entries = get(index.entries, pid, nothing)
+    entries === nothing && return nothing
+    for position in index.lookups[pid].lowest_weights
+        position == 0 && continue
+        donor = entries[position]
+        donor.ms_file_idx == receiver_file && continue
+        donor.ms_file_idx == best_donor.ms_file_idx && continue
+        return donor
+    end
+    return nothing
+end
+
+_mbr_select_donor(index::_MBRDonorIndex, pid::UInt32, receiver_file::UInt32, atlas) =
+    _mbr_select_donor(index.entries, pid, receiver_file, atlas)
+
+function _mbr_select_donor(
+    donors::_MBRReceiverDonors, pid::UInt32, receiver_file::UInt32, atlas,
+)
+    index = donors.index
+    receiver_file == donors.receiver_file && donors.finite_similarity ||
+        return _mbr_select_donor(index.entries, pid, receiver_file, atlas)
+    donors.equal_similarity && return _mbr_top_scoring_donor(index, pid, receiver_file)
+    entries = get(index.entries, pid, nothing)
+    entries === nothing && return nothing
+    lookup = index.lookups[pid]
+    ranked = donors.ranked_files
+    n_donors = length(entries)
+    n_donors == 0 && return nothing
+    # Sparse precursors can be cheaper to scan than to probe through the run ranking.
+    if n_donors <= (length(ranked) ÷ n_donors) * ndigits(n_donors; base=2)
+        return _mbr_select_donor(index.entries, pid, receiver_file, atlas)
+    end
+    rank = 1
+    while rank <= length(ranked)
+        similarity = ranked[rank][1]
+        best_position = 0
+        while rank <= length(ranked) && ranked[rank][1] == similarity
+            position = _mbr_donor_position(entries, lookup, ranked[rank][2])
+            if position != 0 && (best_position == 0 ||
+               entries[position].trace_prob > entries[best_position].trace_prob ||
+               (entries[position].trace_prob == entries[best_position].trace_prob && position < best_position))
+                best_position = position
+            end
+            rank += 1
+        end
+        best_position != 0 && return entries[best_position]
+    end
+    return nothing
+end
+
+_mbr_donor_in_file(donors::_MBRReceiverDonors, pid::UInt32, file_idx::UInt32) =
+    _mbr_donor_in_file(donors.index, pid, file_idx)
+_mbr_top_scoring_donor(donors::_MBRReceiverDonors, pid::UInt32, receiver_file::UInt32) =
+    _mbr_top_scoring_donor(donors.index, pid, receiver_file)
+_mbr_worst_alternate_donor(
+    donors::_MBRReceiverDonors, pid::UInt32, receiver_file::UInt32, best_donor::_MBRDonorEntry,
+) = _mbr_worst_alternate_donor(donors.index, pid, receiver_file, best_donor)
+
 @inline function _mbr_pid_already_taken(
     donors::Vector{Union{Nothing, _MBRDonorEntry}},
     n_found::Int,
@@ -426,7 +580,7 @@ end
 
 @inline function _mbr_collect_false_donors_from_pool!(
     donors::Vector{Union{Nothing, _MBRDonorEntry}},
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorCollection,
     pool::_MBRIrtPool,
     target_irt::Float32,
     receiver_pid::UInt32,
@@ -462,7 +616,7 @@ end
 end
 
 function _mbr_false_donors(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorCollection,
     pools::_MBRPartnerPools,
     eligibility::_MBRCounterfactualEligibility,
     receiver_pid::UInt32,
@@ -608,7 +762,7 @@ function _mbr_feature_values(
     atlas::Union{Nothing, RunSimilarityAtlas},
     clusters::_MBRReceiverRunClusters,
     bitvec_rank_table,
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorCollection,
 )
     worst_donor = _mbr_worst_alternate_donor(
         donor_dict,
@@ -678,10 +832,7 @@ function _mbr_feature_values(
     )
 end
 
-# Concretely-typed replacement for the old `Dict{Symbol, Any}`. Every field is a concrete vector
-# type, so a feature write is a direct store — no Dict hash, no dynamic dispatch through an `Any`,
-# no boxed Float32. `paired` is block-major and positionally parallel to MBR_PAIRED_COLUMN_NAMES,
-# `missing_flags` to MBR_MISSING_COLUMN_NAMES, `shared` to MBR_SHARED_FEATURES.
+# Candidate feature columns, with paired features stored in block-major order.
 struct _MBRSidecarColumns
     precursor_idx::Vector{UInt32}
     scan_idx::Vector{UInt32}
@@ -720,9 +871,32 @@ const MBR_SHARED_CORR_RANK_IDX =
     return log2(weight) - lod
 end
 
+function _mbr_candidate_donors(
+    qvals, global_qvals, pids, file_indices, donor_dict, contexts,
+    atlas, threshold,
+)
+    rows = Int64[]
+    donors = _MBRDonorEntry[]
+    @inbounds for row in 1:length(qvals)
+        qval = Float32(qvals[row])
+        global_qval = Float32(global_qvals[row])
+        isfinite(global_qval) && global_qval <= threshold || continue
+        isfinite(qval) && qval <= threshold && continue
+        receiver_file = UInt32(file_indices[row])
+        context = get!(contexts, receiver_file) do
+            _mbr_receiver_donors(donor_dict, receiver_file, atlas)
+        end
+        donor = _mbr_select_donor(context, UInt32(pids[row]), receiver_file, atlas)
+        donor === nothing && continue
+        push!(rows, row)
+        push!(donors, donor)
+    end
+    return rows, donors
+end
+
 function compute_postintegration_mbr_features!(
     main_path::String,
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorCollection,
     pools::_MBRPartnerPools,
     eligibility::_MBRCounterfactualEligibility;
     run_similarity_atlas::Union{Nothing, RunSimilarityAtlas},
@@ -731,12 +905,22 @@ function compute_postintegration_mbr_features!(
     lod_log2_weight_global::Float32,
     bitvec_rank_table = nothing,
     q_value_threshold::Float32,
+    stats = nothing,
 )
+    started = time()
     main = Arrow.Table(main_path)
     n = length(main.precursor_idx)
-    columns = _mbr_sidecar_columns(n)
-    columns.precursor_idx .= UInt32.(main.precursor_idx)
-    columns.scan_idx .= UInt32.(main.scan_idx)
+    contexts = Dict{UInt32, _MBRDonorCollection}()
+    rows, true_donors = _mbr_candidate_donors(
+        main.qval, main.global_qval, main.precursor_idx, main.ms_file_idx,
+        donor_dict, contexts, run_similarity_atlas, q_value_threshold,
+    )
+    selection_seconds = time() - started
+    features_started = time()
+    columns = _mbr_sidecar_columns(length(rows))
+    columns.precursor_idx .= main.precursor_idx[rows]
+    columns.scan_idx .= main.scan_idx[rows]
+    fill!(columns.missing_flags[1], false)
 
     temporal_mean_columns = ntuple(
         rank -> getproperty(
@@ -749,9 +933,6 @@ function compute_postintegration_mbr_features!(
         main,
         MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN,
     )
-    # Candidacy is decidable here, and only candidates ever have their paired features read.
-    qval_column = main.qval
-    global_qval_column = main.global_qval
     weight_column = getproperty(main, MBR_INTEGRATED_WEIGHT_COLUMN)
     explained_column = getproperty(
         main,
@@ -769,10 +950,7 @@ function compute_postintegration_mbr_features!(
     )
     has_irt_pred = hasproperty(main, :irt_pred)
 
-    # DIAGNOSTIC (PIONEER_MBR_ROW_DIAG=1): split the ~43 GB still in this loop into true-donor
-    # featurisation, counterfactual DONOR SELECTION, and counterfactual featurisation.
-    # One buffer per file. compute_postintegration_mbr_features! is the unit of parallelism
-    # (parallel_foreach! over files), so a local here is per-task and needs no locking.
+    # Each file reuses its own counterfactual donor buffer.
     false_donor_buffer = Union{Nothing, _MBRDonorEntry}[
         nothing for _ in 1:MBR_N_COUNTERFACTUALS
     ]
@@ -780,34 +958,11 @@ function compute_postintegration_mbr_features!(
     _rdiag = get(ENV, "PIONEER_MBR_ROW_DIAG", "0") == "1"
     _ra = Base.gc_bytes(); _rt = time()
 
-    @inbounds for row in 1:n
+    @inbounds for (candidate_row, row) in enumerate(rows)
         receiver_pid = UInt32(main.precursor_idx[row])
         receiver_file = UInt32(main.ms_file_idx[row])
-        true_donor = _mbr_select_donor(
-            donor_dict,
-            receiver_pid,
-            receiver_file,
-            run_similarity_atlas,
-        )
-        true_donor === nothing && continue
-        # A true donor exists: record that before the candidacy test below, because
-        # _mbr_candidate_mask reads MBR_best_is_missing_true for EVERY row, candidate or not.
-        columns.missing_flags[1][row] = false
-
-        # The 104 paired feature values are consumed exactly once -- _mbr_available_feature_sets at
-        # rescoring.jl:921, on frame[candidate_indices, :]. _mbr_candidate_mask selects rows that
-        # pass globally but FAIL the run-level threshold and have a true donor, which is ~10 % of
-        # staged rows; the other ~90 % had their features computed and discarded. Baseline rows are
-        # still needed as DONORS, but build_mbr_integrated_donor_dict reads only the
-        # MBR_INTEGRATED_* columns, never these.
-        #
-        # Skipping them leaves the -1.0f0 sentinel the paired columns were initialised with, which is
-        # the existing "absent" convention and is never read for a non-candidate.
-        run_qval = Float32(qval_column[row])
-        global_qval = Float32(global_qval_column[row])
-        global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
-        run_pass = isfinite(run_qval) && run_qval <= q_value_threshold
-        (global_pass && !run_pass) || continue
+        donor_context = contexts[receiver_file]
+        true_donor = true_donors[candidate_row]
 
         receiver_weight = Float32(weight_column[row])
         receiver_explained = Float32(explained_column[row])
@@ -822,14 +977,14 @@ function compute_postintegration_mbr_features!(
         )
         receiver_temporal_trace = temporal_trace_column[row]
         receiver_corr_mask = UInt8(corr_mask_column[row])
-        columns.shared[MBR_SHARED_LOD_RATIO_IDX][row] =
+        columns.shared[MBR_SHARED_LOD_RATIO_IDX][candidate_row] =
             _mbr_log2_weight_lod_ratio(
                 receiver_weight,
                 receiver_file,
                 lod_log2_weight_by_file,
                 lod_log2_weight_global,
             )
-        columns.shared[MBR_SHARED_CORR_RANK_IDX][row] =
+        columns.shared[MBR_SHARED_CORR_RANK_IDX][candidate_row] =
             Float32(corr_rank_column[row])
 
         true_values = _mbr_feature_values(
@@ -847,10 +1002,10 @@ function compute_postintegration_mbr_features!(
             run_similarity_atlas,
             receiver_run_clusters,
             bitvec_rank_table,
-            donor_dict,
+            donor_context,
         )
         @inbounds for feature_idx in 1:MBR_N_PAIRED
-            columns.paired[feature_idx][row] = true_values[feature_idx]
+            columns.paired[feature_idx][candidate_row] = true_values[feature_idx]
         end
         if _rdiag
             MBR_ROW_DIAG[:true_feat_bytes] += Base.gc_bytes() - _ra
@@ -860,7 +1015,7 @@ function compute_postintegration_mbr_features!(
 
         target_irt = receiver_irt_pred
         false_donors = _mbr_false_donors(
-            donor_dict,
+            donor_context,
             pools,
             eligibility,
             receiver_pid,
@@ -894,12 +1049,12 @@ function compute_postintegration_mbr_features!(
                 run_similarity_atlas,
                 receiver_run_clusters,
                 bitvec_rank_table,
-                donor_dict,
+                donor_context,
             )
-            columns.missing_flags[counterfactual_idx + 1][row] = false
+            columns.missing_flags[counterfactual_idx + 1][candidate_row] = false
             offset = counterfactual_idx * MBR_N_PAIRED
             @inbounds for feature_idx in 1:MBR_N_PAIRED
-                columns.paired[offset + feature_idx][row] =
+                columns.paired[offset + feature_idx][candidate_row] =
                     false_values[feature_idx]
             end
         end
@@ -914,9 +1069,7 @@ function compute_postintegration_mbr_features!(
         _mbr_row_diag_report()
     end
 
-    # Same column order as before: ids, true-missing flag, shared, true block, then per
-    # counterfactual (its missing flag, then its features).
-    sidecar = DataFrame()
+    sidecar = DataFrame(row_idx = rows)
     sidecar[!, :precursor_idx] = columns.precursor_idx
     sidecar[!, :scan_idx] = columns.scan_idx
     sidecar[!, MBR_MISSING_COLUMN_NAMES[1]] = columns.missing_flags[1]
@@ -936,7 +1089,18 @@ function compute_postintegration_mbr_features!(
                 columns.paired[offset + feature_idx]
         end
     end
+    feature_seconds = time() - features_started
+    write_started = time()
     writeArrow(main_path * MBR_SIDECAR_SUFFIX, sidecar)
+    if stats !== nothing
+        stats[] = (
+            rows = n,
+            candidates = length(rows),
+            selection_seconds = selection_seconds,
+            feature_seconds = feature_seconds,
+            write_seconds = time() - write_started,
+        )
+    end
     return main_path * MBR_SIDECAR_SUFFIX
 end
 

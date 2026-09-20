@@ -188,6 +188,34 @@ struct _MBRDonorEntry
     ms_file_idx::UInt32
 end
 
+struct _MBRDonorLookup
+    file_order::Vector{UInt32}
+    top_scores::NTuple{2, UInt32}
+    lowest_weights::NTuple{3, UInt32}
+end
+
+struct _MBRDonorIndex
+    entries::Dict{UInt32, Vector{_MBRDonorEntry}}
+    lookups::Dict{UInt32, _MBRDonorLookup}
+    file_ids::Vector{UInt32}
+end
+
+struct _MBRReceiverDonors
+    index::_MBRDonorIndex
+    receiver_file::UInt32
+    ranked_files::Vector{Tuple{Float32, UInt32}}
+    equal_similarity::Bool
+    finite_similarity::Bool
+end
+
+const _MBRDonorCollection = Union{
+    Dict{UInt32, Vector{_MBRDonorEntry}}, _MBRDonorIndex, _MBRReceiverDonors,
+}
+
+Base.length(index::_MBRDonorIndex) = length(index.entries)
+Base.values(index::_MBRDonorIndex) = values(index.entries)
+Base.getindex(index::_MBRDonorIndex, pid::UInt32) = index.entries[pid]
+
 const MBR_RECEIVER_FEATURES = Symbol[
     :trace_prob_infold,
     :fitted_manhattan_distance,

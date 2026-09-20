@@ -674,6 +674,7 @@ function finalize_postintegration_mbr!(
         Dict{UInt32, Vector{UInt16}},
     } = nothing,
 )
+    started = time()
     file_paths = String[
         path for path in integrated_paths
         if isfile(path) && isfile(path * PASS1_SIDECAR_SUFFIX)
@@ -712,6 +713,8 @@ function finalize_postintegration_mbr!(
         return nothing
     end
 
+    phase_started = time()
+    @debug_l1 "Post-integration MBR donor threshold starting: files=$(length(file_paths))"
     donor_score_floor = _mbr_donor_score_floor(
         file_paths;
         donor_q_threshold = donor_q_threshold,
@@ -719,33 +722,52 @@ function finalize_postintegration_mbr!(
         q_value_threshold = q_value_threshold,
     )
     _mark(:donor_floor)
+    @debug_l1 "Post-integration MBR donor threshold complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR donor dictionary starting: files=$(length(file_paths))"
     donor_dict = build_mbr_integrated_donor_dict(
         file_paths,
         donor_score_floor;
         q_value_threshold = q_value_threshold,
     )
     _mark(:donor_dict)
+    @debug_l1 "Post-integration MBR donor dictionary complete: precursors=$(length(donor_dict)) entries=$(sum(length, values(donor_dict); init=0)) elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR LOD thresholds starting: files=$(length(file_paths))"
     lod_thresholds = _mbr_lod_thresholds(
         file_paths,
         donor_score_floor;
         q_value_threshold = q_value_threshold,
     )
     _mark(:lod_thresholds)
+    @debug_l1 "Post-integration MBR LOD thresholds complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR receiver clusters starting: files=$(length(file_paths))"
     receiver_run_clusters = build_mbr_receiver_run_clusters(
         file_paths;
         q_value_threshold = q_value_threshold,
     )
     _mark(:run_clusters)
+    @debug_l1 "Post-integration MBR receiver clusters complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR partner pools starting: files=$(length(file_paths))"
     partner_pools = build_mbr_partner_pools(file_paths, precursors)
     _mark(:partner_pools)
+    @debug_l1 "Post-integration MBR partner pools complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR counterfactual eligibility starting: files=$(length(file_paths))"
     eligibility = build_mbr_counterfactual_eligibility(
         file_paths;
         q_value_threshold = q_value_threshold,
     )
-    @debug_l1 "Post-integration MBR donors: precursors=$(length(donor_dict)), " *
-              "entries=$(sum(length, values(donor_dict)))"
-
     _mark(:eligibility)
+    @debug_l1 "Post-integration MBR counterfactual eligibility complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    feature_started = time()
+    feature_progress = Ref((files = 0, rows = 0, candidates = 0,
+                            selection_seconds = 0.0, feature_seconds = 0.0,
+                            write_seconds = 0.0, logged_at = feature_started))
+    feature_progress_lock = ReentrantLock()
+    @debug_l1 "Post-integration MBR features starting: files=$(length(file_paths))"
     # Base.gc_bytes() is process-global, so the row-loop probes inside
     # compute_postintegration_mbr_features! are meaningless when files run concurrently — each
     # thread's window absorbs every other thread's allocations. Run serially when diagnosing.
@@ -760,6 +782,7 @@ function finalize_postintegration_mbr!(
             rank_table = bitvec_rank_tables_by_file === nothing ?
                 nothing :
                 get(bitvec_rank_tables_by_file, file_idx, nothing)
+            stats = Ref{Any}()
             compute_postintegration_mbr_features!(
                 path,
                 donor_dict,
@@ -771,7 +794,27 @@ function finalize_postintegration_mbr!(
                 lod_log2_weight_global = lod_thresholds.global_lod,
                 bitvec_rank_table = rank_table,
                 q_value_threshold = q_value_threshold,
+                stats = stats,
             )
+            file_stats = stats[]
+            lock(feature_progress_lock) do
+                state = feature_progress[]
+                now = time()
+                done = state.files + 1
+                rows = state.rows + file_stats.rows
+                candidates = state.candidates + file_stats.candidates
+                log_progress = now - state.logged_at >= 60
+                if log_progress
+                    @debug_l1 "Post-integration MBR features: files=$done/$(length(file_paths)) rows=$rows candidates=$candidates elapsed=$(round(now - feature_started, digits=2))s"
+                end
+                feature_progress[] = (
+                    files = done, rows = rows, candidates = candidates,
+                    selection_seconds = state.selection_seconds + file_stats.selection_seconds,
+                    feature_seconds = state.feature_seconds + file_stats.feature_seconds,
+                    write_seconds = state.write_seconds + file_stats.write_seconds,
+                    logged_at = log_progress ? now : state.logged_at,
+                )
+            end
         end
     end
     if _serial_diag
@@ -783,10 +826,18 @@ function finalize_postintegration_mbr!(
     end
 
     _mark(:compute_features)
+    feature_totals = feature_progress[]
+    @debug_l1 "Post-integration MBR features complete: files=$(length(file_paths)) rows=$(feature_totals.rows) candidates=$(feature_totals.candidates) elapsed=$(round(time() - feature_started, digits=2))s"
+    @debug_l1 "Post-integration MBR features cumulative worker time: selection=$(round(feature_totals.selection_seconds, digits=2))s features=$(round(feature_totals.feature_seconds, digits=2))s write=$(round(feature_totals.write_seconds, digits=2))s"
     # Candidates only (~10% of rows). See load_postintegration_mbr_candidates for why this is safe.
+    phase_started = time()
+    @debug_l1 "Post-integration MBR candidate loading starting: files=$(length(file_paths))"
     loaded = load_postintegration_mbr_candidates(file_paths, q_value_threshold)
     frame = loaded.candidates
     _mark(:load_frame)
+    @debug_l1 "Post-integration MBR candidate loading complete: candidates=$(nrow(frame)) elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR rescoring starting: candidates=$(nrow(frame))"
     summary = apply_postintegration_mbr_rescoring!(
         frame;
         alpha = q_value_threshold,
@@ -795,11 +846,15 @@ function finalize_postintegration_mbr!(
         frame_is_candidates = true,
     )
     _mark(:rescoring)
+    @debug_l1 "Post-integration MBR rescoring complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    phase_started = time()
+    @debug_l1 "Post-integration MBR recovery sidecars starting: files=$(length(file_paths))"
     _write_mbr_recovery_sidecars_from_candidates!(
         frame, loaded.masks, loaded.n_rows, file_paths)
     frame = DataFrame()
     GC.gc(false)
     _mark(:write_sidecars)
+    @debug_l1 "Post-integration MBR recovery sidecars complete: elapsed=$(round(time() - phase_started, digits=2))s"
     # When the caller supplies the frozen pre-MBR spline (it always does; see
     # PrecursorScoringSearch.jl:358 -> IntegrateChromatogramsSearch.jl:628) the score remap needs no
     # global pass, so it rides along with the merge instead of costing its own read-modify-write of
@@ -807,6 +862,8 @@ function finalize_postintegration_mbr!(
     remap_bounds = pre_mbr_qval_spline === nothing ?
         nothing :
         _mbr_remap_bounds(pre_mbr_qval_spline, q_value_threshold)
+    phase_started = time()
+    @debug_l1 "Post-integration MBR recovery merge starting: files=$(length(file_paths))"
     _merge_mbr_recoveries!(
         file_paths,
         q_value_threshold;
@@ -814,8 +871,11 @@ function finalize_postintegration_mbr!(
     )
 
     _mark(:merge_recoveries)
+    @debug_l1 "Post-integration MBR recovery merge complete: elapsed=$(round(time() - phase_started, digits=2))s"
     refs = PSMFileReference[PSMFileReference(path) for path in file_paths]
     if remap_bounds === nothing
+        phase_started = time()
+        @debug_l1 "Post-integration MBR score remapping starting: files=$(length(refs))"
         refs = _remap_mbr_scores!(
             refs,
             merged_path;
@@ -824,8 +884,11 @@ function finalize_postintegration_mbr!(
             fdr_scale_factor = fdr_scale_factor,
             pre_mbr_qval_spline = pre_mbr_qval_spline,
         )
+        @debug_l1 "Post-integration MBR score remapping complete: elapsed=$(round(time() - phase_started, digits=2))s"
     end
     _mark(:remap_scores)
+    phase_started = time()
+    @debug_l1 "Post-integration MBR q-value recalculation starting: files=$(length(refs))"
     refs, qval_deferred = _recalculate_post_mbr_qvalues!(
         refs,
         merged_path;
@@ -834,12 +897,17 @@ function finalize_postintegration_mbr!(
         fdr_scale_factor = fdr_scale_factor,
     )
     _mark(:recalc_qvalues)
+    @debug_l1 "Post-integration MBR q-value recalculation complete: elapsed=$(round(time() - phase_started, digits=2))s"
     # The internal-column drop used to be its own full materialise-and-rewrite pass over every file
     # (_drop_internal_mbr_columns!). It is pure per-file work with no cross-file dependency, so it is
     # now folded into the process_final_psms! loop in summarize_results!, which already reads and
     # writes each table. One fewer full pass; peak memory is unchanged (still one file at a time).
+    phase_started = time()
+    @debug_l1 "Post-integration MBR sidecar cleanup starting: files=$(length(file_paths))"
     _cleanup_mbr_sidecars!(file_paths)
     _mark(:cleanup)
+    @debug_l1 "Post-integration MBR sidecar cleanup complete: elapsed=$(round(time() - phase_started, digits=2))s"
+    @debug_l1 "Post-integration MBR finalization complete: files=$(length(file_paths)) elapsed=$(round(time() - started, digits=2))s"
     _fdiag && _mbr_final_diag_report()
     # refs carry the deferred :qval/:pep sidecars; qval_deferred says whether the q-value filter
     # still has to be applied downstream (false when no spline could be built, matching the old

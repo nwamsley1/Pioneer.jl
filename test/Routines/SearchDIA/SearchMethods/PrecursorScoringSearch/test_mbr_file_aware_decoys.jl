@@ -413,6 +413,8 @@ end
         end
     end
 
+    candidate_rows = (n_baseline + 1):n
+    candidates = frame[candidate_rows, :]
     summary = Pioneer.apply_postintegration_mbr_rescoring!(
         frame;
         alpha = 0.01f0,
@@ -423,6 +425,16 @@ end
     @test all(frame.MBR_transfer_candidate[candidate_rows])
     @test all(isfinite, frame.ftr_qval_true[candidate_rows])
     @test all(isfinite, frame.ftr_pep_true[candidate_rows])
+    candidate_summary = Pioneer.apply_postintegration_mbr_rescoring!(
+        candidates; alpha=0.01f0, q_value_threshold=0.01f0,
+        baseline_counts=(n_baseline, 0), frame_is_candidates=true,
+    )
+    @test isequal(candidate_summary, summary)
+    for column in (:mbr_recovered, :mbr_target_decoy_prob, :ftr_qval_true,
+                   :ftr_pep_true, :mbr_counterfactual_decoy_prob,
+                   :mbr_counterfactual_decoy_index)
+        @test isequal(candidates[!, column], frame[candidate_rows, column])
+    end
 end
 
 @testset "hardest MBR counterfactual control retains score and block index" begin
