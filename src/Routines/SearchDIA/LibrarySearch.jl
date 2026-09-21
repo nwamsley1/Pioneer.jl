@@ -79,6 +79,39 @@ Pipeline within this function:
 3. For each NCE model, spawn threads calling `process_scans!` to score candidates
 4. Concatenate results across threads and NCE models into a single DataFrame
 """
+# Ion-mobility gate for fragment-index candidates on timsTOF slice data: a candidate must lie within
+# IM_GATE_TOL_SIGMA x (per-charge multiplier) x sigma of the z2 line fitted in Parameter Tuning. 0 disables.
+# Dev override: PIONEER_IM_GATE_SIGMA.
+#
+# Why the z2 line for every charge (measured 2026-09-21 on human 250 pg and 50 ng against the main-search PSMs):
+# the instrument's scan-to-1/K0 map is one line, and the library predictor's z3 / z4 values sit on the z2 line
+# with no offset (|median| <= 0.2 sigma) but 1.5-1.9x (z3) and 2.2x (z4) the z2 scatter; a line fitted per
+# charge gains < 5% in sigma and needs PSMs tuning rarely has for z3+. At 4 sigma the gate removes 6-9% of
+# emitted candidates and 0.2-0.6% of passing PSMs; at 3 sigma 12-19% and 0.9-1.9%.
+const IM_GATE_TOL_SIGMA = 4.0f0
+const IM_GATE_SIGMA_MULT = (z2 = 1.0f0, z3 = 1.8f0, other = 2.2f0)
+im_gate_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_IM_GATE_SIGMA", "")), IM_GATE_TOL_SIGMA))
+im_gate_sigma_mult(z::Integer) = z == 2 ? IM_GATE_SIGMA_MULT.z2 : z == 3 ? IM_GATE_SIGMA_MULT.z3 : IM_GATE_SIGMA_MULT.other
+
+"""
+    build_im_gate(search_context, spectra, precursors, ms_file_idx) -> ImGate or nothing
+
+The gate for this file: `nothing` unless the file has mobility scans, the library has predicted 1/K0, an IM
+model has been fitted for the file, and the tolerance is > 0.
+"""
+function build_im_gate(search_context::SearchContext, spectra::MassSpecData, precursors, ms_file_idx::Integer)
+    tol = im_gate_tol_sigma()
+    tol > 0 || return nothing
+    getImScans(spectra) === nothing && return nothing
+    im_lib = getInvIonMobility(precursors)
+    im_lib === nothing && return nothing
+    model = getImModel(search_context, ms_file_idx)
+    haskey(model, 2) || return nothing
+    a, b, s = model[2]                        # the z2 line; other charges use it with a wider sigma
+    lines = [(a, b, s * im_gate_sigma_mult(z)) for z in 0:8]
+    return ImGate(lines, im_lib, getCharge(precursors), tol)
+end
+
 function library_search(
     spectra::MassSpecData,
     search_context::SearchContext,
@@ -177,7 +210,8 @@ function library_search(
         Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
         getMz(precursors);
         score_filter = score_filter, max_peaks = max_peaks,
-        scratch = getFragIndexScratch(search_context))
+        scratch = getFragIndexScratch(search_context),
+        im_gate = build_im_gate(search_context, spectra, precursors, ms_file_idx))
     t_frag = time() - t_frag_start
 
     # Dev hook: PIONEER_INDEX_DUMP_DIR="<dir>" writes the fragment-index candidates

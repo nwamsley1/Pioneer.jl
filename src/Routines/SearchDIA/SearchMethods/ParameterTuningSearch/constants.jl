@@ -64,6 +64,8 @@ const TUNING_GAUSSIAN_COVERAGE = Float64(0.95)
 
 # iRT tolerance: σ_iRT × this multiplier
 const TUNING_IRT_TOL_SIGMA = Int64(3)
+# Minimum target PSMs (per charge, and pooled) to fit an ion-mobility line in tuning.
+const TUNING_IM_MIN_CALIB = 50
 
 # Score tier backoff and top-N fragment requirement
 const TUNING_SCORE_TIERS = (UInt8(8), UInt8(7), UInt8(6), UInt8(5))
