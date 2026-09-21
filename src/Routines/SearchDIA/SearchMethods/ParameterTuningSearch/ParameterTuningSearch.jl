@@ -743,6 +743,25 @@ function process_file!(
                         @debug_l1 "  RT: insufficient PSMs ($(n_passing) < $(MIN_PSMS_FOR_RT))"
                     end
 
+                    # Ion-mobility lines (timsTOF slice data) for the fragment-index IM gate of the later
+                    # stages; MainSearch refits them from its own PSMs.
+                    if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing
+                        im_lib_all = getInvIonMobility(getPrecursors(getSpecLib(search_context)))
+                        im_scan_col = getImScans(spectra)
+                        im_scan = Float32[Float32(im_scan_col[si]) for si in scored_psms[!, :scan_idx]]
+                        im_pred = Float32[Float32(im_lib_all[pid]) for pid in scored_psms[!, :precursor_idx]]
+                        # the z2 line only: the gate derives every charge from it (see build_im_gate)
+                        im_calib = Vector{Bool}(scored_psms[!, :target] .& (scored_psms[!, :charge] .== 2))
+                        im_models = fit_im_lines(im_scan, im_pred, scored_psms[!, :charge], im_calib; min_calib = TUNING_IM_MIN_CALIB)
+                        setImModel!(search_context, ms_file_idx, im_models)
+                        if haskey(im_models, 2)
+                            a, b, s = im_models[2]
+                            @debug_l1 "  IM line (tuning, z2, $(count(im_calib)) PSMs): 1/K0 = $(round(a, digits = 4)) + ($(round(b, digits = 6))) * scan, sigma = $(round(s, digits = 4))"
+                        else
+                            @debug_l1 "  IM line: fewer than $(TUNING_IM_MIN_CALIB) z2 target PSMs, no IM gate for this file"
+                        end
+                    end
+
                     iteration_state.best_fragments = frags
                     if n_frags >= MIN_FRAGS_FOR_INTENSITY_MODEL
                         k_val = Float32(quantile(Normal(), (1.0 + TUNING_GAUSSIAN_COVERAGE) / 2.0))
