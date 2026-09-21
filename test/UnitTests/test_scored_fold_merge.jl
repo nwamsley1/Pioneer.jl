@@ -65,6 +65,39 @@
         end
     end
 
+    @testset "Indexed sidecar discovery preserves metadata and collisions" begin
+        mktempdir() do dir
+            nested = joinpath(dir, "nested")
+            mkpath(nested)
+            fold0 = write_scored_fold_fixture(dir, "α.sample_fold0", [4, 1])
+            fold1 = write_scored_fold_fixture(nested, "sample_fold1", [6, 2])
+            paths = [fold0.path, fold1.path]
+            Arrow.write(fold0.path * ".wrong_count.sidecar.arrow", (; ignored=[1]))
+            Arrow.write(joinpath(dir, "unrelated.sidecar.arrow"), (; ignored=[1, 2]))
+            index = Pioneer.index_sidecar_paths(paths)
+            for path in paths
+                original = Pioneer.PSMFileReference(path)
+                indexed = Pioneer.PSMFileReference(path; sidecar_paths=index[path], table=Arrow.Table(path))
+                @test original.row_count == indexed.row_count
+                @test [(s.path, s.cols) for s in original.sidecars] ==
+                      [(s.path, s.cols) for s in indexed.sidecars]
+            end
+            # A snapshot does not discover sidecars written after it was built.
+            late_path = fold0.path * ".late.sidecar.arrow"
+            Arrow.write(late_path, (; late_column=[1, 2]))
+            cached = Pioneer.PSMFileReference(fold0.path; sidecar_paths=index[fold0.path])
+            @test all(s -> s.path != late_path, cached.sidecars)
+            @test any(s -> s.path == late_path, Pioneer.PSMFileReference(fold0.path).sidecars)
+            merged_path = joinpath(dir, "merged.arrow")
+            result = Pioneer._merge_scored_folds!(paths, merged_path; sidecar_index=index)
+            check_merged_table(merged_path, vcat(fold0.expected, fold1.expected))
+            @test result.rows == 4
+            @test all(t -> t >= 0, (result.read_seconds, result.attach_seconds,
+                                   result.concatenate_seconds, result.write_seconds))
+            @test Set(result.cleanup_paths) == Set(vcat(fold0.inputs, fold1.inputs))
+        end
+    end
+
     @testset "Missing and empty folds" begin
         mktempdir() do dir
             absent_path = joinpath(dir, "absent_fold.arrow")
