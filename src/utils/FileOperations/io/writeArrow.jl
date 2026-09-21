@@ -48,12 +48,12 @@ function _audit_log_write(fpath::AbstractString, df::AbstractDataFrame)
     return
 end
 
-function writeArrow(fpath::String, df::AbstractDataFrame)
+function writeArrow(fpath::String, df::AbstractDataFrame; temp_dir::AbstractString=tempdir())
     _audit_log_write(fpath, df)
     fpath = normpath(fpath)
     if Sys.iswindows()
         # Create a unique temporary file
-        tpath = tempname() * ".arrow"
+        tpath = tempname(temp_dir) * ".arrow"
         # Write to the temporary file
         Arrow.write(tpath, df)
         # Route replacement through the same normalized, retrying deletion
@@ -75,7 +75,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
     else
         # For Linux/MacOS, use temp file approach for safety
         # This avoids Bus errors when writing to a file that may still be memory-mapped
-        tpath = tempname() * ".arrow"
+        tpath = tempname(temp_dir) * ".arrow"
         Arrow.write(tpath, df)
         mv(tpath, fpath, force=true)
     end

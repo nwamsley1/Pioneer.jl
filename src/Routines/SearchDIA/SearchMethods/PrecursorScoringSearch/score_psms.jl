@@ -110,17 +110,23 @@ the row count and source paths for cleanup after the combined file is written.
 """
 function _merge_scored_folds!(
     fold_paths::Vector{String},
-    merged_path::String,
+    merged_path::String;
+    sidecar_index = index_sidecar_paths(fold_paths),
 )
+    read_seconds = attach_seconds = 0.0
     fold_dfs = DataFrame[]
     cleanup_paths = String[]
     for path in fold_paths
         isfile(path) || continue
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing Pass-1 predictions for $path")
-        ref = PSMFileReference(path)
-        main = DataFrame(Tables.columntable(Arrow.Table(path)))
+        read_started = time()
+        table = Arrow.Table(path)
+        ref = PSMFileReference(path; table, sidecar_paths=sidecar_index[path])
+        main = DataFrame(table; copycols=false)
         pass1 = Arrow.Table(pass1_path)
+        read_seconds += time() - read_started
+        attach_started = time()
         n = nrow(main)
         length(pass1.precursor_idx) == n ||
             error("Pass-1 row-count mismatch at $path")
@@ -134,21 +140,29 @@ function _merge_scored_folds!(
         end
         main[!, :trace_prob]         = main[!, :trace_prob_prepass]
         main[!, :mbr_recovered]      = falses(n)
+        attach_seconds += time() - attach_started
         for sidecar in ref.sidecars
+            read_started = time()
             table = Arrow.Table(sidecar.path)
             for name in sidecar.cols
                 hasproperty(main, name) && continue
                 main[!, name] = collect(Tables.getcolumn(table, name))
             end
+            read_seconds += time() - read_started
         end
         push!(fold_dfs, main)
         append!(cleanup_paths, (path, pass1_path))
         append!(cleanup_paths, (sidecar.path for sidecar in ref.sidecars))
     end
     isempty(fold_dfs) && return nothing
+    concatenate_started = time()
     combined = vcat(fold_dfs...)
-    writeArrow(merged_path, combined)
-    return (; rows = nrow(combined), cleanup_paths)
+    concatenate_seconds = time() - concatenate_started
+    write_started = time()
+    writeArrow(merged_path, combined; temp_dir=dirname(merged_path))
+    write_seconds = time() - write_started
+    return (; rows = nrow(combined), cleanup_paths,
+            read_seconds, attach_seconds, concatenate_seconds, write_seconds)
 end
 
 # MBR-off path. Streams Pass-1 LightGBM over the per-file Arrow tables via the same

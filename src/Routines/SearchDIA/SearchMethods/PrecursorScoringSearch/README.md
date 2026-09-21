@@ -22,7 +22,9 @@ After model selection, release the pool and score every source file once.
 Sidecars preserve row order and contain `precursor_idx`, `scan_idx`,
 `trace_prob_prepass` (OOF), and `trace_prob_infold` (NaN when MBR is disabled).
 The scores are attached while merging each run's folds into a single Arrow
-file. Experiment-wide FDR and integrated MBR processing run downstream.
+file. Sidecar paths are indexed once per directory; fold tables remain backed
+by Arrow until concatenation. Temporary merged files are written in the output
+directory. Experiment-wide FDR and integrated MBR processing run downstream.
 
 Retained LightGBM models contain trees without training datasets. Training
 memory includes the pool, a temporary filtered subset, and native LightGBM
@@ -31,6 +33,9 @@ The pool cap controls training size; `max_psms_in_memory` is currently unused.
 
 Debug logs report sampling, per-fold fitting, pool prediction, q-value
 calculation, and final prediction timings, plus file progress every 100 files.
+Fold-merge progress includes cumulative read/metadata, prediction attachment,
+concatenation, and write/publish timings. Reads are memory-mapped, so page-fault
+I/O can also appear in the later phases that access those columns.
 Post-scoring logs time fold merging, cleanup, probability aggregation, score
 sorting/merging, and q-value/PEP calculation.
 MBR preparation also logs annotation, initial filtering, donor-threshold

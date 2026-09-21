@@ -82,36 +82,67 @@ mutable struct PSMFileReference <: FileReference
     # row count matches the main file are auto-discovered and registered.
     # This ensures fresh PSMFileReferences built from a path inherit any
     # sidecars produced upstream by `add_columns_via_sidecar!`.
-    function PSMFileReference(file_path::String)
+    function PSMFileReference(file_path::String; sidecar_paths=nothing, table=nothing)
         if !isfile(file_path)
             return new(file_path, FileSchema(Symbol[]), (), 0, false, Sidecar[])
         end
 
         # Read schema from file
-        tbl = Arrow.Table(file_path)
+        tbl = table === nothing ? Arrow.Table(file_path) : table
         schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
         # Get row count from first column if columns exist
         col_names = Tables.columnnames(tbl)
         row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
 
         ref = new(file_path, schema, (), row_count, true, Sidecar[])
-        _discover_sidecars_from_disk!(ref)
+        _discover_sidecars_from_disk!(ref; sidecar_paths)
         return ref
     end
+end
+
+"""
+    index_sidecar_paths(file_paths)
+
+Discover sidecar paths with one directory listing per input directory. The index
+is a snapshot; build it after upstream sidecar writers finish.
+"""
+function index_sidecar_paths(file_paths::Vector{String})
+    index = Dict(path => String[] for path in file_paths)
+    by_directory = Dict{String, Dict{String, String}}()
+    for path in file_paths
+        names = get!(() -> Dict{String, String}(), by_directory, dirname(path))
+        names[basename(path)] = path
+    end
+    for (directory, names) in by_directory
+        isdir(directory) || continue
+        for entry in readdir(directory)
+            endswith(entry, ".sidecar.arrow") || continue
+            for dot in findall(==('.'), entry)
+                dot == firstindex(entry) && continue
+                path = get(names, entry[firstindex(entry):prevind(entry, dot)], nothing)
+                path === nothing && continue
+                push!(index[path], joinpath(directory, entry))
+            end
+        end
+    end
+    return index
 end
 
 # Scan the directory containing `ref.file_path` for files named
 # "{basename}.<tag>.sidecar.arrow" and register any that have the matching
 # row count + no schema collisions. Used by the PSMFileReference constructor.
-function _discover_sidecars_from_disk!(ref::PSMFileReference)
+function _discover_sidecars_from_disk!(ref::PSMFileReference; sidecar_paths=nothing)
     dir = dirname(ref.file_path)
     base = basename(ref.file_path)
     isdir(dir) || return ref
     pattern = base * "."
-    for entry in readdir(dir)
+    paths = sidecar_paths === nothing ?
+        (joinpath(dir, entry) for entry in readdir(dir)
+         if startswith(entry, pattern) && endswith(entry, ".sidecar.arrow")) : sidecar_paths
+    for side_path in paths
+        entry = basename(side_path)
         startswith(entry, pattern) || continue
         endswith(entry, ".sidecar.arrow") || continue
-        side_path = joinpath(dir, entry)
         # Skip self-collisions: if the main path itself has a .sidecar.arrow
         # tail (shouldn't, but be defensive), don't register it as its own sidecar.
         side_path == ref.file_path && continue

@@ -382,28 +382,40 @@ function summarize_results!(
 
     @debug_l1 "ScoringSearch prediction attachment and fold merge starting: runs=$(length(valid_file_data))"
     merge_started = last_merge_log = time()
+    sidecar_index = index_sidecar_paths(valid_fold_paths)
+    @debug_l1 "ScoringSearch fold sidecar discovery complete: folds=$(length(valid_fold_paths)) elapsed=$(round(time() - merge_started, digits=2))s"
+    merge_read = merge_attach = merge_concatenate = merge_write = 0.0
     merged_rows = 0
     merged_psm_paths = String[]
     fold_paths_to_delete = String[]
     for (run_number, (idx, base_path)) in enumerate(valid_file_data)
         merged_path = "$(base_path).arrow"
         merged = _merge_scored_folds!(
-            ["$(base_path)_fold0.arrow", "$(base_path)_fold1.arrow"], merged_path,
+            ["$(base_path)_fold0.arrow", "$(base_path)_fold1.arrow"], merged_path;
+            sidecar_index,
         )
         if merged !== nothing
             push!(merged_psm_paths, merged_path)
             append!(fold_paths_to_delete, merged.cleanup_paths)
             merged_rows += merged.rows
+            merge_read += merged.read_seconds
+            merge_attach += merged.attach_seconds
+            merge_concatenate += merged.concatenate_seconds
+            merge_write += merged.write_seconds
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
         end
         if run_number % 100 == 0 || time() - last_merge_log >= 60
             @debug_l1 "ScoringSearch fold merge: runs=$run_number/$(length(valid_file_data)) " *
-                "rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s"
+                "rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s " *
+                "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
+                "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
             last_merge_log = time()
         end
     end
     @debug_l1 "ScoringSearch prediction attachment and fold merge complete: " *
-        "runs=$(length(merged_psm_paths)) rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s"
+        "runs=$(length(merged_psm_paths)) rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s " *
+        "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
+        "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
 
     # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
     @debug_l1 "ScoringSearch fold cleanup starting: files=$(length(fold_paths_to_delete))"
@@ -418,7 +430,8 @@ function summarize_results!(
     @debug_l1 "ScoringSearch merged-file metadata starting: files=$(length(merged_psm_paths))"
     metadata_started = time()
     second_pass_paths = merged_psm_paths
-    second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
+    merged_sidecars = index_sidecar_paths(second_pass_paths)
+    second_pass_refs = [PSMFileReference(path; sidecar_paths=merged_sidecars[path]) for path in second_pass_paths]
     @debug_l1 "ScoringSearch merged-file metadata complete: $(round(time() - metadata_started, digits = 2))s"
 
     # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
