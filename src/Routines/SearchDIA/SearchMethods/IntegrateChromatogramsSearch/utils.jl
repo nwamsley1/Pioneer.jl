@@ -1409,6 +1409,10 @@ end
 # IM line (MainSearch's add_im_error!). Dev override: PIONEER_CHROM_IM_SIGMA.
 const CHROM_IM_TOL_SIGMA = 3.0f0
 chrom_im_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SIGMA", "")), CHROM_IM_TOL_SIGMA))
+# Empirical ion-mobility window for chromatogram extraction, in IM scans around the precursor's best PSM (the
+# mobility analogue of the per-precursor RT window). 0 = off. Dev override: PIONEER_CHROM_IM_SCANS.
+const CHROM_IM_WINDOW_SCANS = 32.0f0
+chrom_im_window_scans() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SCANS", "")), CHROM_IM_WINDOW_SCANS))
 # Dev override of the per-precursor RT window (minutes) in chromatogram extraction; 0 = off.
 chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_RT_TOL", "")), 0f0))
 
@@ -1506,11 +1510,16 @@ function collect_rt_window_precursors!(
     im_scan::Float32 = 0f0,
     im_lib::AbstractVector{Float32} = Float32[],
     im_lines::Vector{NTuple{3, Float32}} = NTuple{3, Float32}[],
-    im_tol_sigma::Float32 = 0f0) where {I<:Integer}
+    im_tol_sigma::Float32 = 0f0,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0) where {I<:Integer}
 
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     size = 0
     has_rt_filter = precursor_rt_map !== nothing
+    # Empirical IM window: the slice's IM scan must lie within im_window_scans of the precursor's best PSM's
+    # IM scan (packet data with a map). Precursors without an entry are not restricted.
+    has_im_window = precursor_im_map !== nothing && im_window_scans > 0f0
     # Ion-mobility gate (packet data): keep a precursor only when its library 1/K0 lies
     # within im_tol_sigma * sigma of the per-charge line evaluated at this packet's IM
     # scan. Inactive (im_lines empty) for files without mobility data.
@@ -1537,6 +1546,10 @@ function collect_rt_window_precursors!(
                     prec_tol = rt_binned_tol !== nothing ? get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
                     abs(scan_rt - prec_rt_val) > prec_tol && continue
                 end
+            end
+            if has_im_window
+                prec_im_val = get(precursor_im_map, prec_idx, NaN32)
+                !isnan(prec_im_val) && abs(im_scan - prec_im_val) > im_window_scans && continue
             end
 
             prec_charge = prec_charges[prec_idx]
@@ -1592,6 +1605,18 @@ function extract_chromatograms(
     for i in eachindex(_pids)
         precursor_rt_map[_pids[i]] = _rts[i]
     end
+    # Per-precursor IM centre (the best PSM's IM scan) for the empirical mobility window; packet data only.
+    _im_scans = getImScans(spectra)
+    precursor_im_map = if _im_scans === nothing || !hasproperty(passing_psms, :scan_idx)
+        nothing
+    else
+        _scans = passing_psms[!, :scan_idx]
+        m = Dict{UInt32, Float32}(); sizehint!(m, length(_pids))
+        for i in eachindex(_pids)
+            m[_pids[i]] = Float32(_im_scans[_scans[i]])
+        end
+        m
+    end
 
     # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
     # set of scan indices, so the writes never collide.
@@ -1614,6 +1639,7 @@ function extract_chromatograms(
                 ms_file_idx,
                 chrom_type;
                 scan_tic = scan_tic,
+                precursor_im_map = precursor_im_map,
             )
         end
     end
@@ -1648,7 +1674,9 @@ function build_chromatograms(
     ms_file_idx::Int64,
     ::MS2CHROM;
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
 )
+    im_window_scans = precursor_im_map === nothing ? 0f0 : chrom_im_window_scans()
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
     weights = getTempWeights(search_data)
@@ -1726,7 +1754,7 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
-        im_scan = isempty(im_lines) ? 0f0 : Float32(im_scans[scan_idx])
+        im_scan = im_scans === nothing ? 0f0 : Float32(im_scans[scan_idx])
         # The total ion current is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
         #
@@ -1779,7 +1807,7 @@ function build_chromatograms(
             getIsoSplines(search_data), quad_func, prec_trans_buf,
             params.isotope_err_bounds, params.min_fraction_transmitted,
             precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local,
-            im_scan, im_lib, im_lines, im_tol_sigma)
+            im_scan, im_lib, im_lines, im_tol_sigma, precursor_im_map, im_window_scans)
 
         if prec_temp_size == 0
             reset!(id_to_col); reset!(Hs)
