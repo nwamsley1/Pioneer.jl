@@ -1411,7 +1411,10 @@ const CHROM_IM_TOL_SIGMA = 3.0f0
 chrom_im_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SIGMA", "")), CHROM_IM_TOL_SIGMA))
 # Empirical ion-mobility window for chromatogram extraction, in IM scans around the precursor's best PSM (the
 # mobility analogue of the per-precursor RT window). 0 = off. Dev override: PIONEER_CHROM_IM_SCANS.
-const CHROM_IM_WINDOW_SCANS = 32.0f0
+# 2026-09-22: 32 scans clipped the mobility peak — 4.5% of precursors had their apex on the window edge and 14%
+# still had > half the apex height there (RT, for comparison: 0.5% and 5%). 64 scans (8 slices) covers the
+# measured extent (± 3 slices holds 97-98% of a precursor's weight).
+const CHROM_IM_WINDOW_SCANS = 64.0f0
 chrom_im_window_scans() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SCANS", "")), CHROM_IM_WINDOW_SCANS))
 # Dev override of the per-precursor RT window (minutes) in chromatogram extraction; 0 = off.
 chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_RT_TOL", "")), 0f0))
@@ -1422,6 +1425,13 @@ chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_
 # vector length fall back to entry 1 at the call site. Empty when the model is empty.
 function im_lines_by_charge(model::Dict{Int, NTuple{3, Float32}})
     isempty(model) && return NTuple{3, Float32}[]
+    # Same derivation as the fragment-index gate (build_im_gate): the z2 line for every charge, with its sigma
+    # scaled per charge. Measured 2026-09-21: z3 / z4 sit on the z2 line with no offset but 1.8x / 2.2x its
+    # scatter, and a line fitted per charge gains < 5% — while needing PSMs that tuning rarely has for z3+.
+    if haskey(model, 2)
+        a, b, s = model[2]
+        return NTuple{3, Float32}[(a, b, s * im_gate_sigma_mult(z)) for z in 1:max(8, maximum(keys(model)))]
+    end
     pooled = get(model, 0, first(values(model)))
     zmax = max(8, maximum(keys(model)))
     return NTuple{3, Float32}[get(model, z, pooled) for z in 1:zmax]
