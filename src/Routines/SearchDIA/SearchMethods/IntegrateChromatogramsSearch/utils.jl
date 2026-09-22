@@ -1405,9 +1405,16 @@ function withinQuadrupoleBounds(
     return mz_low ≤ prec_mz ≤ mz_high
 end
 
-# Ion-mobility gate width for chromatogram extraction, in sigma units of the per-charge
-# IM line (MainSearch's add_im_error!). Dev override: PIONEER_CHROM_IM_SIGMA.
-const CHROM_IM_TOL_SIGMA = 3.0f0
+# Library-line ion-mobility gate for chromatogram extraction, in sigma units of the per-charge IM line.
+# DISABLED by default (0) and kept only as a dev switch: PIONEER_CHROM_IM_SIGMA.
+#
+# The line is centred on the PREDICTED mobility, so for a precursor whose prediction is off — 5% of PSMs sit
+# beyond 2 sigma — the gate is lopsided and cuts the peak on one side while collecting empty slices on the
+# other. Measured case (2026-09-22, precursor 8812954, 2+): observed apex at IM scan 381, the line puts its
+# library 1/K0 at 355, so the +/-3 sigma gate admitted 314-395 and collection stopped at 389 with the weight
+# still at 78% of apex. The empirical window below is centred on the precursor's OWN best PSM and is the
+# right constraint once a PSM exists; the library line's job is candidate pre-filtering in the fragment index.
+const CHROM_IM_TOL_SIGMA = 0.0f0
 chrom_im_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SIGMA", "")), CHROM_IM_TOL_SIGMA))
 # Empirical ion-mobility window for chromatogram extraction, in IM scans around the precursor's best PSM (the
 # mobility analogue of the per-precursor RT window). 0 = off. Dev override: PIONEER_CHROM_IM_SCANS.
@@ -1746,10 +1753,10 @@ function build_chromatograms(
     # the library 1/K0 column. Both empty when the file or library has no mobility data.
     im_scans = getImScans(spectra)
     im_lib_col = getInvIonMobility(precursors)
-    im_lines = (im_scans === nothing || im_lib_col === nothing) ?
+    im_tol_sigma = chrom_im_tol_sigma()
+    im_lines = (im_scans === nothing || im_lib_col === nothing || im_tol_sigma <= 0f0) ?
         NTuple{3, Float32}[] : im_lines_by_charge(getImModel(search_context, ms_file_idx))
     im_lib = isempty(im_lines) ? Float32[] : Float32.(im_lib_col)
-    im_tol_sigma = chrom_im_tol_sigma()
     # Dev override of the per-precursor RT tolerance (minutes): PIONEER_CHROM_RT_TOL.
     rt_tol_override = chrom_rt_tol_override()
     if rt_tol_override > 0f0
