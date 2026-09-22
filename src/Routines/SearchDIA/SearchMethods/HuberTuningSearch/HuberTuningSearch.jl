@@ -2,7 +2,8 @@ struct HuberTuningSearch <: TuningMethod end
 
 struct HuberTuningSearchResults <: SearchResults
     huber_delta::Base.Ref{Float32}
-    tuning_psms::Vector{DataFrame}
+    huber_histogram::Dict{Int, Int}
+    n_observations::Base.RefValue{Int}
 end
 
 struct HuberTuningSearchParameters{C<:IntegrateChromatogramSearchParameters} <: FragmentIndexSearchParameters
@@ -36,7 +37,8 @@ get_parameters(::HuberTuningSearch, params::Any) = HuberTuningSearchParameters(p
 function init_search_results(::HuberTuningSearchParameters, ::SearchContext)
     return HuberTuningSearchResults(
         Ref(300.0f0),
-        DataFrame[],
+        Dict{Int, Int}(),
+        Ref(0),
     )
 end
 
@@ -77,7 +79,13 @@ function process_file!(
         params,
         ms_file_idx,
     )
-    nrow(tuning_psms) > 0 && push!(results.tuning_psms, tuning_psms)
+    accumulate_huber_histogram!(
+        results.huber_histogram, tuning_psms, params.delta_grid, params.min_pct_diff,
+    )
+    results.n_observations[] += nrow(tuning_psms)
+    if ms_file_idx % 100 == 0
+        @debug_l1 "Huber calibration summary: runs=$ms_file_idx observations=$(results.n_observations[]) accepted_curves=$(sum(values(results.huber_histogram); init=0)) retained_bins=$(length(results.huber_histogram))"
+    end
 
     return results
 end
@@ -104,7 +112,7 @@ function summarize_results!(
     params.enabled || return nothing
 
     fallback_delta = params.base_solver.delta
-    if isempty(results.tuning_psms)
+    if results.n_observations[] == 0
         results.huber_delta[] = fallback_delta
         setHuberDelta!(search_context, fallback_delta)
         @user_warn "No Huber calibration observations found; using default delta $(fallback_delta)"
@@ -112,15 +120,10 @@ function summarize_results!(
     end
 
     try
-        all_psms = vcat(results.tuning_psms...)
-        optimal_delta = estimate_optimal_huber_delta(
-            all_psms,
-            params.delta_grid,
-            params.min_pct_diff,
-        )
+        optimal_delta = estimate_optimal_huber_delta(results.huber_histogram)
         results.huber_delta[] = optimal_delta
         setHuberDelta!(search_context, optimal_delta)
-        @debug_l1 "Global Huber delta calibration selected delta=$(optimal_delta) from $(nrow(all_psms)) observations"
+        @debug_l1 "Global Huber delta calibration selected delta=$(optimal_delta) from $(results.n_observations[]) observations; retained_bins=$(length(results.huber_histogram))"
     catch e
         results.huber_delta[] = fallback_delta
         setHuberDelta!(search_context, fallback_delta)

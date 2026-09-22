@@ -261,36 +261,54 @@ function process_huber_calibration_scans!(
     return tuning_results
 end
 
-function estimate_optimal_huber_delta(
+"""
+    accumulate_huber_histogram!(histogram, psms, delta_grid, min_pct_diff)
+
+Reduce complete calibration curves from one run to integer delta-bin counts.
+Call with all observations for each run/precursor/scan group together. Only the
+histogram is retained between runs; its bins depend on the fixed delta grid.
+"""
+function accumulate_huber_histogram!(
+    histogram::Dict{Int, Int},
     psms::DataFrame,
     delta_grid::Vector{Float32},
     min_pct_diff::Float32,
 )
+    isempty(psms) && return histogram
     delta_col = hasproperty(psms, :huber_delta) ? :huber_delta : Symbol("huber_δ")
     group_cols = hasproperty(psms, :ms_file_idx) ?
         [:ms_file_idx, :precursor_idx, :scan_idx] :
         [:precursor_idx, :scan_idx]
 
-    grouped_psms = groupby(psms, group_cols)
-    curves = combine(grouped_psms) do sdf
-        process_huber_curve(sdf[!, :weight], sdf[!, delta_col])
+    for group in groupby(psms, group_cols)
+        curve = process_huber_curve(group[!, :weight], group[!, delta_col])
+        curve.n == length(delta_grid) || continue
+        curve.wdiff > (min_pct_diff / 100) || continue
+        ismissing(curve.huber50) && continue
+        bin = ceil(Int, curve.huber50)
+        histogram[bin] = get(histogram, bin, 0) + 1
     end
+    return histogram
+end
 
-    filter!(row -> row.n == length(delta_grid), curves)
-    filter!(row -> row.wdiff > (min_pct_diff / 100), curves)
-    filter!(row -> !ismissing(row.huber50), curves)
-    isempty(curves) && throw(ArgumentError("No complete Huber calibration curves passed filtering"))
-
-    curves[!, :huber50] = ceil.(Int, curves[!, :huber50])
-    huber_hist = combine(groupby(curves, :huber50), nrow)
-    sort!(huber_hist, :huber50)
-    huber_hist[!, :prob] = huber_hist[!, :nrow] ./ sum(huber_hist[!, :nrow])
-    huber_hist[!, :cum_prob] = Float32.(cumsum(huber_hist[!, :prob]))
-
-    return get_median_huber_delta(
-        huber_hist[!, :cum_prob],
-        huber_hist[!, :huber50],
+function estimate_optimal_huber_delta(
+    psms::DataFrame,
+    delta_grid::Vector{Float32},
+    min_pct_diff::Float32,
+)
+    histogram = accumulate_huber_histogram!(
+        Dict{Int, Int}(), psms, delta_grid, min_pct_diff,
     )
+    return estimate_optimal_huber_delta(histogram)
+end
+
+function estimate_optimal_huber_delta(histogram::Dict{Int, Int})
+    isempty(histogram) &&
+        throw(ArgumentError("No complete Huber calibration curves passed filtering"))
+    bins = sort!(collect(keys(histogram)))
+    counts = [histogram[bin] for bin in bins]
+    cumulative_probability = Float32.(cumsum(counts ./ sum(counts)))
+    return get_median_huber_delta(cumulative_probability, bins)
 end
 
 function process_huber_curve(
