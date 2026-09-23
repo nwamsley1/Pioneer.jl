@@ -1,0 +1,162 @@
+using Test, Random, Arrow, DataFrames
+using Pioneer
+
+@testset "Grouped score statistics and bounded sorting" begin
+    function reference_statistics(scores, labels, scale)
+        keys = sort!(unique(Pioneer._score_key.(scores)); rev=true)
+        ts = [count(i -> labels[i] && Pioneer._score_key(scores[i]) == key, eachindex(scores)) for key in keys]
+        ds = [count(i -> !labels[i] && Pioneer._score_key(scores[i]) == key, eachindex(scores)) for key in keys]
+        cumulative_t, cumulative_d = cumsum(ts), cumsum(ds)
+        raw = [t == 0 ? Inf32 : Float32(d * Float64(scale) / t) for (t,d) in zip(cumulative_t,cumulative_d)]
+        q = [minimum(raw[i:end]) for i in eachindex(raw)]
+        weights = ts .+ scale .* ds
+        probabilities = Pioneer._weighted_pava(vcat(0.0, scale .* ds ./ weights), vcat(1.0, weights))[2:end]
+        pep = clamp.(probabilities ./ (1 .- probabilities), 0, 1)
+        index = Dict(k => i for (i,k) in enumerate(keys))
+        return Float32[q[index[Pioneer._score_key(s)]] for s in scores],
+               Float32[pep[index[Pioneer._score_key(s)]] for s in scores]
+    end
+
+    rng = MersenneTwister(123)
+    cases = [
+        (Float32[3,3,2,1], Bool[1,0,1,1]),
+        (fill(0.5f0, 301), [isodd(i) for i in 1:301]),
+        (rand(rng, Float32[0.1,0.2,0.4,0.6,0.7,0.9], 2000), rand(rng, Bool, 2000)),
+        (rand(rng, Float32, 1500), rand(rng, Bool, 1500)),
+        (Float32[Inf,0.0,-0.0,NaN,-Inf,Inf], Bool[1,1,0,1,0,0]),
+        (Float32.(1:201), trues(201)),
+        (Float32.(1:201), falses(201)),
+    ]
+    for (scores, labels) in cases, scale in (0.5f0, 1.0f0, 2.0f0)
+        expected_q, expected_pep = reference_statistics(scores, labels, scale)
+        for budget in (4096, 8192, 1024^2)
+            q, pep = similar(scores), similar(scores)
+            Pioneer.get_score_statistics!(scores, labels, q, pep;
+                memory_budget_bytes=budget, fdr_scale_factor=scale)
+            @test q == expected_q
+            @test pep ≈ expected_pep
+            perm = randperm(rng, length(scores))
+            q2, p2 = similar(q), similar(pep)
+            Pioneer.get_score_statistics!(scores[perm], labels[perm], q2, p2;
+                memory_budget_bytes=budget, fdr_scale_factor=scale)
+            @test q2 == q[perm]
+            @test p2 ≈ pep[perm]
+            producer = emit -> Pioneer._emit_score_arrays(emit, scores, labels)
+            for threshold in (0.0f0, 0.01f0, 0.5f0, 1.0f0)
+                selected = [Pioneer._score_key(scores[i]) for i in eachindex(scores) if labels[i] && q[i] <= threshold]
+                floor = Pioneer.qvalue_score_cutoff(producer; q_threshold=threshold,
+                    memory_budget_bytes=budget, max_fanin=2, fdr_scale_factor=scale)
+                @test floor === (isempty(selected) ? nothing : minimum(selected))
+            end
+        end
+    end
+
+    @testset "PAVA stack spills and merges across buffers" begin
+        # Increasing decoy fractions build a deep stack; trailing targets force
+        # it to merge back through multiple on-disk buffers.
+        scores = Float32[]; labels = Bool[]
+        for i in 1:400
+            append!(scores, fill(Float32(401-i), 20))
+            append!(labels, [j > (i ÷ 20) for j in 1:20])
+        end
+        append!(scores, fill(0.0f0, 8000)); append!(labels, trues(8000))
+        q = similar(scores); pep = similar(scores)
+        expected_q, expected_pep = reference_statistics(scores, labels, 1.0f0)
+        Pioneer.get_score_statistics!(scores, labels, q, pep; memory_budget_bytes=4096)
+        @test q == expected_q
+        @test pep ≈ expected_pep
+    end
+
+    @testset "Compaction and temporary-file lifetime" begin
+        fit = Pioneer.build_score_calibration(; memory_budget_bytes=4096, max_fanin=2) do emit
+            for i in 1:10_000
+                emit(Float32(i), true)
+            end
+        end
+        @test fit.qval_spline.store.n == 2
+        @test all(iszero, fit.qval_spline.([0,1,20,9999,10000,10001]))
+        @test all(iszero, fit.pep_interp.([0,1,20,9999,10000,10001]))
+        @test length(fit.qval_spline.store.cache) <= fit.qval_spline.store.max_pages
+        path = fit.qval_spline.store.path
+        Pioneer._close_score_calibration(fit)
+        @test !ispath(dirname(path))
+        @test isnothing(Pioneer.build_score_calibration(emit -> nothing; memory_budget_bytes=4096))
+        @test isnothing(Pioneer.qvalue_score_cutoff(emit -> nothing))
+        @test_throws ErrorException Pioneer.build_score_calibration(; memory_budget_bytes=4096) do emit
+            for i in 1:1000
+                emit(Float32(i), true)
+            end
+            error("Interrupted producer")
+        end
+    end
+
+    @testset "Arrow batches, protein refs, and MBR initial-pass filter" begin
+        mktempdir() do dir
+            scores = repeat(Float32[0.9,0.9,0.8,0.7], 40)
+            labels = repeat(Bool[1,0,1,1], 40)
+            path = joinpath(dir, "scores.arrow")
+            table = DataFrame(prec_prob=scores, trace_prob_prepass=scores, target=labels,
+                qval=fill(0.01f0, length(scores)), global_qval=fill(0.01f0,length(scores)))
+            open(Arrow.Writer, path; file=true) do writer
+                Arrow.write(writer, table[1:70,:])
+                Arrow.write(writer, table[71:end,:])
+            end
+            q, pep = reference_statistics(scores, labels, 1.0f0)
+            for refs in ([Pioneer.PSMFileReference(path)], [Pioneer.ProteinGroupFileReference(path)])
+                fit = Pioneer.build_qvalue_spline_from_refs(refs, :prec_prob, joinpath(dir,"unused.arrow");
+                    compute_pep=true, memory_budget_bytes=4096)
+                @test Float32.(fit.qval_spline.(scores)) == q
+                @test Float32.(fit.pep_interp.(scores)) ≈ pep
+                Pioneer._close_score_calibration(fit)
+            end
+            for initial_pass in (false, true)
+                @test Pioneer._mbr_donor_score_floor([path]; donor_q_threshold=0.5f0,
+                    require_initial_pass=initial_pass) == 0.7f0
+                @test Pioneer._mbr_donor_score_floor([path]; donor_q_threshold=0.01f0,
+                    require_initial_pass=initial_pass) == Inf32
+            end
+        end
+    end
+end
+
+@testset "Calibration cache eviction and failure cleanup" begin
+    scores = Float32.(5000:-1:1)
+    labels = BitVector(i <= 1000 for i in 1:5000)
+    q = similar(scores); pep = similar(scores)
+    Pioneer.get_score_statistics!(scores, labels, q, pep)
+    fit = Pioneer.build_score_calibration(emit -> Pioneer._emit_score_arrays(emit, scores, labels);
+        memory_budget_bytes=4096, max_fanin=2)
+    actual_q, actual_pep = similar(q), similar(pep)
+    Threads.@threads for i in eachindex(scores)
+        actual_q[i] = fit.qval_spline(scores[i])
+        actual_pep[i] = fit.pep_interp(scores[i])
+    end
+    @test actual_q == q
+    @test actual_pep == pep
+    @test fit.qval_spline.store.n > fit.qval_spline.store.page_size * fit.qval_spline.store.max_pages
+    @test length(fit.qval_spline.store.cache) <= fit.qval_spline.store.max_pages
+    Pioneer._close_score_calibration(fit)
+    mktempdir() do directory
+        @test_throws ErrorException Pioneer.build_score_calibration(; memory_budget_bytes=4096, temp_parent=directory) do emit
+            for i in 1:1000
+                emit(Float32(i), true)
+            end
+            error("Interrupted after spilling")
+        end
+        @test isempty(readdir(directory))
+    end
+end
+
+@testset "MBR stops with valid statistics when tied scores yield no positives" begin
+    frame = DataFrame(target=trues(4), cv_fold=UInt8[0,1,0,1], constant=zeros(Float32,4))
+    for i in 1:Pioneer.MBR_N_COUNTERFACTUALS
+        frame[!, Pioneer._mbr_missing_feature(i)] = falses(4)
+    end
+    state, _ = Pioneer._mbr_semisupervised_oof(frame, [:constant],
+        [[:constant] for _ in 1:Pioneer.MBR_N_COUNTERFACTUALS])
+    @test state.iteration == 1
+    @test state.metrics.n_positive == 0
+    @test all(state.metrics.eval_mask[1:4])
+    @test state.metrics.qvalues[1:4] == ones(Float32, 4)
+    @test state.metrics.peps[1:4] == ones(Float32, 4)
+end

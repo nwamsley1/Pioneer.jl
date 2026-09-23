@@ -55,16 +55,14 @@ function _count_passing_target_ids(
     q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     fdr_scale_factor::Float32 = 1.0f0,
 )
-    q_values = Vector{Float32}(undef, length(scores))
-    get_qvalues!(
-        scores,
-        targets,
-        q_values;
-        fdr_scale_factor = fdr_scale_factor,
-    )
+    length(scores) == length(targets) == length(experiment_wide_id_counts) ||
+        throw(DimensionMismatch("Score and ID-count arrays differ in length"))
+    floor = qvalue_score_cutoff(emit -> _emit_score_arrays(emit, scores, targets);
+        q_threshold, fdr_scale_factor)
+    floor === nothing && return 0
     passing_id_count = 0
-    @inbounds for row in eachindex(targets, q_values, experiment_wide_id_counts)
-        targets[row] && q_values[row] <= q_threshold || continue
+    @inbounds for row in 1:length(scores)
+        targets[row] && _score_key(scores[row]) >= floor || continue
         passing_id_count += experiment_wide_id_counts[row]
     end
     return passing_id_count
@@ -137,40 +135,17 @@ function _scoring_semisupervised_metrics_and_mask(
     stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
 )
     n = length(scores)
-    order = sortperm(scores; rev = true, alg = QuickSort)
+    cutoffs = qvalue_score_cutoffs(emit -> _emit_score_arrays(emit, scores, targets),
+        (train_q_threshold, stop_q_threshold))
+    train_floor, stop_floor = cutoffs.floors
     training_mask = BitVector(undef, n)
-    total_targets = count(targets)
-    total_decoys = n - total_targets
-    suffix_targets = 0
-    suffix_decoys = 0
-    min_q = Inf32
-    target_q01 = 0
-    decoy_q01 = 0
-
-    @inbounds for sorted_pos in n:-1:1
-        i = Int(order[sorted_pos])
-        prefix_targets = total_targets - suffix_targets
-        prefix_decoys = total_decoys - suffix_decoys
-        raw_q = prefix_targets == 0 ? Inf32 : Float32(prefix_decoys) / Float32(prefix_targets)
-        min_q = min(min_q, raw_q)
-        train_q_pass = min_q <= train_q_threshold
-        stop_q_pass = min_q <= stop_q_threshold
+    target_q01 = decoy_q01 = 0
+    @inbounds for i in 1:n
         is_target = targets[i]
-
-        if stop_q_pass
-            if is_target
-                target_q01 += 1
-            else
-                decoy_q01 += 1
-            end
+        if stop_floor !== nothing && _score_key(scores[i]) >= stop_floor
+            is_target ? (target_q01 += 1) : (decoy_q01 += 1)
         end
-        training_mask[i] = !is_target || train_q_pass
-
-        if is_target
-            suffix_targets += 1
-        else
-            suffix_decoys += 1
-        end
+        training_mask[i] = !is_target || (train_floor !== nothing && _score_key(scores[i]) >= train_floor)
     end
 
     return (

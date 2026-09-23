@@ -638,8 +638,8 @@ function apply_protein_scores_multifold!(
                 df[!, :pg_score] = _initial_protein_probabilities(df.old_pg_score)
             end
             
-            # Sort by pg_score and target in descending order
-            sort!(df, [:pg_score, :target], rev = [true, true])
+            # Sort by descending protein score
+            sort!(df, :pg_score, rev = true)
             
             # Remove temporary training-only columns before returning.
             columns_to_remove = Symbol[:cv_fold]

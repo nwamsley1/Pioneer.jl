@@ -413,8 +413,7 @@ function _mbr_iteration_metrics(
         eval_labels = labels[eval_indices]
         eval_qvalues = Vector{Float32}(undef, length(eval_indices))
         eval_peps = Vector{Float32}(undef, length(eval_indices))
-        get_qvalues!(eval_scores, eval_labels, eval_qvalues)
-        get_PEP!(eval_scores, eval_labels, eval_peps)
+        get_score_statistics!(eval_scores, eval_labels, eval_qvalues, eval_peps)
         qvalues[eval_indices] .= eval_qvalues
         peps[eval_indices] .= eval_peps
     end
@@ -971,7 +970,10 @@ function _mbr_semisupervised_oof(
                   "receiver decoys=$(count(receiver_decoy_top)); " *
                   "FTR≤$(100 * MBR_SEMISUPERVISED_FTR_THRESHOLD)% " *
                   "target transfers=$(metrics.n_positive)"
-        if iteration > 1 && !_scoring_target_gain_sufficient(
+        if metrics.n_positive == 0
+            @debug_l1 "MBR transfer model stopping: no confident target transfers remain; using iteration $(best_state.iteration)"
+            break
+        elseif iteration > 1 && !_scoring_target_gain_sufficient(
             previous_positive,
             metrics.n_positive,
         )

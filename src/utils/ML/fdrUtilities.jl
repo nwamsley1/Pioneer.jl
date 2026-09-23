@@ -22,56 +22,72 @@ This module provides functions for calculating FDR and q-values using the
 target-decoy approach, with support for library target/decoy ratio correction.
 """
 
-"""
-    get_qvalues!(probs, labels, qvals; doSort=true, fdr_scale_factor=1.0f0)
-
-Calculates q-values (false discovery rate estimates) for PSMs.
-
-# Arguments
-- `probs`: Vector of probability scores
-- `labels`: Vector of target/decoy labels (true = target, false = decoy)
-- `qvals`: Vector to store calculated q-values
-- `doSort`: Whether to sort by probability scores (default: true)
-- `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio (default: 1.0)
-
-# Process
-1. Sorts PSMs by probability score (if doSort=true)
-2. Calculates running ratio of decoys to targets
-3. Applies FDR scale factor to correct for library imbalance
-4. Assigns q-values based on corrected decoy/target ratio
-5. Ensures q-values are monotonically non-increasing
-
-Implements target-decoy approach for FDR estimation with library ratio correction.
-"""
-function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}; 
-                      doSort::Bool = true, fdr_scale_factor::Float32 = 1.0f0
-) where {T,U<:AbstractFloat}
-
-    if doSort
-        order = sortperm(probs, rev = true, alg=QuickSort) #Sort class probabilities
-    else
-        order = eachindex(probs)
-    end
-
-    targets = 0
-    decoys = 0
-    @inbounds @fastmath for i in order
-            targets += labels[i]
-            decoys += (1 - labels[i])
-            # Apply FDR scale factor to correct for library target/decoy ratio
-            qvals[i] = (decoys * fdr_scale_factor) / targets
-    end
-
-    fdr = Inf
-    @inbounds @fastmath for i in reverse(order)
-        if qvals[i] > fdr
-            qvals[i] = fdr
-        else
-            fdr = qvals[i]
-        end
-    end
+function _score_order(scores)
+    sortperm(scores; by=_score_key, rev=true)
 end
 
+function _get_qvalues_from_order!(scores, labels, qvalues, order, scale)
+    n = length(order)
+    targets = decoys = 0
+    i = 1
+    while i <= n
+        score = _score_key(scores[order[i]])
+        j = i
+        while j <= n && _score_key(scores[order[j]]) == score
+            labels[order[j]] ? (targets += 1) : (decoys += 1)
+            j += 1
+        end
+        q = _group_fdr(targets, decoys, scale)
+        for k in i:(j-1)
+            qvalues[order[k]] = q
+        end
+        i = j
+    end
+    minimum_q = Inf
+    for k in n:-1:1
+        row = order[k]
+        minimum_q = min(minimum_q, qvalues[row])
+        qvalues[row] = minimum_q
+    end
+    return nothing
+end
+
+function _score_array_calibration(scores, labels; kwargs...)
+    build_score_calibration(emit -> _emit_score_arrays(emit, scores, labels); kwargs...)
+end
+
+"""
+    get_qvalues!(scores, labels, qvalues; doSort=true, fdr_scale_factor=1.0f0,
+                 memory_budget_bytes=SCORE_WORKSPACE_BYTES)
+
+Assign each tied score the same q-value: count the whole score group, then take
+suffix minima of scaled cumulative decoy/target ratios. `doSort=false` requires
+scores ordered from best to worst. Large inputs use bounded external sorting;
+the workspace budget excludes caller-owned arrays and fixed I/O overhead.
+"""
+function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T};
+    doSort::Bool=true, fdr_scale_factor::Float32=1.0f0,
+    memory_budget_bytes::Int=SCORE_WORKSPACE_BYTES,
+) where {T,U<:AbstractFloat}
+    length(probs) == length(labels) == length(qvals) || throw(DimensionMismatch("Score arrays differ in length"))
+    _validate_score_options(fdr_scale_factor, memory_budget_bytes)
+    isempty(probs) && return nothing
+    if length(probs) > memory_budget_bytes ÷ 64
+        fit = _score_array_calibration(probs, labels; compute_pep=false,
+            fdr_scale_factor, memory_budget_bytes)
+        try
+            for i in 1:length(probs)
+                qvals[i] = fit.qval_spline(probs[i])
+            end
+        finally
+            _close_score_calibration(fit)
+        end
+    else
+        order = doSort ? _score_order(probs) : (1:length(probs))
+        _get_qvalues_from_order!(probs, labels, qvals, order, fdr_scale_factor)
+    end
+    return nothing
+end
 
 """
     get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fdrs::AbstractVector{T};
@@ -89,60 +105,94 @@ end
     - `doSort`: Whether to sort by scores before fitting (default: true)
     - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 """
-function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fdrs::AbstractVector{T};
-    doSort::Bool=true, fdr_scale_factor::Float32=1.0f0) where {T,U<:AbstractFloat}
-
-    @assert length(scores) == length(is_target)
-    N = length(scores)
-    if N == 0
-        return
+function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, peps::AbstractVector{T};
+    doSort::Bool=true, fdr_scale_factor::Float32=1.0f0,
+    memory_budget_bytes::Int=SCORE_WORKSPACE_BYTES,
+) where {T,U<:AbstractFloat}
+    length(scores) == length(is_target) == length(peps) || throw(DimensionMismatch("Score arrays differ in length"))
+    _validate_score_options(fdr_scale_factor, memory_budget_bytes)
+    isempty(scores) && return nothing
+    if length(scores) > memory_budget_bytes ÷ 64
+        fit = _score_array_calibration(scores, is_target; fdr_scale_factor, memory_budget_bytes)
+        try
+            for i in 1:length(scores)
+                peps[i] = fit.pep_interp(scores[i])
+            end
+        finally
+            _close_score_calibration(fit)
+        end
+    else
+        order = doSort ? _score_order(scores) : (1:length(scores))
+        _get_PEP_from_order!(scores, is_target, peps, order, fdr_scale_factor; memory_budget_bytes)
     end
-
-    order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : eachindex(scores)
-    _get_PEP_from_order!(scores, is_target, fdrs, order, fdr_scale_factor)
-    return
+    return nothing
 end
 
+"""Fit equal-score groups with weighted PAVA, preserving the zero-valued
+unit-weight pseudocount before the first group. `order` is descending by score.
 """
-    _get_PEP_from_order!(scores, is_target, fdrs, order, fdr_scale_factor)
-
-Evaluate PAVA in an existing descending-score order. MainSearch uses this entry
-point with its reusable per-file `Int32` permutation; experiment-wide callers
-continue through `get_PEP!` and its native-`Int` sort.
-"""
-function _get_PEP_from_order!(
-    scores::AbstractVector{U},
-    is_target::AbstractVector{Bool},
-    fdrs::AbstractVector{T},
-    order::AbstractVector{<:Integer},
-    fdr_scale_factor::Float32,
-) where {T,U<:AbstractFloat}
-    N = length(scores)
-    @assert length(is_target) == N
-    @assert length(fdrs) == N
-    @assert length(order) == N
-
-    labels = Vector{Float64}(undef, N + 1)
-    weights = Vector{Float64}(undef, N + 1)
-    labels[1] = 0.0              # pseudo observation
-    weights[1] = 1.0
-
-    @inbounds for j in 1:N
-        idx = order[j]
-        labels[j+1] = is_target[idx] ? 0.0 : 1.0
-        weights[j+1] = is_target[idx] ? 1.0 : float(fdr_scale_factor)
+function _get_PEP_from_order!(scores, labels, peps, order, scale;
+    memory_budget_bytes::Int=SCORE_WORKSPACE_BYTES)
+    length(scores) == length(labels) == length(peps) == length(order) ||
+        throw(DimensionMismatch("Score arrays differ in length"))
+    _validate_score_options(scale, memory_budget_bytes)
+    if length(scores) > memory_budget_bytes ÷ 64
+        return get_PEP!(scores, labels, peps; fdr_scale_factor=Float32(scale), memory_budget_bytes)
     end
-
-    fitted = _weighted_pava(labels, weights)
-    fitted = fitted[2:end]  # remove pseudo row
-
-    pep = fitted ./ (1 .- fitted)
-    pep = clamp.(pep, 0.0, 1.0)
-
-    @inbounds for (j, idx) in enumerate(order)
-        fdrs[idx] = T(pep[j])
+    # Block sizes count observations, including all observations in a tied group.
+    blocks = ScorePAVABlock[ScorePAVABlock(0.0, 1.0, 0)]
+    i = 1
+    while i <= length(order)
+        score = _score_key(scores[order[i]])
+        targets = decoys = 0
+        j = i
+        while j <= length(order) && _score_key(scores[order[j]]) == score
+            labels[order[j]] ? (targets += 1) : (decoys += 1)
+            j += 1
+        end
+        d = Float64(decoys) * scale
+        block = ScorePAVABlock(d, targets + d, j-i)
+        while !isempty(blocks) && last(blocks).decoys / last(blocks).weight > block.decoys / block.weight
+            top = pop!(blocks)
+            block = ScorePAVABlock(top.decoys + block.decoys, top.weight + block.weight, top.groups + block.groups)
+        end
+        push!(blocks, block)
+        i = j
     end
-    return
+    position = 1
+    for block in blocks
+        pep = clamp(block.decoys / (block.weight - block.decoys), 0.0, 1.0)
+        for _ in 1:block.groups
+            peps[order[position]] = pep
+            position += 1
+        end
+    end
+    return nothing
+end
+
+"""Compute q-values and PEPs using one shared score ordering."""
+function get_score_statistics!(scores, labels, qvalues, peps;
+    fdr_scale_factor::Float32=1.0f0, memory_budget_bytes::Int=SCORE_WORKSPACE_BYTES)
+    length(scores) == length(labels) == length(qvalues) == length(peps) ||
+        throw(DimensionMismatch("Score arrays differ in length"))
+    _validate_score_options(fdr_scale_factor, memory_budget_bytes)
+    isempty(scores) && return nothing
+    if length(scores) > memory_budget_bytes ÷ 64
+        fit = _score_array_calibration(scores, labels; fdr_scale_factor, memory_budget_bytes)
+        try
+            for i in 1:length(scores)
+                qvalues[i] = fit.qval_spline(scores[i])
+                peps[i] = fit.pep_interp(scores[i])
+            end
+        finally
+            _close_score_calibration(fit)
+        end
+    else
+        order = _score_order(scores)
+        _get_qvalues_from_order!(scores, labels, qvalues, order, fdr_scale_factor)
+        _get_PEP_from_order!(scores, labels, peps, order, fdr_scale_factor; memory_budget_bytes)
+    end
+    return nothing
 end
 
 """ Weighted pool adjacent violators algorithm used by `get_PEP!`."""

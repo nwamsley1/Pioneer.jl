@@ -135,8 +135,8 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         log_binom_coeff = log_binom_coeffs
     )
     
-    # Sort by pg_score and target in descending order
-    sort!(df, [:pg_score, :target], rev = [true, true])
+    # Sort by descending protein score
+    sort!(df, :pg_score, rev = true)
     
     # Write to Arrow file
     writeArrow(output_path, df)
