@@ -81,7 +81,10 @@ function _accumulate_run_summary!(
     peak_area::AbstractVector, peak_area_normalized, mbr_recovered,
     irt_error::AbstractVector, rt_fwhm::AbstractVector, points_integrated::AbstractVector,
     charge::AbstractVector, missed_cleavage::AbstractVector)
-    for i in eachindex(ms_file_idx)
+    # NOT eachindex: these are separate ChainedVectors whose chunk boundaries need not line up,
+    # and eachindex yields a ChainedVectorIndex bound to this column's own chunking. Using it on
+    # another column throws "indexing ChainedVector with wrong ChainedVectorIndex".
+    for i in 1:length(ms_file_idx)
         target[i] || continue
         s = stats[ms_file_idx[i]]
         s.precursors_identified += 1
