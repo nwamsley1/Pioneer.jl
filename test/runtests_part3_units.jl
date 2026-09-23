@@ -102,6 +102,7 @@ include("./UnitTests/test_scoring_semisupervised.jl")
 include("./UnitTests/test_pass1_pool.jl")
 include("./UnitTests/test_scored_fold_merge.jl")
 include("./UnitTests/test_run_summary.jl")
+include("./UnitTests/test_calibration_qc.jl")
 include("./UnitTests/test_precursor_long_export.jl")
 include("./UnitTests/test_file_name_labels.jl")
 

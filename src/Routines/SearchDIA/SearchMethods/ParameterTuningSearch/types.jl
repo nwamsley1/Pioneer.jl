@@ -114,12 +114,11 @@ mutable struct IterationState
     best_score::UInt8
     best_scan_count::Int64
     best_fragments::Union{Nothing, Vector{MassErrSample}}
-    wide_scout_plot::Any
 
     function IterationState()
         new(false, 1, false,
             0, nothing, nothing, UInt8(0), 0,
-            nothing, nothing)
+            nothing)
     end
 end
 
@@ -137,11 +136,6 @@ struct ParameterTuningSearchResults <: SearchResults
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
     frag_mzs::Vector{Float32}  # Fragment m/z values corresponding to ppm_errs
-    rt_plots::Vector{Vector{UInt8}}    # PNG bytes (legacy)
-    mass_plots::Vector{Vector{UInt8}}  # PNG bytes (legacy)
-    rt_plot_objects::Vector{Any}       # Plot objects accumulated for combined PDF
-    mass_plot_objects::Vector{Any}     # Plot objects accumulated for combined PDF
-    nce_plot_objects::Vector{Any}      # Plot objects accumulated for combined PDF
     qc_plots_folder_path::String
     diagnostics::ParameterTuningDiagnostics
     parameter_history::ParameterHistory

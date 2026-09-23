@@ -54,9 +54,11 @@ For each (scan_idx, precursor_idx) row in `psms` (typically the MS2-accepted
 PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
 the ppm residual of the closest peak to the precursor's M+0, M+1, M+2 isotopes
 within ±MS1_DIAG_WINDOW_PPM. Returns a flat vector of signed ppm residuals
-(positive = observed peak above theoretical m/z).
+(positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
+matching theoretical m/z and scan RT values for within-file residual checks.
 """
-function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer)
+function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer;
+    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing)
     n = nrow(psms)
     n == 0 && return Float32[]
 
@@ -112,6 +114,10 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
             hit, obs_mz = _ms1_diag_find_peak(cached_mz, target, MS1_DIAG_WINDOW_PPM)
             if hit
                 push!(residuals, (obs_mz - target) / target * 1f6)
+                if qc_coordinates !== nothing
+                    push!(qc_coordinates[1], target)
+                    push!(qc_coordinates[2], Float32(getRetentionTime(spectra, ms1_idx)))
+                end
             end
         end
     end

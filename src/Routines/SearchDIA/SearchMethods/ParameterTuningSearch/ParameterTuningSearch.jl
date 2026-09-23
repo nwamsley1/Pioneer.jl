@@ -125,11 +125,6 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),  # frag_mzs
-        Vector{UInt8}[],  # rt_plots (legacy)
-        Vector{UInt8}[],  # mass_plots (legacy)
-        Any[],            # rt_plot_objects
-        Any[],            # mass_plot_objects
-        Any[],            # nce_plot_objects
         qc_dir,
         ParameterTuningDiagnostics(),
         ParameterHistory(),
@@ -361,7 +356,13 @@ function fit_nce_from_psms!(
     psms::DataFrame;
     nce_grid::AbstractVector{Float32} = LinRange{Float32}(21.0f0, 40.0f0, 20)
 )
-    nrow(psms) < 50 && return nothing
+    if nrow(psms) < 50
+        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+            assess_calibration_qc(:nce,nrow(psms),(NaN,NaN,NaN,NaN); min_support=50))
+        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+            calibration_notice!(search_context, :nce, ms_file_idx)
+        return nothing
+    end
 
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)
@@ -424,6 +425,10 @@ function fit_nce_from_psms!(
 
     if nrow(nce_psms) < 50
         @debug_l1 "NCE sweep: too few PSMs ($(nrow(nce_psms)))"
+        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+            assess_calibration_qc(:nce,nrow(nce_psms),(NaN,NaN,NaN,NaN); min_support=50))
+        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+            calibration_notice!(search_context, :nce, ms_file_idx)
         return nothing
     end
 
@@ -450,9 +455,34 @@ function fit_nce_from_psms!(
     charges = sort(unique(best_nce[!, :charge]))
     @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)"
 
+    weak = 0
+    for group in groupby(nce_psms, :precursor_idx)
+        best_score = group.gof[1]
+        alternative = findfirst(!=(group.nce[1]), group.nce)
+        weak += alternative === nothing || !isfinite(best_score) ||
+            best_score - group.gof[alternative] <= 0.01 * max(abs(best_score), eps(Float32))
+    end
+    endpoints = count(x -> x == first(nce_grid) || x == last(nce_grid), best_nce.nce)
+    supported = count(c -> 1 <= c <= 6 && nce_model.offsets[Int(c)] != 0, best_nce.charge)
+    record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+        assess_calibration_qc(:nce,n_precs,(supported/n_precs,NaN,weak/n_precs,endpoints/n_precs);
+            min_support=50, fallback=supported == 0))
+    if select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx)
+        render_calibration_safely(search_context, :nce, ms_file_idx) do
+            if any(charge -> count(==(charge), best_nce.charge) >= 10, charges)
+                plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, nce_model, charges)
+            else
+                calibration_notice!(search_context, :nce, ms_file_idx)
+            end
+        end
+    end
+    return nce_model
+end
+
+function plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, nce_model, charges)
     # Generate per-charge diagnostic plots
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    nce_plots = Plots.Plot[]
+    parsed_fname = calibration_qc_title(search_context, :nce, ms_file_idx, getParsedFileName(search_context, ms_file_idx))
+    plot_rng = MersenneTwister(1844 + ms_file_idx)
     for charge in charges
         mask = best_nce[!, :charge] .== charge
         n_c = count(mask)
@@ -494,7 +524,7 @@ function fit_nce_from_psms!(
             half_w = (hi - lo) / 2
 
             # Jittered raw points
-            jittered_x = [center + half_w * 0.8 * (2 * rand() - 1) for _ in eachindex(bin_mz)]
+            jittered_x = [center + half_w * 0.8 * (2 * rand(plot_rng) - 1) for _ in eachindex(bin_mz)]
             Plots.scatter!(p, jittered_x, Float64.(bin_nce_vals),
                 alpha = 0.12, markersize = 1.5, color = :steelblue, label = (b == 1 ? "data" : nothing))
 
@@ -525,32 +555,12 @@ function fit_nce_from_psms!(
             Plots.vline!(p, [bin_edges[b]], lw = 0.5, ls = :dot, color = :gray60, label = nothing)
         end
 
-        push!(nce_plots, p)
+        write_calibration_page!(search_context, :nce, p)
     end
 
-    return nce_model, nce_plots
+    return nothing
 end
 
-function generate_wide_scout_plot(wide_frags, scout_model, parsed_fname)
-    (scout_model === nothing || length(wide_frags) < 20) && return nothing
-    frag_mzs = Float64[s.theoretical_mz for s in wide_frags]
-    da_errs = Float64[s.observed_mz - s.theoretical_mz for s in wide_frags]
-    mz_range = range(minimum(frag_mzs), maximum(frag_mzs), length=200)
-    tol_mda = Float64(scout_model.tolerance_da * 1e3)
-    bias_mda = [Float64(_scout_mz_bias_da(scout_model, Float32(m))) * 1e3 for m in mz_range]
-
-    p = Plots.scatter(frag_mzs, da_errs .* 1e3,
-        alpha=0.1, markersize=1.5, color=:steelblue, label=nothing,
-        xlabel="Fragment m/z", ylabel="Raw error (mDa)",
-        title="$(parsed_fname)\nWide scout m/z bias (n=$(length(wide_frags)), tol=±$(round(tol_mda, digits=1)) mDa)",
-        size=(600, 600), topmargin=10Plots.mm)
-    Plots.plot!(p, mz_range, bias_mda, lw=2.5, color=:red, label="m/z bias (robust linear)")
-    Plots.plot!(p, mz_range, bias_mda .+ tol_mda, lw=1.5, ls=:dash, color=:red,
-        label="collection tol: ±$(round(tol_mda, digits=1)) mDa")
-    Plots.plot!(p, mz_range, bias_mda .- tol_mda, lw=1.5, ls=:dash, color=:red, label=nothing)
-    Plots.hline!(p, [0.0], color=:black, lw=1, ls=:dot, label=nothing)
-    return p
-end
 
 """
 Process a single MS file to determine optimal mass error and RT parameters.
@@ -637,7 +647,6 @@ function process_file!(
                         MassErrorModel(0.0f0, (WIDE_SCOUT_FALLBACK_TOL_PPM, WIDE_SCOUT_FALLBACK_TOL_PPM)))
                     @debug_l1 "  Scout: <$(SCOUT_MIN_FRAGS) frags, fallback ±$(WIDE_SCOUT_FALLBACK_TOL_PPM) ppm"
                 end
-                iteration_state.wide_scout_plot = generate_wide_scout_plot(frags, scout_model, parsed_fname)
 
             else
                 # Phase 2: fit RT model + final mass error model
@@ -673,12 +682,12 @@ function process_file!(
                     # MS2-accepted PSMs. Installs into SearchContext for use by
                     # MainSearch MS1 features and IntegrateChromatogramsSearch.
                     try
-                        ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx)
+                        ms1_coordinates = (Float32[], Float32[])
+                        ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx;
+                            qc_coordinates=ms1_coordinates)
                         parsed_fname_ms1 = getParsedFileName(search_context, ms_file_idx)
                         ms1_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ms1_mass_error_plots")
                         isdir(ms1_dir) || mkpath(ms1_dir)
-                        generate_ms1_residual_histogram(ms1_residuals, parsed_fname_ms1,
-                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
                         fit = fit_ms1_model_from_residuals(ms1_residuals)
                         if fit !== nothing
                             ms1_model, ms1_med, ms1_mad = fit
@@ -689,17 +698,45 @@ function process_file!(
                         else
                             @debug_l1 "  MS1 model: insufficient residuals ($(length(ms1_residuals)))"
                         end
+                        if fit !== nothing || any(i -> getMsOrder(spectra, i) == 1, 1:length(spectra))
+                            trend = if fit === nothing || !all(isfinite, (fit[2],fit[3]))
+                                NaN
+                            else
+                                corrected = ms1_residuals .- fit[2]
+                                maximum(_qc_binned_bias(xs, corrected) for xs in ms1_coordinates)
+                            end
+                            record_calibration_qc!(search_context.calibration_qc, :ms1_mass, ms_file_idx,
+                                assess_calibration_qc(:ms1_mass,length(ms1_residuals),
+                                    (NaN,fit === nothing ? NaN : fit[3],trend,NaN);
+                                    min_support=10, failed=fit !== nothing && !all(isfinite, (fit[2],fit[3]))))
+                            if select_calibration_plot!(search_context.calibration_qc, :ms1_mass, ms_file_idx)
+                                if fit === nothing
+                                    calibration_notice!(search_context, :ms1_mass, ms_file_idx)
+                                else
+                                    render_calibration_safely(search_context, :ms1_mass, ms_file_idx) do
+                                        generate_ms1_residual_histogram(ms1_residuals,
+                                            calibration_qc_title(search_context, :ms1_mass, ms_file_idx, parsed_fname_ms1),
+                                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
+                                    end
+                                end
+                            end
+                        end
                     catch ms1_err
+                        record_calibration_qc!(search_context.calibration_qc, :ms1_mass, ms_file_idx,
+                            assess_calibration_qc(:ms1_mass,0,(NaN,NaN,NaN,NaN); failed=true))
+                        select_calibration_plot!(search_context.calibration_qc, :ms1_mass, ms_file_idx) &&
+                            calibration_notice!(search_context, :ms1_mass, ms_file_idx)
                         @debug_l1 "  MS1 diag failed: $(sprint(showerror, ms1_err))"
                     end
 
-                    # NCE sweep: reuse collected PSMs (skip fragment index).
-                    # Plots are accumulated for the combined NCE PDF written
-                    # by summarize_results!; the redundant per-file PDF was
-                    # dropped 2026-06-26 (same rationale as the mass-error PDF).
-                    nce_result = fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
-                    if nce_result !== nothing
-                        append!(results.nce_plot_objects, nce_result[2])
+                    try
+                        fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
+                    catch err
+                        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+                            assess_calibration_qc(:nce,0,(NaN,NaN,NaN,NaN); failed=true))
+                        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+                            calibration_notice!(search_context, :nce, ms_file_idx)
+                        rethrow()
                     end
 
                     iteration_state.best_psms = rt_psms
@@ -839,119 +876,47 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
+    state = results.current_iteration_state[]
+    name = getParsedFileName(search_context, ms_file_idx)
     try
-        rt_alignment_folder = getRtAlignPlotFolder(search_context)
-        mass_error_folder = getMassErrPlotFolder(search_context)
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        
-        # Get iteration_state from results
-        iteration_state = results.current_iteration_state[]
-        # Note: No mass-error buffer is applied. Plots reflect the fitted model.
-        
-        # (Plot objects collected into file_rt_plots and file_mass_plots below)
-
-        # Generate RT alignment plot (as Plot object for PDF output)
-        file_rt_plots = Plots.Plot[]
-        if length(results.rt) > 0
-            irt_tol = getIrtErrors(search_context)[ms_file_idx]
-            rt_plot = generate_rt_plot(results, parsed_fname; irt_tol=irt_tol)
-            push!(file_rt_plots, rt_plot)
-        elseif iteration_state !== nothing && iteration_state.best_psms !== nothing &&
-               hasproperty(iteration_state.best_psms, :rt) &&
-               nrow(iteration_state.best_psms) > 0
-            psms = iteration_state.best_psms
-            precursors = getPrecursors(getSpecLib(search_context))
-            irts = Float32[getIrt(precursors)[pid] for pid in psms[!, :precursor_idx]]
-            rts = Float32[getRetentionTimes(spectra)[sid] for sid in psms[!, :scan_idx]]
-            p = Plots.scatter(rts, irts,
-                alpha=0.1, markersize=2, color=:steelblue, label=nothing,
-                xlabel="Retention Time RT (min)",
-                ylabel="Indexed Retention Time iRT (min)",
-                title=parsed_fname * "\n⚠️ Insufficient PSMs for RT model " *
-                      "($(iteration_state.best_psm_count) PSMs, need 750)",
-                size=(600, 600))
-            push!(file_rt_plots, p)
-        else
-            fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(file_rt_plots, fallback_plot)
+        rt_record = rt_calibration_qc(results.rt, results.irt, getRtToIrtModel(results),
+            getRetentionTimes(spectra); min_support=MIN_PSMS_FOR_RT)
+        record_calibration_qc!(search_context.calibration_qc, :rt, ms_file_idx, rt_record)
+        if select_calibration_plot!(search_context.calibration_qc, :rt, ms_file_idx)
+            if isempty(results.rt)
+                calibration_notice!(search_context, :rt, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :rt, ms_file_idx) do
+                    p = generate_rt_plot(results, calibration_qc_title(search_context, :rt, ms_file_idx, name);
+                        irt_tol=get(getIrtErrors(search_context), ms_file_idx, Inf32))
+                    write_calibration_page!(search_context, :rt, p)
+                end
             end
         end
-
-        # Generate mass error plot (only store in memory, no individual files)
-        current_model = getMassErrorModel(search_context, ms_file_idx)
-        has_intensity_model = current_model isa IntensityMassErrorModel
-
-        has_fragments = iteration_state !== nothing &&
-                        iteration_state.best_fragments !== nothing &&
-                        !isempty(iteration_state.best_fragments)
-
-        # Collect Plot objects for per-file PDF (display-based, correct orientation)
-        file_mass_plots = Plots.Plot[]
-
-        # Include wide scout plot if stored in iteration_state
-        if iteration_state !== nothing && iteration_state.wide_scout_plot !== nothing
-            push!(file_mass_plots, iteration_state.wide_scout_plot)
-            iteration_state.wide_scout_plot = nothing
-        end
-
-        if has_fragments
-            frag_data = extract_fragment_plot_data(iteration_state.best_fragments)
-            iteration_state.best_fragments = nothing
-            n_frags = length(frag_data.da_errs)
-
-            mda_plots = generate_mass_error_plot_mda(frag_data, current_model, parsed_fname;
-)
-            if mda_plots !== nothing
-                append!(file_mass_plots, mda_plots)
-            end
-
-            if has_intensity_model
-                @debug_l1 "IntensityMassErrorModel plots: $n_frags fragments, " *
-                    "model α=$(current_model.mz_spread_α), β=$(current_model.mz_spread_β), γ=$(current_model.mz_spread_γ)"
-                intensity_plots = generate_intensity_model_plots(frag_data, current_model, parsed_fname)
-                @debug_l2 "Generated $(length(intensity_plots)) intensity model plots"
-                append!(file_mass_plots, intensity_plots)
-            end
-        else
-            fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(file_mass_plots, fallback_plot)
+        fragments = state === nothing ? nothing : state.best_fragments
+        model = getMassErrorModel(search_context, ms_file_idx)
+        fallback = results.diagnostics.file_statuses[ms_file_idx].used_fallback
+        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx,
+            ms2_calibration_qc(fragments, model; fallback))
+        if select_calibration_plot!(search_context.calibration_qc, :ms2_mass, ms_file_idx)
+            if fragments === nothing || isempty(fragments)
+                calibration_notice!(search_context, :ms2_mass, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :ms2_mass, ms_file_idx) do
+                    data = extract_fragment_plot_data(fragments)
+                    title = calibration_qc_title(search_context, :ms2_mass, ms_file_idx, name)
+                    plots = generate_mass_error_plot_mda(data, model, title)
+                    plots !== nothing && foreach(p -> write_calibration_page!(search_context, :ms2_mass, p), plots)
+                    if model isa IntensityMassErrorModel
+                        foreach(p -> write_calibration_page!(search_context, :ms2_mass, p),
+                            generate_intensity_model_plots(data, model, title))
+                    end
+                end
             end
         end
-
-        # Accumulate Plot objects for the combined mass-error PDF written by
-        # summarize_results!. The per-file mass-error PDF was dropped 2026-06-26:
-        # writing it took ~2.4 s per file (Plots.jl PDF backend; ~15 s of the
-        # ~44 s warm Param Tuning stage on 6-file Olsen). The combined PDF
-        # already paginates per file, so no diagnostic info is lost.
-        if !isempty(file_mass_plots)
-            append!(results.mass_plot_objects, file_mass_plots)
-        end
-
-        # Accumulate RT plots for the combined RT-alignment PDF written by
-        # summarize_results!. The per-file RT PDF was dropped 2026-06-26 (same
-        # rationale as the mass-error PDF: the combined PDF already paginates
-        # per file, so no diagnostic info is lost).
-        if !isempty(file_rt_plots)
-            append!(results.rt_plot_objects, file_rt_plots)
-        end
-
-        # Update models in search context
-        setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-        setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
-
-        # Clear plotting data to save memory
-        resize!(results.rt, 0)
-        resize!(results.irt, 0)
-        resize!(results.ppm_errs, 0)
-        resize!(results.frag_mzs, 0)
-        results.current_iteration_state[] = nothing  # Clear iteration state after use
-    catch e
-        # Plot-generation failures are non-fatal and should not mark the file as failed.
-        bt = catch_backtrace()
-        @user_error "PLOT GENERATION FAILED for file $ms_file_idx: $(typeof(e))"
-        @user_error sprint(showerror, e, bt)
+    finally
+        empty!(results.rt); empty!(results.irt); empty!(results.ppm_errs); empty!(results.frag_mzs)
+        results.current_iteration_state[] = nothing
     end
 end
 
@@ -974,49 +939,16 @@ end
 Summarize results across all MS files.
 """
 function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
-    # Combine individual plots into merged PDFs using save_multipage_pdf
-    
-    try
-        rt_plots_folder = getRtAlignPlotFolder(search_context)
-        mass_error_plots_folder = getMassErrPlotFolder(search_context)
-        
-        # Combined RT alignment PDF from all files
-        if !isempty(results.rt_plot_objects)
-            rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.rt_plot_objects], rt_combined_path)
-            empty!(results.rt_plot_objects)
-        end
-
-        # Combined mass error PDF from all files
-        if !isempty(results.mass_plot_objects)
-            mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.mass_plot_objects], mass_combined_path)
-            empty!(results.mass_plot_objects)
-        end
-
-        # Combined NCE alignment PDF from all files
-        if !isempty(results.nce_plot_objects)
-            nce_dir = joinpath(getDataOutDir(search_context), "qc_plots", "collision_energy_alignment")
-            mkpath(nce_dir)
-            nce_combined_path = joinpath(nce_dir, "nce_alignment_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.nce_plot_objects], nce_combined_path)
-            empty!(results.nce_plot_objects)
-        end
-        empty!(results.rt_plots)
-        empty!(results.mass_plots)
-        
-        # Generate summary report
-        # TODO: Implement generate_summary_report if detailed report needed
-        # For now, the diagnostic summary below provides the key information
-        
-    catch e
-        @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
+    root = joinpath(getDataOutDir(search_context), "qc_plots")
+    for (stage, path) in (
+        (:rt, joinpath(getRtAlignPlotFolder(search_context), "rt_alignment_plots.pdf")),
+        (:ms2_mass, joinpath(getMassErrPlotFolder(search_context), "mass_error_plots.pdf")),
+        (:ms1_mass, joinpath(root, "ms1_mass_error_plots", "ms1_calibration_notices.pdf")),
+        (:nce, joinpath(root, "collision_energy_alignment", "nce_alignment_plots.pdf")),
+    )
+        finish_calibration_report!(search_context, stage, path)
     end
-    
-    # Apply buffer to all mass error models AFTER plots are generated
-    # This ensures plots show the actual fitted values, not buffered ones
-    # Do not apply an additional buffer here; models were buffered once per file
-    
+
     # Log diagnostic summary
     diagnostics = getDiagnostics(results)
     # Fixed: use values() to iterate over dictionary values
