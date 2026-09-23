@@ -66,6 +66,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # When false, skip post-integration donor/counterfactual feature
     # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
+    calibrate_huber::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
@@ -78,6 +79,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             Float64(ml_params.max_psm_memory_mb),
             _resolve_q_value_threshold(global_params),
             mbr,
+            get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber",
         )
     end
 end
@@ -546,6 +548,14 @@ function summarize_results!(
                 (:global_qval, params.q_value_threshold),
                 (:qval, params.q_value_threshold),
             ])
+        empty!(search_context.huber_calibration_winners)
+        if params.calibrate_huber
+            winners = search_context.huber_calibration_winners
+            resize!(winners, n_precursors)
+            fill!(winners, HuberCalibrationWinner(-Inf32, 0, 0))
+            initial_filter = initial_filter |>
+                ("collect_global_huber_winners" => (df -> collect_huber_winners!(winners, df)))
+        end
         phase_started = time()
         @debug_l1 "Initial precursor q-value filter starting: files=$(length(annotated_refs))"
         passing_refs = apply_pipeline_batch(
