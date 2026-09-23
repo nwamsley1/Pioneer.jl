@@ -211,7 +211,8 @@ function importScripts()
             "proteinInference.jl",
             "runSimilarity.jl",
             "profile.jl",
-            "pdfUtils.jl"
+            "pdfUtils.jl",
+            "calibrationQC.jl"
         ]
     )
 

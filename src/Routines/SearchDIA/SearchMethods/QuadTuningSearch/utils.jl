@@ -1380,5 +1380,12 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
         ϵ3=1e-5,
         max_iter=500
     )
-    return fitted_params, initial_params
+    residual_rmse = sqrt(sum((sm_yt[i] - F(fitted_params, sm_x0[i], sm_x1[i]))^2 for i in eachindex(sm_yt)) / n_pts)
+    coverage = min(1.0, max(0.0, -min(minimum(sm_x0),minimum(sm_x1))) / (window_width/2),
+                   max(0.0, max(maximum(sm_x0),maximum(sm_x1))) / (window_width/2))
+    at_bound = any(((fitted_params.al, 0.2, window_width), (fitted_params.ar, 0.2, window_width),
+                    (fitted_params.bl, 1e-3, 24.0), (fitted_params.br, 1e-3, 24.0))) do (value, low, high)
+        min(abs(value-low), abs(high-value)) <= 0.01 * (high-low)
+    end
+    return fitted_params, initial_params, (coverage, residual_rmse, NaN, Float64(at_bound))
 end

@@ -192,6 +192,7 @@ function write_run_summary(path::String, stats::Vector{RunSummaryStats},
         n_ms1_scans = [r[2] for r in raw],
         n_ms2_scans = [r[3] for r in raw],
     )
+    add_calibration_qc_columns!(df, search_context.calibration_qc, n)
     CSV.write(path, df, delim = '\t')
     return df
 end

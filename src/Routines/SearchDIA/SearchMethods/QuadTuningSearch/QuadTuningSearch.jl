@@ -71,9 +71,6 @@ struct QuadTuningSearchResults <: SearchResults
     }}}
     quad_model::Base.Ref{QuadTransmissionModel}
     quad_plot_dir::String
-    quad_plot_objects::Vector{Any}
-    # Per-file (file_name, fitted_model, window_width) for the Razo LM overlay.
-    per_file_models::Vector{Tuple{String, QuadTransmissionModel, Float64}}
 end
 
 """
@@ -174,9 +171,7 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
     return QuadTuningSearchResults(
         temp_data,
         Ref{QuadTransmissionModel}(),
-        qpp,
-        Any[],
-        Tuple{String, QuadTransmissionModel, Float64}[]
+        qpp
     )
 end
 
@@ -276,7 +271,7 @@ function process_file!(
         else
             total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
             if nrow(total_psms) >= 50
-                fitted_params, initial_params = fit_quad_model(total_psms, window_width)
+                fitted_params, initial_params, qc_metrics = fit_quad_model(total_psms, window_width)
                 fitted_model = RazoQuadModel(fitted_params)
                 razo_initial_model = RazoQuadModel(initial_params)
                 active_model = fitted_model
@@ -286,34 +281,29 @@ function process_file!(
 
         setQuadModel(results, active_model)
 
-        # Per-file QC plots. Fallback files still get the SquareQuad transmission
-        # plot; the scatter/median plots are skipped when there's no data.
-        file_plots = Plots.Plot[]
-        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-        razo_lm_for_plot = use_fallback ? nothing :
-            (@isdefined(fitted_model) ? fitted_model : nothing)
-        if !isempty(total_psms)
-            push!(file_plots, plot_charge_distributions(total_psms, results, fname;
-                                                         quad_model=razo_lm_for_plot,
-                                                         window_width=window_width))
+        record_calibration_qc!(search_context.calibration_qc, :quadrupole, ms_file_idx,
+            assess_calibration_qc(:quadrupole,nrow(total_psms),
+                use_fallback ? (NaN,NaN,NaN,NaN) : qc_metrics;
+                min_support=50, fallback=use_fallback,
+                failed=!use_fallback && !isfinite(qc_metrics[2])))
+        if select_calibration_plot!(search_context.calibration_qc, :quadrupole, ms_file_idx)
+            render_calibration_safely(search_context, :quadrupole, ms_file_idx) do
+                fname = calibration_qc_title(search_context, :quadrupole, ms_file_idx,
+                    getParsedFileName(search_context, ms_file_idx))
+                model = use_fallback ? nothing : fitted_model
+                if !isempty(total_psms)
+                    write_calibration_page!(search_context, :quadrupole,
+                        plot_charge_distributions(total_psms, results, fname; quad_model=model, window_width))
+                end
+                write_calibration_page!(search_context, :quadrupole,
+                    plot_quad_model(active_model, window_width, results, fname; initial_model=razo_initial_model))
+                if !isempty(total_psms)
+                    write_calibration_page!(search_context, :quadrupole,
+                        plot_sliding_median_smoother(total_psms, fname; window_width,
+                            quad_model=model, initial_model=razo_initial_model))
+                end
+            end
         end
-        push!(file_plots, plot_quad_model(active_model, window_width, results, fname;
-                                           initial_model=razo_initial_model))
-        if !isempty(total_psms)
-            push!(file_plots, plot_sliding_median_smoother(total_psms, fname;
-                                                           window_width=window_width,
-                                                           quad_model=razo_lm_for_plot,
-                                                           initial_model=razo_initial_model))
-        end
-
-        # Accumulate plot objects for the combined quad-transmission PDF
-        # written by summarize_results!. The per-file PDF was dropped
-        # 2026-06-26 (same rationale as the ParameterTuningSearch mass-error
-        # PDF: the combined PDF paginates per file, so no diagnostic info is
-        # lost, and writing it doubled the QuadTuning plot I/O cost).
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        append!(results.quad_plot_objects, file_plots)
-        push!(results.per_file_models, (parsed_fname, active_model, Float64(window_width)))
 
         t_wall = time() - t_file_start
         if !use_fallback
@@ -334,6 +324,13 @@ function process_search_results!(
 ) where {P<:QuadTuningSearchParameters}
 
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
+    if calibration_qc_record(search_context.calibration_qc, :quadrupole, ms_file_idx).status == QC_NOT_ASSESSED
+        record_calibration_qc!(search_context.calibration_qc, :quadrupole, ms_file_idx,
+            assess_calibration_qc(:quadrupole,0,(NaN,NaN,NaN,NaN); fallback=true))
+        select_calibration_plot!(search_context.calibration_qc, :quadrupole, ms_file_idx) &&
+            calibration_notice!(search_context, :quadrupole, ms_file_idx)
+    end
+
 end
 
 function summarize_results!(
@@ -342,38 +339,8 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:QuadTuningSearchParameters}
     
-    # Cross-file overlay plots: one per model variant so we can see how
-    # consistent each model's fit is across files.
-    if !isempty(results.per_file_models)
-        max_window = maximum(w for (_, _, w) in results.per_file_models)
-        half_width = 2.0 + max_window / 2
-        plot_bins = LinRange(-half_width, half_width, 200)
-
-        # Razo LM overlay — split into pages of 12 files so the legend stays readable.
-        files_per_page = 12
-        n_files = length(results.per_file_models)
-        n_pages = cld(n_files, files_per_page)
-        for page in 1:n_pages
-            lo = (page - 1) * files_per_page + 1
-            hi = min(page * files_per_page, n_files)
-            title_suffix = n_pages > 1 ? " ($(lo)-$(hi) of $n_files)" : ""
-            overlay = plot(title="Per-file quad transmission — Razo LM$title_suffix",
-                           xlabel="m/z offset", ylabel="transmission",
-                           legend=:outertopright, size=(800, 500))
-            for (name, model, _) in results.per_file_models[lo:hi]
-                f = getQuadTransmissionFunction(model, 0.0f0, 2.0f0)
-                plot!(overlay, plot_bins, f.(plot_bins), lw=1.5, alpha=0.6, label=name)
-            end
-            push!(results.quad_plot_objects, overlay)
-        end
-    end
-
-    if !isempty(results.quad_plot_objects)
-        combined_path = joinpath(results.quad_plot_dir, "quad_transmission_plots.pdf")
-        save_multipage_pdf(Plots.Plot[p for p in results.quad_plot_objects], combined_path)
-        empty!(results.quad_plot_objects)
-    end
-    empty!(results.per_file_models)
+    finish_calibration_report!(search_context, :quadrupole,
+        joinpath(results.quad_plot_dir, "quad_transmission_plots.pdf"))
 
     reset_precursor_arrays!(search_context)
     return nothing
