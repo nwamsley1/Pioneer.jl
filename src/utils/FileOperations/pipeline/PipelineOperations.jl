@@ -128,9 +128,9 @@ end
 
 """
     add_interpolated_column(new_col::Symbol, source_col::Symbol, 
-                           interpolator::Interpolations.Extrapolation)
+                           interpolator)
 
-Add a new column by applying an interpolation function to an existing column.
+Add a new column by applying a callable interpolation or score-calibration mapping to an existing column.
 Commonly used for adding q-value columns based on probability scores.
 
 Example:
@@ -150,7 +150,7 @@ pipeline = TransformPipeline() |>
 end
 
 function add_interpolated_column(new_col::Symbol, source_col::Symbol,
-                               interpolator::Interpolations.Extrapolation)
+                               interpolator)
     desc = "add_interpolated_column($new_col from $source_col)"
     op = function(df)
         source_data = df[!, source_col]

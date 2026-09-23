@@ -160,3 +160,62 @@ end
     @test state.metrics.qvalues[1:4] == ones(Float32, 4)
     @test state.metrics.peps[1:4] == ones(Float32, 4)
 end
+
+@testset "Protein annotation pipelines accept bounded calibration mappings" begin
+    mktempdir() do dir
+        scores = Float32[0.95, 0.9, 0.8, 0.7]
+        targets = Bool[1, 1, 0, 1]
+        table = DataFrame(protein_name=["p1", "p2", "p3", "p4"],
+            target=targets, entrap_id=zeros(UInt8, 4), pg_score=scores)
+        path = joinpath(dir, "proteins.arrow")
+        Arrow.write(path, table)
+        refs = [Pioneer.ProteinGroupFileReference(path)]
+        fit = Pioneer.build_qvalue_spline_from_refs(refs, :pg_score, joinpath(dir, "sorted.arrow");
+            compute_pep=true, memory_budget_bytes=4096)
+        try
+            qvals = Float32.(fit.qval_spline.(scores))
+            peps = Float32.(fit.pep_interp.(scores))
+            global_scores = Dict((table.protein_name[i], targets[i], UInt8(0)) => scores[i] for i in 1:4)
+            global_qvals = Pioneer.build_protein_global_qval_dict(global_scores)
+            pipeline = Pioneer.TransformPipeline() |>
+                Pioneer.add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_scores) |>
+                Pioneer.add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_qvals) |>
+                Pioneer.add_interpolated_column(:pg_qval, :pg_score, fit.qval_spline) |>
+                Pioneer.add_interpolated_column(:pg_pep, :pg_score, fit.pep_interp) |>
+                Pioneer.filter_by_multiple_thresholds([(:global_pg_qval, 0.01f0), (:pg_qval, 0.01f0)])
+            output = Pioneer.apply_pipeline_batch(refs, pipeline, joinpath(dir, "passing"))
+            actual = DataFrame(Arrow.Table(Pioneer.file_path(only(output))))
+            keep = qvals .<= 0.01f0
+            @test actual.protein_name == table.protein_name[keep]
+            @test actual.pg_qval == qvals[keep]
+            @test actual.pg_pep == peps[keep]
+            @test eltype(actual.pg_qval) == Float32
+            @test eltype(actual.pg_pep) == Float32
+            # The subsequent q-value-only recalibration uses the same helper.
+            recalibrated = Pioneer.build_qvalue_spline_from_refs(output, :pg_score, joinpath(dir, "recalc.arrow");
+                memory_budget_bytes=4096)
+            try
+                recalc_pipeline = Pioneer.TransformPipeline() |>
+                    Pioneer.add_interpolated_column(:pg_qval, :pg_score, recalibrated.qval_spline)
+                recalc_output = Pioneer.apply_pipeline_batch(output, recalc_pipeline, joinpath(dir, "recalibrated"))
+                @test DataFrame(Arrow.Table(Pioneer.file_path(only(recalc_output)))).pg_qval ==
+                    Float32.(recalibrated.qval_spline.(actual.pg_score))
+            finally
+                Pioneer._close_score_calibration(recalibrated)
+            end
+        finally
+            Pioneer._close_score_calibration(fit)
+        end
+    end
+end
+
+@testset "Interpolation column helper retains legacy and empty-table behavior" begin
+    interp = Pioneer.linear_interpolation(Float32[0, 1], Float32[1, 0];
+        extrapolation_bc=Pioneer.Interpolations.Flat())
+    operation = last(Pioneer.add_interpolated_column(:qval, :score, interp))
+    frame = DataFrame(score=Float32[-1, 0.25, 2])
+    @test operation(frame).qval == Float32[1, 0.75, 0]
+    empty_frame = DataFrame(score=Float32[])
+    @test isempty(operation(empty_frame).qval)
+    @test eltype(empty_frame.qval) == Float32
+end
