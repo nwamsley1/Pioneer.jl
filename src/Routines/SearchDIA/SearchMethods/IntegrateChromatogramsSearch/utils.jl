@@ -434,12 +434,20 @@ function integrate_precursors(chromatograms::DataFrame,
                              quant_withheld::AbstractVector{Bool};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
+                             im_half_scans::Int = 0,
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    # 2D path: only when the caller attached the grid coordinates AND gave a band. On slice data the
+    # rows of one precursor span both cycles and mobility scans, so the 1D integrator would see a
+    # jagged multi-valued trace -- see integrate_chrom_2d for why this is not optional there.
+    use_2d = im_half_scans > 0 &&
+        hasproperty(chromatograms, :cycle_idx) && hasproperty(chromatograms, :im_scan)
+    cycle_all = use_2d ? chromatograms[!, :cycle_idx]::AbstractVector{UInt32} : UInt32[]
+    im_all = use_2d ? chromatograms[!, :im_scan]::AbstractVector{UInt16} : UInt16[]
 
     chrom_index, max_chrom_len = build_chrom_index(chromatograms, isotope_trace_type)
     N = max_chrom_len + (2*n_pad)
@@ -458,8 +466,9 @@ function integrate_precursors(chromatograms::DataFrame,
     n_thread_slots = Threads.maxthreadid()
     ws_by_thread = [WHWorkspace(N) for _ in 1:n_thread_slots]
     state_by_thread = [Chromatogram(zeros(Float32, N), zeros(Float32, N), 0) for _ in 1:n_thread_slots]
+    sc2d_by_thread = [Chrom2DScratch() for _ in 1:n_thread_slots]
 
-    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram)
+    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram, sc2d::Chrom2DScratch)
         for chunk_idx in task_ranges[batch_id]
             chunk = all_chunks[chunk_idx]
             for i in chunk
@@ -488,6 +497,27 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
+                if use_2d
+                    peak_area[i], new_best_scan[i], points_integrated[i],
+                        integration_start_scan[i], integration_stop_scan[i],
+                        quant_withheld[i] =
+                        integrate_chrom_2d(
+                        @view(rt_all[chrom_range]),
+                        @view(scan_idx_all[chrom_range]),
+                        @view(cycle_all[chrom_range]),
+                        @view(im_all[chrom_range]),
+                        @view(intensity_all[chrom_range]),
+                        apex_scan,
+                        im_half_scans,
+                        sc2d,
+                        ws,
+                        state,
+                        λ,
+                    )
+                    reset!(state)
+                    continue
+                end
+
                 peak_area[i], new_best_scan[i], points_integrated[i],
                     integration_start_scan[i], integration_stop_scan[i],
                     _, _, quant_withheld[i], _ =
@@ -512,7 +542,7 @@ function integrate_precursors(chromatograms::DataFrame,
 
     Threads.@threads :static for batch_id in 1:n_tasks
         tid = Threads.threadid()
-        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid])
+        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid], sc2d_by_thread[tid])
     end
 
     # Clamp NaN and negative values to zero for downstream processing
@@ -1425,6 +1455,16 @@ const CHROM_IM_WINDOW_SCANS = 64.0f0
 chrom_im_window_scans() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SCANS", "")), CHROM_IM_WINDOW_SCANS))
 # Dev override of the per-precursor RT window (minutes) in chromatogram extraction; 0 = off.
 chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_RT_TOL", "")), 0f0))
+
+# Half-width of the mobility INTEGRATION band, in 1/K0, for the 2D integrator (integrate_chrom_2d).
+# Distinct from CHROM_IM_WINDOW_SCANS, which is the wider window the weights are COLLECTED over.
+# Measured on twelve-file HYE runs: mobility FWHM is 0.018 1/K0 at the median and the ordering of band
+# widths is identical on the 15-min and 5-min gradients, so this is a physical constant, not a
+# per-dataset tuning knob. +/-0.021 is the setting Nathan chose; narrower is slightly more accurate and
+# slightly less precise (+/-0.007 gives yeast 0.89 / E. coli 73.5% against 0.86 / 69.3% here).
+# 0 disables the 2D path and falls back to the 1D integrator. Dev override: PIONEER_CHROM_IM_BAND_K0.
+const CHROM_IM_BAND_K0 = 0.021f0
+chrom_im_band_k0() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_BAND_K0", "")), CHROM_IM_BAND_K0))
 
 # im_lines_by_charge(model) -> Vector{NTuple{3,Float32}}
 # Charge-indexed (a, b, sigma) lines from a per-file IM model Dict (key 0 = pooled, other
