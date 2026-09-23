@@ -96,7 +96,8 @@ end
 Per-file ion-mobility calibration after initial LightGBM scoring (ion-mobility packet
 data). Fits per-charge lines of library-predicted 1/K0 against the packet's IM scan
 index on high-confidence target PSMs (score > `min_prob`) via `fit_im_lines`, and writes
-`im_error` = |predicted 1/K0 - line(scan)| / sigma for every row. Charges with fewer
+`im_error` = |predicted 1/K0 - line(scan)| / sigma for every row, and `im_obs` = line(scan),
+the observed mobility on the library's 1/K0 scale (signed, and comparable between runs). Charges with fewer
 than `min_calib` calibration PSMs use the pooled line. When the file has no IM scan
 column or the library no mobility predictions, `im_error` is 0 everywhere — the column
 always exists because ScoringSearch takes its feature list from the first file's schema.
@@ -114,10 +115,16 @@ function add_im_error!(
 )
     n = nrow(best_psms)
     im_error = zeros(Float32, n)
+    # Observed mobility on the library's 1/K0 scale, i.e. the calibration line evaluated at the PSM's
+    # IM scan. Unlike im_error (an absolute, sigma-normalised residual) this is signed and comparable
+    # BETWEEN runs, which is what a donor/receiver mobility comparison needs. Zero when there is no
+    # mobility data, so the column always exists.
+    im_obs = zeros(Float32, n)
     im_scans = getImScans(spectra)
     im_lib = getInvIonMobility(precursors)
     if im_scans === nothing || im_lib === nothing || n == 0
         best_psms[!, :im_error] = im_error
+        best_psms[!, :im_obs] = im_obs
         return Dict{Int, NTuple{3, Float32}}()
     end
     scan = Float32[Float32(im_scans[si]) for si in best_psms[!, :scan_idx]]
@@ -128,14 +135,18 @@ function add_im_error!(
     if isempty(models)
         @debug_l1 "IM calibration (file $ms_file_idx): fewer than $min_calib high-confidence PSMs, im_error = 0"
         best_psms[!, :im_error] = im_error
+        best_psms[!, :im_obs] = im_obs
         return models
     end
     pooled = models[0]
     @inbounds for i in 1:n
         a, b, s = get(models, Int(charge[i]), pooled)
-        im_error[i] = abs(pred[i] - (a + b * scan[i])) / s
+        obs = a + b * scan[i]
+        im_obs[i] = obs
+        im_error[i] = abs(pred[i] - obs) / s
     end
     best_psms[!, :im_error] = im_error
+    best_psms[!, :im_obs] = im_obs
     for (z, (a, b, s)) in sort(collect(models))
         n_z = z == 0 ? count(calib) : count(i -> calib[i] && Int(charge[i]) == z, eachindex(calib))
         @debug_l1 "  IM line " * (z == 0 ? "pooled" : "z=$z") * " (file $ms_file_idx): pred 1/K0 = " *
