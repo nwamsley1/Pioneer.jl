@@ -4,7 +4,12 @@ struct HuberTuningSearchResults <: SearchResults
     huber_delta::Base.Ref{Float32}
     huber_histogram::Dict{Int, Int}
     n_observations::Base.RefValue{Int}
+    n_selected::Base.RefValue{Int}
+    n_curves::Base.RefValue{Int}
 end
+
+HuberTuningSearchResults(delta, histogram, observations) =
+    HuberTuningSearchResults(delta, histogram, observations, Ref(0), Ref(0))
 
 struct HuberTuningSearchParameters{C<:IntegrateChromatogramSearchParameters} <: FragmentIndexSearchParameters
     chromatogram_params::C
@@ -42,6 +47,27 @@ function init_search_results(::HuberTuningSearchParameters, ::SearchContext)
     )
 end
 
+function execute_search(::HuberTuningSearch, search_context::SearchContext, params::PioneerParameters)
+    tuning_params = HuberTuningSearchParameters(params)
+    tuning_params.enabled || return nothing
+    Random.seed!(1844)
+    results = init_search_results(tuning_params, search_context)
+    winners = search_context.huber_calibration_winners
+    files = huber_winner_files(winners)
+    @debug_l1 "Global Huber selection: winners=$(count(w -> w.file_idx != 0, winners)) files=$(length(files))"
+    try
+        for file_idx in ProgressBar(files)
+            idx = Int64(file_idx)
+            spectra = getMSData(getMSData(search_context), idx)
+            process_file!(results, tuning_params, search_context, idx, spectra)
+        end
+        summarize_results!(results, tuning_params, search_context)
+    finally
+        search_context.huber_calibration_winners = HuberCalibrationWinner[]
+    end
+    return nothing
+end
+
 function process_file!(
     results::HuberTuningSearchResults,
     params::HuberTuningSearchParameters,
@@ -61,10 +87,11 @@ function process_file!(
     isempty(passing_psms) && return results
 
     calibration_psms = select_huber_calibration_psms(
-        passing_psms,
+        global_huber_psms(passing_psms, search_context.huber_calibration_winners, ms_file_idx),
         params.max_psms_for_huber,
     )
     isempty(calibration_psms) && return results
+    results.n_selected[] += nrow(calibration_psms)
 
     rt_index = buildRtIndex(
         DataFrame(Arrow.Table(rt_index_path)),
@@ -77,14 +104,16 @@ function process_file!(
         rt_index,
         search_context,
         params,
-        ms_file_idx,
+        ms_file_idx;
+        competing_psms = passing_psms,
     )
+    results.n_curves[] += nrow(tuning_psms) ÷ length(params.delta_grid)
     accumulate_huber_histogram!(
         results.huber_histogram, tuning_psms, params.delta_grid, params.min_pct_diff,
     )
     results.n_observations[] += nrow(tuning_psms)
     if ms_file_idx % 100 == 0
-        @debug_l1 "Huber calibration summary: runs=$ms_file_idx observations=$(results.n_observations[]) accepted_curves=$(sum(values(results.huber_histogram); init=0)) retained_bins=$(length(results.huber_histogram))"
+        @debug_l1 "Huber calibration summary: file_idx=$ms_file_idx selected_psms=$(results.n_selected[]) evaluated_curves=$(results.n_curves[]) delta_evaluations=$(results.n_observations[]) accepted_curves=$(sum(values(results.huber_histogram); init=0)) retained_bins=$(length(results.huber_histogram))"
     end
 
     return results
@@ -123,7 +152,7 @@ function summarize_results!(
         optimal_delta = estimate_optimal_huber_delta(results.huber_histogram)
         results.huber_delta[] = optimal_delta
         setHuberDelta!(search_context, optimal_delta)
-        @debug_l1 "Global Huber delta calibration selected delta=$(optimal_delta) from $(results.n_observations[]) observations; retained_bins=$(length(results.huber_histogram))"
+        @debug_l1 "Global Huber delta calibration selected delta=$(optimal_delta) from selected_psms=$(results.n_selected[]) evaluated_curves=$(results.n_curves[]) delta_evaluations=$(results.n_observations[]) accepted_curves=$(sum(values(results.huber_histogram); init=0)); retained_bins=$(length(results.huber_histogram))"
     catch e
         results.huber_delta[] = fallback_delta
         setHuberDelta!(search_context, fallback_delta)

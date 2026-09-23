@@ -249,6 +249,12 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_obs_high::Vector{Float32}
 end
 
+struct HuberCalibrationWinner
+    probability::Float32
+    file_idx::UInt32
+    scan_idx::UInt32
+end
+
 """
 Primary search context holding all data structures and state for search execution.
 """
@@ -291,6 +297,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
     pg_score_to_pep::Ref{Any}
     
+    huber_calibration_winners::Vector{HuberCalibrationWinner}
     calibration_qc::CalibrationQCState
 
     # Method results storage
@@ -343,6 +350,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, RTBinnedTolerance}(),
             Dict{UInt32, Float32}(),
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
+            HuberCalibrationWinner[],
             CalibrationQCState(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,

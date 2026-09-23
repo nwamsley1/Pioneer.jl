@@ -21,6 +21,49 @@ function empty_huber_tuning_results()
     )
 end
 
+"""Update global Huber winners from already confidence-filtered direct identifications."""
+function collect_huber_winners!(winners::Vector{HuberCalibrationWinner}, psms::DataFrame)
+    recovered = hasproperty(psms, :mbr_recovered) ? psms.mbr_recovered : nothing
+    candidates = hasproperty(psms, :MBR_transfer_candidate) ? psms.MBR_transfer_candidate : nothing
+    _collect_huber_winners!(winners, psms.precursor_idx, psms.prec_prob,
+        psms.ms_file_idx, psms.scan_idx, recovered, candidates)
+    return psms
+end
+
+function _collect_huber_winners!(winners, precursors, probabilities, files, scans, recovered, candidates)
+    for i in eachindex(precursors)
+        recovered !== nothing && coalesce(recovered[i], false) && continue
+        candidates !== nothing && coalesce(candidates[i], false) && continue
+        probability = probabilities[i]
+        (ismissing(probability) || !isfinite(probability)) && continue
+        pid = Int(precursors[i])
+        file_idx, scan_idx = UInt32(files[i]), UInt32(scans[i])
+        old = winners[pid]
+        if old.file_idx == 0 || probability > old.probability ||
+           (probability == old.probability && (file_idx, scan_idx) < (old.file_idx, old.scan_idx))
+            winners[pid] = HuberCalibrationWinner(Float32(probability), file_idx, scan_idx)
+        end
+    end
+    return nothing
+end
+
+function global_huber_psms(psms::DataFrame, winners::Vector{HuberCalibrationWinner}, file_idx::Integer)
+    keep = _huber_winner_mask(psms.precursor_idx, psms.scan_idx, winners, file_idx)
+    return psms[keep, :]
+end
+
+function _huber_winner_mask(precursors, scans, winners, file_idx)
+    keep = falses(length(precursors))
+    for i in eachindex(keep)
+        winner = winners[Int(precursors[i])]
+        keep[i] = winner.file_idx == file_idx && winner.scan_idx == scans[i]
+    end
+    return keep
+end
+
+huber_winner_files(winners::Vector{HuberCalibrationWinner}) =
+    sort!(collect(Set(w.file_idx for w in winners if w.file_idx != 0)))
+
 function select_huber_calibration_psms(psms::DataFrame, max_psms::Int64)
     max_psms <= 0 && return psms[1:0, :]
     nrow(psms) <= max_psms && return psms
@@ -69,14 +112,15 @@ function perform_huber_calibration_search(
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     params::HuberTuningSearchParameters,
-    ms_file_idx::Int64,
+    ms_file_idx::Int64;
+    competing_psms::DataFrame = calibration_psms,
 )
     isempty(calibration_psms) && return empty_huber_tuning_results()
 
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 2)
     scan_to_prec = huber_scan_precursor_mapping(calibration_psms)
-    precursor_rt_map = huber_precursor_rt_map(calibration_psms)
-    precursor_set = Set(calibration_psms[!, :precursor_idx])  # shared read-only across threads (was N copies)
+    precursor_rt_map = huber_precursor_rt_map(competing_psms)
+    precursor_set = Set(competing_psms[!, :precursor_idx])
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
