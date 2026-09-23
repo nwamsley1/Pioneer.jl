@@ -2,7 +2,8 @@
 
 using Test
 using Pioneer
-using Pioneer: im_lines_by_charge, chrom_im_tol_sigma, chrom_rt_tol_override, CHROM_IM_TOL_SIGMA
+using Pioneer: im_lines_by_charge, chrom_im_tol_sigma, chrom_rt_tol_override, CHROM_IM_TOL_SIGMA,
+               im_gate_sigma_mult
 
 @testset "im_lines_by_charge — charge-indexed lines with pooled fill" begin
     @test isempty(im_lines_by_charge(Dict{Int, NTuple{3, Float32}}()))
@@ -13,8 +14,15 @@ using Pioneer: im_lines_by_charge, chrom_im_tol_sigma, chrom_rt_tol_override, CH
     )
     lines = im_lines_by_charge(model)
     @test length(lines) == 8
-    @test lines[2] == model[2] && lines[3] == model[3]
-    @test lines[1] == model[0] && lines[4] == model[0] && lines[8] == model[0]
+    # When a z2 line exists every charge is derived FROM it, with only its sigma scaled per charge:
+    # z3/z4 sit on the z2 line with no offset but 1.8x/2.2x the scatter, and fitting a separate line
+    # per charge gains < 5% while needing PSMs that tuning rarely has above z2. The per-charge and
+    # pooled entries of `model` are deliberately ignored on this path.
+    a2, b2, s2 = model[2]
+    @test lines[2] == model[2]                       # z2 multiplier is 1.0, so z2 is itself
+    @test all(z -> lines[z] == (a2, b2, s2 * im_gate_sigma_mult(z)), 1:8)
+    @test lines[3] != model[3]                       # NOT the separately fitted z3 line
+    @test lines[1] != model[0]
     # a charge above 8 extends the vector
     model[10] = (1.2f0, -0.0006f0, 0.04f0)
     @test length(im_lines_by_charge(model)) == 10
