@@ -36,7 +36,6 @@ struct ProteinScoringSearchParameters <: SearchParameters
     min_peptides::Int64
     q_value_threshold::Float32
     min_pep_neg_threshold_itr::Float32
-    q_value_interpolation_points_per_bin::Int64
     write_qc_plots::Bool
 
     function ProteinScoringSearchParameters(params::PioneerParameters)
@@ -49,7 +48,6 @@ struct ProteinScoringSearchParameters <: SearchParameters
             Int64(protein_scoring_params.min_peptides),
             _resolve_q_value_threshold(global_params),
             PROTEIN_SCORING_MIN_PEP_NEG_THRESHOLD_ITR,
-            Int64(ml_params.pep_bin_size),
             Bool(protein_scoring_params.write_qc_plots)
         )
     end
@@ -126,7 +124,6 @@ function summarize_results!(
         min_peptides = params.min_peptides,
         write_qc_plots = params.write_qc_plots,
         min_pep_neg_threshold_itr = params.min_pep_neg_threshold_itr,
-        q_value_interpolation_points_per_bin = params.q_value_interpolation_points_per_bin
     )
     empty!(protein_ambiguity_candidates)
     empty!(protein_peptide_opportunities)

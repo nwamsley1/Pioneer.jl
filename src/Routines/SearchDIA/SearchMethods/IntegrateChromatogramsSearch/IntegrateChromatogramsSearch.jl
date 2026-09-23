@@ -144,7 +144,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     prec_estimation::P
     match_between_runs::Bool
     q_value_threshold::Float32
-    pep_bin_size::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -165,7 +164,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # nested location for old configs (see _resolve_n_isotopes).
         n_isotopes_val = _resolve_n_isotopes(search_params)
         global_params = params.global_settings
-        machine_learning_params = params.optimization.machine_learning
         match_between_runs =
             hasproperty(global_params, :match_between_runs) ?
             Bool(global_params.match_between_runs) :
@@ -190,7 +188,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             prec_estimation,
             match_between_runs,
             _resolve_q_value_threshold(global_params),
-            Int64(machine_learning_params.pep_bin_size),
         )
     end
 end
@@ -717,7 +714,6 @@ function summarize_results!(
             run_similarity_atlas = precursor_results.run_similarity[],
             q_value_threshold = params.q_value_threshold,
             donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
-            min_pep_points_per_bin = params.pep_bin_size,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
             merged_path = joinpath(
                 getDataOutDir(search_context), "temp_data",

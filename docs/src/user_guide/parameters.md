@@ -37,7 +37,6 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Memory budget (MB) for in-memory PSM scoring. Above this, ScoringSearch switches to the out-of-memory path. |
-| `optimization.machine_learning.pep_bin_size` | Int | `10` | Retained for configuration compatibility. Score calibration now uses exact equal-score groups rather than histogram bins. |
 
 ### Optimization (Chromatogram Integration)
 

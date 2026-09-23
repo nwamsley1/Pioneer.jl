@@ -61,11 +61,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # exceeds this.
     max_psm_memory_mb::Float64
 
-    # Retained for parameter compatibility; grouped calibration uses exact score ties.
-    # Smaller = finer-grained but noisier per-bin FDR estimates; larger =
-    # smoother but coarser.
-    pep_bin_size::Int64
-
     q_value_threshold::Float32
 
     # When false, skip post-integration donor/counterfactual feature
@@ -81,7 +76,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
 
         new(
             Float64(ml_params.max_psm_memory_mb),
-            Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
             mbr,
         )
@@ -465,7 +459,6 @@ function summarize_results!(
             :prec_prob,
             results.merged_quant_path;
             compute_pep = true,
-            min_pep_points_per_bin = params.pep_bin_size,
             fdr_scale_factor = fdr_scale,
             temp_prefix = "preglobal_qval_sidecar",
         )
@@ -595,7 +588,6 @@ function summarize_results!(
                 passing_refs,
                 :prec_prob,
                 results.merged_quant_path;
-                min_pep_points_per_bin = params.pep_bin_size,
                 fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
                 temp_prefix = "recalc_sidecar",
             )

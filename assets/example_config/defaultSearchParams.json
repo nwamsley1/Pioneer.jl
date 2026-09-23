@@ -18,8 +18,7 @@
             "deconvolution_solver": "huber"
         },
         "machine_learning": {
-            "max_psm_memory_mb": 2000,
-            "pep_bin_size": 10
+            "max_psm_memory_mb": 2000
         }
     },
     "proteinScoring": {
