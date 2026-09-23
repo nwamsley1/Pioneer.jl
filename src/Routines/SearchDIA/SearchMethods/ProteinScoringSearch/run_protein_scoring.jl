@@ -245,7 +245,6 @@ function run_protein_scoring!(
     min_peptides::Int64,
     write_qc_plots::Bool,
     min_pep_neg_threshold_itr::Float32,
-    q_value_interpolation_points_per_bin::Int64
 )
     isempty(passing_refs) && return nothing
 
@@ -315,7 +314,6 @@ function run_protein_scoring!(
         sorted_pg_scores_path;
         batch_size = 1_000_000,
         compute_pep = true,
-        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
         temp_prefix = "preglobal_pg_sidecar",
     )
     spline_result === nothing &&
@@ -370,7 +368,6 @@ function run_protein_scoring!(
 
     spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
         batch_size = 1_000_000,
-        min_pep_points_per_bin = q_value_interpolation_points_per_bin,
         temp_prefix = "pg_recalc")
     search_context.pg_score_to_qval[] = spline_result.qval_spline
 

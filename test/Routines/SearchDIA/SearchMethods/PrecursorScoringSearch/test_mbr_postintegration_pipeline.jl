@@ -89,7 +89,6 @@ end
             ],
             joinpath(directory, "unused.arrow");
             q_value_threshold = 0.01f0,
-            min_pep_points_per_bin = 10,
             fdr_scale_factor = 1.0f0,
             pre_mbr_qval_spline = frozen_qvalue,
         )

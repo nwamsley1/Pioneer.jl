@@ -175,8 +175,7 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 ```json
 "optimization": {
     "machine_learning": {
-        "max_psm_memory_mb": 2000,   // PSM in-memory budget; OOM path triggers above
-        "pep_bin_size": 10           // PSMs per bin for empirical q-value/PEP histogram
+        "max_psm_memory_mb": 2000   // PSM in-memory budget; OOM path triggers above
     }
 },
 "proteinInference": {
@@ -186,14 +185,6 @@ ScoringSearch implements a comprehensive 23-step pipeline:
     "q_value_threshold": 0.01        // Final FDR threshold; also used for model comparison
 }
 ```
-
-`spline_points` was a previously-surfaced knob whose corresponding
-`precursor_prob_spline_points_per_bin` / `pg_prob_spline_points_per_bin`
-fields on `ScoringSearchParameters` were never read downstream — both knob
-and fields have been deleted. `interpolation_points` was renamed to
-`pep_bin_size` (clearer name for "PSMs per histogram bin"); old configs
-fall back via `_resolve_q_value_threshold`-style helper. `force_oom` is
-now a developer toggle: `const FORCE_OOM = false` in `ScoringSearch.jl`.
 
 ### Model Comparison Behavior
 - **Automatic Selection**: Enabled by default for datasets with 1,000-100,000 PSMs

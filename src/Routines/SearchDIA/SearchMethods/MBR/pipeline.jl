@@ -503,7 +503,6 @@ function _remap_mbr_scores!(
     refs::Vector{PSMFileReference},
     merged_path::String;
     q_value_threshold::Float32,
-    min_pep_points_per_bin::Int,
     fdr_scale_factor::Float32,
     pre_mbr_qval_spline = nothing,
 )
@@ -514,7 +513,6 @@ function _remap_mbr_scores!(
             :prec_prob,
             merged_path;
             compute_pep = false,
-            min_pep_points_per_bin = min_pep_points_per_bin,
             fdr_scale_factor = fdr_scale_factor,
             temp_prefix = "mbr_pre_remap",
         )
@@ -576,7 +574,6 @@ function _recalculate_post_mbr_qvalues!(
     refs::Vector{PSMFileReference},
     merged_path::String;
     q_value_threshold::Float32,
-    min_pep_points_per_bin::Int,
     fdr_scale_factor::Float32,
 )
     spline_result = build_qvalue_spline_from_refs(
@@ -584,7 +581,6 @@ function _recalculate_post_mbr_qvalues!(
         :prec_prob,
         merged_path;
         compute_pep = true,
-        min_pep_points_per_bin = min_pep_points_per_bin,
         fdr_scale_factor = fdr_scale_factor,
         temp_prefix = "post_integration_mbr",
     )
@@ -665,7 +661,6 @@ function finalize_postintegration_mbr!(
     run_similarity_atlas::Union{Nothing, RunSimilarityAtlas},
     q_value_threshold::Float32,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
-    min_pep_points_per_bin::Int,
     fdr_scale_factor::Float32,
     merged_path::String,
     pre_mbr_qval_spline = nothing,
@@ -880,7 +875,6 @@ function finalize_postintegration_mbr!(
             refs,
             merged_path;
             q_value_threshold = q_value_threshold,
-            min_pep_points_per_bin = min_pep_points_per_bin,
             fdr_scale_factor = fdr_scale_factor,
             pre_mbr_qval_spline = pre_mbr_qval_spline,
         )
@@ -893,7 +887,6 @@ function finalize_postintegration_mbr!(
         refs,
         merged_path;
         q_value_threshold = q_value_threshold,
-        min_pep_points_per_bin = min_pep_points_per_bin,
         fdr_scale_factor = fdr_scale_factor,
     )
     _mark(:recalc_qvalues)

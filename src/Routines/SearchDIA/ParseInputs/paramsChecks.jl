@@ -86,7 +86,6 @@ function checkParams(json_path::String)
 
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Real)
-    check_param(ml_params, "pep_bin_size", Integer)
 
     check_param(opt_params, "chromatogram_integration", Dict)
     chrom_params = opt_params["chromatogram_integration"]

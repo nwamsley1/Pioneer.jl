@@ -224,7 +224,7 @@ end
     build_qvalue_spline_from_refs(refs, score_col, merged_path; ...) → Union{Nothing, NamedTuple}
 
 Build grouped q-value/PEP mappings using bounded sorting and disk-backed calibration.
-`merged_path`, bin size, and batch size are retained for caller compatibility.
+`merged_path` selects the scratch directory; batch size is retained for caller compatibility.
 """
 function build_qvalue_spline_from_refs(
     refs::Vector{<:FileReference},
@@ -232,7 +232,6 @@ function build_qvalue_spline_from_refs(
     merged_path::String;
     batch_size::Int = 10_000_000,
     compute_pep::Bool = false,
-    min_pep_points_per_bin::Int = 100,
     fdr_scale_factor::Float32 = 1.0f0,
     temp_prefix::String = "sidecar",
     memory_budget_bytes::Int = SCORE_WORKSPACE_BYTES,
