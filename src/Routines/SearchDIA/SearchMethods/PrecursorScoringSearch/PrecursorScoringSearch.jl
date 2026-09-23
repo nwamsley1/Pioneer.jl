@@ -61,7 +61,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # exceeds this.
     max_psm_memory_mb::Float64
 
-    # PSMs per bin for empirical q-value/PEP interpolation in get_qvalue_spline.
+    # Retained for parameter compatibility; grouped calibration uses exact score ties.
     # Smaller = finer-grained but noisier per-bin FDR estimates; larger =
     # smoother but coarser.
     pep_bin_size::Int64

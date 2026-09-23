@@ -107,41 +107,41 @@ function _mbr_donor_score_floor(
     q_value_threshold::Float32 = donor_q_threshold,
 )
     started = last_progress = time()
-    @debug_l1 "MBR donor threshold collection starting: files=$(length(file_paths)) initial_pass=$require_initial_pass"
-    scores = Float32[]
-    targets = Bool[]
-    for (file_idx, path) in enumerate(file_paths)
-        tbl = Arrow.Table(path)
-        hasproperty(tbl, :trace_prob_prepass) ||
-            error("MBR donor selection requires :trace_prob_prepass in $path")
-        @inbounds for row in eachindex(tbl.trace_prob_prepass)
+    rows = 0
+    @debug_l1 "MBR donor threshold grouping starting: files=$(length(file_paths)) initial_pass=$require_initial_pass"
+    score_floor = qvalue_score_cutoff(; q_threshold=donor_q_threshold,
+        temp_parent=isempty(file_paths) ? tempdir() : dirname(first(file_paths))) do emit
+        for (file_idx, path) in enumerate(file_paths)
+            tbl = Arrow.Table(path)
+            hasproperty(tbl, :trace_prob_prepass) ||
+                error("MBR donor selection requires :trace_prob_prepass in $path")
             if require_initial_pass
                 hasproperty(tbl, :qval) && hasproperty(tbl, :global_qval) ||
                     error("Initial-pass donor floor requires q-value columns in $path")
-                _mbr_initial_pass(
-                    tbl.qval[row],
-                    tbl.global_qval[row],
-                    q_value_threshold,
-                ) || continue
+                rows += _emit_mbr_initial_scores(emit, tbl.trace_prob_prepass, tbl.target,
+                    tbl.qval, tbl.global_qval, q_value_threshold)
+            else
+                _emit_score_arrays(emit, tbl.trace_prob_prepass, tbl.target)
+                rows += length(tbl.target)
             end
-            push!(scores, Float32(tbl.trace_prob_prepass[row]))
-            push!(targets, Bool(tbl.target[row]))
-        end
-        if time() - last_progress >= 60
-            @debug_l1 "MBR donor threshold collection: files=$file_idx/$(length(file_paths)) rows=$(length(scores)) elapsed=$(round(time() - started, digits=2))s"
-            last_progress = time()
+            if time() - last_progress >= 60
+                @debug_l1 "MBR donor threshold grouping: files=$file_idx/$(length(file_paths)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
+                last_progress = time()
+            end
         end
     end
-    @debug_l1 "MBR donor threshold collection complete: rows=$(length(scores)) elapsed=$(round(time() - started, digits=2))s"
-    isempty(scores) && return Inf32
-    started = time()
-    @debug_l1 "MBR donor threshold q-values starting: rows=$(length(scores))"
-    qvalues = similar(scores)
-    get_qvalues!(scores, targets, qvalues)
-    eligible = targets .& (qvalues .<= donor_q_threshold)
-    score_floor = any(eligible) ? minimum(scores[eligible]) : Inf32
-    @debug_l1 "MBR donor threshold q-values complete: score_floor=$score_floor elapsed=$(round(time() - started, digits=2))s"
-    return score_floor
+    @debug_l1 "MBR donor threshold complete: rows=$rows score_floor=$score_floor elapsed=$(round(time()-started, digits=2))s"
+    return score_floor === nothing ? Inf32 : Float32(score_floor)
+end
+
+function _emit_mbr_initial_scores(emit, scores, targets, qvalues, global_qvalues, threshold)
+    rows = 0
+    for row in 1:length(scores)
+        _mbr_initial_pass(qvalues[row], global_qvalues[row], threshold) || continue
+        emit(scores[row], targets[row])
+        rows += 1
+    end
+    return rows
 end
 
 function _collect_mbr_donor_files!(

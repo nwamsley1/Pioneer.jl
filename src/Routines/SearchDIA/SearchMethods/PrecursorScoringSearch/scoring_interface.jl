@@ -152,12 +152,6 @@ function build_global_qval_dict_from_scores(
     scores = Float32[score_dict[pid] for pid in pids]
     targets = Bool[target_dict[pid] for pid in pids]
 
-    # Sort descending by score
-    perm = sortperm(scores; rev=true)
-    permute!(pids, perm)
-    permute!(scores, perm)
-    permute!(targets, perm)
-
     # Compute q-values
     qvals = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals; fdr_scale_factor=fdr_scale)
@@ -201,41 +195,6 @@ end
 
 
 """
-    write_score_sidecars(refs, columns; temp_prefix) → Vector{PSMFileReference}
-
-Extract only the named columns from each file into a temporary Arrow sidecar file.
-"""
-function write_score_sidecars(
-    refs::Vector{<:FileReference},
-    columns::Vector{Symbol};
-    temp_prefix::String = "sidecar"
-)
-    started = last_progress = time()
-    rows_processed = 0
-    @debug_l1 "Score sidecars ($temp_prefix) starting: files=$(length(refs)) columns=$(join(columns, ','))"
-    sidecar_refs = PSMFileReference[]
-    for (file_idx, ref) in enumerate(refs)
-        # Use materialize_columns so columns are pulled from main OR any
-        # registered sidecar (e.g. :prec_prob now lives in a sidecar after
-        # aggregate_per_file!).
-        df = ref isa PSMFileReference ? materialize_columns(ref, columns) :
-             DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))[!, columns]
-        if nrow(df) > 0
-            temp_path = tempname() * "_$(temp_prefix).arrow"
-            writeArrow(temp_path, df)
-            push!(sidecar_refs, PSMFileReference(temp_path))
-            rows_processed += nrow(df)
-        end
-        if time() - last_progress >= 60
-            @debug_l1 "Score sidecars ($temp_prefix): files=$file_idx/$(length(refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
-            last_progress = time()
-        end
-    end
-    @debug_l1 "Score sidecars ($temp_prefix) complete: files=$(length(refs)) nonempty=$(length(sidecar_refs)) rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
-    return sidecar_refs
-end
-
-"""
     _score_floor_for_qvalue(qval_spline, q_value_threshold)
 
 Find the lowest run-level score whose pooled experiment-wide q-value passes
@@ -264,7 +223,8 @@ end
 """
     build_qvalue_spline_from_refs(refs, score_col, merged_path; ...) → Union{Nothing, NamedTuple}
 
-Encapsulates the full sidecar lifecycle: write → sort → merge → cleanup → spline computation.
+Build grouped q-value/PEP mappings using bounded sorting and disk-backed calibration.
+`merged_path`, bin size, and batch size are retained for caller compatibility.
 """
 function build_qvalue_spline_from_refs(
     refs::Vector{<:FileReference},
@@ -274,56 +234,29 @@ function build_qvalue_spline_from_refs(
     compute_pep::Bool = false,
     min_pep_points_per_bin::Int = 100,
     fdr_scale_factor::Float32 = 1.0f0,
-    temp_prefix::String = "sidecar"
+    temp_prefix::String = "sidecar",
+    memory_budget_bytes::Int = SCORE_WORKSPACE_BYTES,
 )
     started = time()
     context = "Score calibration ($temp_prefix, $score_col)"
-    sidecar_refs = write_score_sidecars(refs, [score_col, :target]; temp_prefix=temp_prefix)
-    isempty(sidecar_refs) && return nothing
-    n_rows = sum(row_count, sidecar_refs)
-
-    try
-        phase_started = time()
-        @debug_l1 "$context sorting starting: files=$(length(sidecar_refs)) rows=$n_rows"
-        sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
-        @debug_l1 "$context sorting complete: elapsed=$(round(time() - phase_started, digits=2))s"
-        phase_started = time()
-        @debug_l1 "$context merge starting: files=$(length(sidecar_refs)) rows=$n_rows"
-        stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
-                           batch_size=batch_size, reverse=[true, true])
-        @debug_l1 "$context merge complete: elapsed=$(round(time() - phase_started, digits=2))s"
-    finally
-        phase_started = last_progress = time()
-        @debug_l1 "$context sidecar cleanup starting: files=$(length(sidecar_refs))"
-        GC.gc(false)
-        for (file_idx, ref) in enumerate(sidecar_refs)
-            safeRm(file_path(ref); force=true)
-            if time() - last_progress >= 60
-                @debug_l1 "$context sidecar cleanup: files=$file_idx/$(length(sidecar_refs)) elapsed=$(round(time() - phase_started, digits=2))s"
-                last_progress = time()
+    rows = 0
+    @debug_l1 "$context grouping starting: files=$(length(refs))"
+    result = build_score_calibration(; compute_pep, fdr_scale_factor, memory_budget_bytes,
+        temp_parent=dirname(merged_path)) do emit
+        for ref in refs
+            if ref isa PSMFileReference
+                table = materialize_columns(ref, [score_col, :target])
+                _emit_score_arrays(emit, table[!, score_col], table[!, :target])
+                rows += nrow(table)
+            else
+                for table in Arrow.Stream(file_path(ref))
+                    scores, targets = Tables.getcolumn(table, score_col), Tables.getcolumn(table, :target)
+                    _emit_score_arrays(emit, scores, targets)
+                    rows += length(scores)
+                end
             end
         end
-        @debug_l1 "$context sidecar cleanup complete: elapsed=$(round(time() - phase_started, digits=2))s"
     end
-
-    phase_started = time()
-    @debug_l1 "$context q-value interpolation starting: rows=$n_rows"
-    qval_spline = get_qvalue_spline(merged_path, score_col, false;
-        min_pep_points_per_bin=min_pep_points_per_bin,
-        fdr_scale_factor=fdr_scale_factor)
-    @debug_l1 "$context q-value interpolation complete: elapsed=$(round(time() - phase_started, digits=2))s"
-
-    pep_interp = if compute_pep
-        phase_started = time()
-        @debug_l1 "$context PEP interpolation starting: rows=$n_rows"
-        result = get_pep_interpolation(merged_path, score_col;
-            fdr_scale_factor=fdr_scale_factor)
-        @debug_l1 "$context PEP interpolation complete: elapsed=$(round(time() - phase_started, digits=2))s"
-        result
-    else
-        nothing
-    end
-
-    @debug_l1 "$context complete: files=$(length(refs)) rows=$n_rows elapsed=$(round(time() - started, digits=2))s"
-    return (; qval_spline, pep_interp)
+    @debug_l1 "$context complete: files=$(length(refs)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
+    return result
 end

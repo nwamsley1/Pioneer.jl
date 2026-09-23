@@ -31,6 +31,7 @@ include("./UnitTests/test_download_speclib.jl")
 
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
+include("./UnitTests/test_score_groups.jl")
 
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
