@@ -299,7 +299,7 @@ function getApexScan(
 end
 
 """
-getIntegrationBounds!(u2, u, N, apex_scan, n_pad) -> UnitRange
+getIntegrationBounds!(u2, u, N, apex_scan, n_pad, boundary_floor) -> UnitRange
 
 Find the start/stop scan indices of a chromatographic peak whose apex
 (in the *unpadded* region) is at `apex_scan`.
@@ -309,6 +309,11 @@ Find the start/stop scan indices of a chromatographic peak whose apex
 * `N`  - length of the **central** window (without padding)
 * `apex_scan` - 1-based apex position inside the central window
 * `n_pad` - number of padded samples on each side
+* `boundary_floor` - the search starts at `apex_scan ± boundary_floor` and only ever
+  walks outward, so the returned range always contains it. This is the narrowest peak
+  the picker can return, and it must scale with the peak width in cycles: the same
+  constant is a different fraction of a peak on a 5-minute gradient than on a 60-minute
+  one. Callers that know the run's cycle time and peak width should pass a scaled value.
 
 Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).
 """
@@ -316,7 +321,8 @@ function getIntegrationBounds!(u2::Vector{Float32},
                             u::Vector{Float32},
                             N::Int,
                             apex_scan::Int,
-                            n_pad::Int)::UnitRange{Int}
+                            n_pad::Int,
+                            boundary_floor::Int = 2)::UnitRange{Int}
 
     # indices in the *padded* coordinate system
     pad_start   = n_pad + 1                   # first index of the real window
@@ -325,10 +331,12 @@ function getIntegrationBounds!(u2::Vector{Float32},
 
     #return pad_start:pad_end
 
-    # initialise search bounds (clamp to valid padded range). Start the boundary
-    # search at apex ± 2 (not ± 1) so the integrated peak is at least 5 scans wide.
-    start = max(apex_padded - 2, pad_start)
-    stop  = min(apex_padded + 2, pad_end)
+    # initialise search bounds (clamp to valid padded range). The search starts at
+    # apex ± boundary_floor and only walks outward, so this is the narrowest peak the
+    # picker can return (default 2, i.e. at least 5 scans wide).
+    bf = max(boundary_floor, 1)
+    start = max(apex_padded - bf, pad_start)
+    stop  = min(apex_padded + bf, pad_end)
 
     # ──────────────── search to the right (RH boundary) ────────────────
     # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
@@ -603,7 +611,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0))
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_floor::Int = 2)
 
     m = length(rt_col)
     # Helper functions (WHSmooth!, fillU2!, getApexScan, getIntegrationBounds!,
@@ -636,7 +645,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         z,
         m,
         apex_scan,
-        n_pad
+        n_pad,
+        boundary_floor
     )
     fallback_scan_range = ensureMinimumScanRange(scan_range, apex_scan, m)
     forced_boundary_range = getForcedBoundaryRange(
@@ -840,7 +850,8 @@ function integrate_chrom(chrom::SubDataFrame,
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0))
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_floor::Int = 2)
     return integrate_chrom(
         chrom[!, :rt],
         chrom[!, :scan_idx],
@@ -860,5 +871,6 @@ function integrate_chrom(chrom::SubDataFrame,
         debug_apex_scan = debug_apex_scan,
         forced_boundary_start_scan = forced_boundary_start_scan,
         forced_boundary_stop_scan = forced_boundary_stop_scan,
+        boundary_floor = boundary_floor,
     )
 end
