@@ -349,9 +349,8 @@ export interface ConvertParams {
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
    *
-   *  PioneerConverter parallelises on two levels and the knobs multiply, so
-   *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
-   *  only one exposed. It is deliberately not the sidebar thread count: that
+   *  PioneerConverter processes files sequentially and parallelises scan reads
+   *  within the current file. This is separate from the sidebar thread count: that
    *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
    *  reads it.
    *
@@ -361,9 +360,8 @@ export interface ConvertParams {
   batchSize: string
   /** RAW only. */
   scanChunkSize: string
-  /** mzML only: files converted at the same time. The Julia converter has one
-   *  level of parallelism rather than two, so unlike the RAW path this is
-   *  exposed directly instead of being pinned at 1. */
+  /** mzML only: files converted at the same time. RAW conversion is always
+   *  sequential across files. */
   concurrentFiles: string
   /** mzML only. convertMzML omits scan headers by default; they roughly double
    *  the Arrow file and nothing in SearchDIA reads them, so this stays off
@@ -379,7 +377,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   outputDir: '',
   skipExisting: false,
   threadsPerFile: '3',
-  batchSize: '10000',
+  batchSize: '1000',
   scanChunkSize: '128',
   concurrentFiles: '2',
   includeScanHeader: false,

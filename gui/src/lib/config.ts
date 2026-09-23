@@ -451,7 +451,7 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
  *  flags, and the two flag sets only partly overlap:
  *
  *    PioneerConverter RAW_PATH  [-o DIR] [--skip-existing]
- *                     [-n CONCURRENT] [-t PER_FILE] [-b BATCH] [--scan-chunk-size N]
+ *                     [-t PER_FILE] [-b BATCH] [--scan-chunk-size N]
  *
  *    convertMzML      MZML_PATH [-o DIR] [--skip-existing]
  *                     [-n CONCURRENT] [--skip-header | --include-scan-header]
@@ -465,9 +465,7 @@ export function buildConvertArgs(s: ConvertParams): string[] {
   if (s.skipExisting) args.push('--skip-existing')
 
   if (s.format === 'mzml') {
-    // convertMzML parallelises across files only -- there is no within-file
-    // knob to multiply against -- so this one is exposed as-is rather than
-    // pinned the way the RAW path pins it.
+    // convertMzML exposes the number of files converted at once.
     args.push('--concurrent-files', String(Math.max(1, parseInt(s.concurrentFiles, 10) || 1)))
     // Emitted either way: --skip-header is the converter's default, but naming
     // it keeps the logged line unambiguous about which was chosen.
@@ -475,11 +473,7 @@ export function buildConvertArgs(s: ConvertParams): string[] {
     return args
   }
 
-  // One file at a time, split across `threads` scan readers. The converter can
-  // work on several files concurrently, but exposing both knobs meant the two
-  // multiplied and it was easy to oversubscribe the machine without noticing.
-  // Pinned to 1 explicitly rather than left to the converter's own default.
-  args.push('--concurrent-files', '1')
+  // PioneerConverter processes one file at a time with this many scan readers.
   args.push('--threads-per-file', String(Math.max(1, parseInt(s.threadsPerFile, 10) || 1)))
   args.push('--batch-size', s.batchSize.trim())
   args.push('--scan-chunk-size', s.scanChunkSize.trim())
@@ -538,11 +532,9 @@ export interface ConvertGroup {
  *  files, so its group is one invocation over a staging folder. PioneerConverter
  *  cannot: its Thermo reader memory-maps the file it is given and gets the size
  *  of the link rather than the target, so a linked `.raw` dies with an
- *  arithmetic overflow — while the process still exits 0. So the `.raw` group is
- *  one invocation per file, on real paths, run in sequence as a single job.
- *  Nothing is lost by that: buildConvertArgs already pins `--concurrent-files 1`
- *  for `.raw`, so one invocation over N files converted them one at a time
- *  anyway.
+ *  arithmetic overflow with older converter builds. The `.raw` group uses one
+ *  invocation per file, on real paths, run in sequence as a single job. This
+ *  matches PioneerConverter's sequential directory conversion.
  *
  *  Anything neither converter reads is left out entirely; validateConvertRun
  *  refuses the run rather than letting it be silently dropped here.

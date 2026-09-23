@@ -78,7 +78,7 @@ show_help() {
     #echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
     #echo "                                              Generate parse parameter template"
     #echo "                                              Default params output path: ./parsespeclib_params.json"
-    echo "  convert-raw <data_path> [--output-dir <dir>] [--skip-existing] [--concurrent-files N] [--threads-per-file N]"
+    echo "  convert-raw <data_path> [--output-dir <dir>] [--skip-existing] [--threads-per-file N]"
     echo "                                              Convert Thermo RAW files via PioneerConverter"
     echo "                                              For additional converter options, run: pioneer convert-raw --help"
     echo "  convert-mzml <data_path> [options]"

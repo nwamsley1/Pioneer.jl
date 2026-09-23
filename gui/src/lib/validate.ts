@@ -62,7 +62,7 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   maxCharge: { label: 'Max charge', min: 1, max: 4, step: 1, int: true },
   missedCleav: { label: 'Missed cleav.', min: 0, max: 9, step: 1, int: true },
   maxVarMods: { label: 'Max var. mods', min: 0, max: 5, step: 1, int: true },
-  // PioneerConverter's own defaults are 2 / 3 / 10000 / 128.
+  // PioneerConverter's own defaults are 3 / 1000 / 128.
   threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
   batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
   scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
@@ -634,9 +634,6 @@ export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
   return NONE
 }
 
-/** The two parallelism knobs multiply, so individually reasonable values can
- *  still ask for more threads than the machine has. The Julia thread picker is
- *  clamped at its control; this product cannot be, so it is enforced here. */
 /** Blocks a download that cannot be started.
  *
  *  A destination is required rather than defaulted: a 3 GiB download landing
