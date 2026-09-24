@@ -9,9 +9,8 @@
 # `getMzArray` / `getIntensityArray` are not defined for this type on purpose: a shared implicit buffer is exactly
 # what this design avoids.
 #
-# The vectors are `Vector{Union{Missing,Float32}}` so the views match the `AbstractArray{Union{Missing,Float32}}`
-# signatures of run_fused! / prepare_scan_peaks! / the fragment-index scorer unchanged (element types are
-# invariant, so a Float32 view would not). No element is ever `missing`.
+# Peaks are plain `Float32` (never missing). The peak kernels (run_fused!, prepare_scan_peaks!, the fragment-index
+# scorer) take `AbstractArray{<:Union{Missing,Float32}}`, so they accept these and Arrow's nullable peak columns.
 #
 # m/z and intensity are the same Float32 values `TimsSlices.expand` writes into the slice Arrow
 # (`Float32((a + b·bin/k)²)`, `Float32(stored / int_scale)`), so a search from the .tdfs and from its expanded
@@ -30,10 +29,10 @@ mutable struct PeakDecodeBuffer
     scan::Int                                   # scan currently decoded (0 = none)
     sb::SliceBuffer
     codec::BlockCodec
-    mz::Vector{Union{Missing, Float32}}
-    intensity::Vector{Union{Missing, Float32}}
+    mz::Vector{Float32}
+    intensity::Vector{Float32}
 end
-PeakDecodeBuffer() = PeakDecodeBuffer(0, 0, SliceBuffer(), BlockCodec(), Union{Missing, Float32}[], Union{Missing, Float32}[])
+PeakDecodeBuffer() = PeakDecodeBuffer(0, 0, SliceBuffer(), BlockCodec(), Float32[], Float32[])
 
 # Identifies an opened file for the buffer's (file, scan) cache key.
 const _TDFS_NEXT_UID = Threads.Atomic{Int}(1)
@@ -101,7 +100,7 @@ function _tdfs_decode!(buf::PeakDecodeBuffer, d::TdfsMassSpecData, scan::Int)
     buf
 end
 
-const _TdfsPeakView = SubArray{Union{Missing, Float32}, 1, Vector{Union{Missing, Float32}}, Tuple{UnitRange{Int64}}, true}
+const _TdfsPeakView = SubArray{Float32, 1, Vector{Float32}, Tuple{UnitRange{Int64}}, true}
 
 """
     getPeaks!(buf::PeakDecodeBuffer, spectra::MassSpecData, scan_idx) -> (mz, intensity)

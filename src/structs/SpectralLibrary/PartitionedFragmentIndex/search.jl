@@ -213,8 +213,8 @@ on every call so scans, calibrated models, and intensity cutoffs cannot go stale
         partition::LocalPartition{T},
         irt_low::Float32,
         irt_high::Float32,
-        masses::AbstractArray{Union{Missing, U}},
-        intensities::AbstractArray{Union{Missing, V}},
+        masses::AbstractArray{<:Union{Missing, U}},
+        intensities::AbstractArray{<:Union{Missing, V}},
         mass_err_model::AbstractMassErrorModel;
         linear_threshold::UInt32 = HINT_LINEAR_THRESHOLD,
         intensity_threshold::Float32 = 0.0f0,
