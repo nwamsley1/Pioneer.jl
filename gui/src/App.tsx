@@ -22,6 +22,7 @@ import {
   buildLibJson,
   buildSearchJson,
   convertCommandLine,
+  defaultConvertOutput,
   buildConfigToState,
   computeExtras,
   extraLeafPaths,
@@ -858,21 +859,23 @@ export default function App() {
   const verifyConversionProduced = useCallback(async (job: Job) => {
     if (job.snapshot.cmd !== 'convertraw') return
     const c = job.snapshot.convert
-    const dir = c.outputDir.trim() || `${c.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    const dir = c.outputDir.trim() || defaultConvertOutput(c)
     if (!dir) return
     const info = await backend.inspectPath(dir)
-    if (info.arrow_count > 0) return
+    const bruker = c.format === 'bruker'
+    if ((bruker ? info.tdfs_count : info.arrow_count) > 0) return
+    const out = bruker ? '.tdfs runs' : '.arrow files'
     setJobs((prev) =>
       prev.map((j) =>
         j.id === job.id
           ? {
               ...j,
               status: 'failed' as JobStatus,
-              failMsg: 'The converter reported success but wrote no .arrow files.',
+              failMsg: `The converter reported success but wrote no ${out}.`,
               logLines: [
                 ...j.logLines,
                 {
-                  text: `ERROR: no .arrow files in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
                   stream: 'app' as const,
                   transient: false,
                 },
@@ -965,10 +968,9 @@ export default function App() {
     // The ConvertRAW workflow drives two binaries. Which one is a property of
     // the run, not of the tab, so it is read off the snapshot rather than the
     // command id -- that way a restored mzML run re-runs as an mzML run.
+    const convertFormat = next.snapshot.cmd === 'convertraw' ? next.snapshot.convert.format : null
     const backendCmd: BackendCommand =
-      next.snapshot.cmd === 'convertraw' && next.snapshot.convert.format === 'mzml'
-        ? 'convertmzml'
-        : next.cmd
+      convertFormat === 'mzml' ? 'convertmzml' : convertFormat === 'bruker' ? 'convertbruker' : next.cmd
 
     backend
       .startJob(next.id, backendCmd, next.invocation, next.threads)
@@ -1089,13 +1091,34 @@ export default function App() {
     setRunError('')
   }
 
+  /** Same, for timsTOF runs: a .tdfs run is a folder, which the file picker
+   *  cannot select. Anything picked that is not a .tdfs folder is refused. */
+  const addMsTdfs = async () => {
+    const picked = await backend.pickFolders('Choose the timsTOF .tdfs runs to search')
+    if (picked.length === 0) return
+    const runs = picked.filter((f) => /\.tdfs[\\/]?$/i.test(f.trim()))
+    setSearch((p) => {
+      const have = new Set(p.msDataFiles)
+      return { ...p, msDataFiles: [...p.msDataFiles, ...runs.filter((f) => !have.has(f))] }
+    })
+    setRunError(
+      runs.length < picked.length
+        ? `Not a .tdfs run: ${picked.filter((f) => !runs.includes(f)).join(', ')}`
+        : '',
+    )
+  }
+
   const removeMsFile = (index: number) => {
     setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
   }
 
   const browseConvertInput = async () => {
     const picked = await backend.pickFolder(
-      convert.format === 'mzml' ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
+      convert.format === 'mzml'
+        ? 'Choose a folder of .mzML files'
+        : convert.format === 'bruker'
+          ? 'Choose a Bruker .d folder, or a folder of them'
+          : 'Choose a folder of .raw files',
     )
     if (picked) onParam('input', picked)
   }
@@ -1585,7 +1608,7 @@ export default function App() {
           return
         }
         if (!files.length) {
-          setRunError('No .arrow files in that folder.')
+          setRunError('No .arrow files or .tdfs runs in that folder.')
           return
         }
       }
@@ -2059,6 +2082,7 @@ export default function App() {
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
                 onAddMsFiles={addMsFiles}
+                onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}

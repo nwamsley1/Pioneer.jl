@@ -37,6 +37,10 @@ pub enum Command {
     /// Julia one. The page picks between them; they are separate here because
     /// they are separate binaries with separate flags and separate environments.
     ConvertMzml,
+    /// Bruker timsTOF `.d` bundles to `.tdfs` runs: Pioneer's Julia
+    /// `convertBruker` (TimsSlices). A third converter because it is a third
+    /// binary, with a different output (`.tdfs` folders, not `.arrow` files).
+    ConvertBruker,
 }
 
 impl Command {
@@ -47,6 +51,7 @@ impl Command {
             Command::DownloadSpecLib => "DownloadSpecLib",
             Command::ConvertRaw => "PioneerConverter",
             Command::ConvertMzml => "convertMzML",
+            Command::ConvertBruker => "convertBruker",
         }
     }
 
@@ -58,6 +63,7 @@ impl Command {
             Command::DownloadSpecLib => "download",
             Command::ConvertRaw => "convert-raw",
             Command::ConvertMzml => "convert-mzml",
+            Command::ConvertBruker => "convert-bruker",
         }
     }
 
@@ -176,7 +182,7 @@ fn inspect(home: &Path, source: &str) -> Option<PioneerInfo> {
     let bin = home.join("bin");
     let mut executables = Vec::new();
     for cmd in [Command::SearchDia, Command::BuildSpecLib, Command::DownloadSpecLib,
-                Command::ConvertRaw, Command::ConvertMzml] {
+                Command::ConvertRaw, Command::ConvertMzml, Command::ConvertBruker] {
         if exe_path(&bin, cmd.exe_name()).is_some() {
             executables.push(cmd.exe_name().to_string());
         }

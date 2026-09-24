@@ -1044,6 +1044,25 @@ export function BuildSpecLibForm({
             </>
           )}
         </div>
+        <div
+          style={{
+            marginTop: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+              Bruker timsTOF library
+            </div>
+            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
+              Also predict ion mobility (AlphaPeptDeep CCS). Needed to search timsTOF .tdfs data.
+            </div>
+          </div>
+          <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
+        </div>
       </section>
 
       <section style={CARD}>

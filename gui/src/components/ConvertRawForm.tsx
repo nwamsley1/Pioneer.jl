@@ -15,7 +15,7 @@
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
-import { convertGroups, formatOfFile, type ConvertGroup } from '../lib/config'
+import { convertGroups, defaultConvertOutput, formatOfFile, type ConvertGroup } from '../lib/config'
 import type { ConvertFormat, ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
@@ -219,6 +219,7 @@ export function ConvertRawForm({
   // In list mode each file names its own converter, so the format toggle has
   // nothing to decide and is hidden. `format` still drives the folder-mode copy.
   const isMzml = !byFiles && params.format === 'mzml'
+  const isBruker = !byFiles && params.format === 'bruker'
   const groups = convertGroups(params.inputFiles)
   const unreadable = params.inputFiles.filter((f) => formatOfFile(f) === null)
 
@@ -229,15 +230,23 @@ export function ConvertRawForm({
   const defaultOut = byFiles
     ? 'required for a list of files'
     : params.input.trim()
-      ? `${params.input.trim()}/arrow_out`
-      : '<input folder>/arrow_out'
+      ? defaultConvertOutput(params)
+      : isBruker
+        ? '<input folder>/tdfs_out'
+        : '<input folder>/arrow_out'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>
-            {byFiles ? 'Convert files' : isMzml ? 'Convert mzML files' : 'Convert raw files'}
+            {byFiles
+              ? 'Convert files'
+              : isMzml
+                ? 'Convert mzML files'
+                : isBruker
+                  ? 'Convert Bruker timsTOF data'
+                  : 'Convert raw files'}
           </h2>
         </div>
         <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
@@ -247,6 +256,14 @@ export function ConvertRawForm({
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code> files to
               Arrow, which is what SearchDIA reads. The list can mix the two — each format goes to
               its own converter, as its own run.
+            </>
+          ) : isBruker ? (
+            <>
+              Convert Bruker timsTOF diaPASEF{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.d</code> folders to{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.tdfs</code> runs, which
+              is what SearchDIA reads for timsTOF data. Search them with a library built with the
+              timsTOF option on.
             </>
           ) : isMzml ? (
             <>
@@ -269,7 +286,7 @@ export function ConvertRawForm({
           <button
             type="button"
             onClick={() => onParam('format', 'raw')}
-            style={seg(!isMzml)}
+            style={seg(!isMzml && !isBruker)}
           >
             Thermo .raw
           </button>
@@ -280,10 +297,19 @@ export function ConvertRawForm({
           >
             .mzML
           </button>
+          <button
+            type="button"
+            onClick={() => onParam('format', 'bruker')}
+            style={seg(isBruker)}
+          >
+            Bruker .d
+          </button>
         </div>
 
         <label style={LABEL}>Input</label>
-        <div style={{ ...SEG_TRACK, marginBottom: 12 }}>
+        {/* A .d bundle is a folder, which the file list cannot hold, so Bruker is
+            folder-only: the folder can be one .d or a folder of them. */}
+        <div style={{ ...SEG_TRACK, marginBottom: 12, display: isBruker ? 'none' : undefined }}>
           <button
             type="button"
             onClick={() => onParam('inputMode', 'files')}
@@ -316,7 +342,9 @@ export function ConvertRawForm({
                 data-key="convertInput"
                 value={params.input}
                 onChange={(e) => onParam('input', e.target.value)}
-                placeholder={isMzml ? '/path/to/mzml/folder' : '/path/to/raw/folder'}
+                placeholder={
+                  isMzml ? '/path/to/mzml/folder' : isBruker ? '/path/to/run.d or folder' : '/path/to/raw/folder'
+                }
                 style={{
                   flex: 1,
                   padding: '9px 12px',
@@ -376,7 +404,7 @@ export function ConvertRawForm({
 
         <div
           style={{
-            display: 'flex',
+            display: isBruker ? 'none' : 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 14,
@@ -461,7 +489,11 @@ export function ConvertRawForm({
             {/* Disjoint sets, not a shared set with some fields disabled: none
                 of PioneerConverter's knobs has a counterpart in convertMzML,
                 so showing them greyed out would only suggest otherwise. */}
-            {isMzml ? (
+            {isBruker ? (
+              <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+                None. Slicing uses the settings Pioneer&rsquo;s timsTOF search was validated with.
+              </div>
+            ) : isMzml ? (
               <>
                 <div
                   style={{
