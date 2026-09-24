@@ -15,8 +15,9 @@ until it is marked **applied** with a commit.
 - Mixed vendors in one search (`.arrow` + `.tdfs`): hard error. **Applied `3f14465dc`.**
 - The GUI must be able to build Bruker libraries, convert `.d`, and search `.tdfs`.
   **Applied `8ff7fc1a3` (convertBruker executable, `pioneer convert-bruker`) + `5bd43f747` (GUI).**
-  Type-checked and Rust-tested only; not yet clicked through in the app. Open: the library calibration-file
-  picker does not take `.tdfs`; no precompile target for convertBruker / a `.tdfs` search (needs a fixture).
+  Type-checked and Rust-tested only; not yet clicked through in the app. The library calibration-file picker
+  takes a `.tdfs` run (constant fragment bounds, precursor bounds from the window edges; see the commit after
+  `3307f1aae`). Open: no precompile target for convertBruker / a `.tdfs` search (needs a fixture).
 - Before merging: verify parameter tuning is not broken or degraded on non-Bruker datasets
   (regression tests plus local analyses).
 - Rebase onto `develop` before opening the PR.

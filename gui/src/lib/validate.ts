@@ -267,9 +267,18 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   }
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This file does not exist.' }
-  if (info.is_dir) return { level: 'error', msg: 'Choose a single MS data file, not a folder.' }
+  if (info.is_dir) {
+    // A timsTOF .tdfs run is a folder. Its bounds are read differently from a Thermo file's.
+    if (info.extension === 'tdfs') {
+      return {
+        level: '',
+        msg: 'timsTOF run: one fixed fragment range for every window (the widest MS2 scan range), and the precursor range from the outer edges of the diaPASEF windows.',
+      }
+    }
+    return { level: 'error', msg: 'Choose a single MS data file or a .tdfs run, not a folder.' }
+  }
   if (info.extension && !MS_EXTENSIONS.includes(info.extension)) {
-    return { level: 'error', msg: 'Expected a .raw, .mzML or .arrow file.' }
+    return { level: 'error', msg: 'Expected a .raw, .mzML or .arrow file, or a .tdfs run.' }
   }
   return NONE
 }

@@ -818,7 +818,9 @@ export function BuildSpecLibForm({
             data-key="calibrationFile"
             value={params.calibrationFile}
             onChange={(e) => onParam('calibrationFile', e.target.value)}
-            placeholder="/path/to/one_run.arrow  (optional)"
+            placeholder={
+              params.timsTOF ? '/path/to/one_run.tdfs  (optional)' : '/path/to/one_run.arrow  (optional)'
+            }
             style={{
               flex: 1,
               padding: '9px 12px',
@@ -847,10 +849,12 @@ export function BuildSpecLibForm({
               marginTop: 9,
               fontSize: 12,
               lineHeight: 1.4,
-              color: calibNote.level === 'error' ? '#C0392B' : '#B45309',
+              color:
+                calibNote.level === 'error' ? '#C0392B' : calibNote.level === 'warn' ? '#B45309' : '#667085',
             }}
           >
-            ⚠&nbsp; {calibNote.msg}
+            {calibNote.level ? '\u26a0\u00a0 ' : ''}
+            {calibNote.msg}
           </div>
         )}
 
