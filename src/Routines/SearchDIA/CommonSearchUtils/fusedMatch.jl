@@ -485,8 +485,8 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
                               obs_low::Vector{Float32},
                               obs_high::Vector{Float32},
                               mem::AbstractMassErrorModel,
-                              scan_mz::AbstractArray{Union{Missing, Float32}},
-                              scan_int::AbstractArray{Union{Missing, Float32}},
+                              scan_mz::AbstractArray{<:Union{Missing, Float32}},
+                              scan_int::AbstractArray{<:Union{Missing, Float32}},
                               scan_rt::Float32)
     n = length(scan_mz)
     if length(corrected) < n
@@ -792,7 +792,7 @@ function run_fused!(
     iso_splines::IsotopeSplineModel,
     quad_transmission_func::QuadTransmissionFunction,
     mem::AbstractMassErrorModel,
-    scan_int::AbstractArray{Union{Missing, Float32}},
+    scan_int::AbstractArray{<:Union{Missing, Float32}},
     scan_irt::Float32,
     irt_tol::Float32,
     frag_mz_bounds::Tuple{Float32, Float32},
@@ -1000,8 +1000,8 @@ function run_fused_masserr!(
     precursors_passed::AbstractVector{UInt32},
     prec_range::UnitRange{Int64},
     mem::AbstractMassErrorModel,
-    scan_mz::AbstractArray{Union{Missing, Float32}},
-    scan_int::AbstractArray{Union{Missing, Float32}},
+    scan_mz::AbstractArray{<:Union{Missing, Float32}},
+    scan_int::AbstractArray{<:Union{Missing, Float32}},
     scan_rt::Float32;
     max_rank::Int = 6,
     min_ion_position::Int = 4)
