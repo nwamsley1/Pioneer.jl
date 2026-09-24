@@ -155,6 +155,7 @@ fn params_path(job_id: &str, command: pioneer::Command) -> PathBuf {
         pioneer::Command::DownloadSpecLib => "download.json",
         pioneer::Command::ConvertRaw => "convert.json",
         pioneer::Command::ConvertMzml => "convertmzml.json",
+        pioneer::Command::ConvertBruker => "convertbruker.json",
     };
     dir.join(name)
 }
