@@ -476,11 +476,12 @@ function fit_nce_from_psms!(
     sort!(nce_psms, :gof, rev=true)
     best_nce = combine(groupby(nce_psms, :precursor_idx), first)
 
-    # Fit NCE model. Files whose scans carry a collision energy (timsTOF packets: an
-    # eV ramp along ion mobility) are binned on the Thermo-normalised nominal NCE of
-    # each precursor's scan eV instead of on precursor m/z (see CeBinnedNceModel).
+    # Fit NCE model. timsTOF data (an eV ramp along ion mobility, so every slice has its own energy) is binned
+    # on the Thermo-normalised nominal NCE of each precursor's scan eV instead of on precursor m/z (see
+    # CeBinnedNceModel). Only for ion-mobility data: Thermo files also carry a per-scan eV (converted from the
+    # method NCE), and for them the m/z-binned model is kept, unchanged from before the timsTOF work.
     scan_evs = Float32[getCollisionEnergyEv(spectra, si) for si in best_nce[!, :scan_idx]]
-    use_ce = count(>(0f0), scan_evs) >= 50
+    use_ce = getImScans(spectra) !== nothing && count(>(0f0), scan_evs) >= 50
     nce_model = if use_ce
         fit_ce_binned_median_nce(scan_evs, best_nce[!, :prec_mz], best_nce[!, :nce],
                                  best_nce[!, :charge], Float32(median(nce_grid)))
