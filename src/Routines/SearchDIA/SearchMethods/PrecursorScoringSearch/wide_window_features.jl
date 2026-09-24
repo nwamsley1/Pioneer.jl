@@ -578,20 +578,23 @@ function _wide_fill_scan_centric_ms1_m0!(
     ms1_ppm_tol::Float32,
 )
     ms1_keys = collect(keys(ms1_work))
-    Threads.@threads for key_idx in eachindex(ms1_keys)
-        ms1_i32 = ms1_keys[key_idx]
-        work_items = ms1_work[ms1_i32]
-        mz = getMzArray(spectra, Int(ms1_i32))
-        intensities = getIntensityArray(spectra, Int(ms1_i32))
+    # One task per chunk, each with its own decode buffer (.tdfs peaks).
+    parallel_foreach!(length(ms1_keys)) do chunk
+        decode_buf = PeakDecodeBuffer()
+        for key_idx in chunk
+            ms1_i32 = ms1_keys[key_idx]
+            work_items = ms1_work[ms1_i32]
+            mz, intensities = getPeaks!(decode_buf, spectra, Int(ms1_i32))
 
-        @inbounds for (group_idx, flank_pos) in work_items
-            group = groups[group_idx]
-            group.ms1_m0[flank_pos] = _wide_peak_intensity(
-                mz,
-                intensities,
-                group.ms1_target,
-                ms1_ppm_tol,
-            )
+            @inbounds for (group_idx, flank_pos) in work_items
+                group = groups[group_idx]
+                group.ms1_m0[flank_pos] = _wide_peak_intensity(
+                    mz,
+                    intensities,
+                    group.ms1_target,
+                    ms1_ppm_tol,
+                )
+            end
         end
     end
     return nothing
@@ -605,59 +608,60 @@ function _wide_fill_scan_centric_fragments!(
     frag_mem::AbstractMassErrorModel,
 )
     scan_keys = collect(keys(ms2_work))
-    max_thread_id = Threads.maxthreadid()
-    scan_corrected_mz = [Float32[] for _ in 1:max_thread_id]
-    scan_obs_low = [Float32[] for _ in 1:max_thread_id]
-    scan_obs_high = [Float32[] for _ in 1:max_thread_id]
 
-    Threads.@threads for key_idx in eachindex(scan_keys)
-        scan_i32 = scan_keys[key_idx]
-        work_items = ms2_work[scan_i32]
-        scan_idx = Int(scan_i32)
-        mz = getMzArray(spectra, scan_idx)
-        intensities = getIntensityArray(spectra, scan_idx)
-        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
-        thread_idx = Threads.threadid()
-        n_peaks = prepare_scan_peaks!(
-            scan_corrected_mz[thread_idx],
-            scan_obs_low[thread_idx],
-            scan_obs_high[thread_idx],
-            frag_mem,
-            mz,
-            intensities,
-            scan_rt,
-        )
+    # One task per chunk, each with its own decode buffer (.tdfs peaks) and peak-window scratch.
+    parallel_foreach!(length(scan_keys)) do chunk
+        decode_buf = PeakDecodeBuffer()
+        scan_corrected_mz = Float32[]
+        scan_obs_low = Float32[]
+        scan_obs_high = Float32[]
+        for key_idx in chunk
+            scan_i32 = scan_keys[key_idx]
+            work_items = ms2_work[scan_i32]
+            scan_idx = Int(scan_i32)
+            mz, intensities = getPeaks!(decode_buf, spectra, scan_idx)
+            scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+            n_peaks = prepare_scan_peaks!(
+                scan_corrected_mz,
+                scan_obs_low,
+                scan_obs_high,
+                frag_mem,
+                mz,
+                intensities,
+                scan_rt,
+            )
 
-        @inbounds for (group_idx, flank_pos) in work_items
-            group = groups[group_idx]
-            n_frags = group.n_frags
-            sorted_ranks = group.sorted_ranks
-            sorted_targets = group.sorted_targets
-            sorted_lows = group.sorted_lows
-            sorted_highs = group.sorted_highs
-            fragments = group.fragments
-            # Fragments are sorted by ascending m/z, so each successive bsearch
-            # can start from the previous fragment's first-peak index: the search
-            # range only ever shrinks, and the result is identical to searching
-            # [1, n_peaks] every time (low_{s+1} >= low_s).
-            start_idx = 1
-            for s in 1:n_frags
-                start_idx = bsearch_hybrid(
-                    scan_corrected_mz[thread_idx], sorted_lows[s], start_idx, n_peaks,
-                )
-                best_peak, _, _ = scan_for_nearest_in_window(
-                    scan_corrected_mz[thread_idx],
-                    scan_obs_low[thread_idx],
-                    scan_obs_high[thread_idx],
-                    start_idx,
-                    n_peaks,
-                    sorted_targets[s],
-                    sorted_highs[s],
-                )
-                if best_peak != 0
-                    intensity = intensities[best_peak]
-                    fragments[flank_pos, sorted_ranks[s]] =
-                        ismissing(intensity) ? 0f0 : Float32(intensity)
+            @inbounds for (group_idx, flank_pos) in work_items
+                group = groups[group_idx]
+                n_frags = group.n_frags
+                sorted_ranks = group.sorted_ranks
+                sorted_targets = group.sorted_targets
+                sorted_lows = group.sorted_lows
+                sorted_highs = group.sorted_highs
+                fragments = group.fragments
+                # Fragments are sorted by ascending m/z, so each successive bsearch
+                # can start from the previous fragment's first-peak index: the search
+                # range only ever shrinks, and the result is identical to searching
+                # [1, n_peaks] every time (low_{s+1} >= low_s).
+                start_idx = 1
+                for s in 1:n_frags
+                    start_idx = bsearch_hybrid(
+                        scan_corrected_mz, sorted_lows[s], start_idx, n_peaks,
+                    )
+                    best_peak, _, _ = scan_for_nearest_in_window(
+                        scan_corrected_mz,
+                        scan_obs_low,
+                        scan_obs_high,
+                        start_idx,
+                        n_peaks,
+                        sorted_targets[s],
+                        sorted_highs[s],
+                    )
+                    if best_peak != 0
+                        intensity = intensities[best_peak]
+                        fragments[flank_pos, sorted_ranks[s]] =
+                            ismissing(intensity) ? 0f0 : Float32(intensity)
+                    end
                 end
             end
         end

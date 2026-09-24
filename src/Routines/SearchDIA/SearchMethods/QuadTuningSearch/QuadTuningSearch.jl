@@ -221,8 +221,7 @@ function process_file!(
             # Test array access - this will fail if there are type mismatches
             test_scan_idx = findfirst(i -> getMsOrder(spectra, i) == 2, 1:length(spectra))
             if test_scan_idx !== nothing
-                _ = getMzArray(spectra, test_scan_idx)
-                _ = getIntensityArray(spectra, test_scan_idx)
+                _ = getPeaks!(PeakDecodeBuffer(), spectra, test_scan_idx)
             end
         catch type_error
             if isa(type_error, MethodError) || contains(string(type_error), "SubArray")

@@ -1740,6 +1740,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     spectral_scores = getMainSearchSpectralScores(search_data)
     collect_mbr_evidence = params.match_between_runs
     fused_scratch = getFusedScratch(search_data)
@@ -1872,8 +1873,7 @@ function build_chromatograms(
         end
 
         # 2. Pre-correct peak m/z for the scan.
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                           mass_error_model, scan_mz, scan_int,
                                           Float32(rt))
@@ -2042,6 +2042,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
@@ -2144,8 +2145,7 @@ function build_chromatograms(
             ion_misses,
             ion_templates,
             ion_idx,
-            getMzArray(spectra, scan_idx),
-            getIntensityArray(spectra, scan_idx),
+            getPeaks!(decode_buf, spectra, scan_idx)...,
             mem,
             getHighMz(spectra, scan_idx)
         )

@@ -691,6 +691,7 @@ function _ms1_lookup_scan_runs!(psms, spectra,
     cached_int = Vector{Float32}()
     cached_ms1_idx::Int = -1   # force first miss
     cached_noise_floor = 0f0
+    decode_buf = PeakDecodeBuffer()   # this chunk's own (.tdfs); the peaks are copied into the cache below
     m0_peak_keys = UInt64[]
     competition_scratch = _M0PeakCompetitionScratch()
 
@@ -703,8 +704,7 @@ function _ms1_lookup_scan_runs!(psms, spectra,
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
             _ms1_refresh_cache!(cached_mz, cached_int,
-                                getMzArray(spectra, ms1_idx),
-                                getIntensityArray(spectra, ms1_idx))
+                                getPeaks!(decode_buf, spectra, ms1_idx)...)
             cached_noise_floor = _ms1_noise_floor(cached_int)
         end
 

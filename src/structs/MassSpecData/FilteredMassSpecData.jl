@@ -328,9 +328,9 @@ function FilteredMassSpecData(
     indices_buffer = topn !== nothing ? Vector{Int}(undef, 10000) : Int[]
 
     # Copy scan data
+    decode_buf = PeakDecodeBuffer()   # .tdfs originals decode here; the peaks are copied out below
     for (i, oi) in enumerate(scan_indices_to_sample)
-        mz_array = getMzArray(original, oi)
-        int_array = getIntensityArray(original, oi)
+        mz_array, int_array = getPeaks!(decode_buf, original, oi)
 
         if topn !== nothing && length(mz_array) > topn
             mz_arrays[i], intensity_arrays[i] = filterTopNPeaks(mz_array, int_array, topn, indices_buffer, min_intensity_typed)
@@ -493,9 +493,9 @@ function Base.append!(
 
     indices_buffer = filtered.topn !== nothing ? Vector{Int}(undef, 10000) : Int[]
 
+    decode_buf = PeakDecodeBuffer()   # .tdfs originals decode here; the peaks are copied out below
     for oi in new_scan_indices
-        mz_array = getMzArray(original, oi)
-        int_array = getIntensityArray(original, oi)
+        mz_array, int_array = getPeaks!(decode_buf, original, oi)
 
         if filtered.topn !== nothing && length(mz_array) > filtered.topn
             mz_f, int_f = filterTopNPeaks(mz_array, int_array, filtered.topn, indices_buffer, filtered.min_intensity)
