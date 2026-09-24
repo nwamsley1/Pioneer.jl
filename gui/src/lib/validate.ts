@@ -277,8 +277,9 @@ export function calibrationNote(value: string, info: PathInfo): Note {
     }
     return { level: 'error', msg: 'Choose a single MS data file or a .tdfs run, not a folder.' }
   }
-  if (info.extension && !MS_EXTENSIONS.includes(info.extension)) {
-    return { level: 'error', msg: 'Expected a .raw, .mzML or .arrow file, or a .tdfs run.' }
+  // BuildSpecLib reads the calibration run as Arrow; convert .raw / .mzML first.
+  if (info.extension !== 'arrow') {
+    return { level: 'error', msg: 'Expected an .arrow file or a timsTOF .tdfs run (convert .raw / .mzML first).' }
   }
   return NONE
 }

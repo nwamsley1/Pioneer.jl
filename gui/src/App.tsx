@@ -1082,30 +1082,15 @@ export default function App() {
    *  selection would make that impossible. Duplicates are dropped -- the same
    *  file twice would be the same search twice. */
   const addMsFiles = async () => {
+    // A file chosen inside a timsTOF .tdfs run adds the run (see asRunPath); two files of one run add it once.
     const picked = await backend.pickFiles('Choose the files to search', 'MS data', ['arrow'])
     if (picked.length === 0) return
-    setSearch((p) => {
-      const have = new Set(p.msDataFiles)
-      return { ...p, msDataFiles: [...p.msDataFiles, ...picked.filter((f) => !have.has(f))] }
-    })
-    setRunError('')
-  }
-
-  /** Same, for timsTOF runs: a .tdfs run is a folder, which the file picker
-   *  cannot select. Anything picked that is not a .tdfs folder is refused. */
-  const addMsTdfs = async () => {
-    const picked = await backend.pickFolders('Choose the timsTOF .tdfs runs to search')
-    if (picked.length === 0) return
-    const runs = picked.filter((f) => /\.tdfs[\\/]?$/i.test(f.trim()))
+    const runs = [...new Set(picked.map(backend.asRunPath))]
     setSearch((p) => {
       const have = new Set(p.msDataFiles)
       return { ...p, msDataFiles: [...p.msDataFiles, ...runs.filter((f) => !have.has(f))] }
     })
-    setRunError(
-      runs.length < picked.length
-        ? `Not a .tdfs run: ${picked.filter((f) => !runs.includes(f)).join(', ')}`
-        : '',
-    )
+    setRunError('')
   }
 
   const removeMsFile = (index: number) => {
@@ -1269,20 +1254,10 @@ export default function App() {
     setRunError('')
   }
 
+  /** Pioneer reads the calibration run as Arrow (or a timsTOF .tdfs run: pick any file inside it). */
   const browseCalibration = async () => {
-    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', [
-      'arrow',
-      'mzML',
-      'mzml',
-      'raw',
-    ])
-    if (picked) onParam('calibrationFile', picked)
-  }
-
-  /** A timsTOF .tdfs run is a folder, which the file picker cannot select. */
-  const browseCalibrationTdfs = async () => {
-    const picked = await backend.pickFolder('Choose one timsTOF .tdfs run from this experiment')
-    if (picked) onParam('calibrationFile', picked)
+    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', ['arrow'])
+    if (picked) onParam('calibrationFile', backend.asRunPath(picked))
   }
 
   const browseLibPath = async () => {
@@ -2088,7 +2063,6 @@ export default function App() {
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
                 onAddMsFiles={addMsFiles}
-                onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
@@ -2113,7 +2087,6 @@ export default function App() {
                 onRemoveFasta={removeFasta}
                 onBrowseLibPath={browseLibPath}
                 onBrowseCalibration={browseCalibration}
-                onBrowseCalibrationTdfs={browseCalibrationTdfs}
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
