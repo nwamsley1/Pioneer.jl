@@ -25,7 +25,8 @@ const CONVERT_BRUKER_APP_NAME = "convertBruker"
 Convert Bruker timsTOF diaPASEF `.d` bundles to `.tdfs` runs for SearchDIA. `path` is one `.d` folder or a folder
 containing them. Each bundle becomes `<output_dir>/<name>.tdfs`; `output_dir` defaults to `tdfs_out` next to the
 bundles. Uses TimsSlices' default slicing (8 IM scans per slice, IM sigma 5 scans, m/z sigma 3 bins, summed
-intensities, no cull), the settings Pioneer's timsTOF search was validated with. Returns the `.tdfs` paths.
+intensities, the 1,500 most intense centroids kept per MS2 slice, MS1 uncapped), the settings Pioneer's timsTOF
+search was validated with. Returns the `.tdfs` paths.
 """
 function convertBruker(path::AbstractString; output_dir::AbstractString = "")
     src = rstrip(expanduser(String(path)), ['/', '\\'])
