@@ -23,7 +23,7 @@ if not defined PIONEER_VERSION set "PIONEER_VERSION=unknown"
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml
+set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml convert-bruker
 rem empirical params-empirical 
 
 :parse_args
@@ -135,6 +135,8 @@ echo                                                 Convert Thermo RAW files vi
 echo                                                 For additional converter options, run: pioneer convert-raw --help
 echo   convert-mzml ^<data_path^> [options]
 echo                                                 Convert mzML files
+echo   convert-bruker ^<d_path^> [--output-dir ^<dir^>]
+echo                                                 Convert Bruker timsTOF .d folders to .tdfs
 echo.
 echo Examples:
 echo   pioneer params-predict yeast.poin fasta/ --params-path predict_params.json
@@ -190,6 +192,7 @@ rem if /I "%SUBCOMMAND%"=="params-empirical" set SUBCOMMAND=GetParseSpecLibParam
 if /I "%SUBCOMMAND%"=="params-search" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
+if /I "%SUBCOMMAND%"=="convert-bruker" set SUBCOMMAND=convertBruker
 if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
 
