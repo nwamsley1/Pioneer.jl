@@ -41,6 +41,7 @@ function process_scans_fused!(
     corr_mz         = getScanCorrectedMz(search_data)
     obs_low         = getScanObsLow(search_data)
     obs_high        = getScanObsHigh(search_data)
+    decode_buf      = getDecodeBuffer(search_data)
     isotopes_buf    = getIsotopes(search_data)
     prec_trans_buf  = getPrecursorTransmission(search_data)
 
@@ -76,8 +77,7 @@ function process_scans_fused!(
 
         # Pre-compute per-peak (corrected_mz, obs_low, obs_high) once per scan
         # using the intensity/RT-aware MEM API.
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                            mem, scan_mz, scan_int, scan_rt)
 

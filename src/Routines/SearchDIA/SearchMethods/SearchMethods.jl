@@ -303,6 +303,7 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),  # scan_corrected_mz
         zeros(Float32, 5000),  # scan_obs_low
         zeros(Float32, 5000),  # scan_obs_high
+        PeakDecodeBuffer(),    # decode_buf
     )
 end
 

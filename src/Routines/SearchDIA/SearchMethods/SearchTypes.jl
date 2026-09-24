@@ -247,6 +247,9 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_corrected_mz::Vector{Float32}
     scan_obs_low::Vector{Float32}
     scan_obs_high::Vector{Float32}
+    # Peak decode buffer for `.tdfs` data (`getPeaks!`). Owned by the task using this struct, so decoded peaks
+    # cannot be overwritten by another task. Unused for Arrow-backed data.
+    decode_buf::PeakDecodeBuffer
 end
 
 """
@@ -479,6 +482,7 @@ getHsFused(s::SearchDataStructures) = s.Hs_fused
 getScanCorrectedMz(s::SearchDataStructures) = s.scan_corrected_mz
 getScanObsLow(s::SearchDataStructures) = s.scan_obs_low
 getScanObsHigh(s::SearchDataStructures) = s.scan_obs_high
+getDecodeBuffer(s::SearchDataStructures) = s.decode_buf
 getTuningResults(s::SearchDataStructures) = s.tuning_results
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
 getColNorm2(s::SimpleLibrarySearch) = s.colnorm2
