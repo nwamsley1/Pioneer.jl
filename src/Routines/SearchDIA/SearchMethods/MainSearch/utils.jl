@@ -13,8 +13,7 @@ function recalibrate_rt!(
     best_psms::DataFrame,
     scores::Vector{Float32};
     min_prob::Float32 = 0.9f0,
-    # Dev override: PIONEER_IRT_TOL_MULT widens/narrows the recalibrated iRT window (MAD multiplier).
-    irt_tol_multiplier::Float32 = Float32(something(tryparse(Float32, get(ENV, "PIONEER_IRT_TOL_MULT", "")), 4.0f0)),
+    irt_tol_multiplier::Float32 = 4.0f0,
     min_calib_psms::Int = 30
 )
     # 1. Filter to high-confidence target PSMs for calibration

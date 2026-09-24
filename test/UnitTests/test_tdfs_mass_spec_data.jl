@@ -13,7 +13,7 @@ using Pioneer: BasicMassSpecData, TdfsMassSpecData, PeakDecodeBuffer, getPeaks!,
                getMzArray, getIntensityArray, getRetentionTime, getLowMz, getHighMz, getTIC, getCenterMz,
                getIsolationWidthMz, getMsOrder, getCycleIdx, getCollisionEnergyEv, getPeakCount, getPeakCounts,
                getRetentionTimes, getTICs, getCenterMzs, getIsolationWidthMzs, getMsOrders, getCycleIdxs,
-               getImScans, getFrameIds, getCollisionEnergyEvs, getMzArrays, ArrowTableReference, getMSData
+               getImScans, getImSlope, getFrameIds, getCollisionEnergyEvs, getMzArrays, ArrowTableReference, getMSData
 
 const TDFS_TEST_DATA = get(ENV, "TIMSSLICES_TEST_DATA", expanduser("~/BrukerTims/pride"))
 const TDFS_HELA = joinpath(TDFS_TEST_DATA, "20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_high_speed_S1-B2_1_25186.d")
@@ -32,6 +32,9 @@ else
     @test length(t) == n > 1000
     @test is_ms_data_path(paths.tdfs) && is_ms_data_path(paths.arrow) && !is_ms_data_path(out_dir)
     @test loadMassSpecData(paths.tdfs) isa TdfsMassSpecData && loadMassSpecData(paths.arrow) isa Pioneer.NonIonMobilityData
+    # the instrument's scan-to-1/K0 slope comes from the .tdfs calibration; Arrow data carries none
+    @test getImSlope(t) == Float32(abs(t.file.meta["im_slope_1overK0_per_scan"])) > 0
+    @test getImSlope(a) === nothing
 
     same_peaks(buf, i) = begin
         mz, it = getPeaks!(buf, t, i)

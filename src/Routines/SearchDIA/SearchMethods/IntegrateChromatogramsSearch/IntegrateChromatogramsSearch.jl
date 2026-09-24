@@ -414,51 +414,20 @@ function process_file!(
         MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
         _st = time(); _sa = Base.gc_bytes()
     end
-    # DEV HOOK (PIONEER_CHROM_DUMP_DIR=<dir>): write the deconvolved weights with RT and
-    # (packet data) frame / IM-scan coordinates before integration reorders them.
-    # PIONEER_CHROM_DUMP_ONLY=1 additionally skips integration (peak_area stays 0) and the
-    # MBR tail, so it needs match_between_runs = false (the MBR finalize step requires the
-    # integrated-weight columns).
-    let dump_dir = get(ENV, "PIONEER_CHROM_DUMP_DIR", "")
-        if !isempty(dump_dir)
-            dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
-            # PIONEER_CHROM_ALT_FILES=<arrow>[,<arrow>...]: extract the same passing precursors
-            # (same models, RT index and allowlist) from other conversions of this run, e.g.
-            # different ion-mobility binnings, and dump each under <dump_dir>/<file basename>/.
-            for alt_path in filter(!isempty, split(get(ENV, "PIONEER_CHROM_ALT_FILES", ""), ','))
-                alt = BasicMassSpecData(String(alt_path))
-                tag = replace(basename(String(alt_path)), r"(\.zstd)?\.arrow$" => "")
-                @user_info "Chromatogram weight dump: alternate file $tag ($(length(alt)) scans)"
-                alt_chroms, _ = extract_chromatograms(alt, passing_psms, rt_index, search_context, params, ms_file_idx, MS2CHROM())
-                dump_chromatogram_weights(joinpath(dump_dir, tag), alt_chroms, alt, search_context, ms_file_idx)
-                alt_chroms = nothing; alt = nothing
-                GC.gc()
-            end
-            if get(ENV, "PIONEER_CHROM_DUMP_ONLY", "0") == "1"
-                chromatograms = nothing
-                results.psms[] = passing_psms
-                return results
-            end
-        end
-    end
     # Ion-mobility data: attach the grid coordinates the 2D integrator needs, and convert the
-    # mobility band from 1/K0 to IM scans with THIS file's calibration line. The line's slope (b,
-    # 1/K0 per scan) is fitted per file in MainSearch, so a band specified in 1/K0 lands on the
-    # right number of scans whatever the ramp was. No mobility, no model, or band 0 -> 1D path.
+    # mobility band from 1/K0 to IM scans with this file's scan-to-1/K0 slope (im_half_width_scans),
+    # so a band specified in 1/K0 lands on the right number of scans whatever the ramp was.
+    # No mobility or no slope -> 1D path.
     im_half_scans = 0
     let im_scans_v = getImScans(spectra)
-        band_k0 = chrom_im_band_k0()
-        if im_scans_v !== nothing && band_k0 > 0 && nrow(chromatograms) > 0
-            model = getImModel(search_context, ms_file_idx)
-            slope = haskey(model, 0) ? abs(model[0][2]) :
-                    (isempty(model) ? 0.0f0 : abs(first(values(model))[2]))
-            if slope > 0
-                im_half_scans = max(1, round(Int, band_k0 / slope))
+        if im_scans_v !== nothing && nrow(chromatograms) > 0
+            im_half_scans = im_half_width_scans(CHROM_IM_BAND_K0, spectra, search_context, ms_file_idx)
+            if im_half_scans > 0
                 cyc_v = getCycleIdxs(spectra)
                 sidx = chromatograms[!, :scan_idx]
                 chromatograms[!, :cycle_idx] = UInt32[UInt32(cyc_v[s]) for s in sidx]
                 chromatograms[!, :im_scan] = UInt16[UInt16(im_scans_v[s]) for s in sidx]
-                @user_info "2D chromatogram integration: mobility band ±$(band_k0) 1/K0 = ±$(im_half_scans) IM scans"
+                @user_info "2D chromatogram integration: mobility band ±$(CHROM_IM_BAND_K0) 1/K0 = ±$(im_half_scans) IM scans"
             else
                 @user_warn "Ion-mobility data but no usable IM calibration line; falling back to 1D integration"
             end

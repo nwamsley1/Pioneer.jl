@@ -1435,97 +1435,42 @@ function withinQuadrupoleBounds(
     return mz_low ≤ prec_mz ≤ mz_high
 end
 
-# Library-line ion-mobility gate for chromatogram extraction, in sigma units of the per-charge IM line.
-# DISABLED by default (0) and kept only as a dev switch: PIONEER_CHROM_IM_SIGMA.
-#
-# The line is centred on the PREDICTED mobility, so for a precursor whose prediction is off — 5% of PSMs sit
-# beyond 2 sigma — the gate is lopsided and cuts the peak on one side while collecting empty slices on the
-# other. Measured case (2026-09-22, precursor 8812954, 2+): observed apex at IM scan 381, the line puts its
-# library 1/K0 at 355, so the +/-3 sigma gate admitted 314-395 and collection stopped at 389 with the weight
-# still at 78% of apex. The empirical window below is centred on the precursor's OWN best PSM and is the
-# right constraint once a PSM exists; the library line's job is candidate pre-filtering in the fragment index.
-const CHROM_IM_TOL_SIGMA = 0.0f0
-chrom_im_tol_sigma() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SIGMA", "")), CHROM_IM_TOL_SIGMA))
-# Empirical ion-mobility window for chromatogram extraction, in IM scans around the precursor's best PSM (the
-# mobility analogue of the per-precursor RT window). 0 = off. Dev override: PIONEER_CHROM_IM_SCANS.
-# 2026-09-22: 32 scans clipped the mobility peak — 4.5% of precursors had their apex on the window edge and 14%
-# still had > half the apex height there (RT, for comparison: 0.5% and 5%). 64 scans (8 slices) covers the
-# measured extent (± 3 slices holds 97-98% of a precursor's weight).
-const CHROM_IM_WINDOW_SCANS = 64.0f0
-chrom_im_window_scans() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_SCANS", "")), CHROM_IM_WINDOW_SCANS))
-# Dev override of the per-precursor RT window (minutes) in chromatogram extraction; 0 = off.
-chrom_rt_tol_override() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_RT_TOL", "")), 0f0))
+# Empirical ion-mobility window for chromatogram extraction: a slice is extracted for a precursor only when its
+# IM scan lies within this half-width (1/K0) of the IM scan of the precursor's best PSM (the mobility analogue of
+# the per-precursor RT window). Converted to IM scans per file by `im_half_width_scans`.
+# Measured 2026-09-23 (HYE 50 ng, ~84k precursors per file, +/-96-scan extraction): the best PSM sits on the
+# mobility apex (75% exactly, 94% within one 8-scan slice, mean offset -0.5 scans); the window holds 97% of the
+# weight within +/-96 scans, and the ~2% of apexes beyond it are further than any mobility peak is wide (median
+# FWHM 0.018 1/K0), i.e. co-isolated signal, not a clipped peak. On the ramps measured so far (0.00085-0.000865
+# 1/K0 per scan) this is 64-65 scans; a narrower mobility range packs more scans into the same 1/K0.
+const CHROM_IM_WINDOW_K0 = 0.055f0
 
 # Half-width of the mobility INTEGRATION band, in 1/K0, for the 2D integrator (integrate_chrom_2d).
-# Distinct from CHROM_IM_WINDOW_SCANS, which is the wider window the weights are COLLECTED over.
+# Distinct from CHROM_IM_WINDOW_K0, which is the wider window the weights are COLLECTED over.
 # Measured on twelve-file HYE runs: mobility FWHM is 0.018 1/K0 at the median and the ordering of band
 # widths is identical on the 15-min and 5-min gradients, so this is a physical constant, not a
 # per-dataset tuning knob. +/-0.021 is the setting Nathan chose; narrower is slightly more accurate and
 # slightly less precise (+/-0.007 gives yeast 0.89 / E. coli 73.5% against 0.86 / 69.3% here).
-# 0 disables the 2D path and falls back to the 1D integrator. Dev override: PIONEER_CHROM_IM_BAND_K0.
 const CHROM_IM_BAND_K0 = 0.021f0
-chrom_im_band_k0() = Float32(something(tryparse(Float32, get(ENV, "PIONEER_CHROM_IM_BAND_K0", "")), CHROM_IM_BAND_K0))
 
-# im_lines_by_charge(model) -> Vector{NTuple{3,Float32}}
-# Charge-indexed (a, b, sigma) lines from a per-file IM model Dict (key 0 = pooled, other
-# keys = charge). Charges without their own line get the pooled one; charges above the
-# vector length fall back to entry 1 at the call site. Empty when the model is empty.
-function im_lines_by_charge(model::Dict{Int, NTuple{3, Float32}})
-    isempty(model) && return NTuple{3, Float32}[]
-    # Same derivation as the fragment-index gate (build_im_gate): the z2 line for every charge, with its sigma
-    # scaled per charge. Measured 2026-09-21: z3 / z4 sit on the z2 line with no offset but 1.8x / 2.2x its
-    # scatter, and a line fitted per charge gains < 5% — while needing PSMs that tuning rarely has for z3+.
-    if haskey(model, 2)
-        a, b, s = model[2]
-        return NTuple{3, Float32}[(a, b, s * im_gate_sigma_mult(z)) for z in 1:max(8, maximum(keys(model)))]
-    end
-    pooled = get(model, 0, first(values(model)))
-    zmax = max(8, maximum(keys(model)))
-    return NTuple{3, Float32}[get(model, z, pooled) for z in 1:zmax]
-end
+"""
+    im_half_width_scans(half_width_k0, spectra, search_context, ms_file_idx) -> Int
 
-# dump_chromatogram_weights(dump_dir, chromatograms, spectra, search_context, ms_file_idx)
-# Dev hook (PIONEER_CHROM_DUMP_DIR): writes every deconvolved (precursor, scan) weight
-# with its RT and, for packet data, the packet's frame id and IM scan index, to
-# <dump_dir>/<file>_chrom_weights.arrow, and the per-file IM lines (charge 0 = pooled) to
-# <dump_dir>/<file>_im_model.arrow.
-function dump_chromatogram_weights(
-    dump_dir::AbstractString,
-    chromatograms::DataFrame,
-    spectra::MassSpecData,
-    search_context::SearchContext,
-    ms_file_idx::Int64
-)
-    mkpath(dump_dir)
-    fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-    scan_idxs = chromatograms[!, :scan_idx]
-    im_scans = getImScans(spectra)
-    frame_ids = getFrameIds(spectra)
-    cycle_idxs = getCycleIdxs(spectra)
-    out = DataFrame(
-        precursor_idx = chromatograms[!, :precursor_idx],
-        scan_idx = scan_idxs,
-        rt = chromatograms[!, :rt],
-        weight = chromatograms[!, :intensity],
-        cycle_idx = UInt32[UInt32(cycle_idxs[s]) for s in scan_idxs],
-        frame_id = frame_ids === nothing ? zeros(Int32, length(scan_idxs)) : Int32[Int32(frame_ids[s]) for s in scan_idxs],
-        im_scan = im_scans === nothing ? zeros(UInt16, length(scan_idxs)) : UInt16[UInt16(im_scans[s]) for s in scan_idxs],
-    )
-    if hasproperty(chromatograms, :precursor_fraction_transmitted)
-        out[!, :precursor_fraction_transmitted] = chromatograms[!, :precursor_fraction_transmitted]
+A mobility half-width in 1/K0 as a whole number of IM scans for this file, rounded UP so the window never
+covers less than asked for. Uses the instrument's scan-to-1/K0 slope (`getImSlope`, from the `.tdfs`
+calibration); files without one (Arrow packet files) use the slope of the pooled IM line fitted in MainSearch.
+0 when neither is available.
+"""
+function im_half_width_scans(half_width_k0::Float32, spectra::MassSpecData, search_context::SearchContext,
+                             ms_file_idx::Integer)
+    slope = getImSlope(spectra)
+    if slope === nothing
+        model = getImModel(search_context, ms_file_idx)
+        slope = haskey(model, 0) ? abs(model[0][2]) : (isempty(model) ? 0f0 : abs(first(values(model))[2]))
     end
-    Arrow.write(joinpath(dump_dir, fname * "_chrom_weights.arrow"), out)
-    model = getImModel(search_context, ms_file_idx)
-    zs = sort(collect(keys(model)))
-    Arrow.write(joinpath(dump_dir, fname * "_im_model.arrow"), DataFrame(
-        charge = zs,
-        a = Float32[model[z][1] for z in zs],
-        b = Float32[model[z][2] for z in zs],
-        sigma = Float32[model[z][3] for z in zs],
-    ))
-    @user_info "Chromatogram weight dump: $(nrow(out)) rows for $(length(unique(out.precursor_idx))) precursors -> $(joinpath(dump_dir, fname * "_chrom_weights.arrow"))"
-    return nothing
+    return im_half_width_scans(half_width_k0, Float32(slope))
 end
+im_half_width_scans(half_width_k0::Float32, slope::Float32) = slope > 0 ? ceil(Int, half_width_k0 / slope) : 0
 
 """
     collect_rt_window_precursors!(precs_temp, rt_index, rt_start_idx, rt_stop_idx,
@@ -1534,13 +1479,12 @@ end
                                    precursor_transmission, isotope_err_bounds,
                                    min_fraction_transmitted, precursor_rt_map,
                                    scan_rt, rt_binned_tol, rt_tol_fallback,
-                                   [im_scan, im_lib, im_lines, im_tol_sigma]) -> Int
+                                   [im_scan, precursor_im_map, im_window_scans]) -> Int
 
 Walk the RT-bin range, applying quad-window, precursors_passing allowlist,
 per-precursor RT, isotope_err_bounds, and min_fraction_transmitted filters.
-With `im_lines` non-empty (ion-mobility packet data) also drops precursors whose
-library 1/K0 (`im_lib`) is more than `im_tol_sigma` sigma from the per-charge line
-evaluated at the packet's `im_scan`.
+With `precursor_im_map` (ion-mobility data) also drops precursors whose best PSM's
+IM scan is more than `im_window_scans` from the slice's `im_scan`.
 Writes the surviving precursor ids into `precs_temp[1:n]` and returns `n`.
 
 Extracted from the classic `RTIndexedTransitionSelection` path so
@@ -1565,9 +1509,6 @@ function collect_rt_window_precursors!(
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
     rt_tol_fallback::Float32,
     im_scan::Float32 = 0f0,
-    im_lib::AbstractVector{Float32} = Float32[],
-    im_lines::Vector{NTuple{3, Float32}} = NTuple{3, Float32}[],
-    im_tol_sigma::Float32 = 0f0,
     precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
     im_window_scans::Float32 = 0f0) where {I<:Integer}
 
@@ -1577,11 +1518,6 @@ function collect_rt_window_precursors!(
     # Empirical IM window: the slice's IM scan must lie within im_window_scans of the precursor's best PSM's
     # IM scan (packet data with a map). Precursors without an entry are not restricted.
     has_im_window = precursor_im_map !== nothing && im_window_scans > 0f0
-    # Ion-mobility gate (packet data): keep a precursor only when its library 1/K0 lies
-    # within im_tol_sigma * sigma of the per-charge line evaluated at this packet's IM
-    # scan. Inactive (im_lines empty) for files without mobility data.
-    has_im_filter = !isempty(im_lines)
-    n_im_lines = length(im_lines)
 
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
@@ -1590,12 +1526,6 @@ function collect_rt_window_precursors!(
         for i in start:stop
             prec_idx = first(precs[i])
             (!isnothing(precursors_passing) && prec_idx ∉ precursors_passing) && continue
-
-            if has_im_filter
-                z = Int(prec_charges[prec_idx])
-                a, b, s = im_lines[z <= n_im_lines ? z : 1]
-                abs(im_lib[prec_idx] - (a + b * im_scan)) > im_tol_sigma * s && continue
-            end
 
             if has_rt_filter
                 prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
@@ -1662,9 +1592,11 @@ function extract_chromatograms(
     for i in eachindex(_pids)
         precursor_rt_map[_pids[i]] = _rts[i]
     end
-    # Per-precursor IM centre (the best PSM's IM scan) for the empirical mobility window; packet data only.
+    # Per-precursor IM centre (the best PSM's IM scan) for the empirical mobility window; mobility data only.
     _im_scans = getImScans(spectra)
-    precursor_im_map = if _im_scans === nothing || !hasproperty(passing_psms, :scan_idx)
+    im_window_scans = _im_scans === nothing ? 0 :
+        im_half_width_scans(CHROM_IM_WINDOW_K0, spectra, search_context, ms_file_idx)
+    precursor_im_map = if _im_scans === nothing || im_window_scans == 0 || !hasproperty(passing_psms, :scan_idx)
         nothing
     else
         _scans = passing_psms[!, :scan_idx]
@@ -1697,6 +1629,7 @@ function extract_chromatograms(
                 chrom_type;
                 scan_tic = scan_tic,
                 precursor_im_map = precursor_im_map,
+                im_window_scans = Float32(im_window_scans),
             )
         end
     end
@@ -1732,8 +1665,8 @@ function build_chromatograms(
     ::MS2CHROM;
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
     precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0,
 )
-    im_window_scans = precursor_im_map === nothing ? 0f0 : chrom_im_window_scans()
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
     weights = getTempWeights(search_data)
@@ -1789,20 +1722,7 @@ function build_chromatograms(
     frag_lookup = getFragmentLookupTable(spec_lib)
     intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
 
-    # Ion-mobility gate inputs (packet data only): per-charge lines from MainSearch's
-    # calibration, indexed by charge (pooled line fills charges without their own), and
-    # the library 1/K0 column. Both empty when the file or library has no mobility data.
     im_scans = getImScans(spectra)
-    im_lib_col = getInvIonMobility(precursors)
-    im_tol_sigma = chrom_im_tol_sigma()
-    im_lines = (im_scans === nothing || im_lib_col === nothing || im_tol_sigma <= 0f0) ?
-        NTuple{3, Float32}[] : im_lines_by_charge(getImModel(search_context, ms_file_idx))
-    im_lib = isempty(im_lines) ? Float32[] : Float32.(im_lib_col)
-    # Dev override of the per-precursor RT tolerance (minutes): PIONEER_CHROM_RT_TOL.
-    rt_tol_override = chrom_rt_tol_override()
-    if rt_tol_override > 0f0
-        rt_binned_tol = nothing
-    end
 
     kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
 
@@ -1830,9 +1750,7 @@ function build_chromatograms(
             @inbounds scan_tic[scan_idx] = Float32(getTIC(spectra, scan_idx))
         end
 
-        if rt_tol_override > 0f0
-            rt_tol_local = rt_tol_override
-        elseif rt_binned_tol !== nothing
+        if rt_binned_tol !== nothing
             rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
         else
             h = 0.1f0
@@ -1865,7 +1783,7 @@ function build_chromatograms(
             getIsoSplines(search_data), quad_func, prec_trans_buf,
             params.isotope_err_bounds, params.min_fraction_transmitted,
             precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local,
-            im_scan, im_lib, im_lines, im_tol_sigma, precursor_im_map, im_window_scans)
+            im_scan, precursor_im_map, im_window_scans)
 
         if prec_temp_size == 0
             reset!(id_to_col); reset!(Hs)

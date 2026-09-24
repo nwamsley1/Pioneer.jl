@@ -135,6 +135,9 @@ getMsOrders(ms_data::NonIonMobilityData{T}) where T =
 # Ion-mobility scan index per row (timsTOF packet files carry an `imScan` column);
 # `nothing` for files without one. Not a hot-path accessor.
 getImScans(::MassSpecData) = nothing
+# 1/K0 per IM scan (absolute value) from the instrument's mobility calibration; `nothing` when the file does not
+# carry one (only `.tdfs` data does).
+getImSlope(::MassSpecData) = nothing
 getImScans(ms_data::NonIonMobilityData) =
     hasproperty(ms_data.data, :imScan) ? ms_data.data[:imScan] : nothing
 # TIMS frame id per row (timsTOF packet files carry a `frameId` column); `nothing` otherwise.
