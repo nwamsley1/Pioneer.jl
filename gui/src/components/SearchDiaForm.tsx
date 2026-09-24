@@ -119,11 +119,13 @@ function PathRow({
 function MsFileList({
   params,
   onAdd,
+  onAddTdfs,
   onRemove,
   onToggleBatch,
 }: {
   params: SearchParams
   onAdd: () => void
+  onAddTdfs: () => void
   onRemove: (index: number) => void
   onToggleBatch: () => void
 }) {
@@ -210,14 +212,25 @@ function MsFileList({
               strokeLinecap="round"
             />
           </svg>
-          {files.length ? 'Add more .arrow/.tdfs' : 'Choose .arrow/.tdfs'}
+          {files.length ? 'Add .arrow' : 'Choose .arrow'}
+        </button>
+        <button type="button" className="pio-browse" onClick={onAddTdfs} style={BROWSE_BLOCK}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
+          Add Bruker .tdfs
         </button>
         <span style={HINT}>
           {files.length
             ? batch
               ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
               : `${files.length} file${files.length > 1 ? 's' : ''}, searched together \u2014 1 run queued.`
-            : 'For a timsTOF .tdfs run, open it and choose any file inside.'}
+            : 'Thermo / Sciex: .arrow files. Bruker timsTOF: .tdfs runs (select the folder).'}
         </span>
       </div>
       {files.length > 0 && (
@@ -331,6 +344,8 @@ interface Props {
   onBrowse: (key: 'msData' | 'library' | 'results') => void
   /** Add files to the list, via the multi-select picker. */
   onAddMsFiles: () => void
+  /** Add Bruker .tdfs runs (folders), via the multi-select folder picker. */
+  onAddMsTdfs: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
   /** Flip between one run per file and one run over the whole list. */
@@ -348,6 +363,7 @@ export function SearchDiaForm({
   onToggle,
   onBrowse,
   onAddMsFiles,
+  onAddMsTdfs,
   onRemoveMsFile,
   onToggleMsBatch,
   onOpenLoad,
@@ -389,6 +405,7 @@ export function SearchDiaForm({
               <MsFileList
                 params={params}
                 onAdd={onAddMsFiles}
+                onAddTdfs={onAddMsTdfs}
                 onRemove={onRemoveMsFile}
                 onToggleBatch={onToggleMsBatch}
               />

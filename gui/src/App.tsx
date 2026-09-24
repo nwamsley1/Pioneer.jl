@@ -1093,6 +1093,24 @@ export default function App() {
     setRunError('')
   }
 
+  /** Bruker timsTOF runs: a .tdfs run is a folder, which the file picker cannot select, so it has its own
+   *  folder picker. Anything picked that is not a .tdfs folder is refused, by name. */
+  const addMsTdfs = async () => {
+    const picked = await backend.pickFolders('Choose the Bruker .tdfs runs to search')
+    if (picked.length === 0) return
+    const isRun = (f: string) => /\.tdfs[\\/]?$/i.test(f.trim())
+    const runs = picked.filter(isRun)
+    setSearch((p) => {
+      const have = new Set(p.msDataFiles)
+      return { ...p, msDataFiles: [...p.msDataFiles, ...runs.filter((f) => !have.has(f))] }
+    })
+    setRunError(
+      runs.length < picked.length
+        ? `Not a Bruker .tdfs run: ${picked.filter((f) => !isRun(f)).join(', ')}`
+        : '',
+    )
+  }
+
   const removeMsFile = (index: number) => {
     setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
   }
@@ -1258,6 +1276,12 @@ export default function App() {
   const browseCalibration = async () => {
     const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', ['arrow'])
     if (picked) onParam('calibrationFile', backend.asRunPath(picked))
+  }
+
+  /** A Bruker .tdfs run is a folder: its own folder picker (calibrationNote rejects other folders). */
+  const browseCalibrationTdfs = async () => {
+    const picked = await backend.pickFolder('Choose one Bruker .tdfs run from this experiment')
+    if (picked) onParam('calibrationFile', picked)
   }
 
   const browseLibPath = async () => {
@@ -2063,6 +2087,7 @@ export default function App() {
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
                 onAddMsFiles={addMsFiles}
+                onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
@@ -2087,6 +2112,7 @@ export default function App() {
                 onRemoveFasta={removeFasta}
                 onBrowseLibPath={browseLibPath}
                 onBrowseCalibration={browseCalibration}
+                onBrowseCalibrationTdfs={browseCalibrationTdfs}
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
