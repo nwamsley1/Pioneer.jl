@@ -263,6 +263,14 @@ export async function pickFolder(title: string): Promise<string | null> {
   return picked
 }
 
+/** Native folder picker allowing several folders. Returns [] when cancelled. */
+export async function pickFolders(title: string): Promise<string[]> {
+  const picked = await open({ directory: true, multiple: true, title, defaultPath: lastDir() })
+  if (!Array.isArray(picked) || picked.length === 0) return []
+  rememberDir(picked[0], true)
+  return picked
+}
+
 /** Where to write a new library.
  *
  *  A save dialog, not a folder picker. `pickFolder` can only return a

@@ -7,7 +7,7 @@ export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'conv
  *  ConvertRAW page drives two different binaries, so the workflow the user
  *  picked and the program that ends up being spawned are not the same thing.
  *  Mirrors the Rust `pioneer::Command` enum. */
-export type BackendCommand = CommandId | 'convertmzml'
+export type BackendCommand = CommandId | 'convertmzml' | 'convertbruker'
 
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
@@ -225,6 +225,9 @@ export interface BuildParams {
   libPath: string
   /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
   predictionModel: string
+  /** Bruker timsTOF library: predict ion mobility too, emitted as
+   *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
+  timsTOF: boolean
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -279,6 +282,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
+  timsTOF: false,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
   // form emits what Pioneer would have defaulted to anyway.
@@ -324,7 +328,7 @@ export const BUILD_DEFAULTS: BuildParams = {
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
  *  can hold both. */
-export type ConvertFormat = 'raw' | 'mzml'
+export type ConvertFormat = 'raw' | 'mzml' | 'bruker'
 
 /** ConvertRAW's two converters are both driven entirely by CLI flags — there is
  *  no params JSON for either. Defaults are each converter's own. */
@@ -473,6 +477,9 @@ export interface PathInfo {
   raw_count: number
   mzml_count: number
   arrow_count: number
+  /** Bruker timsTOF directories: `.tdfs` runs (searchable) and raw `.d` bundles. */
+  tdfs_count: number
+  d_count: number
   has_config_json: boolean
   is_pion_library: boolean
   error: string | null
@@ -488,6 +495,8 @@ export const EMPTY_PATH_INFO: PathInfo = {
   raw_count: 0,
   mzml_count: 0,
   arrow_count: 0,
+  tdfs_count: 0,
+  d_count: 0,
   has_config_json: false,
   is_pion_library: false,
   error: null,
