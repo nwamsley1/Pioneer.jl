@@ -355,8 +355,6 @@ interface Props {
   onRemoveFasta: (idx: number) => void
   onBrowseLibPath: () => void
   onBrowseCalibration: () => void
-  /** Pick a timsTOF .tdfs run (a folder) as the calibration file. */
-  onBrowseCalibrationTdfs: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
   onEnzyme: (id: string) => void
@@ -382,7 +380,6 @@ export function BuildSpecLibForm({
   onRemoveFasta,
   onBrowseLibPath,
   onBrowseCalibration,
-  onBrowseCalibrationTdfs,
   onModField,
   onRemoveMod,
   onEnzyme,
@@ -822,7 +819,7 @@ export function BuildSpecLibForm({
             value={params.calibrationFile}
             onChange={(e) => onParam('calibrationFile', e.target.value)}
             placeholder={
-              params.timsTOF ? '/path/to/one_run.tdfs  (optional)' : '/path/to/one_run.arrow  (optional)'
+              '/path/to/one_run.arrow or .tdfs  (optional)'
             }
             style={{
               flex: 1,
@@ -841,17 +838,9 @@ export function BuildSpecLibForm({
             className="pio-browse"
             onClick={onBrowseCalibration}
             style={BROWSE}
+            title="An .arrow file, or a timsTOF .tdfs run: open the run and choose any file inside it"
           >
-            Browse
-          </button>
-          <button
-            type="button"
-            className="pio-browse"
-            onClick={onBrowseCalibrationTdfs}
-            style={BROWSE}
-            title="Choose a timsTOF .tdfs run (a folder)"
-          >
-            Browse .tdfs
+            Browse .arrow/.tdfs
           </button>
         </div>
         )}
