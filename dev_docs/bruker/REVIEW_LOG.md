@@ -19,7 +19,14 @@ until it is marked **applied** with a commit.
   takes a `.tdfs` run (constant fragment bounds, precursor bounds from the window edges; see the commit after
   `3307f1aae`). Open: no precompile target for convertBruker / a `.tdfs` search (needs a fixture).
 - Before merging: verify parameter tuning is not broken or degraded on non-Bruker datasets
-  (regression tests plus local analyses).
+  (regression tests plus local analyses). **Done 2026-09-24** (`~/BrukerTims/tuning_ab/`, paper settings, MBR on,
+  3 files each, develop `1b1672b27` vs branch `9083e7c70`): the CE-keyed NCE model had been switching on for
+  Thermo data too (Thermo arrows carry per-scan eV) -> gated on IM data in `9083e7c70`; the branch now reports
+  "binned on precursor m/z" everywhere, as develop. Precursor rows / PG rows / Parameter Tuning time:
+  Astral SCP 250 pg +5.4% / +2.9% / 10.6 -> 5.9 s (neither arm converges; second-order stopping ends tiers after
+  7-58k of 144k scans); Sciex 7600 nSWATH4 -0.25% / +0.18% / 25.7 -> 24.6 s; Exploris 500 ng -0.03% / -0.21% /
+  16.6 -> 17.8 s. Fragment mass MAD, q99 clamp and NCE fits unchanged; MS1 tolerance +7% on Sciex (fewer
+  collection PSMs after the 3/precursor cap: ~3.9-4.8k vs 4.7-5.7k). Total runtime within 1%.
 - Rebase onto `develop` before opening the PR.
 - Remove all development-only logging, profiling and data dumps.
 - After the PR: collect a varied set of Bruker datasets (PRIDE and other repositories; different ramps,
