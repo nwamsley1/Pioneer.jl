@@ -23,8 +23,8 @@ if !isdir(TDFS_HELA)
 else
 @testset "TdfsMassSpecData" begin
     out_dir = mktempdir()
-    # 120 frames (13 MS1 + 107 MS2), integer bins, per-level cull so both branches of the metadata are exercised
-    params = TimsSlices.ConvertParams(format = :both, frames = collect(1:120), cull_q = 0.01, ms1_cull_q = 0.0)
+    # 120 frames (13 MS1 + 107 MS2), integer bins, default MS2 peak cap
+    params = TimsSlices.ConvertParams(format = :both, frames = collect(1:120))
     paths = TimsSlices.convert(TDFS_HELA, out_dir; params = params, name = "hela120", log = devnull)
     a = BasicMassSpecData(paths.arrow)
     t = TdfsMassSpecData(paths.tdfs)
@@ -95,7 +95,7 @@ else
     @testset "buffer cache is keyed on (file, scan), not scan alone" begin
         # A second file whose scan i holds different peaks: a buffer that just decoded scan i of `t` must decode again.
         p2 = TimsSlices.convert(TDFS_HELA, joinpath(out_dir, "second"); params = TimsSlices.ConvertParams(
-            format = :both, frames = collect(121:240), cull_q = 0.01, ms1_cull_q = 0.0), name = "hela121", log = devnull)
+            format = :both, frames = collect(121:240)), name = "hela121", log = devnull)
         t2 = TdfsMassSpecData(p2.tdfs); a2 = BasicMassSpecData(p2.arrow)
         i = findfirst(k -> getPeakCount(t, k) > 0 && getPeakCount(t2, k) > 0 &&
                            getMzArray(a, k) != getMzArray(a2, k), 1:min(n, length(t2)))
