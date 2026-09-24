@@ -318,8 +318,8 @@ abstract type FragIndexEmitStrategy end
 
 """
 Ion-mobility gate on fragment-index candidates (timsTOF slice data): a candidate is kept only when its library
-1/K0 lies within `tol_sigma` sigma of the per-charge line `a + b * im_scan` fitted in Parameter Tuning
-(`fit_im_lines`). `lines[z + 1]` is the line for charge z (the pooled line where a charge has none).
+1/K0 lies within `tol_sigma` sigma of the line `a + b * im_scan` fitted in Parameter Tuning (`fit_im_lines`).
+`lines[z + 1]` is the entry for charge z: the z2 line with its sigma scaled per charge (`build_im_gate`).
 """
 struct ImGate{V<:AbstractVector{Float32}, C<:AbstractVector{UInt8}}
     lines::Vector{NTuple{3, Float32}}
