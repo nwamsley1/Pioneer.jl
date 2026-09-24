@@ -74,12 +74,13 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
 
     cached_mz::Vector{Float32} = Float32[]
     cached_ms1_idx::Int = -1
+    decode_buf = PeakDecodeBuffer()
 
     @inbounds for i in 1:n
         ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
-            cached_mz = _ms1_diag_clean_mz(getMzArray(spectra, ms1_idx))
+            cached_mz = _ms1_diag_clean_mz(first(getPeaks!(decode_buf, spectra, ms1_idx)))
         end
         pid = UInt32(psms.precursor_idx[i])
         prec_mz  = Float32(prec_mzs[pid])

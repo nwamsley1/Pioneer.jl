@@ -82,7 +82,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem))
@@ -790,8 +790,7 @@ function _quad_process_scan!(
     fused_scratch  = getFusedScratch(search_data)
     id_to_col      = getIdToCol(search_data)
 
-    scan_mz  = getMzArray(spectra, scan_idx)
-    scan_int = getIntensityArray(spectra, scan_idx)
+    scan_mz, scan_int = getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)
     scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
     peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                       mem, scan_mz, scan_int, scan_rt)

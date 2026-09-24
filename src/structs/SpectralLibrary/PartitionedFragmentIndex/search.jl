@@ -491,6 +491,7 @@ function searchFragmentIndexPartitionMajorHinted(
         thread_mz_high_bufs = scratch.mz_high_bufs
     end
     thread_counts = zeros(Int, n_threads)
+    decode_bufs = [PeakDecodeBuffer() for _ in 1:n_threads]   # one per task below (.tdfs peaks)
 
     # ── 4. Build emit strategy (compile-time dispatch) ─────────────────────
     emit_strategy = if pattern_accumulator !== nothing
@@ -513,7 +514,8 @@ function searchFragmentIndexPartitionMajorHinted(
                 scan_irts, scan_ims, precursor_mzs,
                 mem, linear_threshold, n_threads,
                 thread_int_bufs[tid], max_peaks,
-                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid])
+                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid],
+                decode_bufs[tid])
             thread_times[tid] = time() - t_thread
         end
     end
@@ -593,7 +595,8 @@ function _run_thread(tid::Int, emit::E,
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
         int_buf::Vector{Float32}, max_peaks::Int,
-        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32}
+        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32},
+        decode_buf::PeakDecodeBuffer
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
 
     wp = 0
@@ -610,10 +613,11 @@ function _run_thread(tid::Int, emit::E,
             si = relevant[scan_i]
             scan_idx = all_scan_idxs[si]
 
+            scan_mzs, scan_intensities = getPeaks!(decode_buf, spectra, scan_idx)
+
             # Compute intensity threshold for top-N peak filtering (wide scout only)
             intensity_threshold = 0.0f0
             if max_peaks > 0
-                scan_intensities = getIntensityArray(spectra, scan_idx)
                 n_scan_peaks = length(scan_intensities)
                 if n_scan_peaks > max_peaks
                     @inbounds for j in 1:n_scan_peaks
@@ -627,8 +631,7 @@ function _run_thread(tid::Int, emit::E,
 
             _score_partition_hinted!(lc, partition,
                 scan_irt_lo[si], scan_irt_hi[si],
-                getMzArray(spectra, scan_idx),
-                getIntensityArray(spectra, scan_idx),
+                scan_mzs, scan_intensities,
                 mem;
                 linear_threshold=linear_threshold,
                 intensity_threshold=intensity_threshold,

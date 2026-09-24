@@ -1,12 +1,13 @@
 # TdfsMassSpecData: Pioneer's view of a `.tdfs` (TimsSlices.jl) — IM-smoothed, m/z-centroided timsTOF slices
 # stored as one zstd block per slice. Every slice is one Pioneer scan.
 #
-# Peak arrays are decoded on demand: `getMzArray(d, scan)` / `getIntensityArray(d, scan)` decode the scan's block
-# into the calling THREAD's scratch (one slice, ~5 µs for an MS2 slice, 30-50 µs for an MS1 slice) and return views
-# into it. A view is valid until the same thread fetches a DIFFERENT scan; fetching the same scan again (the usual
-# mz-then-intensity pair) reuses the decoded slice. No caller in Pioneer holds a view across another scan's fetch
-# (audit 2026-09-18, docs/bruker_timstof_progress.md §9); a task migrates threads only at a yield, and the hot
-# loops have none between fetch and use. Keep it that way.
+# Peak arrays are decoded on demand into a buffer the CALLER owns: `getPeaks!(buf, d, scan)` decodes the scan's
+# block into `buf` (~5 µs for an MS2 slice, 30-50 µs for an MS1 slice) and returns views into it, valid until
+# `buf` is used for a different scan. Each task owns its buffer (the search tasks carry one in their
+# SearchDataStructures), so a task that yields or moves thread can never have its peaks overwritten by another
+# task. Buffers are keyed on (file, scan), so one buffer can be reused across files.
+# `getMzArray` / `getIntensityArray` are not defined for this type on purpose: a shared implicit buffer is exactly
+# what this design avoids.
 #
 # The vectors are `Vector{Union{Missing,Float32}}` so the views match the `AbstractArray{Union{Missing,Float32}}`
 # signatures of run_fused! / prepare_scan_peaks! / the fragment-index scorer unchanged (element types are
@@ -18,17 +19,28 @@
 
 using TimsSlices: TimsSlices, TdfsFile, SliceBuffer, BlockCodec
 
-mutable struct TdfsSliceScratch
+"""
+    PeakDecodeBuffer()
+
+Decode scratch for one task: `getPeaks!(buf, spectra, scan)` decodes `.tdfs` peaks into it. Arrow-backed data
+ignores it. Grows to the largest slice decoded into it. Not thread-safe: one task uses one buffer.
+"""
+mutable struct PeakDecodeBuffer
+    file_uid::Int                               # TdfsMassSpecData.uid of the decoded scan (0 = none)
     scan::Int                                   # scan currently decoded (0 = none)
     sb::SliceBuffer
     codec::BlockCodec
     mz::Vector{Union{Missing, Float32}}
     intensity::Vector{Union{Missing, Float32}}
 end
-TdfsSliceScratch() = TdfsSliceScratch(0, SliceBuffer(), BlockCodec(), Union{Missing, Float32}[], Union{Missing, Float32}[])
+PeakDecodeBuffer() = PeakDecodeBuffer(0, 0, SliceBuffer(), BlockCodec(), Union{Missing, Float32}[], Union{Missing, Float32}[])
+
+# Identifies an opened file for the buffer's (file, scan) cache key.
+const _TDFS_NEXT_UID = Threads.Atomic{Int}(1)
 
 struct TdfsMassSpecData <: MassSpecData
     file::TdfsFile
+    uid::Int                                    # unique per opened file (PeakDecodeBuffer cache key)
     n::Int
     retention_time::Vector{Float32}             # minutes
     low_mz::Vector{Float32}
@@ -42,14 +54,13 @@ struct TdfsMassSpecData <: MassSpecData
     im_scan::Vector{UInt16}
     frame_id::Vector{Int32}
     n_peaks::Vector{Int32}
-    scratch::Vector{TdfsSliceScratch}           # one per thread id
 end
 
 """
     TdfsMassSpecData(dir::String)
 
-Open a `<name>.tdfs` directory. The slice side table is loaded into plain columns; the block file is memory-mapped;
-per-thread decode scratch is allocated once (it grows to the largest slice decoded on that thread).
+Open a `<name>.tdfs` directory. The slice side table is loaded into plain columns; the block file is memory-mapped.
+Peaks are decoded per scan with `getPeaks!`.
 """
 function TdfsMassSpecData(dir::String)
     file = TimsSlices.open_tdfs(dir)
@@ -58,12 +69,11 @@ function TdfsMassSpecData(dir::String)
     nan_to_missing(v) = Union{Missing, Float32}[isnan(x) ? missing : Float32(x) for x in v]
     mz_lo = Float32(file.meta["mz_lo"]); mz_hi = Float32(file.meta["mz_hi"])
     TdfsMassSpecData(
-        file, n,
+        file, Threads.atomic_add!(_TDFS_NEXT_UID, 1), n,
         Vector{Float32}(sl.retention_time), fill(mz_lo, n), fill(mz_hi, n), Vector{Float32}(sl.tic),
         nan_to_missing(sl.center_mz), nan_to_missing(sl.isolation_width),
         Vector{Float32}(sl.collision_energy_ev), Vector{UInt8}(sl.ms_order), Vector{UInt32}(sl.cycle_idx),
         Vector{UInt16}(sl.im_scan), Vector{Int32}(sl.frame_id), Vector{Int32}(sl.n_peaks),
-        [TdfsSliceScratch() for _ in 1:Threads.maxthreadid()],
     )
 end
 
@@ -71,50 +81,49 @@ is_tdfs_path(path::AbstractString) = endswith(path, ".tdfs") && isdir(path)
 
 Base.length(d::TdfsMassSpecData) = d.n
 
-# ---- peak arrays: decode on demand into the thread's scratch ------------------------------------------------
+# ---- peak arrays: decode on demand into the caller's buffer ------------------------------------------------
 
-@inline function _tdfs_scratch(d::TdfsMassSpecData)
-    tid = Threads.threadid()
-    tid <= length(d.scratch) || throw(ErrorException("TdfsMassSpecData: thread id $tid exceeds the $(length(d.scratch)) scratch slots allocated at open"))
-    @inbounds d.scratch[tid]
-end
-
-function _tdfs_decode!(s::TdfsSliceScratch, d::TdfsMassSpecData, scan::Int)
+function _tdfs_decode!(buf::PeakDecodeBuffer, d::TdfsMassSpecData, scan::Int)
     np = Int(@inbounds d.n_peaks[scan])
-    TimsSlices.read_slice!(s.sb, s.codec, d.file, scan)
-    if length(s.mz) < np
-        resize!(s.mz, np); resize!(s.intensity, np)
+    TimsSlices.read_slice!(buf.sb, buf.codec, d.file, scan)
+    if length(buf.mz) < np
+        resize!(buf.mz, np); resize!(buf.intensity, np)
     end
-    f = d.file; bins = s.sb.bin; ints = s.sb.intensity; mz = s.mz; it = s.intensity
+    f = d.file; bins = buf.sb.bin; ints = buf.sb.intensity; mz = buf.mz; it = buf.intensity
     @inbounds for i in 1:np
         mz[i] = Float32(TimsSlices.bin_to_mz(f, bins[i]))
         it[i] = Float32(TimsSlices.stored_to_intensity(f, ints[i]))
     end
-    s.scan = scan
-    s
-end
-
-@inline function _tdfs_slice(d::TdfsMassSpecData, scan_idx::Integer)
-    scan = Int(scan_idx)
-    1 <= scan <= d.n || throw(BoundsError(d, scan))
-    s = _tdfs_scratch(d)
-    s.scan == scan || _tdfs_decode!(s, d, scan)
-    s
+    buf.file_uid = d.uid
+    buf.scan = scan
+    buf
 end
 
 const _TdfsPeakView = SubArray{Union{Missing, Float32}, 1, Vector{Union{Missing, Float32}}, Tuple{UnitRange{Int64}}, true}
 
-function getMzArray(d::TdfsMassSpecData, scan_idx::Integer)
-    s = _tdfs_slice(d, scan_idx)
-    return view(s.mz, 1:Int(@inbounds d.n_peaks[Int(scan_idx)]))::_TdfsPeakView
-end
-function getIntensityArray(d::TdfsMassSpecData, scan_idx::Integer)
-    s = _tdfs_slice(d, scan_idx)
-    return view(s.intensity, 1:Int(@inbounds d.n_peaks[Int(scan_idx)]))::_TdfsPeakView
-end
+"""
+    getPeaks!(buf::PeakDecodeBuffer, spectra::MassSpecData, scan_idx) -> (mz, intensity)
 
-getMzArrays(::TdfsMassSpecData) = error("TdfsMassSpecData decodes peaks per scan; use getPeakCounts / getPeakCount for lengths or getMzArray per scan")
-getIntensityArrays(::TdfsMassSpecData) = error("TdfsMassSpecData decodes peaks per scan; use getPeakCounts / getPeakCount for lengths or getIntensityArray per scan")
+The scan's peak arrays. For `.tdfs` data they are decoded into `buf` (skipped when `buf` already holds this scan
+of this file) and are views into it, valid until `buf` is used for another scan. Other data types return their
+usual arrays and do not touch `buf`.
+"""
+function getPeaks!(buf::PeakDecodeBuffer, d::TdfsMassSpecData, scan_idx::Integer)
+    scan = Int(scan_idx)
+    1 <= scan <= d.n || throw(BoundsError(d, scan))
+    (buf.scan == scan && buf.file_uid == d.uid) || _tdfs_decode!(buf, d, scan)
+    np = Int(@inbounds d.n_peaks[scan])
+    return (view(buf.mz, 1:np)::_TdfsPeakView, view(buf.intensity, 1:np)::_TdfsPeakView)
+end
+getPeaks!(::PeakDecodeBuffer, d::MassSpecData, scan_idx::Integer) =
+    (getMzArray(d, scan_idx), getIntensityArray(d, scan_idx))
+getPeaks!(buf::PeakDecodeBuffer, d::IndexedMassSpecData, vi::Integer) =
+    getPeaks!(buf, d.original_data, get_actual_index(d, vi))
+
+getMzArray(::TdfsMassSpecData, ::Integer) = error("TdfsMassSpecData decodes into a caller-owned buffer; use getPeaks!(buf, spectra, scan)")
+getIntensityArray(::TdfsMassSpecData, ::Integer) = error("TdfsMassSpecData decodes into a caller-owned buffer; use getPeaks!(buf, spectra, scan)")
+getMzArrays(::TdfsMassSpecData) = error("TdfsMassSpecData decodes peaks per scan; use getPeakCounts / getPeakCount for lengths or getPeaks! per scan")
+getIntensityArrays(::TdfsMassSpecData) = error("TdfsMassSpecData decodes peaks per scan; use getPeakCounts / getPeakCount for lengths or getPeaks! per scan")
 
 # ---- per-scan peak counts (no decode) -------------------------------------------------------------------------
 
