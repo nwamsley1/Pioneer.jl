@@ -52,10 +52,6 @@ function _get_qvalues_from_order!(scores, labels, qvalues, order, scale)
     return nothing
 end
 
-function _score_array_calibration(scores, labels; kwargs...)
-    build_score_calibration(emit -> _emit_score_arrays(emit, scores, labels); kwargs...)
-end
-
 """
     get_qvalues!(scores, labels, qvalues; doSort=true, fdr_scale_factor=1.0f0,
                  memory_budget_bytes=SCORE_WORKSPACE_BYTES)
@@ -72,19 +68,12 @@ function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qv
     length(probs) == length(labels) == length(qvals) || throw(DimensionMismatch("Score arrays differ in length"))
     _validate_score_options(fdr_scale_factor, memory_budget_bytes)
     isempty(probs) && return nothing
-    if length(probs) > memory_budget_bytes ÷ 64
-        fit = _score_array_calibration(probs, labels; compute_pep=false,
-            fdr_scale_factor, memory_budget_bytes)
-        try
-            for i in 1:length(probs)
-                qvals[i] = fit.qval_spline(probs[i])
-            end
-        finally
-            _close_score_calibration(fit)
+    if doSort
+        with_score_order(probs; memory_budget_bytes) do order
+            _get_qvalues_from_order!(probs, labels, qvals, order, fdr_scale_factor)
         end
     else
-        order = doSort ? _score_order(probs) : (1:length(probs))
-        _get_qvalues_from_order!(probs, labels, qvals, order, fdr_scale_factor)
+        _get_qvalues_from_order!(probs, labels, qvals, 1:length(probs), fdr_scale_factor)
     end
     return nothing
 end
@@ -112,18 +101,12 @@ function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, pe
     length(scores) == length(is_target) == length(peps) || throw(DimensionMismatch("Score arrays differ in length"))
     _validate_score_options(fdr_scale_factor, memory_budget_bytes)
     isempty(scores) && return nothing
-    if length(scores) > memory_budget_bytes ÷ 64
-        fit = _score_array_calibration(scores, is_target; fdr_scale_factor, memory_budget_bytes)
-        try
-            for i in 1:length(scores)
-                peps[i] = fit.pep_interp(scores[i])
-            end
-        finally
-            _close_score_calibration(fit)
+    if doSort
+        with_score_order(scores; memory_budget_bytes) do order
+            _get_PEP_from_order!(scores, is_target, peps, order, fdr_scale_factor; memory_budget_bytes)
         end
     else
-        order = doSort ? _score_order(scores) : (1:length(scores))
-        _get_PEP_from_order!(scores, is_target, peps, order, fdr_scale_factor; memory_budget_bytes)
+        _get_PEP_from_order!(scores, is_target, peps, 1:length(scores), fdr_scale_factor; memory_budget_bytes)
     end
     return nothing
 end
@@ -137,7 +120,7 @@ function _get_PEP_from_order!(scores, labels, peps, order, scale;
         throw(DimensionMismatch("Score arrays differ in length"))
     _validate_score_options(scale, memory_budget_bytes)
     if length(scores) > memory_budget_bytes ÷ 64
-        return get_PEP!(scores, labels, peps; fdr_scale_factor=Float32(scale), memory_budget_bytes)
+        return _get_bounded_peps_from_order!(scores, labels, peps, order, scale, memory_budget_bytes)
     end
     # Block sizes count observations, including all observations in a tied group.
     blocks = ScorePAVABlock[ScorePAVABlock(0.0, 1.0, 0)]
@@ -170,6 +153,41 @@ function _get_PEP_from_order!(scores, labels, peps, order, scale;
     return nothing
 end
 
+function _get_bounded_peps_from_order!(scores, labels, peps, order, scale, budget)
+    mktemp() do _, io
+        stack = ScorePAVAStack(io, 0, ScorePAVABlock[], max(1, min(8192, budget ÷ 256)))
+        _stack_push!(stack, ScorePAVABlock(0.0, 1.0, 0))
+        i = 1
+        while i <= length(order)
+            score = _score_key(scores[order[i]])
+            targets = decoys = 0
+            j = i
+            while j <= length(order) && _score_key(scores[order[j]]) == score
+                labels[order[j]] ? (targets += 1) : (decoys += 1)
+                j += 1
+            end
+            d = Float64(decoys) * scale
+            _stack_push!(stack, ScorePAVABlock(d, targets + d, j-i))
+            i = j
+        end
+        seek(io, stack.disk_blocks * sizeof(ScorePAVABlock))
+        write(io, stack.buffer)
+        n_blocks = stack.disk_blocks + length(stack.buffer)
+        flush(io)
+        seekstart(io)
+        position = 1
+        for _ in 1:n_blocks
+            block = _read_score_record(io, ScorePAVABlock)
+            pep = clamp(block.decoys / (block.weight - block.decoys), 0.0, 1.0)
+            for _ in 1:block.groups
+                peps[order[position]] = pep
+                position += 1
+            end
+        end
+    end
+    return nothing
+end
+
 """Compute q-values and PEPs using one shared score ordering."""
 function get_score_statistics!(scores, labels, qvalues, peps;
     fdr_scale_factor::Float32=1.0f0, memory_budget_bytes::Int=SCORE_WORKSPACE_BYTES)
@@ -177,18 +195,7 @@ function get_score_statistics!(scores, labels, qvalues, peps;
         throw(DimensionMismatch("Score arrays differ in length"))
     _validate_score_options(fdr_scale_factor, memory_budget_bytes)
     isempty(scores) && return nothing
-    if length(scores) > memory_budget_bytes ÷ 64
-        fit = _score_array_calibration(scores, labels; fdr_scale_factor, memory_budget_bytes)
-        try
-            for i in 1:length(scores)
-                qvalues[i] = fit.qval_spline(scores[i])
-                peps[i] = fit.pep_interp(scores[i])
-            end
-        finally
-            _close_score_calibration(fit)
-        end
-    else
-        order = _score_order(scores)
+    with_score_order(scores; memory_budget_bytes) do order
         _get_qvalues_from_order!(scores, labels, qvalues, order, fdr_scale_factor)
         _get_PEP_from_order!(scores, labels, peps, order, fdr_scale_factor; memory_budget_bytes)
     end
