@@ -1270,15 +1270,18 @@ export default function App() {
   }
 
   const browseCalibration = async () => {
-    // A timsTOF .tdfs run is a folder, which the file picker cannot select.
-    const picked = build.timsTOF
-      ? await backend.pickFolder('Choose one timsTOF .tdfs run from this experiment')
-      : await backend.pickFile('Choose one run from this experiment', 'MS data', [
-          'arrow',
-          'mzML',
-          'mzml',
-          'raw',
-        ])
+    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', [
+      'arrow',
+      'mzML',
+      'mzml',
+      'raw',
+    ])
+    if (picked) onParam('calibrationFile', picked)
+  }
+
+  /** A timsTOF .tdfs run is a folder, which the file picker cannot select. */
+  const browseCalibrationTdfs = async () => {
+    const picked = await backend.pickFolder('Choose one timsTOF .tdfs run from this experiment')
     if (picked) onParam('calibrationFile', picked)
   }
 
@@ -2110,6 +2113,7 @@ export default function App() {
                 onRemoveFasta={removeFasta}
                 onBrowseLibPath={browseLibPath}
                 onBrowseCalibration={browseCalibration}
+                onBrowseCalibrationTdfs={browseCalibrationTdfs}
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
