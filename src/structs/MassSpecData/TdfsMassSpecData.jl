@@ -54,6 +54,7 @@ struct TdfsMassSpecData <: MassSpecData
     im_scan::Vector{UInt16}
     frame_id::Vector{Int32}
     n_peaks::Vector{Int32}
+    im_slope::Float32                           # |d(1/K0)/d(IM scan)| from the instrument calibration (meta.json)
 end
 
 """
@@ -74,6 +75,7 @@ function TdfsMassSpecData(dir::String)
         nan_to_missing(sl.center_mz), nan_to_missing(sl.isolation_width),
         Vector{Float32}(sl.collision_energy_ev), Vector{UInt8}(sl.ms_order), Vector{UInt32}(sl.cycle_idx),
         Vector{UInt16}(sl.im_scan), Vector{Int32}(sl.frame_id), Vector{Int32}(sl.n_peaks),
+        Float32(abs(file.meta["im_slope_1overK0_per_scan"])),
     )
 end
 
@@ -165,5 +167,6 @@ getIsolationWidthMzs(d::TdfsMassSpecData) = d.isolation_width
 getMsOrders(d::TdfsMassSpecData) = d.ms_order
 getCycleIdxs(d::TdfsMassSpecData) = d.cycle_idx
 getImScans(d::TdfsMassSpecData) = d.im_scan
+getImSlope(d::TdfsMassSpecData) = d.im_slope
 getFrameIds(d::TdfsMassSpecData) = d.frame_id
 getCollisionEnergyEvs(d::TdfsMassSpecData) = d.collision_energy_ev

@@ -89,11 +89,8 @@ function set_rt_to_irt_model!(
     setRtIrtMap!(search_context, model[1], ms_file_idx)
     
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    # Dev override: PIONEER_TUNING_IRT_TOL_MULT scales the iRT window used by the main search's candidate
-    # selection (default 3 x MAD of the tuning RT fit).
-    tol_mult = Float32(something(tryparse(Float32, get(ENV, "PIONEER_TUNING_IRT_TOL_MULT", "")), 1.0f0))
-    getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA * tol_mult
-    @debug_l1 "  Tuning iRT tolerance for the main search: $(round(getIrtErrors(search_context)[ms_file_idx], digits = 3)) (MAD $(round(model[4], digits = 3)) x $(TUNING_IRT_TOL_SIGMA) x $tol_mult)"
+    getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA
+    @debug_l1 "  Tuning iRT tolerance for the main search: $(round(getIrtErrors(search_context)[ms_file_idx], digits = 3)) (MAD $(round(model[4], digits = 3)) x $(TUNING_IRT_TOL_SIGMA))"
 end
 
 
@@ -273,7 +270,6 @@ function accumulate_psms!(
     scored_psms = DataFrame()
     n_passing = 0
     total_scans_used = 0
-    second_order = tuning_second_order()
     t_phase = time()
     end_reason = "exhausted all tiers"
     n_prec = 0; n_capped = 0
@@ -290,10 +286,8 @@ function accumulate_psms!(
         n_passing = 0
         # Second-order stopping state: the previous checkpoint and the previous batch's marginal rate.
         prev_scans = 0; prev_passing = 0; prev_marginal = -1.0
-        # First tier: start at initial_scans. Subsequent tiers: start at max_scans under the
-        # cumulative-rate rule (one batch, no checkpoints); with second-order stopping every tier
-        # grows from initial_scans so the decay check can end it early too.
-        scan_target = (tier_idx == 1 || second_order) ? min(initial_scans, max_scans) : max_scans
+        # Every tier grows from initial_scans so the second-order decay check can end it early.
+        scan_target = min(initial_scans, max_scans)
 
         while prev < max_scans
             batch_indices = all_scan_indices[(prev+1):scan_target]
@@ -349,22 +343,20 @@ function accumulate_psms!(
             # Second-order: marginal yield of the last batch vs the batch before. If it is decaying,
             # the most the remaining scans can add is dn * d / (1 - d) (geometric tail); if even that
             # cannot reach the target, further search at this tier is wasted -> back off now.
-            if second_order
-                ds = prev - prev_scans; dn = n_passing - prev_passing
-                marginal = ds > 0 ? dn / ds : 0.0
-                if prev_marginal > 0 && marginal < prev_marginal
-                    d = marginal / prev_marginal
-                    tail_max = dn * d / (1 - d)
-                    if n_passing + tail_max < target_psms
-                        @debug_l1 "  $(label) (score≥$(score)): marginal yield decaying (" *
-                                   "$(round(1000 * prev_marginal, digits=2)) -> $(round(1000 * marginal, digits=2)) per 1k scans, " *
-                                   "tail bound +$(round(Int, tail_max)) < $(target_psms - n_passing) needed), backing off early"
-                        end_reason = "score≥$(score) backed off early at $(prev) scans"
-                        break
-                    end
+            ds = prev - prev_scans; dn = n_passing - prev_passing
+            marginal = ds > 0 ? dn / ds : 0.0
+            if prev_marginal > 0 && marginal < prev_marginal
+                d = marginal / prev_marginal
+                tail_max = dn * d / (1 - d)
+                if n_passing + tail_max < target_psms
+                    @debug_l1 "  $(label) (score≥$(score)): marginal yield decaying (" *
+                               "$(round(1000 * prev_marginal, digits=2)) -> $(round(1000 * marginal, digits=2)) per 1k scans, " *
+                               "tail bound +$(round(Int, tail_max)) < $(target_psms - n_passing) needed), backing off early"
+                    end_reason = "score≥$(score) backed off early at $(prev) scans"
+                    break
                 end
-                prev_scans = prev; prev_passing = n_passing; prev_marginal = marginal
             end
+            prev_scans = prev; prev_passing = n_passing; prev_marginal = marginal
             additional = if rate > 0
                 remaining = target_psms - n_passing
                 clamp(ceil(Int, remaining / rate * 1.5), 1, scans_remaining)
@@ -483,15 +475,6 @@ function fit_nce_from_psms!(
     # Keep best NCE per precursor (highest gof — deconvolution goodness of fit)
     sort!(nce_psms, :gof, rev=true)
     best_nce = combine(groupby(nce_psms, :precursor_idx), first)
-    # Dev hook (shares PIONEER_TUNING_DUMP_PSMS): the per-precursor best grid NCE
-    # with its scan, so alternative NCE models can be evaluated offline.
-    let dump_dir = get(ENV, "PIONEER_TUNING_DUMP_PSMS", "")
-        if !isempty(dump_dir)
-            mkpath(dump_dir)
-            keep = intersect([:precursor_idx, :scan_idx, :prec_mz, :charge, :nce, :gof], Symbol.(names(best_nce)))
-            Arrow.write(joinpath(dump_dir, "$(getParsedFileName(search_context, ms_file_idx))_best_nce.arrow"), best_nce[!, keep])
-        end
-    end
 
     # Fit NCE model. Files whose scans carry a collision energy (timsTOF packets: an
     # eV ramp along ion mobility) are binned on the Thermo-normalised nominal NCE of
@@ -677,7 +660,7 @@ function process_file!(
              initial_scans = Int64(TUNING_MIN_COLLECT_SCANS),
              max_peaks = 0),
         )
-        phase_caps = (0, tuning_collection_cap())   # scout: PSM rows; collection: best-k rows per precursor
+        phase_caps = (0, TUNING_MAX_PSMS_PER_PRECURSOR)   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
         for (phase_idx, phase) in enumerate(phases)
@@ -695,14 +678,6 @@ function process_file!(
                 max_per_precursor = phase_caps[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
-            # Dev hook: PIONEER_TUNING_DUMP_PSMS="<dir>" writes each phase's
-            # scored PSMs (otherwise memory-only) for inspection.
-            dump_dir = get(ENV, "PIONEER_TUNING_DUMP_PSMS", "")
-            if !isempty(dump_dir) && n_passing > 0
-                mkpath(dump_dir)
-                Arrow.write(joinpath(dump_dir,
-                    "$(parsed_fname)_$(replace(lowercase(phase.label), ' ' => '_'))_psms.arrow"), scored_psms)
-            end
 
             # Extract fragments and fit model
             frags = n_passing > 0 ?
