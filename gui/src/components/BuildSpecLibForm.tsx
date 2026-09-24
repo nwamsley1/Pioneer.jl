@@ -355,6 +355,8 @@ interface Props {
   onRemoveFasta: (idx: number) => void
   onBrowseLibPath: () => void
   onBrowseCalibration: () => void
+  /** Pick a timsTOF .tdfs run (a folder) as the calibration file. */
+  onBrowseCalibrationTdfs: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
   onEnzyme: (id: string) => void
@@ -380,6 +382,7 @@ export function BuildSpecLibForm({
   onRemoveFasta,
   onBrowseLibPath,
   onBrowseCalibration,
+  onBrowseCalibrationTdfs,
   onModField,
   onRemoveMod,
   onEnzyme,
@@ -840,6 +843,15 @@ export function BuildSpecLibForm({
             style={BROWSE}
           >
             Browse
+          </button>
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onBrowseCalibrationTdfs}
+            style={BROWSE}
+            title="Choose a timsTOF .tdfs run (a folder)"
+          >
+            Browse .tdfs
           </button>
         </div>
         )}
