@@ -368,6 +368,33 @@ getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = load
 loadMassSpecData(path::AbstractString) = is_tdfs_path(path) ? TdfsMassSpecData(String(path)) : BasicMassSpecData(String(path))
 "An MS data path Pioneer can open: `<name>.arrow` files and `<name>.tdfs` directories."
 is_ms_data_path(path::AbstractString) = (endswith(path, ".arrow") && isfile(path)) || is_tdfs_path(path)
+
+"""
+    check_ms_data_vendors(paths)
+
+Refuse a search that mixes timsTOF `.tdfs` runs with `.arrow` files: the two take different code paths (ion
+mobility, quad model, 2D integration) and are not calibrated or scored together.
+"""
+function check_ms_data_vendors(paths::AbstractVector{<:AbstractString})
+    n_tdfs = count(is_tdfs_path, paths)
+    0 < n_tdfs < length(paths) || return nothing
+    error("The ms_data folder mixes $(n_tdfs) timsTOF .tdfs run$(n_tdfs == 1 ? "" : "s") with " *
+          "$(length(paths) - n_tdfs) .arrow file$(length(paths) - n_tdfs == 1 ? "" : "s"). " *
+          "Search data from different instruments separately.")
+end
+
+"""
+    check_library_ion_mobility(paths, library_has_im, library_path)
+
+Refuse to search timsTOF `.tdfs` runs with a library that has no predicted ion mobility (`inv_ion_mobility`).
+"""
+function check_library_ion_mobility(paths::AbstractVector{<:AbstractString}, library_has_im::Bool,
+                                    library_path::AbstractString)
+    (library_has_im || !any(is_tdfs_path, paths)) && return nothing
+    error("The spectral library $(library_path) has no ion-mobility predictions, which searching timsTOF " *
+          ".tdfs data requires. Rebuild it with the timsTOF option on " *
+          "(library_params.im_model = \"alphapept_ccs\" in the BuildSpecLib parameters).")
+end
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
