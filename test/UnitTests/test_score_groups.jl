@@ -219,3 +219,65 @@ end
     @test isempty(operation(empty_frame).qval)
     @test eltype(empty_frame.qval) == Float32
 end
+
+@testset "Bulk score assignment across memory and disk orders" begin
+    rng = MersenneTwister(877)
+    scores = rand(rng, Float64[Inf, 0.9, 0.5, 0.0, -0.0, -1, -Inf, NaN], 1001)
+    labels = rand(rng, Bool, length(scores))
+    for scale in (0.5f0, 1f0, 2f0)
+        expected_q = zeros(Float32, length(scores))
+        expected_pep = similar(expected_q)
+        Pioneer.get_score_statistics!(scores, labels, expected_q, expected_pep;
+            fdr_scale_factor=scale, memory_budget_bytes=1_000_000)
+        q, pep = similar(expected_q), similar(expected_pep)
+        Pioneer.get_score_statistics!(scores, labels, q, pep;
+            fdr_scale_factor=scale, memory_budget_bytes=4096)
+        @test q == expected_q
+        @test pep == expected_pep
+        Pioneer.get_qvalues!(scores, labels, q; fdr_scale_factor=scale, memory_budget_bytes=4096)
+        Pioneer.get_PEP!(scores, labels, pep; fdr_scale_factor=scale, memory_budget_bytes=4096)
+        @test q == expected_q
+        @test pep == expected_pep
+        order = Pioneer._score_order(scores)
+        Pioneer._get_PEP_from_order!(scores, labels, pep, Int32.(order), scale; memory_budget_bytes=4096)
+        @test pep == expected_pep
+        Pioneer.get_qvalues!(scores[order], labels[order], q; doSort=false,
+            fdr_scale_factor=scale, memory_budget_bytes=4096)
+        Pioneer.get_PEP!(scores[order], labels[order], pep; doSort=false,
+            fdr_scale_factor=scale, memory_budget_bytes=4096)
+        @test q == expected_q[order]
+        @test pep == expected_pep[order]
+    end
+    mktempdir() do dir
+        Pioneer.with_score_order(scores; memory_budget_bytes=4096, max_fanin=2, temp_parent=dir) do order
+            @test order isa Pioneer.DiskScoreOrder
+            indices = collect(order)
+            @test sort(indices) == collect(eachindex(scores))
+            @test issorted(Pioneer._score_key.(scores[indices]); rev=true)
+            @test [order[i] for i in length(order):-1:1] == reverse(indices)
+        end
+        @test isempty(readdir(dir))
+        @test_throws ErrorException Pioneer.with_score_order(_ -> error("consumer failure"), scores;
+            memory_budget_bytes=4096, max_fanin=2, temp_parent=dir)
+        @test isempty(readdir(dir))
+    end
+    # A monotonic sequence of group decoy fractions keeps enough PAVA blocks
+    # to spill, including leading zero blocks and the unit pseudocount.
+    scores = Float32.(2000:-1:1)
+    for labels in (falses(2000), trues(2000), vcat(trues(1000), falses(1000)), vcat(falses(1000), trues(1000)))
+        expected = zeros(Float32, 2000)
+        actual = similar(expected)
+        Pioneer._get_PEP_from_order!(scores, labels, expected, 1:2000, 1f0; memory_budget_bytes=1_000_000)
+        Pioneer._get_PEP_from_order!(scores, labels, actual, 1:2000, 1f0; memory_budget_bytes=4096)
+        @test actual == expected
+    end
+    # Exercise the cutoff on either side with the same grouped results.
+    for n in (63, 64, 65)
+        scores = fill(0.5f0, n)
+        labels = [isodd(i) for i in 1:n]
+        q, pep = zeros(Float32, n), zeros(Float32, n)
+        Pioneer.get_score_statistics!(scores, labels, q, pep; memory_budget_bytes=4096)
+        @test all(==(Float32(count(!, labels) / count(identity, labels))), q)
+        @test all(==(Float32(count(!, labels) / count(identity, labels))), pep)
+    end
+end

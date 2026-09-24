@@ -45,11 +45,8 @@ and emit a one-line @user_info summary with target counts at q≤.001, q≤.01,
 PEP≤.01, PEP≤.05. **Diagnostic only** — purely transparent (no mutation of
 best_psms columns).
 
-Gated on `DEBUG_CONSOLE_LEVEL[] >= 1` because the q-value + PEP calculation
-underneath (two sorts of up to ~3.98M rows each, called 3× per file) is
-non-trivial — ~0.6 s/file × 8 files = ~5 s on Astral. The default debug
-level is 0, so this is a no-op in production. Set
-`logging.debug_console_level: 1` in the config to re-enable.
+Gated on `DEBUG_CONSOLE_LEVEL[] >= 1`. Q-values and PEPs share one score
+ordering; the default debug level is 0, so diagnostics add no scoring work.
 """
 function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString,
                                 ms_file_idx::Integer, file_name::AbstractString)
@@ -61,9 +58,8 @@ function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString
     probs = Float32.(best_psms[!, :lgbm_prob])
     is_t  = Vector{Bool}(best_psms[!, :target])
     qv = zeros(Float32, length(probs))
-    get_qvalues!(probs, is_t, qv; doSort=true, fdr_scale_factor=1.0f0)
     peps = Vector{Float32}(undef, length(probs))
-    get_PEP!(probs, is_t, peps; doSort=true, fdr_scale_factor=1.0f0)
+    get_score_statistics!(probs, is_t, qv, peps; fdr_scale_factor=1.0f0)
     n_t_q001  = count((qv .<= 0.001f0) .& is_t)
     n_t_q01   = count((qv .<= 0.01f0)  .& is_t)
     n_t_pep01 = count((peps .<= 0.01f0) .& is_t)

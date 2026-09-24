@@ -421,3 +421,115 @@ function _close_score_calibration(fit)
     empty!(store.cache)
     rm(dirname(store.path); recursive=true, force=true)
 end
+
+# Sequentially cached permutation for bulk calibration. The caller owns scores
+# and output arrays; only the sort/merge buffers and PAVA stack use workspace.
+mutable struct DiskScoreOrder <: AbstractVector{Int64}
+    io::IOStream
+    n::Int
+    buffer::Vector{Int64}
+    first::Int
+    capacity::Int
+end
+Base.size(order::DiskScoreOrder) = (order.n,)
+Base.IndexStyle(::Type{DiskScoreOrder}) = IndexLinear()
+@inline function Base.getindex(order::DiskScoreOrder, i::Int)
+    @boundscheck checkbounds(order, i)
+    if !(order.first <= i < order.first + length(order.buffer))
+        order.first = ((i - 1) ÷ order.capacity) * order.capacity + 1
+        resize!(order.buffer, min(order.capacity, order.n - order.first + 1))
+        seek(order.io, (order.first - 1) * sizeof(Int64))
+        read!(order.io, order.buffer)
+    end
+    @inbounds return order.buffer[i - order.first + 1]
+end
+
+function _merge_score_orders!(destination, paths, scores, budget)
+    orders = DiskScoreOrder[]
+    heap = BinaryMinHeap{Tuple{Float64, Int64, Int}}()
+    positions = ones(Int, length(paths))
+    capacity = max(1, min(8192, budget ÷ (32 * (length(paths) + 1))))
+    output = Int64[]
+    sizehint!(output, capacity)
+    try
+        for path in paths
+            order = DiskScoreOrder(open(path, "r"), filesize(path) ÷ 8, Int64[], 0, capacity)
+            push!(orders, order)
+            if !isempty(order)
+                row = order[1]
+                push!(heap, (-_score_key(scores[row]), row, length(orders)))
+            end
+        end
+        open(destination, "w") do io
+            while !isempty(heap)
+                _, row, source = pop!(heap)
+                push!(output, row)
+                if length(output) == capacity
+                    write(io, output)
+                    empty!(output)
+                end
+                positions[source] += 1
+                order = orders[source]
+                if positions[source] <= length(order)
+                    next_row = order[positions[source]]
+                    push!(heap, (-_score_key(scores[next_row]), next_row, source))
+                end
+            end
+            write(io, output)
+        end
+    finally
+        foreach(order -> close(order.io), orders)
+    end
+    return nothing
+end
+
+"""Visit a descending score permutation, spilling indexed runs with bounded fan-in."""
+function with_score_order(consume, scores; memory_budget_bytes=SCORE_WORKSPACE_BYTES,
+    max_fanin=32, temp_parent=tempdir())
+    _validate_score_options(1.0, memory_budget_bytes)
+    max_fanin >= 2 || throw(ArgumentError("Score merge fan-in must be at least two"))
+    capacity = max(1, memory_budget_bytes ÷ 64)
+    length(scores) <= capacity && return consume(_score_order(scores))
+    mktempdir(temp_parent) do directory
+        levels = Vector{Vector{String}}()
+        counter = 0
+        next_path() = joinpath(directory, "$(counter += 1).bin")
+        function stage(path, level=1)
+            while length(levels) < level
+                push!(levels, String[])
+            end
+            push!(levels[level], path)
+            if length(levels[level]) == max_fanin
+                merged = next_path()
+                _merge_score_orders!(merged, levels[level], scores, memory_budget_bytes)
+                foreach(rm, levels[level])
+                empty!(levels[level])
+                stage(merged, level + 1)
+            end
+        end
+        for first in 1:capacity:length(scores)
+            rows = collect(Int64, first:min(first + capacity - 1, length(scores)))
+            sort!(rows; by=i -> _score_key(scores[i]), rev=true)
+            path = next_path()
+            open(io -> write(io, rows), path, "w")
+            stage(path)
+        end
+        paths = reduce(vcat, levels; init=String[])
+        while length(paths) > 1
+            next = String[]
+            for first in 1:max_fanin:length(paths)
+                batch = paths[first:min(first + max_fanin - 1, end)]
+                path = next_path()
+                _merge_score_orders!(path, batch, scores, memory_budget_bytes)
+                foreach(rm, batch)
+                push!(next, path)
+            end
+            paths = next
+        end
+        open(only(paths), "r") do io
+            order = DiskScoreOrder(io, length(scores), Int64[], 0,
+                max(1, min(8192, memory_budget_bytes ÷ 64)))
+            return consume(order)
+        end
+    end
+end
