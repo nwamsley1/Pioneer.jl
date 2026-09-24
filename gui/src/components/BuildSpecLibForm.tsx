@@ -355,6 +355,8 @@ interface Props {
   onRemoveFasta: (idx: number) => void
   onBrowseLibPath: () => void
   onBrowseCalibration: () => void
+  /** Pick a Bruker .tdfs run (a folder) as the calibration file. */
+  onBrowseCalibrationTdfs: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
   onEnzyme: (id: string) => void
@@ -380,6 +382,7 @@ export function BuildSpecLibForm({
   onRemoveFasta,
   onBrowseLibPath,
   onBrowseCalibration,
+  onBrowseCalibrationTdfs,
   onModField,
   onRemoveMod,
   onEnzyme,
@@ -838,9 +841,18 @@ export function BuildSpecLibForm({
             className="pio-browse"
             onClick={onBrowseCalibration}
             style={BROWSE}
-            title="An .arrow file, or a timsTOF .tdfs run: open the run and choose any file inside it"
+            title="A converted Thermo / Sciex run (.arrow file)"
           >
-            Browse .arrow/.tdfs
+            Browse .arrow
+          </button>
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onBrowseCalibrationTdfs}
+            style={BROWSE}
+            title="A converted Bruker timsTOF run (.tdfs folder): select the folder and click Open"
+          >
+            Browse Bruker .tdfs
           </button>
         </div>
         )}
