@@ -16,17 +16,17 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    MaxLFQSearch
+    ProteinQuantificationSearch
 
-Search method for performing MaxLFQ normalization and protein quantification.
+Search method for normalization, protein quantification, and output.
 
 This search:
 1. Normalizes quantitative values across runs
-2. Performs MaxLFQ protein quantification
+2. Quantifies proteins with directLFQ or MaxLFQ
 3. Generates long and wide format results
 4. Creates QC plots
 """
-struct MaxLFQSearch <: SearchMethod end
+struct ProteinQuantificationSearch <: SearchMethod end
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
@@ -36,9 +36,9 @@ Type Definitions
 ==========================================================#
 
 """
-Results container for MaxLFQ search.
+Results container for protein quantification.
 """
-struct MaxLFQSearchResults <: SearchResults
+struct ProteinQuantificationSearchResults <: SearchResults
     precursors_long_path::String
     precursors_wide_path::String
     proteins_long_path::String
@@ -47,16 +47,17 @@ struct MaxLFQSearchResults <: SearchResults
 end
 
 """
-Parameters for MaxLFQ search.
+Parameters for protein quantification.
 """
 
-struct MaxLFQSearchParameters <: SearchParameters
+struct ProteinQuantificationSearchParameters <: SearchParameters
     # Run-to-run normalization on/off (the median-spline normalizer's tuning
     # constants — n_rt_bins, spline_n_knots — are hardcoded below since they
     # have no shipping override).
     run_to_run_normalization::Bool
 
     # LFQ parameters
+    quantification_method::Symbol
     q_value_threshold::Float32
     batch_size::Int64
     min_peptides::Int64
@@ -69,7 +70,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     delete_temp::Bool
     params::Any  # Store full parameters for reference
 
-    function MaxLFQSearchParameters(params::PioneerParameters)
+    function ProteinQuantificationSearchParameters(params::PioneerParameters)
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
@@ -77,6 +78,7 @@ struct MaxLFQSearchParameters <: SearchParameters
 
         new(
             Bool(maxLFQ_params.run_to_run_normalization),
+            Symbol(get(maxLFQ_params, :quantification_method, "directlfq")),
             _resolve_q_value_threshold(global_params),
             Int64(100000),  # Default batch size
             Int64(protein_scoring_params.min_peptides),
@@ -99,10 +101,10 @@ const MAXLFQ_NORM_SPLINE_N_KNOTS = 7
 Interface Implementation
 ==========================================================#
 
-get_parameters(::MaxLFQSearch, params::Any) = MaxLFQSearchParameters(params)
+get_parameters(::ProteinQuantificationSearch, params::Any) = ProteinQuantificationSearchParameters(params)
 
-function init_search_results(::MaxLFQSearchParameters, search_context::SearchContext)
-    return MaxLFQSearchResults(
+function init_search_results(::ProteinQuantificationSearchParameters, search_context::SearchContext)
+    return ProteinQuantificationSearchResults(
         joinpath(getDataOutDir(search_context), "precursors_long.arrow"),
         joinpath(getDataOutDir(search_context), "precursors_wide.arrow"),
         joinpath(getDataOutDir(search_context), "protein_groups_long.arrow"),
@@ -115,8 +117,8 @@ end
 Process a single file for MaxLFQ analysis.
 """
 function process_file!(
-    results::MaxLFQSearchResults,
-    params::MaxLFQSearchParameters,
+    results::ProteinQuantificationSearchResults,
+    params::ProteinQuantificationSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
@@ -129,8 +131,8 @@ end
 No per-file results processing needed.
 """
 function process_search_results!(
-    ::MaxLFQSearchResults,
-    ::MaxLFQSearchParameters,
+    ::ProteinQuantificationSearchResults,
+    ::ProteinQuantificationSearchParameters,
     ::SearchContext,
     ::Int64,
     ::MassSpecData
@@ -138,7 +140,7 @@ function process_search_results!(
     return nothing
 end
 
-function reset_results!(::MaxLFQSearchResults)
+function reset_results!(::ProteinQuantificationSearchResults)
     return nothing
 end
 
@@ -204,8 +206,8 @@ end
 Perform MaxLFQ analysis across all files.
 """
 function summarize_results!(
-    results::MaxLFQSearchResults,
-    params::MaxLFQSearchParameters,
+    results::ProteinQuantificationSearchResults,
+    params::ProteinQuantificationSearchParameters,
     search_context::SearchContext
 )
     # Get paths
@@ -309,8 +311,22 @@ function summarize_results!(
         write_csv = params.write_csv
     )
 
-    @user_info "Performing MaxLFQ..."
-    # Chunked MaxLFQ protein quantification (bounded memory per chunk)
+    @user_info "Performing $(params.quantification_method) protein quantification..."
+    quantification_metadata = Dict{String, Any}(
+        "method" => String(params.quantification_method),
+        "run_to_run_normalization" => params.run_to_run_normalization ? "pioneer_median_spline" : "none",
+    )
+    if params.quantification_method == :directlfq
+        merge!(quantification_metadata, Dict(
+            "reference_revision" => DIRECTLFQ_REFERENCE_REVISION,
+            "max_precursors" => DIRECTLFQ_MAX_PRECURSORS,
+            "reference_precursors" => DIRECTLFQ_REFERENCE_PRECURSORS,
+            "min_valid_precursors_per_run" => 1,
+        ))
+    end
+    write(joinpath(getDataOutDir(search_context), "protein_quantification.json"),
+        JSON.json(quantification_metadata, 4))
+    # Quantify protein-aligned input chunks incrementally.
     precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
     LFQ_chunked(
         chunk_refs,
@@ -323,13 +339,14 @@ function summarize_results!(
         params.q_value_threshold,
         build_accession_to_species(precursors),
         output_schema_policy = output_schema_policy,
-        batch_size = params.batch_size
+        batch_size = params.batch_size,
+        quantification_method = params.quantification_method
     )
     chunk_paths = [file_path(ref) for ref in chunk_refs]
 
     # Create FileReference for output metadata tracking
     protein_ref = ProteinQuantFileReference(protein_long_path)
-    @user_info "MaxLFQ: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
+    @user_info "Protein quantification: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
 
     @user_info "Writing protein group results..."
     # Create wide format protein table (protein groups table is small, no chunking needed)

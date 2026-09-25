@@ -22,7 +22,7 @@ identification and quantification counts, signal, calibration and
 peptide-property medians.
 
 The per-precursor statistics are accumulated from the chunks that
-`MaxLFQSearch` already streams into `precursors_long.arrow`, so the summary
+`ProteinQuantificationSearch` already streams into `precursors_long.arrow`, so the summary
 adds no extra pass over the data.
 """
 
@@ -58,7 +58,7 @@ RunSummaryStats(file_name::String) = RunSummaryStats(
 """
     accumulate_run_summary!(stats, tbl)
 
-Fold one chunk of identified precursors (the table `MaxLFQSearch` writes to
+Fold one chunk of identified precursors (the table `ProteinQuantificationSearch` writes to
 `precursors_long.arrow`) into the per-file accumulators. Decoy rows are
 skipped; `stats` is indexed by `ms_file_idx`.
 """

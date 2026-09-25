@@ -2138,7 +2138,7 @@ function process_final_psms!(
     end
     psms[!, :accession_numbers] = accession_numbers
 
-    # No sort here. MaxLFQSearch sorts the merged PSMs by :inferred_protein_group
+    # No sort here. ProteinQuantificationSearch sorts the merged PSMs by :inferred_protein_group
     # before its chunked-merge so chunk boundaries align with protein-group
     # boundaries. ProteinInferenceSearch (which runs between this method and
     # MaxLFQ) is what populates :inferred_protein_group, so a sort by that

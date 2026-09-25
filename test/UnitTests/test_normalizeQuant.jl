@@ -1,6 +1,6 @@
 # Unit tests for normalizeQuant (src/utils/normalizeQuant.jl).
 #
-# Tests RT-dependent quantification normalization used by MaxLFQSearch.
+# Tests RT-dependent quantification normalization used by ProteinQuantificationSearch.
 # Creates synthetic Arrow files with known intensity offsets and verifies
 # the normalization pipeline corrects them.
 #
