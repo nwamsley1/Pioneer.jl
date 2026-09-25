@@ -311,27 +311,19 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
         return Vector{Union{Missing, Float32}}(missing, n_runs)
     end
 
-    relative_profile = if valid_pairs == n_runs * (n_runs - 1) ÷ 2
-        # Complete overlap gives A = n_runs * I - ones(n_runs, n_runs).
-        # On the zero-mean subspace, the solution is therefore b / n_runs.
-        Atb ./= n_runs
-        Atb .-= mean(Atb)
-        Atb
-    else
-        AtA = getA(X)
-        system_matrix = Matrix{Float64}(undef, n_runs + 1, n_runs + 1)
-        system_matrix[1:n_runs, 1:n_runs] .= 2.0 .* AtA
-        system_matrix[1:n_runs, end] .= 1.0
-        system_matrix[end, 1:n_runs] .= 1.0
-        system_matrix[end, end] = 0.0
+    AtA = getA(X)
+    system_matrix = Matrix{Float64}(undef, n_runs + 1, n_runs + 1)
+    system_matrix[1:n_runs, 1:n_runs] .= 2.0 .* AtA
+    system_matrix[1:n_runs, end] .= 1.0
+    system_matrix[end, 1:n_runs] .= 1.0
+    system_matrix[end, end] = 0.0
 
-        rhs = Vector{Float64}(undef, n_runs + 1)
-        rhs[1:n_runs] .= 2.0 .* Atb
-        rhs[end] = 0.0
+    rhs = Vector{Float64}(undef, n_runs + 1)
+    rhs[1:n_runs] .= 2.0 .* Atb
+    rhs[end] = 0.0
 
-        solution = system_matrix \ rhs
-        @view solution[1:n_runs]
-    end
+    solution = system_matrix \ rhs
+    relative_profile = @view solution[1:n_runs]
     max_observed = maximum(observed_values)
     max_profile = maximum(relative_profile)
     log2_cumulative_intensity = Float64(max_observed) + log2(sum(

@@ -16,7 +16,7 @@ using Random
 
 @testset "MaxLFQ" begin
 
-@testset "complete-overlap shortcut matches dense equations" begin
+@testset "MaxLFQ matches independent dense equations" begin
     function dense_reference(X)
         n = size(X, 2)
         A = zeros(n + 1, n + 1)
@@ -58,7 +58,7 @@ using Random
     @test Pioneer.solve_maxlfq_component(@view X[:, [3, 1, 2]]) ≈
           dense_reference(X)[[3, 1, 2]] rtol=1e-6
 
-    # Connected through a chain, but not complete: retain the dense fallback.
+    # Connected through a chain, with incomplete pairwise overlap.
     X = Union{Missing, Float64}[10 12 missing missing; missing 15 18 missing;
                                missing missing 8 9]
     @test Pioneer.solve_maxlfq_component(X) ≈ dense_reference(X) rtol=1e-6
@@ -69,11 +69,11 @@ using Random
     @test all(ismissing, Pioneer.solve_maxlfq_component(Union{Missing, Float64}[10;;]))
     @test isempty(Pioneer.solve_maxlfq_component(Matrix{Union{Missing, Float64}}(undef, 2, 0)))
 
-    # After compilation, complete overlap must not allocate a run-by-run matrix
-    # or one ratio buffer per pair. Inputs are allocated outside the measurement.
+    # Pairwise ratio calculation reuses its buffer across all run pairs.
+    # Inputs and compilation are excluded from the allocation measurement.
     X = Matrix{Union{Missing, Float64}}(randn(rng, 8, 256))
-    Pioneer.solve_maxlfq_component(X)
-    @test (@allocated Pioneer.solve_maxlfq_component(X)) < 200_000
+    Pioneer.getB(X)
+    @test (@allocated Pioneer.getB(X)) < 200_000
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
