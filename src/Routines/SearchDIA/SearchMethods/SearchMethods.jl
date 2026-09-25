@@ -261,6 +261,20 @@ function initSearchContext(
 end
 
 """
+    zt_mode(acq, spectra) -> (on::Bool, source::String, file_is_zt::Bool)
+
+Whether to search a file in scanning-quad (ZT) mode. `acquisition.scanning_quad` decides when the config sets
+it; otherwise the file's own metadata does (SciexWiff records `acquisition_type = "zt_scan_dia"` when it
+converts a ZT Scan DIA run). Files without metadata (e.g. msConvert → `convertMzML`) stay off unless configured.
+"""
+function zt_mode(acq, spectra::MassSpecData)
+    meta = getAcquisitionMetadata(spectra)
+    file_is_zt = meta !== nothing && get(meta, "acquisition_type", "") == "zt_scan_dia"
+    hasproperty(acq, :scanning_quad) && return (Bool(acq.scanning_quad), "config", file_is_zt)
+    return (file_is_zt, "file metadata", file_is_zt)
+end
+
+"""
     ensure_zt_geometry!(search_context, params, ms_file_idx, spectra) -> Nothing
 
 Detect and record the Q1 bin lattice for one file, the first time that file is seen.
@@ -291,9 +305,11 @@ function ensure_zt_geometry!(
     fname = getParsedFileName(getMassSpecData(search_context), ms_file_idx)
     acq = params.acquisition
 
-    if !(hasproperty(acq, :scanning_quad) && Bool(acq.scanning_quad))
+    zt_on, source, file_is_zt = zt_mode(acq, spectra)
+    if !zt_on
         setZTGeometry!(search_context, ms_file_idx, nothing)
-        @user_info "Scanning-quad (ZT) [$fname]: OFF"
+        @user_info "Scanning-quad (ZT) [$fname]: OFF" *
+                   (file_is_zt ? " (file is ZT Scan DIA, but acquisition.scanning_quad = false)" : "")
         return nothing
     end
 
@@ -330,7 +346,7 @@ function ensure_zt_geometry!(
                               SquareQuadModel(zt_deconv_overhang(g)))
 
     tiling = zt_tiles_contiguously(g) ? "contiguous" : "NON-CONTIGUOUS (check acquisition!)"
-    @user_info "Scanning-quad (ZT) [$fname]: ON  k=$(g.metascan_k) (±$(g.metascan_k) bins, " *
+    @user_info "Scanning-quad (ZT) [$fname]: ON ($source)  k=$(g.metascan_k) (±$(g.metascan_k) bins, " *
                "±$(round(g.metascan_k * g.bin_step, digits=2)) Da)  S=$(round(g.bin_step, digits=4)) Da  " *
                "nominal width=$(round(g.nominal_width, digits=4)) Da ($tiling)  " *
                "bins/ramp=$(g.bins_per_ramp)  span=$(round(zt_span_mz(g), digits=2)) Da"

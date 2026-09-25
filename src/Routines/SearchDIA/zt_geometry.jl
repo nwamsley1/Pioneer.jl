@@ -232,14 +232,16 @@ zt_frag_overhang() = ZT_FRAG_OVERHANG
 """
     zt_candidacy_tol() -> Float32
 
-Wide-emit candidacy half-width in Da (`PIONEER_ZT_CANDIDACY_TOL`); 0 disables it.
+Wide-emit candidacy half-width in Da: `ZT_CANDIDACY_TOL_DEFAULT` (2 Da, the best-measured setting),
+overridable with `PIONEER_ZT_CANDIDACY_TOL`; 0 disables it.
 
 Wide-emit widens the fragment-index box so a precursor gets an emission CHANCE in every bin of
 its meta-scan, then `map_any_hit_to_center!` re-anchors each emission to the precursor's own bin.
 It survives if it cleared the bitvec in ANY bin, rather than needing its center bin to clear.
 """
+const ZT_CANDIDACY_TOL_DEFAULT = 2.0f0
 zt_candidacy_tol() =
-    something(tryparse(Float32, get(ENV, "PIONEER_ZT_CANDIDACY_TOL", "")), 0.0f0)
+    something(tryparse(Float32, get(ENV, "PIONEER_ZT_CANDIDACY_TOL", "")), ZT_CANDIDACY_TOL_DEFAULT)
 
 """
     zt_candidacy_overhang(g::ZTGeometry) -> Float32
