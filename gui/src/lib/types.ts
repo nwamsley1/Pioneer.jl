@@ -1,5 +1,5 @@
 import { DEFAULT_CLEAVAGE } from './enzymes'
-import { modEntry } from './koinaMods'
+import { DEFAULT_RT_MODEL, modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
 
@@ -225,6 +225,8 @@ export interface BuildParams {
   libPath: string
   /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
   predictionModel: string
+  /** Key into RT_MODELS (koinaMods.ts); emitted as `library_params.rt_model`. */
+  rtModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -279,6 +281,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
+  rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
   // form emits what Pioneer would have defaulted to anyway.

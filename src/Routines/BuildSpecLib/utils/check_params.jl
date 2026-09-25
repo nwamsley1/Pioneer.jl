@@ -96,6 +96,111 @@ function check_mod_site_conflicts(params::Dict{String, Any})
     return nothing
 end
 
+"""
+    unimod_id(name) -> Union{Int, Nothing}
+
+The UNIMOD accession a modification name carries: "Unimod:35", "UNIMOD:35" and
+a bare "35" all give 35. Anything else gives `nothing` -- the name is written
+into Koina sequences as `[NAME]`, so a non-UNIMOD name cannot be predicted.
+"""
+function unimod_id(name)
+    name isa AbstractString || return nothing
+    m = match(r"^\s*(?:unimod:)?\s*(\d+)\s*$"i, name)
+    return m === nothing ? nothing : parse(Int, m.captures[1])
+end
+
+"""
+    mod_pattern_sites(pattern) -> Set{Char}
+
+Where a modification pattern places its modification: the residues it matches
+(via `mod_pattern_residues`), or `'n'` for a pattern anchored at the peptide
+N-terminus.
+"""
+function mod_pattern_sites(pattern::AbstractString)
+    startswith(strip(pattern), '^') && return Set(['n'])
+    return mod_pattern_residues(pattern)
+end
+
+_site_label(c::Char) = c == 'n' ? "N-term" : string(c)
+
+"""
+    check_model_mod_support(params)
+
+Refuse a build whose modifications the fragment model or the retention-time
+model cannot predict.
+
+Koina does not reject an unfamiliar modification: the model predicts something,
+and the library is silently wrong. So every fixed and variable modification
+(accession *and* site) is checked against `supported_mods` of both the
+`prediction_model` and the `rt_model`, and leaving cysteine unmodified -- no
+fixed modification on C -- is checked against their `free_cys`, since most
+models assume it carbamidomethylated.
+
+The error names each offending modification and the model that rejects it,
+and lists the models that would accept the whole selection, so the two ways
+out (drop the modifications, or switch model) are both visible.
+"""
+function check_model_mod_support(params::Dict{String, Any})
+    get(params, "predict_fragments", true) || return nothing   # resuming from disk: no prediction
+    library_params = params["library_params"]
+    prediction_model = String(get(library_params, "prediction_model", "altimeter"))
+    rt_model = String(get(library_params, "rt_model", DEFAULT_RT_MODEL))
+    haskey(MODEL_CONFIGS, prediction_model) || throw(InvalidParametersError(
+        "Unknown prediction_model '$prediction_model'. Valid: " *
+        join(sort(collect(keys(MODEL_CONFIGS))), ", "), params))
+
+    # (accession, site, "Unimod:4 on C") for every fixed and variable modification.
+    selected = Tuple{Int, Char, String}[]
+    fixed_sites = Set{Char}()
+    for (kind, key) in (("fixed", "fixed_mods"), ("variable", "variable_mods"))
+        mods = params[key]
+        names, patterns = mods["name"], mods["pattern"]
+        for (name, pattern) in zip(names, patterns)
+            id = unimod_id(name)
+            id === nothing && throw(InvalidParametersError(
+                "$(kind) modification name $(repr(name)) is not a UNIMOD accession. " *
+                "Prediction models only know modifications by accession -- name it " *
+                "\"Unimod:<id>\" (e.g. \"Unimod:35\" for oxidation).", params))
+            sites = mod_pattern_sites(string(pattern))
+            kind == "fixed" && union!(fixed_sites, sites)
+            for site in sort!(collect(sites))     # deterministic message order
+                push!(selected, (id, site, "Unimod:$(id) on $(_site_label(site))"))
+            end
+        end
+    end
+    free_cys = !('C' in fixed_sites)
+
+    unsupported(support) = unique(label for (id, site, label) in selected
+                                  if !occursin(site, get(support.supported_mods, id, "")))
+    accepts(support) = isempty(unsupported(support)) && (!free_cys || support.free_cys)
+
+    problems = String[]
+    for (role, name, support) in (("fragment model", prediction_model, MODEL_CONFIGS[prediction_model]),
+                                  ("retention-time model", rt_model, RT_MODEL_CONFIGS[rt_model]))
+        bad = unsupported(support)
+        isempty(bad) || push!(problems,
+            "$(role) $(name) does not support " * join(bad, ", "))
+        if free_cys && !support.free_cys
+            push!(problems,
+                "$(role) $(name) assumes carbamidomethylated cysteine, but no fixed " *
+                "modification covers C (unmodified cysteine)")
+        end
+    end
+    isempty(problems) && return nothing
+
+    frag_ok = sort([n for (n, c) in MODEL_CONFIGS if accepts(c)])
+    rt_ok = sort([n for (n, c) in RT_MODEL_CONFIGS if accepts(c)])
+    throw(InvalidParametersError(
+        "Modifications not supported by the selected prediction models:\n  - " *
+        join(problems, "\n  - ") *
+        "\nResolve by removing or changing those modifications, or by choosing models " *
+        "that support the whole selection. Fragment models that would: " *
+        (isempty(frag_ok) ? "none" : join(frag_ok, ", ")) *
+        ". Retention-time models that would: " *
+        (isempty(rt_ok) ? "none" : join(rt_ok, ", ")) * ".",
+        params))
+end
+
 function check_params_bsp(json_string::String)
     # Parse user parameters
     user_params = JSON.parse(json_string, dicttype=Dict{String,Any})
@@ -199,6 +304,17 @@ function check_params_bsp(json_string::String)
     # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
     # endpoint isn't instrument-parameterized.
 
+    # Retention-time model. Defaulted here rather than at the call site so the
+    # config.json written into the library records which model predicted its
+    # retention times.
+    rt_model = get!(library_params, "rt_model", DEFAULT_RT_MODEL)
+    if !(rt_model isa AbstractString) || !haskey(RT_MODEL_CONFIGS, rt_model)
+        throw(InvalidParametersError(
+            "library_params.rt_model must be one of: " *
+            join(sort(collect(keys(RT_MODEL_CONFIGS))), ", ") * " (got $(repr(rt_model)))",
+            params))
+    end
+
     # Check variable_mods and fixed_mods
     for mod_type in ["variable_mods", "fixed_mods"]
         mods = params[mod_type]
@@ -208,6 +324,7 @@ function check_params_bsp(json_string::String)
     end
 
     check_mod_site_conflicts(params)
+    check_model_mod_support(params)
 
     # Check isotope_mod_groups
     isotope_mod_groups = params["isotope_mod_groups"]
