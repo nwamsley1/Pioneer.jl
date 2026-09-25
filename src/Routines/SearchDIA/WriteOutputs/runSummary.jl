@@ -23,8 +23,8 @@ peptide-property medians.
 
 The per-precursor statistics are accumulated from the chunks that
 `ProteinQuantificationSearch` already streams into `precursors_long.arrow`, so the summary
-adds no extra pass over the precursor Arrow output. Exact order statistics use
-temporary disk partitions, so retained observation data does not grow in RAM.
+adds no extra pass over the precursor Arrow output. Exact order statistics spill
+to temporary partitions only when their in-memory workspace fills.
 """
 
 const SUMMARY_FANOUT = 16
@@ -56,6 +56,10 @@ mutable struct RunSummaryAccumulator
     streams::Vector{IOStream}
     buffers::Vector{Vector{RunSummaryRecord}}
     capacity::Int
+    records::Vector{RunSummaryRecord}
+    record_limit::Int
+    temp_parent::String
+    directory::Union{Nothing, String}
 end
 
 function _summary_flush!(io, buffer)
@@ -132,6 +136,36 @@ function _large_summary_medians(path, n_peptides, budget)
     return medians, count(seen)
 end
 
+function _finish_summary_records!(stats, records, n_peptides)
+    n = length(records)
+    sort!(records; by=r -> r.run)
+    seen = falses(n_peptides)
+    values = Float32[]
+    first = 1
+    while first <= n
+        last = first
+        while last < n && records[last+1].run == records[first].run
+            last += 1
+        end
+        fill!(seen, false)
+        for i in first:last
+            seen[records[i].peptide] = true
+        end
+        s = stats[records[first].run]
+        s.peptides_identified = count(seen)
+        s.medians = ntuple(8) do metric
+            empty!(values)
+            for i in first:last
+                r = records[i]
+                r.valid & (UInt32(1) << (metric-1)) == 0 || push!(values, r.values[metric])
+            end
+            isempty(values) ? missing : median!(values)
+        end
+        first = last + 1
+    end
+    return nothing
+end
+
 function _finish_summary_partition!(stats, path, depth, n_peptides, budget)
     n = filesize(path) ÷ sizeof(RunSummaryRecord)
     n == 0 && return rm(path)
@@ -139,31 +173,7 @@ function _finish_summary_partition!(stats, path, depth, n_peptides, budget)
     if filesize(path) <= budget ÷ 4
         records = Vector{RunSummaryRecord}(undef, n)
         open(io -> read!(io, records), path)
-        sort!(records; by=r -> r.run)
-        seen = falses(n_peptides)
-        values = Float32[]
-        first = 1
-        while first <= n
-            last = first
-            while last < n && records[last+1].run == records[first].run
-                last += 1
-            end
-            fill!(seen, false)
-            for i in first:last
-                seen[records[i].peptide] = true
-            end
-            s = stats[records[first].run]
-            s.peptides_identified = count(seen)
-            s.medians = ntuple(8) do metric
-                empty!(values)
-                for i in first:last
-                    r = records[i]
-                    r.valid & (UInt32(1) << (metric-1)) == 0 || push!(values, r.values[metric])
-                end
-                isempty(values) ? missing : median!(values)
-            end
-            first = last + 1
-        end
+        _finish_summary_records!(stats, records, n_peptides)
     elseif stats[first_run].precursors_identified == n
         stats[first_run].medians, stats[first_run].peptides_identified =
             _large_summary_medians(path, n_peptides, budget)
@@ -201,39 +211,68 @@ end
 """
     with_run_summary(f, file_names; temp_parent=tempdir(), memory_budget_bytes=64*1024^2)
 
-Accumulate exact summary statistics through bounded disk partitions. The callback
-receives an accumulator for `accumulate_run_summary!`; finalized statistics are
-returned after all temporary files have been removed. Run counters and a shared
-sequence dictionary are metadata outside the numeric workspace budget.
+Accumulate exact summary statistics in memory, spilling to temporary partitions
+only when records exceed the workspace allowance. Reserve workspace for sorting,
+median selection, and spill buffers. Run counters and a shared sequence dictionary
+are metadata outside the numeric workspace budget.
 """
 function with_run_summary(f, file_names; temp_parent=tempdir(), memory_budget_bytes=64*1024^2)
     memory_budget_bytes >= 65536 || throw(ArgumentError("Summary workspace must be at least 64 KiB"))
-    mktempdir(temp_parent; prefix=".run_summary_") do dir
-        stats = RunSummaryStats.(file_names)
-        paths = [joinpath(dir, "$i.bin") for i in 1:SUMMARY_FANOUT]
-        streams = IOStream[]
-        buffers = [RunSummaryRecord[] for _ in paths]
-        capacity = max(1, min(16384, memory_budget_bytes ÷ (8SUMMARY_FANOUT * sizeof(RunSummaryRecord))))
-        acc = RunSummaryAccumulator(stats, Dict{String,UInt32}(), streams, buffers, capacity)
-        try
-            for path in paths
-                push!(streams, open(path, "w"))
-            end
-            f(acc)
-            for i in eachindex(streams)
-                _summary_flush!(streams[i], buffers[i])
-            end
-        finally
-            foreach(close, streams)
-        end
+    stats = RunSummaryStats.(file_names)
+    capacity = max(1, min(16384, memory_budget_bytes ÷ (8SUMMARY_FANOUT * sizeof(RunSummaryRecord))))
+    record_limit = memory_budget_bytes ÷ (4sizeof(RunSummaryRecord))
+    acc = RunSummaryAccumulator(stats, Dict{String,UInt32}(), IOStream[],
+        Vector{RunSummaryRecord}[], capacity, RunSummaryRecord[], record_limit,
+        String(temp_parent), nothing)
+    try
+        f(acc)
         n_peptides = length(acc.peptide_ids)
-        empty!(acc.buffers)
         acc.peptide_ids = Dict{String,UInt32}()
-        for path in paths
-            _finish_summary_partition!(stats, path, 1, n_peptides, memory_budget_bytes)
+        if acc.directory === nothing
+            _finish_summary_records!(stats, acc.records, n_peptides)
+        else
+            for i in eachindex(acc.streams)
+                _summary_flush!(acc.streams[i], acc.buffers[i])
+                close(acc.streams[i])
+            end
+            empty!(acc.buffers)
+            for i in 1:SUMMARY_FANOUT
+                _finish_summary_partition!(stats, joinpath(acc.directory, "$i.bin"),
+                    1, n_peptides, memory_budget_bytes)
+            end
         end
         return stats
+    finally
+        foreach(close, acc.streams)
+        acc.directory === nothing || rm(acc.directory; recursive=true, force=true)
     end
+end
+
+function _buffer_summary_record!(acc, record)
+    bucket = Int((record.run - 1) % SUMMARY_FANOUT) + 1
+    push!(acc.buffers[bucket], record)
+    length(acc.buffers[bucket]) >= acc.capacity &&
+        _summary_flush!(acc.streams[bucket], acc.buffers[bucket])
+end
+
+function _push_summary_record!(acc, record)
+    if acc.directory === nothing
+        if length(acc.records) < acc.record_limit
+            push!(acc.records, record)
+            return nothing
+        end
+        acc.directory = mktempdir(acc.temp_parent; prefix=".run_summary_", cleanup=false)
+        for i in 1:SUMMARY_FANOUT
+            push!(acc.streams, open(joinpath(acc.directory, "$i.bin"), "w"))
+            push!(acc.buffers, RunSummaryRecord[])
+        end
+        for previous in acc.records
+            _buffer_summary_record!(acc, previous)
+        end
+        acc.records = RunSummaryRecord[]
+    end
+    _buffer_summary_record!(acc, record)
+    return nothing
 end
 
 function accumulate_run_summary!(acc::RunSummaryAccumulator, tbl)
@@ -274,9 +313,7 @@ function _accumulate_run_summary!(acc::RunSummaryAccumulator, ms_file_idx, targe
         values = (area, factor, Float32(abs(irt_error[i])), Float32(rt_fwhm[i]),
             Float32(points_integrated[i]), Float32(length(sequence[i])), Float32(charge[i]),
             Float32(missed_cleavage[i]))
-        bucket = Int((run - 1) % SUMMARY_FANOUT) + 1
-        push!(acc.buffers[bucket], RunSummaryRecord(run, peptide, valid, values))
-        length(acc.buffers[bucket]) >= acc.capacity && _summary_flush!(acc.streams[bucket], acc.buffers[bucket])
+        _push_summary_record!(acc, RunSummaryRecord(run, peptide, valid, values))
     end
 end
 

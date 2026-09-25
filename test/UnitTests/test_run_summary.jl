@@ -118,17 +118,42 @@ end
         names = string.(1:17)
         small = Pioneer.with_run_summary(names; temp_parent=dir, memory_budget_bytes=65536) do acc
             accumulate_run_summary!(acc, rows)
+            @test acc.directory !== nothing
+            @test isempty(acc.records)
         end
         large = Pioneer.with_run_summary(names; temp_parent=dir) do acc
             accumulate_run_summary!(acc, rows)
+            @test acc.directory === nothing
+            @test isempty(acc.streams)
+            @test isempty(readdir(dir))
         end
         @test all(isequal(getfield(small[i], f), getfield(large[i], f))
                   for i in 1:17, f in fieldnames(RunSummaryStats))
         @test isempty(readdir(dir))
-        @test_throws ErrorException Pioneer.with_run_summary(names; temp_parent=dir) do acc
-            accumulate_run_summary!(acc, rows)
-            error("interrupted")
+        for budget in (65536, 64*1024^2)
+            @test_throws ErrorException Pioneer.with_run_summary(names; temp_parent=dir, memory_budget_bytes=budget) do acc
+                accumulate_run_summary!(acc, rows)
+                error("interrupted")
+            end
+            @test isempty(readdir(dir))
         end
+        boundary = Pioneer.with_run_summary(names; temp_parent=dir, memory_budget_bytes=65536) do acc
+            limit = acc.record_limit
+            table = DataFrame(rows)
+            accumulate_run_summary!(acc, view(table, 1:limit, :))
+            @test acc.directory === nothing
+            @test length(acc.records) == limit
+            @test isempty(readdir(dir))
+            accumulate_run_summary!(acc, view(table, limit+1:limit+1, :))
+            @test acc.directory !== nothing
+            @test isempty(acc.records)
+            accumulate_run_summary!(acc, view(table, limit+2:n, :))
+        end
+        @test all(isequal(getfield(boundary[i], f), getfield(large[i], f))
+                  for i in 1:17, f in fieldnames(RunSummaryStats))
+        @test isempty(readdir(dir))
+        empty_stats = Pioneer.with_run_summary(_ -> nothing, names; temp_parent=dir)
+        @test all(s -> s.precursors_identified == 0 && all(ismissing, s.medians), empty_stats)
         @test isempty(readdir(dir))
         # Compare disk selection with Julia's median, including nonfinite values.
         for values in (Float32[-Inf, -2, -0.0, 0.0, 2, Inf],
