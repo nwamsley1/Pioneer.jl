@@ -224,10 +224,12 @@ function getB(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
     n_runs = size(X, 2)
     Atb = zeros(Float64, n_runs)
     valid_pairs = 0
+    ratios = Float64[]
+    sizehint!(ratios, size(X, 1))
 
     for left_idx in 1:(n_runs - 1)
         for right_idx in (left_idx + 1):n_runs
-            ratios = Float64[]
+            empty!(ratios)
             for peptide_idx in axes(X, 1)
                 left_val = X[peptide_idx, left_idx]
                 right_val = X[peptide_idx, right_idx]
@@ -240,7 +242,7 @@ function getB(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
                 continue
             end
 
-            ratio_median = median(ratios)
+            ratio_median = median!(ratios)
             Atb[left_idx] -= ratio_median
             Atb[right_idx] += ratio_median
             valid_pairs += 1
@@ -304,24 +306,32 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
         return Vector{Union{Missing, Float32}}(missing, n_runs)
     end
 
-    AtA = getA(X)
     Atb, valid_pairs = getB(X)
     if valid_pairs == 0
         return Vector{Union{Missing, Float32}}(missing, n_runs)
     end
 
-    system_matrix = Matrix{Float64}(undef, n_runs + 1, n_runs + 1)
-    system_matrix[1:n_runs, 1:n_runs] = 2.0 .* AtA
-    system_matrix[1:n_runs, end] .= 1.0
-    system_matrix[end, 1:n_runs] .= 1.0
-    system_matrix[end, end] = 0.0
+    relative_profile = if valid_pairs == n_runs * (n_runs - 1) ÷ 2
+        # Complete overlap gives A = n_runs * I - ones(n_runs, n_runs).
+        # On the zero-mean subspace, the solution is therefore b / n_runs.
+        Atb ./= n_runs
+        Atb .-= mean(Atb)
+        Atb
+    else
+        AtA = getA(X)
+        system_matrix = Matrix{Float64}(undef, n_runs + 1, n_runs + 1)
+        system_matrix[1:n_runs, 1:n_runs] .= 2.0 .* AtA
+        system_matrix[1:n_runs, end] .= 1.0
+        system_matrix[end, 1:n_runs] .= 1.0
+        system_matrix[end, end] = 0.0
 
-    rhs = Vector{Float64}(undef, n_runs + 1)
-    rhs[1:n_runs] = 2.0 .* Atb
-    rhs[end] = 0.0
+        rhs = Vector{Float64}(undef, n_runs + 1)
+        rhs[1:n_runs] .= 2.0 .* Atb
+        rhs[end] = 0.0
 
-    solution = system_matrix \ rhs
-    relative_profile = @view solution[1:n_runs]
+        solution = system_matrix \ rhs
+        @view solution[1:n_runs]
+    end
     max_observed = maximum(observed_values)
     max_profile = maximum(relative_profile)
     log2_cumulative_intensity = Float64(max_observed) + log2(sum(
@@ -334,7 +344,7 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
 
     estimates = Vector{Union{Missing, Float32}}(missing, n_runs)
     for run_idx in 1:n_runs
-        scaled_estimate = solution[run_idx] + log2_scale
+        scaled_estimate = relative_profile[run_idx] + log2_scale
         if isfinite(scaled_estimate)
             estimates[run_idx] = scaled_estimate
         end

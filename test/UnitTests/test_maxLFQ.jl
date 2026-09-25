@@ -12,7 +12,69 @@ if !@isdefined(Pioneer)
     using Statistics
 end
 
+using Random
+
 @testset "MaxLFQ" begin
+
+@testset "complete-overlap shortcut matches dense equations" begin
+    function dense_reference(X)
+        n = size(X, 2)
+        A = zeros(n + 1, n + 1)
+        b = zeros(n + 1)
+        for i in 1:n-1, j in i+1:n
+            ratios = [Float64(X[k, j]) - Float64(X[k, i]) for k in axes(X, 1)
+                      if !ismissing(X[k, i]) && !ismissing(X[k, j])]
+            isempty(ratios) && continue
+            A[i, i] += 2
+            A[j, j] += 2
+            A[i, j] -= 2
+            A[j, i] -= 2
+            ratio = 2 * median(ratios)
+            b[i] -= ratio
+            b[j] += ratio
+        end
+        A[1:n, end] .= 1
+        A[end, 1:n] .= 1
+        profile = (A \ b)[1:n]
+        observed = collect(skipmissing(vec(X)))
+        scale = maximum(observed) + log2(sum(exp2, observed .- maximum(observed))) -
+                maximum(profile) - log2(sum(exp2, profile .- maximum(profile)))
+        return profile .+ scale
+    end
+
+    rng = MersenneTwister(123)
+    for T in (Float32, Float64), n in (2, 3, 17), p in (1, 2, 7, 8)
+        X = Matrix{Union{Missing, T}}(20 .+ 3 .* randn(rng, T, p, n))
+        # Keep one shared precursor, but vary the other pairwise overlap counts.
+        for j in 1:n, i in 2:p
+            rand(rng) < 0.4 && (X[i, j] = missing)
+        end
+        @test Pioneer.solve_maxlfq_component(X) ≈ dense_reference(X) rtol=1e-6
+    end
+
+    # Every pair overlaps, although no precursor is shared by all three runs.
+    X = Union{Missing, Float64}[10 12 missing; missing 15 18; 8 missing 9]
+    @test Pioneer.solve_maxlfq_component(X) ≈ dense_reference(X) rtol=1e-6
+    @test Pioneer.solve_maxlfq_component(@view X[:, [3, 1, 2]]) ≈
+          dense_reference(X)[[3, 1, 2]] rtol=1e-6
+
+    # Connected through a chain, but not complete: retain the dense fallback.
+    X = Union{Missing, Float64}[10 12 missing missing; missing 15 18 missing;
+                               missing missing 8 9]
+    @test Pioneer.solve_maxlfq_component(X) ≈ dense_reference(X) rtol=1e-6
+    @test all(ismissing, Pioneer.solve_maxlfq_component(
+        Union{Missing, Float64}[10 missing; missing 12]))
+    @test all(ismissing, Pioneer.solve_maxlfq_component(
+        fill!(Matrix{Union{Missing, Float64}}(undef, 2, 3), missing)))
+    @test all(ismissing, Pioneer.solve_maxlfq_component(Union{Missing, Float64}[10;;]))
+    @test isempty(Pioneer.solve_maxlfq_component(Matrix{Union{Missing, Float64}}(undef, 2, 0)))
+
+    # After compilation, complete overlap must not allocate a run-by-run matrix
+    # or one ratio buffer per pair. Inputs are allocated outside the measurement.
+    X = Matrix{Union{Missing, Float64}}(randn(rng, 8, 256))
+    Pioneer.solve_maxlfq_component(X)
+    @test (@allocated Pioneer.solve_maxlfq_component(X)) < 200_000
+end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # getS — build peptide × experiment intensity matrix
