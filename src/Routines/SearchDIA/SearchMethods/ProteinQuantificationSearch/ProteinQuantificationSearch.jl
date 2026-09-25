@@ -78,7 +78,7 @@ struct ProteinQuantificationSearchParameters <: SearchParameters
 
         new(
             Bool(maxLFQ_params.run_to_run_normalization),
-            Symbol(get(maxLFQ_params, :quantification_method, "directlfq")),
+            Symbol(get(maxLFQ_params, :quantification_method, "sparsemaxlfq")),
             _resolve_q_value_threshold(global_params),
             Int64(100000),  # Default batch size
             Int64(protein_scoring_params.min_peptides),
@@ -315,7 +315,12 @@ function summarize_results!(
         "method" => String(params.quantification_method),
         "run_to_run_normalization" => params.run_to_run_normalization ? "pioneer_median_spline" : "none",
     )
-    if params.quantification_method == :directlfq
+    if params.quantification_method == :sparsemaxlfq
+        merge!(quantification_metadata, Dict(
+            "partners" => SPARSE_MAXLFQ_PARTNERS,
+            "seed" => SPARSE_MAXLFQ_SEED,
+        ))
+    elseif params.quantification_method == :directlfq
         merge!(quantification_metadata, Dict(
             "reference_revision" => DIRECTLFQ_REFERENCE_REVISION,
             "max_precursors" => DIRECTLFQ_MAX_PRECURSORS,

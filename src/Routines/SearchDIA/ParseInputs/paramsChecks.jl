@@ -115,8 +115,8 @@ function checkParams(json_path::String)
     check_param(output, "run_to_run_normalization", Bool)
     if haskey(output, "quantification_method")
         check_param(output, "quantification_method", String)
-        output["quantification_method"] in ("directlfq", "maxlfq") ||
-            throw(InvalidParametersError("maxLFQ.quantification_method must be directlfq or maxlfq", params))
+        output["quantification_method"] in ("sparsemaxlfq", "directlfq", "maxlfq") ||
+            throw(InvalidParametersError("maxLFQ.quantification_method must be sparsemaxlfq, directlfq, or maxlfq", params))
     end
 
     # Validate output parameters
