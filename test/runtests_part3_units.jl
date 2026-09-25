@@ -55,6 +55,7 @@ include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 # Partitioned fragment index tests
 include("./UnitTests/partitionedFragmentIndex.jl")
 include("./UnitTests/buildPartitionedIndex.jl")
+include("./UnitTests/partitionedFragmentIndex32.jl")
 include("./UnitTests/test_build_fragment_index_exact.jl")
 include("./UnitTests/test_synthetic_koina.jl")
 include("./UnitTests/test_ion_mobility_model.jl")

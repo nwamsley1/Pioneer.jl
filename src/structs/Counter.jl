@@ -124,7 +124,8 @@ stops happening once the buffers have grown to fit. Fields are sized lazily by
 
 Fields (all length `n_threads`):
 - `si`, `pid`        : per-thread output buffers (Int32 / UInt32, sized to est_per_thread)
-- `counters`         : per-thread `Counter{UInt16,UInt8}` (sized to `max_local+1`)
+- `counters`         : per-thread `Counter{UInt16,UInt8}` (sized to `max_local+1`), for UInt16-ID indexes
+- `counters32`       : per-thread `Counter{UInt32,UInt8}`, for UInt32-ID indexes (`LocalPartitionedFragmentIndex32`)
 - `int_bufs`         : per-thread intensity buffers for top-N peak filtering
 - `mz_low_bufs`, `mz_high_bufs`: per-thread peak mass windows, rebuilt for each
   scan/partition visit and reused across its overlapping RT bins
@@ -133,6 +134,7 @@ mutable struct FragIndexScratch
     si::Vector{Vector{Int32}}
     pid::Vector{Vector{UInt32}}
     counters::Vector{Counter{UInt16,UInt8}}
+    counters32::Vector{Counter{UInt32,UInt8}}
     int_bufs::Vector{Vector{Float32}}
     mz_low_bufs::Vector{Vector{Float32}}
     mz_high_bufs::Vector{Vector{Float32}}
@@ -141,6 +143,7 @@ mutable struct FragIndexScratch
             [Int32[]    for _ in 1:n_threads],
             [UInt32[]   for _ in 1:n_threads],
             [Counter(UInt16, UInt8, 1) for _ in 1:n_threads],
+            [Counter(UInt32, UInt8, 1) for _ in 1:n_threads],
             [Float32[]  for _ in 1:n_threads],
             [Float32[]  for _ in 1:n_threads],
             [Float32[]  for _ in 1:n_threads],
@@ -150,24 +153,27 @@ end
 
 """
     prepare!(s::FragIndexScratch; n_threads, est_per_thread, counter_size,
-             int_buf_size, mz_buf_size=0)
+             int_buf_size, mz_buf_size=0, id_type=UInt16)
 
 Grow each per-thread buffer to at least the requested size. Counters are
 replaced (not resized) when `counter_size` exceeds their current capacity —
-the freshly-allocated Counter is already zeroed.
+the freshly-allocated Counter is already zeroed. Only the counters for `id_type` (the index's
+local ID type) are prepared; fetch them with `scratch_counters(s, id_type)`.
 """
 function prepare!(s::FragIndexScratch;
         n_threads::Int,
         est_per_thread::Int,
         counter_size::Int,
         int_buf_size::Int,
-        mz_buf_size::Int = 0)
+        mz_buf_size::Int = 0,
+        id_type::Type{I} = UInt16) where {I<:Unsigned}
     @assert length(s.si) == n_threads
+    counters = scratch_counters(s, I)
     @inbounds for tid in 1:n_threads
         length(s.si[tid])  < est_per_thread && resize!(s.si[tid],  est_per_thread)
         length(s.pid[tid]) < est_per_thread && resize!(s.pid[tid], est_per_thread)
-        if length(s.counters[tid].counts) < counter_size
-            s.counters[tid] = Counter(UInt16, UInt8, counter_size)
+        if length(counters[tid].counts) < counter_size
+            counters[tid] = Counter(I, UInt8, counter_size)
         end
         length(s.int_bufs[tid]) < int_buf_size && resize!(s.int_bufs[tid], int_buf_size)
         length(s.mz_low_bufs[tid]) < mz_buf_size && resize!(s.mz_low_bufs[tid], mz_buf_size)
@@ -175,6 +181,10 @@ function prepare!(s::FragIndexScratch;
     end
     return s
 end
+
+"Per-thread counters of `s` for local IDs of type UInt16 / UInt32."
+scratch_counters(s::FragIndexScratch, ::Type{UInt16}) = s.counters
+scratch_counters(s::FragIndexScratch, ::Type{UInt32}) = s.counters32
 
 """
     inc!(c::Counter, id, score)

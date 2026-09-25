@@ -294,13 +294,14 @@ function apply_diann_decoy_style!(lib_path::String)
     frag_bin_tol_ppm = Float32(get(lib_params, "frag_bin_tol_ppm", 10.0))
     rt_bin_tol = Float32(get(lib_params, "rt_bin_tol", 1.0))
     partition_width = Float32(get(lib_params, "prec_partition_width", 5.0))
+    id_type = frag_index_local_id_type(lib_params)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol)
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol, id_type=id_type)
     serialize_to_jls(joinpath(lib_path, "partitioned_fragment_index.jls"), partitioned_index)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32), id_type=id_type)
     serialize_to_jls(joinpath(lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     @debug_l1 "DIA-NN decoy generation complete: $n_total total precursors ($n_targets targets + $n_created decoys)"

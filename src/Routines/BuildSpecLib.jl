@@ -481,6 +481,7 @@ function BuildSpecLib(params_path::String)
                 koina_model_type;
                 frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
                 partition_width = Float32(get(_params.library_params, "prec_partition_width", 5.0)),
+                id_type = frag_index_local_id_type(_params.library_params),
                 detailed_frags = detailed_frags,
                 pid_to_fid = pid_to_fid
             )

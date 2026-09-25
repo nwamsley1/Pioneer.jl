@@ -1,3 +1,7 @@
+"Fragment-index local ID type from `library_params[\"frag_index_local_id_type\"]` (\"UInt16\" default, or \"UInt32\")."
+frag_index_local_id_type(library_params) =
+    get(library_params, "frag_index_local_id_type", "UInt16") == "UInt32" ? UInt32 : UInt16
+
 """
     sort_detailed_fragments_by_mz!(frags, prec_ranges) -> Int
 
@@ -132,6 +136,7 @@ function buildPionLib(spec_lib_path::String,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
                       partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      id_type::Type{<:Unsigned} = UInt16, # fragment-index partition-local precursor ID type
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -222,13 +227,13 @@ function buildPionLib(spec_lib_path::String,
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     # Sort detailed_frags by m/z within each precursor (run_fused! pre-condition).
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
@@ -288,6 +293,7 @@ function buildPionLib(spec_lib_path::String,
                       model_type::InstrumentAgnosticModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
                       partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      id_type::Type{<:Unsigned} = UInt16, # fragment-index partition-local precursor ID type
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -313,13 +319,13 @@ function buildPionLib(spec_lib_path::String,
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
 
