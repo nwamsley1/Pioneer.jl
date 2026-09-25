@@ -290,15 +290,10 @@ function process_file!(
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
 
-    # Scanning-quad: search in cycle-aligned chunks and collapse each to meta-PSMs before the
-    # next, so the per-file deconvolved table is never resident whole (see _zt_chunked_main_search).
-    _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
-    _zt_chunked = _zt_geom !== nothing && _zt_geom.metascan_k > 0
-    psms = if _zt_chunked
-        _zt_chunked_main_search(spectra, search_context, params, ms_file_idx, _zt_geom)
-    else
-        @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
-    end
+    psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
+    # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
+    # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
+    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx))
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -314,9 +309,7 @@ function process_file!(
     # contiguous-by-scan invariant: linear sweep for run boundaries
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
-    # On the chunked ZT path both per-scan passes already ran inside each chunk, BEFORE the
-    # collapse: they need the raw per-bin rows, contiguous by scan.
-    t_scan_comp = _zt_chunked ? 0.0 :
+    t_scan_comp = zt_collapsed ? 0.0 :
         @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
@@ -327,7 +320,7 @@ function process_file!(
     # precursor-sorted input. The per-precursor chromatogram-feature passes
     # (ms1_corr_*, frag_*) run later in process_search_results! after the
     # precursor sort, since they group by :precursor_idx.
-    t_ms1 = _zt_chunked ? 0.0 :
+    t_ms1 = zt_collapsed ? 0.0 :
         @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
 
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
@@ -352,41 +345,6 @@ function process_file!(
                "sort=$(round(t_sort * 1000, digits=0))ms  n_cols=$(ncol(psms))"
 
     return results
-end
-
-"""
-    _zt_chunked_main_search(spectra, search_context, params, ms_file_idx, geom) -> DataFrame
-
-Scanning-quad main search in cycle-aligned chunks sized by EXACT candidate count. The fragment
-index + expansion run once over the whole file inside `library_search`; each chunk is then
-deconvolved and handed back here to run the two per-scan feature passes on the raw rows and the
-meta-scan collapse. Only meta-PSMs are retained, so peak memory is one chunk's raw rows plus the
-growing collapsed table.
-"""
-function _zt_chunked_main_search(spectra::MassSpecData, search_context::SearchContext,
-                                 params::MainSearchParameters, ms_file_idx::Int64,
-                                 geom::ZTGeometry)
-    precursors = getPrecursors(getSpecLib(search_context))
-    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
-    t_sc = 0.0; t_ms1 = 0.0; t_col = 0.0
-    reduce_chunk = (raw::DataFrame, ci::Int) -> begin
-        nrow(raw) == 0 && return raw
-        t_sc  += @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
-        t_ms1 += @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
-        t_col += @elapsed part = @alloc_bucket "metascan_collapse" collapse_to_metascans(
-            raw, spectra, precursors, geom; bitvec_rank_table = bitvec_rank_table)
-        part
-    end
-    out = @alloc_bucket "library_search (deconv)" library_search(
-        spectra, search_context, params, ms_file_idx;
-        zt_chunk_candidates = ZT_CHUNK_CANDIDATES, zt_reduce = reduce_chunk)
-    # The whole-file candidate index and its expansion scratch are dead once the chunked
-    # search returns; collect them before the meta-PSM table is permuted and featurised, which
-    # is where the resident set peaks on ZT files (measured: EV1109 29.8 GB at that point).
-    GC.gc()
-    @user_info "ZT reduce breakdown: scan_competition=$(round(t_sc; digits=1))s  " *
-               "ms1_lookup=$(round(t_ms1; digits=1))s  collapse=$(round(t_col; digits=1))s"
-    return out
 end
 
 """

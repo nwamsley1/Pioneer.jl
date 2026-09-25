@@ -248,7 +248,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_obs_low::Vector{Float32}
     scan_obs_high::Vector{Float32}
     # Deconvolution convergence tolerance for the file being searched, overriding the stage's own
-    # `max_diff`; NaN (the default) means no override. Set per file by `execute_search` (ZT files).
+    # `max_diff`; NaN (the default) means no override. Set per file by `zt_prepare_file!`.
     deconv_tol::Float32
 end
 
@@ -547,23 +547,6 @@ end
 
 # Simple setters
 setQuadTransmissionModel!(s::SearchContext, index::I, model::QuadTransmissionModel) where {I<:Integer} = (s.quad_transmission_model[index] = model)
-
-"""
-   getZTGeometry(s::SearchContext, index::Integer) -> Union{Nothing, ZTGeometry}
-
-Q1 bin lattice for a scanning-quad file, or `nothing` when the file is not a scanning
-acquisition (or detection has not run for it yet). Unlike `getQuadTransmissionModel`, absence
-is the normal case — most files are not scanning acquisitions — so this does not warn.
-"""
-getZTGeometry(s::SearchContext, index::I) where {I<:Integer} =
-    get(s.zt_geometry, Int64(index), nothing)::Union{Nothing, ZTGeometry}
-
-setZTGeometry!(s::SearchContext, index::I, g::Union{Nothing, ZTGeometry}) where {I<:Integer} =
-    (s.zt_geometry[Int64(index)] = g)
-
-"""True when `index` has been checked and is a scanning-quad acquisition."""
-isZTFile(s::SearchContext, index::I) where {I<:Integer} =
-    getZTGeometry(s, index) !== nothing
 
 """
    getMassErrorModel(s::SearchContext, index::Integer)

@@ -433,3 +433,83 @@ function collect_zt_quad_psms(spectra::MassSpecData, search_context::SearchConte
     end
     return kept, n_fit, used
 end
+
+"""Fittable (precursor, cycle) meta-scan targets for the triangle fit. h is stable to ~1.3% with
+only 200 meta-scans, so these are generous."""
+const ZT_QUAD_TARGET_METASCANS = Int64(2000)
+const ZT_QUAD_MIN_METASCANS    = Int64(100)
+
+"""
+    zt_quad_tuning!(results, params, search_context, ms_file_idx, spectra, geom) -> Nothing
+
+QuadTuningSearch on a scanning-quad file: fit the transmission triangle instead of the Razo model.
+
+The transmission model was installed from the measured lattice in `ensure_zt_geometry!`. The
+Razo fit bounds al/ar to (0.2, window_width), and window_width here is the RECORDED Q1 step
+(~1 Da), so FWHM is capped at ~2 Da while the measured profile is ~6.3-7.0 Da; the fit pins at the
+bound and compensates with an unphysically shallow slope. No isotope-ratio probe either: a swept
+quad shows each precursor in ~2k+1 bins of one meta-scan, and with the wide square deconvolution
+box the fitted weight is already proportional to transmission.
+"""
+function zt_quad_tuning!(results::QuadTuningSearchResults, params::QuadTuningSearchParameters,
+                         search_context::SearchContext, ms_file_idx::Int64,
+                         spectra::MassSpecData, _g::ZTGeometry)
+    _sq = getQuadTransmissionModel(search_context, ms_file_idx)   # wide box for collection
+    _psms, _nfit, _ncyc = collect_zt_quad_psms(spectra, search_context, params, ms_file_idx)
+    # Apex sits at the isotope centre of mass; use the library's isotope splines
+    # (mass + sulfur count) rather than an averagine guess.
+    _iso = getIsoSplines(first(getSearchData(search_context)))
+    _fit, _hist = _nfit >= ZT_QUAD_MIN_METASCANS ?
+        fit_zt_triangle_from_psms(_psms, spectra, getPrecursors(getSpecLib(search_context)), _g;
+                                  iso_splines = _iso) :
+        (nothing, Int[])
+    if _fit === nothing
+        setQuadModel(results, _sq)
+        @user_warn "ZT quad tuning [file $ms_file_idx]: triangle fit failed " *
+                   "($(nrow(_psms)) PSM rows over $_ncyc cycles, $_nfit fittable meta-scans; " *
+                   "bins-per-metascan 1..10 = $(_hist[1:min(10,length(_hist))])) " *
+                   "— keeping the geometry's square model"
+    else
+        _model = ZTTriangleModel(_fit.h)
+        # The fitted triangle is REPORTED, not installed. Deconvolving under it (weights
+        # divided by T, outer bins near zero) lost 3,088 precursors on A_REP1
+        # (27,926 -> 24,838) versus the flat meta-scan box, which stays the model.
+        setQuadModel(results, _sq)
+        append!(results.quad_plot_objects,
+                plot_zt_triangle(_fit, _psms, spectra,
+                                 getPrecursors(getSpecLib(search_context)), _g,
+                                 getParsedFileName(search_context, ms_file_idx);
+                                 iso_splines = _iso))
+        push!(results.per_file_models,
+              (getParsedFileName(search_context, ms_file_idx), _model,
+               Float64(_g.nominal_width)))
+        # Derived metascan_k: when the config leaves it unset, the fitted profile decides
+        # how far the expansion reaches. Re-install the geometry AND the flat deconv box
+        # (its width is keyed to k) so BitVecCalibration, MainSearch and the collapse all
+        # see the new k. An explicit config value is only warned on.
+        _derive_k = _g.metascan_k_derived
+        _flag = if _fit.k_implied == Int(_g.metascan_k)
+            _derive_k ? " (derived, = provisional default)" : ""
+        elseif _derive_k
+            _g2 = zt_with_metascan_k(_g, _fit.k_implied)
+            setZTGeometry!(search_context, ms_file_idx, _g2)
+            setQuadTransmissionModel!(search_context, ms_file_idx,
+                                      SquareQuadModel(zt_deconv_overhang(_g2)))
+            _g = _g2
+            "  <-- DERIVED: metascan_k $(Int(_g.metascan_k)) replaces provisional $(ZT_METASCAN_K_DEFAULT)"
+        else
+            "  <-- DIFFERS from configured metascan_k=$(Int(_g.metascan_k))"
+        end
+        # Collapse template from the fit: the meta-scan collapse uses the transmission
+        # template as matched filter (fitted/shadow spectra) and as the feature template
+        # (zt_tri_cosine / zt_tri_pcor).
+        _g = zt_with_template_h(_g, _fit.h)
+        setZTGeometry!(search_context, ms_file_idx, _g)
+        @user_info "ZT quad tuning [file $ms_file_idx]: h=$(round(_fit.h; digits=3)) Da " *
+            "(IQR $(round(_fit.h_iqr_lo; digits=2))–$(round(_fit.h_iqr_hi; digits=2))), " *
+            "bin_step=$(round(_g.bin_step; digits=4)), k_implied=$(_fit.k_implied)$_flag; " *
+            "$(_fit.n_metascans) meta-scans, median R²=$(round(_fit.median_r2; digits=3)); " *
+            "reported only (square meta-scan box kept); collapse template = fitted triangle"
+    end
+    return nothing
+end

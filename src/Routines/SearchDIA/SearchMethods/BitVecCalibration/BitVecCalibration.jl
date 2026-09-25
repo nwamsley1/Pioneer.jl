@@ -301,18 +301,10 @@ function process_file!(
     precursors = getPrecursors(spec_lib)
     is_decoy = getIsDecoy(precursors)
     partitioned_index = get_fragment_index(spec_lib, params)
-    # Calibrate on the SAME precursor window the candidacy fragment-index search uses. On a
-    # scanning quad, candidacy deliberately uses a NARROW square box (the precursor's own Q1
-    # bin), not the file's transmission model — so mirror that here, or the LUT's excess rates
-    # describe a different population from the one the threshold actually gates.
-    # Measured on A_REP1: calibrating on the transmission model instead costs 2,008 IDs
-    # (25,141 -> 23,133) and collapses centers by 41% (7.84M -> 4.66M). The LUT then learns
-    # excess rates from precursors across the full ~14 Da transmission window, most of which
-    # candidacy never admits, so the target/decoy excess is diluted with interference patterns
-    # and the threshold rejects far more.
-    _zt_geom = getZTGeometry(search_context, ms_file_idx)
-    qtm = _zt_geom === nothing ? getQuadTransmissionModel(search_context, ms_file_idx) :
-                                 SquareQuadModel(zt_candidacy_overhang(_zt_geom))
+    # Scanning-quad files calibrate on the narrow candidacy box the fragment index uses
+    # (ZT/candidacy.jl), not the wide transmission model: that costs 2,008 IDs on A_REP1.
+    qtm = zt_candidacy_quad_model(getZTGeometry(search_context, ms_file_idx),
+                                  getQuadTransmissionModel(search_context, ms_file_idx))
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)

@@ -48,21 +48,15 @@ struct ZTGeometry
     # Fitted transmission half-base (Da) from QuadTuningSearch; 0 until fitted. When > 0 the
     # collapse template is a triangle of this width instead of the Gaussian above.
     template_h::Float32
+    # True when `acquisition.metascan_k` is unset, so QuadTuningSearch may replace the
+    # provisional default with the k implied by the fitted transmission profile.
+    metascan_k_derived::Bool
 end
+ZTGeometry(bin_step, nominal_width, bins_per_ramp, metascan_k, transmission_fwhm, template_h) =
+    ZTGeometry(bin_step, nominal_width, bins_per_ramp, metascan_k, transmission_fwhm, template_h, false)
 
 """Expansion half-width used before quad tuning when `acquisition.metascan_k` is absent."""
 const ZT_METASCAN_K_DEFAULT = 6
-
-"""
-    zt_metascan_k_is_derived(params) -> Bool
-
-True when the config leaves `acquisition.metascan_k` unset (or 0), so QuadTuningSearch may
-replace the provisional default with the value implied by the fitted transmission profile.
-"""
-function zt_metascan_k_is_derived(params)
-    acq = params.acquisition
-    return !(hasproperty(acq, :metascan_k) && Int(acq.metascan_k) > 0)
-end
 
 """
 Fraction of the transmission half-base `h` used by the per-meta-scan triangle regression: the
@@ -88,114 +82,6 @@ zt_fit_limit_da(g::ZTGeometry) = ZT_FIT_CORE_FRACTION * Float32(g.metascan_k) * 
 """Fit half-width in Da once `h` is known."""
 zt_fit_limit_da(h::Real) = ZT_FIT_CORE_FRACTION * Float32(h)
 
-"""
-Target candidates (precursor x scan pairs after expansion) per main-search chunk on a
-scanning-quad file. Exact, not predicted: the fragment index + expansion run once over the whole
-file before chunking. Rows are 0.13-0.26 of candidates on the ZT files seen, so 60M candidates
-is ~10-15M raw rows per chunk. nano15 (634M candidates, 164M rows in one pass) swapped a 48 GB
-machine; 60M -> 30M (2026-09-17) cut the chunk plateau 26.9 -> 22.5 GB on EV1109 at no time cost.
-"""
-const ZT_CHUNK_CANDIDATES = 30_000_000
-
-"""
-    zt_cycle_scan_ranges(spectra) -> Vector{UnitRange{Int}}
-
-Contiguous MS2 scan ranges, one per acquisition cycle, in scan order.
-"""
-function zt_cycle_scan_ranges(spectra::MassSpecData)
-    cycles = getCycleIdxs(spectra)
-    n = length(spectra)
-    out = UnitRange{Int}[]
-    i = 1
-    while i <= n
-        if getMsOrder(spectra, i) != 2
-            i += 1; continue
-        end
-        c = cycles[i]; j = i
-        while j + 1 <= n && getMsOrder(spectra, j + 1) == 2 && cycles[j + 1] == c
-            j += 1
-        end
-        push!(out, i:j)
-        i = j + 1
-    end
-    return out
-end
-
-"""
-    zt_candidate_count(cycle_ranges, scan_to_prec_idx) -> Int
-
-Exact number of (precursor, scan) candidates in the given cycles, from the per-scan ranges the
-fragment index + expansion produced.
-"""
-function zt_candidate_count(cycle_ranges::Vector{UnitRange{Int}},
-                            scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}})
-    n = 0
-    @inbounds for r in cycle_ranges, si in r
-        rng = scan_to_prec_idx[si]
-        ismissing(rng) || (n += length(rng))
-    end
-    return n
-end
-
-"""
-    zt_cycle_chunks_by_candidates(ranges, scan_to_prec_idx, target) -> Vector{Vector{UnitRange{Int}}}
-
-Group consecutive cycles into chunks of >= `target` candidates. Every chunk boundary is a cycle
-boundary, so no meta-scan is split: candidate expansion and the collapse are both confined to
-one cycle. Dense elution regions get many small chunks, empty regions one large chunk.
-"""
-function zt_cycle_chunks_by_candidates(ranges::Vector{UnitRange{Int}},
-                                       scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-                                       target::Int)
-    chunks = Vector{Vector{UnitRange{Int}}}()
-    cur = UnitRange{Int}[]; acc = 0
-    for r in ranges
-        push!(cur, r); acc += zt_candidate_count([r], scan_to_prec_idx)
-        if acc >= target
-            push!(chunks, cur); cur = UnitRange{Int}[]; acc = 0
-        end
-    end
-    isempty(cur) || push!(chunks, cur)
-    return chunks
-end
-
-"""
-    zt_thread_tasks(cycle_ranges, k, n_threads) -> Vector{Tuple{Int, Vector{Int}}}
-
-Deal one chunk's cycles to threads so that at any moment every thread is working the SAME m/z
-segment of the ramp, on different cycles. Segment width is one meta-scan (2k+1 bins). Thread t
-owns cycles t, t+T, t+2T, ... and walks them segment-major: segment 1 of each of its cycles, then
-segment 2, and so on. All threads therefore touch the same precursors' library entries at the
-same time (cache locality), and each thread processes a full meta-scan width consecutively (what
-a warm-started solver and per-precursor template reuse will need). Per-thread vectors are exactly
-sized up front; nothing grows.
-"""
-function zt_thread_tasks(cycle_ranges::Vector{UnitRange{Int}}, k::Int, n_threads::Int)
-    C = length(cycle_ranges)
-    W = 2k + 1
-    T = min(n_threads, C)
-    counts = zeros(Int, T)
-    @inbounds for c in 1:C
-        counts[mod1(c, T)] += length(cycle_ranges[c])
-    end
-    tasks = [(t, Vector{Int}(undef, counts[t])) for t in 1:T]
-    pos = ones(Int, T)
-    L = maximum(length, cycle_ranges)
-    S = cld(L, W)
-    @inbounds for s in 1:S, c in 1:C
-        r = cycle_ranges[c]
-        lo = first(r) + (s - 1) * W
-        hi = min(lo + W - 1, last(r))
-        lo > hi && continue
-        t = mod1(c, T); v = last(tasks[t]); p = pos[t]
-        for si in lo:hi
-            v[p] = si; p += 1
-        end
-        pos[t] = p
-    end
-    return tasks
-end
-
 """Number of complete cycles sampled by `detect_zt_geometry`."""
 const ZT_GEOM_SAMPLE_CYCLES = 8
 
@@ -208,36 +94,12 @@ Override per acquisition with `acquisition.transmission_fwhm_mz`.
 const ZT_TRANSMISSION_FWHM_DEFAULT = 6.5f0
 
 """
-Overhang (Da) added to the recorded half-width for the ZT fragment-index candidacy box. Zero, so
-candidacy is exactly the precursor's own Q1 bin (+/-w/2 ~ +/-0.51 Da) — the narrow half of the
-two-width quad model. Isotope slack is supplied separately by `isotope_err_bounds`, which widens
-the low side by ~0.5 Da to catch precursors whose M+1 sits in the bin.
-"""
-const ZT_FRAG_OVERHANG = 0.0f0
-
-"""
-    zt_frag_overhang() -> Float32
-
-Candidacy overhang. Zero: candidacy is exactly the precursor's own Q1 bin.
-
-Measured on A_REP1 — widening to 0.5 (a +/-1.01 Da box) costs +26% emissions
-(30.9M -> 39.1M) for +1.9% centers and +71 IDs (25,141 -> 25,212). `filter_to_center_bin!`
-discards everything outside +/-w/2 regardless, so those extra emissions are computed and thrown
-away; the only channel by which they help is a marginally different LUT calibration. Not worth it.
-"""
-zt_frag_overhang() = ZT_FRAG_OVERHANG
-
-"""
-    zt_candidacy_tol() -> Float32
-
-Wide-emit candidacy half-width in Da (`ZT_CANDIDACY_TOL`, 2 Da: the best-measured setting).
-
-Wide-emit widens the fragment-index box so a precursor gets an emission CHANCE in every bin of
-its meta-scan, then `map_any_hit_to_center!` re-anchors each emission to the precursor's own bin.
-It survives if it cleared the bitvec in ANY bin, rather than needing its center bin to clear.
+Candidacy half-width in Da (2 Da, the best-measured setting). The fragment-index box is widened
+so a precursor gets an emission chance in every bin of its meta-scan; `map_any_hit_to_center!`
+then re-anchors each emission to the precursor's own bin, so it survives if it cleared the bitvec
+in ANY bin rather than needing its own bin to clear.
 """
 const ZT_CANDIDACY_TOL = 2.0f0
-zt_candidacy_tol() = ZT_CANDIDACY_TOL
 
 """
 Outer-bin thinning half-width, in Q1 bins: a meta-scan keeps every bin within this many bins of a
@@ -256,15 +118,10 @@ const ZT_DECONV_CONVERGENCE_TOL = 0.03f0
 """
     zt_candidacy_overhang(g::ZTGeometry) -> Float32
 
-Overhang for the fragment-index candidacy box: the wide-emit half-width when one is set, else
-the precursor's own bin. Single source of truth, so BitVecCalibration's LUT keeps mirroring
-candidacy whichever mode is active — a mismatch there cost 2,008 IDs when measured.
+Overhang beyond the recorded half-width that makes the candidacy box `±ZT_CANDIDACY_TOL`. Single
+source of truth, so BitVecCalibration's LUT mirrors candidacy — a mismatch there cost 2,008 IDs.
 """
-function zt_candidacy_overhang(g::ZTGeometry)
-    tol = zt_candidacy_tol()
-    hw = g.nominal_width / 2
-    return tol > hw ? tol - hw : zt_frag_overhang()
-end
+zt_candidacy_overhang(g::ZTGeometry) = max(ZT_CANDIDACY_TOL - g.nominal_width / 2, 0f0)
 
 """
 Extra margin (Da) by which the deconvolution box exceeds the meta-scan expansion span, so the
@@ -292,7 +149,8 @@ within Float32 granularity (ramp start std 0.0, step std ~3e-8 over 818 cycles o
 ZT data). Returns `nothing` when the file carries no usable MS2 isolation metadata.
 """
 function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
-                            transmission_fwhm::Real = ZT_TRANSMISSION_FWHM_DEFAULT)
+                            transmission_fwhm::Real = ZT_TRANSMISSION_FWHM_DEFAULT;
+                            metascan_k_derived::Bool = false)
     widths       = Float32[]
     spacings     = Float32[]
     cycle_counts = Int32[]
@@ -335,6 +193,7 @@ function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
         Int32(metascan_k),
         Float32(transmission_fwhm),
         0f0,
+        metascan_k_derived,
     )
 end
 
@@ -365,7 +224,7 @@ the fitted transmission profile (`k_implied = round(h / bin_step)`) after quad t
 """
 zt_with_metascan_k(g::ZTGeometry, k::Integer) =
     ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, Int32(k), g.transmission_fwhm,
-               g.template_h)
+               g.template_h, g.metascan_k_derived)
 
 """
     zt_with_template_h(g::ZTGeometry, h::Real) -> ZTGeometry
@@ -375,7 +234,7 @@ returns the measured triangle rather than the configured Gaussian.
 """
 zt_with_template_h(g::ZTGeometry, h::Real) =
     ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, g.metascan_k, g.transmission_fwhm,
-               Float32(h))
+               Float32(h), g.metascan_k_derived)
 
 """
     zt_transmission_template(g::ZTGeometry, k::Int) -> (Vector{Float32}, Float32)

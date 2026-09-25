@@ -93,8 +93,7 @@ function importScripts()
             "noQuadModel.jl",
             "RazoQuadModel.jl",
             "binIsotopeRatioData.jl",
-            "SquareQuadModel.jl",
-            "ZTTriangleModel.jl"
+            "SquareQuadModel.jl"
         ]
     )
 
@@ -234,9 +233,10 @@ function importScripts()
     # fusedScan defines FusedScratch, which SearchTypes references as a field
     # on SimpleLibrarySearch — must load first.
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "fusedScan.jl"))
-    # zt_geometry defines ZTGeometry, which SearchTypes references as a field on SearchContext
-    # — must load first.
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "zt_geometry.jl"))
+    # Scanning-quad (ZT): ZTGeometry is a SearchContext field, so it loads before SearchTypes.
+    # The rest of ZT/ loads after LibrarySearch.jl, below.
+    include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"),
+                   ["geometry.jl", "transmission_model.jl"])
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
     # Include remaining files using safe import for directories
@@ -320,7 +320,6 @@ function importScripts()
         "types.jl",                      # MainSearchParameters (no deps)
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
-        "metascan_collapse.jl",          # ZT meta-scan collapse (uses features.jl helpers)
         "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
         "scoring.jl",                    # train_lgbm_for_irt_refinement (uses features)
         "utils.jl",                      # recalibrate_rt!
@@ -335,7 +334,6 @@ function importScripts()
     # Chromatogram integration (explicit order so new files are precompile-tracked)
     include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
         "integrate_chrom.jl",
-        "zt_chromatogram_collapse.jl",     # ZT metascan collapse (no deps beyond MassSpecData)
         "IntegrateChromatogramsSearch.jl",
         "utils.jl"
     ])
@@ -369,6 +367,18 @@ function importScripts()
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
+
+    # Scanning-quad (ZT) search: the hooks the search methods call, and their implementations.
+    # Last, because the hooks dispatch on the search methods' parameter and result types.
+    include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"), [
+        "context.jl",               # per-file ZT state: geometry, mode, solver tolerance
+        "tuning.jl",                # ParameterTuningSearch hooks
+        "quad_tuning.jl",           # QuadTuningSearch: transmission triangle fit
+        "candidacy.jl",             # library_search: re-anchor, expand, thin
+        "metascan_collapse.jl",     # MainSearch: per-bin PSMs -> meta-PSMs
+        "chunked_main_search.jl",   # MainSearch: chunked deconvolution + collapse
+        "chromatogram_collapse.jl", # IntegrateChromatogramsSearch hooks
+    ])
 
 
 

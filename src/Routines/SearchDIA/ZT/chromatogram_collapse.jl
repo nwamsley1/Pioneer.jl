@@ -170,3 +170,46 @@ function collapse_chromatograms_to_metascans(
     meta[!, :intensity] = reduced
     return meta
 end
+
+# --- IntegrateChromatogramsSearch hooks. The `::Nothing` methods (not a ZT file) are no-ops.
+
+"""
+    zt_collapse_chromatograms(geom, chromatograms, spectra, search_context) -> DataFrame
+
+Collapse each precursor's meta-scan bins within a cycle into one chromatogram point before
+smoothing and integration. Extraction selects a precursor in every scan its transmission window
+covers, so on ZT the raw trace carries ~2k+1 points per cycle spanning a few tens of ms, which
+the integrator would read as that many separate time samples.
+
+The reduction is a matched filter on the per-file fitted triangle; vs a plain sum (3A+3B 5 Da,
+2026-09-17) per-precursor log2(A/B) MAD 0.18/0.21/0.31 -> 0.17/0.18/0.27 (H/Y/E), CVs -0.5 pt,
+medians unchanged. A plain sum when no triangle was fitted.
+"""
+zt_collapse_chromatograms(::Nothing, chromatograms::DataFrame, spectra, search_context) = chromatograms
+
+function zt_collapse_chromatograms(g::ZTGeometry, chromatograms::DataFrame, spectra::MassSpecData,
+                                   search_context::SearchContext)
+    (g.metascan_k > 0 && nrow(chromatograms) > 0) || return chromatograms
+    n_pre = nrow(chromatograms)
+    red = g.template_h > 0f0 ? MatchedFilterMetascan(g.template_h / g.bin_step) : SumMetascan()
+    out = collapse_chromatograms_to_metascans(chromatograms, spectra,
+                                              getPrecursors(getSpecLib(search_context)),
+                                              Int(g.metascan_k); reduction = red)
+    @user_info "ZT chromatogram collapse (k=$(g.metascan_k), $(typeof(red))): " *
+               "$n_pre -> $(nrow(out)) points"
+    return out
+end
+
+"""
+    zt_reset_transmission!(geom, chromatograms)
+
+A collapsed meta-scan point already integrates the whole transmission window, so a per-point
+transmission correction in WH smoothing would double-count it: set it to 1.
+`get_isotopes_captured!` still runs first, because it also produces `isotopes_captured`, which
+SeperateTraces mode groups on.
+"""
+zt_reset_transmission!(::Nothing, chromatograms::DataFrame) = nothing
+function zt_reset_transmission!(g::ZTGeometry, chromatograms::DataFrame)
+    g.metascan_k > 0 && (chromatograms[!, :precursor_fraction_transmitted] .= one(Float32))
+    return nothing
+end

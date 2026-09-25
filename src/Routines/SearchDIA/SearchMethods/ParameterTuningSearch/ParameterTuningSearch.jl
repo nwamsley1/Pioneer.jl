@@ -181,13 +181,9 @@ function initialize_models!(search_context, ms_file_idx, params)
 
     # Quad transmission: trust the stated isolation width with a hard
     # square cutoff during tuning, before any file-specific Razo fit.
-    # EXCEPT on a scanning quad, where the stated isolation width is only the Q1 step and the
-    # model installed from the detected geometry spans the whole meta-scan. Clobbering it here
-    # would leave MainSearch deconvolving with a ~+/-0.5 Da box, giving every expanded
-    # neighbour-bin candidate zero transmission.
-    if getZTGeometry(search_context, ms_file_idx) === nothing
+    # (Scanning-quad files keep the model installed from their geometry; ZT/tuning.jl.)
+    zt_keeps_quad_model(getZTGeometry(search_context, ms_file_idx)) ||
         setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
-    end
 end
 
 
@@ -587,10 +583,7 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        # Scanning-quad files: Q1-stratified order (see get_ms2_scan_priority_order_q1).
-        scan_priority = getZTGeometry(search_context, ms_file_idx) === nothing ?
-            get_ms2_scan_priority_order(spectra) :
-            get_ms2_scan_priority_order_q1(spectra, TUNING_ZT_Q1_BINS)
+        scan_priority = tuning_scan_priority(getZTGeometry(search_context, ms_file_idx), spectra)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true

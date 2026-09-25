@@ -3,7 +3,7 @@ using Arrow
 using DataFrames
 using Random
 
-using Pioneer: BasicMassSpecData, getMsOrder, getCycleIdx, expand_to_metascans!, _sort_dedup!
+using Pioneer: BasicMassSpecData, getMsOrder, getCycleIdx, expand_to_metascans!
 
 """
 Write a synthetic scanning-quad (ZT) arrow: `n_cycles` cycles, each one MS1 head scan followed
@@ -180,22 +180,4 @@ end
         @test out === pp
         @test isequal(s2p, before)
     end
-end
-
-@testset "_sort_dedup!" begin
-    v = UInt32[5, 1, 5, 3, 1, 1]
-    m = _sort_dedup!(v)
-    @test m == 3
-    @test v[1:m] == UInt32[1, 3, 5]
-
-    empty_v = UInt32[]
-    @test _sort_dedup!(empty_v) == 0
-
-    single = UInt32[9]
-    @test _sort_dedup!(single) == 1
-    @test single[1] == UInt32(9)
-
-    same = UInt32[4, 4, 4, 4]
-    @test _sort_dedup!(same) == 1
-    @test same[1] == UInt32(4)
 end

@@ -4,8 +4,55 @@ using DataFrames
 using Random
 
 using Pioneer
-using Pioneer: BasicMassSpecData, getMsOrder, getCycleIdx, getCenterMz,
-               map_any_hit_to_center!, filter_to_center_bin!, ZTGeometry
+using Pioneer: BasicMassSpecData, MassSpecData, getMsOrder, getCycleIdx, getCenterMz,
+               getIsolationWidthMz, map_any_hit_to_center!, ZTGeometry
+
+"""
+Reference for the narrow-tolerance case (no longer used by the search).
+
+    filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, prec_mzs)
+
+Scanning-quad (ZT) center-bin candidacy. The fragment index runs with a widened box so a
+precursor can be emitted from neighbouring Q1 bins; this keeps only the emissions whose scan is
+the precursor's own bin, i.e. `|prec_mz - centerMz| <= isolationWidth/2`. `expand_to_metascans!`
+then refills the ±k neighbours, so the meta-scan is anchored on the precursor's true bin rather
+than on wherever it happened to be emitted.
+
+Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
+`filter_low_scan_candidates!`). Returns the new `precursors_passed`.
+"""
+function filter_to_center_bin!(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    spectra::MassSpecData,
+    all_scan_idxs::Vector{Int},
+    prec_mzs::AbstractVector{Float32},
+)
+    new_passed = UInt32[]
+    sizehint!(new_passed, length(precursors_passed))
+    @inbounds for si in all_scan_idxs
+        rng = scan_to_prec_idx[si]
+        ismissing(rng) && continue
+        cv = getCenterMz(spectra, si)
+        wv = getIsolationWidthMz(spectra, si)
+        start = length(new_passed) + 1
+        if ismissing(cv) || ismissing(wv)
+            # No window metadata: keep everything rather than silently dropping candidates.
+            for r in rng
+                push!(new_passed, precursors_passed[r])
+            end
+        else
+            c = Float32(cv); hw = Float32(wv) / 2
+            for r in rng
+                p = precursors_passed[r]
+                abs(prec_mzs[p] - c) <= hw && push!(new_passed, p)
+            end
+        end
+        scan_to_prec_idx[si] = length(new_passed) >= start ?
+            (start:length(new_passed)) : missing
+    end
+    return new_passed
+end
 
 const MSTEP = 1.0221f0
 const MSTART = 400.0f0

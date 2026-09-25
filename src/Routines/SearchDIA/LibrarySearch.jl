@@ -58,8 +58,6 @@ function library_search(
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
     max_peaks::Int = 0,
-    zt_chunk_candidates::Int = 0,
-    zt_reduce = nothing,
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
@@ -77,24 +75,11 @@ function library_search(
         get_fragment_index(spec_lib, params)
     end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
-    # Scanning-quad (ZT) two-width quad model. The recorded isolation width is only the Q1
-    # step; the physical window is several Da swept across m/z. So the fragment index keeps a
-    # NARROW ~1 m/z box (candidacy stays tight and specific) while deconvolution uses a box
-    # wide enough to span the whole meta-scan. `qtm_deconv` is finalized once k is known below.
+    # Scanning-quad (ZT) files: a narrow candidacy box and a meta-scan-wide deconvolution box
+    # (ZT/candidacy.jl). Both are `qtm` on every other file.
     zt_geom = getZTGeometry(search_context, ms_file_idx)
-    zt_on   = zt_geom !== nothing
-    zt_k    = zt_on ? Int(zt_geom.metascan_k) : 0
-    # Candidacy expansion and the wide deconv box are MAIN-search only: the tuning searches
-    # must not be calibrated on the metascan-expanded, wide-box deconvolution.
-    zt_main = zt_on && (params isa MainSearchParameters)
-    # Scanning-quad (ZT) quad tuning needs the SAME meta-scan view as the main search: the
-    # expansion, so a precursor is seen in all 2k+1 bins, and the WIDE square deconvolution box,
-    # so its fitted weight tracks true transmission instead of being divided by an assumed
-    # model. Without both, every (precursor, cycle) group holds 1-2 bins and the triangle fit
-    # has nothing to regress against. Only the fit differs from the main search, not the view.
-    zt_qtune = zt_on && (params isa QuadTuningSearchParameters)
-    zt_meta  = zt_main || zt_qtune
-    qtm_frag = zt_on ? SquareQuadModel(zt_candidacy_overhang(zt_geom)) : qtm
+    qtm_frag = zt_candidacy_quad_model(zt_geom, qtm)
+    qtm_deconv = zt_deconv_quad_model(zt_geom, params, qtm)
 
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
@@ -185,53 +170,11 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
-    # --- 2b. ZT: anchor candidacy on the precursor's own bin, then span the meta-scan ---
-    # Non-ZT files and the tuning searches keep the tuned quad model untouched.
-    # Deconvolution uses the file's installed transmission model. On ZT that is the flat box
-    # spanning the meta-scan, set once in ensure_zt_geometry! — so there is no per-call-site
-    # patching here, and every other consumer sees the same model.
-    # Tuning searches must NOT calibrate on the wide meta-scan deconvolution box: it admits
-    # many off-center precursors whose interference degrades the mass-error and NCE fits. Only
-    # the MAIN search deconvolves across the meta-scan; everything else stays on the bin.
-    qtm_deconv = (zt_on && !zt_meta) ? SquareQuadModel(0.0f0) : qtm
-    if zt_meta
-        n_emitted = length(precursors_passed)
-        # Wide-emit re-anchors every emission to the precursor's own bin: it survives if it
-        # cleared the bitvec in ANY bin of its candidacy box, not only its own.
-        precursors_passed = map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra,
-                                                   all_scan_idxs, getMz(precursors), zt_geom)
-        n_center = length(precursors_passed)
-        if zt_k > 0
-            precursors_passed = expand_to_metascans!(
-                scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, zt_k)
-        end
-        # Report the boxes by INTERROGATING the models actually in use, never by recomputing
-        # what they were meant to be — a log that restates intent cannot catch a model that
-        # something else overwrote.
-        _c = Float32(500)
-        _fq = getQuadTransmissionFunction(qtm_frag,   _c, zt_geom.nominal_width)
-        _dq = getQuadTransmissionFunction(qtm_deconv, _c, zt_geom.nominal_width)
-        _fw = (getPrecMaxBound(_fq) - getPrecMinBound(_fq)) / 2
-        _dw = (getPrecMaxBound(_dq) - getPrecMinBound(_dq)) / 2
-        @debug_l1 "ZT candidacy (k=$zt_k): $n_emitted emitted -> $n_center center -> " *
-                   "$(length(precursors_passed)) expanded; candidacy box +/-$(round(_fw, digits=2)) Da, " *
-                   "deconv box +/-$(round(_dw, digits=2)) Da (expansion span +/-" *
-                   "$(round(Float32(zt_k) * zt_geom.bin_step, digits=2)) Da)"
-        _dw < Float32(zt_k) * zt_geom.bin_step &&
-            @user_warn "ZT: deconv box (+/-$(round(_dw,digits=2)) Da) is NARROWER than the " *
-                       "expansion span (+/-$(round(Float32(zt_k)*zt_geom.bin_step,digits=2)) Da) — " *
-                       "expanded candidates in outer bins will get zero transmission." 
-    end
+    # --- 2b. Scanning-quad (ZT): re-anchor, expand across the meta-scan, thin (ZT/candidacy.jl) ---
+    precursors_passed = zt_expand_candidates!(zt_geom, params, scan_to_prec_idx, precursors_passed,
+                                              spectra, all_scan_idxs, getMz(precursors))
 
-
-    if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
-        # Thin the outer bins of each meta-scan (keep bins within ZT_OUTER_BIN_CORE of a candidate's
-        # own bin, every second bin beyond). Measured on 5 Da A_REP1: -20% main search for -0.7%
-        # precursors; the outer bins carry <40% transmission and every second one suffices.
-        precursors_passed = _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra,
-                                                 getMz(precursors), zt_geom, ZT_OUTER_BIN_CORE)
-    end
-
+    # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -267,41 +210,11 @@ function library_search(
         end
         return result
     end
-    # --- 3b. Scanning-quad chunked deconvolution (MainSearch only, zt_chunk_candidates > 0) ---
-    # The fragment index + expansion above ran ONCE over the whole file, so every scan's
-    # candidate count is exact. Cycles are grouped into chunks of ~zt_chunk_candidates
-    # candidates (cycle-aligned: expansion and the meta-scan collapse never cross a cycle),
-    # each chunk is deconvolved with segment-major thread tasks and handed to `zt_reduce`,
-    # which returns the reduced (collapsed) table. Only the reduced tables accumulate, so the
-    # raw per-bin rows of one chunk are the peak, never the whole file's.
-    if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
-        chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
-                                               zt_chunk_candidates)
-        reduced = DataFrame(); n_raw_total = 0; max_raw = 0; n_reduced = 0
-        for (ci, chunk) in enumerate(chunks)
-            t_c = time()
-            n_cand = zt_candidate_count(chunk, scan_to_prec_idx)
-            tt = zt_thread_tasks(chunk, zt_k, Threads.nthreads())
-            raw_all = _deconv_body(tt)
-            raw = length(raw_all) == 1 ? raw_all[1] : vcat(raw_all...)
-            t_d = time() - t_c
-            n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
-            part = zt_reduce(raw, ci)
-            raw = nothing; raw_all = nothing
-            n_reduced += nrow(part)
-            reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
-            @user_info "ZT chunk $ci/$(length(chunks)): $(length(chunk)) cycles, " *
-                       "$(sum(length, chunk)) scans, $n_cand candidates -> $n_raw raw rows " *
-                       "(deconv $(round(t_d; digits=1))s) -> reduced (reduce $(round(time() - t_c - t_d; digits=1))s); " *
-                       "cumulative $n_reduced"
-        end
-        t_deconv = time() - t_deconv_start
-        @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
-                   "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
-                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed))"
-        return reduced
-    end
-
+    # Scanning-quad (ZT) main search deconvolves and collapses in cycle-aligned chunks
+    # (ZT/chunked_main_search.jl); `nothing` everywhere else.
+    zt_psms = zt_chunked_deconvolution(zt_geom, params, _deconv_body, spectra, search_context,
+                                       ms_file_idx, scan_to_prec_idx)
+    zt_psms === nothing || return zt_psms
     all_results = _deconv_body(thread_tasks)
     t_deconv = time() - t_deconv_start
 
@@ -362,334 +275,6 @@ function filter_low_scan_candidates!(
             (start:length(new_passed)) : missing
     end
     return new_passed
-end
-
-"""
-    filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, prec_mzs)
-
-Scanning-quad (ZT) center-bin candidacy. The fragment index runs with a widened box so a
-precursor can be emitted from neighbouring Q1 bins; this keeps only the emissions whose scan is
-the precursor's own bin, i.e. `|prec_mz - centerMz| <= isolationWidth/2`. `expand_to_metascans!`
-then refills the ±k neighbours, so the meta-scan is anchored on the precursor's true bin rather
-than on wherever it happened to be emitted.
-
-Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
-`filter_low_scan_candidates!`). Returns the new `precursors_passed`.
-"""
-function filter_to_center_bin!(
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-    precursors_passed::Vector{UInt32},
-    spectra::MassSpecData,
-    all_scan_idxs::Vector{Int},
-    prec_mzs::AbstractVector{Float32},
-)
-    new_passed = UInt32[]
-    sizehint!(new_passed, length(precursors_passed))
-    @inbounds for si in all_scan_idxs
-        rng = scan_to_prec_idx[si]
-        ismissing(rng) && continue
-        cv = getCenterMz(spectra, si)
-        wv = getIsolationWidthMz(spectra, si)
-        start = length(new_passed) + 1
-        if ismissing(cv) || ismissing(wv)
-            # No window metadata: keep everything rather than silently dropping candidates.
-            for r in rng
-                push!(new_passed, precursors_passed[r])
-            end
-        else
-            c = Float32(cv); hw = Float32(wv) / 2
-            for r in rng
-                p = precursors_passed[r]
-                abs(prec_mzs[p] - c) <= hw && push!(new_passed, p)
-            end
-        end
-        scan_to_prec_idx[si] = length(new_passed) >= start ?
-            (start:length(new_passed)) : missing
-    end
-    return new_passed
-end
-
-"""
-    map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs,
-                           prec_mzs, geom) -> Vector{UInt32}
-
-Scanning-quad (ZT) wide-emit candidacy. The fragment index runs with a WIDENED box, so a
-precursor can be emitted from any bin of its meta-scan; this maps every emission back to the
-precursor's OWN bin, deduped per (cycle, precursor). Net effect: a precursor survives if it
-cleared the bitvec in ANY of its bins, where `filter_to_center_bin!` requires the center bin
-itself to clear. Different bins expose different fragment subsets, so those are real second
-looks rather than noise admission.
-
-`expand_to_metascans!` then fills each survivor's +/-k as usual, so collapse and the shape
-features are unchanged.
-
-Implementation notes — the reference version was the single fattest serial step in the search
-(~181 s over ~60 M emissions), for three separable reasons, all addressed here:
-
-  * It found each precursor's bin by scanning `+/-search_halfbins` neighbours with three
-    accessor calls apiece. The lattice is uniform to Float32 granularity, so the bin is
-    `si + round((prec_mz - centerMz[si]) / S)` in O(1).
-  * It deduped with a `Set{Tuple{UInt32,UInt32}}` and accumulated into a
-    `Dict{Int,Set{UInt32}}`. Center scan is bounded by `length(spectra)`, so this is a COUNTING
-    sort: count per center scan, prefix-sum, scatter by index. No hashing, no `push!` in the
-    hot loop, one exactly-sized allocation, and dedup becomes a sort of each scan's ~160-element
-    slice rather than one global sort of tens of millions.
-  * It was serial. Both passes and the per-scan dedup are threaded.
-
-`cs` is deliberately recomputed in the scatter pass rather than stored: the arithmetic is a
-multiply, a round and a clamp, against hundreds of MB of stores and loads.
-"""
-function map_any_hit_to_center!(
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-    precursors_passed::Vector{UInt32},
-    spectra::MassSpecData,
-    all_scan_idxs::Vector{Int},
-    prec_mzs::AbstractVector{Float32},
-    geom::ZTGeometry,
-)
-    (isempty(all_scan_idxs) || isempty(precursors_passed)) && return precursors_passed
-    nspec = length(spectra)
-    inv_S = 1.0f0 / geom.bin_step
-
-    # Per-cycle MS2 scan bounds, so a re-anchored center never crosses a ramp boundary.
-    cyc = Vector{UInt32}(getCycleIdxs(spectra))
-    ncyc = 0
-    @inbounds for si in 1:nspec
-        getMsOrder(spectra, si) == 2 || continue
-        c = Int(cyc[si]); c > ncyc && (ncyc = c)
-    end
-    ncyc == 0 && return precursors_passed
-    cyc_lo = fill(typemax(Int), ncyc)
-    cyc_hi = zeros(Int, ncyc)
-    @inbounds for si in 1:nspec
-        getMsOrder(spectra, si) == 2 || continue
-        c = Int(cyc[si])
-        si < cyc_lo[c] && (cyc_lo[c] = si)
-        si > cyc_hi[c] && (cyc_hi[c] = si)
-    end
-
-    cmzs = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
-
-    n = length(all_scan_idxs)
-    nchunks = min(Threads.nthreads(), n)
-    bounds = [(n * (t - 1)) ÷ nchunks + 1 for t in 1:(nchunks + 1)]
-    bounds[end] = n + 1
-
-    # --- Pass A: count emissions per center scan (parallel; nothing allocates in the loop) ---
-    counts = [zeros(Int64, nspec) for _ in 1:nchunks]
-    Threads.@threads for t in 1:nchunks
-        ct = counts[t]
-        @inbounds for i in bounds[t]:(bounds[t + 1] - 1)
-            si = all_scan_idxs[i]
-            rng = scan_to_prec_idx[si]
-            ismissing(rng) && continue
-            cm = cmzs[si]; isnan(cm) && continue
-            c = Int(cyc[si]); (c < 1 || c > ncyc) && continue
-            lo, hi = cyc_lo[c], cyc_hi[c]
-            for r in rng
-                cs = si + round(Int, (prec_mzs[precursors_passed[r]] - cm) * inv_S)
-                ct[clamp(cs, lo, hi)] += 1
-            end
-        end
-    end
-
-    # --- Prefix sums: each chunk gets its own write cursor per scan, so scatters never race ---
-    scan_start = Vector{Int}(undef, nspec)
-    scan_len   = zeros(Int32, nspec)
-    total = 0
-    @inbounds for cs in 1:nspec
-        scan_start[cs] = total
-        s = 0
-        for t in 1:nchunks
-            ct = counts[t][cs]
-            counts[t][cs] = total + s      # this chunk's start slot for this scan
-            s += ct
-        end
-        scan_len[cs] = Int32(s)
-        total += s
-    end
-    total == 0 && return UInt32[]
-
-    # --- Pass B: scatter by index (parallel; no push!, one exactly-sized allocation) ---
-    scratch = Vector{UInt32}(undef, total)
-    Threads.@threads for t in 1:nchunks
-        pos = counts[t]
-        @inbounds for i in bounds[t]:(bounds[t + 1] - 1)
-            si = all_scan_idxs[i]
-            rng = scan_to_prec_idx[si]
-            ismissing(rng) && continue
-            cm = cmzs[si]; isnan(cm) && continue
-            c = Int(cyc[si]); (c < 1 || c > ncyc) && continue
-            lo, hi = cyc_lo[c], cyc_hi[c]
-            for r in rng
-                p = precursors_passed[r]
-                cs = clamp(si + round(Int, (prec_mzs[p] - cm) * inv_S), lo, hi)
-                k = pos[cs] + 1
-                scratch[k] = p
-                pos[cs] = k
-            end
-        end
-    end
-
-    # --- Dedup within each scan's slice (parallel; ~160 elements each, not one global sort) ---
-    new_len = zeros(Int32, nspec)
-    Threads.@threads for cs in 1:nspec
-        L = Int(scan_len[cs]); L == 0 && continue
-        st = scan_start[cs]
-        v = view(scratch, (st + 1):(st + L))
-        sort!(v)
-        m = 1
-        @inbounds for i in 2:L
-            if v[i] != v[m]
-                m += 1; v[m] = v[i]
-            end
-        end
-        new_len[cs] = Int32(m)
-    end
-
-    # --- Compact and reindex ---
-    outn = 0
-    @inbounds for cs in 1:nspec
-        outn += new_len[cs]
-    end
-    new_passed = Vector{UInt32}(undef, outn)
-    @inbounds for si in 1:nspec
-        scan_to_prec_idx[si] = missing
-    end
-    off = 0
-    @inbounds for cs in 1:nspec
-        L = Int(new_len[cs]); L == 0 && continue
-        copyto!(new_passed, off + 1, scratch, scan_start[cs] + 1, L)
-        scan_to_prec_idx[cs] = (off + 1):(off + L)
-        off += L
-    end
-    return new_passed
-end
-
-"""
-    _sort_dedup!(v) -> Int
-
-Sort `v` and compact duplicates to the front in place. Returns the count of unique elements;
-`v[1:n]` holds them. Replaces a per-scan `Set{UInt32}` in `expand_to_metascans!`.
-"""
-@inline function _sort_dedup!(v::Vector{UInt32})
-    isempty(v) && return 0
-    sort!(v)
-    m = 1
-    @inbounds for i in 2:length(v)
-        if v[i] != v[m]
-            m += 1
-            v[m] = v[i]
-        end
-    end
-    return m
-end
-
-"""
-    expand_to_metascans!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, k)
-
-Scanning-quad (ZT) meta-scan expansion. The swept quadrupole spreads a precursor's ions across
-~`2k+1` adjacent Q1 bins (consecutive MS2 scans within a cycle), so replace each searched scan's
-candidate set with the UNION of the candidates of every scan within ±`k` of it in the SAME cycle.
-Deconvolution then estimates a per-bin weight across the whole meta-scan, which the collapse step
-exploits.
-
-Neighbours are `si±j` guarded by `getMsOrder == 2` and equal `getCycleIdx`, so expansion never
-crosses a cycle or MS1 boundary.
-
-Rebuilds `precursors_passed` and reindexes `scan_to_prec_idx` in place (mirrors
-`filter_low_scan_candidates!`). Returns the new `precursors_passed`. Candidates are sorted within
-each scan.
-
-Three parallel phases over scans, each writing only its own scan's slot; `scan_to_prec_idx` is
-read as it was BEFORE expansion and rewritten only in the final serial phase. Exact per-scan
-counts are computed first so the output is allocated ONCE at its final size: the previous
-per-thread append!-grown buffers plus a concatenation copy allocated 14.8 GB and held ~7 GB live
-to produce a 2.6 GB result on EV1109 (647M candidates).
-"""
-function expand_to_metascans!(
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-    precursors_passed::Vector{UInt32},
-    spectra::MassSpecData,
-    all_scan_idxs::Vector{Int},
-    k::Int,
-)
-    (k <= 0 || isempty(all_scan_idxs)) && return precursors_passed
-    n     = length(all_scan_idxs)
-    nspec = length(spectra)
-
-    # --- Phase 1 (parallel, read-only): exact per-scan counts. After re-anchoring each precursor
-    # occupies exactly one bin per cycle, so the neighbour union has no duplicates and its size
-    # is the plain sum of neighbour range lengths. (Dedup below is kept as a guard; if it ever
-    # removes anything the scan's range is simply shorter — gaps in the array are never read.)
-    counts = Vector{Int64}(undef, n)
-    Threads.@threads for i in 1:n
-        si = all_scan_idxs[i]
-        ci = getCycleIdx(spectra, si)
-        c = 0
-        @inbounds for j in -k:k
-            sj = si + j
-            (sj < 1 || sj > nspec) && continue
-            getMsOrder(spectra, sj) == 2 || continue
-            getCycleIdx(spectra, sj) == ci || continue
-            rng = scan_to_prec_idx[sj]
-            ismissing(rng) || (c += length(rng))
-        end
-        counts[i] = c
-    end
-
-    # --- Phase 2 (serial): exact prefix offsets, one allocation of the final size ---
-    offsets = Vector{Int64}(undef, n + 1)
-    offsets[1] = 0
-    @inbounds for i in 1:n
-        offsets[i + 1] = offsets[i] + counts[i]
-    end
-    total = offsets[n + 1]
-    new_precursors = Vector{UInt32}(undef, total)
-
-    # --- Phase 3 (parallel, disjoint slots): gather each scan's union in place, sort, dedup ---
-    # Reads scan_to_prec_idx as it was BEFORE expansion (not yet rewritten), writes only its
-    # own slot of new_precursors. Sorting is in place (no scratch).
-    new_counts = Vector{Int64}(undef, n)
-    Threads.@threads for i in 1:n
-        si = all_scan_idxs[i]
-        ci = getCycleIdx(spectra, si)
-        lo = offsets[i] + 1
-        p = lo
-        @inbounds for j in -k:k
-            sj = si + j
-            (sj < 1 || sj > nspec) && continue
-            getMsOrder(spectra, sj) == 2 || continue
-            getCycleIdx(spectra, sj) == ci || continue
-            rng = scan_to_prec_idx[sj]
-            ismissing(rng) && continue
-            for r in rng
-                new_precursors[p] = precursors_passed[r]; p += 1
-            end
-        end
-        m = p - lo
-        if m > 1
-            v = @view new_precursors[lo:(p - 1)]
-            sort!(v; alg = QuickSort)
-            w = 1
-            @inbounds for t in 2:m
-                if v[t] != v[w]
-                    w += 1
-                    v[w] = v[t]
-                end
-            end
-            m = w
-        end
-        new_counts[i] = m
-    end
-
-    # --- Phase 4 (serial): reindex ---
-    @inbounds for i in 1:n
-        si = all_scan_idxs[i]
-        c  = new_counts[i]
-        scan_to_prec_idx[si] = c == 0 ? missing : (offsets[i] + 1):(offsets[i] + c)
-    end
-    return new_precursors
 end
 
 """
@@ -899,39 +484,4 @@ end
 
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
-end
-
-
-"""
-    _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra, prec_mzs, geom, c)
-
-EXPERIMENT: on odd-position scans of each cycle, keep only the candidates whose precursor m/z
-lies within `c` bins of the scan centre (the core of their meta-scan); drop the rest. Even scans
-are untouched. So every meta-scan keeps all bins within ±c of its centre and every second bin
-outside. Rebuilds `precursors_passed` and reindexes in place (mirrors filter_low_scan_candidates!).
-"""
-function _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed::Vector{UInt32}, spectra::MassSpecData,
-                              prec_mzs::AbstractVector{Float32}, geom::ZTGeometry, c::Int)
-    cmzs = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
-    lim = Float32(c) * geom.bin_step + geom.bin_step / 2
-    odd = falses(length(spectra))
-    for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r); isodd(pos) && (odd[si] = true); end
-    new_passed = UInt32[]; sizehint!(new_passed, length(precursors_passed))
-    n_before = length(precursors_passed)
-    @inbounds for si in eachindex(scan_to_prec_idx)
-        rng = scan_to_prec_idx[si]; ismissing(rng) && continue
-        start = length(new_passed) + 1
-        if odd[si]
-            cm = cmzs[si]
-            for i in rng
-                pid = precursors_passed[i]
-                abs(prec_mzs[pid] - cm) <= lim && push!(new_passed, pid)
-            end
-        else
-            for i in rng; push!(new_passed, precursors_passed[i]); end
-        end
-        scan_to_prec_idx[si] = length(new_passed) >= start ? (start:length(new_passed)) : missing
-    end
-    @user_info "ZT thin-outer-bins experiment (core ±$c): candidates $n_before -> $(length(new_passed))"
-    return new_passed
 end
