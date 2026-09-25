@@ -32,7 +32,7 @@ and no `Union{Missing,Float32}` is introduced into any carried column.
 
 `peak_area_normalized` carries the same sentinel when run-to-run normalization is enabled,
 so it is blanked too. When normalization is *disabled* the column is never computed at all
-(`MaxLFQSearch` selects `:peak_area` as the quant column); it is then dropped from the output
+(`ProteinQuantificationSearch` selects `:peak_area` as the quant column); it is then dropped from the output
 by `drop_uncomputed_normalized` rather than emitted as an empty column.
 """
 const OUTPUT_BLANKED_QUANT_COLUMNS = (:peak_area, :peak_area_normalized)
@@ -58,7 +58,7 @@ end
     drop_uncomputed_normalized(cols, normalized::Bool)
 
 `peak_area_normalized` is only populated when run-to-run normalization is enabled --
-`MaxLFQSearch` selects `:peak_area` as the quant column otherwise and never fills it. Emitting
+`ProteinQuantificationSearch` selects `:peak_area` as the quant column otherwise and never fills it. Emitting
 it as an all-zero (or, after blanking, all-empty) column invites readers to treat uncomputed
 values as measurements. Drop it from the output entirely when normalization is off.
 """
@@ -282,7 +282,7 @@ end
 # DEAD CODE (commented out, not deleted).
 #
 # `writePrecursorCSV` is the unchunked precursor CSV writer. Nothing calls it: the live path is
-# `writePrecursorCSV_chunked` below (MaxLFQSearch.jl:228), and the only surviving mention of this
+# `writePrecursorCSV_chunked` below (ProteinQuantificationSearch.jl:228), and the only surviving mention of this
 # name is the phrase "Chunked version of writePrecursorCSV" in that function's docstring.
 #
 # It also would not survive being called today -- it does the full-table materialisation the

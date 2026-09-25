@@ -53,12 +53,24 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `proteinScoring.global_protein_inference` | Bool | `true` | Run protein inference once across the union of passing PSMs from every file. Set `false` for the legacy per-file path. |
 | `proteinScoring.write_qc_plots` | Bool | `false` | Emit protein-scoring QC plots. |
 
-### MaxLFQ
+### Protein Quantification
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `maxLFQ.quantification_method` | String | `"directlfq"` | Protein quantification method: `"directlfq"` or `"maxlfq"` for comparison. |
 | `maxLFQ.run_to_run_normalization` | Bool | `true` | Apply between-run median-spline normalization to peak areas. |
-| `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during MaxLFQ. |
+| `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
+
+
+Protein quantification defaults to directLFQ. It uses Pioneer’s existing run
+normalization setting and retains up to 100 precursor traces per protein.
+`n_precursors_quantified` reports the aligned traces contributing to each run;
+identification-support counts and `total_peak_area` continue to describe the
+eligible input observations. Sparse proteins may have different quantification
+coverage than with MaxLFQ.
+
+For comparisons, set `maxLFQ.quantification_method` to `"maxlfq"`. The selected
+method and its settings are saved in `protein_quantification.json`.
 
 ### Output
 

@@ -245,7 +245,7 @@ function SearchDIA(params_path::String)
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
             ("Protein Inference", ProteinInferenceSearch()),
             ("Protein Scoring", ProteinScoringSearch()),
-            ("Quantification & Output", MaxLFQSearch())
+            ("Quantification & Output", ProteinQuantificationSearch())
         ])
 
         # Execute each search phase and record timing + peak RSS delta

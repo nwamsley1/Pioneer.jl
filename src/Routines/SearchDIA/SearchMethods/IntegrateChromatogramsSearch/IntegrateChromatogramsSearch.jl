@@ -311,7 +311,7 @@ function process_file!(
     # Load PSMs that passed previous filtering steps. Decoys are intentionally
     # kept here — ProteinInferenceSearch and ProteinScoringSearch need them
     # for protein-level FDR / PEP calibration. Final decoy suppression for
-    # output happens later in MaxLFQSearch when output.write_decoys=false.
+    # output happens later in ProteinQuantificationSearch when output.write_decoys=false.
     passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
 
     # Initialize the integration schema before the empty-file check so an

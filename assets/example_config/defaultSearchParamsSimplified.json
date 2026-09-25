@@ -13,6 +13,7 @@
         "q_value_threshold": 0.01
     },
     "maxLFQ": {
+        "quantification_method": "directlfq",
         "run_to_run_normalization": true
     }
 }
