@@ -203,6 +203,13 @@ function check_params_bsp(json_string::String)
         library_params["prec_partition_width"] > 0 || throw(InvalidParametersError(
             "prec_partition_width must be > 0", library_params))
     end
+    # Optional. Partition-local precursor ID type of the fragment index: "UInt16"
+    # (default; partitions split at 65,535 precursors) or "UInt32" (no split, so
+    # partitions keep prec_partition_width; larger search counters).
+    if haskey(library_params, "frag_index_local_id_type")
+        get(library_params, "frag_index_local_id_type", "") in ("UInt16", "UInt32") || throw(InvalidParametersError(
+            "frag_index_local_id_type must be \"UInt16\" or \"UInt32\"", library_params))
+    end
     # Optional. Koina ion-mobility (CCS) model; empty or absent skips the
     # prediction and the library has no `ccs` / `inv_ion_mobility` columns.
     im_model = get(library_params, "im_model", "")

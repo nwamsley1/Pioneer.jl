@@ -209,8 +209,8 @@ The optional scratch vectors retain capacity, but their contents are rebuilt
 on every call so scans, calibrated models, and intensity cutoffs cannot go stale.
 """
 @inline function _score_partition_hinted!(
-        local_counter::Counter{UInt16, UInt8},
-        partition::LocalPartition{T},
+        local_counter::Counter{I, UInt8},
+        partition::AbstractLocalPartition{T},
         irt_low::Float32,
         irt_high::Float32,
         masses::AbstractArray{<:Union{Missing, U}},
@@ -220,7 +220,7 @@ on every call so scans, calibrated models, and intensity cutoffs cannot go stale
         intensity_threshold::Float32 = 0.0f0,
         mz_low_buf::Vector{Float32} = Float32[],
         mz_high_buf::Vector{Float32} = Float32[],
-        ) where {T<:AbstractFloat, U<:AbstractFloat, V<:AbstractFloat}
+        ) where {I<:Unsigned, T<:AbstractFloat, U<:AbstractFloat, V<:AbstractFloat}
 
     p_rt_bins   = getRTBins(partition)
     p_frag_bins = getFragBins(partition)
@@ -360,11 +360,11 @@ end
 Process the scored counter for one scan. Dispatches on strategy type.
 Returns updated write position (for EmitToBuffer) or 0 (for EmitToAccumulator).
 """
-@inline function emit_candidates!(s::EmitToBuffer{F, G}, lc::Counter{UInt16, UInt8},
+@inline function emit_candidates!(s::EmitToBuffer{F, G}, lc::Counter{I, UInt8},
         l2g::Vector{UInt32}, si::Int, scan_irt::Float32, scan_im::Float32,
         prec_lo::Float32, prec_hi::Float32,
         precursor_mzs::AbstractVector{Float32},
-        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {F<:AbstractBitVecFilter, G}
+        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {F<:AbstractBitVecFilter, G, I<:Unsigned}
     sf = s.sf
     gate = s.gate
     @inbounds for i in 1:(lc.size - 1)
@@ -385,11 +385,11 @@ Returns updated write position (for EmitToBuffer) or 0 (for EmitToAccumulator).
     return wp
 end
 
-@inline function emit_candidates!(s::EmitToAccumulator, lc::Counter{UInt16, UInt8},
+@inline function emit_candidates!(s::EmitToAccumulator, lc::Counter{I, UInt8},
         l2g::Vector{UInt32}, si::Int, scan_irt::Float32, scan_im::Float32,
         prec_lo::Float32, prec_hi::Float32,
         precursor_mzs::AbstractVector{Float32},
-        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int)
+        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {I<:Unsigned}
     acc = s.acc
     acc_min = acc.min_score
     irt_tol = s.irt_tol
@@ -424,7 +424,7 @@ Returns a flat vector of global precursor IDs (concatenated across all scans).
 """
 function searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-        pfi::LocalPartitionedFragmentIndex{Float32},
+        pfi::AbstractLocalPartitionedFragmentIndex{Float32},
         spectra::MassSpecData,
         all_scan_idxs::Vector{Int},
         n_threads::Int,
@@ -463,6 +463,7 @@ function searchFragmentIndexPartitionMajorHinted(
     # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
     est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
+    I = local_id_type(pfi)                     # counter ID type = the index's local ID type (UInt16 / UInt32)
     mz_buf_size = maximum(si -> getPeakCount(spectra, all_scan_idxs[si]),
                           1:n_scans; init=0)
     int_buf_size = max_peaks > 0 ? mz_buf_size : 0
@@ -470,7 +471,7 @@ function searchFragmentIndexPartitionMajorHinted(
     if scratch === nothing
         thread_si_bufs  = [Vector{Int32}(undef, est_per_thread) for _ in 1:n_threads]
         thread_pid_bufs = [Vector{UInt32}(undef, est_per_thread) for _ in 1:n_threads]
-        thread_counters = [Counter(UInt16, UInt8, max_local + 1) for _ in 1:n_threads]
+        thread_counters = [Counter(I, UInt8, max_local + 1) for _ in 1:n_threads]
         thread_int_bufs = max_peaks > 0 ?
             [Vector{Float32}(undef, int_buf_size) for _ in 1:n_threads] :
             [Float32[] for _ in 1:n_threads]
@@ -482,10 +483,11 @@ function searchFragmentIndexPartitionMajorHinted(
             est_per_thread = est_per_thread,
             counter_size = max_local + 1,
             int_buf_size = int_buf_size,
-            mz_buf_size = mz_buf_size)
+            mz_buf_size = mz_buf_size,
+            id_type = I)
         thread_si_bufs  = scratch.si
         thread_pid_bufs = scratch.pid
-        thread_counters = scratch.counters
+        thread_counters = scratch_counters(scratch, I)
         thread_int_bufs = scratch.int_bufs
         thread_mz_low_bufs = scratch.mz_low_bufs
         thread_mz_high_bufs = scratch.mz_high_bufs
@@ -582,9 +584,9 @@ end
 
 """Typed inner function: Julia specializes on E (emit strategy) + M (mass error model)."""
 function _run_thread(tid::Int, emit::E,
-        lc::Counter{UInt16, UInt8},
+        lc::Counter{I, UInt8},
         si_buf::Vector{Int32}, pid_buf::Vector{UInt32},
-        pfi_ref::LocalPartitionedFragmentIndex{Float32},
+        pfi_ref::P,
         partition_to_scans::Vector{Vector{Int}},
         all_scan_idxs::Vector{Int},
         spectra::MassSpecData,
@@ -597,7 +599,7 @@ function _run_thread(tid::Int, emit::E,
         int_buf::Vector{Float32}, max_peaks::Int,
         mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32},
         decode_buf::PeakDecodeBuffer
-        ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
+        ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel, I<:Unsigned, P<:AbstractLocalPartitionedFragmentIndex{Float32}}
 
     wp = 0
 
