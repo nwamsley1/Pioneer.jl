@@ -65,7 +65,7 @@
                 @test sum(s.precursors_quantified for s in stats) == nrows - nrows ÷ 5 - 1
                 @test stats[3].precursors_identified == 0
                 @test stats[1].total_peak_area == 1.0
-                @test stats[1].normalization_factors == Float32[2]
+                @test stats[1].medians[2] == 2f0
 
                 if nrows == 1_000
                     repeated_refs = Pioneer.PSMFileReference[]

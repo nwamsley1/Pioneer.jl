@@ -184,13 +184,12 @@ function write_precursor_long_arrow(
     path::String, chunk_refs, file_names::Vector{String}, policy::OutputSchemaPolicy;
     run_to_run_normalization::Bool,
 )
-    run_stats = [RunSummaryStats(name) for name in file_names]
     pools = precursor_output_string_pools(chunk_refs, policy)
     isfile(path) && rm(path)
-    open(Arrow.Writer, path; file=true) do writer
-        for chunk_ref in chunk_refs
-            let tbl = Arrow.Table(file_path(chunk_ref))
-                accumulate_run_summary!(run_stats, tbl)
+    run_stats = with_run_summary(file_names; temp_parent=dirname(abspath(path))) do accumulator
+        open(Arrow.Writer, path; file=true, ntasks=0) do writer
+            for chunk_ref in chunk_refs, tbl in Arrow.Stream(file_path(chunk_ref))
+                accumulate_run_summary!(accumulator, tbl)
                 columns = drop_uncomputed_normalized(
                     blank_unquantified_areas(enabled_output_table(policy, :precursors, tbl)),
                     run_to_run_normalization,

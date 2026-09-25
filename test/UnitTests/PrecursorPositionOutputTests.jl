@@ -72,5 +72,34 @@
             findall(in(expected_order), Symbol.(propertynames(wide_arrow)))
         ] == expected_order
         @test wide.missed_cleavage == UInt8[0, 1]
+
+        # Sparse rows across 6,000 runs must produce small record batches.
+        run_names = ["run$i" for i in 1:6000]
+        Pioneer.writePrecursorCSV_chunked(refs, temp_dir, run_names, false, proteins;
+            write_csv=false, memory_budget_bytes=65536)
+        batches = collect(Arrow.Stream(joinpath(temp_dir, "precursors_wide.arrow")))
+        @test length(batches) == 2
+        @test all(length(b.precursor_idx) == 1 for b in batches)
+        @test collect(batches[1].run1) == Float32[1000]
+        @test all(ismissing, batches[1].run6000)
+        @test String.(propertynames(batches[1]))[end-5999:end] == run_names
+        @test !isfile(joinpath(temp_dir, "precursors_long.tsv"))
     end
+end
+
+@testset "precursor pivot bounds and complete keys" begin
+    df = DataFrame(precursor_idx=[1, 1, 1, 2, 3, 4],
+        annotation=["a", "b", "a", "c", "d", "e"],
+        file_name=["r1", "r1", "r1", "r2", "r1", "r2"],
+        area=Union{Missing,Float32}[1, 2, 3, missing, 5, 6])
+    keys = [:precursor_idx, :annotation]
+    batches = DataFrame[]
+    Pioneer._foreach_precursor_wide_batch(df, keys, 6000, 65536, 3) do batch
+        push!(batches, unstack(batch, keys, :file_name, :area; combine=sum))
+    end
+    @test length(batches) == 5
+    @test all(nrow(b) == 1 for b in batches)
+    combined = vcat(batches...; cols=:union)
+    expected = unstack(df, keys, :file_name, :area; combine=sum)
+    @test isequal(combined[:, names(expected)], expected)
 end

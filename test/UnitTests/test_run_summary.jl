@@ -42,41 +42,47 @@
                     Arrow.write(writer, rows[4:end, :])
                 end
                 @test length(collect(Arrow.Stream(path))) == 2
-                expected = accumulate_run_summary!([RunSummaryStats("a"), RunSummaryStats("b")], rows)
-                actual = accumulate_run_summary!([RunSummaryStats("a"), RunSummaryStats("b")], Arrow.Table(path))
+                expected = Pioneer.with_run_summary(["a", "b"]) do acc
+                    accumulate_run_summary!(acc, rows)
+                end
+                actual = Pioneer.with_run_summary(["a", "b"]) do acc
+                    for batch in Arrow.Stream(path)
+                        accumulate_run_summary!(acc, batch)
+                    end
+                end
                 @test all(isequal(getfield(actual[i], field), getfield(expected[i], field))
                           for i in eachindex(expected), field in fieldnames(RunSummaryStats))
             end
         end
     end
-    stats = [RunSummaryStats("a"), RunSummaryStats("b")]
-    accumulate_run_summary!(stats, chunk)
-    # A second chunk must fold into the same accumulators.
-    accumulate_run_summary!(stats, (
-        ms_file_idx = UInt32[1], target = Bool[true], sequence = ["NEWPEPK"],
-        peak_area = Union{Missing, Float32}[40], peak_area_normalized = Union{Missing, Float32}[20],
-        mbr_recovered = Bool[false], irt_error = Float16[4.0], rt_fwhm = Float16[0.4],
-        points_integrated = UInt32[9], charge = UInt8[2], missed_cleavage = UInt8[1]))
-
+    stats = Pioneer.with_run_summary(["a", "b"]) do acc
+        accumulate_run_summary!(acc, chunk)
+        # A second chunk must fold into the same accumulators.
+        accumulate_run_summary!(acc, (
+            ms_file_idx = UInt32[1], target = Bool[true], sequence = ["NEWPEPK"],
+            peak_area = Union{Missing, Float32}[40], peak_area_normalized = Union{Missing, Float32}[20],
+            mbr_recovered = Bool[false], irt_error = Float16[4.0], rt_fwhm = Float16[0.4],
+            points_integrated = UInt32[9], charge = UInt8[2], missed_cleavage = UInt8[1]))
+    end
     a, b = stats
     @test a.precursors_identified == 4
     @test a.precursors_quantified == 4
     @test a.precursors_mbr == 1
-    @test length(a.peptides) == 3            # PEPTIDEK counted once
+    @test a.peptides_identified == 3            # PEPTIDEK counted once
     @test a.total_peak_area == 100.0
-    @test median(a.peak_areas) == 25.0f0
-    @test median(a.normalization_factors) == 1.5f0   # ratios 2, 1, 2, 0.5
-    @test median(a.irt_errors) == 2.5f0             # |−1|,2,3,4
-    @test median(a.charges) == 2.0f0
-    @test median(a.missed_cleavages) == 0.5f0
-    @test median(a.peptide_lengths) == 8.0f0        # 8,8,9,7
+    @test a.medians[1] == 25.0f0
+    @test a.medians[2] == 1.5f0   # ratios 2, 1, 2, 0.5
+    @test a.medians[3] == 2.5f0             # |−1|,2,3,4
+    @test a.medians[7] == 2.0f0
+    @test a.medians[8] == 0.5f0
+    @test a.medians[6] == 8.0f0        # 8,8,9,7
 
     @test b.precursors_identified == 3               # decoy skipped
     @test b.precursors_quantified == 1               # zero and missing areas are unquantified
     @test b.precursors_mbr == 1
-    @test length(b.peptides) == 2
+    @test b.peptides_identified == 2
     @test b.total_peak_area == 5.0
-    @test isempty(b.normalization_factors) || b.normalization_factors == Float32[1.0]
+    @test b.medians[2] == 1f0
 
     pg = DataFrame(
         file_name = ["a", "a", "a", "b", "zzz"],
@@ -92,4 +98,48 @@
     @test Pioneer._mass_tol_columns(Dict{Int64, Pioneer.AbstractMassErrorModel}(), 1) === (missing, missing, missing)
     d = Dict{Int64, Pioneer.AbstractMassErrorModel}(1 => Pioneer.MassErrorModel(0.0f0, (10.0f0, 12.0f0)))
     @test Pioneer._mass_tol_columns(d, 1) == (10.0f0, 12.0f0, "ppm")
+end
+
+@testset "bounded exact summary partitions" begin
+    mktempdir() do dir
+        n = 12000
+        rows = (
+            ms_file_idx = UInt32[isodd(i) ? 1 : 17 for i in 1:n],
+            target = trues(n),
+            sequence = [string("PEPTIDE", i % 31) for i in 1:n],
+            peak_area = Union{Missing,Float32}[i % 11 == 0 ? missing : i % 97 for i in 1:n],
+            peak_area_normalized = Float32[i % 107 for i in 1:n],
+            irt_error = Float32[sin(i) for i in 1:n],
+            rt_fwhm = Float32[isodd(i) ? -0.0 : 0.0 for i in 1:n],
+            points_integrated = UInt32[i % 19 for i in 1:n],
+            charge = UInt8[i % 4 for i in 1:n],
+            missed_cleavage = UInt8[i % 3 for i in 1:n],
+        )
+        names = string.(1:17)
+        small = Pioneer.with_run_summary(names; temp_parent=dir, memory_budget_bytes=65536) do acc
+            accumulate_run_summary!(acc, rows)
+        end
+        large = Pioneer.with_run_summary(names; temp_parent=dir) do acc
+            accumulate_run_summary!(acc, rows)
+        end
+        @test all(isequal(getfield(small[i], f), getfield(large[i], f))
+                  for i in 1:17, f in fieldnames(RunSummaryStats))
+        @test isempty(readdir(dir))
+        @test_throws ErrorException Pioneer.with_run_summary(names; temp_parent=dir) do acc
+            accumulate_run_summary!(acc, rows)
+            error("interrupted")
+        end
+        @test isempty(readdir(dir))
+        # Compare disk selection with Julia's median, including nonfinite values.
+        for values in (Float32[-Inf, -2, -0.0, 0.0, 2, Inf],
+                       Float32[-Inf, Inf], Float32[1, NaN, 2], Float32[1, 3, 9])
+            path = joinpath(dir, "records.bin")
+            records = [Pioneer.RunSummaryRecord(1, 1, 0xff, ntuple(_ -> v, 8)) for v in values]
+            open(io -> write(io, records), path, "w")
+            medians, peptides = Pioneer._large_summary_medians(path, 1, 65536)
+            @test all(x -> isequal(x, median(values)), medians)
+            @test peptides == 1
+            rm(path)
+        end
+    end
 end

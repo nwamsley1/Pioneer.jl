@@ -506,11 +506,32 @@ function _precursor_csv_read_columns(tbl, requested_cols)
     return Symbol[c for c in propertynames(tbl) if c in wanted]
 end
 
+# Bound the pivot by output cells as well as input rows. A complete wide-row
+# group stays together so duplicate observations retain sum semantics.
+function _foreach_precursor_wide_batch(f, df, keys, nfiles, budget, row_limit)
+    group_limit = max(1, budget ÷ (4 * max(1, 16nfiles + 1024)))
+    rows = Int[]
+    groups = 0
+    for group in groupby(df, keys; sort=false)
+        indices = parentindices(group)[1]
+        if !isempty(rows) && (groups >= group_limit || length(rows) + length(indices) > row_limit)
+            f(view(df, rows, :))
+            empty!(rows)
+            groups = 0
+        end
+        append!(rows, indices)
+        groups += 1
+    end
+    isempty(rows) || f(view(df, rows, :))
+    return nothing
+end
+
 """
     writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins; ...)
 
 Chunked version of writePrecursorCSV that processes merge chunks one at a time,
-keeping memory bounded to ~1 chunk (~1 GB) instead of loading the full precursors table.
+keeping one input chunk in memory. The workspace budget sizes additional batches
+by input rows and output run columns; one complete wide-row group is the minimum batch.
 Produces identical output files: precursors_long.tsv, precursors_wide.tsv, precursors_wide.arrow.
 """
 function writePrecursorCSV_chunked(
@@ -521,10 +542,14 @@ function writePrecursorCSV_chunked(
     proteins::LibraryProteins;
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
-    batch_size::Int64 = 2000000)
+    batch_size::Int64 = 2000000,
+    memory_budget_bytes::Int = 64*1024^2)
+
+    batch_size > 0 || throw(ArgumentError("batch_size must be positive"))
+    memory_budget_bytes > 0 || throw(ArgumentError("memory_budget_bytes must be positive"))
 
     function makeWideFormat(
-        longdf::DataFrame,
+        longdf::AbstractDataFrame,
         cols::AbstractVector{Symbol},
         normalized::Bool)
 
@@ -642,7 +667,7 @@ function writePrecursorCSV_chunked(
 
     open(long_precursors_path, "w") do io1
         open(wide_precursors_path, "w") do io2
-            open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
+            open(Arrow.Writer, wide_precursors_arrow_path; file=true, ntasks=0) do arrow_writer
                 headers_written = false
                 # Skip the progress bar when there's only one chunk —
                 # ProgressBars displays "Inf:Inf, InfGs/it" on n=1 (rate divide-by-zero).
@@ -707,28 +732,24 @@ function writePrecursorCSV_chunked(
                         headers_written = true
                     end
 
-                    # Batch processing within chunk
-                    pid_col = precursors_long[!, :precursor_idx]
-                    batch_start_idx, batch_end_idx = 1, min(batch_size + 1, n_rows)
-                    while batch_start_idx <= n_rows
-                        batch_end_idx = _extend_batch_to_group_end(
-                            pid_col, batch_end_idx, n_rows)
-
-                        subdf = precursors_long[range(batch_start_idx, batch_end_idx), :]
-                        batch_start_idx = batch_end_idx + 1
-                        batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-
-                        if write_csv
+                    row_limit = max(1, min(batch_size, memory_budget_bytes ÷ 512))
+                    if write_csv
+                        for first in 1:row_limit:n_rows
+                            subdf = precursors_long[first:min(n_rows, first + row_limit - 1), :]
                             _sanitize_empty_strings!(subdf)
                             CSV.write(io1, subdf, append=true, header=false, delim='\t')
                         end
+                    end
+                    write_csv && _sanitize_empty_strings!(precursors_long)
+                    _foreach_precursor_wide_batch(
+                        precursors_long, Symbol.(wide_columns), length(file_names),
+                        memory_budget_bytes, row_limit) do subdf
                         subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
                         _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
                         if write_csv
                             _sanitize_empty_strings!(subunstack)
                             CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
                         end
-                        # Normalize column types for consistent Arrow schema across batches
                         allowmissing!(subunstack)
                         Arrow.write(arrow_writer, subunstack[!, sorted_columns])
                     end
