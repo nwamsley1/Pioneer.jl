@@ -2,6 +2,9 @@ using Random: MersenneTwister, shuffle!, rand
 using LinearAlgebra: dot, norm
 using Statistics: median!, mean
 
+const SPARSE_MAXLFQ_PARTNERS = 16
+const SPARSE_MAXLFQ_SEED = 0
+
 function _lfq_root!(parents, i)
     while parents[i] != i
         parents[i] = parents[parents[i]]
@@ -133,7 +136,7 @@ end
     solve_sparse_maxlfq(X, run_priorities; partners=16, seed=0,
                        rtol=1e-10, atol=1e-12, maxiter=max(100, 4size(X,2)))
 
-Experimental MaxLFQ using a sparse set of same-precursor median log ratios.
+MaxLFQ using a sparse set of same-precursor median log ratios.
 Input is a precursor-by-run matrix of finite log2 intensities or missing values.
 Keeps the full overlap graph's best connected component and MaxLFQ intensity
 scaling. Returns a named tuple with estimates, component_labels, edge_count,
@@ -150,10 +153,10 @@ ordering. Graph selection depends on observation availability, not intensities.
 The input matrix and its observation indexes require O(precursors*runs) and
 O(observations) space respectively; no dense run-by-run matrix is allocated.
 Each iterative solve step is O(edges). Convergence is checked, never silently
-truncated; strict linear total runtime is not guaranteed. Not a production default.
+truncated; strict linear total runtime is not guaranteed.
 """
 function solve_sparse_maxlfq(X::AbstractMatrix, run_priorities::AbstractVector;
-    partners::Int=16, seed::Int=0, rtol::Real=1e-10, atol::Real=1e-12,
+    partners::Int=SPARSE_MAXLFQ_PARTNERS, seed::Int=SPARSE_MAXLFQ_SEED, rtol::Real=1e-10, atol::Real=1e-12,
     maxiter::Int=max(100, 4size(X,2)))
     partners >= 0 || throw(ArgumentError("partners must be nonnegative"))
     rtol > 0 && isfinite(rtol) || throw(ArgumentError("rtol must be finite and positive"))

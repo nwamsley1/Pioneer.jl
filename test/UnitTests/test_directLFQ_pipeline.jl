@@ -46,9 +46,9 @@ end
 
 @testset "Protein quantification parameter selection" begin
     defaults = JSON.parsefile(joinpath(@__DIR__, "..", "..", "assets", "example_config", "defaultSearchParams.json"))
-    @test defaults["maxLFQ"]["quantification_method"] == "directlfq"
+    @test defaults["maxLFQ"]["quantification_method"] == "sparsemaxlfq"
     mktempdir() do dir
-        for method in ("directlfq", "maxlfq")
+        for method in ("sparsemaxlfq", "directlfq", "maxlfq")
             defaults["maxLFQ"]["quantification_method"] = method
             path = joinpath(dir, "params.json")
             write(path, JSON.json(defaults))
@@ -56,9 +56,49 @@ end
             selected = Pioneer.ProteinQuantificationSearchParameters(params)
             @test selected.quantification_method == Symbol(method)
         end
+        delete!(defaults["maxLFQ"], "quantification_method")
+        path = joinpath(dir, "omitted.json")
+        write(path, JSON.json(defaults))
+        selected = Pioneer.ProteinQuantificationSearchParameters(Pioneer.parse_pioneer_parameters(path))
+        @test selected.quantification_method == :sparsemaxlfq
         defaults["maxLFQ"]["quantification_method"] = "typo"
         path = joinpath(dir, "bad.json")
         write(path, JSON.json(defaults))
         @test_throws Pioneer.InvalidParametersError Pioneer.checkParams(path)
+    end
+end
+
+@testset "Sparse MaxLFQ production routing" begin
+    mktempdir() do dir
+        nr, np = 37, 5
+        areas = Float32[exp2(5 + 0.03r + sin(p*r)) for p in 1:np, r in 1:nr]
+        table = DataFrame(inferred_protein_group=fill("A", nr*np),
+            precursor_idx=repeat(UInt32.(1:np); outer=nr),
+            ms_file_idx=repeat(UInt32.(1:nr); inner=np), peak_area=vec(areas),
+            use_for_protein_quant=fill(true, nr*np), target=fill(true,nr*np),
+            entrapment_group_id=zeros(UInt8,nr*np),
+            global_pg_qval=fill(0.001f0,nr*np), pg_qval=fill(0.001f0,nr*np),
+            pg_pep=fill(0.002f0,nr*np), pg_score=fill(4f0,nr*np),
+            global_pg_score=fill(5f0,nr*np))
+        singleton = copy(table[1:1,:])
+        singleton.inferred_protein_group .= "B"
+        append!(table,singleton)
+        input = joinpath(dir,"input.arrow")
+        Arrow.write(input,table)
+        output = joinpath(dir,"output.arrow")
+        Pioneer.LFQ_chunked([Pioneer.PSMFileReference(input)], output, :peak_area,
+            ["r$i" for i in 1:nr], ["PEPTIDE$i" for i in 1:np],
+            fill(missing,np),fill(missing,np),0.01f0,Dict("A"=>"human","B"=>"human");
+            quantification_method=:sparsemaxlfq)
+        out=DataFrame(Arrow.Table(output))
+        X=Union{Missing,Float64}[log2(Float64(v)) for v in areas]
+        expected=Pioneer.solve_sparse_maxlfq(X,fill(4f0,nr))
+        @test Pioneer.SPARSE_MAXLFQ_PARTNERS == 16
+        @test Pioneer.SPARSE_MAXLFQ_SEED == 0
+        @test out[out.protein .== "A",:abundance] ≈ exp2.(expected.estimates) rtol=2e-6
+        full,_=Pioneer.solve_maxlfq(X,Union{Missing,Float64}[4.0 for _ in 1:nr])
+        @test maximum(abs.(full .- expected.estimates)) > 1e-4
+        @test only(out[out.protein .== "B",:abundance]) ≈ areas[1,1]
+        @test all(==(np),out[out.protein .== "A",:n_precursors_quantified])
     end
 end

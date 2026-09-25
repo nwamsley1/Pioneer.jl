@@ -644,17 +644,22 @@ function getProtAbundance(protein::String,
             end
         end
         total_peak_area = Union{Missing, Float32}[v > 0 ? Float32(v) : missing for v in area_sums]
-    elseif quantification_method == :maxlfq
+    elseif quantification_method in (:maxlfq, :sparsemaxlfq)
         S = getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
         X = get_log2_intensity_matrix(S)
-        log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
+        if quantification_method == :sparsemaxlfq
+            result = solve_sparse_maxlfq(X, run_pg_scores)
+            log2_abundances, component_labels = result.estimates, result.component_labels
+        else
+            log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
+        end
         total_peak_area = get_total_peak_area(S)
         quant_counts = UInt32[count(!ismissing, col) for col in eachcol(S)]
     else
         throw(ArgumentError("Unknown protein quantification method: $quantification_method"))
     end
     quantified_runs = findall(x -> !ismissing(x), total_peak_area)
-    if quantification_method == :maxlfq && length(quantified_runs) == 1
+    if quantification_method in (:maxlfq, :sparsemaxlfq) && length(quantified_runs) == 1
         run_idx = only(quantified_runs)
         log2_abundances[run_idx] = log2(total_peak_area[run_idx])
     end
