@@ -54,7 +54,7 @@ existing schema plus `frameId`, `imScan`, `windowGroup`, `cycle_idx`, `collision
 E. coli 8.5 GB, human 250 pg 8.2 GB. Searchable, but tuning never converged on packets (one precursor = ~7
 adjacent-scan PSMs) and adjacent-scan centroid jitter split ions on exact-bin merging.
 
-**Centroiding converter** (`docs/bruker/tdf_centroid_to_arrow.jl`, driver `convert_many.jl`): per frame and DIA
+**Centroiding converter** (prototype, since replaced by [TimsSlices.jl](https://github.com/nwamsley1/TimsSlices.jl)): per frame and DIA
 window (MS1: whole frame), for slices every `stride` scans: (1) IM Gaussian (σ scans) accumulated per TOF bin,
 (2) m/z Gaussian (σ bins) over dense runs of nearby bins, (3) local maxima with a footprint walk (≤ 4 bins),
 m/z = intensity-weighted mean bin (sub-bin), intensity = footprint sum, (4) optional culls: raw-intensity

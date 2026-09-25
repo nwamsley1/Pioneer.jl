@@ -1,8 +1,9 @@
 # timsTOF quantification: the 2D chromatogram and how to integrate it (2026-09-21/22)
 
-Branch `feat/tdfs-reader`. Scripts in `docs/bruker/` (`chrom2d.jl`, `hye_quant.jl`, the `plot_*.jl` set); they run
-offline on the weight dumps that `PIONEER_CHROM_DUMP_DIR` writes, so integration strategies can be compared
-without re-searching. Working data on Nathan's machine: `~/BrukerTims/pride_hye/`.
+Branch `feat/tdfs-reader`. The analysis scripts behind these numbers (`chrom2d.jl`, `hye_quant.jl`, the `plot_*.jl`
+set) are kept outside the repository; they ran offline on per-(precursor, slice) weight dumps from a development
+hook that has since been removed, so integration strategies could be compared without re-searching. Working data
+on Nathan's machine: `~/BrukerTims/pride_hye/`.
 
 ## 1. What a timsTOF chromatogram is
 
