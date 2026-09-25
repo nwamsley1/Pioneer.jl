@@ -349,7 +349,7 @@ function summarize_results!(
     @user_info "Protein quantification: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
 
     @user_info "Writing protein group results..."
-    # Create wide format protein table (protein groups table is small, no chunking needed)
+    # Export protein groups through bounded buffers.
     proteins_wide_path = writeProteinGroupsCSV(
         results.proteins_long_path,
         getSequence(precursors),
@@ -373,7 +373,7 @@ function summarize_results!(
     GC.gc()
 
     @user_info "Writing run summary..."
-    add_protein_group_counts!(run_stats, DataFrame(Arrow.Table(protein_long_path)), all_file_names)
+    add_protein_group_counts!(run_stats, protein_long_path, all_file_names)
     write_run_summary(joinpath(getDataOutDir(search_context), "run_summary.tsv"),
                       run_stats, search_context)
 
