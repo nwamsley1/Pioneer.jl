@@ -70,7 +70,7 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
     spectra = write_collapse_arrow(joinpath(mktempdir(), "c.arrow"))
     k = 3
     L = 2k + 1
-    geom = ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(k), 3.0f0)
+    geom = ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(k), 3.0f0, 0f0)
     tri, tnorm = zt_transmission_template(geom, k)
 
     # bin b (1-based) -> scan index, MS1 at the head
@@ -117,7 +117,7 @@ brute_centers(df, spectra, pmz) = [i for i in 1:nrow(df) if
 
     @testset "k <= 0 returns the input unchanged" begin
         df = psm_table([(1, bscan(10), 1.0f0)])
-        out = collapse_to_metascans(df, spectra, precs, ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(0), 3.0f0))
+        out = collapse_to_metascans(df, spectra, precs, ZTGeometry(CSTEP, CSTEP, Int32(CBINS), Int32(0), 3.0f0, 0f0))
         @test out === df
     end
 

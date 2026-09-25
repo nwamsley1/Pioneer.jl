@@ -114,12 +114,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            # EXPERIMENT (PIONEER_MAINSEARCH_SOLVER=ols): the PoissonMM solve is ~60% of the fused
-            # deconvolution loop (flat profile, ZT 5 Da A_REP1, 2026-09-14). Default unchanged.
-            (get(ENV, "PIONEER_MAINSEARCH_SOLVER", "pmm") == "ols" ? OLSSolver() : PoissonMMSolver()),
+            PoissonMMSolver(),  # OLS / Lasso / AdaptiveLasso paths retained in git history
             DECONV_MAX_ITER,          # max_iter_outer
-            # EXPERIMENT (PIONEER_DECONV_TOL): relative convergence threshold sweep. Default unchanged.
-            something(tryparse(Float32, get(ENV, "PIONEER_DECONV_TOL", "")), DECONV_CONVERGENCE_TOL),   # max_diff
+            DECONV_CONVERGENCE_TOL,   # max_diff
 
             Int64(0),   # min_y_count hardcoded
             Float32(0), # min_spectral_contrast hardcoded

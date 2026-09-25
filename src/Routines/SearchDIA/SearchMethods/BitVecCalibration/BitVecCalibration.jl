@@ -259,19 +259,6 @@ const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
 const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
 
-"""
-    bitvec_min_excess_rate() -> Float64
-
-Minimum library-corrected target-over-decoy EXCESS a fragment-index bitmask pattern must show to
-be emitted as a candidate. Lowering it lets weaker, lower-bit patterns through, which helps
-recall where signal is diluted across bins — the scanning-quad case — at some FDR cost.
-
-Env-overridable (`PIONEER_BITVEC_MIN_EXCESS`) for sweeps; the default is unchanged.
-"""
-bitvec_min_excess_rate() =
-    Float64(something(tryparse(Float64, get(ENV, "PIONEER_BITVEC_MIN_EXCESS", "")),
-                      BITVEC_MIN_EXCESS_RATE))
-
 function _bitvec_excess_rank_table(
     target_counts::AbstractVector{<:Integer},
     decoy_counts::AbstractVector{<:Integer},
@@ -386,7 +373,7 @@ function process_file!(
 
     # Compute per-file filter
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
-    min_excess_rate = bitvec_min_excess_rate()
+    min_excess_rate = Float64(BITVEC_MIN_EXCESS_RATE)
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
@@ -432,18 +419,6 @@ function process_file!(
         mode = "coarse(b1,k3,k5)"
     end
 
-    # EXPERIMENT (PIONEER_BITVEC_MIN_BITS, off by default): floor on pattern weight.
-    # Lowering min_excess_rate to admit weak patterns is dominated by the count_ones==3 class,
-    # which carries 1.96M counts on A_REP1 (3x the k=4 class, 12x k=5) at a 0.18% target excess
-    # -- ~70% of the added emission volume for little signal. This caps weight without touching
-    # the rate, so the informative k>=4 admissions are kept.
-    _min_bits = something(tryparse(Int, get(ENV, "PIONEER_BITVEC_MIN_BITS", "")), 0)
-    if _min_bits > 0
-        @inbounds for p in 0:255
-            count_ones(UInt8(p)) < _min_bits && (filter_table[p + 1] = false)
-        end
-    end
-
     setBitVecFilter!(search_context, ms_file_idx, filter_table)
     n_pass = count(filter_table)
     elapsed = round(time() - t_start, digits=2)
@@ -477,7 +452,7 @@ function summarize_results!(
     end
 
     z = Float64(BITVEC_DIAGNOSTIC_Z)
-    min_r = bitvec_min_excess_rate()
+    min_r = Float64(BITVEC_MIN_EXCESS_RATE)
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
     result = _adaptive_merge(tc, dc, z, min_r, fdr_scale)
     partition = result.partition

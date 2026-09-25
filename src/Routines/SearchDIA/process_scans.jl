@@ -116,32 +116,18 @@ Post-design-matrix processing. Returns `true` if scoring should proceed.
 function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::MainSearchParameters)
     weights = getTempWeights(search_data)
     initialize_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
-    # DIAGNOSTIC (PIONEER_PMM_DUMP_DIR, PIONEER_PMM_DUMP_EVERY): serialize every n-th solve's
-    # inputs (design matrix, observed y, warm-start weights) as a solver test problem, in the
-    # Dict format test/UnitTests/test_poissonMM.jl reads. Inert unless set.
-    if PMM_DUMP_EVERY[] > 0
-        _c = Threads.atomic_add!(PMM_DUMP_COUNTER, 1)
-        _c % PMM_DUMP_EVERY[] == 0 && _pmm_dump_problem(Hs, search_data, weights, _c)
-    end
-    converged, n_iter = solve_deconvolution!(
+    converged = first(solve_deconvolution!(
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff
-    )
-    # Diagnostic tally (main search): solves and outer iterations, reported per library_search.
-    Threads.atomic_add!(DECONV_SOLVES, 1)
-    Threads.atomic_add!(DECONV_ITERS, Int(n_iter))
+        params.max_iter_outer, deconv_tol(search_data, params.max_diff)
+    ))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
         zero_negligible_weights!(weights, Hs.n)
     end
     return converged
 end
-
-"""Main-search deconvolution tallies (solves, outer iterations); reset and logged by library_search."""
-const DECONV_SOLVES = Threads.Atomic{Int}(0)
-const DECONV_ITERS  = Threads.Atomic{Int}(0)
 
 function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSparseDesignMatrix, params::ParameterTuningSearchParameters)
     weights = getTempWeights(search_data)
@@ -150,7 +136,7 @@ function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSpar
         OLSSolver(),
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        DECONV_MAX_ITER, DECONV_CONVERGENCE_TOL
+        DECONV_MAX_ITER, deconv_tol(search_data, DECONV_CONVERGENCE_TOL)
     ))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
@@ -249,25 +235,4 @@ function score_psms!(
         default_top3_ll = get_default_top3_ll(mem)
     )
     return score_result.last_val
-end
-
-
-const PMM_DUMP_EVERY = Ref(0)
-const PMM_DUMP_COUNTER = Threads.Atomic{Int}(0)
-const PMM_DUMP_DIR = Ref("")
-function _pmm_dump_problem(Hs, search_data, weights, counter)
-    n_rows = Int(Hs.m); n_cols = Int(Hs.n); n_vals = Int(Hs.n_vals)
-    n_cols == 0 && return
-    # observed intensities: rows are peaks; Hs.x holds the observed value per nonzero entry
-    y = zeros(Float32, n_rows)
-    @inbounds for i in 1:n_vals
-        r = Int(Hs.rowval[i]); r >= 1 && r <= n_rows && (y[r] = Hs.x[i])
-    end
-    d = Dict{Symbol,Any}(:n_rows => n_rows, :n_cols => n_cols, :n_vals => n_vals,
-        :colptr => Int64.(Hs.colptr[1:n_cols + 1]), :rowval => Int64.(Hs.rowval[1:n_vals]),
-        :nzval => Float32.(Hs.nzval[1:n_vals]), :y => y,
-        :w_before_all => Float32.(weights[1:n_cols]), :counter => counter)
-    path = joinpath(PMM_DUMP_DIR[], "pmm_problem_$(lpad(counter, 8, '0')).dat")
-    open(io -> serialize(io, d), path, "w")
-    return nothing
 end

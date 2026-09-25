@@ -133,20 +133,20 @@ end
             @test length(unique(v)) == length(v)
         end
 
-        # 3. ranges tile new_pp exactly, in scan order, with no gaps or overlap
-        expected_len = sum(length(want[si]) for si in all_scan_idxs)
-        @test length(new_pp) == expected_len
+        # 3. ranges are in scan order, disjoint and in bounds. Dedup can leave unread gaps
+        # after a scan's range (the output is sized before dedup), so no exact tiling.
+        @test length(new_pp) >= sum(length(want[si]) for si in all_scan_idxs)
         off = 0
         for si in all_scan_idxs
             rng = s2p[si]
             if ismissing(rng)
                 @test isempty(want[si])
             else
-                @test first(rng) == off + 1
+                @test first(rng) > off
                 off = last(rng)
             end
         end
-        @test off == length(new_pp)
+        @test off <= length(new_pp)
 
         # 4. expansion never crosses a cycle boundary
         for si in all_scan_idxs

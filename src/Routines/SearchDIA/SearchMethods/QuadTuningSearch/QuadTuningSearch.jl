@@ -215,19 +215,6 @@ function process_file!(
             # Apex sits at the isotope centre of mass; use the library's isotope splines
             # (mass + sulfur count) rather than an averagine guess.
             _iso = getIsoSplines(first(getSearchData(search_context)))
-            # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE_DIR): dump the collected per-bin rows so the
-            # centroid / shape choices can be swept offline without re-running the search.
-            let _pd = get(ENV, "PIONEER_ZT_QUAD_PROBE_DIR", "")
-                if !isempty(_pd) && nrow(_psms) > 0
-                    mkpath(_pd)
-                    _cyc = UInt32.(getCycleIdxs(spectra))
-                    _cm  = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
-                    _d = DataFrame(precursor_idx = _psms.precursor_idx, scan_idx = _psms.scan_idx,
-                                   cycle = _cyc[_psms.scan_idx], center_mz = _cm[_psms.scan_idx],
-                                   weight = _psms.weight)
-                    writeArrow(joinpath(_pd, "zt_quad_rows_file$(ms_file_idx).arrow"), _d)
-                end
-            end
             _fit, _hist = _nfit >= ZT_QUAD_MIN_METASCANS ?
                 fit_zt_triangle_from_psms(_psms, spectra, getPrecursors(getSpecLib(search_context)), _g;
                                           iso_splines = _iso) :
@@ -240,13 +227,10 @@ function process_file!(
                            "— keeping the geometry's square model"
             else
                 _model = ZTTriangleModel(_fit.h)
-                # The fitted triangle is REPORTED but not installed by default. Deconvolving
-                # under it (weights divided by T, outer bins near zero) lost 3,088 precursors on
-                # A_REP1 (27,926 -> 24,838) versus the flat meta-scan box, which stays the shipped
-                # model. PIONEER_ZT_INSTALL_TRIANGLE=1 installs it for MainSearch instead.
-                _install = get(ENV, "PIONEER_ZT_INSTALL_TRIANGLE", "0") != "0"
-                _install && setQuadTransmissionModel!(search_context, ms_file_idx, _model)
-                setQuadModel(results, _install ? _model : _sq)
+                # The fitted triangle is REPORTED, not installed. Deconvolving under it (weights
+                # divided by T, outer bins near zero) lost 3,088 precursors on A_REP1
+                # (27,926 -> 24,838) versus the flat meta-scan box, which stays the model.
+                setQuadModel(results, _sq)
                 append!(results.quad_plot_objects,
                         plot_zt_triangle(_fit, _psms, spectra,
                                          getPrecursors(getSpecLib(search_context)), _g,
@@ -265,8 +249,8 @@ function process_file!(
                 elseif _derive_k
                     _g2 = zt_with_metascan_k(_g, _fit.k_implied)
                     setZTGeometry!(search_context, ms_file_idx, _g2)
-                    _install || setQuadTransmissionModel!(search_context, ms_file_idx,
-                                                          SquareQuadModel(zt_deconv_overhang(_g2)))
+                    setQuadTransmissionModel!(search_context, ms_file_idx,
+                                              SquareQuadModel(zt_deconv_overhang(_g2)))
                     _g = _g2
                     "  <-- DERIVED: metascan_k $(Int(_g.metascan_k)) replaces provisional $(ZT_METASCAN_K_DEFAULT)"
                 else
@@ -274,18 +258,14 @@ function process_file!(
                 end
                 # Collapse template from the fit: the meta-scan collapse uses the transmission
                 # template as matched filter (fitted/shadow spectra) and as the feature template
-                # (zt_tri_cosine / zt_tri_pcor). PIONEER_ZT_TEMPLATE=gaussian keeps the
-                # configured Gaussian instead.
-                if get(ENV, "PIONEER_ZT_TEMPLATE", "fit") != "gaussian"
-                    _g = zt_with_template_h(_g, _fit.h)
-                    setZTGeometry!(search_context, ms_file_idx, _g)
-                end
+                # (zt_tri_cosine / zt_tri_pcor).
+                _g = zt_with_template_h(_g, _fit.h)
+                setZTGeometry!(search_context, ms_file_idx, _g)
                 @user_info "ZT quad tuning [file $ms_file_idx]: h=$(round(_fit.h; digits=3)) Da " *
                     "(IQR $(round(_fit.h_iqr_lo; digits=2))–$(round(_fit.h_iqr_hi; digits=2))), " *
                     "bin_step=$(round(_g.bin_step; digits=4)), k_implied=$(_fit.k_implied)$_flag; " *
                     "$(_fit.n_metascans) meta-scans, median R²=$(round(_fit.median_r2; digits=3)); " *
-                    (_install ? "INSTALLED for MainSearch" : "reported only (square meta-scan box kept)") *
-                    (_g.template_h > 0f0 ? "; collapse template = fitted triangle" : "; collapse template = Gaussian")
+                    "reported only (square meta-scan box kept); collapse template = fitted triangle"
             end
             return nothing
         end
@@ -372,19 +352,6 @@ function process_file!(
             @user_warn "QuadTuning [$file_name]: only $n_collected PSMs collected (target=$target_psms_int, fallback_min=$min_psms_int); using SquareQuadModel fallback"
         else
             total_psms = process_quad_pipeline(initial_psms, spectra, search_context, results, params, ms_file_idx, window_width)
-            # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE): dump the raw isotope-pair measurement cloud
-            # (x0, x1, yt, charge) so the transmission profile can be reconstructed and
-            # inspected offline, independent of whatever model form is fitted to it.
-            let _probe_dir = get(ENV, "PIONEER_ZT_QUAD_PROBE_DIR", "")
-                if !isempty(_probe_dir) && !isempty(total_psms)
-                    mkpath(_probe_dir)
-                    _pp = joinpath(_probe_dir, "quad_probe_file$(ms_file_idx).arrow")
-                    writeArrow(_pp, total_psms)
-                    @user_info "ZT quad probe: $(nrow(total_psms)) isotope pairs, " *
-                               "x0 in [$(round(minimum(total_psms.x0),digits=2)), " *
-                               "$(round(maximum(total_psms.x0),digits=2))] Da -> $_pp"
-                end
-            end
             if nrow(total_psms) >= 50
                 fitted_params, initial_params = fit_quad_model(total_psms, window_width)
                 fitted_model = RazoQuadModel(fitted_params)
@@ -394,14 +361,6 @@ function process_file!(
             end
         end
 
-        # EXPERIMENT (PIONEER_QUAD_SQUARE=<overhang Da>): ignore the fitted model and install a
-        # square transmission box (window ± overhang). Used to test deconvolved 1-Da ZT files.
-        let _sq = get(ENV, "PIONEER_QUAD_SQUARE", "")
-            if !isempty(_sq)
-                active_model = SquareQuadModel(parse(Float32, _sq))
-                @user_info "QuadTuning [$file_name]: PIONEER_QUAD_SQUARE set; installing SquareQuadModel(overhang=$_sq) instead of the fitted model"
-            end
-        end
         setQuadModel(results, active_model)
 
         # Per-file QC plots. Fallback files still get the SquareQuad transmission

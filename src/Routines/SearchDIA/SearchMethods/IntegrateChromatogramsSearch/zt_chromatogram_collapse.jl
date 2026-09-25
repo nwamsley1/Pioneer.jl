@@ -34,13 +34,9 @@
 How a precursor's metascan bins within one cycle are reduced to a single chromatogram point.
 The choice is a genuine tradeoff, so it dispatches rather than being hardcoded:
 
-- [`SumMetascan`](@ref)      — assumption-free, the most direct measure of total transmitted signal
-- [`TriangleMetascan`](@ref) — down-weights outer bins, where transmission is low and interference
-                               is proportionally worse
-
-A third option, weighting by the *measured* transmission profile, is the maximum-likelihood
-estimator for abundance given a known profile shape. It is not implemented yet because it needs
-the per-file transmission curve threaded through; add it as another subtype when it is.
+- [`SumMetascan`](@ref)            — assumption-free total transmitted signal; the fallback
+- [`MatchedFilterMetascan`](@ref)  — least-squares abundance under the per-file fitted triangle;
+                                     the default when a triangle was fitted
 """
 abstract type MetascanReduction end
 
@@ -51,27 +47,6 @@ therefore constant for a given precursor across runs — so ratios are preserved
 accumulates over all bins.
 """
 struct SumMetascan <: MetascanReduction end
-
-"""
-Triangle-weighted mean of the bin intensities, matching the template the shape features use.
-Trades a little signal for less noise: outer bins contribute least, which is where transmission
-is lowest and interference proportionally largest.
-"""
-struct TriangleMetascan <: MetascanReduction end
-
-"""
-Triangle-weighted SUM over only the innermost `±half_width` bins, with the triangle still shaped
-by the full `k` — so the weight at the window edge is `1 - half_width/(k+1)` (0.714 at ±2 for
-k=6), NOT zero. Keeps the high-transmission core and discards the outer bins entirely, where
-transmission is lowest (~8% at ±6 on a 6.3 Da FWHM) and interference is proportionally worst.
-
-A sum rather than a normalized mean, so it stays on the same footing as `SumMetascan`: the weight
-total depends only on which bins are present, which is constant per precursor across runs, so
-ratios are preserved.
-"""
-struct TriangleWindowMetascan <: MetascanReduction
-    half_width::Int
-end
 
 """
 Matched filter with the MEASURED transmission profile: bin weights `T_j = max(0, 1 - |j·S| / h)`
@@ -97,32 +72,6 @@ from the center bin (0 at center), and `intensities[i]` its deconvolved intensit
     s = zero(Float32)
     @inbounds for v in intensities
         s += v
-    end
-    return s
-end
-
-@inline function reduce_metascan(::TriangleMetascan, intensities::AbstractVector{Float32},
-                                 offsets::AbstractVector{Int}, k::Int)
-    kf = Float32(k + 1)
-    num = zero(Float32); den = zero(Float32)
-    @inbounds for i in eachindex(intensities)
-        t = max(0f0, 1f0 - abs(Float32(offsets[i])) / kf)
-        num += t * intensities[i]
-        den += t
-    end
-    return den > 0f0 ? num / den : 0f0
-end
-
-@inline function reduce_metascan(r::TriangleWindowMetascan, intensities::AbstractVector{Float32},
-                                 offsets::AbstractVector{Int}, k::Int)
-    kf = Float32(k + 1)
-    hw = r.half_width
-    s = zero(Float32)
-    @inbounds for i in eachindex(intensities)
-        o = offsets[i]
-        if abs(o) <= hw
-            s += max(0f0, 1f0 - abs(Float32(o)) / kf) * intensities[i]
-        end
     end
     return s
 end

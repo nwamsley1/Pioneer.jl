@@ -247,7 +247,18 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_corrected_mz::Vector{Float32}
     scan_obs_low::Vector{Float32}
     scan_obs_high::Vector{Float32}
+    # Deconvolution convergence tolerance for the file being searched, overriding the stage's own
+    # `max_diff`; NaN (the default) means no override. Set per file by `execute_search` (ZT files).
+    deconv_tol::Float32
 end
+
+"""
+    deconv_tol(search_data, default) -> Float32
+
+The deconvolution convergence tolerance for the current file: the per-file override when one is set
+(scanning-quad files), otherwise the stage's `default`.
+"""
+@inline deconv_tol(sd::SimpleLibrarySearch, default::Real) = isnan(sd.deconv_tol) ? Float32(default) : sd.deconv_tol
 
 """
 Primary search context holding all data structures and state for search execution.

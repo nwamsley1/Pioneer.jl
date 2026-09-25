@@ -289,13 +289,11 @@ function process_file!(
 
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
-    PMM_INNER_ITER[] = something(tryparse(Int64, get(ENV, "PIONEER_PMM_INNER", "")), Int64(5))
 
     # Scanning-quad: search in cycle-aligned chunks and collapse each to meta-PSMs before the
     # next, so the per-file deconvolved table is never resident whole (see _zt_chunked_main_search).
     _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
-    _zt_chunked = _zt_geom !== nothing && _zt_geom.metascan_k > 0 &&
-                  get(ENV, "PIONEER_ZT_CHUNKED", "1") != "0"     # =0: old whole-file path (A/B)
+    _zt_chunked = _zt_geom !== nothing && _zt_geom.metascan_k > 0
     psms = if _zt_chunked
         _zt_chunked_main_search(spectra, search_context, params, ms_file_idx, _zt_geom)
     else
@@ -375,15 +373,13 @@ function _zt_chunked_main_search(spectra::MassSpecData, search_context::SearchCo
         nrow(raw) == 0 && return raw
         t_sc  += @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
         t_ms1 += @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
-        _zt_dump_precollapse(raw, search_context, ms_file_idx; chunk = ci)
         t_col += @elapsed part = @alloc_bucket "metascan_collapse" collapse_to_metascans(
             raw, spectra, precursors, geom; bitvec_rank_table = bitvec_rank_table)
         part
     end
-    ZT_REDUCE_TIMES[] = (0.0, 0.0, 0.0)
     out = @alloc_bucket "library_search (deconv)" library_search(
         spectra, search_context, params, ms_file_idx;
-        zt_chunk_candidates = zt_chunk_candidates(), zt_reduce = reduce_chunk)
+        zt_chunk_candidates = ZT_CHUNK_CANDIDATES, zt_reduce = reduce_chunk)
     # The whole-file candidate index and its expansion scratch are dead once the chunked
     # search returns; collect them before the meta-PSM table is permuted and featurised, which
     # is where the resident set peaks on ZT files (measured: EV1109 29.8 GB at that point).
@@ -392,9 +388,6 @@ function _zt_chunked_main_search(spectra::MassSpecData, search_context::SearchCo
                "ms1_lookup=$(round(t_ms1; digits=1))s  collapse=$(round(t_col; digits=1))s"
     return out
 end
-
-"""Placeholder kept for symmetry with other per-stage tallies; the reduce timers are local."""
-const ZT_REDUCE_TIMES = Ref((0.0, 0.0, 0.0))
 
 """
 Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
@@ -446,56 +439,17 @@ function process_search_results!(
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
     bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
-
-    # Scanning-quad (ZT): collapse the per-bin PSMs of each meta-scan into one meta-PSM
-    # carrying the weight-profile shape features, THEN run develop's chromatogram features on
-    # the collapsed one-point-per-cycle meta trace. Running them post-collapse means the
-    # across-cycle "elution" features are develop's own, on the same code path, rather than a
-    # bespoke ZT implementation.
-    _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
-    # The chunked path in process_file! already collapsed (zt_tri_cosine is a collapse column).
-    if _zt_geom !== nothing && _zt_geom.metascan_k > 0 && !hasproperty(psms, :zt_tri_cosine)
-        _n_pre = nrow(psms)
-        _zt_dump_precollapse(psms, search_context, ms_file_idx)
-        t_collapse = @elapsed psms = @alloc_bucket "metascan_collapse" collapse_to_metascans(
-            psms, spectra, getPrecursors(getSpecLib(search_context)), _zt_geom;
-            bitvec_rank_table = bitvec_rank_table)
-        @user_info "ZT meta-scan collapse (k=$(_zt_geom.metascan_k)): $_n_pre -> $(nrow(psms)) " *
-                   "meta-PSMs in $(round(t_collapse; digits=1))s"
-    end
-
-    _lv0 = Base.gc_live_bytes()
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
         bitvec_rank_table = bitvec_rank_table,
     )
 
-    # DIAGNOSTIC (PIONEER_ZT_DUMP_FEATURES=<dir>): dump both feature families side by side --
-    # the within-metascan (_shape, across BINS) set from the collapse and the across-cycle
-    # (elution, across TIME) set from add_chromatogram_features! -- plus the target label, so
-    # redundancy and per-feature discrimination can be measured offline. Inert when unset.
-    let _fdir = get(ENV, "PIONEER_ZT_DUMP_FEATURES", "")
-        if !isempty(_fdir) && nrow(psms) > 0
-            _want = vcat(ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES,
-                         [:frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
-                          :frag_apex_dispersion_irt, :n_correlated_fragments,
-                          :n_correlated_fragments_bitvec_rank, :n_scans,
-                          :precursor_idx, :target])
-            _have = intersect(_want, Symbol.(names(psms)))
-            mkpath(_fdir)
-            _fp = joinpath(_fdir, "zt_features_file$(ms_file_idx).arrow")
-            writeArrow(_fp, psms[!, _have])
-            @user_info "ZT: dumped $(nrow(psms)) rows x $(length(_have)) feature cols -> $_fp"
-        end
-    end
-
     # Train LightGBM on all PSMs and select the narrow set of representatives
     # needed to fit the out-of-fold iRT correction.
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
-    _lv1 = Base.gc_live_bytes()
     t_lgbm_start = time()
     refinement_psms, lgbm_timings, lgbm_predictor =
         @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
@@ -503,11 +457,6 @@ function process_search_results!(
             results.lgbm_buffers,
         )
     t_lgbm_end = time()
-    _lv2 = Base.gc_live_bytes()
-    haskey(ENV, "PIONEER_ZT_COLLAPSE_PROF") && @user_info "post-collapse live heap: " *
-        "start $(round(_lv0/1e9; digits=1)) GB -> after chromatogram features $(round(_lv1/1e9; digits=1)) GB " *
-        "(+$(round((_lv1-_lv0)/1e9; digits=1))) -> after LightGBM train $(round(_lv2/1e9; digits=1)) GB " *
-        "(+$(round((_lv2-_lv1)/1e9; digits=1))); table $(nrow(psms)) rows x $(ncol(psms)) cols"
 
     # Refine predicted iRTs with out-of-fold correction models. The correction
     # changes iRT-dependent features for every candidate PSM, so reapply the

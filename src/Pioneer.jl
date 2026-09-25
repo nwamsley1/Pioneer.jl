@@ -17,7 +17,6 @@
 
 module Pioneer
 
-using Profile
 using Arrow, ArrowTypes, ArgParse, Dates
 import AcceleratedKernels
 using Base64
@@ -719,10 +718,7 @@ files_loaded = importScripts()
 
 # Spectral deconvolution solver defaults (Huber / OLS / Poisson MM coordinate descent)
 const DECONV_MAX_ITER::Int64 = Int64(1000)
-# 0.03 (was 0.01): measured on ZT 5 Da and nano30 A_REP1 (2026-09-16), the looser threshold
-# cuts mean PoissonMM outer iterations 28 -> 18 and the deconvolution loop 15-18% with
-# precursor and protein-group counts unchanged within noise on both files.
-const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.03)
+const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.01)
 
 # AA_to_mass is defined in get_mz.jl and available via importScripts()
 

@@ -1730,7 +1730,7 @@ function build_chromatograms(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
-                params.max_iter_outer, params.max_diff)
+                params.max_iter_outer, deconv_tol(search_data, params.max_diff))
             # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
             # (MS2MBRChromObject has no other score field), so the five aggregate metrics
             # getDistanceMetrics computes are not calculated.
@@ -2007,7 +2007,7 @@ function build_chromatograms(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
-                params.max_iter_outer, params.max_diff
+                params.max_iter_outer, deconv_tol(search_data, params.max_diff)
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors

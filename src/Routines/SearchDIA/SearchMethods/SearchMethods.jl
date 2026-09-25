@@ -50,6 +50,9 @@ function execute_search(
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
         ensure_zt_geometry!(search_context, params, ms_file_idx, spectra)
+        # Scanning-quad files converge the deconvolution solvers to a looser tolerance.
+        _tol = getZTGeometry(search_context, ms_file_idx) === nothing ? NaN32 : ZT_DECONV_CONVERGENCE_TOL
+        foreach(sd -> sd.deconv_tol = _tol, getSearchData(search_context))
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
@@ -291,8 +294,9 @@ input, not an inference.
 The measured lattice is PER FILE: sibling runs from the same acquisition method differ slightly
 in sweep start and step. `metascan_k` is a config value and so is the same for every file.
 
-Every file logs its ZT status exactly once, ON or OFF — silence is never a valid state, because
-a silent no-op of the ZT path is the single most expensive bug this work has hit.
+Every ZT file logs its status once, ON or OFF — a silent no-op of the ZT path is the single most
+expensive bug this work has hit. Non-ZT files log OFF at debug level only, so their output
+matches a build without ZT support.
 """
 function ensure_zt_geometry!(
     search_context::SearchContext,
@@ -308,8 +312,11 @@ function ensure_zt_geometry!(
     zt_on, source, file_is_zt = zt_mode(acq, spectra)
     if !zt_on
         setZTGeometry!(search_context, ms_file_idx, nothing)
-        @user_info "Scanning-quad (ZT) [$fname]: OFF" *
-                   (file_is_zt ? " (file is ZT Scan DIA, but acquisition.scanning_quad = false)" : "")
+        if file_is_zt
+            @user_info "Scanning-quad (ZT) [$fname]: OFF (file is ZT Scan DIA, but acquisition.scanning_quad = false)"
+        else
+            @debug_l1 "Scanning-quad (ZT) [$fname]: OFF"
+        end
         return nothing
     end
 
@@ -397,6 +404,7 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),  # scan_corrected_mz
         zeros(Float32, 5000),  # scan_obs_low
         zeros(Float32, 5000),  # scan_obs_high
+        NaN32,                 # deconv_tol: no per-file override
     )
 end
 

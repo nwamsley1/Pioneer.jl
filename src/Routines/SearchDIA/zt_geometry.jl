@@ -93,11 +93,9 @@ Target candidates (precursor x scan pairs after expansion) per main-search chunk
 scanning-quad file. Exact, not predicted: the fragment index + expansion run once over the whole
 file before chunking. Rows are 0.13-0.26 of candidates on the ZT files seen, so 60M candidates
 is ~10-15M raw rows per chunk. nano15 (634M candidates, 164M rows in one pass) swapped a 48 GB
-machine. `PIONEER_ZT_CHUNK_CANDIDATES` overrides it for tuning.
+machine; 60M -> 30M (2026-09-17) cut the chunk plateau 26.9 -> 22.5 GB on EV1109 at no time cost.
 """
-const ZT_CHUNK_CANDIDATES_DEFAULT = 30_000_000   # 60M -> 30M (2026-09-17): chunk plateau 26.9 -> 22.5 GB on EV1109, no time cost
-zt_chunk_candidates() = something(tryparse(Int, get(ENV, "PIONEER_ZT_CHUNK_CANDIDATES", "")),
-                                  ZT_CHUNK_CANDIDATES_DEFAULT)
+const ZT_CHUNK_CANDIDATES = 30_000_000
 
 """
     zt_cycle_scan_ranges(spectra) -> Vector{UnitRange{Int}}
@@ -232,16 +230,28 @@ zt_frag_overhang() = ZT_FRAG_OVERHANG
 """
     zt_candidacy_tol() -> Float32
 
-Wide-emit candidacy half-width in Da: `ZT_CANDIDACY_TOL_DEFAULT` (2 Da, the best-measured setting),
-overridable with `PIONEER_ZT_CANDIDACY_TOL`; 0 disables it.
+Wide-emit candidacy half-width in Da (`ZT_CANDIDACY_TOL`, 2 Da: the best-measured setting).
 
 Wide-emit widens the fragment-index box so a precursor gets an emission CHANCE in every bin of
 its meta-scan, then `map_any_hit_to_center!` re-anchors each emission to the precursor's own bin.
 It survives if it cleared the bitvec in ANY bin, rather than needing its center bin to clear.
 """
-const ZT_CANDIDACY_TOL_DEFAULT = 2.0f0
-zt_candidacy_tol() =
-    something(tryparse(Float32, get(ENV, "PIONEER_ZT_CANDIDACY_TOL", "")), ZT_CANDIDACY_TOL_DEFAULT)
+const ZT_CANDIDACY_TOL = 2.0f0
+zt_candidacy_tol() = ZT_CANDIDACY_TOL
+
+"""
+Outer-bin thinning half-width, in Q1 bins: a meta-scan keeps every bin within this many bins of a
+candidate's own bin and every second bin beyond. Fixed for now; to be tuned (possibly derived from
+the acquisition's Q1 geometry).
+"""
+const ZT_OUTER_BIN_CORE = 2
+
+"""
+Deconvolution convergence tolerance for scanning-quad files (every solver stage). Measured on ZT 5 Da and
+nano30 A_REP1 (2026-09-16): 0.03 instead of the default 0.01 cuts mean PoissonMM outer iterations 28 -> 18
+and the deconvolution loop 15-18% with precursor and protein-group counts unchanged within noise.
+"""
+const ZT_DECONV_CONVERGENCE_TOL = 0.03f0
 
 """
     zt_candidacy_overhang(g::ZTGeometry) -> Float32

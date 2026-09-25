@@ -21,7 +21,6 @@ const ZT_QUAD_TARGET_METASCANS = Int64(2000)
 const ZT_QUAD_MIN_METASCANS    = Int64(100)
 
 const TUNING_MIN_SAMPLES = Int64(1200)          # PSM target for collection phase
-const TUNING_MAX_PSMS_PER_PRECURSOR = 3         # cap per precursor before counting convergence
 const TUNING_ZT_Q1_BINS = 15                    # scanning-quad: Q1 bins per RT bin in the scan priority order
 const TUNING_MAX_PRESEARCH_ITERS = Int64(10)
 const TUNING_MAX_Q_VALUE = Float32(0.01)
@@ -32,9 +31,6 @@ const TUNING_CALIBRATION_BIN_SIZE = Int64(200)  # Equal-count bins for mass-erro
 const TUNING_MZ_BIAS_BIN_SIZE = Int64(100)      # Denser bins for m/z-dependent bias medians
 const TUNING_MZ_BIAS_KNOTS = Int64(24)          # Knots for binned m/z-dependent bias spline
 const TUNING_MZ_BIAS_LAMBDA = Float64(0.1)      # Smoothness penalty for m/z-dependent bias spline
-const TUNING_INT_BIAS_BIN_SIZE = Int64(100)     # Equal-count bins for intensity-dependent bias medians
-const TUNING_INT_BIAS_KNOTS = Int64(24)         # Knots for binned intensity-dependent bias spline
-const TUNING_INT_BIAS_LAMBDA = Float64(0.1)     # Smoothness penalty for intensity-dependent bias spline
 const TUNING_RT_BIAS_BIN_SIZE = Int64(100)      # Denser bins for RT-dependent bias medians
 const TUNING_RT_BIAS_KNOTS = Int64(48)          # Knots for raw RT bias spline
 const TUNING_RT_BIAS_LAMBDA = Float64(0.03)     # Smoothness penalty for RT-dependent bias spline

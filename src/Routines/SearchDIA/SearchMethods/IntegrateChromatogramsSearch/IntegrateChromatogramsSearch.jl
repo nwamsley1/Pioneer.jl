@@ -399,25 +399,11 @@ function process_file!(
     _zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
     if _zt_geom !== nothing && _zt_geom.metascan_k > 0 && nrow(chromatograms) > 0
         _n_pre = nrow(chromatograms)
-        # EXPERIMENT (PIONEER_ZT_CHROM_TRIWIN=<half_width>, unset = current SumMetascan):
-        # triangle-weighted sum over only the innermost +/-half_width bins, triangle shaped by
-        # the full k so the window edge keeps a real weight (0.714 at +/-2 for k=6).
-        # PIONEER_ZT_CHROM_REDUCE=sum|triwin:<hw>|matched (default sum). "matched" uses the
-        # per-file fitted triangle (geom.template_h); falls back to sum when no fit exists.
-        # Default "matched" (2026-09-17, 3A+3B 5 Da): vs sum, per-precursor log2(A/B) MAD
-        # 0.18/0.21/0.31 -> 0.17/0.18/0.27 (H/Y/E), CVs -0.5 pt, medians unchanged; equals
-        # triwin:2 on precision but is invariant to which bins are present.
-        _mode = get(ENV, "PIONEER_ZT_CHROM_REDUCE", "matched")
-        _twin = something(tryparse(Int, get(ENV, "PIONEER_ZT_CHROM_TRIWIN", "")), 0)
-        _red = if _mode == "matched" && _zt_geom.template_h > 0f0
-            MatchedFilterMetascan(_zt_geom.template_h / _zt_geom.bin_step)
-        elseif startswith(_mode, "triwin:")
-            TriangleWindowMetascan(parse(Int, _mode[8:end]))
-        elseif _twin > 0
-            TriangleWindowMetascan(_twin)
-        else
-            SumMetascan()
-        end
+        # Matched filter on the per-file fitted triangle (2026-09-17, 3A+3B 5 Da): vs a plain
+        # sum, per-precursor log2(A/B) MAD 0.18/0.21/0.31 -> 0.17/0.18/0.27 (H/Y/E), CVs -0.5 pt,
+        # medians unchanged. Plain sum when no triangle was fitted.
+        _red = _zt_geom.template_h > 0f0 ?
+            MatchedFilterMetascan(_zt_geom.template_h / _zt_geom.bin_step) : SumMetascan()
         chromatograms = collapse_chromatograms_to_metascans(
             chromatograms, spectra, getPrecursors(getSpecLib(search_context)),
             Int(_zt_geom.metascan_k); reduction = _red)

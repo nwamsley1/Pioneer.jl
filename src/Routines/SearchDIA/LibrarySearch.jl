@@ -96,17 +96,6 @@ function library_search(
     zt_meta  = zt_main || zt_qtune
     qtm_frag = zt_on ? SquareQuadModel(zt_candidacy_overhang(zt_geom)) : qtm
 
-    # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE=<Da>): widen the quad-tuning candidacy AND deconv box
-    # so the isotope-pair measurement can observe offsets far enough off bin-center to resolve
-    # the swept transmission. QuadTuning measures yt = log T(x0) - log T(x1) across the isotope
-    # spacing, so mapping a several-Da-wide profile needs x0 to span several Da — which it
-    # cannot if candidacy stops at the recorded ~1 Da step. Inert unless the env var is set.
-    zt_probe = (zt_on && params isa QuadTuningSearchParameters) ?
-        something(tryparse(Float32, get(ENV, "PIONEER_ZT_QUAD_PROBE", "")), 0f0) : 0f0
-    if zt_probe > 0f0
-        qtm_frag = SquareQuadModel(zt_probe)
-    end
-
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -130,7 +119,13 @@ function library_search(
         # Use provided scan indices, filter to valid MS2 scans
         all_scan_idxs = filter(si -> si > 0 && si <= length(spectra) &&
             getMsOrder(spectra, si) ∈ getSpecOrder(params), Int.(scan_indices))
-        thread_tasks = _round_robin_tasks(all_scan_idxs, Threads.nthreads())
+        # Partition provided scans evenly across threads
+        n_threads = Threads.nthreads()
+        thread_tasks = [(i, Int[]) for i in 1:n_threads]
+        for (idx, si) in enumerate(all_scan_idxs)
+            push!(thread_tasks[mod1(idx, n_threads)][2], si)
+        end
+        filter!(tt -> !isempty(last(tt)), thread_tasks)
     end
 
     isempty(all_scan_idxs) && return _empty_scored_psms(search_data, params)
@@ -169,7 +164,6 @@ function library_search(
     #     pprof(out = prof_path, web = false)
     #     @user_info "Fragment index profile saved to $prof_path\n"
     #
-    _mb0 = Base.gc_bytes(); _ml0 = Base.gc_live_bytes()
     precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
         Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
@@ -177,7 +171,6 @@ function library_search(
         score_filter = score_filter, max_peaks = max_peaks,
         scratch = getFragIndexScratch(search_context))
     t_frag = time() - t_frag_start
-    _mb1 = Base.gc_bytes(); _ml1 = Base.gc_live_bytes()
 
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
@@ -201,37 +194,17 @@ function library_search(
     # many off-center precursors whose interference degrades the mass-error and NCE fits. Only
     # the MAIN search deconvolves across the meta-scan; everything else stays on the bin.
     qtm_deconv = (zt_on && !zt_meta) ? SquareQuadModel(0.0f0) : qtm
-    zt_probe > 0f0 && (qtm_deconv = SquareQuadModel(zt_probe))
     if zt_meta
         n_emitted = length(precursors_passed)
-        # Wide-emit re-anchors every emission to the precursor's own bin (survives if it cleared
-        # in ANY bin); the narrow path requires the center bin itself to clear.
-        # Re-anchoring is useful even at the DEFAULT box: with isotope_err_bounds (1,0) the
-        # effective search window is ~1.52 Da against a ~1.02 Da bin step, so a precursor in the
-        # upper half of its bin is also a candidate in the bin above. filter_to_center_bin!
-        # discards that emission; if it cleared the bitvec there but not in its own bin, the
-        # precursor is lost. Re-anchoring keeps it at no extra emission cost.
-        _reanchor = zt_candidacy_tol() > zt_geom.nominal_width / 2 ||
-                    get(ENV, "PIONEER_ZT_REANCHOR", "0") != "0"
-        precursors_passed = if _reanchor
-            map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra,
-                                   all_scan_idxs, getMz(precursors), zt_geom)
-        else
-            filter_to_center_bin!(scan_to_prec_idx, precursors_passed, spectra,
-                                  all_scan_idxs, getMz(precursors))
-        end
+        # Wide-emit re-anchors every emission to the precursor's own bin: it survives if it
+        # cleared the bitvec in ANY bin of its candidacy box, not only its own.
+        precursors_passed = map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra,
+                                                   all_scan_idxs, getMz(precursors), zt_geom)
         n_center = length(precursors_passed)
-        _mb2 = Base.gc_bytes(); _ml2 = Base.gc_live_bytes()
         if zt_k > 0
             precursors_passed = expand_to_metascans!(
                 scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs, zt_k)
         end
-        _mb3 = Base.gc_bytes(); _ml3 = Base.gc_live_bytes()
-        params isa MainSearchParameters && @user_info "ZT candidate build memory (alloc / live-after): " *
-            "frag index $(round((_mb1-_mb0)/1e9; digits=2)) / $(round(_ml1/1e9; digits=2)) GB; " *
-            "re-anchor $(round((_mb2-_mb1)/1e9; digits=2)) / $(round(_ml2/1e9; digits=2)) GB; " *
-            "expand $(round((_mb3-_mb2)/1e9; digits=2)) / $(round(_ml3/1e9; digits=2)) GB; " *
-            "expanded candidates $(length(precursors_passed)) = $(round(4*length(precursors_passed)/1e9; digits=2)) GB"
         # Report the boxes by INTERROGATING the models actually in use, never by recomputing
         # what they were meant to be — a log that restates intent cannot catch a model that
         # something else overwrote.
@@ -250,48 +223,13 @@ function library_search(
                        "expanded candidates in outer bins will get zero transmission." 
     end
 
-    # DIAGNOSTIC (PIONEER_ZT_OVERLAP=1, main search): candidate-set overlap between consecutive
-    # bins of a cycle after expansion — the template-reuse opportunity. Candidates are sorted
-    # within each scan, so overlap is a linear merge.
-    if zt_meta && zt_k > 0 && get(ENV, "PIONEER_ZT_OVERLAP", "0") != "0" && params isa MainSearchParameters
-        _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed, spectra)
-    end
 
     if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
-        # EXPERIMENT (PIONEER_ZT_EVEN_BINS=1): after expansion, deconvolve only every second MS2
-        # scan of each cycle (even position within the cycle). Halves the solves; the collapse
-        # still sees ~half the bins of every meta-scan. Candidate sets are untouched.
-        # PIONEER_ZT_EVEN_BINS=1 drops every odd-position scan. PIONEER_ZT_EVEN_BINS=core:<c>
-        # keeps every scan whose cycle position is within c bins of ANY precursor's own bin —
-        # approximated here by keeping the scan if it is within c of a scan that a candidate
-        # anchors on. Simpler proxy used: keep odd scans too when (pos mod 2k+1) is within c of
-        # the meta-scan centre. Since meta-scans are not aligned to cycle positions, the
-        # practical variant is: drop odd scans only where the bin is >= c from the precursor
-        # m/z for ALL its candidates — too costly to evaluate here. So "core:<c>" instead thins
-        # the OUTER bins by candidate: for each dropped odd scan, candidates whose precursor m/z
-        # lies within c bins of that scan's centre are moved back in (kept). See _zt_thin_bins!.
-        # Default on scanning-quad files: thin the outer bins (core ±2). Measured on 5 Da A_REP1:
-        # −20% main search for −0.7% precursors (29,635 -> 29,420); the outer bins of a
-        # meta-scan carry <40% transmission and every second one is enough for the collapse.
-        # PIONEER_ZT_EVEN_BINS=0 restores all bins; =1 or core:<c> select other variants.
-        _mode = get(ENV, "PIONEER_ZT_EVEN_BINS", "core:2")
-        begin
-            if _mode == "0"
-                # all bins
-            elseif _mode == "1"
-                _dropped = 0
-                for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r)
-                    if isodd(pos) && !ismissing(scan_to_prec_idx[si])
-                        scan_to_prec_idx[si] = missing; _dropped += 1
-                    end
-                end
-                @user_info "ZT even-bins experiment: dropped $_dropped odd-position MS2 scans from deconvolution"
-            elseif startswith(_mode, "core:")
-                _c = parse(Int, _mode[6:end])
-                precursors_passed = _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra,
-                                                         getMz(precursors), zt_geom, _c)
-            end
-        end
+        # Thin the outer bins of each meta-scan (keep bins within ZT_OUTER_BIN_CORE of a candidate's
+        # own bin, every second bin beyond). Measured on 5 Da A_REP1: -20% main search for -0.7%
+        # precursors; the outer bins carry <40% transmission and every second one suffices.
+        precursors_passed = _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra,
+                                                 getMz(precursors), zt_geom, ZT_OUTER_BIN_CORE)
     end
 
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
@@ -302,23 +240,6 @@ function library_search(
     # (selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse!).
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
     t_deconv_start = time()
-    if params isa MainSearchParameters
-        DECONV_SOLVES[] = 0; DECONV_ITERS[] = 0
-        PMM_STATS_ON[] = haskey(ENV, "PIONEER_PMM_STATS")
-        PMM_DUMP_DIR[] = get(ENV, "PIONEER_PMM_DUMP_DIR", "")
-        PMM_DUMP_EVERY[] = isempty(PMM_DUMP_DIR[]) ? 0 :
-            something(tryparse(Int, get(ENV, "PIONEER_PMM_DUMP_EVERY", "")), 500)
-        PMM_DUMP_EVERY[] > 0 && mkpath(PMM_DUMP_DIR[])
-        PMM_STAT_VISITS[] = 0; PMM_STAT_ZERO_VISITS[] = 0; PMM_STAT_NNZ[] = 0; PMM_STAT_COLS[] = 0; PMM_STAT_ZERO_END[] = 0
-    end
-    # DIAGNOSTIC (PIONEER_PROFILE_DECONV=1, main search only): sample the threaded deconv with
-    # Julia's Profile and write a flat self-time profile to the output dir, so the run_fused!
-    # match/design-matrix build can be separated from the solver. Adds sampling overhead when on.
-    _prof_deconv = (params isa MainSearchParameters) && get(ENV, "PIONEER_PROFILE_DECONV", "0") != "0"
-    if _prof_deconv
-        Profile.clear()
-        Profile.init(n = 200_000_000, delay = 0.001)
-    end
     _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
         tasks = map(tt) do thread_task
@@ -356,80 +277,32 @@ function library_search(
     if zt_meta && zt_k > 0 && zt_chunk_candidates > 0 && zt_reduce !== nothing
         chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
                                                zt_chunk_candidates)
-        # EXPERIMENT (PIONEER_ZT_GC=1): full collection after the expansion scratch is dead and
-        # after each chunk's raw table is reduced, so the resident set tracks live data.
-        _zt_gc = get(ENV, "PIONEER_ZT_GC", "0") != "0"
-        _zt_gc && GC.gc()
-        # EXPERIMENT (PIONEER_ZT_SPILL=1): write each chunk's reduced table to Arrow under the
-        # run's temp_data and read all of them back ONCE at the end into an exactly sized table,
-        # instead of append!-ing in memory (column vectors grow by doubling, so the accumulating
-        # table peaked at ~2x its final size while a chunk's raw table was also in flight).
-        _spill = get(ENV, "PIONEER_ZT_SPILL", "0") != "0"
-        _spill_dir = joinpath(getDataOutDir(search_context), "temp_data", "zt_chunks_$(ms_file_idx)")
-        _spill && (mkpath(_spill_dir); foreach(f -> rm(joinpath(_spill_dir, f)), readdir(_spill_dir)))
-        _spill_paths = String[]
         reduced = DataFrame(); n_raw_total = 0; max_raw = 0; n_reduced = 0
         for (ci, chunk) in enumerate(chunks)
             t_c = time()
             n_cand = zt_candidate_count(chunk, scan_to_prec_idx)
             tt = zt_thread_tasks(chunk, zt_k, Threads.nthreads())
-            raw_all = _prof_deconv ? (Profile.@profile _deconv_body(tt)) : _deconv_body(tt)
+            raw_all = _deconv_body(tt)
             raw = length(raw_all) == 1 ? raw_all[1] : vcat(raw_all...)
             t_d = time() - t_c
             n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
             part = zt_reduce(raw, ci)
             raw = nothing; raw_all = nothing
             n_reduced += nrow(part)
-            if _spill
-                _pp = joinpath(_spill_dir, "chunk_$(lpad(ci, 3, '0')).arrow")
-                nrow(part) > 0 && (writeArrow(_pp, part); push!(_spill_paths, _pp))
-                part = nothing
-            else
-                reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
-            end
-            _zt_gc && GC.gc()
+            reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
             @user_info "ZT chunk $ci/$(length(chunks)): $(length(chunk)) cycles, " *
                        "$(sum(length, chunk)) scans, $n_cand candidates -> $n_raw raw rows " *
                        "(deconv $(round(t_d; digits=1))s) -> reduced (reduce $(round(time() - t_c - t_d; digits=1))s); " *
                        "cumulative $n_reduced"
         end
-        if _spill && !isempty(_spill_paths)
-            GC.gc()
-            reduced = DataFrame(Tables.columntable(Arrow.Table(_spill_paths)))
-            foreach(rm, _spill_paths)
-        end
         t_deconv = time() - t_deconv_start
-        if _prof_deconv
-            _pp = joinpath(getDataOutDir(search_context), "deconv_profile_$(ms_file_idx).txt")
-            open(_pp, "w") do io
-                Profile.print(IOContext(io, :displaysize => (100000, 320));
-                              format = :flat, sortedby = :count, mincount = 20)
-            end
-            @user_info "Deconv flat profile (all chunks) saved to $_pp"
-        end
         @user_info "ZT chunked main search: $(length(chunks)) chunks, largest $max_raw raw rows, " *
                    "$n_raw_total raw -> $(nrow(reduced)) reduced; frag_index=$(round(t_frag, digits=1))s " *
-                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed)); " *
-                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
-        if PMM_STATS_ON[]
-            @user_info "PMM stats: $(PMM_STAT_COLS[]) columns over $(DECONV_SOLVES[]) solves " *
-                       "(mean $(round(PMM_STAT_COLS[] / max(DECONV_SOLVES[],1); digits=0))/solve), " *
-                       "$(round(100 * PMM_STAT_ZERO_END[] / max(PMM_STAT_COLS[],1); digits=1))% at zero at exit; " *
-                       "$(PMM_STAT_VISITS[]) column-visits, $(round(100 * PMM_STAT_ZERO_VISITS[] / max(PMM_STAT_VISITS[],1); digits=1))% zero->zero; " *
-                       "mean nnz/column $(round(PMM_STAT_NNZ[] / max(PMM_STAT_VISITS[],1); digits=1))"
-        end
+                   "deconv+reduce=$(round(t_deconv, digits=1))s candidates=$(length(precursors_passed))"
         return reduced
     end
 
-    all_results = _prof_deconv ? (Profile.@profile _deconv_body(thread_tasks)) : _deconv_body(thread_tasks)
-    if _prof_deconv
-        _pp = joinpath(getDataOutDir(search_context), "deconv_profile_$(ms_file_idx).txt")
-        open(_pp, "w") do io
-            Profile.print(IOContext(io, :displaysize => (100000, 320));
-                          format = :flat, sortedby = :count, mincount = 20)
-        end
-        @user_info "Deconv flat profile saved to $_pp"
-    end
+    all_results = _deconv_body(thread_tasks)
     t_deconv = time() - t_deconv_start
 
     t_post_start = time()
@@ -441,11 +314,10 @@ function library_search(
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
-        @user_info "library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
+        @debug_l1 "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
                    "deconv=$(round(t_deconv, digits=2))s  " *
                    "vcat=$(round(t_vcat, digits=2))s  " *
-                   "candidates=$(length(get_precursors(prec_index))); " *
-                   "solver: $(DECONV_SOLVES[]) solves, mean $(round(DECONV_ITERS[] / max(DECONV_SOLVES[], 1); digits=2)) iters"
+                   "candidates=$(length(get_precursors(prec_index)))"
     end
 
     return result
@@ -1027,60 +899,6 @@ end
 
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
-end
-
-
-"""Strided round-robin scan partition, exactly sized (no push!)."""
-function _round_robin_tasks(all_scan_idxs::Vector{Int}, n_threads::Int)
-    n = length(all_scan_idxs)
-    T = min(n_threads, max(n, 1))
-    tasks = [(t, Vector{Int}(undef, length(t:T:n))) for t in 1:T]
-    @inbounds for t in 1:T
-        v = last(tasks[t]); p = 1
-        for i in t:T:n
-            v[p] = all_scan_idxs[i]; p += 1
-        end
-    end
-    filter!(tt -> !isempty(last(tt)), tasks)
-    return tasks
-end
-
-
-"""
-    _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed, spectra)
-
-For every pair of consecutive MS2 scans in the same cycle, count |A ∩ B| against |A|, |B|.
-Reports the mean fraction of a bin's candidates already present in the previous bin (what a
-per-thread template cache could reuse) and the mean Jaccard. Diagnostic only.
-"""
-function _zt_report_adjacent_overlap(scan_to_prec_idx, precursors_passed::Vector{UInt32},
-                                     spectra::MassSpecData)
-    cyc = getCycleIdxs(spectra); n = length(spectra)
-    tot_b = 0; tot_inter = 0; tot_union = 0; npairs = 0
-    reuse_fracs = Float64[]
-    @inbounds for si in 2:n
-        (getMsOrder(spectra, si) == 2 && getMsOrder(spectra, si - 1) == 2 && cyc[si] == cyc[si - 1]) || continue
-        ra = scan_to_prec_idx[si - 1]; rb = scan_to_prec_idx[si]
-        (ismissing(ra) || ismissing(rb)) && continue
-        ia = first(ra); ib = first(rb); inter = 0
-        while ia <= last(ra) && ib <= last(rb)
-            a = precursors_passed[ia]; b = precursors_passed[ib]
-            if a == b; inter += 1; ia += 1; ib += 1
-            elseif a < b; ia += 1
-            else; ib += 1
-            end
-        end
-        nb = length(rb); na = length(ra)
-        tot_b += nb; tot_inter += inter; tot_union += na + nb - inter; npairs += 1
-        push!(reuse_fracs, inter / nb)
-    end
-    npairs == 0 && return
-    sort!(reuse_fracs)
-    q(p) = reuse_fracs[clamp(round(Int, p * length(reuse_fracs)), 1, length(reuse_fracs))]
-    @user_info "ZT adjacent-bin candidate overlap: $npairs pairs; reusable fraction of a bin's " *
-               "candidates (present in previous bin) = $(round(100 * tot_inter / tot_b; digits=1))% " *
-               "(median $(round(100 * q(0.5); digits=1))%, p10 $(round(100 * q(0.1); digits=1))%); " *
-               "Jaccard = $(round(100 * tot_inter / tot_union; digits=1))%"
 end
 
 

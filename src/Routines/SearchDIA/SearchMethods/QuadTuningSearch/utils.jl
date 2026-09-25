@@ -43,7 +43,7 @@ function post_design_matrix!(search_data::SearchDataStructures,
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff))
+        params.max_iter_outer, deconv_tol(search_data, params.max_diff)))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
         zero_negligible_weights!(weights, Hs.n)
@@ -846,7 +846,7 @@ function _quad_process_scan!(
         getMu(search_data),
         getObserved(search_data),
         params.max_iter_outer,
-        params.max_diff)
+        deconv_tol(search_data, params.max_diff))
 
     # Record results (reads Hs.colptr + matched_at(Hs, j) per column).
     _quad_record_scan_results!(
@@ -1265,19 +1265,11 @@ function process_quad_pipeline(
     for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
         processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
     end
-    # DIAGNOSTIC (PIONEER_ZT_QUAD_PROBE=<Da>): the retention filter below is anchored to the
-    # RECORDED half-width. On a scanning quad that is the Q1 *step* (~0.51 Da), not the
-    # physical sweep half-width, so it clips x0 to roughly (-1.1, +0.9) Da and the fitted model
-    # is extrapolating everywhere beyond that. When probing, retain the full +/-probe span so
-    # the measurement can actually see the transmission profile.
-    _zt_probe = something(tryparse(Float32, get(ENV, "PIONEER_ZT_QUAD_PROBE", "")), 0f0)
     keep_data = zeros(Bool, size(processed_psms, 1))
     for i in range(1, size(processed_psms, 1))
         x0 = processed_psms[i,:x0]::Float32
         hw = processed_psms[i,:half_width_mz]::Float32
-        if _zt_probe > 0f0
-            keep_data[i] = abs(x0) <= (hw + _zt_probe)
-        elseif x0 > zero(Float32)
+        if x0 > zero(Float32)
             if (x0 - hw) < (C13_C12_MASS_DIFF/4 + 0.1)
                 keep_data[i] = true
             end

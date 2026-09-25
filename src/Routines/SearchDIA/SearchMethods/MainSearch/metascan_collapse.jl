@@ -155,30 +155,6 @@ Gather `col[perm]` into a fresh concrete `Vector{Float32}` in one pass, with no 
     return out
 end
 
-"""
-    _zt_dump_precollapse(psms, search_context, ms_file_idx)
-
-TEMPORARY (Stage 2 bring-up). When `PIONEER_ZT_DUMP_PRECOLLAPSE=<dir>` is set, write the columns
-`collapse_to_metascans` reads to `<dir>/precollapse_file<N>.arrow`, so the collapse can be
-benchmarked and validated against real input outside a full search. Inert when unset; remove
-once Stage 2 is verified.
-"""
-function _zt_dump_precollapse(psms::DataFrame, search_context, ms_file_idx; chunk::Int = 0)
-    dir = get(ENV, "PIONEER_ZT_DUMP_PRECOLLAPSE", "")
-    isempty(dir) && return nothing
-    cols = Symbol[:precursor_idx, :scan_idx, :weight]
-    for b in 1:8
-        c = Symbol("frag$(b)_int")
-        hasproperty(psms, c) && push!(cols, c)
-    end
-    mkpath(dir)
-    path = joinpath(dir, chunk > 0 ? "precollapse_file$(ms_file_idx)_chunk$(chunk).arrow" :
-                                     "precollapse_file$(ms_file_idx).arrow")
-    writeArrow(path, psms[!, cols])
-    @user_info "ZT: dumped $(nrow(psms)) pre-collapse rows, $(length(cols)) cols -> $path"
-    return nothing
-end
-
 """Per-thread scratch and output vectors for `collapse_to_metascans` (blocks are independent)."""
 struct _CollapseOut
     w::Vector{Float32}; Fbuf::Vector{Vector{Float32}}; cfw::Vector{Float32}; has_sig::BitVector
@@ -229,8 +205,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     # Sort by (precursor_idx, scan_idx) so a precursor's meta-scan bins become contiguous
     # rows. Both keys are UInt32, so pack them into one UInt64: identical lexicographic
     # order, a single integer compare rather than a tuple built per comparison.
-    _prof = haskey(ENV, "PIONEER_ZT_COLLAPSE_PROF")
-    _t0 = time(); _b0 = Base.gc_bytes(); _g0 = Base.gc_time_ns()
     pid0 = psms[!, :precursor_idx]::Vector{UInt32}
     scn0 = psms[!, :scan_idx]::Vector{UInt32}
     sortkeys = Vector{UInt64}(undef, n)
@@ -257,7 +231,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
         ntuple(r -> _permute_f32(psms[!, Symbol("frag$(r)_int")], perm), 8) :
         ntuple(_ -> Float32[], 8)
     rank_weights = _fragment_rank_weights(8)
-    _t1 = time(); _b1 = Base.gc_bytes(); _g1 = Base.gc_time_ns()
 
     # Per-bin fitted (deconvolved) and shadow (raw observed) spectra. References only -- the 8
     # frag columns above are permuted for locality, but permuting 16 more would cost ~3.8 GB, so
@@ -440,7 +413,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     end  # blocks
     end  # threads
 
-    _t2 = time(); _b2 = Base.gc_bytes(); _g2 = Base.gc_time_ns()
     cat(f) = reduce(vcat, (f(o) for o in outs))
     center_rows = cat(o -> o.center_rows)
     f_tri_cos = cat(o -> o.f_tri_cos); f_entropy = cat(o -> o.f_entropy); f_tri_pcor = cat(o -> o.f_tri_pcor)
@@ -473,14 +445,6 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             meta[!, Symbol("fitted_frag$(b)_int")] = out_fit[b]
             meta[!, Symbol("shadow_frag$(b)_int")] = out_shd[b]
         end
-    end
-    if _prof
-        _t3 = time(); _b3 = Base.gc_bytes(); _g3 = Base.gc_time_ns()
-        _s(a, b) = round(b - a; digits=2); _gb(a, b) = round((b - a) / 1e9; digits=2); _gs(a, b) = round((b - a) / 1e9; digits=2)
-        @user_info "ZT collapse profile: n=$n rows, $(length(center_rows)) centers | " *
-                   "sort+gather $(_s(_t0,_t1))s alloc $(_gb(_b0,_b1))GB gc $(_gs(_g0,_g1))s | " *
-                   "center loop $(_s(_t1,_t2))s alloc $(_gb(_b1,_b2))GB gc $(_gs(_g1,_g2))s | " *
-                   "row gather + columns $(_s(_t2,_t3))s alloc $(_gb(_b2,_b3))GB gc $(_gs(_g2,_g3))s"
     end
     return meta
 end

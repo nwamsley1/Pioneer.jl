@@ -810,18 +810,9 @@ function fit_intensity_mass_error_model(
     mz_bias = mz_spline_f64
     mz_residuals = da_errs .- [mz_bias(m) for m in mz_f64]
 
-    # Step 2: intensity bias — binned robust spline, unconstrained in curvature (the same path
-    # as the m/z bias). The former monotone fit could not follow a plateau-then-droop shape
-    # (nano ZT: flat to log2 15, +1.5 mDa near 17, −5 mDa above 18), and its coefficient
-    # projection flattened curvature exactly where the data bent. Monotone remains the fallback
-    # when there are too few bins.
-    I_spline_f64, I_label = fit_binned_regularized_bias_spline(
-        log2I, mz_residuals; n_knots=TUNING_INT_BIAS_KNOTS, λ=TUNING_INT_BIAS_LAMBDA,
-        bin_size=TUNING_INT_BIAS_BIN_SIZE)
-    if I_spline_f64 === nothing
-        I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
-            n_knots=10, λ=1.0, lr=0.0001)
-    end
+    # Step 2: intensity bias — monotone spline on ALL mz-corrected data
+    I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
+        n_knots=10, λ=1.0, lr=0.0001)
 
     if I_spline_f64 === nothing
         @user_warn "Intensity bias spline fitting failed, keeping SimpleMassErrorModel"
@@ -926,10 +917,6 @@ function fit_intensity_mass_error_model(
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
     k_emp = Float32(quantile(normalized_residuals, EMPK_QUANTILE))
     k = clamp(k_emp, EMPK_MIN_K, EMPK_CLAMP_HI)
-    # EXPERIMENT (PIONEER_MASSERR_K=<k>): pin the coverage multiplier for tolerance sweeps.
-    let _k = tryparse(Float32, get(ENV, "PIONEER_MASSERR_K", ""))
-        _k !== nothing && (k = _k)
-    end
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
