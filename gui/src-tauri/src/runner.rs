@@ -156,6 +156,7 @@ fn params_path(job_id: &str, command: pioneer::Command) -> PathBuf {
         pioneer::Command::ConvertRaw => "convert.json",
         pioneer::Command::ConvertMzml => "convertmzml.json",
         pioneer::Command::ConvertBruker => "convertbruker.json",
+        pioneer::Command::ConvertSciex => "convertsciex.json",
     };
     dir.join(name)
 }

@@ -7,7 +7,7 @@ export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'conv
  *  ConvertRAW page drives two different binaries, so the workflow the user
  *  picked and the program that ends up being spawned are not the same thing.
  *  Mirrors the Rust `pioneer::Command` enum. */
-export type BackendCommand = CommandId | 'convertmzml' | 'convertbruker'
+export type BackendCommand = CommandId | 'convertmzml' | 'convertbruker' | 'convertsciex'
 
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
@@ -328,7 +328,7 @@ export const BUILD_DEFAULTS: BuildParams = {
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
  *  can hold both. */
-export type ConvertFormat = 'raw' | 'mzml' | 'bruker'
+export type ConvertFormat = 'raw' | 'mzml' | 'bruker' | 'sciex'
 
 /** ConvertRAW's two converters are both driven entirely by CLI flags — there is
  *  no params JSON for either. Defaults are each converter's own. */
@@ -480,6 +480,9 @@ export interface PathInfo {
   /** Bruker timsTOF directories: `.tdfs` runs (searchable) and raw `.d` bundles. */
   tdfs_count: number
   d_count: number
+  /** SCIEX: `.scxs` runs (directories, searchable) and raw `.wiff` files. */
+  scxs_count: number
+  wiff_count: number
   has_config_json: boolean
   is_pion_library: boolean
   error: string | null
@@ -497,6 +500,8 @@ export const EMPTY_PATH_INFO: PathInfo = {
   arrow_count: 0,
   tdfs_count: 0,
   d_count: 0,
+  scxs_count: 0,
+  wiff_count: 0,
   has_config_json: false,
   is_pion_library: false,
   error: null,

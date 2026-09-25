@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "b2d446b06df474c13b15d5be465806405780d577"
+project_hash = "5671bacc25258108db84d918e59483ba60ef104f"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -1391,7 +1391,7 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.4"
 
 [[deps.Pioneer]]
-deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "TimsSlices"]
+deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "Mmap", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SciexWiff", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "TimsSlices"]
 path = "."
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 version = "0.10.0"
@@ -1696,6 +1696,14 @@ deps = ["InteractiveUtils"]
 git-tree-sha1 = "e785eaa35a0f5518a388f9010e66fda64ea95ede"
 uuid = "30f210dd-8aff-4c5f-94ba-8e64358c1161"
 version = "3.1.0"
+
+[[deps.SciexWiff]]
+deps = ["Arrow", "JSON3", "Mmap", "Printf", "Zstd_jll"]
+git-tree-sha1 = "fc452d9df8ef4783a4f52892e2cc101e8c3f238f"
+repo-rev = "main"
+repo-url = "https://github.com/nwamsley1/SciexWiff.jl"
+uuid = "3511961b-b631-4bc5-89a9-84fcc786d61e"
+version = "0.1.0"
 
 [[deps.ScopedValues]]
 deps = ["HashArrayMappedTries", "Logging"]

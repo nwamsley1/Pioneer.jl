@@ -220,6 +220,9 @@ export function ConvertRawForm({
   // nothing to decide and is hidden. `format` still drives the folder-mode copy.
   const isMzml = !byFiles && params.format === 'mzml'
   const isBruker = !byFiles && params.format === 'bruker'
+  const isSciex = !byFiles && params.format === 'sciex'
+  // Bruker (.d folders) and SCIEX (.wiff + .wiff.scan pairs) are converted per folder or per run, never from a list.
+  const folderOnly = isBruker || isSciex
   const groups = convertGroups(params.inputFiles)
   const unreadable = params.inputFiles.filter((f) => formatOfFile(f) === null)
 
@@ -233,7 +236,9 @@ export function ConvertRawForm({
       ? defaultConvertOutput(params)
       : isBruker
         ? '<input folder>/tdfs_out'
-        : '<input folder>/arrow_out'
+        : isSciex
+          ? '<input folder>/scxs_out'
+          : '<input folder>/arrow_out'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -246,7 +251,9 @@ export function ConvertRawForm({
                 ? 'Convert mzML files'
                 : isBruker
                   ? 'Convert Bruker timsTOF data'
-                  : 'Convert raw files'}
+                  : isSciex
+                    ? 'Convert SCIEX data'
+                    : 'Convert raw files'}
           </h2>
         </div>
         <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
@@ -264,6 +271,18 @@ export function ConvertRawForm({
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.tdfs</code> runs, which
               is what SearchDIA reads for timsTOF data. Search them with a library built with the
               timsTOF option on.
+            </>
+          ) : isSciex ? (
+            <>
+              Convert SCIEX SWATH{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff</code> runs (each
+              with its{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff.scan</code> beside it)
+              to{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.scxs</code> runs, which
+              SearchDIA reads directly. Runs that have only a{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff2</code> are not
+              supported; convert those to mzML with msConvert.
             </>
           ) : isMzml ? (
             <>
@@ -286,7 +305,7 @@ export function ConvertRawForm({
           <button
             type="button"
             onClick={() => onParam('format', 'raw')}
-            style={seg(!isMzml && !isBruker)}
+            style={seg(!isMzml && !isBruker && !isSciex)}
           >
             Thermo .raw
           </button>
@@ -304,12 +323,20 @@ export function ConvertRawForm({
           >
             Bruker .d
           </button>
+          <button
+            type="button"
+            onClick={() => onParam('format', 'sciex')}
+            style={seg(isSciex)}
+          >
+            SCIEX .wiff
+          </button>
         </div>
 
         <label style={LABEL}>Input</label>
         {/* A .d bundle is a folder, which the file list cannot hold, so Bruker is
-            folder-only: the folder can be one .d or a folder of them. */}
-        <div style={{ ...SEG_TRACK, marginBottom: 12, display: isBruker ? 'none' : undefined }}>
+            folder-only: the folder can be one .d or a folder of them. SCIEX is too: a
+            .wiff needs its .wiff.scan beside it, which a staged file list would not carry. */}
+        <div style={{ ...SEG_TRACK, marginBottom: 12, display: folderOnly ? 'none' : undefined }}>
           <button
             type="button"
             onClick={() => onParam('inputMode', 'files')}
@@ -343,7 +370,13 @@ export function ConvertRawForm({
                 value={params.input}
                 onChange={(e) => onParam('input', e.target.value)}
                 placeholder={
-                  isMzml ? '/path/to/mzml/folder' : isBruker ? '/path/to/run.d or folder' : '/path/to/raw/folder'
+                  isMzml
+                    ? '/path/to/mzml/folder'
+                    : isBruker
+                      ? '/path/to/run.d or folder'
+                      : isSciex
+                        ? '/path/to/run.wiff or folder'
+                        : '/path/to/raw/folder'
                 }
                 style={{
                   flex: 1,
@@ -404,7 +437,7 @@ export function ConvertRawForm({
 
         <div
           style={{
-            display: isBruker ? 'none' : 'flex',
+            display: folderOnly ? 'none' : 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 14,
@@ -492,6 +525,10 @@ export function ConvertRawForm({
             {isBruker ? (
               <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
                 None. Slicing uses the settings Pioneer&rsquo;s timsTOF search was validated with.
+              </div>
+            ) : isSciex ? (
+              <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+                None. Centroiding uses SciexWiff&rsquo;s defaults, validated against msConvert&rsquo;s.
               </div>
             ) : isMzml ? (
               <>

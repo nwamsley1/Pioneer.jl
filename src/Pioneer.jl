@@ -826,7 +826,7 @@ function __init__()
     get!(ENV, "GKS_WSTYPE", "100")
 end
 
-export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker,
+export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker, convertSciex,
        get_pioneer_version, setup_windows_lightgbm,
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

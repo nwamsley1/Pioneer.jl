@@ -49,7 +49,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml convert-bruker"
+VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex"
 # empirical params-empirical 
 
 show_help() {
@@ -85,6 +85,8 @@ show_help() {
     echo "                                              Convert mzML files"
     echo "  convert-bruker <d_path> [--output-dir <dir>]"
     echo "                                              Convert Bruker timsTOF .d folders to .tdfs"
+    echo "  convert-sciex <wiff_path> [--output-dir <dir>]"
+    echo "                                              Convert SCIEX .wiff/.wiff.scan runs to .scxs"
     echo ""
     echo "Examples:"
     echo "  pioneer params-predict yeast.poin fasta/ --params-path predict_params.json"
@@ -220,6 +222,9 @@ case "$SUBCOMMAND" in
         ;;
     convert-bruker)
         SUBCOMMAND="convertBruker"
+        ;;
+    convert-sciex)
+        SUBCOMMAND="convertSciex"
         ;;
 esac
     #empirical)
