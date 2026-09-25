@@ -90,6 +90,20 @@ const ZT_SHAPE_FEATURES = Symbol[
     :zt_tri_pcor,     # mean-centered Pearson vs the template; complements the uncentered cosine
 ]
 
+"""
+Meta-scan features scored by both LightGBM models (MainSearch's `PRESCORE_FEATURES` and
+ScoringSearch's `ADVANCED_FEATURE_SET`). They exist only on collapsed ZT tables; both scorers
+drop features the table lacks, so appending them is inert for every other file.
+
+Measured over 5.46M meta-PSMs: the within-cycle weight profile and each fragment's tracking of
+it are near-orthogonal (r = 0.015-0.136 between matched pairs). Of the nine original profile
+descriptors only these carried signal. The ZT across-cycle (elution) features are develop's own
+chromatogram features, recomputed on the collapsed one-point-per-cycle trace.
+"""
+const ZT_SCORING_FEATURES = vcat(ZT_PROFILE_FEATURES, ZT_SHAPE_FEATURES)
+append!(PRESCORE_FEATURES, ZT_SCORING_FEATURES)
+append!(ADVANCED_FEATURE_SET, ZT_SCORING_FEATURES)
+
 # zt_emp_cosine (cosine vs a template shifted to the precursor's in-bin m/z offset) was dropped
 # 2026-09-10: measured r = 0.991 with zt_tri_cosine over 5.46M meta-PSMs, with no discrimination
 # advantage (|AUC-0.5| 0.0213 vs 0.0211). The physical idea -- transmission peaks at the
