@@ -863,8 +863,9 @@ export default function App() {
     if (!dir) return
     const info = await backend.inspectPath(dir)
     const bruker = c.format === 'bruker'
-    if ((bruker ? info.tdfs_count : info.arrow_count) > 0) return
-    const out = bruker ? '.tdfs runs' : '.arrow files'
+    const sciex = c.format === 'sciex'
+    if ((bruker ? info.tdfs_count : sciex ? info.scxs_count : info.arrow_count) > 0) return
+    const out = bruker ? '.tdfs runs' : sciex ? '.scxs runs' : '.arrow files'
     setJobs((prev) =>
       prev.map((j) =>
         j.id === job.id
@@ -970,7 +971,13 @@ export default function App() {
     // command id -- that way a restored mzML run re-runs as an mzML run.
     const convertFormat = next.snapshot.cmd === 'convertraw' ? next.snapshot.convert.format : null
     const backendCmd: BackendCommand =
-      convertFormat === 'mzml' ? 'convertmzml' : convertFormat === 'bruker' ? 'convertbruker' : next.cmd
+      convertFormat === 'mzml'
+        ? 'convertmzml'
+        : convertFormat === 'bruker'
+          ? 'convertbruker'
+          : convertFormat === 'sciex'
+            ? 'convertsciex'
+            : next.cmd
 
     backend
       .startJob(next.id, backendCmd, next.invocation, next.threads)
@@ -1082,7 +1089,7 @@ export default function App() {
    *  selection would make that impossible. Duplicates are dropped -- the same
    *  file twice would be the same search twice. */
   const addMsFiles = async () => {
-    // A file chosen inside a timsTOF .tdfs run adds the run (see asRunPath); two files of one run add it once.
+    // A file chosen inside a .tdfs / .scxs run adds the run (see asRunPath); two files of one run add it once.
     const picked = await backend.pickFiles('Choose the files to search', 'MS data', ['arrow'])
     if (picked.length === 0) return
     const runs = [...new Set(picked.map(backend.asRunPath))]
@@ -1093,12 +1100,12 @@ export default function App() {
     setRunError('')
   }
 
-  /** Bruker timsTOF runs: a .tdfs run is a folder, which the file picker cannot select, so it has its own
-   *  folder picker. Anything picked that is not a .tdfs folder is refused, by name. */
+  /** Bruker timsTOF .tdfs and SCIEX .scxs runs are folders, which the file picker cannot select, so they have
+   *  their own folder picker. Anything picked that is not a .tdfs / .scxs folder is refused, by name. */
   const addMsTdfs = async () => {
-    const picked = await backend.pickFolders('Choose the Bruker .tdfs runs to search')
+    const picked = await backend.pickFolders('Choose the .tdfs / .scxs runs to search')
     if (picked.length === 0) return
-    const isRun = (f: string) => /\.tdfs[\\/]?$/i.test(f.trim())
+    const isRun = (f: string) => /\.(tdfs|scxs)[\\/]?$/i.test(f.trim())
     const runs = picked.filter(isRun)
     setSearch((p) => {
       const have = new Set(p.msDataFiles)
@@ -1106,7 +1113,7 @@ export default function App() {
     })
     setRunError(
       runs.length < picked.length
-        ? `Not a Bruker .tdfs run: ${picked.filter((f) => !isRun(f)).join(', ')}`
+        ? `Not a .tdfs or .scxs run: ${picked.filter((f) => !isRun(f)).join(', ')}`
         : '',
     )
   }
@@ -1121,7 +1128,9 @@ export default function App() {
         ? 'Choose a folder of .mzML files'
         : convert.format === 'bruker'
           ? 'Choose a Bruker .d folder, or a folder of them'
-          : 'Choose a folder of .raw files',
+          : convert.format === 'sciex'
+            ? 'Choose a folder of SCIEX .wiff files'
+            : 'Choose a folder of .raw files',
     )
     if (picked) onParam('input', picked)
   }
@@ -1272,15 +1281,15 @@ export default function App() {
     setRunError('')
   }
 
-  /** Pioneer reads the calibration run as Arrow (or a timsTOF .tdfs run: pick any file inside it). */
+  /** Pioneer reads the calibration run as Arrow (or a .tdfs / .scxs run: pick any file inside it). */
   const browseCalibration = async () => {
     const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', ['arrow'])
     if (picked) onParam('calibrationFile', backend.asRunPath(picked))
   }
 
-  /** A Bruker .tdfs run is a folder: its own folder picker (calibrationNote rejects other folders). */
+  /** A .tdfs / .scxs run is a folder: its own folder picker (calibrationNote rejects other folders). */
   const browseCalibrationTdfs = async () => {
-    const picked = await backend.pickFolder('Choose one Bruker .tdfs run from this experiment')
+    const picked = await backend.pickFolder('Choose one .tdfs or .scxs run from this experiment')
     if (picked) onParam('calibrationFile', picked)
   }
 
@@ -1613,7 +1622,7 @@ export default function App() {
           return
         }
         if (!files.length) {
-          setRunError('No .arrow files or .tdfs runs in that folder.')
+          setRunError('No .arrow files or .tdfs / .scxs runs in that folder.')
           return
         }
       }

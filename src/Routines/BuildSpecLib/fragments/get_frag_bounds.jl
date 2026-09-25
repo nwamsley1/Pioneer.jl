@@ -229,6 +229,18 @@ function get_fragment_bounds(
                            "$frag_bounds_detection_raw_file_path ($(sprint(showerror, e))). Using default values. " *
                            "Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
             end
+        elseif is_scxs_path(frag_bounds_detection_raw_file_path)
+            # A SCIEX .scxs run is a directory holding the same scan metadata as its Arrow.
+            try
+                d = ScxsMassSpecData(frag_bounds_detection_raw_file_path)
+                frag_bounds, prec_mz_min, prec_mz_max = get_fragment_bounds(
+                    getCenterMzs(d), getIsolationWidthMzs(d), getMsOrders(d), getLowMzs(d), getHighMzs(d))
+                return (frag_bounds = frag_bounds, prec_mz_min = prec_mz_min - 1.0f0, prec_mz_max = prec_mz_max + 1.0f0)
+            catch e
+                @user_warn "failed to read fragment and precursor bounds from the SCIEX file " *
+                           "$frag_bounds_detection_raw_file_path ($(sprint(showerror, e))). Using default values. " *
+                           "Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
+            end
         elseif isfile(frag_bounds_detection_raw_file_path)
             try
             MS_TABLE = Arrow.Table(frag_bounds_detection_raw_file_path)

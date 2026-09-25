@@ -39,7 +39,15 @@ try {
     '/data/input.raw', '--output-dir', '/ssd/output', '--skip-existing',
     '--concurrent-files', '8', '--skip-header',
   ])
-  console.log('RAW and mzML converter argument regression checks passed')
+  // convertBruker / convertSciex take the input and the output folder only
+  for (const [format, exe] of [['bruker', 'convertBruker'], ['sciex', 'convertSciex']]) {
+    assert.deepEqual(buildConvertArgs({ ...raw, format }), ['/data/input.raw', '--output-dir', '/ssd/output'])
+    assert(convertCommandLine({ ...raw, format }).startsWith(exe + ' '))
+  }
+  const { defaultConvertOutput } = require('./config.js')
+  assert.equal(defaultConvertOutput({ ...raw, format: 'sciex', input: '/data/run.wiff' }), '/data/scxs_out')
+  assert.equal(defaultConvertOutput({ ...raw, format: 'sciex', input: '/data/sciex/' }), '/data/sciex/scxs_out')
+  console.log('RAW, mzML, Bruker and SCIEX converter argument regression checks passed')
 } finally {
   rmSync(out, { recursive: true, force: true })
 }

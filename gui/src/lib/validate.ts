@@ -133,11 +133,11 @@ export function msDataNote(value: string, info: PathInfo): Note {
           msg: 'Unsupported type — Pioneer reads .raw, .mzML or .arrow (a folder is fine too).',
         }
   }
-  // A .tdfs run is a folder, but it is one run, not a folder of them.
-  if (info.extension === 'tdfs') {
+  // A .tdfs / .scxs run is a folder, but it is one run, not a folder of them.
+  if (info.extension === 'tdfs' || info.extension === 'scxs') {
     return {
       level: 'error',
-      msg: 'This is a single .tdfs run. Choose the folder that holds it, or use Chosen files.',
+      msg: `This is a single .${info.extension} run. Choose the folder that holds it, or use Chosen files.`,
     }
   }
   if (info.ms_file_count === 0) {
@@ -147,9 +147,15 @@ export function msDataNote(value: string, info: PathInfo): Note {
         msg: `${info.d_count} Bruker .d folder${info.d_count > 1 ? 's' : ''} found and no .tdfs — convert them first.`,
       }
     }
-    return { level: 'error', msg: 'No .raw, .mzML, .arrow or .tdfs data in this folder.' }
+    if (info.wiff_count > 0) {
+      return {
+        level: 'error',
+        msg: `${info.wiff_count} SCIEX .wiff file${info.wiff_count > 1 ? 's' : ''} found and no .scxs — convert them first.`,
+      }
+    }
+    return { level: 'error', msg: 'No .raw, .mzML, .arrow, .tdfs or .scxs data in this folder.' }
   }
-  if (info.raw_count > 0 && info.arrow_count === 0 && info.tdfs_count === 0) {
+  if (info.raw_count > 0 && info.arrow_count === 0 && info.tdfs_count === 0 && info.scxs_count === 0) {
     // SearchDIA reads Arrow; .raw still needs converting first.
     return {
       level: 'warn',
@@ -275,11 +281,16 @@ export function calibrationNote(value: string, info: PathInfo): Note {
         msg: 'timsTOF run: one fixed fragment range for every window (the widest MS2 scan range), and the precursor range from the outer edges of the diaPASEF windows.',
       }
     }
-    return { level: 'error', msg: 'Choose a single MS data file or a .tdfs run, not a folder.' }
+    // A SCIEX .scxs run is a folder too; its bounds are read as for an .arrow file.
+    if (info.extension === 'scxs') return NONE
+    return { level: 'error', msg: 'Choose a single MS data file or a .tdfs / .scxs run, not a folder.' }
   }
   // BuildSpecLib reads the calibration run as Arrow; convert .raw / .mzML first.
   if (info.extension !== 'arrow') {
-    return { level: 'error', msg: 'Expected an .arrow file or a timsTOF .tdfs run (convert .raw / .mzML first).' }
+    return {
+      level: 'error',
+      msg: 'Expected an .arrow file or a .tdfs / .scxs run (convert .raw / .mzML / .wiff first).',
+    }
   }
   return NONE
 }
@@ -622,6 +633,20 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
     }
   }
 
+  // SCIEX input is one .wiff (its .wiff.scan beside it) or a folder of them.
+  if (p.format === 'sciex') {
+    if (info.is_file) {
+      return info.wiff_count === 1
+        ? { level: '', msg: '1 .wiff run to convert to .scxs (its .wiff.scan must sit beside it).' }
+        : { level: 'error', msg: 'Choose a SCIEX .wiff file, or a folder of them.' }
+    }
+    if (info.wiff_count === 0) return { level: 'error', msg: 'No SCIEX .wiff files here.' }
+    return {
+      level: '',
+      msg: `${info.wiff_count} .wiff run${info.wiff_count > 1 ? 's' : ''} to convert to .scxs.`,
+    }
+  }
+
   const mzml = p.format === 'mzml'
   const label = mzml ? '.mzML' : '.raw'
   const count = mzml ? info.mzml_count : info.raw_count
@@ -649,6 +674,14 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
 export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
   if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
   if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
+  if (p.format === 'sciex') {
+    return info.scxs_count > 0
+      ? {
+          level: 'warn',
+          msg: `This folder already holds ${info.scxs_count} .scxs run${info.scxs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+        }
+      : NONE
+  }
   if (p.format === 'bruker') {
     return info.tdfs_count > 0
       ? {
