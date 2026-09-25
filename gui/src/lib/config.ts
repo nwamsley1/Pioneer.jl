@@ -466,8 +466,8 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
-  // convertBruker takes the input and the output folder and nothing else.
-  if (s.format === 'bruker') return args
+  // convertBruker and convertSciex take the input and the output folder and nothing else.
+  if (s.format === 'bruker' || s.format === 'sciex') return args
   if (s.skipExisting) args.push('--skip-existing')
 
   if (s.format === 'mzml') {
@@ -503,10 +503,14 @@ export function downloadCommandLine(s: DownloadParams): string {
 }
 
 /** Where a folder-mode conversion writes when no output folder is given: the
- *  converters' own defaults, `arrow_out` (Thermo, mzML) or `tdfs_out` (Bruker)
- *  inside the input folder -- beside it when the input is itself a `.d`. */
+ *  converters' own defaults, `arrow_out` (Thermo, mzML), `tdfs_out` (Bruker) or
+ *  `scxs_out` (SCIEX) inside the input folder -- beside it when the input is
+ *  itself a `.d` or a `.wiff`. */
 export function defaultConvertOutput(s: ConvertParams): string {
   const input = s.input.trim().replace(/[\\/]$/, '')
+  if (s.format === 'sciex') {
+    return /\.wiff$/i.test(input) ? `${input.replace(/[\\/][^\\/]*$/, '')}/scxs_out` : `${input}/scxs_out`
+  }
   if (s.format !== 'bruker') return `${input}/arrow_out`
   return /\.d$/i.test(input) ? `${input.replace(/[\\/][^\\/]*$/, '')}/tdfs_out` : `${input}/tdfs_out`
 }
@@ -515,7 +519,13 @@ export function defaultConvertOutput(s: ConvertParams): string {
 export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
   const exe =
-    s.format === 'mzml' ? 'convertMzML' : s.format === 'bruker' ? 'convertBruker' : 'PioneerConverter'
+    s.format === 'mzml'
+      ? 'convertMzML'
+      : s.format === 'bruker'
+        ? 'convertBruker'
+        : s.format === 'sciex'
+          ? 'convertSciex'
+          : 'PioneerConverter'
   return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
 }
 

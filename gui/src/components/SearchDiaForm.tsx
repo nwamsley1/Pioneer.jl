@@ -223,14 +223,14 @@ function MsFileList({
               strokeLinecap="round"
             />
           </svg>
-          Add Bruker .tdfs
+          Add .tdfs / .scxs
         </button>
         <span style={HINT}>
           {files.length
             ? batch
               ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
               : `${files.length} file${files.length > 1 ? 's' : ''}, searched together \u2014 1 run queued.`
-            : 'Thermo / Sciex: .arrow files. Bruker timsTOF: .tdfs runs (select the folder).'}
+            : 'Thermo: .arrow files. SCIEX: .arrow files or .scxs runs. Bruker timsTOF: .tdfs runs (select the folder).'}
         </span>
       </div>
       {files.length > 0 && (
@@ -269,7 +269,7 @@ function BatchToggle({
         </div>
         <div style={{ ...HINT, marginTop: 2 }}>
           {on
-            ? `One run per ${scope === 'folder' ? '.arrow file or .tdfs run in the folder' : 'file'}, each with its own results folder and nothing shared between them.`
+            ? `One run per ${scope === 'folder' ? '.arrow file or .tdfs / .scxs run in the folder' : 'file'}, each with its own results folder and nothing shared between them.`
             : `One run over the whole ${scope}, sharing FDR and match-between-runs across it.`}
         </div>
       </div>
@@ -344,7 +344,7 @@ interface Props {
   onBrowse: (key: 'msData' | 'library' | 'results') => void
   /** Add files to the list, via the multi-select picker. */
   onAddMsFiles: () => void
-  /** Add Bruker .tdfs runs (folders), via the multi-select folder picker. */
+  /** Add Bruker .tdfs / SCIEX .scxs runs (folders), via the multi-select folder picker. */
   onAddMsTdfs: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
