@@ -28,6 +28,7 @@ include("./UnitTests/test_parallel_mainsearch_sortperm.jl")
 include("./UnitTests/test_maxLFQ.jl")
 include("./UnitTests/test_directLFQ.jl")
 include("./UnitTests/test_directLFQ_pipeline.jl")
+include("./UnitTests/test_protein_export.jl")
 include("./UnitTests/test_normalizeQuant.jl")
 include("./UnitTests/test_download_speclib.jl")
 

@@ -129,6 +129,15 @@ function add_protein_group_counts!(stats::Vector{RunSummaryStats},
     return stats
 end
 
+function add_protein_group_counts!(stats::Vector{RunSummaryStats},
+                                   path::AbstractString,
+                                   file_names::Vector{String})
+    for batch in Arrow.Stream(path)
+        add_protein_group_counts!(stats, DataFrame(batch; copycols=false), file_names)
+    end
+    return stats
+end
+
 _median_or_missing(v::AbstractVector) = isempty(v) ? missing : median(v)
 
 _mass_tol_unit(::SimpleMassErrorModel) = "ppm"
