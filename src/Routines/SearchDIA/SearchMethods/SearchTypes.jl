@@ -147,7 +147,7 @@ struct ArrowTableReference <: MassSpecDataReference
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
-        file_paths = [p for p in file_paths if endswith(p, ".arrow") || endswith(p, ".tdfs")]
+        file_paths = [p for p in file_paths if endswith(p, ".arrow") || endswith(p, ".tdfs") || endswith(p, ".scxs")]
         file_id_to_name = parseFileNames(file_paths)
         if length(file_id_to_name) != length(file_paths)
             file_id_to_name = ["" for x in 1:length(file_id_to_name)]
@@ -364,10 +364,13 @@ Interface Methods for Parameter Access
 ==========================================================#
 #MassSpecDataReference interface getters 
 getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = loadMassSpecData(msdr.file_paths[ms_file_idx])
-"Open an MS data file by its path: a `.tdfs` directory (TdfsMassSpecData) or an Arrow file (BasicMassSpecData)."
-loadMassSpecData(path::AbstractString) = is_tdfs_path(path) ? TdfsMassSpecData(String(path)) : BasicMassSpecData(String(path))
-"An MS data path Pioneer can open: `<name>.arrow` files and `<name>.tdfs` directories."
-is_ms_data_path(path::AbstractString) = (endswith(path, ".arrow") && isfile(path)) || is_tdfs_path(path)
+"Open an MS data file by its path: a `.tdfs` directory (TdfsMassSpecData), a `.scxs` directory (ScxsMassSpecData,
+SCIEX) or an Arrow file (BasicMassSpecData)."
+loadMassSpecData(path::AbstractString) =
+    is_tdfs_path(path) ? TdfsMassSpecData(String(path)) :
+    is_scxs_path(path) ? ScxsMassSpecData(String(path)) : BasicMassSpecData(String(path))
+"An MS data path Pioneer can open: `<name>.arrow` files and `<name>.tdfs` / `<name>.scxs` directories."
+is_ms_data_path(path::AbstractString) = (endswith(path, ".arrow") && isfile(path)) || is_tdfs_path(path) || is_scxs_path(path)
 
 """
     check_ms_data_vendors(paths)
