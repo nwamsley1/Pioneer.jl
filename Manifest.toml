@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "4f8247f22c45c166b7fcf8d69a61955ac377a149"
+project_hash = "b2d446b06df474c13b15d5be465806405780d577"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -1963,10 +1963,12 @@ version = "0.5.29"
     FlameGraphs = "08572546-2f56-4bcf-ba4e-bab62c3a3f89"
 
 [[deps.TimsSlices]]
-deps = ["Arrow", "JSON3", "Mmap", "Printf", "SQLite", "Statistics", "Zstd_jll"]
-path = "/Users/n.t.wamsley/Projects/TimsSlices.jl"
+deps = ["Arrow", "JSON3", "Mmap", "Printf", "SQLite", "Zstd_jll"]
+git-tree-sha1 = "4824beca737f868b0cffd9fdaf999ad8cbc319bf"
+repo-rev = "master"
+repo-url = "https://github.com/nwamsley1/TimsSlices.jl"
 uuid = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
-version = "0.1.0"
+version = "0.2.0"
 
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"

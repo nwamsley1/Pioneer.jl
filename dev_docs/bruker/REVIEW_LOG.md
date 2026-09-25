@@ -27,7 +27,8 @@ until it is marked **applied** with a commit.
   7-58k of 144k scans); Sciex 7600 nSWATH4 -0.25% / +0.18% / 25.7 -> 24.6 s; Exploris 500 ng -0.03% / -0.21% /
   16.6 -> 17.8 s. Fragment mass MAD, q99 clamp and NCE fits unchanged; MS1 tolerance +7% on Sciex (fewer
   collection PSMs after the 3/precursor cap: ~3.9-4.8k vs 4.7-5.7k). Total runtime within 1%.
-- Rebase onto `develop` before opening the PR.
+- Rebase onto `develop` before opening the PR. **Applied** (branch `feat/tdfs-reader-rebased`, 2026-09-24; no
+  conflicts). TimsSlices resolved from GitHub via `[sources]` until it is registered (then drop `[sources]`).
 - Remove all development-only logging, profiling and data dumps.
 - After the PR: collect a varied set of Bruker datasets (PRIDE and other repositories; different ramps,
   gradients, loads, instruments) and check that the parameters generalise.
