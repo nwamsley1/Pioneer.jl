@@ -117,6 +117,7 @@ function importScripts()
             "MassSpecData/getters.jl",
             "MassSpecData/FilteredMassSpecData.jl",
             "MassSpecData/IndexedMassSpecData.jl",
+            "MassSpecData/TdfsMassSpecData.jl",
             "ChromObject.jl",
             "Counter.jl",
             "Ion.jl",
@@ -432,6 +433,7 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "BrukerConverter", "convertBruker.jl"))
 
     return files_loaded
 end

@@ -181,6 +181,7 @@ struct _MBRDonorEntry
     log2_intensity_explained::Float32
     irt_residual::Float32
     irt_obs::Float32
+    im_obs::Float32
     n_scans::Float32
     integrated_frag_sqrt::NTuple{8, Float32}
     frag_corr_bitvec::UInt8
@@ -192,6 +193,10 @@ const MBR_RECEIVER_FEATURES = Symbol[
     :trace_prob_infold,
     :fitted_manhattan_distance,
     :irt_error,
+    # Mobility residual of the receiver itself, |predicted 1/K0 - observed| / sigma. A transfer placed
+    # at the right retention time but the wrong mobility is invisible to every other feature here.
+    # Identically zero on data without ion mobility, where LightGBM simply never splits on it.
+    :im_error,
     :poisson,
     :err_norm,
     :weight,
@@ -231,6 +236,8 @@ const MBR_PAIRED_FEATURE_STEMS = String[
     "MBR_worst_irt_diff",
     "MBR_best_observed_irt_diff",
     "MBR_worst_observed_irt_diff",
+    "MBR_best_observed_im_diff",
+    "MBR_worst_observed_im_diff",
     "MBR_single_donor",
     "MBR_best_hellinger_source_prob",
     "MBR_best_temporal_frag_hellinger",

@@ -51,7 +51,7 @@ function _add_psm_features!(psms::DataFrame,
     prec_enzymatic_termini = getNumEnzymaticTermini(precursors_lib)
     prec_num_var_mods = getNumVariableModifications(precursors_lib)
     scan_rts         = getRetentionTimes(spectra)
-    masses           = getMzArrays(spectra)
+    peak_counts      = getPeakCounts(spectra)
 
     N = nrow(psms)
 
@@ -109,7 +109,7 @@ function _add_psm_features!(psms::DataFrame,
             num_enzymatic_termini[i] = prec_enzymatic_termini[prec_idx]
             sequence_length[i]     = prec_length[prec_idx]
             prec_mzs[i]            = prec_mz[prec_idx]
-            spectrum_peak_count[i] = length(masses[scan_idx])
+            spectrum_peak_count[i] = peak_counts[scan_idx]
 
             # Lazy per-precursor Mox.
             if !_mox_computed[prec_idx]
@@ -194,6 +194,9 @@ const PRESCORE_FEATURES = [
     :n_correlated_fragments_bitvec_rank,
     :frag_corr_strength,
     :frag_corr_effective_n,
+    # Ion-mobility slice data: the precursor's PSMs at the same retention time (other mobility
+    # slices) and this PSM's share of their weight; 1 on files without mobility data.
+    :n_scans_in_window, :weight_frac_in_cycle,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -608,6 +611,54 @@ function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
     )
 end
 
+"""
+    build_scan_to_ms1(spectra) -> Vector{Int32}
+
+The MS1 scan to read for every scan of the file (0 everywhere when the file has no MS1 scans).
+Plain files: the nearest MS1 scan by RT. Ion-mobility packet / slice files (`imScan` column): the
+row of the nearest MS1 frame (by RT) whose IM scan is nearest to the scan's own, so a precursor is
+looked up at its own mobility. The nearest-RT rule on such files lands on whichever slice of the
+previous MS1 frame is last in time, i.e. the wrong mobility for almost every precursor (measured:
+MS1 features populated for 2.8% of confident PSMs on a 250 pg timsTOF file).
+"""
+function build_scan_to_ms1(spectra)
+    n_scans = length(spectra)
+    ms1 = Int32[s for s in 1:n_scans if getMsOrder(spectra, s) == 1]
+    scan_to_ms1 = zeros(Int32, n_scans)
+    isempty(ms1) && return scan_to_ms1
+    im_scans = getImScans(spectra)
+    nearest(v, x, lo, hi) = begin                     # index in lo:hi of the value of sorted v nearest to x
+        j = searchsortedfirst(view(v, lo:hi), x) + lo - 1
+        j <= lo ? lo : j > hi ? hi : (abs(v[j-1] - x) <= abs(v[j] - x) ? j - 1 : j)
+    end
+    if im_scans === nothing
+        rts = Float32[Float32(getRetentionTime(spectra, s)) for s in ms1]
+        @inbounds for s in 1:n_scans
+            scan_to_ms1[s] = ms1[nearest(rts, Float32(getRetentionTime(spectra, s)), 1, length(ms1))]
+        end
+        return scan_to_ms1
+    end
+    # MS1 rows grouped into frames (consecutive MS1 rows sharing a frame id, or a cycle without one)
+    frame_ids = getFrameIds(spectra)
+    cyc = getCycleIdxs(spectra)
+    frame_key(s) = frame_ids === nothing ? Int(cyc[s]) : Int(frame_ids[s])
+    f_start = Int[]; f_rt = Float32[]
+    prev = typemin(Int)
+    for (k, s) in enumerate(ms1)
+        if frame_key(s) != prev
+            push!(f_start, k); push!(f_rt, Float32(getRetentionTime(spectra, s))); prev = frame_key(s)
+        end
+    end
+    push!(f_start, length(ms1) + 1)
+    ms1_im = Int32[Int32(im_scans[s]) for s in ms1]     # ascending within a frame
+    @inbounds for s in 1:n_scans
+        f = nearest(f_rt, Float32(getRetentionTime(spectra, s)), 1, length(f_rt))
+        k = nearest(ms1_im, Int32(im_scans[s]), f_start[f], f_start[f + 1] - 1)
+        scan_to_ms1[s] = ms1[k]
+    end
+    return scan_to_ms1
+end
+
 # Per-scan-run worker. The input PSM table is contiguous by :scan_idx at this
 # point in MainSearch, so each run shares one nearest MS1 scan and one MS2
 # isolation window. That lets us compute window intensity/noise once per scan
@@ -640,6 +691,7 @@ function _ms1_lookup_scan_runs!(psms, spectra,
     cached_int = Vector{Float32}()
     cached_ms1_idx::Int = -1   # force first miss
     cached_noise_floor = 0f0
+    decode_buf = PeakDecodeBuffer()   # this chunk's own (.tdfs); the peaks are copied into the cache below
     m0_peak_keys = UInt64[]
     competition_scratch = _M0PeakCompetitionScratch()
 
@@ -652,8 +704,7 @@ function _ms1_lookup_scan_runs!(psms, spectra,
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
             _ms1_refresh_cache!(cached_mz, cached_int,
-                                getMzArray(spectra, ms1_idx),
-                                getIntensityArray(spectra, ms1_idx))
+                                getPeaks!(decode_buf, spectra, ms1_idx)...)
             cached_noise_floor = _ms1_noise_floor(cached_int)
         end
 
@@ -844,38 +895,13 @@ function add_ms1_lookup_features!(psms::DataFrame,
     psms[!, :scan_prec_mz_n_precursors] = zeros(UInt16, n)
     n == 0 && return
 
-    # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
+    # 1. `scan_to_ms1[scan_id]` = the MS1 scan to read for each scan, once per file (nearest by RT;
+    #    on ion-mobility data the nearest MS1 frame at the row's own mobility, see build_scan_to_ms1).
     n_scans = length(spectra)
-    ms1_scan_idxs = Int[]
-    ms1_scan_rts  = Float32[]
-    for s in 1:n_scans
-        if getMsOrder(spectra, s) == 1
-            push!(ms1_scan_idxs, s)
-            push!(ms1_scan_rts, Float32(getRetentionTime(spectra, s)))
-        end
-    end
-    if isempty(ms1_scan_idxs)
+    scan_to_ms1 = build_scan_to_ms1(spectra)
+    if all(iszero, scan_to_ms1)
         @debug_l1 "add_ms1_lookup_features!: no MS1 scans found, features all zero"
         return
-    end
-
-    # 1b. Precompute `scan_to_ms1[scan_id]` = nearest MS1 scan id, once per
-    # file. Replaces a per-PSM `getRetentionTime` + `searchsortedfirst` (was
-    # ~1-1.5 s/file on Astral) with a single array indexing per PSM.
-    n_ms1 = length(ms1_scan_rts)
-    scan_to_ms1 = Vector{Int32}(undef, n_scans)
-    @inbounds for s in 1:n_scans
-        scan_rt = Float32(getRetentionTime(spectra, s))
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        scan_to_ms1[s] = if pos == 1
-            Int32(ms1_scan_idxs[1])
-        elseif pos > n_ms1
-            Int32(ms1_scan_idxs[end])
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            d_before <= d_after ? Int32(ms1_scan_idxs[pos-1]) : Int32(ms1_scan_idxs[pos])
-        end
     end
 
     scan_window_low = fill(Inf32, n_scans)
@@ -1095,6 +1121,15 @@ computes:
 - `frag_corr_top3_weight`      Mean Pearson(rank-1..3 chrom, weight chrom)
 - `frag_apex_dispersion_irt`   Std-dev of arg-max iRT across the 8 fragments (real: tight; chimeric: wide)
 - `n_correlated_fragments`     Count of fragments with Pearson(frag, weight) > 0.7
+- `n_scans_in_window`          Number of this precursor's PSMs in the same cycle (and isolation
+                               window) as this PSM, i.e. at other ion-mobility slices of the same
+                               retention time. 1 on Thermo/Sciex data (one scan per window per cycle).
+- `weight_frac_in_cycle`       This PSM's deconvolution weight over the sum of the precursor's
+                               weights in the same cycle: its share of the mobility profile at that
+                               retention time (1 when alone in the cycle, and on Thermo/Sciex data).
+                               2026-09-17, timsTOF 250 pg human at 1% FDR: none 9,670; slice count
+                               alone 9,724; slice count + weight fraction 9,914; per-slice / per-cycle
+                               fragment correlations and the weight/max ratio added nothing further.
 
 Validated 2026-05-10 to add ~+2,088 IDs at q≤.01 vs MS1-only baseline (Olsen
 Exploris one-file, entrap1, paired EFDR ~0.0107). Mechanism is the same as
@@ -1334,6 +1369,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     # second pass and the Dict-build that classifier training would
     # otherwise do over ~14M rows).
     psms[!, :n_scans]                     = ones(UInt32, n)   # default 1 for single-PSM precs
+    psms[!, :n_scans_in_window]           = ones(UInt32, n)   # PSMs of the precursor in the same cycle
+    psms[!, :weight_frac_in_cycle]        = ones(Float32, n)  # weight / sum of the precursor's weights in the cycle
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -1352,6 +1389,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
     n_scans_col = psms.n_scans::Vector{UInt32}
+    n_scans_win_col = psms.n_scans_in_window::Vector{UInt32}
+    wfrac_col = psms.weight_frac_in_cycle::Vector{Float32}
+    has_cycle = hasproperty(psms, :cycle_idx)
+    cyc_col = has_cycle ? Int32[Int32(c) for c in psms.cycle_idx] : Int32[]
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
@@ -1376,6 +1417,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     cfw_scratch  = [Vector{Float32}(undef, 8) for _ in 1:nthr]
     vm0_scratch  = [Float32[] for _ in 1:nthr]
     apex_scratch = [Float32[] for _ in 1:nthr]
+    cyc_scratch  = [Int32[] for _ in 1:nthr]
+    cw_scratch   = [Float32[] for _ in 1:nthr]
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the output columns; all input arrays are read-only.
@@ -1392,6 +1435,32 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             len_u32 = UInt32(npts)
             for k in 0:(npts-1)
                 n_scans_col[perm[i_start + k]] = len_u32
+            end
+            # :n_scans_in_window / :weight_frac_in_cycle — PSMs of this precursor sharing the
+            # row's cycle, and the row's share of their summed weight. Rows of a precursor arrive
+            # in scan order, so the cycle copy is nearly sorted (insertion sort is ~O(n) there and
+            # allocation-free); the per-cycle weight sum is a prefix sum over the sorted copy.
+            if has_cycle && npts > 1
+                cyc = cyc_scratch[tid]; resize!(cyc, npts)
+                cw  = cw_scratch[tid];  resize!(cw, npts)
+                for k in 1:npts; cyc[k] = cyc_col[perm[i_start + k - 1]]; end
+                sort!(cyc; alg = Base.Sort.InsertionSort)
+                # cw[j] = summed weight of the cycle at sorted position j (one pass: accumulate into the
+                # run's first slot via binary search on the sorted keys, then read it back)
+                fill!(view(cw, 1:npts), 0f0)
+                for k in 0:(npts-1)
+                    i_orig = perm[i_start + k]
+                    lo = searchsortedfirst(cyc, cyc_col[i_orig])
+                    cw[lo] += max(Float32(weight[i_orig]), 0f0)
+                end
+                for k in 0:(npts-1)
+                    i_orig = perm[i_start + k]
+                    c = cyc_col[i_orig]
+                    lo = searchsortedfirst(cyc, c); hi = searchsortedlast(cyc, c)
+                    n_scans_win_col[i_orig] = UInt32(hi - lo + 1)
+                    s = cw[lo]; w = max(Float32(weight[i_orig]), 0f0)
+                    wfrac_col[i_orig] = s > 0f0 ? w / s : 1f0
+                end
             end
             npts < 2 && continue
 

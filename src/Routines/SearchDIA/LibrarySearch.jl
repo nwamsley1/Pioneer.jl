@@ -50,6 +50,38 @@ Pipeline within this function:
 3. For each NCE model, spawn threads calling `process_scans!` to score candidates
 4. Concatenate results across threads and NCE models into a single DataFrame
 """
+# Ion-mobility gate for fragment-index candidates on timsTOF slice data: a candidate must lie within
+# IM_GATE_TOL_SIGMA x (per-charge multiplier) x sigma of the z2 line fitted in Parameter Tuning.
+#
+# Why the z2 line for every charge (measured 2026-09-21 on human 250 pg and 50 ng against the main-search PSMs):
+# the instrument's scan-to-1/K0 map is one line, and the library predictor's z3 / z4 values sit on the z2 line
+# with no offset (|median| <= 0.2 sigma) but 1.5-1.9x (z3) and 2.2x (z4) the z2 scatter; a line fitted per
+# charge gains < 5% in sigma and needs PSMs tuning rarely has for z3+. At 4 sigma the gate removes 6-9% of
+# emitted candidates and 0.2-0.6% of passing PSMs; at 3 sigma 12-19% and 0.9-1.9%. Gate on vs off, final IDs at 1%
+# FDR (HYE, 2026-09-23): 50 ng 12 files, precursors equal (off +0.05%), protein groups off -0.3%; 250 pg 6 files,
+# precursors off -0.6% (every file lower). The multipliers describe alphapept_ccs's prediction error (the IM
+# predictor used for every timsTOF library); z1 (measured 2.9x) is excluded by the default min_charge of 2.
+const IM_GATE_TOL_SIGMA = 4.0f0
+const IM_GATE_SIGMA_MULT = (z2 = 1.0f0, z3 = 1.8f0, other = 2.2f0)
+im_gate_sigma_mult(z::Integer) = z == 2 ? IM_GATE_SIGMA_MULT.z2 : z == 3 ? IM_GATE_SIGMA_MULT.z3 : IM_GATE_SIGMA_MULT.other
+# The gate's lines, indexed by charge + 1 (charges 0-8): the z2 line with its sigma scaled per charge.
+im_gate_lines((a, b, s)::NTuple{3, Float32}) = [(a, b, s * im_gate_sigma_mult(z)) for z in 0:8]
+
+"""
+    build_im_gate(search_context, spectra, precursors, ms_file_idx) -> ImGate or nothing
+
+The gate for this file: `nothing` unless the file has mobility scans, the library has predicted 1/K0, an IM
+model (z2 line) has been fitted for the file.
+"""
+function build_im_gate(search_context::SearchContext, spectra::MassSpecData, precursors, ms_file_idx::Integer)
+    getImScans(spectra) === nothing && return nothing
+    im_lib = getInvIonMobility(precursors)
+    im_lib === nothing && return nothing
+    model = getImModel(search_context, ms_file_idx)
+    haskey(model, 2) || return nothing
+    return ImGate(im_gate_lines(model[2]), im_lib, getCharge(precursors), IM_GATE_TOL_SIGMA)
+end
+
 function library_search(
     spectra::MassSpecData,
     search_context::SearchContext,
@@ -148,7 +180,8 @@ function library_search(
         Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
         getMz(precursors);
         score_filter = score_filter, max_peaks = max_peaks,
-        scratch = getFragIndexScratch(search_context))
+        scratch = getFragIndexScratch(search_context),
+        im_gate = build_im_gate(search_context, spectra, precursors, ms_file_idx))
     t_frag = time() - t_frag_start
 
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---

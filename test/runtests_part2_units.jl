@@ -45,6 +45,8 @@ include("./UnitTests/BuildPionLibTest.jl")
 include("./UnitTests/RazoQuadModel.jl")
 
 include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+include("./UnitTests/test_tdfs_mass_spec_data.jl")
+include("./UnitTests/test_scan_priority_im.jl")
 include("./UnitTests/LoggingTests.jl")
 include("./UnitTests/LogTruncationTests.jl")
 

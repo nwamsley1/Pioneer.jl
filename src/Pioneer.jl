@@ -805,7 +805,14 @@ const KOINA_URLS = Dict(
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
     "prosit_2025_40ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2025_intensity_40PTM/infer",
+    # Ion-mobility (CCS) models; selected with `library_params.im_model`.
+    "alphapept_ccs" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPept_ccs_generic/infer",
+    "im2deep" => "https://koina.wilhelmlab.org:443/v2/models/IM2Deep/infer",
 )
+
+# Valid `library_params.im_model` values. Both take (peptide_sequences,
+# precursor_charges) and return a `ccs` tensor in Å².
+const IM_MODEL_NAMES = Set(["alphapept_ccs", "im2deep"])
 
 function __init__()
     # Don't initialize gr() immediately - let it be initialized when first used
@@ -819,7 +826,7 @@ function __init__()
     get!(ENV, "GKS_WSTYPE", "100")
 end
 
-export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML,
+export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker,
        get_pioneer_version, setup_windows_lightgbm,
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

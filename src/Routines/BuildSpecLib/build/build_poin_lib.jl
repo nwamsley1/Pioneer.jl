@@ -131,6 +131,7 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
+                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -218,13 +219,13 @@ function buildPionLib(spec_lib_path::String,
     temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)
@@ -286,6 +287,7 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::InstrumentAgnosticModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
+                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -308,13 +310,13 @@ function buildPionLib(spec_lib_path::String,
     temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)

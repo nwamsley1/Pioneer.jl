@@ -434,12 +434,20 @@ function integrate_precursors(chromatograms::DataFrame,
                              quant_withheld::AbstractVector{Bool};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
+                             im_half_scans::Int = 0,
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    # 2D path: only when the caller attached the grid coordinates AND gave a band. On slice data the
+    # rows of one precursor span both cycles and mobility scans, so the 1D integrator would see a
+    # jagged multi-valued trace -- see integrate_chrom_2d for why this is not optional there.
+    use_2d = im_half_scans > 0 &&
+        hasproperty(chromatograms, :cycle_idx) && hasproperty(chromatograms, :im_scan)
+    cycle_all = use_2d ? chromatograms[!, :cycle_idx]::AbstractVector{UInt32} : UInt32[]
+    im_all = use_2d ? chromatograms[!, :im_scan]::AbstractVector{UInt16} : UInt16[]
 
     chrom_index, max_chrom_len = build_chrom_index(chromatograms, isotope_trace_type)
     N = max_chrom_len + (2*n_pad)
@@ -458,8 +466,9 @@ function integrate_precursors(chromatograms::DataFrame,
     n_thread_slots = Threads.maxthreadid()
     ws_by_thread = [WHWorkspace(N) for _ in 1:n_thread_slots]
     state_by_thread = [Chromatogram(zeros(Float32, N), zeros(Float32, N), 0) for _ in 1:n_thread_slots]
+    sc2d_by_thread = [Chrom2DScratch() for _ in 1:n_thread_slots]
 
-    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram)
+    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram, sc2d::Chrom2DScratch)
         for chunk_idx in task_ranges[batch_id]
             chunk = all_chunks[chunk_idx]
             for i in chunk
@@ -488,6 +497,27 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
+                if use_2d
+                    peak_area[i], new_best_scan[i], points_integrated[i],
+                        integration_start_scan[i], integration_stop_scan[i],
+                        quant_withheld[i] =
+                        integrate_chrom_2d(
+                        @view(rt_all[chrom_range]),
+                        @view(scan_idx_all[chrom_range]),
+                        @view(cycle_all[chrom_range]),
+                        @view(im_all[chrom_range]),
+                        @view(intensity_all[chrom_range]),
+                        apex_scan,
+                        im_half_scans,
+                        sc2d,
+                        ws,
+                        state,
+                        λ,
+                    )
+                    reset!(state)
+                    continue
+                end
+
                 peak_area[i], new_best_scan[i], points_integrated[i],
                     integration_start_scan[i], integration_stop_scan[i],
                     _, _, quant_withheld[i], _ =
@@ -512,7 +542,7 @@ function integrate_precursors(chromatograms::DataFrame,
 
     Threads.@threads :static for batch_id in 1:n_tasks
         tid = Threads.threadid()
-        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid])
+        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid], sc2d_by_thread[tid])
     end
 
     # Clamp NaN and negative values to zero for downstream processing
@@ -1405,16 +1435,56 @@ function withinQuadrupoleBounds(
     return mz_low ≤ prec_mz ≤ mz_high
 end
 
+# Empirical ion-mobility window for chromatogram extraction: a slice is extracted for a precursor only when its
+# IM scan lies within this half-width (1/K0) of the IM scan of the precursor's best PSM (the mobility analogue of
+# the per-precursor RT window). Converted to IM scans per file by `im_half_width_scans`.
+# Measured 2026-09-23 (HYE 50 ng, ~84k precursors per file, +/-96-scan extraction): the best PSM sits on the
+# mobility apex (75% exactly, 94% within one 8-scan slice, mean offset -0.5 scans); the window holds 97% of the
+# weight within +/-96 scans, and the ~2% of apexes beyond it are further than any mobility peak is wide (median
+# FWHM 0.018 1/K0), i.e. co-isolated signal, not a clipped peak. On the ramps measured so far (0.00085-0.000865
+# 1/K0 per scan) this is 64-65 scans; a narrower mobility range packs more scans into the same 1/K0.
+const CHROM_IM_WINDOW_K0 = 0.055f0
+
+# Half-width of the mobility INTEGRATION band, in 1/K0, for the 2D integrator (integrate_chrom_2d).
+# Distinct from CHROM_IM_WINDOW_K0, which is the wider window the weights are COLLECTED over.
+# Measured on twelve-file HYE runs: mobility FWHM is 0.018 1/K0 at the median and the ordering of band
+# widths is identical on the 15-min and 5-min gradients, so this is a physical constant, not a
+# per-dataset tuning knob. +/-0.021 is the setting Nathan chose; narrower is slightly more accurate and
+# slightly less precise (+/-0.007 gives yeast 0.89 / E. coli 73.5% against 0.86 / 69.3% here).
+const CHROM_IM_BAND_K0 = 0.021f0
+
+"""
+    im_half_width_scans(half_width_k0, spectra, search_context, ms_file_idx) -> Int
+
+A mobility half-width in 1/K0 as a whole number of IM scans for this file, rounded UP so the window never
+covers less than asked for. Uses the instrument's scan-to-1/K0 slope (`getImSlope`, from the `.tdfs`
+calibration); files without one (Arrow packet files) use the slope of the pooled IM line fitted in MainSearch.
+0 when neither is available.
+"""
+function im_half_width_scans(half_width_k0::Float32, spectra::MassSpecData, search_context::SearchContext,
+                             ms_file_idx::Integer)
+    slope = getImSlope(spectra)
+    if slope === nothing
+        model = getImModel(search_context, ms_file_idx)
+        slope = haskey(model, 0) ? abs(model[0][2]) : (isempty(model) ? 0f0 : abs(first(values(model))[2]))
+    end
+    return im_half_width_scans(half_width_k0, Float32(slope))
+end
+im_half_width_scans(half_width_k0::Float32, slope::Float32) = slope > 0 ? ceil(Int, half_width_k0 / slope) : 0
+
 """
     collect_rt_window_precursors!(precs_temp, rt_index, rt_start_idx, rt_stop_idx,
                                    precursors_passing, prec_mzs, prec_charges,
                                    prec_sulfur_counts, iso_splines, quad_func,
                                    precursor_transmission, isotope_err_bounds,
                                    min_fraction_transmitted, precursor_rt_map,
-                                   scan_rt, rt_binned_tol, rt_tol_fallback) -> Int
+                                   scan_rt, rt_binned_tol, rt_tol_fallback,
+                                   [im_scan, precursor_im_map, im_window_scans]) -> Int
 
 Walk the RT-bin range, applying quad-window, precursors_passing allowlist,
 per-precursor RT, isotope_err_bounds, and min_fraction_transmitted filters.
+With `precursor_im_map` (ion-mobility data) also drops precursors whose best PSM's
+IM scan is more than `im_window_scans` from the slice's `im_scan`.
 Writes the surviving precursor ids into `precs_temp[1:n]` and returns `n`.
 
 Extracted from the classic `RTIndexedTransitionSelection` path so
@@ -1437,11 +1507,17 @@ function collect_rt_window_precursors!(
     precursor_rt_map::Union{Dict{UInt32, Float32}, Nothing},
     scan_rt::Float32,
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
-    rt_tol_fallback::Float32) where {I<:Integer}
+    rt_tol_fallback::Float32,
+    im_scan::Float32 = 0f0,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0) where {I<:Integer}
 
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     size = 0
     has_rt_filter = precursor_rt_map !== nothing
+    # Empirical IM window: the slice's IM scan must lie within im_window_scans of the precursor's best PSM's
+    # IM scan (packet data with a map). Precursors without an entry are not restricted.
+    has_im_window = precursor_im_map !== nothing && im_window_scans > 0f0
 
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
@@ -1457,6 +1533,10 @@ function collect_rt_window_precursors!(
                     prec_tol = rt_binned_tol !== nothing ? get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
                     abs(scan_rt - prec_rt_val) > prec_tol && continue
                 end
+            end
+            if has_im_window
+                prec_im_val = get(precursor_im_map, prec_idx, NaN32)
+                !isnan(prec_im_val) && abs(im_scan - prec_im_val) > im_window_scans && continue
             end
 
             prec_charge = prec_charges[prec_idx]
@@ -1512,6 +1592,20 @@ function extract_chromatograms(
     for i in eachindex(_pids)
         precursor_rt_map[_pids[i]] = _rts[i]
     end
+    # Per-precursor IM centre (the best PSM's IM scan) for the empirical mobility window; mobility data only.
+    _im_scans = getImScans(spectra)
+    im_window_scans = _im_scans === nothing ? 0 :
+        im_half_width_scans(CHROM_IM_WINDOW_K0, spectra, search_context, ms_file_idx)
+    precursor_im_map = if _im_scans === nothing || im_window_scans == 0 || !hasproperty(passing_psms, :scan_idx)
+        nothing
+    else
+        _scans = passing_psms[!, :scan_idx]
+        m = Dict{UInt32, Float32}(); sizehint!(m, length(_pids))
+        for i in eachindex(_pids)
+            m[_pids[i]] = Float32(_im_scans[_scans[i]])
+        end
+        m
+    end
 
     # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
     # set of scan indices, so the writes never collide.
@@ -1534,6 +1628,8 @@ function extract_chromatograms(
                 ms_file_idx,
                 chrom_type;
                 scan_tic = scan_tic,
+                precursor_im_map = precursor_im_map,
+                im_window_scans = Float32(im_window_scans),
             )
         end
     end
@@ -1568,6 +1664,8 @@ function build_chromatograms(
     ms_file_idx::Int64,
     ::MS2CHROM;
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0,
 )
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
@@ -1575,6 +1673,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     spectral_scores = getMainSearchSpectralScores(search_data)
     collect_mbr_evidence = params.match_between_runs
     fused_scratch = getFusedScratch(search_data)
@@ -1623,6 +1722,8 @@ function build_chromatograms(
     frag_lookup = getFragmentLookupTable(spec_lib)
     intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
 
+    im_scans = getImScans(spectra)
+
     kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
 
     for scan_idx in scan_range
@@ -1631,6 +1732,7 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
+        im_scan = im_scans === nothing ? 0f0 : Float32(im_scans[scan_idx])
         # The total ion current is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
         #
@@ -1680,7 +1782,8 @@ function build_chromatograms(
             precursors_passing, prec_mz_arr, prec_charge_arr, prec_sulfur_arr,
             getIsoSplines(search_data), quad_func, prec_trans_buf,
             params.isotope_err_bounds, params.min_fraction_transmitted,
-            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local)
+            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local,
+            im_scan, precursor_im_map, im_window_scans)
 
         if prec_temp_size == 0
             reset!(id_to_col); reset!(Hs)
@@ -1688,8 +1791,7 @@ function build_chromatograms(
         end
 
         # 2. Pre-correct peak m/z for the scan.
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                           mass_error_model, scan_mz, scan_int,
                                           Float32(rt))
@@ -1708,7 +1810,8 @@ function build_chromatograms(
             scan_int, 0f0, Float32(Inf),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             params.n_frag_isotopes,
-            params.isotope_err_bounds)
+            params.isotope_err_bounds;
+            scan_ev = getCollisionEnergyEv(spectra, scan_idx))
 
         if nmatches > 2
             # Resize weight buffers for new columns.
@@ -1857,6 +1960,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
@@ -1959,8 +2063,7 @@ function build_chromatograms(
             ion_misses,
             ion_templates,
             ion_idx,
-            getMzArray(spectra, scan_idx),
-            getIntensityArray(spectra, scan_idx),
+            getPeaks!(decode_buf, spectra, scan_idx)...,
             mem,
             getHighMz(spectra, scan_idx)
         )

@@ -81,6 +81,9 @@ const ADVANCED_FEATURE_SET = [
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
+    # Ion-mobility residual (sigma units) from MainSearch's per-file mobility
+    # calibration; 0 on files without mobility data (see add_im_error!).
+    :im_error,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
@@ -96,6 +99,8 @@ const ADVANCED_FEATURE_SET = [
     :n_correlated_fragments_bitvec_rank,
     :frag_corr_strength,
     :frag_corr_effective_n,
+    # Ion-mobility slice data (see _add_fragment_chromatogram_features!); 1 without mobility data.
+    :n_scans_in_window, :weight_frac_in_cycle,
     :frag_corr_best_m0,
     :n_frags_detected_union,
     :n_frags_detected_intersection,

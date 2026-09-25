@@ -81,7 +81,10 @@ function _accumulate_run_summary!(
     peak_area::AbstractVector, peak_area_normalized, mbr_recovered,
     irt_error::AbstractVector, rt_fwhm::AbstractVector, points_integrated::AbstractVector,
     charge::AbstractVector, missed_cleavage::AbstractVector)
-    for i in eachindex(ms_file_idx)
+    # NOT eachindex: these are separate ChainedVectors whose chunk boundaries need not line up,
+    # and eachindex yields a ChainedVectorIndex bound to this column's own chunking. Using it on
+    # another column throws "indexing ChainedVector with wrong ChainedVectorIndex".
+    for i in 1:length(ms_file_idx)
         target[i] || continue
         s = stats[ms_file_idx[i]]
         s.precursors_identified += 1
@@ -140,11 +143,16 @@ function _mass_tol_columns(models::Dict{Int64, AbstractMassErrorModel}, i::Int)
     return (getLeftTol(m), getRightTol(m), _mass_tol_unit(m))
 end
 
-# Scan-level metadata straight from the (memory-mapped) raw file.
+# Scan-level metadata straight from the raw file (memory-mapped Arrow, or the .tdfs slice table).
 function _raw_file_columns(path::String)
-    tbl = Arrow.Table(path)
-    orders = tbl[:msOrder]
-    rts = tbl[:retentionTime]
+    if is_tdfs_path(path)
+        sl = TimsSlices.open_tdfs(path).slices
+        orders = sl.ms_order; rts = sl.retention_time
+    else
+        tbl = Arrow.Table(path)
+        orders = tbl[:msOrder]
+        rts = tbl[:retentionTime]
+    end
     n_ms1 = count(==(UInt8(1)), orders)
     n_ms2 = length(orders) - n_ms1
     gradient = isempty(rts) ? missing : Float32(maximum(rts))

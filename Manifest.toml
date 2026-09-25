@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.6"
+julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "04352d64b527d547fc29c5a6e9f5b461996a9558"
+project_hash = "b2d446b06df474c13b15d5be465806405780d577"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -412,6 +412,11 @@ version = "0.6.3"
 git-tree-sha1 = "249fe38abf76d48563e2f4556bebd215aa317e15"
 uuid = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 version = "4.1.1"
+
+[[deps.DBInterface]]
+git-tree-sha1 = "265d7f87f329c063cbde41920f9d00713a43cedd"
+uuid = "a10d1c49-ce27-4219-8d33-6db1a4562965"
+version = "2.7.0"
 
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
@@ -930,6 +935,16 @@ weakdeps = ["ArrowTypes"]
     [deps.JSON.extensions]
     JSONArrowExt = ["ArrowTypes"]
 
+[[deps.JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
+git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.14.3"
+weakdeps = ["ArrowTypes"]
+
+    [deps.JSON3.extensions]
+    JSON3ArrowExt = ["ArrowTypes"]
+
 [[deps.JpegTurbo_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "c0c9b76f3520863909825cbecdef58cd63de705a"
@@ -1376,7 +1391,7 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.4"
 
 [[deps.Pioneer]]
-deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables"]
+deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "TimsSlices"]
 path = "."
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 version = "0.10.0"
@@ -1664,6 +1679,18 @@ git-tree-sha1 = "e24dc23107d426a096d3eae6c165b921e74c18e4"
 uuid = "fdea26ae-647d-5447-a871-4b548cad5224"
 version = "3.7.2"
 
+[[deps.SQLite]]
+deps = ["DBInterface", "Random", "SQLite_jll", "Serialization", "Tables", "WeakRefStrings"]
+git-tree-sha1 = "2a4d0a468db82170e9111b89aaad4ef68d83599c"
+uuid = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
+version = "1.8.3"
+
+[[deps.SQLite_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Zlib_jll", "dlfcn_win32_jll"]
+git-tree-sha1 = "1ccd7f7235fe700bfb57dd6dd9984cce08f517d2"
+uuid = "76ed43ae-9a5d-5a62-8c75-30186b810ce8"
+version = "3.53.4+0"
+
 [[deps.ScientificTypesBase]]
 deps = ["InteractiveUtils"]
 git-tree-sha1 = "e785eaa35a0f5518a388f9010e66fda64ea95ede"
@@ -1828,6 +1855,12 @@ git-tree-sha1 = "f2dcb92855b31ad92fe8f079d4f75ac57c93e4b8"
 uuid = "354b36f9-a18e-4713-926e-db85100087ba"
 version = "1.3.7"
 
+[[deps.StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "159331b30e94d7b11379037feeb9b690950cace8"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.11.0"
+
 [[deps.StructUtils]]
 deps = ["Dates", "UUIDs"]
 git-tree-sha1 = "82bee338d650aa515f31866c460cb7e3bcef90b8"
@@ -1928,6 +1961,14 @@ version = "0.5.29"
 
     [deps.TimerOutputs.weakdeps]
     FlameGraphs = "08572546-2f56-4bcf-ba4e-bab62c3a3f89"
+
+[[deps.TimsSlices]]
+deps = ["Arrow", "JSON3", "Mmap", "Printf", "SQLite", "Zstd_jll"]
+git-tree-sha1 = "4824beca737f868b0cffd9fdaf999ad8cbc319bf"
+repo-rev = "master"
+repo-url = "https://github.com/nwamsley1/TimsSlices.jl"
+uuid = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
+version = "0.2.0"
 
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"
@@ -2177,6 +2218,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "446b23e73536f84e8037f5dce465e92275f6a308"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
 version = "1.5.7+1"
+
+[[deps.dlfcn_win32_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "e141d67ffe550eadfb5af1bdbdaf138031e4805f"
+uuid = "c4b69c83-5512-53e3-94e6-de98773c479f"
+version = "1.4.2+0"
 
 [[deps.eudev_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]

@@ -56,6 +56,35 @@ function get_fragment_bounds(
 end
 
 """
+    get_constant_fragment_bounds(center_mass, isolation_width, ms_order, low_frag_mass, high_frag_mass)
+
+Bounds for instruments that record every MS2 window over one fixed m/z range (Bruker timsTOF): the fragment range
+does not depend on the precursor, so no regression. Over the MS2 scans:
+
+- fragment range = (minimum scan low m/z, maximum scan high m/z), the widest range any MS2 scan recorded;
+- precursor range = (minimum of `centre - width / 2`, maximum of `centre + width / 2`): the outer EDGES of the
+  isolation windows, not their centres. A top window centred at 900 m/z and 25 m/z wide isolates precursors up to
+  912.5 m/z; bounding at the centre would drop the upper half of that window from the library.
+
+Returns `(FragBoundModel, prec_mz_min, prec_mz_max)` like `get_fragment_bounds`.
+"""
+function get_constant_fragment_bounds(
+    center_mass::AbstractVector{<:Union{Missing, Float32}},
+    isolation_width::AbstractVector{<:Union{Missing, Float32}},
+    ms_order::AbstractVector{UInt8},
+    low_frag_mass::AbstractVector{Float32},
+    high_frag_mass::AbstractVector{Float32}
+    )
+    ms2 = findall(==(0x02), ms_order)
+    isempty(ms2) && throw(ArgumentError("no MS2 scans to take fragment and precursor bounds from"))
+    frag_lo = minimum(low_frag_mass[i] for i in ms2)
+    frag_hi = maximum(high_frag_mass[i] for i in ms2)
+    prec_lo = minimum(Float32(center_mass[i] - isolation_width[i] / 2) for i in ms2)
+    prec_hi = maximum(Float32(center_mass[i] + isolation_width[i] / 2) for i in ms2)
+    return FragBoundModel(ImmutablePolynomial((frag_lo,)), ImmutablePolynomial((frag_hi,))), prec_lo, prec_hi
+end
+
+"""
 Coefficients for a manual fragment-bound rule, as `(slope, intercept)` pairs
 applied to the precursor m/z.
 
@@ -187,7 +216,20 @@ function get_fragment_bounds(
     }} = nothing)::@NamedTuple{frag_bounds::FragBoundModel, prec_mz_min::Float32, prec_mz_max::Float32}
 
     if auto_detect_frag_bounds
-        if isfile(frag_bounds_detection_raw_file_path)
+        # A timsTOF .tdfs run is a directory: one fixed MS2 range for every window (constant fragment bounds);
+        # precursor bounds from the diaPASEF windows' edges.
+        if is_tdfs_path(frag_bounds_detection_raw_file_path)
+            try
+                d = TdfsMassSpecData(frag_bounds_detection_raw_file_path)
+                frag_bounds, prec_mz_min, prec_mz_max = get_constant_fragment_bounds(
+                    getCenterMzs(d), getIsolationWidthMzs(d), getMsOrders(d), getLowMzs(d), getHighMzs(d))
+                return (frag_bounds = frag_bounds, prec_mz_min = prec_mz_min - 1.0f0, prec_mz_max = prec_mz_max + 1.0f0)
+            catch e
+                @user_warn "failed to read fragment and precursor bounds from the timsTOF file " *
+                           "$frag_bounds_detection_raw_file_path ($(sprint(showerror, e))). Using default values. " *
+                           "Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
+            end
+        elseif isfile(frag_bounds_detection_raw_file_path)
             try
             MS_TABLE = Arrow.Table(frag_bounds_detection_raw_file_path)
             frag_bounds, prec_mz_min, prec_mz_max =  get_fragment_bounds(

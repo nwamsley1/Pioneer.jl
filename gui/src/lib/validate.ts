@@ -133,10 +133,23 @@ export function msDataNote(value: string, info: PathInfo): Note {
           msg: 'Unsupported type — Pioneer reads .raw, .mzML or .arrow (a folder is fine too).',
         }
   }
-  if (info.ms_file_count === 0) {
-    return { level: 'error', msg: 'No .raw, .mzML or .arrow files in this folder.' }
+  // A .tdfs run is a folder, but it is one run, not a folder of them.
+  if (info.extension === 'tdfs') {
+    return {
+      level: 'error',
+      msg: 'This is a single .tdfs run. Choose the folder that holds it, or use Chosen files.',
+    }
   }
-  if (info.raw_count > 0 && info.arrow_count === 0) {
+  if (info.ms_file_count === 0) {
+    if (info.d_count > 0) {
+      return {
+        level: 'error',
+        msg: `${info.d_count} Bruker .d folder${info.d_count > 1 ? 's' : ''} found and no .tdfs — convert them first.`,
+      }
+    }
+    return { level: 'error', msg: 'No .raw, .mzML, .arrow or .tdfs data in this folder.' }
+  }
+  if (info.raw_count > 0 && info.arrow_count === 0 && info.tdfs_count === 0) {
     // SearchDIA reads Arrow; .raw still needs converting first.
     return {
       level: 'warn',
@@ -254,9 +267,19 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   }
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This file does not exist.' }
-  if (info.is_dir) return { level: 'error', msg: 'Choose a single MS data file, not a folder.' }
-  if (info.extension && !MS_EXTENSIONS.includes(info.extension)) {
-    return { level: 'error', msg: 'Expected a .raw, .mzML or .arrow file.' }
+  if (info.is_dir) {
+    // A timsTOF .tdfs run is a folder. Its bounds are read differently from a Thermo file's.
+    if (info.extension === 'tdfs') {
+      return {
+        level: '',
+        msg: 'timsTOF run: one fixed fragment range for every window (the widest MS2 scan range), and the precursor range from the outer edges of the diaPASEF windows.',
+      }
+    }
+    return { level: 'error', msg: 'Choose a single MS data file or a .tdfs run, not a folder.' }
+  }
+  // BuildSpecLib reads the calibration run as Arrow; convert .raw / .mzML first.
+  if (info.extension !== 'arrow') {
+    return { level: 'error', msg: 'Expected an .arrow file or a timsTOF .tdfs run (convert .raw / .mzML first).' }
   }
   return NONE
 }
@@ -589,6 +612,16 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
 
+  // Bruker bundles are folders: the input is one `.d` or a folder of them.
+  if (p.format === 'bruker') {
+    if (info.is_file) return { level: 'error', msg: 'Choose a .d folder, or a folder of them.' }
+    if (info.d_count === 0) return { level: 'error', msg: 'No Bruker .d folders here.' }
+    return {
+      level: '',
+      msg: `${info.d_count} .d folder${info.d_count > 1 ? 's' : ''} to convert to .tdfs.`,
+    }
+  }
+
   const mzml = p.format === 'mzml'
   const label = mzml ? '.mzML' : '.raw'
   const count = mzml ? info.mzml_count : info.raw_count
@@ -616,6 +649,14 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
 export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
   if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
   if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
+  if (p.format === 'bruker') {
+    return info.tdfs_count > 0
+      ? {
+          level: 'warn',
+          msg: `This folder already holds ${info.tdfs_count} .tdfs run${info.tdfs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+        }
+      : NONE
+  }
   if (info.exists && info.arrow_count > 0) {
     // Nothing to warn about once the files are being left alone: the warning
     // existed only to offer this setting, and telling someone to enable what

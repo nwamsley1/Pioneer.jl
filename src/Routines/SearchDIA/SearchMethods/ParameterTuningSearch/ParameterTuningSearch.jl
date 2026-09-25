@@ -90,6 +90,7 @@ function set_rt_to_irt_model!(
     
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
     getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA
+    @debug_l1 "  Tuning iRT tolerance for the main search: $(round(getIrtErrors(search_context)[ms_file_idx], digits = 3)) (MAD $(round(model[4], digits = 3)) x $(TUNING_IRT_TOL_SIGMA))"
 end
 
 
@@ -259,7 +260,8 @@ function accumulate_psms!(
     score_tiers = TUNING_SCORE_TIERS,
     n_required_top::Int = TUNING_N_REQUIRED_TOP,
     fdr_threshold::Float16 = Float16(0.01),
-    label::String = "accumulate"
+    label::String = "accumulate",
+    max_per_precursor::Int = 0      # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -268,6 +270,9 @@ function accumulate_psms!(
     scored_psms = DataFrame()
     n_passing = 0
     total_scans_used = 0
+    t_phase = time()
+    end_reason = "exhausted all tiers"
+    n_prec = 0; n_capped = 0
 
     for (tier_idx, score) in enumerate(score_tiers)
         setMassErrorModel!(search_context, ms_file_idx, mass_model)
@@ -279,8 +284,10 @@ function accumulate_psms!(
         raw_psms = DataFrame()
         prev = 0
         n_passing = 0
-        # First tier: start at initial_scans. Subsequent: start at max_scans.
-        scan_target = tier_idx == 1 ? min(initial_scans, max_scans) : max_scans
+        # Second-order stopping state: the previous checkpoint and the previous batch's marginal rate.
+        prev_scans = 0; prev_passing = 0; prev_marginal = -1.0
+        # Every tier grows from initial_scans so the second-order decay check can end it early.
+        scan_target = min(initial_scans, max_scans)
 
         while prev < max_scans
             batch_indices = all_scan_indices[(prev+1):scan_target]
@@ -307,14 +314,25 @@ function accumulate_psms!(
                              scored_tmp[!,:q_value]; fdr_scale_factor=fdr_scale)
                 filter!(row -> row.q_value::Float16 <= fdr_threshold, scored_tmp)
                 filter!(row -> row.target::Bool, scored_tmp)
+                n_before = nrow(scored_tmp)
+                if max_per_precursor > 0
+                    # Keep the best k PSMs per precursor (by prob) and count the remaining rows: a few
+                    # persistent ions cannot fill the target on their own (on packet data one precursor
+                    # yields ~7 adjacent-slice PSMs), but the target does not demand distinct precursors.
+                    scored_tmp = filter_top_psms_per_precursor(scored_tmp, max_per_precursor)
+                end
                 n_passing = nrow(scored_tmp)
+                n_capped = n_before - n_passing
+                n_prec = length(unique(scored_tmp.precursor_idx))
                 scored_psms = scored_tmp
             end
 
-            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, " *
-                       "$(n_passing) at $(round(Float64(fdr_threshold)*100, digits=1))% FDR"
+            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, $(n_passing) PSMs at " *
+                       "$(round(Float64(fdr_threshold)*100, digits=1))% FDR ($(n_prec) precursors" *
+                       (max_per_precursor > 0 ? ", $(n_capped) removed by the $(max_per_precursor)/precursor cap" : "") * ")"
 
             if n_passing >= target_psms
+                end_reason = "converged at score≥$(score)"
                 break
             end
 
@@ -322,6 +340,23 @@ function accumulate_psms!(
             scans_remaining = max_scans - prev
             scans_remaining <= 0 && break
             rate = n_passing / max(prev, 1)
+            # Second-order: marginal yield of the last batch vs the batch before. If it is decaying,
+            # the most the remaining scans can add is dn * d / (1 - d) (geometric tail); if even that
+            # cannot reach the target, further search at this tier is wasted -> back off now.
+            ds = prev - prev_scans; dn = n_passing - prev_passing
+            marginal = ds > 0 ? dn / ds : 0.0
+            if prev_marginal > 0 && marginal < prev_marginal
+                d = marginal / prev_marginal
+                tail_max = dn * d / (1 - d)
+                if n_passing + tail_max < target_psms
+                    @debug_l1 "  $(label) (score≥$(score)): marginal yield decaying (" *
+                               "$(round(1000 * prev_marginal, digits=2)) -> $(round(1000 * marginal, digits=2)) per 1k scans, " *
+                               "tail bound +$(round(Int, tail_max)) < $(target_psms - n_passing) needed), backing off early"
+                    end_reason = "score≥$(score) backed off early at $(prev) scans"
+                    break
+                end
+            end
+            prev_scans = prev; prev_passing = n_passing; prev_marginal = marginal
             additional = if rate > 0
                 remaining = target_psms - n_passing
                 clamp(ceil(Int, remaining / rate * 1.5), 1, scans_remaining)
@@ -344,6 +379,10 @@ function accumulate_psms!(
     delete!(search_context.bitvec_filter, ms_file_idx)
 
     converged = n_passing >= target_psms
+    @debug_l1 "  $(label) summary: $(converged ? "CONVERGED" : "NOT converged") — $(end_reason); " *
+               "$(total_scans_used) of $(max_scans) scans searched, $(n_passing) PSMs from $(n_prec) precursors " *
+               "(target $(target_psms), unit = " * (max_per_precursor > 0 ? "rows after best-$(max_per_precursor)/precursor cap" : "rows") *
+               "), $(round(time() - t_phase, digits=2))s"
     rate = n_passing / max(total_scans_used, 1)
     return converged, scored_psms, total_scans_used, rate
 end
@@ -437,18 +476,33 @@ function fit_nce_from_psms!(
     sort!(nce_psms, :gof, rev=true)
     best_nce = combine(groupby(nce_psms, :precursor_idx), first)
 
-    # Fit NCE model
-    nce_model = fit_binned_median_nce(
-        best_nce[!, :prec_mz],
-        best_nce[!, :nce],
-        best_nce[!, :charge],
-        Float32(median(nce_grid)))
+    # Fit NCE model. timsTOF data (an eV ramp along ion mobility, so every slice has its own energy) is binned
+    # on the Thermo-normalised nominal NCE of each precursor's scan eV instead of on precursor m/z (see
+    # CeBinnedNceModel). Only for ion-mobility data: Thermo files also carry a per-scan eV (converted from the
+    # method NCE), and for them the m/z-binned model is kept, unchanged from before the timsTOF work.
+    scan_evs = Float32[getCollisionEnergyEv(spectra, si) for si in best_nce[!, :scan_idx]]
+    use_ce = getImScans(spectra) !== nothing && count(>(0f0), scan_evs) >= 50
+    nce_model = if use_ce
+        fit_ce_binned_median_nce(scan_evs, best_nce[!, :prec_mz], best_nce[!, :nce],
+                                 best_nce[!, :charge], Float32(median(nce_grid)))
+    else
+        fit_binned_median_nce(best_nce[!, :prec_mz], best_nce[!, :nce],
+                              best_nce[!, :charge], Float32(median(nce_grid)))
+    end
 
     setNceModel!(search_context, ms_file_idx, nce_model)
 
     n_precs = nrow(best_nce)
     charges = sort(unique(best_nce[!, :charge]))
-    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)"
+    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)" *
+              (use_ce ? "; binned on scan collision energy (nominal NCE)" : "; binned on precursor m/z")
+
+    # Plot x axis and the bin table: nominal NCE for the CE-keyed model, else m/z.
+    x_vals = use_ce ?
+        Float32[nominal_nce(scan_evs[i], best_nce[i, :prec_mz], best_nce[i, :charge]) for i in 1:nrow(best_nce)] :
+        best_nce[!, :prec_mz]
+    bins_model = use_ce ? nce_model.inner : nce_model
+    x_label = use_ce ? "Nominal NCE (scan eV × 500 / (m/z × f(z)))" : "Precursor m/z"
 
     # Generate per-charge diagnostic plots
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
@@ -457,27 +511,27 @@ function fit_nce_from_psms!(
         mask = best_nce[!, :charge] .== charge
         n_c = count(mask)
         n_c < 10 && continue
-        charge_mz = best_nce[mask, :prec_mz]
+        charge_mz = x_vals[mask]
         charge_nce = best_nce[mask, :nce]
         ci = Int(UInt8(charge))
 
         # Get the bin edges from the fitted model
-        has_bins = ci >= 1 && ci <= 6 && nce_model.offsets[ci] != 0x00
+        has_bins = ci >= 1 && ci <= 6 && bins_model.offsets[ci] != 0x00
         if has_bins
-            nb = Int(nce_model.n_bins[ci])
-            bw = Float64(nce_model.bin_width[ci])
-            mz_lo = Float64(nce_model.mz_min[ci])
+            nb = Int(bins_model.n_bins[ci])
+            bw = Float64(bins_model.bin_width[ci])
+            mz_lo = Float64(bins_model.mz_min[ci])
             bin_edges = [mz_lo + (b - 1) * bw for b in 1:nb+1]
-            bin_medians = [Float64(nce_model.medians[Int(nce_model.offsets[ci]) + b - 1]) for b in 1:nb]
+            bin_medians = [Float64(bins_model.medians[Int(bins_model.offsets[ci]) + b - 1]) for b in 1:nb]
         else
             nb = 1
             mz_lo_f, mz_hi_f = extrema(charge_mz)
             bin_edges = [Float64(mz_lo_f), Float64(mz_hi_f) + 1.0]
-            bin_medians = [Float64(nce_model(median(charge_mz), charge))]
+            bin_medians = [Float64(bins_model(median(charge_mz), charge))]
         end
 
         p = Plots.plot(
-            xlabel = "Precursor m/z", ylabel = "Best NCE",
+            xlabel = x_label, ylabel = "Best NCE",
             title = _split_title(parsed_fname, "NCE +$(charge)") *
                     "\nn=$n_c, $(nb) bins, $(length(nce_grid)) grid pts",
             size = (900, 900), topmargin = 15Plots.mm,
@@ -581,7 +635,12 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        scan_priority = get_ms2_scan_priority_order(spectra)
+        # Ion-mobility packet files: stratify within each RT bin over (isolation
+        # window, IM bin) so adjacent-scan duplicates of one precursor and one
+        # dense window cannot dominate (see get_ms2_scan_priority_order_im).
+        scan_priority = getImScans(spectra) === nothing ?
+            get_ms2_scan_priority_order(spectra) :
+            get_ms2_scan_priority_order_im(spectra, TUNING_IM_BINS)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true
@@ -602,6 +661,7 @@ function process_file!(
              initial_scans = Int64(TUNING_MIN_COLLECT_SCANS),
              max_peaks = 0),
         )
+        phase_caps = (0, TUNING_MAX_PSMS_PER_PRECURSOR)   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
         for (phase_idx, phase) in enumerate(phases)
@@ -615,7 +675,8 @@ function process_file!(
                 target_psms = phase.target_psms,
                 initial_scans = phase.initial_scans,
                 max_peaks = phase.max_peaks,
-                label = phase.label)
+                label = phase.label,
+                max_per_precursor = phase_caps[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
 
@@ -656,6 +717,25 @@ function process_file!(
                         results.rt_to_irt_model[] = IdentityModel()
                         getIrtErrors(search_context)[ms_file_idx] = typemax(Float32)
                         @debug_l1 "  RT: insufficient PSMs ($(n_passing) < $(MIN_PSMS_FOR_RT))"
+                    end
+
+                    # Ion-mobility lines (timsTOF slice data) for the fragment-index IM gate of the later
+                    # stages; MainSearch refits them from its own PSMs.
+                    if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing
+                        im_lib_all = getInvIonMobility(getPrecursors(getSpecLib(search_context)))
+                        im_scan_col = getImScans(spectra)
+                        im_scan = Float32[Float32(im_scan_col[si]) for si in scored_psms[!, :scan_idx]]
+                        im_pred = Float32[Float32(im_lib_all[pid]) for pid in scored_psms[!, :precursor_idx]]
+                        # the z2 line only: the gate derives every charge from it (see build_im_gate)
+                        im_calib = Vector{Bool}(scored_psms[!, :target] .& (scored_psms[!, :charge] .== 2))
+                        im_models = fit_im_lines(im_scan, im_pred, scored_psms[!, :charge], im_calib; min_calib = TUNING_IM_MIN_CALIB)
+                        setImModel!(search_context, ms_file_idx, im_models)
+                        if haskey(im_models, 2)
+                            a, b, s = im_models[2]
+                            @debug_l1 "  IM line (tuning, z2, $(count(im_calib)) PSMs): 1/K0 = $(round(a, digits = 4)) + ($(round(b, digits = 6))) * scan, sigma = $(round(s, digits = 4))"
+                        else
+                            @debug_l1 "  IM line: fewer than $(TUNING_IM_MIN_CALIB) z2 target PSMs, no IM gate for this file"
+                        end
                     end
 
                     iteration_state.best_fragments = frags

@@ -263,6 +263,21 @@ export async function pickFolder(title: string): Promise<string | null> {
   return picked
 }
 
+/** Native folder picker allowing several folders. Returns [] when cancelled. */
+export async function pickFolders(title: string): Promise<string[]> {
+  const picked = await open({ directory: true, multiple: true, title, defaultPath: lastDir() })
+  if (!Array.isArray(picked) || picked.length === 0) return []
+  rememberDir(picked[0], true)
+  return picked
+}
+
+/** The run a picked file stands for. A timsTOF `.tdfs` run is a folder, which a file dialog cannot select, so
+ *  choosing any file inside one (its `slices.arrow`, say) means the run itself. Anything else is returned as is. */
+export function asRunPath(file: string): string {
+  const parent = file.trim().replace(/[\\/][^\\/]*$/, '')
+  return /\.tdfs$/i.test(parent) ? parent : file
+}
+
 /** Where to write a new library.
  *
  *  A save dialog, not a folder picker. `pickFolder` can only return a

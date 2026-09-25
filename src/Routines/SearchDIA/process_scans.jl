@@ -197,7 +197,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem)
@@ -229,7 +229,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem)

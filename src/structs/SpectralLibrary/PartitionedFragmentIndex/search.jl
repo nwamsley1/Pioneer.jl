@@ -213,8 +213,8 @@ on every call so scans, calibrated models, and intensity cutoffs cannot go stale
         partition::LocalPartition{T},
         irt_low::Float32,
         irt_high::Float32,
-        masses::AbstractArray{Union{Missing, U}},
-        intensities::AbstractArray{Union{Missing, V}},
+        masses::AbstractArray{<:Union{Missing, U}},
+        intensities::AbstractArray{<:Union{Missing, V}},
         mass_err_model::AbstractMassErrorModel;
         linear_threshold::UInt32 = HINT_LINEAR_THRESHOLD,
         intensity_threshold::Float32 = 0.0f0,
@@ -317,11 +317,31 @@ end
 abstract type FragIndexEmitStrategy end
 
 """
-Emit to flat buffers for downstream deconvolution. Only bitmask filter applied.
-Parameterized on filter type F for compile-time dispatch.
+Ion-mobility gate on fragment-index candidates (timsTOF slice data): a candidate is kept only when its library
+1/K0 lies within `tol_sigma` sigma of the line `a + b * im_scan` fitted in Parameter Tuning (`fit_im_lines`).
+`lines[z + 1]` is the entry for charge z: the z2 line with its sigma scaled per charge (`build_im_gate`).
 """
-struct EmitToBuffer{F<:AbstractBitVecFilter} <: FragIndexEmitStrategy
+struct ImGate{V<:AbstractVector{Float32}, C<:AbstractVector{UInt8}}
+    lines::Vector{NTuple{3, Float32}}
+    im_lib::V
+    prec_charges::C
+    tol_sigma::Float32
+end
+
+@inline function passes_im_gate(g::ImGate, pid::UInt32, scan_im::Float32)
+    z = Int(@inbounds g.prec_charges[pid])
+    a, b, s = @inbounds g.lines[z + 1 <= length(g.lines) ? z + 1 : 1]
+    return abs(@inbounds(g.im_lib[pid]) - (a + b * scan_im)) <= g.tol_sigma * s
+end
+@inline passes_im_gate(::Nothing, ::UInt32, ::Float32) = true
+
+"""
+Emit to flat buffers for downstream deconvolution. Bitmask filter, plus the ion-mobility gate when one is set.
+Parameterized on filter type F (and gate type G) for compile-time dispatch.
+"""
+struct EmitToBuffer{F<:AbstractBitVecFilter, G<:Union{Nothing, ImGate}} <: FragIndexEmitStrategy
     sf::F
+    gate::G
 end
 
 """
@@ -340,17 +360,19 @@ end
 Process the scored counter for one scan. Dispatches on strategy type.
 Returns updated write position (for EmitToBuffer) or 0 (for EmitToAccumulator).
 """
-@inline function emit_candidates!(s::EmitToBuffer{F}, lc::Counter{UInt16, UInt8},
-        l2g::Vector{UInt32}, si::Int, scan_irt::Float32,
+@inline function emit_candidates!(s::EmitToBuffer{F, G}, lc::Counter{UInt16, UInt8},
+        l2g::Vector{UInt32}, si::Int, scan_irt::Float32, scan_im::Float32,
         prec_lo::Float32, prec_hi::Float32,
         precursor_mzs::AbstractVector{Float32},
-        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {F<:AbstractBitVecFilter}
+        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {F<:AbstractBitVecFilter, G}
     sf = s.sf
+    gate = s.gate
     @inbounds for i in 1:(lc.size - 1)
         lid = lc.ids[i]
         score = lc.counts[lid]
         passes_filter(sf, score) || continue
         global_pid = l2g[lid]
+        passes_im_gate(gate, global_pid, scan_im) || continue
         wp += 1
         if wp > length(pid_buf)
             new_len = length(pid_buf) * 2
@@ -364,7 +386,7 @@ Returns updated write position (for EmitToBuffer) or 0 (for EmitToAccumulator).
 end
 
 @inline function emit_candidates!(s::EmitToAccumulator, lc::Counter{UInt16, UInt8},
-        l2g::Vector{UInt32}, si::Int, scan_irt::Float32,
+        l2g::Vector{UInt32}, si::Int, scan_irt::Float32, scan_im::Float32,
         prec_lo::Float32, prec_hi::Float32,
         precursor_mzs::AbstractVector{Float32},
         tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int)
@@ -418,6 +440,7 @@ function searchFragmentIndexPartitionMajorHinted(
         precursor_irts::AbstractVector{Float32} = Float32[],
         max_peaks::Int = 0,
         scratch::Union{Nothing, FragIndexScratch} = nothing,
+        im_gate::Union{Nothing, ImGate} = nothing,
         ) where {M<:AbstractMassErrorModel, Q<:QuadTransmissionModel,
                  P<:FragmentIndexSearchParameters}
 
@@ -427,6 +450,7 @@ function searchFragmentIndexPartitionMajorHinted(
     # ── 1. Pre-compute per-scan properties ─────────────────────────────────
     scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts =
         _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline, irt_tol, qtm, iso_bounds, n_scans)
+    scan_ims = _scan_im_positions(spectra, all_scan_idxs)
 
     # ── 2. Map partitions to scans ─────────────────────────────────────────
     partition_to_scans = _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, n_scans)
@@ -439,7 +463,7 @@ function searchFragmentIndexPartitionMajorHinted(
     # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
     est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
-    mz_buf_size = maximum(si -> length(getMzArray(spectra, all_scan_idxs[si])),
+    mz_buf_size = maximum(si -> getPeakCount(spectra, all_scan_idxs[si]),
                           1:n_scans; init=0)
     int_buf_size = max_peaks > 0 ? mz_buf_size : 0
 
@@ -467,12 +491,13 @@ function searchFragmentIndexPartitionMajorHinted(
         thread_mz_high_bufs = scratch.mz_high_bufs
     end
     thread_counts = zeros(Int, n_threads)
+    decode_bufs = [PeakDecodeBuffer() for _ in 1:n_threads]   # one per task below (.tdfs peaks)
 
     # ── 4. Build emit strategy (compile-time dispatch) ─────────────────────
     emit_strategy = if pattern_accumulator !== nothing
         EmitToAccumulator(pattern_accumulator, precursor_irts, Float32(irt_tol))
     else
-        EmitToBuffer(score_filter)
+        EmitToBuffer(score_filter, im_gate)
     end
 
     # ── 6. Partition-major parallel execution ──────────────────────────────
@@ -486,10 +511,11 @@ function searchFragmentIndexPartitionMajorHinted(
                 thread_si_bufs[tid], thread_pid_bufs[tid],
                 pfi, partition_to_scans, all_scan_idxs, spectra,
                 scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
-                scan_irts, precursor_mzs,
+                scan_irts, scan_ims, precursor_mzs,
                 mem, linear_threshold, n_threads,
                 thread_int_bufs[tid], max_peaks,
-                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid])
+                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid],
+                decode_bufs[tid])
             thread_times[tid] = time() - t_thread
         end
     end
@@ -535,6 +561,13 @@ function _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline,
     return scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max, scan_irts
 end
 
+"""Per-scan ion-mobility scan index as Float32 (zeros for files without an `imScan` column)."""
+function _scan_im_positions(spectra, all_scan_idxs)
+    im_scans = getImScans(spectra)
+    im_scans === nothing && return zeros(Float32, length(all_scan_idxs))
+    return Float32[Float32(im_scans[scan_idx]) for scan_idx in all_scan_idxs]
+end
+
 """Build partition → scan mapping for partition-major traversal."""
 function _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, n_scans)
     partition_to_scans = [Int[] for _ in 1:pfi.n_partitions]
@@ -557,12 +590,13 @@ function _run_thread(tid::Int, emit::E,
         spectra::MassSpecData,
         scan_irt_lo::Vector{Float32}, scan_irt_hi::Vector{Float32},
         scan_prec_min::Vector{Float32}, scan_prec_max::Vector{Float32},
-        scan_irts::Vector{Float32},
+        scan_irts::Vector{Float32}, scan_ims::Vector{Float32},
         precursor_mzs::AbstractVector{Float32},
         mem::M,
         linear_threshold::UInt32, n_threads::Int,
         int_buf::Vector{Float32}, max_peaks::Int,
-        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32}
+        mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32},
+        decode_buf::PeakDecodeBuffer
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
 
     wp = 0
@@ -579,10 +613,11 @@ function _run_thread(tid::Int, emit::E,
             si = relevant[scan_i]
             scan_idx = all_scan_idxs[si]
 
+            scan_mzs, scan_intensities = getPeaks!(decode_buf, spectra, scan_idx)
+
             # Compute intensity threshold for top-N peak filtering (wide scout only)
             intensity_threshold = 0.0f0
             if max_peaks > 0
-                scan_intensities = getIntensityArray(spectra, scan_idx)
                 n_scan_peaks = length(scan_intensities)
                 if n_scan_peaks > max_peaks
                     @inbounds for j in 1:n_scan_peaks
@@ -596,15 +631,14 @@ function _run_thread(tid::Int, emit::E,
 
             _score_partition_hinted!(lc, partition,
                 scan_irt_lo[si], scan_irt_hi[si],
-                getMzArray(spectra, scan_idx),
-                getIntensityArray(spectra, scan_idx),
+                scan_mzs, scan_intensities,
                 mem;
                 linear_threshold=linear_threshold,
                 intensity_threshold=intensity_threshold,
                 mz_low_buf=mz_low_buf,
                 mz_high_buf=mz_high_buf)
 
-            wp = emit_candidates!(emit, lc, l2g, si, scan_irts[si],
+            wp = emit_candidates!(emit, lc, l2g, si, scan_irts[si], scan_ims[si],
                 scan_prec_min[si], scan_prec_max[si],
                 precursor_mzs, tid, si_buf, pid_buf, wp)
 
