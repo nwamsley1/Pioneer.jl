@@ -15,7 +15,7 @@ function evaluate_sparse_lfq()
     prior = Dict{Tuple{String,Int,String},Float64}()
     for path in meta.paths
         table = SP.Arrow.Table(path)
-        for i in eachindex(table.precursor_idx)
+        for i in 1:length(table.precursor_idx)
             table.target[i] || continue
             ismissing(table.inferred_protein_group[i]) && continue
             coalesce(table.pg_qval[i] <= meta.q, false) || continue
