@@ -208,6 +208,7 @@ function importScripts()
             "isotopeSplines.jl",
             "directLFQ.jl",
             "maxLFQ.jl",
+            "sparseMaxLFQ.jl",
             "normalizeQuant.jl",
             "proteinInference.jl",
             "runSimilarity.jl",
