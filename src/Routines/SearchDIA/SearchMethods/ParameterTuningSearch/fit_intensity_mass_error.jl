@@ -810,9 +810,18 @@ function fit_intensity_mass_error_model(
     mz_bias = mz_spline_f64
     mz_residuals = da_errs .- [mz_bias(m) for m in mz_f64]
 
-    # Step 2: intensity bias — monotone spline on ALL mz-corrected data
-    I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
-        n_knots=10, λ=1.0, lr=0.0001)
+    # Step 2: intensity bias — binned robust spline, unconstrained in curvature (the same path
+    # as the m/z bias). The former monotone fit could not follow a plateau-then-droop shape
+    # (nano ZT: flat to log2 15, +1.5 mDa near 17, −5 mDa above 18), and its coefficient
+    # projection flattened curvature exactly where the data bent. Monotone remains the fallback
+    # when there are too few bins.
+    I_spline_f64, I_label = fit_binned_regularized_bias_spline(
+        log2I, mz_residuals; n_knots=TUNING_INT_BIAS_KNOTS, λ=TUNING_INT_BIAS_LAMBDA,
+        bin_size=TUNING_INT_BIAS_BIN_SIZE)
+    if I_spline_f64 === nothing
+        I_spline_f64, I_label = fit_best_monotone_bias(log2I, mz_residuals;
+            n_knots=10, λ=1.0, lr=0.0001)
+    end
 
     if I_spline_f64 === nothing
         @user_warn "Intensity bias spline fitting failed, keeping SimpleMassErrorModel"
