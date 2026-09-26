@@ -744,29 +744,47 @@ function _mbr_fit_oof_iteration(
             continue
         end
 
+        phase_started = time()
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) training gather starting: rows=$(length(train_rows)), features=$(length(true_features))"
+        train_matrix = _mbr_gather_feature_rows(
+            candidate_frame, true_features, false_features, train_rows, n_candidates)
+        labels = _prepare_labels(train_labels)
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) training gather complete: elapsed=$(round(time() - phase_started; digits=2))s"
+
         classifier = build_lightgbm_classifier(; SHARED_LGBM_HP...)
-        LightGBM.fit!(
-            classifier,
-            _mbr_gather_feature_rows(
-                candidate_frame, true_features, false_features,
-                train_rows, n_candidates),
-            _prepare_labels(train_labels);
-            verbosity = -1,
-        )
-        # Batched so the gathered matrix stays bounded regardless of candidate count. Predictions
-        # are per-row independent, so this is equivalent to one call over all test rows.
+        phase_started = time()
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) fit starting: rows=$(length(train_rows)), threads=$(classifier.num_threads), iterations=$(classifier.num_iterations)"
+        LightGBM.fit!(classifier, train_matrix, labels; verbosity=-1)
+        _detach_lightgbm_training_data!(classifier)
+        train_matrix = nothing
+        labels = nothing
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) fit complete: elapsed=$(round(time() - phase_started; digits=2))s"
+
+        prediction_started = time()
+        last_progress = prediction_started
+        gather_seconds = 0.0
+        predict_seconds = 0.0
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction starting: rows=$(length(test_rows)), batch_size=$MBR_PREDICT_ROW_BATCH"
         for batch_start in 1:MBR_PREDICT_ROW_BATCH:length(test_rows)
             batch_stop = min(batch_start + MBR_PREDICT_ROW_BATCH - 1, length(test_rows))
             batch_rows = @view test_rows[batch_start:batch_stop]
-            raw = LightGBM.predict(
-                classifier,
-                _mbr_gather_feature_rows(
-                    candidate_frame, true_features, false_features,
-                    batch_rows, n_candidates),
-            )
-            predictions = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            phase_started = time()
+            test_matrix = _mbr_gather_feature_rows(
+                candidate_frame, true_features, false_features, batch_rows, n_candidates)
+            gather_seconds += time() - phase_started
+            phase_started = time()
+            raw = LightGBM.predict(classifier, test_matrix)
+            predict_seconds += time() - phase_started
+            test_matrix = nothing
+            predictions = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
             @inbounds scores[batch_rows] .= Float32.(predictions)
+            now = time()
+            if now - last_progress >= 60
+                @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction progress: rows=$batch_stop/$(length(test_rows)), gather=$(round(gather_seconds; digits=2))s, predict=$(round(predict_seconds; digits=2))s, elapsed=$(round(now - prediction_started; digits=2))s"
+                last_progress = now
+            end
         end
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction complete: rows=$(length(test_rows)), gather=$(round(gather_seconds; digits=2))s, predict=$(round(predict_seconds; digits=2))s, elapsed=$(round(time() - prediction_started; digits=2))s"
         last_classifier = classifier
     end
     return scores, last_classifier

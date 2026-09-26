@@ -226,6 +226,18 @@ function _prepare_labels(labels)
     return label_vec
 end
 
+# Only for completed matrix fits whose training datasets are owned by this booster.
+function _detach_lightgbm_training_data!(model::LightGBM.LGBMClassification)
+    trained = model.booster
+    isempty(trained.datasets) && return model
+    # LightGBM.jl reloads only the trees when copying a booster.
+    model.booster = deepcopy(trained)
+    Base.finalize(trained)
+    foreach(Base.finalize, trained.datasets)
+    empty!(trained.datasets)
+    return model
+end
+
 function fit_lightgbm_model(model::LightGBM.LGBMClassification,
                             feature_data::AbstractDataFrame,
                             labels::AbstractVector;
@@ -241,6 +253,7 @@ function fit_lightgbm_model(model::LightGBM.LGBMClassification,
     end
 
     LightGBM.fit!(model, X, y_int; verbosity = -1)
+    _detach_lightgbm_training_data!(model)
     return LightGBMModel(model, features, nothing)
 end
 

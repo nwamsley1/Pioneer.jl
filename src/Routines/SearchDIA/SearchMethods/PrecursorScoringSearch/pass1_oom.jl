@@ -258,8 +258,7 @@ function _fit_pass1_booster(
     end
     cls = build_lightgbm_classifier(; lgbm_hp...)
     LightGBM.fit!(cls, X, _prepare_labels(y); verbosity = -1)
-    # LightGBM.jl implements Booster deepcopy by serializing/reloading the trees.
-    cls.booster = deepcopy(cls.booster)
+    _detach_lightgbm_training_data!(cls)
     return cls
 end
 

@@ -247,7 +247,10 @@ function _train_psm_classifier_with_fallback(
                 end
             else
                 cls = build_lightgbm_classifier(; hp_eff...)
-                tf = time(); LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1); t_fit += time() - tf
+                tf = time()
+                LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1)
+                _detach_lightgbm_training_data!(cls)
+                t_fit += time() - tf
                 ts2 = time(); X_te = gather_rows!(bufs.test, X_all, test_idx); t_slice += time() - ts2
                 tp = time(); raw = LightGBM.predict(cls, X_te); t_predict += time() - tp
                 fold_scores[fi] = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw

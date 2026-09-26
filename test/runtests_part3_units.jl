@@ -21,6 +21,7 @@ println("dir ", @__DIR__)
 
 include("./UnitTests/test_psm_container.jl")
 include("./UnitTests/test_scoring_workspace.jl")
+include("./UnitTests/test_lightgbm_training_release.jl")
 include("./UnitTests/test_fast_df_sort.jl")
 include("./UnitTests/test_parallel_mainsearch_sortperm.jl")
 
