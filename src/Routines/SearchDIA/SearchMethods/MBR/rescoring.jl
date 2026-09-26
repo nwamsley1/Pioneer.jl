@@ -3,6 +3,93 @@
 # This file is part of Pioneer.jl
 # Licensed under AGPL v3+; see LICENSE.
 
+# Candidate features stay in bounded blocks; only labels, IDs and scores span the search.
+mutable struct _MBRFeatureStore
+    path::String
+    budget::Int
+    bytes::Int
+    blocks::Vector{DataFrame}
+    offsets::Vector{Int64}
+    row_ends::Vector{Int}
+    schema::DataFrame
+    io::Union{Nothing, IOStream}
+end
+function _MBRFeatureStore(path; budget::Int=64*1024^2)
+    budget > 0 || throw(ArgumentError("MBR feature cache budget must be positive"))
+    return _MBRFeatureStore(path, budget, 0, DataFrame[], Int64[], Int[], DataFrame(), nothing)
+end
+Base.close(store::_MBRFeatureStore) = store.io === nothing ? nothing : close(store.io)
+
+function _mbr_store_features!(store::_MBRFeatureStore, frame::DataFrame)
+    columns = unique(vcat(MBR_FTR_FEATURES_TRUE,
+        (_mbr_ftr_features_false(k) for k in 1:MBR_N_COUNTERFACTUALS)...))
+    filter!(col -> hasproperty(frame, col), columns)
+    block = select(frame, columns; copycols=true)
+    append!(store.schema, block[1:0, :]; cols=:union)
+    bytes = store.io === nothing ? Base.summarysize(block) : 0
+    if store.io === nothing && store.bytes + bytes > store.budget
+        store.io = open(store.path, "w+")
+        for saved in store.blocks
+            push!(store.offsets, position(store.io))
+            Serialization.serialize(store.io, saved)
+        end
+        empty!(store.blocks)
+        store.bytes = 0
+    end
+    if store.io === nothing
+        push!(store.blocks, block)
+        store.bytes += bytes
+    else
+        push!(store.offsets, position(store.io))
+        Serialization.serialize(store.io, block)
+    end
+    push!(store.row_ends, (isempty(store.row_ends) ? 0 : last(store.row_ends)) + nrow(frame))
+    return nothing
+end
+
+function _mbr_feature_block(store::_MBRFeatureStore, index)
+    store.io === nothing && return store.blocks[index]
+    seek(store.io, store.offsets[index])
+    return Serialization.deserialize(store.io)::DataFrame
+end
+
+function _mbr_copy_feature_rows!(dest, src, positions)
+    @inbounds for j in axes(src, 2), i in eachindex(positions)
+        dest[positions[i], j] = src[i, j]
+    end
+end
+
+function _mbr_gather_feature_rows(store::_MBRFeatureStore, true_features, false_features,
+                                  rows::AbstractVector{Int}, n_candidates::Int)
+    dest = Matrix{Float32}(undef, length(rows), length(true_features))
+    positions = [Int[] for _ in store.row_ends]
+    for (position, row) in enumerate(rows)
+        1 <= row <= (1 + length(false_features)) * n_candidates || throw(BoundsError(rows, position))
+        candidate = mod(row - 1, n_candidates) + 1
+        push!(positions[searchsortedfirst(store.row_ends, candidate)], position)
+    end
+    columns = unique(vcat(true_features, false_features...))
+    for index in eachindex(positions)
+        selected = positions[index]
+        isempty(selected) && continue
+        first_row = index == 1 ? 1 : store.row_ends[index-1] + 1
+        n = store.row_ends[index] - first_row + 1
+        local_rows = [div(rows[p] - 1, n_candidates) * n +
+                      mod(rows[p] - 1, n_candidates) + 2 - first_row for p in selected]
+        block = _mbr_feature_block(store, index)
+        # Match the unioned in-memory table: absent feature values gather as zero.
+        if any(col -> !hasproperty(block, col), columns)
+            block = copy(block)
+            for col in columns
+                hasproperty(block, col) || (block[!, col] = zeros(Float32, n))
+            end
+        end
+        gathered = _mbr_gather_feature_rows(block, true_features, false_features, local_rows, n)
+        _mbr_copy_feature_rows!(dest, gathered, selected)
+    end
+    return dest
+end
+
 function _mbr_validate_sidecar_rows(
     main_pids, main_scans, pass1_pids, pass1_scans,
     mbr_pids, mbr_scans, row_indices, path,
@@ -73,11 +160,18 @@ end
 Load candidate features and retain per-file masks for scattering recovery results
 back to their original rows. Accepts indexed candidate sidecars and legacy dense
 sidecars. Baseline target/decoy counts are accumulated from all main-table rows.
+With `feature_store`, return candidate metadata only and store model features in
+blocks of at most `feature_batch_size` rows. The cache budget excludes the current
+input block, gathered training/prediction matrices, and Arrow input buffers.
 """
 function load_postintegration_mbr_candidates(
     file_paths::Vector{String},
-    q_value_threshold::Float32,
+    q_value_threshold::Float32;
+    feature_store::Union{Nothing, _MBRFeatureStore} = nothing,
+    feature_batch_size::Int = 50_000,
 )
+    feature_batch_size > 0 || throw(ArgumentError("feature_batch_size must be positive"))
+    metadata = DataFrame()
     parts = DataFrame[]
     masks = BitVector[]
     n_rows = Int[]
@@ -105,32 +199,49 @@ function load_postintegration_mbr_candidates(
         push!(masks, mask)
         push!(n_rows, n)
         isempty(sidecar_rows) && continue
-        candidate_rows = rows[sidecar_rows]
+        batches = feature_store === nothing ? (eachindex(sidecar_rows),) :
+            Iterators.partition(eachindex(sidecar_rows), feature_batch_size)
+        for batch in batches
+            selected_sidecar_rows = @view sidecar_rows[batch]
+            candidate_rows = rows[selected_sidecar_rows]
 
-        frame = DataFrame(
-            precursor_idx = UInt32.(main.precursor_idx[candidate_rows]),
-            scan_idx = UInt32.(main.scan_idx[candidate_rows]),
-            ms_file_idx = UInt32.(main.ms_file_idx[candidate_rows]),
-            cv_fold = UInt8.(main.cv_fold[candidate_rows]),
-            target = Bool.(main.target[candidate_rows]),
-            qval = Float32.(main.qval[candidate_rows]),
-            global_qval = Float32.(main.global_qval[candidate_rows]),
-            trace_prob_prepass = Float32.(pass1.trace_prob_prepass[candidate_rows]),
-            trace_prob_infold = Float32.(pass1.trace_prob_infold[candidate_rows]),
-        )
-        for feature in MBR_RECEIVER_FEATURES
-            feature === :trace_prob_infold && continue
-            hasproperty(main, feature) || continue
-            frame[!, feature] = Tables.getcolumn(main, feature)[candidate_rows]
+            frame = DataFrame(
+                precursor_idx = UInt32.(main.precursor_idx[candidate_rows]),
+                scan_idx = UInt32.(main.scan_idx[candidate_rows]),
+                ms_file_idx = UInt32.(main.ms_file_idx[candidate_rows]),
+                cv_fold = UInt8.(main.cv_fold[candidate_rows]),
+                target = Bool.(main.target[candidate_rows]),
+                qval = Float32.(main.qval[candidate_rows]),
+                global_qval = Float32.(main.global_qval[candidate_rows]),
+                trace_prob_prepass = Float32.(pass1.trace_prob_prepass[candidate_rows]),
+                trace_prob_infold = Float32.(pass1.trace_prob_infold[candidate_rows]),
+            )
+            for feature in MBR_RECEIVER_FEATURES
+                feature === :trace_prob_infold && continue
+                hasproperty(main, feature) || continue
+                frame[!, feature] = Tables.getcolumn(main, feature)[candidate_rows]
+            end
+            for feature in Symbol.(Tables.columnnames(mbr))
+                feature in (:row_idx, :precursor_idx, :scan_idx) && continue
+                frame[!, feature] = Tables.getcolumn(mbr, feature)[selected_sidecar_rows]
+            end
+            if feature_store === nothing
+                push!(parts, frame)
+            else
+                metadata_columns = [:precursor_idx, :scan_idx, :ms_file_idx, :cv_fold,
+                    :target, :qval, :global_qval,
+                    (_mbr_missing_feature(k) for k in 1:MBR_N_COUNTERFACTUALS)...]
+                _mbr_add_hellinger_contrasts!(frame)
+                _mbr_store_features!(feature_store, frame)
+                append!(metadata, select(frame, metadata_columns); cols=:union)
+            end
         end
-        for feature in Symbol.(Tables.columnnames(mbr))
-            feature in (:row_idx, :precursor_idx, :scan_idx) && continue
-            frame[!, feature] = Tables.getcolumn(mbr, feature)[sidecar_rows]
-        end
-        push!(parts, frame)
     end
+    feature_store === nothing || feature_store.io === nothing || flush(feature_store.io)
     # Recovery-sidecar writing also requires the ID columns when no candidates survive.
-    candidates = if isempty(parts)
+    candidates = if feature_store !== nothing && !isempty(metadata)
+        metadata
+    elseif isempty(parts)
         DataFrame(
             precursor_idx = UInt32[],
             scan_idx = UInt32[],
@@ -695,7 +806,7 @@ function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
 end
 
 function _mbr_fit_oof_iteration(
-    candidate_frame::DataFrame,
+    candidate_frame,
     true_features::Vector{Symbol},
     false_features::Vector{Vector{Symbol}},
     folds::Vector{UInt8},
@@ -925,7 +1036,8 @@ end
 function _mbr_semisupervised_oof(
     candidate_frame::DataFrame,
     true_features::Vector{Symbol},
-    false_features::Vector{Vector{Symbol}},
+    false_features::Vector{Vector{Symbol}};
+    feature_source = candidate_frame,
 )
     preparation_started = time()
     n_candidates = nrow(candidate_frame)
@@ -957,7 +1069,7 @@ function _mbr_semisupervised_oof(
 
     for iteration in 1:MBR_SEMISUPERVISED_MAX_ITERATIONS
         scores, classifier = _mbr_fit_oof_iteration(
-            candidate_frame,
+            feature_source,
             true_features,
             false_features,
             folds,
@@ -1188,6 +1300,7 @@ function apply_postintegration_mbr_rescoring!(
     q_value_threshold::Float32,
     baseline_counts::Union{Nothing, Tuple{Int, Int}} = nothing,
     frame_is_candidates::Bool = false,
+    feature_source::Union{Nothing, _MBRFeatureStore} = nothing,
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
@@ -1262,13 +1375,17 @@ function apply_postintegration_mbr_rescoring!(
 
     candidates = frame_is_candidates ? frame : frame[candidate_indices, :]
     preparation_started = time()
-    _mbr_add_hellinger_contrasts!(candidates)
-    true_features, false_features = _mbr_available_feature_sets(candidates)
+    feature_source === nothing || frame_is_candidates ||
+        throw(ArgumentError("Stored MBR features require a candidate-only frame"))
+    feature_source === nothing && _mbr_add_hellinger_contrasts!(candidates)
+    true_features, false_features = _mbr_available_feature_sets(
+        feature_source === nothing ? candidates : feature_source.schema)
     @debug_l1 "MBR transfer model feature preparation: rows=$(nrow(candidates)), features=$(length(true_features)), elapsed=$(round(time() - preparation_started; digits=2))s"
     best_state, present = _mbr_semisupervised_oof(
         candidates,
         true_features,
-        false_features,
+        false_features;
+        feature_source = feature_source === nothing ? candidates : feature_source,
     )
     n_candidates = nrow(candidates)
     real_scores = copy(best_state.scores[1:n_candidates])

@@ -649,65 +649,10 @@ function _drop_internal_mbr_columns!(main::DataFrame)
     return main
 end
 
-"""
-    finalize_postintegration_mbr!(integrated_paths, precursors; ...)
-
-Build integrated donors, generate paired real/counterfactual evidence, train
-the out-of-fold transfer model, and apply the combined precursor error budget.
-"""
-function finalize_postintegration_mbr!(
-    integrated_paths::Vector{String},
-    precursors::LibraryPrecursors;
-    run_similarity_atlas::Union{Nothing, RunSimilarityAtlas},
-    q_value_threshold::Float32,
-    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
-    fdr_scale_factor::Float32,
-    merged_path::String,
-    pre_mbr_qval_spline = nothing,
-    bitvec_rank_tables_by_file::Union{
-        Nothing,
-        Dict{UInt32, Vector{UInt16}},
-    } = nothing,
-)
-    started = time()
-    file_paths = String[
-        path for path in integrated_paths
-        if isfile(path) && isfile(path * PASS1_SIDECAR_SUFFIX)
-    ]
-    isempty(file_paths) && return (
-        n_files = 0,
-        n_candidates = 0,
-        n_recovered = 0,
-        base_targets = 0,
-        base_decoys = 0,
-        baseline_error_rate = 0.0f0,
-        mbr_targets = 0,
-        mbr_decoys = 0,
-        mbr_false_transfers = 0,
-        internal_ftr_targets = 0,
-        internal_ftr_errors = 0,
-        internal_ftr_estimate = NaN32,
-        total_targets = 0,
-        total_errors = 0,
-        combined_error_rate = 0.0f0,
-    )
-
-    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1). Measured on Olsen 6-file: this function is ~60 GB /
-    # ~36 s of MBR's ~73 GB / ~49 s total cost — the bulk — and it runs once inside
-    # summarize_results!, outside any per-file instrumentation. Phase probes below locate it.
-    _fdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
-    _fstate = Ref((time(), Base.gc_bytes()))
-    _mark = function (key::Symbol)
-        _fdiag || return nothing
-        t0, a0 = _fstate[]
-        MBR_FINAL_DIAG[Symbol(key, :_bytes)] =
-            get(MBR_FINAL_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
-        MBR_FINAL_DIAG[Symbol(key, :_ms)] =
-            get(MBR_FINAL_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
-        _fstate[] = (time(), Base.gc_bytes())
-        return nothing
-    end
-
+# Keep donor evidence and worker closures out of the subsequent fitting phase.
+function _prepare_postintegration_mbr_features!(file_paths, precursors;
+    run_similarity_atlas, q_value_threshold, donor_q_threshold,
+    bitvec_rank_tables_by_file, _mark)
     phase_started = time()
     @debug_l1 "Post-integration MBR donor threshold starting: files=$(length(file_paths))"
     donor_score_floor = _mbr_donor_score_floor(
@@ -824,22 +769,93 @@ function finalize_postintegration_mbr!(
     feature_totals = feature_progress[]
     @debug_l1 "Post-integration MBR features complete: files=$(length(file_paths)) rows=$(feature_totals.rows) candidates=$(feature_totals.candidates) elapsed=$(round(time() - feature_started, digits=2))s"
     @debug_l1 "Post-integration MBR features cumulative worker time: selection=$(round(feature_totals.selection_seconds, digits=2))s features=$(round(feature_totals.feature_seconds, digits=2))s write=$(round(feature_totals.write_seconds, digits=2))s"
+    return nothing
+end
+
+"""
+    finalize_postintegration_mbr!(integrated_paths, precursors; ...)
+
+Build integrated donors, generate paired real/counterfactual evidence, train
+the out-of-fold transfer model, and apply the combined precursor error budget.
+"""
+function finalize_postintegration_mbr!(
+    integrated_paths::Vector{String},
+    precursors::LibraryPrecursors;
+    run_similarity_atlas::Union{Nothing, RunSimilarityAtlas},
+    q_value_threshold::Float32,
+    donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
+    fdr_scale_factor::Float32,
+    merged_path::String,
+    pre_mbr_qval_spline = nothing,
+    bitvec_rank_tables_by_file::Union{
+        Nothing,
+        Dict{UInt32, Vector{UInt16}},
+    } = nothing,
+)
+    started = time()
+    file_paths = String[
+        path for path in integrated_paths
+        if isfile(path) && isfile(path * PASS1_SIDECAR_SUFFIX)
+    ]
+    isempty(file_paths) && return (
+        n_files = 0,
+        n_candidates = 0,
+        n_recovered = 0,
+        base_targets = 0,
+        base_decoys = 0,
+        baseline_error_rate = 0.0f0,
+        mbr_targets = 0,
+        mbr_decoys = 0,
+        mbr_false_transfers = 0,
+        internal_ftr_targets = 0,
+        internal_ftr_errors = 0,
+        internal_ftr_estimate = NaN32,
+        total_targets = 0,
+        total_errors = 0,
+        combined_error_rate = 0.0f0,
+    )
+
+    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1). Measured on Olsen 6-file: this function is ~60 GB /
+    # ~36 s of MBR's ~73 GB / ~49 s total cost — the bulk — and it runs once inside
+    # summarize_results!, outside any per-file instrumentation. Phase probes below locate it.
+    _fdiag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
+    _fstate = Ref((time(), Base.gc_bytes()))
+    _mark = function (key::Symbol)
+        _fdiag || return nothing
+        t0, a0 = _fstate[]
+        MBR_FINAL_DIAG[Symbol(key, :_bytes)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_bytes), 0) + (Base.gc_bytes() - a0)
+        MBR_FINAL_DIAG[Symbol(key, :_ms)] =
+            get(MBR_FINAL_DIAG, Symbol(key, :_ms), 0) + round(Int, (time() - t0) * 1000)
+        _fstate[] = (time(), Base.gc_bytes())
+        return nothing
+    end
+
+    _prepare_postintegration_mbr_features!(file_paths, precursors;
+        run_similarity_atlas, q_value_threshold, donor_q_threshold,
+        bitvec_rank_tables_by_file, _mark)
+    GC.gc()
     # Candidates only (~10% of rows). See load_postintegration_mbr_candidates for why this is safe.
     phase_started = time()
     @debug_l1 "Post-integration MBR candidate loading starting: files=$(length(file_paths))"
-    loaded = load_postintegration_mbr_candidates(file_paths, q_value_threshold)
-    frame = loaded.candidates
-    _mark(:load_frame)
-    @debug_l1 "Post-integration MBR candidate loading complete: candidates=$(nrow(frame)) elapsed=$(round(time() - phase_started, digits=2))s"
-    phase_started = time()
-    @debug_l1 "Post-integration MBR rescoring starting: candidates=$(nrow(frame))"
-    summary = apply_postintegration_mbr_rescoring!(
-        frame;
-        alpha = q_value_threshold,
-        q_value_threshold = q_value_threshold,
-        baseline_counts = (loaded.base_targets, loaded.base_decoys),
-        frame_is_candidates = true,
-    )
+    loaded, frame, summary = mktempdir(dirname(first(file_paths)); prefix=".mbr_features_") do dir
+        store = _MBRFeatureStore(joinpath(dir, "features.bin"))
+        try
+            loaded = load_postintegration_mbr_candidates(file_paths, q_value_threshold; feature_store=store)
+            frame = loaded.candidates
+            _mark(:load_frame)
+            @debug_l1 "Post-integration MBR candidate loading complete: candidates=$(nrow(frame)) elapsed=$(round(time() - phase_started, digits=2))s"
+            phase_started = time()
+            @debug_l1 "Post-integration MBR rescoring starting: candidates=$(nrow(frame))"
+            summary = apply_postintegration_mbr_rescoring!(frame;
+                alpha=q_value_threshold, q_value_threshold,
+                baseline_counts=(loaded.base_targets, loaded.base_decoys),
+                frame_is_candidates=true, feature_source=store)
+            return loaded, frame, summary
+        finally
+            close(store)
+        end
+    end
     _mark(:rescoring)
     @debug_l1 "Post-integration MBR rescoring complete: elapsed=$(round(time() - phase_started, digits=2))s"
     phase_started = time()
