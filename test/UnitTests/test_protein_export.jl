@@ -65,7 +65,7 @@ end
         previous = read(wide_path)
         bad = copy(rows[1:2, :]); bad.file_name .= "r1"
         Arrow.write(path, bad)
-        @test_throws ArgumentError Pioneer.writeProteinGroupsCSV(path, args...)
+        @test_throws ArgumentError Pioneer.writeProteinGroupsCSV(path, args...; memory_budget_bytes=1)
         @test read(wide_path) == previous
         @test !any(startswith(".protein_export_"), readdir(dir))
 
@@ -74,6 +74,32 @@ end
         Pioneer.writeProteinGroupsCSV(path, args...; write_csv=false)
         @test nrow(DataFrame(Arrow.Table(wide_path))) == 0
         @test propertynames(Arrow.Table(wide_path)) == propertynames(wide)
+    end
+end
+
+@testset "Protein export spill file count" begin
+    mktempdir() do dir
+        store = Pioneer.ProteinExportStore(joinpath(dir, "records.bin"), 1024^2)
+        try
+            Pioneer._store_protein_block!(store,
+                DataFrame(file_name=["run"], abundance=Float32[1]))
+            @test store.io === nothing
+            store.budget = store.bytes
+            for i in 2:2000
+                Pioneer._store_protein_block!(store,
+                    DataFrame(file_name=["run"], abundance=Float32[i]))
+            end
+            @test readdir(dir) == ["records.bin"]
+            @test isempty(store.blocks)
+            @test length(store.offsets) == 2000
+            # Catalog order can differ from the original protein order.
+            for i in (2000, 1, 1000)
+                batches = collect(Pioneer.ProteinExportBatches(store, i, i))
+                @test only(batches).abundance == Float32[i]
+            end
+        finally
+            close(store)
+        end
     end
 end
 
@@ -106,6 +132,54 @@ end
         @test_throws ArgumentError Pioneer.writeProteinGroupsCSV(path, String[],
             Union{Missing,String}[], Union{Missing,String}[], UInt8[], ["r1","r2"], proteins;
             write_csv=false)
+        @test !any(startswith(".protein_export_"), readdir(dir))
+    end
+end
+
+@testset "Protein export consolidated storage" begin
+    mktempdir() do dir
+        path, proteins, rows = protein_export_fixture(dir)
+        keys = [:species, :protein, :target, :entrap_id]
+        metadata = [:species, :gene_names, :protein_names, :protein, :target,
+                    :entrap_id, :global_pg_score, :global_qval]
+        stores = DataFrame[]
+        for (name, budget) in (("memory", 1024^2), ("disk", 1))
+            spooldir = joinpath(dir, name)
+            mkdir(spooldir)
+            catalog, _, _, store = Pioneer._spool_protein_export(path, spooldir, keys, metadata,
+                Dict("A" => "GA"), Dict("A" => "Alpha"), budget, 2, true)
+            try
+                @test (store.io === nothing) == (name == "memory")
+                @test readdir(spooldir) == (name == "memory" ? String[] : ["records.bin"])
+                @test store.bytes <= store.budget
+                if name == "disk"
+                    @test isempty(store.blocks)
+                end
+                recovered = DataFrame()
+                for group in eachrow(catalog)
+                    for batch in Pioneer.ProteinExportBatches(store, group.first_row, group.last_row)
+                        append!(recovered, batch; cols=:union)
+                    end
+                end
+                push!(stores, recovered)
+            finally
+                close(store)
+            end
+        end
+        @test isequal(stores[1], stores[2])
+        @test stores[1].protein == ["B", "C", "C", "A", "A", "D"]
+
+        args = (["AAA", "BBB", "CCC"], Union{Missing,String}[missing, missing, missing],
+            Union{Missing,String}[missing, missing, missing], fill(UInt8(2), 3),
+            ["r1", "r2", "r3", "r4"], proteins)
+        Pioneer.writeProteinGroupsCSV(path, args...; memory_budget_bytes=4*1024^2)
+        expected_wide = DataFrame(Arrow.Table(joinpath(dir, "protein_groups_wide.arrow")))
+        expected_long = read(joinpath(dir, "protein_groups_long.tsv"))
+        expected_wide_tsv = read(joinpath(dir, "protein_groups_wide.tsv"))
+        Pioneer.writeProteinGroupsCSV(path, args...; memory_budget_bytes=1, batch_size=1)
+        @test isequal(expected_wide, DataFrame(Arrow.Table(joinpath(dir, "protein_groups_wide.arrow"))))
+        @test expected_long == read(joinpath(dir, "protein_groups_long.tsv"))
+        @test expected_wide_tsv == read(joinpath(dir, "protein_groups_wide.tsv"))
         @test !any(startswith(".protein_export_"), readdir(dir))
     end
 end
