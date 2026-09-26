@@ -65,9 +65,40 @@ not bit-reproducible. Sequences, m/z, iRT, decoys and order match; 1/K0 differs 
 median 5e-7 relative, with 0.03% of fragments > 1e-3 and 5,106 rank swaps. The +/-1% per-file ID differences may be
 this library noise; not yet isolated.
 
+### Size
+
+| HYE timsTOF | 5 Da / UInt16 | 10 Da / UInt32 |
+|---|---|---|
+| `partitioned_fragment_index.jls` on disk | 658.8 MB | 485.2 MB (-26%) |
+| `presearch_partitioned_fragment_index.jls` on disk | 417.3 MB | 359.4 MB (-14%) |
+| whole library on disk | 4.7 GB | 4.5 GB |
+| main index in memory (fragment array) | 1.17 GB (0.34) | 1.20 GB (0.68) |
+| presearch index in memory | 0.70 GB | 0.86 GB |
+
+Fragment entries double (4 -> 8 bytes), but 3.4x fewer partitions means fewer fragment m/z bins (bins are built per
+partition and RT bin), which nearly offsets it in the main index; the files compress better (zero upper ID bytes).
+
+## Result: E. coli timsTOF, 10 Da UInt16 vs 10 Da UInt32 (2026-09-26)
+
+Same config as the HYE pair but the E. coli canonical FASTA: 1,016,212 precursors, at most 20,754 per 10 Da bin,
+so UInt16 does not split and both indexes have the same 68 partitions (74.8 vs 73.9 MB). E. coli 50 ng 5 min
+diaPASEF (Ultra 2, TimsSlices 0.3.0), warm start, two alternating reps:
+
+| | 10 Da / UInt16 | 10 Da / UInt32 |
+|---|---|---|
+| fragment-index time | 11.0 / 10.5 s | 10.8 / 10.6 s |
+| Main Search | 25.3 / 24.7 s | 25.3 / 24.9 s |
+| total search | 45.3 / 44.7 s | 45.2 / 45.0 s |
+| allocated / peak RSS | 18.1 GiB / 11.1 GiB | 18.2 GiB / 11.1 GiB |
+| precursors / protein groups | 16,416 / 1,781 | 16,357 / 1,788 |
+
+- With the same partition layout the ID width has no measurable cost at ~21k precursors per partition (the counter
+  stays cache-resident either way). The HYE gain comes from wider partitions, which UInt32 makes possible.
+- The two libraries can only differ in search results through Koina's prediction noise: -0.4% precursors / +0.4%
+  protein groups. That is the scale of the HYE differences, so those are most likely library noise, not the index.
+
 ## Open: how to expose it
 
-Options: a JSON / GUI option, or automatic. Automatic rule under consideration: after precursor m/z are known,
-use UInt32 only when the UInt16 limit would split partitions (the ID width, not `prec_partition_width`, is
-binding). A small library whose partitions fit in 65,535 keeps UInt16 (4-byte fragments, smaller counters).
-Test in progress: E. coli timsTOF 10 Da UInt16 vs 10 Da UInt32 on the E. coli 50 ng diaPASEF run.
+Proposed: `frag_index_local_id_type = "auto"`. After precursor m/z are known, use UInt32 only when some
+`prec_partition_width` bin would exceed 65,535 (the ID width is binding), else UInt16. Not yet tested on narrow-window
+(Thermo / Astral) data, where a wider effective partition also admits more out-of-window candidates.
