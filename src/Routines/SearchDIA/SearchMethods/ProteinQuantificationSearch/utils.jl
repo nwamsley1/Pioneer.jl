@@ -16,42 +16,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Create QC plots showing quantification metrics.
-"""
-function create_qc_plots(
-    precursors_path::String,
-    precursors_long_path::String,
-    proteins_path::String,
-    search_context::SearchContext,
-    precursors::LibraryPrecursors,
-    params::Any,
-    successful_file_names::Vector{String}
-)
-    # Create plots showing:
-    # - Normalization factors
-    # - Missing value patterns
-    # - CV distributions
-    # - Dynamic range
-    # Implementation depends on plotting library
-    all_file_paths = collect(getFilePaths(getMSData(search_context)))
-    file_indices = collect(1:length(all_file_paths))
-
-    qcPlots(
-        precursors_path,
-        precursors_long_path,
-        proteins_path,
-        params.params,
-        precursors,
-        successful_file_names,
-        joinpath(getDataOutDir(search_context), "qc_plots"),
-        all_file_paths,
-        getIrtRtMap(search_context),
-        search_context.mass_error_model,
-        file_indices
-    )
-end
-
-"""
 Get protein group q-value interpolation function.
 """
 function getPGQValueInterp(search_context::SearchContext)

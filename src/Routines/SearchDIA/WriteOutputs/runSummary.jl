@@ -19,7 +19,7 @@
 Per-run QC summary (`run_summary.tsv`), in the spirit of DIA-NN's
 `report.stats.tsv` / alphaDIA's `stats.tsv`: one row per raw file with
 identification and quantification counts, signal, calibration and
-peptide-property medians.
+peptide-property statistics.
 
 The per-precursor statistics are accumulated from the chunks that
 `ProteinQuantificationSearch` already streams into `precursors_long.arrow`, so the summary
@@ -38,16 +38,17 @@ mutable struct RunSummaryStats
     protein_groups_identified::Int
     protein_groups_quantified::Int
     total_peak_area::Float64
-    medians::NTuple{8, Union{Missing, Float32}}
+    total_missed_cleavages::Int
+    medians::NTuple{7, Union{Missing, Float32}}
 end
 
-RunSummaryStats(name::String) = RunSummaryStats(name, 0, 0, 0, 0, 0, 0, 0.0, ntuple(_ -> missing, 8))
+RunSummaryStats(name::String) = RunSummaryStats(name, 0, 0, 0, 0, 0, 0, 0.0, 0, ntuple(_ -> missing, 7))
 
 struct RunSummaryRecord
     run::UInt32
     peptide::UInt32
     valid::UInt32
-    values::NTuple{8, Float32}
+    values::NTuple{7, Float32}
 end
 
 mutable struct RunSummaryAccumulator
@@ -87,26 +88,26 @@ _summary_key_float(x::UInt32) = reinterpret(Float32, x & 0x80000000 == 0 ? ~x : 
 # Exact Float32 order statistics using four byte-wise passes over an oversized run.
 function _large_summary_medians(path, n_peptides, budget)
     seen = falses(n_peptides)
-    counts = zeros(Int, 8)
-    has_nan = falses(8)
+    counts = zeros(Int, 7)
+    has_nan = falses(7)
     _scan_summary_records(path, budget) do records
         for record in records
             seen[record.peptide] = true
-            for metric in 1:8
+            for metric in 1:7
                 record.valid & (UInt32(1) << (metric-1)) == 0 && continue
                 counts[metric] += 1
                 has_nan[metric] |= isnan(record.values[metric])
             end
         end
     end
-    ranks = [(counts[m] + k) ÷ 2 for m in 1:8, k in 1:2]
-    prefixes = zeros(UInt32, 8, 2)
-    bins = zeros(Int, 256, 8, 2)
+    ranks = [(counts[m] + k) ÷ 2 for m in 1:7, k in 1:2]
+    prefixes = zeros(UInt32, 7, 2)
+    bins = zeros(Int, 256, 7, 2)
     for shift in (24, 16, 8, 0)
         fill!(bins, 0)
         mask = shift == 24 ? UInt32(0) : typemax(UInt32) << (shift + 8)
         _scan_summary_records(path, budget) do records
-            for record in records, metric in 1:8
+            for record in records, metric in 1:7
                 (has_nan[metric] || record.valid & (UInt32(1) << (metric-1)) == 0) && continue
                 key = _summary_float_key(record.values[metric])
                 for k in 1:2
@@ -115,7 +116,7 @@ function _large_summary_medians(path, n_peptides, budget)
                 end
             end
         end
-        for metric in 1:8, k in 1:2
+        for metric in 1:7, k in 1:2
             (counts[metric] == 0 || has_nan[metric]) && continue
             for bin in 1:256
                 n = bins[bin, metric, k]
@@ -128,7 +129,7 @@ function _large_summary_medians(path, n_peptides, budget)
             end
         end
     end
-    medians = ntuple(8) do m
+    medians = ntuple(7) do m
         counts[m] == 0 && return missing
         has_nan[m] && return Float32(NaN)
         median(Float32[_summary_key_float(prefixes[m, 1]), _summary_key_float(prefixes[m, 2])])
@@ -153,7 +154,7 @@ function _finish_summary_records!(stats, records, n_peptides)
         end
         s = stats[records[first].run]
         s.peptides_identified = count(seen)
-        s.medians = ntuple(8) do metric
+        s.medians = ntuple(7) do metric
             empty!(values)
             for i in first:last
                 r = records[i]
@@ -291,13 +292,14 @@ function _accumulate_run_summary!(acc::RunSummaryAccumulator, ms_file_idx, targe
         run = ms_file_idx[i]
         s = acc.stats[run]
         s.precursors_identified += 1
+        s.total_missed_cleavages += Int(missed_cleavage[i])
         peptide = get!(acc.peptide_ids, sequence[i]) do
             UInt32(length(acc.peptide_ids) + 1)
         end
         mbr_recovered !== nothing && mbr_recovered[i] && (s.precursors_mbr += 1)
-        area, factor, valid = 0.0f0, 0.0f0, UInt32(0xfc)
+        area, factor, valid = 0.0f0, 0.0f0, UInt32(0x7c)
         raw_area = peak_area[i]
-        if !ismissing(raw_area) && !(raw_area <= 0)
+        if !ismissing(raw_area) && raw_area > 0
             s.precursors_quantified += 1
             s.total_peak_area += raw_area
             area = Float32(raw_area)
@@ -311,8 +313,7 @@ function _accumulate_run_summary!(acc::RunSummaryAccumulator, ms_file_idx, targe
             end
         end
         values = (area, factor, Float32(abs(irt_error[i])), Float32(rt_fwhm[i]),
-            Float32(points_integrated[i]), Float32(length(sequence[i])), Float32(charge[i]),
-            Float32(missed_cleavage[i]))
+            Float32(points_integrated[i]), Float32(length(sequence[i])), Float32(charge[i]))
         _push_summary_record!(acc, RunSummaryRecord(run, peptide, valid, values))
     end
 end
@@ -346,6 +347,9 @@ function add_protein_group_counts!(stats::Vector{RunSummaryStats},
     end
     return stats
 end
+
+_missed_cleavage_percentage(s::RunSummaryStats) = s.precursors_identified == 0 ?
+    missing : 100.0 * s.total_missed_cleavages / s.precursors_identified
 
 _median_or_missing(v::AbstractVector) = isempty(v) ? missing : median(v)
 
@@ -399,7 +403,7 @@ function write_run_summary(path::String, stats::Vector{RunSummaryStats},
         median_points_integrated = [s.medians[5] for s in stats],
         median_peptide_length = [s.medians[6] for s in stats],
         median_charge = [s.medians[7] for s in stats],
-        median_missed_cleavages = [s.medians[8] for s in stats],
+        missed_cleavage_percentage = [_missed_cleavage_percentage(s) for s in stats],
         ms2_mass_tol_low = [t[1] for t in ms2_tols],
         ms2_mass_tol_high = [t[2] for t in ms2_tols],
         ms2_mass_tol_unit = [t[3] for t in ms2_tols],

@@ -74,7 +74,7 @@
     @test a.medians[2] == 1.5f0   # ratios 2, 1, 2, 0.5
     @test a.medians[3] == 2.5f0             # |−1|,2,3,4
     @test a.medians[7] == 2.0f0
-    @test a.medians[8] == 0.5f0
+    @test Pioneer._missed_cleavage_percentage(a) == 50.0
     @test a.medians[6] == 8.0f0        # 8,8,9,7
 
     @test b.precursors_identified == 3               # decoy skipped
@@ -159,7 +159,7 @@ end
         for values in (Float32[-Inf, -2, -0.0, 0.0, 2, Inf],
                        Float32[-Inf, Inf], Float32[1, NaN, 2], Float32[1, 3, 9])
             path = joinpath(dir, "records.bin")
-            records = [Pioneer.RunSummaryRecord(1, 1, 0xff, ntuple(_ -> v, 8)) for v in values]
+            records = [Pioneer.RunSummaryRecord(1, 1, 0xff, ntuple(_ -> v, 7)) for v in values]
             open(io -> write(io, records), path, "w")
             medians, peptides = Pioneer._large_summary_medians(path, 1, 65536)
             @test all(x -> isequal(x, median(values)), medians)
@@ -167,4 +167,27 @@ end
             rm(path)
         end
     end
+end
+
+@testset "target counts and mean missed cleavages" begin
+    rows = (
+        ms_file_idx=ones(UInt32, 7), target=Bool[1, 1, 1, 1, 1, 1, 0],
+        sequence=fill("PEPTIDE", 7),
+        peak_area=Union{Missing,Float32}[10, 0, missing, -1, NaN, 20, 999],
+        irt_error=zeros(Float32, 7), rt_fwhm=ones(Float32, 7),
+        points_integrated=ones(UInt32, 7), charge=fill(UInt8(2), 7),
+        missed_cleavage=UInt8[0, 0, 1, 2, 3, 3, 100],
+    )
+    stats = Pioneer.with_run_summary(["run", "empty"]) do acc
+        accumulate_run_summary!(acc, rows)
+    end
+    @test stats[1].precursors_identified == 6
+    @test stats[1].precursors_quantified == 2
+    @test stats[1].total_peak_area == 30
+    @test Pioneer._missed_cleavage_percentage(stats[1]) == 150
+    @test ismissing(Pioneer._missed_cleavage_percentage(stats[2]))
+    proteins = DataFrame(file_name=fill("run", 7), target=rows.target, abundance=rows.peak_area)
+    add_protein_group_counts!(stats, proteins, ["run", "empty"])
+    @test stats[1].protein_groups_identified == 6
+    @test stats[1].protein_groups_quantified == 2
 end

@@ -107,9 +107,8 @@ results_dir/
 │   │       └── quad_model_plots.pdf
 │   ├── rt_alignment_plots/
 │   │   └── rt_alignment_plots.pdf
-│   ├── mass_error_plots/
-│   │   └── mass_error_plots.pdf
-│   └── QC_PLOTS.pdf
+│   └── mass_error_plots/
+│       └── mass_error_plots.pdf
 ├── precursors_long.arrow
 ├── precursors_long.tsv
 ├── precursors_wide.arrow

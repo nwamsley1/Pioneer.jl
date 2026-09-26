@@ -24,7 +24,7 @@ This search:
 1. Normalizes quantitative values across runs
 2. Quantifies proteins with directLFQ or MaxLFQ
 3. Generates long and wide format results
-4. Creates QC plots
+4. Writes per-run summary statistics
 """
 struct ProteinQuantificationSearch <: SearchMethod end
 
@@ -212,7 +212,6 @@ function summarize_results!(
     # Get paths
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
-    qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
     precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
     protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
     spec_lib = getSpecLib(search_context)
@@ -366,7 +365,7 @@ function summarize_results!(
         write_csv = params.write_csv
     )
 
-    # Concatenate chunks into a final Arrow file-format export for QC plots.
+    # Concatenate chunks into the final Arrow file-format export.
     # The per-run summary is accumulated from the same chunks on this pass.
     @debug_l1 "Concatenating chunks to precursors_long.arrow..."
     run_stats = write_precursor_long_arrow(
@@ -380,20 +379,6 @@ function summarize_results!(
     add_protein_group_counts!(run_stats, protein_long_path, all_file_names)
     write_run_summary(joinpath(getDataOutDir(search_context), "run_summary.tsv"),
                       run_stats, search_context)
-
-    @user_info "Creating QC plots..."
-    # Create QC plots
-    qc_plot_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
-    isfile(qc_plot_path) && rm(qc_plot_path)
-    create_qc_plots(
-        precursors_wide_path,
-        precursors_long_path,
-        proteins_wide_path,
-        search_context,
-        precursors,
-        params,
-        all_file_names
-    )
 
     # Cleanup chunk files after dropping Arrow.Table references.
     if isdir(chunk_dir)
