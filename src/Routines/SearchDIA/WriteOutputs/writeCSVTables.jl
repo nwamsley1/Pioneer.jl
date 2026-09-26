@@ -804,22 +804,95 @@ function Base.iterate(ranges::ProteinExportRanges, first_row::Int=1)
     return first_row:i-1, i
 end
 
+# Small exports retain owned blocks in memory. Larger exports use one seekable
+# spool with block offsets, independent of the number of protein groups.
+mutable struct ProteinExportStore
+    path::String
+    budget::Int
+    bytes::Int
+    blocks::Vector{DataFrame}
+    offsets::Vector{Int64}
+    row_ends::Vector{Int}
+    io::Union{Nothing, IOStream}
+    cached_index::Int
+    cached_block::DataFrame
+end
+
+ProteinExportStore(path, budget) = ProteinExportStore(
+    path, budget, 0, DataFrame[], Int64[], Int[], nothing, 0, DataFrame())
+
+function Base.close(store::ProteinExportStore)
+    store.io === nothing || close(store.io)
+end
+
+function _store_protein_block!(store::ProteinExportStore, part)
+    block = DataFrame(part; copycols=true)
+    if hasproperty(block, :peptides)
+        # Arrow list elements otherwise retain the input record buffer.
+        block[!, :peptides] = [collect(ids) for ids in block.peptides]
+    end
+    bytes = store.io === nothing ? Base.summarysize(block) : 0
+    if store.io === nothing && store.bytes + bytes > store.budget
+        store.io = open(store.path, "w+")
+        for saved in store.blocks
+            push!(store.offsets, position(store.io))
+            Serialization.serialize(store.io, saved)
+        end
+        empty!(store.blocks)
+        store.bytes = 0
+    end
+    if store.io === nothing
+        push!(store.blocks, block)
+        store.bytes += bytes
+    else
+        push!(store.offsets, position(store.io))
+        Serialization.serialize(store.io, block)
+    end
+    push!(store.row_ends, (isempty(store.row_ends) ? 0 : last(store.row_ends)) + nrow(block))
+    return nothing
+end
+
+function _protein_export_block(store::ProteinExportStore, index)
+    store.io === nothing && return store.blocks[index]
+    if store.cached_index != index
+        store.cached_block = DataFrame()
+        seek(store.io, store.offsets[index])
+        store.cached_block = Serialization.deserialize(store.io)::DataFrame
+        store.cached_index = index
+    end
+    return store.cached_block
+end
+
+struct ProteinExportBatches
+    store::ProteinExportStore
+    first_row::Int
+    last_row::Int
+end
+Base.IteratorSize(::Type{ProteinExportBatches}) = Base.SizeUnknown()
+function Base.iterate(batches::ProteinExportBatches, row=batches.first_row)
+    row > batches.last_row && return nothing
+    store = batches.store
+    index = searchsortedfirst(store.row_ends, row)
+    first = index == 1 ? 1 : store.row_ends[index-1] + 1
+    last = min(store.row_ends[index], batches.last_row)
+    return view(_protein_export_block(store, index), row-first+1:last-first+1, :), last+1
+end
+
 function _spool_protein_export(long_path, dir, group_key, metadata_columns,
                                gene_map, protein_map, budget, row_limit, write_csv)
+    store = ProteinExportStore(joinpath(dir, "records.bin"), 2budget)
     catalog = DataFrame()
     seen = Set{Tuple}()
     precursor_ids = Set{UInt32}()
     current_key = nothing
     current_metadata = nothing
-    current_path = ""
-    writer = nothing
+    first_row, total_rows = 1, 0
     column_types = Dict{Symbol, Type}(:gene_names => String, :protein_names => String)
     abundance_type = Float32
     function finish_group!()
-        writer === nothing && return
-        close(writer)
+        current_key === nothing && return
         push!(catalog, merge(current_metadata,
-            (n_precursors_total=length(precursor_ids), export_path=current_path)); cols=:union)
+            (n_precursors_total=length(precursor_ids), first_row=first_row, last_row=total_rows)); cols=:union)
     end
     try
         for batch in Arrow.Stream(long_path)
@@ -829,59 +902,62 @@ function _spool_protein_export(long_path, dir, group_key, metadata_columns,
                 col in (:gene_names, :protein_names) && continue
                 column_types[col] = Base.nonmissingtype(eltype(df[!, col]))
             end
-            i = 1
-            while i <= nrow(df)
+            segment_start = 1
+            for i in 1:nrow(df)
                 key = Tuple(df[i, col] for col in group_key)
                 if !isequal(key, current_key)
+                    if i > segment_start
+                        part = view(df, segment_start:i-1, :)
+                        for rows in _protein_export_ranges(part, budget, row_limit)
+                            _store_protein_block!(store, view(part, rows, write_csv ? Colon() : [:file_name, :abundance]))
+                        end
+                    end
+                    segment_start = i
                     finish_group!()
-                    writer = nothing
                     key in seen && throw(ArgumentError("Protein export input must keep each protein group contiguous"))
                     push!(seen, key)
                     empty!(precursor_ids)
                     current_key = key
+                    first_row = total_rows + 1
                     values = map(metadata_columns) do col
                         value = col == :gene_names ? _map_accessions(df.protein[i], gene_map) :
                                 col == :protein_names ? _map_accessions(df.protein[i], protein_map) : df[i, col]
                         col in (:gene_names, :protein_names) && isempty(value) ? missing : value
                     end
                     current_metadata = NamedTuple{Tuple(metadata_columns)}(Tuple(values))
-                    current_path = joinpath(dir, "group_$(length(seen)).arrow")
-                    writer = open(Arrow.Writer, current_path; file=true, ntasks=0)
                 end
-                j = i
-                while j <= nrow(df) && isequal(Tuple(df[j, col] for col in group_key), current_key)
-                    for col in metadata_columns
-                        col in (:gene_names, :protein_names) && continue
-                        isequal(df[j, col], current_metadata[col]) || throw(ArgumentError(
-                            "Inconsistent $col within protein group $(df.protein[j])"))
-                    end
-                    for id in df.peptides[j]
-                        ismissing(id) || push!(precursor_ids, id)
-                    end
-                    j += 1
+                for col in metadata_columns
+                    col in (:gene_names, :protein_names) && continue
+                    isequal(df[i, col], current_metadata[col]) || throw(ArgumentError(
+                        "Inconsistent $col within protein group $(df.protein[i])"))
                 end
-                part = view(df, i:j-1, :)
-                for rows in _protein_export_ranges(part, budget, row_limit)
-                    Arrow.write(writer, view(part, rows, write_csv ? Colon() : [:file_name, :abundance]))
+                for id in df.peptides[i]
+                    ismissing(id) || push!(precursor_ids, id)
                 end
-                i = j
+                total_rows += 1
+            end
+            part = view(df, segment_start:nrow(df), :)
+            for rows in _protein_export_ranges(part, budget, row_limit)
+                _store_protein_block!(store, view(part, rows, write_csv ? Colon() : [:file_name, :abundance]))
             end
         end
         finish_group!()
-        writer = nothing
-    finally
-        writer === nothing || close(writer)
+        store.io === nothing || flush(store.io)
+        if !isempty(catalog)
+            sort!(catalog, [order(:n_precursors_total, rev=true), order(:global_pg_score, rev=true), group_key...])
+        end
+        return catalog, column_types, abundance_type, store
+    catch
+        close(store)
+        rethrow()
     end
-    if !isempty(catalog)
-        sort!(catalog, [order(:n_precursors_total, rev=true), order(:global_pg_score, rev=true), group_key...])
-    end
-    return catalog, column_types, abundance_type
 end
 
 """
     writeProteinGroupsCSV(...; memory_budget_bytes=64*1024^2, batch_size=2000000)
 
-Export protein-aligned Arrow batches through a temporary per-protein spool.
+Export protein-aligned Arrow batches through bounded memory blocks, spilling to
+one seekable temporary file only when needed.
 The group ordering index, per-protein precursor metadata, Arrow input records,
 and bounded output buffers are retained. The original long Arrow table is not rewritten. TSV peptide strings
 are constructed only when requested. Temporary files are removed on failure.
@@ -924,8 +1000,9 @@ function writeProteinGroupsCSV(
     wide_capacity = max(1, min(batch_size, budget ÷ max(1, 16length(file_names) + 512)))
 
     mktempdir(out_dir; prefix=".protein_export_") do dir
+        store = nothing
         try
-            catalog, column_types, abundance_type = _spool_protein_export(
+            catalog, column_types, abundance_type, store = _spool_protein_export(
                 long_pg_path, dir, group_key, metadata_columns, gene_map, protein_map, budget, batch_size, write_csv)
             wide = DataFrame()
             for col in metadata_columns
@@ -946,6 +1023,14 @@ function writeProteinGroupsCSV(
                     println(wide_io, join(propertynames(wide), '\t'))
                 end
                 open(Arrow.Writer, tmp_arrow; file=true, ntasks=0) do arrow_writer
+                    long = DataFrame()
+                    long_bytes = 0
+                    function flush_long!()
+                        isempty(long) && return
+                        CSV.write(long_io, long; append=true, header=false, delim='\t')
+                        long = DataFrame()
+                        long_bytes = 0
+                    end
                     function flush_wide!()
                         write_csv && CSV.write(wide_io, wide; append=true, header=false, delim='\t')
                         Arrow.write(arrow_writer, wide)
@@ -956,8 +1041,7 @@ function writeProteinGroupsCSV(
                         occupied = falses(length(file_names))
                         sequence_cache = Dict{UInt32, String}()
                         sequence_lengths = Dict{UInt32, Int}()
-                        for batch in Arrow.Stream(group.export_path)
-                            df = DataFrame(batch; copycols=false)
+                        for df in ProteinExportBatches(store, group.first_row, group.last_row)
                             for i in 1:nrow(df)
                                 index = get(file_indices, df.file_name[i], 0)
                                 index == 0 && throw(ArgumentError("Unknown run in protein export: $(df.file_name[i])"))
@@ -982,7 +1066,16 @@ function writeProteinGroupsCSV(
                                         value = join((sequence_cache[id] for id in ids if !ismissing(id) && !isempty(sequence_cache[id])), ';')
                                         isempty(value) ? missing : value
                                     end
-                                    CSV.write(long_io, select(part, long_columns); append=true, header=false, delim='\t')
+                                    part = select(part, long_columns)
+                                    part_bytes = Base.summarysize(part)
+                                    long_bytes + part_bytes > budget && flush_long!()
+                                    if isempty(long)
+                                        long = part
+                                    else
+                                        append!(long, part; promote=true)
+                                    end
+                                    long_bytes += part_bytes
+                                    long_bytes >= budget && flush_long!()
                                 end
                             end
                         end
@@ -994,6 +1087,7 @@ function writeProteinGroupsCSV(
                         end
                         nrow(wide) >= wide_capacity && flush_wide!()
                     end
+                    flush_long!()
                     (!isempty(wide) || isempty(catalog)) && flush_wide!()
                 end
             finally
@@ -1009,8 +1103,7 @@ function writeProteinGroupsCSV(
                 safeRm(wide_path; force=true)
             end
         finally
-            # Release temporary Arrow mappings before directory cleanup on Windows.
-            Sys.iswindows() && GC.gc()
+            store === nothing || close(store)
         end
     end
     return arrow_path
