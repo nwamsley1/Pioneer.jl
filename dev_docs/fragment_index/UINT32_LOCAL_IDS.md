@@ -97,8 +97,31 @@ diaPASEF (Ultra 2, TimsSlices 0.3.0), warm start, two alternating reps:
 - The two libraries can only differ in search results through Koina's prediction noise: -0.4% precursors / +0.4%
   protein groups. That is the scale of the HYE differences, so those are most likely library noise, not the index.
 
+## Result: Orbitrap (narrow windows), 5 Da UInt16 vs 5 Da UInt32 (2026-09-26)
+
+HYE libraries from Koina, paper HYE config without ion mobility, seed 1844; 5 Da UInt16 (233 partitions, median
+2.5 Da) vs 5 Da UInt32 (135 partitions, 5 Da, max 117,404 precursors). One process per library and rep (two
+alternating reps): a warm-up search (MTAC 3P Sample-A Standard Rep2), then three timed searches. Means over reps:
+
+| dataset (2 files each) | metric | 5 Da / UInt16 | 5 Da / UInt32 | change |
+|---|---|---|---|---|
+| Olsen Astral 200 ng 30 min, 2 Th | fragment index | 21.6 s | 25.1 s | +16% |
+| | Main Search / total | 131.3 / 281.0 s | 129.1 / 275.7 s | -1.7% / -1.9% |
+| | precursors / protein groups | 413,174 / 26,918 | 409,145 / 26,920 | -1.0% / 0% |
+| MTAC Astral 3P 5 min Standard | fragment index | 3.5 s | 4.5 s | +28% |
+| | Main Search / total | 41.9 / 163.7 s | 40.5 / 159.6 s | -3.4% / -2.5% |
+| | precursors / protein groups | 224,455 / 23,192 | 224,363 / 23,275 | -0.04% / +0.4% |
+| Olsen Exploris 500 ng 30 SPD | fragment index | 4.8 s | 4.9 s | ~0 |
+| | total | 104.2 s | 105.2 s | +1% |
+| | precursors / protein groups | 120,675 / 14,595 | 120,658 / 14,588 | ~0 |
+
+With 2 Th windows a scan overlaps 1-2 partitions either way, so the wider UInt32 partitions only add out-of-window
+candidates: the fragment index is 1-3.5 s slower, but it is ~15% of Main Search on Astral (vs ~47% on timsTOF), and
+Main Search / total come out 1.7-3.4% faster (per-rep spread ~2-3 s): neutral to slightly positive. IDs are within the
+Koina noise floor except Olsen Astral precursors (-1.0%, protein groups unchanged), not isolated from library noise.
+
 ## Open: how to expose it
 
 Proposed: `frag_index_local_id_type = "auto"`. After precursor m/z are known, use UInt32 only when some
-`prec_partition_width` bin would exceed 65,535 (the ID width is binding), else UInt16. Not yet tested on narrow-window
-(Thermo / Astral) data, where a wider effective partition also admits more out-of-window candidates.
+`prec_partition_width` bin would exceed 65,535 (the ID width is binding), else UInt16. On narrow-window Orbitrap data (above)
+it is neutral, so the speed case for UInt32 is the timsTOF one (wide windows, paired with 10 Da partitions).
