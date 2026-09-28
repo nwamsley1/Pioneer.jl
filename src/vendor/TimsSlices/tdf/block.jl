@@ -81,3 +81,37 @@ function decode_codec2!(buf::FrameBuffer, payload::AbstractVector{UInt8}, n_scan
     end
     buf
 end
+
+"""
+    encode_codec2(tof, intensity, scan_start, n_scans; level = 3) -> Vector{UInt8}
+
+Inverse of `decode_codec2!`: one frame's peaks as a complete `analysis.tdf_bin` block (8-byte header + zstd
+payload). `scan_start` is laid out like `FrameBuffer.scan_start` (`n_scans + 1` entries; the peaks of 0-based scan
+`s` are `scan_start[s+1]:scan_start[s+2]-1`), with TOF bins increasing within each scan. A frame without peaks is
+the header alone (block size 8), which `decode_codec2!` reads without touching a payload. Used to build test
+fixtures from real runs (test/fixtures/tools/make_d_fixture.jl).
+"""
+function encode_codec2(tof::AbstractVector{UInt32}, intensity::AbstractVector{UInt32},
+                       scan_start::AbstractVector{<:Integer}, n_scans::Integer; level::Integer = 3)
+    n_peaks = Int(scan_start[n_scans + 1]) - 1
+    header(block_size) = collect(reinterpret(UInt8, UInt32[block_size, n_scans]))
+    n_peaks == 0 && return header(8)
+    n = n_scans + 2n_peaks
+    w = Vector{UInt32}(undef, n)
+    w[1] = UInt32(n_scans)
+    for s in 0:n_scans-2                      # 2 x peaks per scan; the last scan takes the remainder
+        w[s + 2] = UInt32(2 * (scan_start[s + 2] - scan_start[s + 1]))
+    end
+    pos = n_scans + 1
+    for s in 0:n_scans-1                      # (TOF delta, intensity) pairs; the running sum restarts at -1 per scan
+        acc = typemax(UInt32)
+        for k in scan_start[s + 1]:scan_start[s + 2] - 1
+            w[pos] = tof[k] - acc; w[pos + 1] = intensity[k]; acc = tof[k]; pos += 2
+        end
+    end
+    planes = Vector{UInt8}(undef, 4n)
+    transpose!(planes, w, n)
+    z = UInt8[]
+    nz = zstd_compress!(z, ZstdCtx(), planes, 4n, level)
+    return vcat(header(8 + nz), z[1:nz])
+end

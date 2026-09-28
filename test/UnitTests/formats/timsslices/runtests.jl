@@ -31,10 +31,20 @@ const HELA = joinpath(DATA, "20210510_TIMS03_EVO03_PaSk_SA_HeLa_50ng_5_6min_DIA_
 const ECOLI = joinpath(DATA, "LFQ_Ultra2_diaPASEF_5min_50ng_Ecoli_01.d")
 const PG250 = joinpath(DATA, "LFQ_Ultra_diaPASEF_15min_250pg_Human_01.d")
 const BIG = get(ENV, "PIONEER_FORMATS_TEST_BIG", get(ENV, "TIMSSLICES_TEST_BIG", "0")) == "1"
+# The truncated E. coli .d fixture: downloaded from Zenodo into temp/zenodo by .github/actions/precompile-data
+# (PIONEER_FORMATS_FIXTURES overrides the directory).
+const FIXTURES = get(ENV, "PIONEER_FORMATS_FIXTURES", joinpath(pkgdir(Pioneer), "temp", "zenodo"))
+const FIXTURE_D = joinpath(FIXTURES, "ecoli_tims_fixture.d")
 
 @testset "TimsSlices" begin
     include("test_codec.jl")
     include("test_smooth.jl")
+    include("test_encode.jl")
+    if isdir(FIXTURE_D)
+        include("test_fixture.jl")
+    else
+        @warn "E. coli .d fixture not found at $FIXTURE_D (Zenodo download); skipping fixture tests"
+    end
     if isdir(HELA)
         include("test_realdata.jl")
     else

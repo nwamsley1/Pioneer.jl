@@ -255,6 +255,27 @@ end
 
 
 ##########################################
+# timsTOF: .d -> .tdfs conversion and search
+##########################################
+# The truncated E. coli diaPASEF fixture from the Zenodo artifact (temp/zenodo/ecoli_tims_fixture.d, made by
+# test/fixtures/tools/make_d_fixture.jl): 90 s, one isolation window per MS2 frame (537.5 / 562.5 m/z). Searched
+# against the committed E. coli test library, which carries alphapept_ccs 1/K0, it reaches ~750 precursors at 1% FDR,
+# so every stage runs on .tdfs data: TdfsMassSpecData decoding, the IM candidate gate, IM calibration and features,
+# the 2D chromatogram. Without these targets the first timsTOF search in a built app compiles all of that at startup.
+const TDFS_FIXTURE_D = joinpath(root, "..", "..", "temp", "zenodo", "ecoli_tims_fixture.d")
+const TDFS_FIXTURE_OUT = joinpath(data_dir, "precompile", "ecoli_tims_tdfs")
+convert_tdfs_fixture() = (rm(TDFS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertBruker(TDFS_FIXTURE_D; output_dir = TDFS_FIXTURE_OUT))
+maybe_run("convertBruker") do
+    convert_tdfs_fixture()
+end
+maybe_run("SearchDIA_tdfs") do
+    isdir(TDFS_FIXTURE_OUT) || convert_tdfs_fixture()    # so the target also works alone via the `cmd` filter
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_tdfs.json"))
+end
+
+
+##########################################
 # ConvertMzML
 ##########################################
 maybe_run("convertMzML") do
