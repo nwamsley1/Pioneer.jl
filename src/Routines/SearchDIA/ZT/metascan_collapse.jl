@@ -169,6 +169,27 @@ Gather `col[perm]` into a fresh concrete `Vector{Float32}` in one pass, with no 
     return out
 end
 
+"""
+    ZTCollapseLookups(spectra, precursors)
+
+Per-file arrays `collapse_to_metascans` indexes once per row: library precursor m/z, and each
+scan's center m/z, isolation width and cycle. Materialized as concrete vectors because the
+accessors return an Arrow.Primitive and `Union{Missing,Float32}` vectors whose element types box
+on every index; built once per file rather than per chunk. MS1 scans (missing center m/z)
+coalesce to NaN32 and are never indexed by MS2 PSMs.
+"""
+struct ZTCollapseLookups
+    prec_mz::Vector{Float32}
+    cmzs::Vector{Float32}
+    hws::Vector{Float32}
+    cycles::Vector{UInt32}
+end
+ZTCollapseLookups(spectra::MassSpecData, precursors) = ZTCollapseLookups(
+    Vector{Float32}(getMz(precursors)),
+    Float32.(coalesce.(getCenterMzs(spectra), NaN32)),
+    Float32.(coalesce.(getIsolationWidthMzs(spectra), NaN32)),
+    UInt32.(getCycleIdxs(spectra)))
+
 """Per-thread scratch and output vectors for `collapse_to_metascans` (blocks are independent)."""
 struct _CollapseOut
     w::Vector{Float32}; Fbuf::Vector{Vector{Float32}}; cfw::Vector{Float32}; has_sig::BitVector
@@ -202,19 +223,13 @@ The raw 2k+1 weight profile is NOT materialized as columns — it is consumed in
 single buffer is reused across centers.
 """
 function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursors,
-                               geom::ZTGeometry; bitvec_rank_table = nothing)
+                               geom::ZTGeometry; bitvec_rank_table = nothing,
+                               lookups::ZTCollapseLookups = ZTCollapseLookups(spectra, precursors))
     k = Int(geom.metascan_k)
     n = nrow(psms)
     (n == 0 || k <= 0) && return psms
 
-    # Function barrier: these accessors return an Arrow.Primitive and a
-    # Vector{Union{Missing,Float32}} whose element types box on every index — and they are
-    # indexed once per row in the center guard below. Materialize once. MS1 scans (missing
-    # center m/z) coalesce to NaN32 and are never indexed by MS2 PSMs.
-    prec_mz::Vector{Float32} = Vector{Float32}(getMz(precursors))
-    cmzs::Vector{Float32} = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
-    hws::Vector{Float32}  = Float32.(coalesce.(getIsolationWidthMzs(spectra), NaN32))
-    cycles::Vector{UInt32} = UInt32.(getCycleIdxs(spectra))
+    prec_mz = lookups.prec_mz; cmzs = lookups.cmzs; hws = lookups.hws; cycles = lookups.cycles
 
     # Sort by (precursor_idx, scan_idx) so a precursor's meta-scan bins become contiguous
     # rows. Both keys are UInt32, so pack them into one UInt64: identical lexicographic

@@ -131,6 +131,7 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
     k = Int(g.metascan_k)
     precursors = getPrecursors(getSpecLib(search_context))
     bitvec_rank_table = getBitVecExcessRanks(search_context, ms_file_idx)
+    lookups = ZTCollapseLookups(spectra, precursors)
     t0 = time()
     chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
                                            ZT_CHUNK_CANDIDATES)
@@ -143,7 +144,7 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
         t_d = time() - t_c
         n_raw = nrow(raw); n_raw_total += n_raw; max_raw = max(max_raw, n_raw)
         part = _zt_reduce_chunk(raw, spectra, search_context, ms_file_idx, precursors, g,
-                                bitvec_rank_table)
+                                bitvec_rank_table, lookups)
         raw = nothing; raw_all = nothing
         reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
         t_deconv += t_d; t_reduce += time() - t_c - t_d
@@ -166,12 +167,13 @@ Per-chunk reduce: the two per-scan feature passes MainSearch normally runs after
 (they need the raw per-bin rows, contiguous by scan), then the meta-scan collapse.
 """
 function _zt_reduce_chunk(raw::DataFrame, spectra::MassSpecData, search_context::SearchContext,
-                          ms_file_idx::Int64, precursors, g::ZTGeometry, bitvec_rank_table)
+                          ms_file_idx::Int64, precursors, g::ZTGeometry, bitvec_rank_table,
+                          lookups::ZTCollapseLookups)
     nrow(raw) == 0 && return raw
     @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
     @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
     return @alloc_bucket "metascan_collapse" collapse_to_metascans(
-        raw, spectra, precursors, g; bitvec_rank_table = bitvec_rank_table)
+        raw, spectra, precursors, g; bitvec_rank_table = bitvec_rank_table, lookups = lookups)
 end
 
 """
