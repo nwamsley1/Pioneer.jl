@@ -445,8 +445,11 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     sh_str = cat(o -> o.sh_str); sh_effn = cat(o -> o.sh_effn); sh_best = cat(o -> o.sh_best)
     sh_disp = cat(o -> o.sh_disp); sh_n70 = cat(o -> o.sh_n70); sh_rank = cat(o -> o.sh_rank)
     out_fit = ntuple(b -> cat(o -> o.out_fit[b]), 8); out_shd = ntuple(b -> cat(o -> o.out_shd[b]), 8)
-    # center_rows are positions in the PERMED order; map back to original psms rows.
-    meta = psms[perm[center_rows], :]
+    # center_rows are positions in the PERMED order; map back to original psms rows. The fitted
+    # and shadow spectra are replaced below, so they are not gathered.
+    fs_cols = _have_fs ? Set(vcat([Symbol("fitted_frag$(b)_int") for b in 1:8],
+                                  [Symbol("shadow_frag$(b)_int") for b in 1:8])) : Set{Symbol}()
+    meta = psms[perm[center_rows], [c for c in propertynames(psms) if !(c in fs_cols)]]
     meta[!, :zt_tri_cosine] = f_tri_cos
     meta[!, :zt_entropy]    = f_entropy
     meta[!, :zt_tri_pcor]   = f_tri_pcor
@@ -470,6 +473,8 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
             meta[!, Symbol("fitted_frag$(b)_int")] = out_fit[b]
             meta[!, Symbol("shadow_frag$(b)_int")] = out_shd[b]
         end
+        # same column order as the input, then the collapse features
+        select!(meta, vcat(propertynames(psms), setdiff(propertynames(meta), propertynames(psms))))
     end
     return meta
 end
