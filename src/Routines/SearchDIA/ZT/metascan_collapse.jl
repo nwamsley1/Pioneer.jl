@@ -275,7 +275,18 @@ function collapse_to_metascans(psms::DataFrame, spectra::MassSpecData, precursor
     # ---- per-thread scratch and outputs; blocks are independent, output order is block order ----
     nth = max(1, min(Threads.nthreads(), n_blocks))
     bounds = [(n_blocks * (t - 1)) ÷ nth + 1 for t in 1:(nth + 1)]; bounds[end] = n_blocks + 1
-    outs = [_CollapseOut(L, n ÷ nth ÷ L + 16) for _ in 1:nth]
+    # Reserve each thread's outputs for its meta-scan count, about one center per (precursor,
+    # cycle) group, so they never regrow. Rows within a block are sorted by scan, so each
+    # cycle's rows are contiguous.
+    n_groups = zeros(Int, nth)
+    Threads.@threads for t in 1:nth
+        c = 0
+        @inbounds for b in bounds[t]:(bounds[t + 1] - 1), r in blk_starts[b]:(blk_starts[b + 1] - 1)
+            (r == blk_starts[b] || cycles[Int(scn[r])] != cycles[Int(scn[r - 1])]) && (c += 1)
+        end
+        n_groups[t] = c
+    end
+    outs = [_CollapseOut(L, n_groups[t] + 16) for t in 1:nth]
 
     Threads.@threads for t in 1:nth
         o = outs[t]
