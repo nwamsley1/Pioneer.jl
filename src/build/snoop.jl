@@ -276,6 +276,26 @@ end
 
 
 ##########################################
+# SCIEX: .wiff -> .scxs conversion and search
+##########################################
+# The truncated SCIEX SWATH fixture from the Zenodo artifact (temp/zenodo/sciex_wiff_fixture, made by
+# test/fixtures/tools/make_wiff_fixture.jl): a three-proteome ZenoTOF run cut to 30-50 min and to the windows inside
+# the committed E. coli test library's precursor range, which it searches to ~340 precursors at 1% FDR, so every
+# stage runs on ScxsMassSpecData. Converting first also compiles convertSciex and the SciexWiff reader.
+const SCXS_FIXTURE_WIFF = joinpath(root, "..", "..", "temp", "zenodo", "sciex_wiff_fixture", "BenchSample_B_nswath4_25ng.wiff")
+const SCXS_FIXTURE_OUT = joinpath(data_dir, "precompile", "sciex_scxs")
+convert_scxs_fixture() = (rm(SCXS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertSciex(SCXS_FIXTURE_WIFF; output_dir = SCXS_FIXTURE_OUT))
+maybe_run("convertSciex") do
+    convert_scxs_fixture()
+end
+maybe_run("SearchDIA_scxs") do
+    isdir(SCXS_FIXTURE_OUT) || convert_scxs_fixture()    # so the target also works alone via the `cmd` filter
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_scxs.json"))
+end
+
+
+##########################################
 # ConvertMzML
 ##########################################
 maybe_run("convertMzML") do

@@ -101,3 +101,5 @@ temp/
 # Outputs of the precompile workload's timsTOF targets (src/build/snoop.jl)
 data/precompile/ecoli_tims_tdfs/
 data/precompile/ecoli_tims_results/
+data/precompile/sciex_scxs/
+data/precompile/sciex_results/
