@@ -31,7 +31,7 @@ Pioneer and its companion tool Altimeter are an open-source and performant solut
 ## Current Limitations
 
 - **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM
-- **Digestion:** Fully enzymatic digestion only (no semi-enzymatic or non-specific searches)
+- **Digestion:** Full, semi-specific, nonspecific, and no-enzyme library digestion
 - **Interface:** Command-line only; no graphical user interface yet
 
 ## Quick Links

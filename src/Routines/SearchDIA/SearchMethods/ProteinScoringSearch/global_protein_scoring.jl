@@ -448,9 +448,19 @@ function build_global_protein_score_dicts(
         n_experiment_runs = n_experiment_runs,
         run_similarity = run_similarity,
     )
+    global_features = copy(GLOBAL_PROTEIN_SCORE_FEATURES)
+    remove_zero_variance_columns!(global_features, table)
+    if isempty(global_features)
+        @user_warn "No informative global protein features remain after filtering; " *
+            "using empirical global protein scores"
+        return _build_empirical_global_protein_score_dicts(
+            inputs,
+            isqrt(n_runs_total),
+        )
+    end
     scored = _score_global_features_oof(
         table,
-        GLOBAL_PROTEIN_SCORE_FEATURES,
+        global_features,
         cv_folds;
         scoring_name = "Global protein",
         lgbm_hp = GLOBAL_PROTEIN_LGBM_HP,
@@ -474,7 +484,7 @@ function build_global_protein_score_dicts(
     ]
     score_dicts = _build_protein_score_dicts(protein_keys, selected.scores)
     @debug_l1 "Global protein scoring scored $(length(protein_keys)) protein groups " *
-              "with $(length(GLOBAL_PROTEIN_SCORE_FEATURES)) features; " *
+              "with $(length(global_features)) features; " *
               "selected $(selected.source) after semi-supervised iteration $(scored.iter)"
     return score_dicts
 end

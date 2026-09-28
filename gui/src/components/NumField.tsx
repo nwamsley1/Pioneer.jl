@@ -8,9 +8,10 @@ interface Props {
   fieldKey: string
   value: string
   onChange: (key: string, value: string) => void
+  disabled?: boolean
 }
 
-export function NumField({ fieldKey, value, onChange }: Props) {
+export function NumField({ fieldKey, value, onChange, disabled = false }: Props) {
   const spec = NUM_SPECS[fieldKey]
   const error = numError(fieldKey, value)
 
@@ -82,7 +83,8 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           border: `1px solid ${error ? '#E5484D' : '#D7DBE0'}`,
           borderRadius: 8,
           overflow: 'hidden',
-          background: '#fff',
+          background: disabled ? '#F5F7F9' : '#fff',
+          opacity: disabled ? 0.6 : 1,
           marginTop: 'auto',
           // Sized to what a number needs, not to the column it sits in. These
           // hold four or five characters; stretched to a full column they read
@@ -95,6 +97,7 @@ export function NumField({ fieldKey, value, onChange }: Props) {
           data-key={fieldKey}
           value={value}
           onChange={(e) => onChange(fieldKey, e.target.value)}
+          disabled={disabled}
           inputMode="decimal"
           style={{
             flex: 1,
@@ -123,6 +126,7 @@ export function NumField({ fieldKey, value, onChange }: Props) {
             type="button"
             className="pio-numstep"
             onClick={() => stepBy(1)}
+            disabled={disabled}
             tabIndex={-1}
             style={stepBtn}
           >
@@ -140,6 +144,7 @@ export function NumField({ fieldKey, value, onChange }: Props) {
             type="button"
             className="pio-numstep"
             onClick={() => stepBy(-1)}
+            disabled={disabled}
             tabIndex={-1}
             style={{ ...stepBtn, borderTop: '1px solid #E2E6EA' }}
           >

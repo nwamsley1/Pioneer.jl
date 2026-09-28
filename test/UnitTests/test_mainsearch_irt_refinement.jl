@@ -80,13 +80,15 @@ end
                 precursor_idx = UInt32[1, 2],
                 discriminant = Float32[0.1, 0.2],
                 num_enzymatic_termini = UInt8[2, 2],
+                missed_cleavage = UInt8[0, 0],
             ))
             Arrow.write(second_path, (
                 precursor_idx = UInt32[3, 4],
                 discriminant = Float32[0.3, 0.4],
                 num_enzymatic_termini = UInt8[2, 2],
+                missed_cleavage = UInt8[0, 0],
             ))
-            requested = [:discriminant, :num_enzymatic_termini]
+            requested = [:discriminant, :num_enzymatic_termini, :missed_cleavage]
             @test Pioneer._resolve_available_features(
                 [first_path, second_path], requested
             ) == [:discriminant]
@@ -97,6 +99,7 @@ end
                 precursor_idx = UInt32[3, 4],
                 discriminant = Float32[0.3, 0.4],
                 num_enzymatic_termini = UInt8[1, 2],
+                missed_cleavage = UInt8[0, 1],
             ))
             @test Pioneer._resolve_available_features(
                 [first_path, varied_path], requested

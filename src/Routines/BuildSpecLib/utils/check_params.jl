@@ -246,7 +246,7 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "max_length", Integer)
     check_param(fasta_digest_params, "min_charge", Integer)
     check_param(fasta_digest_params, "max_charge", Integer)
-    check_param(fasta_digest_params, "cleavage_regex", String)
+    check_param(fasta_digest_params, "cleavage_regex", Union{Nothing,String})
     check_param(fasta_digest_params, "missed_cleavages", Integer)
     check_param(fasta_digest_params, "max_var_mods", Integer)
     check_param(fasta_digest_params, "add_decoys", Bool)
@@ -255,7 +255,25 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "specificity", String)
     specificity = normalize_digest_specificity(fasta_digest_params["specificity"])
     fasta_digest_params["specificity"] = specificity
+    cleavage_regex = fasta_digest_params["cleavage_regex"]
+    if cleavage_regex isa String && isempty(strip(cleavage_regex))
+        throw(InvalidParametersError(
+            "cleavage_regex must be a non-empty string or null for no-enzyme digestion",
+            fasta_digest_params,
+        ))
+    elseif isnothing(cleavage_regex) && specificity != "none"
+        throw(InvalidParametersError(
+            "cleavage_regex may be null only when specificity is 'none'",
+            fasta_digest_params,
+        ))
+    end
     check_param(fasta_digest_params, "nterm_met_excision", Bool)
+    if isnothing(cleavage_regex)
+        # Canonicalize ignored enzyme-dependent settings so config.json
+        # describes the metadata actually written to the library.
+        fasta_digest_params["missed_cleavages"] = 0
+        fasta_digest_params["nterm_met_excision"] = false
+    end
     
     # Check decoy_method with default value
     if !haskey(fasta_digest_params, "decoy_method")

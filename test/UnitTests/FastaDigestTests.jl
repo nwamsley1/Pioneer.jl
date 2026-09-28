@@ -103,8 +103,26 @@
         @test length(semi) == length(semi_starts) == length(semi_ntt)
 
         @test normalize_digest_specificity(" Semi_N ") == "semi-n"
+
+        nonspecific, nonspecific_starts, nonspecific_ntt = digest_sequence(
+            "MAKRT", r"K", 3, 2, 0, "none"
+        )
+        @test nonspecific == ["MA", "MAK", "AK", "AKR", "KR", "KRT", "RT"]
+        @test nonspecific_starts == UInt32[1, 1, 2, 2, 3, 3, 4]
+        @test nonspecific_ntt == UInt8[1, 2, 1, 0, 0, 1, 2]
+
+        # The missed-cleavage setting does not restrict nonspecific candidates.
+        unrestricted, _, _ = digest_sequence("MAKRT", r"K", 5, 2, 0, "none")
+        @test "MAKRT" in unrestricted
+
+        no_enzyme, no_enzyme_starts, no_enzyme_ntt = digest_sequence(
+            "MAKRT", nothing, 3, 2, 0, "none"; nterm_met_excision = true
+        )
+        @test no_enzyme == nonspecific
+        @test no_enzyme_starts == nonspecific_starts
+        @test all(iszero, no_enzyme_ntt)
         @test_throws ArgumentError digest_sequence(
-            sequence, r"[KR]", 4, 2, 0, "none"
+            sequence, nothing, 4, 2, 0, "full"
         )
     end
     
@@ -307,7 +325,75 @@
         @test validated["fasta_digest_params"]["specificity"] == "semi-n"
 
         digest_params["specificity"] = "none"
-        @test_throws ArgumentError Pioneer.check_params_bsp(JSON.json(params))
+        validated = Pioneer.check_params_bsp(JSON.json(params))
+        @test validated["fasta_digest_params"]["specificity"] == "none"
+
+        digest_params["cleavage_regex"] = nothing
+        validated = Pioneer.check_params_bsp(JSON.json(params))
+        @test isnothing(validated["fasta_digest_params"]["cleavage_regex"])
+        @test validated["fasta_digest_params"]["missed_cleavages"] == 0
+        @test validated["fasta_digest_params"]["nterm_met_excision"] == false
+
+        digest_params["specificity"] = "full"
+        @test_throws Pioneer.InvalidParametersError Pioneer.check_params_bsp(JSON.json(params))
+
+        digest_params["specificity"] = "none"
+        digest_params["cleavage_regex"] = ""
+        @test_throws Pioneer.InvalidParametersError Pioneer.check_params_bsp(JSON.json(params))
+    end
+
+    @testset "nonspecific prediction-input metadata" begin
+        mktempdir() do temp_dir
+            fasta_path = joinpath(temp_dir, "tiny.fasta")
+            open(fasta_path, "w") do io
+                write(io, ">sp|P1|TEST Tiny protein OS=Human GN=TEST\nMAKRT\n")
+            end
+
+            template_path = joinpath(
+                @__DIR__, "..", "..", "assets", "example_config",
+                "defaultBuildLibParams.json",
+            )
+            params = JSON.parsefile(template_path, dicttype=Dict{String,Any})
+            params["fasta_paths"] = [fasta_path]
+            params["fasta_names"] = ["TEST"]
+            params["fasta_digest_params"]["min_length"] = 2
+            params["fasta_digest_params"]["max_length"] = 3
+            params["fasta_digest_params"]["min_charge"] = 2
+            params["fasta_digest_params"]["max_charge"] = 2
+            params["fasta_digest_params"]["max_var_mods"] = 0
+            params["fasta_digest_params"]["add_decoys"] = false
+            params["fasta_digest_params"]["specificity"] = "none"
+            for mod_key in ("variable_mods", "fixed_mods")
+                params[mod_key] = Dict(
+                    "pattern" => String[],
+                    "mass" => Float64[],
+                    "name" => String[],
+                )
+            end
+
+            function prepare_with_rule(rule, stem)
+                params["fasta_digest_params"]["cleavage_regex"] = rule
+                input_path = joinpath(temp_dir, "$stem.arrow")
+                proteins_path = joinpath(temp_dir, "$(stem)_proteins.arrow")
+                Pioneer.prepare_chronologer_input(
+                    params,
+                    missing,
+                    0.0f0,
+                    10_000.0f0,
+                    input_path,
+                    proteins_path,
+                )
+                return Arrow.Table(input_path)
+            end
+
+            annotated = prepare_with_rule(raw"[KR][^_|$]", "annotated")
+            @test any(>(UInt8(0)), annotated.num_enzymatic_termini)
+            @test any(>(UInt8(0)), annotated.missed_cleavages)
+
+            no_enzyme = prepare_with_rule(nothing, "no_enzyme")
+            @test all(iszero, no_enzyme.num_enzymatic_termini)
+            @test all(iszero, no_enzyme.missed_cleavages)
+        end
     end
 
     #==========================================================================

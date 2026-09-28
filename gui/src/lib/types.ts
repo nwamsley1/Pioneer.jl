@@ -255,6 +255,9 @@ export interface BuildParams {
    *  set it; "Custom" lets it be typed. Stored as the pattern rather than a
    *  preset id so a config round-trips even when it matches nothing. */
   cleavageRegex: string
+  /** No protease rule is defined. This serializes cleavage_regex as JSON null
+   *  and is valid only with nonspecific digestion. */
+  noEnzyme: boolean
   /** Whether the rule is being written by hand.
    *
    *  Cannot be derived from `cleavageRegex` alone: a hand-written rule that
@@ -265,7 +268,7 @@ export interface BuildParams {
   /** How many termini must obey that rule. Orthogonal to it: the enzyme says
    *  where cleavage may occur, this says how much of the peptide has to
    *  respect it. */
-  digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
+  digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c' | 'none'
   /** fasta_digest_params.nterm_met_excision: emit each protein N-terminal peptide
    *  both with and without its initiator Met (MPEPTIDEK and PEPTIDEK). */
   ntermMetExcision: boolean
@@ -305,6 +308,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   maxCharge: '3',
   missedCleav: '1',
   cleavageRegex: DEFAULT_CLEAVAGE,
+  noEnzyme: false,
   customEnzyme: false,
   digestSpecificity: 'full',
   ntermMetExcision: true,

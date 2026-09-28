@@ -48,14 +48,15 @@ function _resolve_available_features(file_paths::Vector{String}, requested::Vect
         break
     end
 
-    if :num_enzymatic_termini in available
+    for digestion_feature in (:num_enzymatic_termini, :missed_cleavage)
+        digestion_feature in available || continue
         first_value = nothing
         found_value = false
         varies = false
         for fpath in file_paths
             tbl = Arrow.Table(fpath)
-            hasproperty(tbl, :num_enzymatic_termini) || continue
-            for value in tbl.num_enzymatic_termini
+            hasproperty(tbl, digestion_feature) || continue
+            for value in getproperty(tbl, digestion_feature)
                 if !found_value
                     first_value = value
                     found_value = true
@@ -69,7 +70,7 @@ function _resolve_available_features(file_paths::Vector{String}, requested::Vect
         if !varies
             deleteat!(
                 available,
-                findfirst(==(:num_enzymatic_termini), available),
+                findfirst(==(digestion_feature), available),
             )
         end
     end

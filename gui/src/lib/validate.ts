@@ -468,7 +468,12 @@ export function validateBuildRun(
   }
   if (libNote.level === 'error') return { key: 'libPath', msg: libNote.msg }
 
+  if (p.noEnzyme && p.digestSpecificity !== 'none') {
+    return { key: 'enzyme', msg: 'No-enzyme digestion requires nonspecific digestion.' }
+  }
+
   for (const key of DIGEST_KEYS) {
+    if (p.noEnzyme && key === 'missedCleav') continue
     const err = numError(key, p[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
   }

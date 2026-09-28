@@ -3,15 +3,17 @@ interface Props {
   on: boolean
   onClick: () => void
   fieldKey: string
+  disabled?: boolean
 }
 
-export function Toggle({ on, onClick, fieldKey }: Props) {
+export function Toggle({ on, onClick, fieldKey, disabled = false }: Props) {
   return (
     <button
       type="button"
       data-key={fieldKey}
       onClick={onClick}
-      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flex: 'none' }}
+      disabled={disabled}
+      style={{ background: 'none', border: 'none', padding: 0, cursor: disabled ? 'default' : 'pointer', flex: 'none', opacity: disabled ? 0.5 : 1 }}
     >
       <span
         style={{
