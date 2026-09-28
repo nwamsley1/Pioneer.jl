@@ -5,7 +5,7 @@
 # Run: julia --project=. test/UnitTests/test_scxs_mass_spec_data.jl
 
 using Test, Arrow
-using TimsSlices
+using Pioneer: TimsSlices
 using Pioneer
 using Pioneer: ScxsMassSpecData, PeakDecodeBuffer, getPeaks!, loadMassSpecData, is_ms_data_path, is_scxs_path,
                getMzArray, getIntensityArray, getRetentionTime, getLowMz, getHighMz, getTIC, getCenterMz,

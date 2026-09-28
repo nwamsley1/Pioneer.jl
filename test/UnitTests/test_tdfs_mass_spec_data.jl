@@ -7,7 +7,7 @@
 # when it is absent. Run: julia --project=. test/UnitTests/test_tdfs_mass_spec_data.jl
 
 using Test, Random
-using TimsSlices
+using Pioneer: TimsSlices
 using Pioneer
 using Pioneer: BasicMassSpecData, TdfsMassSpecData, PeakDecodeBuffer, getPeaks!, loadMassSpecData, is_ms_data_path,
                getMzArray, getIntensityArray, getRetentionTime, getLowMz, getHighMz, getTIC, getCenterMz,
@@ -25,7 +25,7 @@ else
     out_dir = mktempdir()
     # 120 frames (13 MS1 + 107 MS2), integer bins, default MS2 peak cap
     params = TimsSlices.ConvertParams(format = :both, frames = collect(1:120))
-    paths = TimsSlices.convert(TDFS_HELA, out_dir; params = params, name = "hela120", log = devnull)
+    paths = TimsSlices.convert_run(TDFS_HELA, out_dir; params = params, name = "hela120", log = devnull)
     a = BasicMassSpecData(paths.arrow)
     t = TdfsMassSpecData(paths.tdfs)
     n = length(a)
@@ -94,7 +94,7 @@ else
 
     @testset "buffer cache is keyed on (file, scan), not scan alone" begin
         # A second file whose scan i holds different peaks: a buffer that just decoded scan i of `t` must decode again.
-        p2 = TimsSlices.convert(TDFS_HELA, joinpath(out_dir, "second"); params = TimsSlices.ConvertParams(
+        p2 = TimsSlices.convert_run(TDFS_HELA, joinpath(out_dir, "second"); params = TimsSlices.ConvertParams(
             format = :both, frames = collect(121:240)), name = "hela121", log = devnull)
         t2 = TdfsMassSpecData(p2.tdfs); a2 = BasicMassSpecData(p2.arrow)
         i = findfirst(k -> getPeakCount(t, k) > 0 && getPeakCount(t2, k) > 0 &&

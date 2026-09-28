@@ -16,7 +16,7 @@
 # (`Float32((a + b·bin/k)²)`, `Float32(stored / int_scale)`), so a search from the .tdfs and from its expanded
 # Arrow see identical peaks.
 
-using TimsSlices: TimsSlices, TdfsFile, SliceBuffer, BlockCodec
+using .TimsSlices: TdfsFile, SliceBuffer, BlockCodec
 
 """
     PeakDecodeBuffer()
