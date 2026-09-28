@@ -1239,23 +1239,6 @@ export function BuildSpecLibForm({
           <NumField fieldKey="maxCharge" value={params.maxCharge} onChange={onParam} />
           <NumField fieldKey="maxVarMods" value={params.maxVarMods} onChange={onParam} />
         </div>
-        {params.digestSpecificity === 'none' && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: '10px 12px',
-              borderRadius: 9,
-              background: '#FFF7E6',
-              border: '1px solid #FFE0A3',
-              fontSize: 11.5,
-              color: '#7A5A11',
-              lineHeight: 1.5,
-            }}
-          >
-            Nonspecific digestion generates every peptide window in the selected length range
-            and can make proteome-scale libraries extremely large.
-          </div>
-        )}
         <div
           style={{
             marginTop: 14,
