@@ -46,6 +46,7 @@ include("./UnitTests/RazoQuadModel.jl")
 
 include("./UnitTests/MassSpecAndFilteredDataTests.jl")
 include("./UnitTests/formats/timsslices/runtests.jl")   # vendored TimsSlices (src/vendor/TimsSlices)
+include("./UnitTests/formats/sciexwiff/runtests.jl")    # vendored SciexWiff (src/vendor/SciexWiff)
 include("./UnitTests/test_tdfs_mass_spec_data.jl")
 include("./UnitTests/test_scxs_mass_spec_data.jl")
 include("./UnitTests/test_scan_priority_im.jl")

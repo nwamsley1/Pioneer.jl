@@ -15,9 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# SCIEX `.wiff` + `.wiff.scan` SWATH runs -> `.scxs` runs (SciexWiff.jl), which SearchDIA reads directly.
+# SCIEX `.wiff` + `.wiff.scan` SWATH runs -> `.scxs` runs (SciexWiff, src/vendor/SciexWiff), which SearchDIA reads directly.
 
-import SciexWiff
 
 const CONVERT_SCIEX_APP_NAME = "convertSciex"
 
@@ -52,7 +51,7 @@ function convertSciex(path::AbstractString; output_dir::AbstractString = "")
     for (i, w) in enumerate(runs)
         name = splitext(basename(w))[1]
         println("\n[$i/$(length(runs))] $name")
-        t = @elapsed paths = SciexWiff.convert(w, out; params = params, name = name)
+        t = @elapsed paths = SciexWiff.convert_run(w, out; params = params, name = name)
         push!(written, paths.scxs)
         println("[$i/$(length(runs))] $name done in $(round(t; digits = 1)) s")
     end

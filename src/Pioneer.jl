@@ -711,6 +711,8 @@ Random.seed!(1776);
 # Vendored formats (folded in from TimsSlices.jl, source commit b3e6d12): timsTOF .d -> .tdfs conversion and the
 # .tdfs container, as the submodule Pioneer.TimsSlices. Loaded before the structs that read .tdfs.
 include(joinpath("vendor", "TimsSlices", "TimsSlices.jl"))
+# SCIEX .wiff/.wiff.scan reader and .wiff -> .scxs conversion (folded in from SciexWiff.jl, source commit e4d9097).
+include(joinpath("vendor", "SciexWiff", "SciexWiff.jl"))
 
 include("importScripts.jl")
 files_loaded = importScripts()
