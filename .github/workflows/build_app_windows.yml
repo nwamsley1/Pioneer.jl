@@ -135,7 +135,7 @@ jobs:
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v2-yeast
+          cache-key: precompile-data-v3-yeast-formats
 
       - name: Compile application
         shell: bash
