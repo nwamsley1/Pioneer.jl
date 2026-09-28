@@ -193,7 +193,7 @@ const MBR_RECEIVER_FEATURES = Symbol[
     :trace_prob_infold,
     :fitted_manhattan_distance,
     :irt_error,
-    # Mobility residual of the receiver itself, |predicted 1/K0 - observed| / sigma. A transfer placed
+    # Mobility residual of the receiver itself, (predicted 1/K0 - observed) / sigma, signed. A transfer placed
     # at the right retention time but the wrong mobility is invisible to every other feature here.
     # Identically zero on data without ion mobility, where LightGBM simply never splits on it.
     :im_error,

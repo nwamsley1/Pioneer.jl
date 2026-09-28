@@ -728,13 +728,17 @@ function process_file!(
                         im_pred = Float32[Float32(im_lib_all[pid]) for pid in scored_psms[!, :precursor_idx]]
                         # the z2 line only: the gate derives every charge from it (see build_im_gate)
                         im_calib = Vector{Bool}(scored_psms[!, :target] .& (scored_psms[!, :charge] .== 2))
-                        im_models = fit_im_lines(im_scan, im_pred, scored_psms[!, :charge], im_calib; min_calib = TUNING_IM_MIN_CALIB)
-                        setImModel!(search_context, ms_file_idx, im_models)
-                        if haskey(im_models, 2)
-                            a, b, s = im_models[2]
+                        im_line = fit_im_line(im_scan, im_pred, im_calib; min_calib = TUNING_IM_MIN_CALIB)
+                        setImModel!(search_context, ms_file_idx,
+                                    im_line === nothing ? Dict{Int, NTuple{3, Float32}}() : Dict(2 => im_line))
+                        # the instrument's scan -> 1/K0 line, for the median line (fill_missing_im_lines!)
+                        im_cal = getImCalibration(spectra)
+                        im_cal === nothing || setImCal!(search_context, ms_file_idx, im_cal)
+                        if im_line !== nothing
+                            a, b, s = im_line
                             @debug_l1 "  IM line (tuning, z2, $(count(im_calib)) PSMs): 1/K0 = $(round(a, digits = 4)) + ($(round(b, digits = 6))) * scan, sigma = $(round(s, digits = 4))"
                         else
-                            @debug_l1 "  IM line: fewer than $(TUNING_IM_MIN_CALIB) z2 target PSMs, no IM gate for this file"
+                            @debug_l1 "  IM line: fewer than $(TUNING_IM_MIN_CALIB) z2 target PSMs; the file gets the median line of the others"
                         end
                     end
 
@@ -1093,6 +1097,9 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
     end
     
+    # Files without their own z2 IM line get the median of the others' (before any later stage reads them)
+    fill_missing_im_lines!(search_context, length(getMSData(search_context).file_paths))
+
     # Apply buffer to all mass error models AFTER plots are generated
     # This ensures plots show the actual fitted values, not buffered ones
     # Do not apply an additional buffer here; models were buffered once per file
