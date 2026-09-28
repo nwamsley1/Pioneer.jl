@@ -135,8 +135,8 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
     t0 = time()
     chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
                                            ZT_CHUNK_CANDIDATES)
-    # More than one chunk: each chunk's meta-PSMs go to disk and are merged into precursor-complete
-    # files, so no more than one chunk is held in memory (ZT/partitioned_scoring.jl).
+    # More than one chunk: each chunk's meta-PSMs go to disk, sorted, and MainSearch merges them into
+    # precursor-complete parts, so no more than one chunk is held in memory (ZT/partitioned_scoring.jl).
     on_disk = length(chunks) > 1
     psm_dir = zt_psm_dir(search_context, ms_file_idx)
     if on_disk
@@ -177,13 +177,10 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
                "(largest chunk $max_raw) -> $n_meta meta-PSMs; " *
                "deconv $(round(t_deconv; digits=1))s, reduce $(round(t_reduce; digits=1))s"
     on_disk || return reduced
-    t_m = @elapsed parts = zt_merge_by_precursor(chunk_paths, joinpath(psm_dir, "merged");
-                                                 target_rows = zt_partition_rows(search_context, ms_file_idx))
-    foreach(rm, chunk_paths)
-    setZTPsmPartitions!(search_context, ms_file_idx, parts)
-    @user_info "ZT main search: merged $(length(chunk_paths)) chunk files into $(length(parts)) " *
-               "precursor-complete files in $(round(t_m; digits=1))s"
-    return DataFrame()          # the meta-PSMs are on disk; MainSearch scores them file by file
+    # The chunk files are merged into precursor-complete parts while MainSearch scores them, after
+    # this call has returned and the whole-file candidate index is freed.
+    setZTPsmPartitions!(search_context, ms_file_idx, chunk_paths)
+    return DataFrame()          # the meta-PSMs are on disk
 end
 
 """

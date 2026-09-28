@@ -1,7 +1,7 @@
 # ZT multi-chunk main search: the k-way merge of sorted chunk files into precursor-complete files.
 
 using Test, Arrow, DataFrames, Random
-using Pioneer: zt_merge_by_precursor, _check_precursor_partitions
+using Pioneer: zt_merge_by_precursor, _check_precursor_part
 
 @testset "ZT merge into precursor-complete files" begin
     rng = MersenneTwister(7)
@@ -18,21 +18,22 @@ using Pioneer: zt_merge_by_precursor, _check_precursor_partitions
     end
     sort!(all_rows, [:precursor_idx, :scan_idx])
     for target in (1, 97, 500, 10_000)
-        out = zt_merge_by_precursor(paths, joinpath(dir, "merged_$target"); target_rows = target, batch_rows = 64)
-        merged = reduce(vcat, (DataFrame(Arrow.Table(p)) for p in out))
+        out = DataFrame[]
+        n = zt_merge_by_precursor(df -> push!(out, df), paths; target_rows = target)
+        @test n == length(out)
+        merged = reduce(vcat, out)
         @test merged == all_rows                               # same rows, same order, same values
         owner = Dict{UInt32, Int}()
         split = false
-        for (i, p) in enumerate(out), pid in Arrow.Table(p).precursor_idx
+        for (i, df) in enumerate(out), pid in df.precursor_idx
             get!(owner, pid, i) == i || (split = true)
         end
         @test !split                                           # each precursor in exactly one file
         target == 10_000 && @test length(out) == 1
         target == 1 && @test length(out) == length(unique(all_rows.precursor_idx))
     end
-    # the invariant check rejects a precursor split across two files
-    a = joinpath(dir, "a.arrow"); b = joinpath(dir, "b.arrow")
-    Arrow.write(a, (precursor_idx = UInt32[1, 2], scan_idx = UInt32[1, 1]))
-    Arrow.write(b, (precursor_idx = UInt32[2, 3], scan_idx = UInt32[2, 1]))
-    @test_throws ErrorException _check_precursor_partitions([a, b], 4)
+    # the invariant check rejects a precursor split across parts, and an unsorted part
+    @test_throws ErrorException _check_precursor_part(DataFrame(precursor_idx = UInt32[2, 3], scan_idx = UInt32[2, 1]), UInt32(2), 2)
+    @test_throws ErrorException _check_precursor_part(DataFrame(precursor_idx = UInt32[4, 3], scan_idx = UInt32[1, 1]), UInt32(2), 2)
+    @test _check_precursor_part(DataFrame(precursor_idx = UInt32[3, 3], scan_idx = UInt32[1, 2]), UInt32(2), 2) === nothing
 end

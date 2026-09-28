@@ -45,78 +45,62 @@ function _zt_gather!(dst::Vector, cols::Vector{C}, bf::Vector{Int32}, br::Vector
 end
 
 """
-    zt_merge_by_precursor(paths, outdir; target_rows, batch_rows = 1_000_000) -> Vector{String}
+    zt_merge_by_precursor(on_part, paths; target_rows) -> Int
 
-k-way merge of Arrow files, each sorted by (precursor_idx, scan_idx), into files of about
-`target_rows` rows that are sorted the same way and hold every row of each of their precursors: a
-file ends only where the precursor changes. Keys are packed into a UInt64 and merged through a
-(key, file) heap; rows are copied a batch at a time, column by column.
+Stream a k-way merge of Arrow files, each sorted by (precursor_idx, scan_idx), and call
+`on_part(df)` with consecutive parts of about `target_rows` rows. Each part is sorted the same way
+and holds every row of each of its precursors: a part ends only where the precursor changes. Keys
+are packed into a UInt64 and merged through a (key, file) heap; each part's columns are filled
+once, at their final size. Returns the number of parts.
 
-Checks the result: every file sorted, and each file's precursors all after the previous file's,
-so each precursor is in exactly one file.
+Checks every part before handing it on: sorted, and starting after the previous part's last
+precursor, so each precursor is in exactly one part; and that the parts hold every input row.
 """
-function zt_merge_by_precursor(paths::Vector{String}, outdir::String;
-                               target_rows::Int, batch_rows::Int = 1_000_000)
-    rm(outdir; recursive = true, force = true); mkpath(outdir)
+function zt_merge_by_precursor(on_part, paths::Vector{String}; target_rows::Int)
     tabs = [Arrow.Table(p) for p in paths]
-    pcs = [t.precursor_idx for t in tabs]; scs = [t.scan_idx for t in tabs]
+    pcs = [Vector{UInt32}(t.precursor_idx) for t in tabs]; scs = [Vector{UInt32}(t.scan_idx) for t in tabs]
     lens = [length(p) for p in pcs]
     names_ = collect(Tables.columnnames(first(tabs)))
     colsets = [[Tables.getcolumn(t, nm) for t in tabs] for nm in names_]
-    bufs = [Vector{eltype(first(cs))}(undef, batch_rows) for cs in colsets]
     heap = BinaryMinHeap{Tuple{UInt64, Int32}}()
     pos = ones(Int, length(tabs))
     for f in eachindex(tabs)
         lens[f] > 0 && push!(heap, (_pid_scan_key(pcs[f], scs[f], 1), Int32(f)))
     end
-    bf = Vector{Int32}(undef, batch_rows); br = Vector{Int32}(undef, batch_rows)
-    out_paths = String[]; writer = nothing; rows_in_file = 0; prev_pid = typemax(UInt32); n = 0
-    function flush_batch!()
-        n == 0 && return
-        for j in eachindex(names_); _zt_gather!(bufs[j], colsets[j], bf, br, n); end
-        # copies: Arrow's writer reads the columns after this returns, and the buffers are reused
-        Arrow.write(writer, DataFrame([nm => bufs[j][1:n] for (j, nm) in enumerate(names_)]; copycols = false))
-        n = 0
+    bf = Int32[]; br = Int32[]; sizehint!(bf, target_rows + 1024); sizehint!(br, target_rows + 1024)
+    n_parts = 0; n_out = 0; last_pid = UInt32(0); prev_pid = typemax(UInt32)
+    function emit!()
+        isempty(bf) && return
+        n = length(bf)
+        df = DataFrame([nm => _zt_gather!(Vector{eltype(first(colsets[j]))}(undef, n), colsets[j], bf, br, n)
+                        for (j, nm) in enumerate(names_)]; copycols = false)
+        _check_precursor_part(df, last_pid, n_parts + 1)
+        last_pid = last(df[!, :precursor_idx]); n_parts += 1; n_out += n
+        empty!(bf); empty!(br)
+        on_part(df)
     end
-    function new_file!()
-        writer === nothing || close(writer)
-        p = joinpath(outdir, "part_$(lpad(length(out_paths) + 1, 4, '0')).arrow"); push!(out_paths, p)
-        writer = open(Arrow.Writer, p); rows_in_file = 0
-    end
-    new_file!()
     while !isempty(heap)
         key, f = pop!(heap)
         pid = UInt32(key >> 32)
-        if rows_in_file >= target_rows && pid != prev_pid          # only between precursors
-            flush_batch!(); new_file!()
-        end
-        r = pos[f]; n += 1; bf[n] = f; br[n] = Int32(r)
-        rows_in_file += 1; prev_pid = pid; pos[f] = r + 1
+        length(bf) >= target_rows && pid != prev_pid && emit!()        # only between precursors
+        r = pos[f]; push!(bf, f); push!(br, Int32(r)); prev_pid = pid; pos[f] = r + 1
         r + 1 <= lens[f] && push!(heap, (_pid_scan_key(pcs[f], scs[f], r + 1), f))
-        n == batch_rows && flush_batch!()
     end
-    flush_batch!(); close(writer)
-    _check_precursor_partitions(out_paths, sum(lens))
-    return out_paths
+    emit!()
+    n_out == sum(lens) || error("ZT merge produced $n_out rows, expected $(sum(lens))")
+    return n_parts
 end
 
-"""Throw unless the merged files are each sorted, hold `n_expected` rows in total, and have
-disjoint, increasing precursor ranges."""
-function _check_precursor_partitions(paths::Vector{String}, n_expected::Int)
-    last_pid = UInt32(0); n = 0
-    for (i, p) in enumerate(paths)
-        t = Arrow.Table(p); pc = t.precursor_idx; sc = t.scan_idx
-        isempty(pc) && continue
-        n += length(pc)
-        i > 1 && first(pc) <= last_pid &&
-            error("ZT merge: precursor $(first(pc)) is split across files $(i - 1) and $i")
-        @inbounds for r in 2:length(pc)
-            _pid_scan_key(pc, sc, r - 1) <= _pid_scan_key(pc, sc, r) ||
-                error("ZT merge: $(basename(p)) is not sorted at row $r")
-        end
-        last_pid = last(pc)
+"""Throw unless part `i` is sorted by (precursor_idx, scan_idx) and starts after `last_pid`, the
+previous part's last precursor."""
+function _check_precursor_part(df::DataFrame, last_pid::UInt32, i::Int)
+    pc = df[!, :precursor_idx]::Vector{UInt32}; sc = df[!, :scan_idx]::Vector{UInt32}
+    i > 1 && first(pc) <= last_pid &&
+        error("ZT merge: precursor $(first(pc)) is split across parts $(i - 1) and $i")
+    @inbounds for r in 2:length(pc)
+        _pid_scan_key(pc, sc, r - 1) <= _pid_scan_key(pc, sc, r) ||
+            error("ZT merge: part $i is not sorted at row $r")
     end
-    n == n_expected || error("ZT merge wrote $n rows, expected $n_expected")
     return nothing
 end
 
@@ -143,28 +127,34 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
                                          search_context::SearchContext, ms_file_idx::Int64,
                                          spectra::MassSpecData, center_mzs, isolation_widths,
                                          bitvec_rank_table)
-    dir = dirname(dirname(first(parts)))
+    dir = dirname(first(parts))                       # the chunk files, sorted by (precursor, scan)
     cleanup = () -> (rm(dir; recursive = true, force = true); setZTPsmPartitions!(search_context, ms_file_idx, nothing))
     n_meta = sum(p -> length(Arrow.Table(p).precursor_idx), parts)
     if n_meta < ZT_PARTITION_MIN_ROWS
-        results.psms[] = n_meta == 0 ? DataFrame() : reduce(vcat, (_zt_load(p) for p in parts))
+        # the in-memory table: chunks in cycle order, stably sorted by precursor (as process_file!)
+        psms = n_meta == 0 ? DataFrame() : reduce(vcat, (_zt_load(p) for p in parts))
+        nrow(psms) > 0 && permute_psms_by_precursor_idx!(psms, results.sortperm_workspace)
+        results.psms[] = psms
         cleanup()
         return _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
                                            center_mzs, isolation_widths, bitvec_rank_table)
     end
     buffers = results.lgbm_buffers
 
-    # ---- pass A: prescore + chromatogram features, per precursor-complete file ----
-    featured = [replace(p, r"\.arrow$" => ".featured.arrow") for p in parts]
-    n_rows = zeros(Int, length(parts)); t_prepare = 0.0; t_ms1 = 0.0
-    for (i, p) in enumerate(parts)
-        df = _zt_load(p)
+    # ---- merge + pass A: each precursor-complete part gets its prescore and chromatogram
+    # features in memory and is written once, featured ----
+    featured = String[]; n_rows = Int[]; t_prepare = 0.0; t_ms1 = 0.0
+    t_merge = @elapsed zt_merge_by_precursor(parts; target_rows = zt_partition_rows(search_context, ms_file_idx)) do df
         t_prepare += @elapsed prepare_psm_features!(df, params, search_context, ms_file_idx, spectra)
         t_ms1 += @elapsed add_chromatogram_features!(df, spectra; bitvec_rank_table = bitvec_rank_table)
-        n_rows[i] = nrow(df)
-        Arrow.write(featured[i], df); rm(p)
+        f = joinpath(dir, "part_$(lpad(length(featured) + 1, 4, '0')).featured.arrow")
+        Arrow.write(f, df); push!(featured, f); push!(n_rows, nrow(df))
     end
+    foreach(rm, parts)
     n_total = sum(n_rows)
+    @user_info "ZT main search: merged $(length(parts)) chunk files into $(length(featured)) " *
+               "precursor-complete parts in $(round(t_merge; digits = 1))s " *
+               "(features $(round(t_prepare + t_ms1; digits = 1))s)"
 
     # ---- LightGBM: as _train_psm_classifier_with_fallback, without the whole-table matrix ----
     t_lgbm_start = time()
