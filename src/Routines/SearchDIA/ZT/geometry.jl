@@ -51,6 +51,18 @@ struct ZTGeometry
     template_h::Float32
 end
 
+"""
+    ZTFileState
+
+Per-file scanning-quad state beyond the geometry: the PSM memory budget
+(`optimization.machine_learning.max_psm_memory_mb`) that sizes the on-disk meta-PSM files, and
+those files once a multi-chunk main search has written them (`nothing` otherwise).
+"""
+mutable struct ZTFileState
+    psm_memory_mb::Float64
+    psm_partitions::Union{Nothing, Vector{String}}
+end
+
 """Meta-scan half-width, in Q1 bins, for the stages before and during quad tuning. Wide enough for
 the triangle fit to see the whole transmission profile (k_fit was 6 on every method measured)."""
 const ZT_METASCAN_K_DEFAULT = 6

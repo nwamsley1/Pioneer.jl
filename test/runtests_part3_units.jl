@@ -102,6 +102,7 @@ include("./UnitTests/test_mainsearch_irt_refinement.jl")
 include("./UnitTests/test_scoring_semisupervised.jl")
 include("./UnitTests/test_run_summary.jl")
 include("./UnitTests/test_zt_mode.jl")
+include("./UnitTests/test_zt_partition_merge.jl")
 
 # FileOperations pipeline
 include("./utils/FileOperations/pipeline/test_pipeline_filtering.jl")

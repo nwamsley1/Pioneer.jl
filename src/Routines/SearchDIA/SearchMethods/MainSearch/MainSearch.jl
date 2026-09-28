@@ -348,21 +348,26 @@ function process_file!(
 end
 
 """
-Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+    _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                center_mzs, isolation_widths, bitvec_rank_table)
+
+First half of per-file scoring with the whole post-deconvolution table in memory: prescore
+features, LightGBM, iRT refinement, best scan per precursor. Returns the best-per-precursor table
+and what the second half needs from the full table, or `nothing` when there are no PSMs.
 """
-function process_search_results!(
+function _mainsearch_best_in_memory!(
     results::MainSearchResults,
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::MassSpecData
+    spectra::MassSpecData,
+    center_mzs,
+    isolation_widths,
+    bitvec_rank_table,
 ) where {P<:MainSearchParameters}
 
-    t_start = time()
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
-    center_mzs = getCenterMzs(spectra)
-    isolation_widths = getIsolationWidthMzs(spectra)
 
     # Compute prescore features
     t_prepare = @elapsed @alloc_bucket "prepare_psm_features" prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
@@ -396,7 +401,6 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
-    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
@@ -456,6 +460,54 @@ function process_search_results!(
     end
     best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
 
+    return (
+        best_psms = best_psms,
+        # every meta-PSM's final score and label (the global PEP), and the rows the trace
+        # features read: here the whole in-memory table
+        all_scores = psms[!, :lgbm_score],
+        all_targets = psms[!, :target],
+        trace_input = (best, mask, peps) -> (psms, mask, peps),
+        cleanup = () -> nothing,
+        n_total_psms = n_total_psms,
+        timings = (prepare = t_prepare, competition = t_competition, apex = t_apex, ms1 = t_ms1,
+                   lgbm_start = t_lgbm_start, lgbm_end = t_lgbm_end, lgbm = lgbm_timings),
+    )
+end
+
+"""
+Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+"""
+function process_search_results!(
+    results::MainSearchResults,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+) where {P<:MainSearchParameters}
+
+    t_start = time()
+    file_name = getParsedFileName(search_context, ms_file_idx)
+    center_mzs = getCenterMzs(spectra)
+    isolation_widths = getIsolationWidthMzs(spectra)
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+
+    # Scanning-quad files searched in more than one chunk keep their meta-PSMs on disk, merged into
+    # precursor-complete files, and are scored file by file (ZT/partitioned_scoring.jl).
+    zt_parts = getZTPsmPartitions(search_context, ms_file_idx)
+    stage = zt_parts === nothing ?
+        _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                    center_mzs, isolation_widths, bitvec_rank_table) :
+        zt_mainsearch_best_partitioned!(zt_parts, results, params, search_context, ms_file_idx,
+                                        spectra, center_mzs, isolation_widths, bitvec_rank_table)
+    stage === nothing && return nothing
+    best_psms = stage.best_psms
+    n_total_psms = stage.n_total_psms
+    t_prepare = stage.timings.prepare; t_competition = stage.timings.competition
+    t_apex = stage.timings.apex; t_ms1 = stage.timings.ms1
+    t_lgbm_start = stage.timings.lgbm_start; t_lgbm_end = stage.timings.lgbm_end
+    lgbm_timings = stage.timings.lgbm
+    precursors = getPrecursors(getSpecLib(search_context))
+
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
     _b_pep = Base.gc_bytes()
@@ -504,8 +556,8 @@ function process_search_results!(
     t_recal = time()
 
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
-        psms[!, :lgbm_score],
-        psms[!, :target],
+        stage.all_scores,
+        stage.all_targets,
         results.sortperm_workspace,
     )
     @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
@@ -522,15 +574,17 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
+    trace_psms, trace_mask, trace_pep_values = stage.trace_input(best_psms, trace_pass_mask, trace_peps)
     @alloc_bucket "trace_and_fragment_features" add_trace_and_fragment_features!(
         best_psms,
-        psms,
-        trace_pass_mask;
+        trace_psms,
+        trace_mask;
         bitvec_rank_table = bitvec_rank_table,
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
-        pep_values = trace_peps,
+        pep_values = trace_pep_values,
     )
+    trace_psms = nothing; stage.cleanup()
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 

@@ -20,14 +20,19 @@ isZTFile(s::SearchContext, index::I) where {I<:Integer} =
     getZTGeometry(s, index) !== nothing
 
 """
-    zt_prepare_file!(search_context, ms_file_idx, spectra)
+    zt_prepare_file!(search_context, params, ms_file_idx, spectra)
 
 Called by `execute_search` before each file of each stage. Detects the file's Q1 lattice on first
 sight (`ensure_zt_geometry!`) and sets the deconvolution convergence tolerance for this file:
 `ZT_DECONV_CONVERGENCE_TOL` on scanning-quad files, each stage's own tolerance otherwise.
 """
-function zt_prepare_file!(search_context::SearchContext, ms_file_idx::Int64, spectra::MassSpecData)
+function zt_prepare_file!(search_context::SearchContext, params::PioneerParameters,
+                          ms_file_idx::Int64, spectra::MassSpecData)
     ensure_zt_geometry!(search_context, ms_file_idx, spectra)
+    if getZTGeometry(search_context, ms_file_idx) !== nothing && !haskey(search_context.zt_file_state, ms_file_idx)
+        search_context.zt_file_state[ms_file_idx] =
+            ZTFileState(Float64(params.optimization.machine_learning.max_psm_memory_mb), nothing)
+    end
     tol = getZTGeometry(search_context, ms_file_idx) === nothing ? NaN32 : ZT_DECONV_CONVERGENCE_TOL
     foreach(sd -> sd.deconv_tol = tol, getSearchData(search_context))
     return nothing
@@ -102,3 +107,13 @@ function ensure_zt_geometry!(search_context::SearchContext, ms_file_idx::Int64,
                "bins/ramp=$(g.bins_per_ramp)  span=$(round(zt_span_mz(g), digits=2)) Da"
     return nothing
 end
+
+"""Merged, precursor-complete meta-PSM files of a multi-chunk ZT main search, or `nothing`."""
+getZTPsmPartitions(s::SearchContext, idx::Integer) =
+    (st = get(s.zt_file_state, Int64(idx), nothing); st === nothing ? nothing : st.psm_partitions)
+
+setZTPsmPartitions!(s::SearchContext, idx::Integer, paths::Union{Nothing, Vector{String}}) =
+    (s.zt_file_state[Int64(idx)].psm_partitions = paths)
+
+"""The PSM memory budget in MB for a ZT file (`max_psm_memory_mb`)."""
+zt_psm_memory_mb(s::SearchContext, idx::Integer) = s.zt_file_state[Int64(idx)].psm_memory_mb

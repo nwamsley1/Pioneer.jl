@@ -135,6 +135,14 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
     t0 = time()
     chunks = zt_cycle_chunks_by_candidates(zt_cycle_scan_ranges(spectra), scan_to_prec_idx,
                                            ZT_CHUNK_CANDIDATES)
+    # More than one chunk: each chunk's meta-PSMs go to disk and are merged into precursor-complete
+    # files, so no more than one chunk is held in memory (ZT/partitioned_scoring.jl).
+    on_disk = length(chunks) > 1
+    psm_dir = zt_psm_dir(search_context, ms_file_idx)
+    if on_disk
+        rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
+    end
+    chunk_paths = String[]; n_meta = 0
     reduced = DataFrame(); n_raw_total = 0; max_raw = 0
     t_deconv = 0.0; t_reduce = 0.0
     for (ci, chunk) in enumerate(chunks)
@@ -146,7 +154,16 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
         part = _zt_reduce_chunk(raw, spectra, search_context, ms_file_idx, precursors, g,
                                 bitvec_rank_table, lookups)
         raw = nothing; raw_all = nothing
-        reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
+        n_meta += nrow(part)
+        if on_disk
+            if nrow(part) > 0
+                _assert_precursor_scan_sorted(part)
+                path = joinpath(psm_dir, "chunk_$(lpad(ci, 4, '0')).arrow")
+                Arrow.write(path, part); push!(chunk_paths, path)
+            end
+        else
+            reduced = isempty(reduced) ? part : (append!(reduced, part); reduced)
+        end
         t_deconv += t_d; t_reduce += time() - t_c - t_d
         @debug_l1 "ZT chunk $ci/$(length(chunks)): $(length(chunk)) cycles, " *
                   "$(zt_candidate_count(chunk, scan_to_prec_idx)) candidates -> $n_raw raw rows " *
@@ -157,9 +174,16 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
     # resident set peaks on ZT files (measured: EV1109 29.8 GB at that point).
     GC.gc()
     @user_info "ZT main search: $(length(chunks)) chunks, $n_raw_total raw rows " *
-               "(largest chunk $max_raw) -> $(nrow(reduced)) meta-PSMs; " *
+               "(largest chunk $max_raw) -> $n_meta meta-PSMs; " *
                "deconv $(round(t_deconv; digits=1))s, reduce $(round(t_reduce; digits=1))s"
-    return reduced
+    on_disk || return reduced
+    t_m = @elapsed parts = zt_merge_by_precursor(chunk_paths, joinpath(psm_dir, "merged");
+                                                 target_rows = zt_partition_rows(search_context, ms_file_idx))
+    foreach(rm, chunk_paths)
+    setZTPsmPartitions!(search_context, ms_file_idx, parts)
+    @user_info "ZT main search: merged $(length(chunk_paths)) chunk files into $(length(parts)) " *
+               "precursor-complete files in $(round(t_m; digits=1))s"
+    return DataFrame()          # the meta-PSMs are on disk; MainSearch scores them file by file
 end
 
 """

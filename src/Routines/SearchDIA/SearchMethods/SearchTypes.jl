@@ -286,6 +286,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # Scanning-quad (ZT) Q1 bin lattice, per file, filled lazily on first touch.
     # `nothing` = checked and not a scanning acquisition. Key absent = not yet checked.
     zt_geometry::Dict{Int64, Union{Nothing, ZTGeometry}}
+    zt_file_state::Dict{Int64, ZTFileState}
     mass_error_model::Dict{Int64, AbstractMassErrorModel}
     ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
@@ -343,6 +344,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, Union{Nothing, ZTGeometry}}(),
+            Dict{Int64, ZTFileState}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, NceModel}(),

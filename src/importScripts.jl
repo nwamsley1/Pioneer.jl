@@ -377,6 +377,7 @@ function importScripts()
         "candidacy.jl",             # library_search: re-anchor, expand, thin
         "metascan_collapse.jl",     # MainSearch: per-bin PSMs -> meta-PSMs
         "chunked_main_search.jl",   # MainSearch: chunked deconvolution + collapse
+        "partitioned_scoring.jl",   # MainSearch: multi-chunk files scored from disk
         "chromatogram_collapse.jl", # IntegrateChromatogramsSearch hooks
     ])
 
