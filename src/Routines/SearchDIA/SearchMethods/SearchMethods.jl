@@ -49,7 +49,7 @@ function execute_search(
     search_results = init_search_results(search_type, search_parameters, search_context)
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
-        zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
+        zt_prepare_file!(search_context, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)

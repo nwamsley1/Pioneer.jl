@@ -1,5 +1,5 @@
 # Scanning-quad (ZT) candidacy: re-anchor fragment-index emissions on the precursor's own Q1
-# bin, expand each candidate across its meta-scan, and thin the outer bins.
+# bin and expand each candidate across its meta-scan.
 
 """
     map_any_hit_to_center!(scan_to_prec_idx, precursors_passed, spectra, all_scan_idxs,
@@ -264,40 +264,6 @@ function expand_to_metascans!(
     return new_precursors
 end
 
-"""
-    _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra, prec_mzs, geom, c)
-
-EXPERIMENT: on odd-position scans of each cycle, keep only the candidates whose precursor m/z
-lies within `c` bins of the scan centre (the core of their meta-scan); drop the rest. Even scans
-are untouched. So every meta-scan keeps all bins within ±c of its centre and every second bin
-outside. Rebuilds `precursors_passed` and reindexes in place (mirrors filter_low_scan_candidates!).
-"""
-function _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed::Vector{UInt32}, spectra::MassSpecData,
-                              prec_mzs::AbstractVector{Float32}, geom::ZTGeometry, c::Int)
-    cmzs = Float32.(coalesce.(getCenterMzs(spectra), NaN32))
-    lim = Float32(c) * geom.bin_step + geom.bin_step / 2
-    odd = falses(length(spectra))
-    for r in zt_cycle_scan_ranges(spectra), (pos, si) in enumerate(r); isodd(pos) && (odd[si] = true); end
-    new_passed = UInt32[]; sizehint!(new_passed, length(precursors_passed))
-    n_before = length(precursors_passed)
-    @inbounds for si in eachindex(scan_to_prec_idx)
-        rng = scan_to_prec_idx[si]; ismissing(rng) && continue
-        start = length(new_passed) + 1
-        if odd[si]
-            cm = cmzs[si]
-            for i in rng
-                pid = precursors_passed[i]
-                abs(prec_mzs[pid] - cm) <= lim && push!(new_passed, pid)
-            end
-        else
-            for i in rng; push!(new_passed, precursors_passed[i]); end
-        end
-        scan_to_prec_idx[si] = length(new_passed) >= start ? (start:length(new_passed)) : missing
-    end
-    @debug_l1 "ZT outer-bin thinning (core ±$c): candidates $n_before -> $(length(new_passed))"
-    return new_passed
-end
-
 # --- library_search hooks. Each has a `::Nothing` method (not a ZT file) that returns develop's
 # --- behaviour unchanged.
 
@@ -333,9 +299,8 @@ zt_deconv_quad_model(::ZTGeometry, params, qtm::QuadTransmissionModel) =
                           all_scan_idxs, prec_mzs) -> Vector{UInt32}
 
 On a ZT file in a meta-scan stage: re-anchor every emission on the precursor's own bin
-(`map_any_hit_to_center!`), expand it across ±k bins (`expand_to_metascans!`) and, in the main
-search, thin the outer bins (`_zt_thin_outer_bins!`). Returns `precursors_passed` unchanged
-otherwise.
+(`map_any_hit_to_center!`) and expand it across ±k bins (`expand_to_metascans!`). Returns
+`precursors_passed` unchanged otherwise.
 """
 zt_expand_candidates!(::Nothing, params, scan_to_prec_idx, precursors_passed::Vector{UInt32},
                       spectra, all_scan_idxs, prec_mzs) = precursors_passed
@@ -354,11 +319,5 @@ function zt_expand_candidates!(g::ZTGeometry, params, scan_to_prec_idx,
                                              all_scan_idxs, k)
     @debug_l1 "ZT candidacy (k=$k): $n_emitted emitted -> $n_center center -> " *
               "$(length(precursors_passed)) expanded"
-    # Measured on 5 Da A_REP1: -20% main search for -0.7% precursors; the outer bins carry <40%
-    # transmission and every second one suffices.
-    if params isa MainSearchParameters
-        precursors_passed = _zt_thin_outer_bins!(scan_to_prec_idx, precursors_passed, spectra,
-                                                 prec_mzs, g, ZT_OUTER_BIN_CORE)
-    end
     return precursors_passed
 end

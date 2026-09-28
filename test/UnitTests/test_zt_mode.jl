@@ -1,8 +1,8 @@
-# ZT mode selection: config `acquisition.scanning_quad` wins; otherwise the file's acquisition metadata decides.
+# ZT mode selection: the file's acquisition metadata alone decides (the user declares ZT when converting).
 
 using Test, Arrow
 using Pioneer
-using Pioneer: zt_mode, getAcquisitionMetadata, BasicMassSpecData
+using Pioneer: zt_mode, zt_search_k, getAcquisitionMetadata, BasicMassSpecData
 
 function tiny_arrow(path; metadata = nothing)
     tbl = (mz_array = [Union{Missing,Float32}[100f0]], intensity_array = [Union{Missing,Float32}[1f0]],
@@ -21,10 +21,8 @@ end
     plain = tiny_arrow(joinpath(d, "plain.arrow"))
     @test getAcquisitionMetadata(zt)["q1_bin_step_mz"] == "1.0221"
     @test getAcquisitionMetadata(plain) === nothing
-    none = (nce = 26,)
-    @test zt_mode(none, zt) == (true, "file metadata", true)
-    @test zt_mode(none, sw) == (false, "file metadata", false)
-    @test zt_mode(none, plain) == (false, "file metadata", false)
-    @test zt_mode((nce = 26, scanning_quad = false), zt) == (false, "config", true)
-    @test zt_mode((nce = 26, scanning_quad = true), plain) == (true, "config", false)
+    @test zt_mode(zt)
+    @test !zt_mode(sw)
+    @test !zt_mode(plain)
+    @test zt_search_k(6) == 3 && zt_search_k(5) == 3 && zt_search_k(7) == 4
 end

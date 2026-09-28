@@ -48,14 +48,10 @@ struct ZTGeometry
     # Fitted transmission half-base (Da) from QuadTuningSearch; 0 until fitted. When > 0 the
     # collapse template is a triangle of this width instead of the Gaussian above.
     template_h::Float32
-    # True when `acquisition.metascan_k` is unset, so QuadTuningSearch may replace the
-    # provisional default with the k implied by the fitted transmission profile.
-    metascan_k_derived::Bool
 end
-ZTGeometry(bin_step, nominal_width, bins_per_ramp, metascan_k, transmission_fwhm, template_h) =
-    ZTGeometry(bin_step, nominal_width, bins_per_ramp, metascan_k, transmission_fwhm, template_h, false)
 
-"""Expansion half-width used before quad tuning when `acquisition.metascan_k` is absent."""
+"""Meta-scan half-width, in Q1 bins, for the stages before and during quad tuning. Wide enough for
+the triangle fit to see the whole transmission profile (k_fit was 6 on every method measured)."""
 const ZT_METASCAN_K_DEFAULT = 6
 
 """
@@ -102,11 +98,18 @@ in ANY bin rather than needing its own bin to clear.
 const ZT_CANDIDACY_TOL = 2.0f0
 
 """
-Outer-bin thinning half-width, in Q1 bins: a meta-scan keeps every bin within this many bins of a
-candidate's own bin and every second bin beyond. Fixed for now; to be tuned (possibly derived from
-the acquisition's Q1 geometry).
+    zt_search_k(k_fit) -> Int
+
+Meta-scan half-width in Q1 bins for every stage after quad tuning: half the fitted profile's
+half-width, rounded up. `k_fit = floor(h / bin_step)` is where the fitted transmission triangle
+reaches zero; the searches use its inner half.
+
+Measured 2026-09 on five methods (5 Da at 5, 11, 15 and 30 min; 10 Da), each with k_fit = 6, so
+k = 3, no outer-bin thinning: precursors -0.6..+0.6% and protein groups within noise of k = 6
+(10 Da -2.1%), deconvolution 23-27% faster. Thinning the outer bins as well lost up to 1.8% of
+precursors and 3.7% of protein groups, so there is none.
 """
-const ZT_OUTER_BIN_CORE = 2
+zt_search_k(k_fit::Integer) = cld(Int(k_fit), 2)
 
 """
 Deconvolution convergence tolerance for scanning-quad files (every solver stage). Measured on ZT 5 Da and
@@ -149,8 +152,7 @@ within Float32 granularity (ramp start std 0.0, step std ~3e-8 over 818 cycles o
 ZT data). Returns `nothing` when the file carries no usable MS2 isolation metadata.
 """
 function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
-                            transmission_fwhm::Real = ZT_TRANSMISSION_FWHM_DEFAULT;
-                            metascan_k_derived::Bool = false)
+                            transmission_fwhm::Real = ZT_TRANSMISSION_FWHM_DEFAULT)
     widths       = Float32[]
     spacings     = Float32[]
     cycle_counts = Int32[]
@@ -193,7 +195,6 @@ function detect_zt_geometry(spectra::MassSpecData, metascan_k::Integer,
         Int32(metascan_k),
         Float32(transmission_fwhm),
         0f0,
-        metascan_k_derived,
     )
 end
 
@@ -224,7 +225,7 @@ the fitted transmission profile (`k_implied = round(h / bin_step)`) after quad t
 """
 zt_with_metascan_k(g::ZTGeometry, k::Integer) =
     ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, Int32(k), g.transmission_fwhm,
-               g.template_h, g.metascan_k_derived)
+               g.template_h)
 
 """
     zt_with_template_h(g::ZTGeometry, h::Real) -> ZTGeometry
@@ -234,7 +235,7 @@ returns the measured triangle rather than the configured Gaussian.
 """
 zt_with_template_h(g::ZTGeometry, h::Real) =
     ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, g.metascan_k, g.transmission_fwhm,
-               Float32(h), g.metascan_k_derived)
+               Float32(h))
 
 """
     zt_transmission_template(g::ZTGeometry, k::Int) -> (Vector{Float32}, Float32)
