@@ -165,12 +165,6 @@ function prepare_chronologer_input(
             )
             @user_info "Estimated nonspecific peptide occurrences: " *
                 "$nonspecific_candidate_total"
-            if nonspecific_candidate_total > 10_000_000
-                @user_warn "Nonspecific digestion will generate up to " *
-                    "$nonspecific_candidate_total peptide occurrences before " *
-                    "deduplication, modifications, charges, and decoys. This may " *
-                    "require substantial memory and runtime."
-            end
         end
         append!(protein_entries, parsed)
         append!(fasta_entries,
