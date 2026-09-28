@@ -21,6 +21,7 @@ import {
 import {
   CUSTOM_ENZYME,
   ENZYMES,
+  NO_ENZYME,
   SAMPLE_SEQUENCE,
   enzymeByPattern,
   previewDigest,
@@ -413,7 +414,7 @@ export function BuildSpecLibForm({
       return Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
     }
     return previewDigest(SAMPLE_SEQUENCE, {
-      pattern: params.cleavageRegex,
+      pattern: params.noEnzyme ? null : params.cleavageRegex,
       specificity: params.digestSpecificity,
       minLength: int(params.minLen, 7),
       maxLength: int(params.maxLen, 40),
@@ -1063,7 +1064,11 @@ export function BuildSpecLibForm({
         <label style={{ ...LABEL }}>Enzyme</label>
         <select
           data-key="enzyme"
-          value={params.customEnzyme ? CUSTOM_ENZYME : (enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME)}
+          value={params.noEnzyme
+            ? NO_ENZYME
+            : params.customEnzyme
+              ? CUSTOM_ENZYME
+              : (enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME)}
           onChange={(e) => onEnzyme(e.target.value)}
           style={{
             width: '100%',
@@ -1082,6 +1087,7 @@ export function BuildSpecLibForm({
               {e.label} — {e.rule}
             </option>
           ))}
+          <option value={NO_ENZYME}>No enzyme</option>
           <option value={CUSTOM_ENZYME}>Custom cleavage rule…</option>
         </select>
           </div>
@@ -1097,6 +1103,7 @@ export function BuildSpecLibForm({
               className="pio-input"
               value={params.digestSpecificity}
               onChange={(e) => onParam('digestSpecificity', e.target.value)}
+              disabled={params.noEnzyme}
               style={{
                 width: '100%',
                 padding: '8px 34px 8px 10px',
@@ -1116,11 +1123,12 @@ export function BuildSpecLibForm({
               <option value="semi">Semi (either terminus)</option>
               <option value="semi-n">Semi-N (C terminus required)</option>
               <option value="semi-c">Semi-C (N terminus required)</option>
+              <option value="none">None (unrestricted)</option>
             </select>
           </div>
         </div>
 
-        {(params.customEnzyme || !enzymeByPattern(params.cleavageRegex)) && (
+        {!params.noEnzyme && (params.customEnzyme || !enzymeByPattern(params.cleavageRegex)) && (
           <div style={{ marginTop: 12 }}>
             <label style={LABEL}>Cleavage regex</label>
             <input
@@ -1172,7 +1180,9 @@ export function BuildSpecLibForm({
               ...(peptidesExpanded ? { maxHeight: 132, overflowY: 'auto' as const } : {}),
             }}
           >
-            {cleavageNote.level === 'error' ? (
+            {params.noEnzyme ? (
+              'No enzyme · all peptide windows have zero digestion metadata.'
+            ) : cleavageNote.level === 'error' ? (
               cleavageNote.msg
             ) : !previewPeptides ? null : previewPeptides.length === 0 ? (
               'No peptides — nothing survives these length limits.'
@@ -1219,11 +1229,33 @@ export function BuildSpecLibForm({
         >
           <NumField fieldKey="minLen" value={params.minLen} onChange={onParam} />
           <NumField fieldKey="maxLen" value={params.maxLen} onChange={onParam} />
-          <NumField fieldKey="missedCleav" value={params.missedCleav} onChange={onParam} />
+          <NumField
+            fieldKey="missedCleav"
+            value={params.missedCleav}
+            onChange={onParam}
+            disabled={params.noEnzyme}
+          />
           <NumField fieldKey="minCharge" value={params.minCharge} onChange={onParam} />
           <NumField fieldKey="maxCharge" value={params.maxCharge} onChange={onParam} />
           <NumField fieldKey="maxVarMods" value={params.maxVarMods} onChange={onParam} />
         </div>
+        {params.digestSpecificity === 'none' && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: '10px 12px',
+              borderRadius: 9,
+              background: '#FFF7E6',
+              border: '1px solid #FFE0A3',
+              fontSize: 11.5,
+              color: '#7A5A11',
+              lineHeight: 1.5,
+            }}
+          >
+            Nonspecific digestion generates every peptide window in the selected length range
+            and can make proteome-scale libraries extremely large.
+          </div>
+        )}
         <div
           style={{
             marginTop: 14,
@@ -1245,6 +1277,7 @@ export function BuildSpecLibForm({
             on={params.ntermMetExcision}
             fieldKey="ntermMetExcision"
             onClick={() => onToggle('ntermMetExcision')}
+            disabled={params.noEnzyme}
           />
         </div>
         {lengthClamp && (

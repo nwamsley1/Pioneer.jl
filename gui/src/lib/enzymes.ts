@@ -73,6 +73,7 @@ export const ENZYMES: Enzyme[] = [
 
 /** Selected when nothing matches: the pattern is then edited directly. */
 export const CUSTOM_ENZYME = 'custom'
+export const NO_ENZYME = 'none'
 
 /** Pioneer's own default, so a library built without touching this field is the
  *  one the CLI would have built. Note it is Trypsin/P rather than Trypsin. */
@@ -89,11 +90,11 @@ export function enzymeById(id: string): Enzyme | null {
 /** A sequence carrying one motif for every rule above, used for the preview. */
 export const SAMPLE_SEQUENCE = 'AKGRSTKDEKPARQGGSEAADFPGWSYLMTFD'
 
-export type DigestSpecificity = 'full' | 'semi' | 'semi-n' | 'semi-c'
+export type DigestSpecificity = 'full' | 'semi' | 'semi-n' | 'semi-c' | 'none'
 
 /** The digestion settings the preview depends on. */
 export interface DigestSettings {
-  pattern: string
+  pattern: string | null
   specificity: DigestSpecificity
   minLength: number
   maxLength: number
@@ -112,7 +113,8 @@ export interface DigestSettings {
  * `overlap = true` — without it the context a match consumes would hide the site
  * immediately after it. Returns null when the pattern will not compile.
  */
-function cleavageMask(sequence: string, pattern: string): boolean[] | null {
+function cleavageMask(sequence: string, pattern: string | null): boolean[] | null {
+  if (pattern === null) return new Array<boolean>(sequence.length).fill(false)
   let re: RegExp
   try {
     re = new RegExp(pattern, 'g')
@@ -209,6 +211,13 @@ export function previewDigest(
     if (minEnd > n - 1) continue
     const maxEnd = Math.min(start + maxLength - 1, n - 1)
     const startIsEnzymatic = startEnzymatic(start)
+
+    if (specificity === 'none') {
+      for (let end = minEnd; end <= maxEnd; end++) {
+        peptides.push(sequence.slice(start, end + 1))
+      }
+      continue
+    }
 
     // semi-c allows an arbitrary C terminus but requires an enzymatic N
     // terminus; general semi does the same for enzymatic starts.

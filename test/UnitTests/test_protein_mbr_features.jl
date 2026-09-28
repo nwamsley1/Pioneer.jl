@@ -196,6 +196,7 @@ end
     end
 
     @testset "common peptide evidence uses specificity, cleavage, and variable modifications" begin
+        @test !Pioneer._is_common_peptide(0, 0, 0)
         psms = DataFrame(
             inferred_protein_group =
                 ["P_SEMI", "P_FULL", "P_MISSED", "P_VARIABLE"],

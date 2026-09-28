@@ -125,6 +125,7 @@ function prepare_chronologer_input(
     # Process FASTA files
     fasta_entries = Vector{FastaEntry}()
     protein_entries = Vector{FastaEntry}()
+    nonspecific_candidate_total = Int128(0)
 
     for (proteome_name, fasta, acc_rgx, gene_rgx, prot_rgx, org_rgx) in zip(
             params["fasta_names"],
@@ -142,12 +143,42 @@ function prepare_chronologer_input(
             protein_regex = prot_rgx,
             organism_regex = org_rgx,
         )
+        if get(_params.fasta_digest_params, "specificity", "full") == "none"
+            min_length = Int128(digest_min_length)
+            max_length = Int128(digest_max_length)
+            for protein in parsed
+                protein_length = Int128(length(get_sequence(protein)))
+                lo = max(min_length, Int128(1))
+                hi = min(max_length, protein_length)
+                if lo <= hi
+                    n_lengths = hi - lo + 1
+                    nonspecific_candidate_total +=
+                        n_lengths * (protein_length + 1) -
+                        ((lo + hi) * n_lengths) ÷ 2
+                end
+            end
+            nonspecific_candidate_total < Int128(typemax(UInt32)) || error(
+                "Nonspecific digestion would generate up to " *
+                "$nonspecific_candidate_total raw peptide windows, exceeding " *
+                "the UInt32 library identifier capacity. Narrow the peptide " *
+                "length range or use smaller FASTA inputs."
+            )
+            @user_info "Estimated nonspecific peptide occurrences: " *
+                "$nonspecific_candidate_total"
+            if nonspecific_candidate_total > 10_000_000
+                @user_warn "Nonspecific digestion will generate up to " *
+                    "$nonspecific_candidate_total peptide occurrences before " *
+                    "deduplication, modifications, charges, and decoys. This may " *
+                    "require substantial memory and runtime."
+            end
+        end
         append!(protein_entries, parsed)
         append!(fasta_entries,
             _bdiag!("chron_digest_fasta", @timed digest_fasta(
                 parsed,
                 proteome_name,
-                regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
+                regex = isnothing(_params.fasta_digest_params["cleavage_regex"]) ?
+                    nothing : Regex(_params.fasta_digest_params["cleavage_regex"]),
                 max_length = digest_max_length,
                 min_length = digest_min_length,
                 missed_cleavages = _params.fasta_digest_params["missed_cleavages"],
@@ -226,9 +257,15 @@ function prepare_chronologer_input(
     _bdiag!("chron_length_missed_cleavages", @timed begin
         fasta_df[!, :length] = UInt8.(length.(fasta_df[!, :sequence]))
         fasta_df[!, :missed_cleavages] = zeros(UInt8, size(fasta_df, 1))
-        cleavage_regex = Regex(_params.fasta_digest_params["cleavage_regex"])
-        for i in 1:size(fasta_df, 1)
-            fasta_df[i, :missed_cleavages] = count(cleavage_regex, fasta_df[i, :sequence])
+        cleavage_rule = _params.fasta_digest_params["cleavage_regex"]
+        if !isnothing(cleavage_rule)
+            cleavage_regex = Regex(cleavage_rule)
+            for i in 1:size(fasta_df, 1)
+                fasta_df[i, :missed_cleavages] = count(
+                    cleavage_regex,
+                    fasta_df[i, :sequence],
+                )
+            end
         end
     end)
 

@@ -133,9 +133,9 @@ Header-parsing regex patterns can be configured three ways:
 | `fasta_digest_params.max_length` | Int | `30` | Maximum peptide length. |
 | `fasta_digest_params.min_charge` | Int | `2` | Minimum charge state. |
 | `fasta_digest_params.max_charge` | Int | `4` | Maximum charge state. |
-| `fasta_digest_params.cleavage_regex` | String | `[KR][^_\|$]` | Cleavage rule. To exclude cleavage before proline use `[KR][^P\|$]`. |
-| `fasta_digest_params.missed_cleavages` | Int | `1` | Maximum missed cleavages. |
-| `fasta_digest_params.specificity` | String | `"full"` | Digestion specificity: `"full"`, `"semi"` (either terminus), `"semi-n"` (C terminus required), or `"semi-c"` (N terminus required). Protein termini count as enzymatic. |
+| `fasta_digest_params.cleavage_regex` | String or null | `[KR][^_\|$]` | Cleavage rule. To exclude cleavage before proline use `[KR][^P\|$]`. Set to `null` for no-enzyme digestion; this requires `specificity = "none"`. |
+| `fasta_digest_params.missed_cleavages` | Int | `1` | Maximum missed cleavages for enzymatically constrained digestion. With `specificity = "none"`, this is recorded as metadata but does not filter peptides. |
+| `fasta_digest_params.specificity` | String | `"full"` | Digestion specificity: `"full"`, `"semi"` (either terminus), `"semi-n"` (C terminus required), `"semi-c"` (N terminus required), or `"none"` (all length-valid peptide windows). With `"none"` and a cleavage regex, enzyme-relative metadata is retained; with a null regex, missed cleavages and enzymatic termini are zero. |
 | `fasta_digest_params.nterm_met_excision` | Bool | `true` | N-terminal Met excision. Each protein N-terminal peptide is emitted both with and without its initiator Met (`MPEPTIDEK` and `PEPTIDEK`); the excised form is length-filtered on its own and costs no missed cleavage. |
 | `fasta_digest_params.max_var_mods` | Int | `1` | Maximum variable modifications per peptide. |
 | `fasta_digest_params.add_decoys` | Bool | `true` | Generate decoy sequences. |

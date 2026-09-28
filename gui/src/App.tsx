@@ -1306,9 +1306,11 @@ export default function App() {
   const onEnzyme = (id: string) => {
     const preset = enzymeById(id)
     setBuild((p) =>
-      preset
-        ? { ...p, cleavageRegex: preset.pattern, customEnzyme: false }
-        : { ...p, customEnzyme: true },
+      id === 'none'
+        ? { ...p, noEnzyme: true, customEnzyme: false, digestSpecificity: 'none' }
+        : preset
+          ? { ...p, noEnzyme: false, cleavageRegex: preset.pattern, customEnzyme: false }
+          : { ...p, noEnzyme: false, customEnzyme: true },
     )
     setRunError('')
   }
@@ -1317,6 +1319,7 @@ export default function App() {
    *  compiles can still be wrong, which is what the preview beside it is for;
    *  this catches only what can be decided. */
   const cleavageNote: Note = (() => {
+    if (build.noEnzyme) return { level: '', msg: '' }
     const pattern = build.cleavageRegex.trim()
     if (!pattern) return { level: 'error', msg: 'Enter a cleavage rule, or choose an enzyme.' }
     // Cut sites, not peptides: whether the rule is sound is a separate question

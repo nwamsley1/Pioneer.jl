@@ -170,6 +170,7 @@ export const BUILD_OWNED_PATHS = [
   'fasta_digest_params.min_charge',
   'fasta_digest_params.max_charge',
   'fasta_digest_params.missed_cleavages',
+  'fasta_digest_params.cleavage_regex',
   'fasta_digest_params.specificity',
   'fasta_digest_params.nterm_met_excision',
   'fasta_digest_params.max_var_mods',
@@ -260,12 +261,14 @@ export function buildLibJsonBase(s: BuildParams): Json {
       max_length: num(s.maxLen, 40),
       min_charge: num(s.minCharge, 2),
       max_charge: num(s.maxCharge, 3),
-      missed_cleavages: num(s.missedCleav, 1),
+      missed_cleavages: s.noEnzyme ? 0 : num(s.missedCleav, 1),
       // Written explicitly rather than left to Pioneer's default, so the
       // config records the rule the library was actually built with.
-      cleavage_regex: s.cleavageRegex.trim() || DEFAULT_CLEAVAGE,
+      cleavage_regex: s.noEnzyme
+        ? null
+        : (s.cleavageRegex.trim() || DEFAULT_CLEAVAGE),
       specificity: s.digestSpecificity,
-      nterm_met_excision: s.ntermMetExcision,
+      nterm_met_excision: s.noEnzyme ? false : s.ntermMetExcision,
       max_var_mods: num(s.maxVarMods, 1),
       add_decoys: s.addDecoys,
     },
@@ -360,9 +363,13 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if (str(d.min_charge) !== undefined) set.minCharge = str(d.min_charge)
   if (str(d.max_charge) !== undefined) set.maxCharge = str(d.max_charge)
   if (str(d.missed_cleavages) !== undefined) set.missedCleav = str(d.missed_cleavages)
-  if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
+  if (d.cleavage_regex === null) {
+    set.noEnzyme = true
+    set.digestSpecificity = 'none'
+  } else if (typeof d.cleavage_regex === 'string' && d.cleavage_regex.trim()) {
     const rule = d.cleavage_regex.trim()
     set.cleavageRegex = rule
+    set.noEnzyme = false
     // A rule matching no preset was written by hand, so the picker should open
     // on Custom with the rule visible rather than on a preset it is not.
     set.customEnzyme = enzymeByPattern(rule) === null
@@ -371,9 +378,10 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
     ?.trim()
     .toLowerCase()
     .replace('_', '-')
-  if (specificity && ['full', 'semi', 'semi-n', 'semi-c'].includes(specificity)) {
+  if (specificity && ['full', 'semi', 'semi-n', 'semi-c', 'none'].includes(specificity)) {
     set.digestSpecificity = specificity as BuildParams['digestSpecificity']
   }
+  if (set.noEnzyme) set.digestSpecificity = 'none'
   if ('nterm_met_excision' in d) set.ntermMetExcision = !!d.nterm_met_excision
   if (str(d.max_var_mods) !== undefined) set.maxVarMods = str(d.max_var_mods)
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys

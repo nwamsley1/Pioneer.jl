@@ -154,17 +154,17 @@ function _train_psm_classifier_with_fallback(
     n_total = nrow(psms)
 
     available_features = filter(f -> hasproperty(psms, f), features)
-    if :num_enzymatic_termini in available_features
-        enzymatic_termini = psms[!, :num_enzymatic_termini]
-        first_value = isempty(enzymatic_termini) ? nothing : first(enzymatic_termini)
-        if isempty(enzymatic_termini) ||
-           all(value -> isequal(value, first_value), enzymatic_termini)
-            # Full-specific libraries (and some small semi-specific files) have
-            # no information in this column. Keep their model matrix identical
-            # to the pre-specificity path and avoid a collinear probit input.
+    for digestion_feature in (:num_enzymatic_termini, :missed_cleavage)
+        digestion_feature in available_features || continue
+        values = psms[!, digestion_feature]
+        first_value = isempty(values) ? nothing : first(values)
+        if isempty(values) || all(value -> isequal(value, first_value), values)
+            # Constant digestion metadata has no predictive information. This
+            # covers fully specific libraries for enzymatic termini and
+            # no-enzyme libraries for both digestion features.
             deleteat!(
                 available_features,
-                findfirst(==(:num_enzymatic_termini), available_features),
+                findfirst(==(digestion_feature), available_features),
             )
         end
     end

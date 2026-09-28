@@ -21,7 +21,7 @@
 const VALID_AAS = Set(['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
                        'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'])
 
-const VALID_DIGEST_SPECIFICITIES = ("full", "semi", "semi-n", "semi-c")
+const VALID_DIGEST_SPECIFICITIES = ("full", "semi", "semi-n", "semi-c", "none")
 
 """Normalize and validate a FASTA digestion-specificity setting."""
 function normalize_digest_specificity(specificity::AbstractString)::String
@@ -107,9 +107,13 @@ Digest a protein with configurable enzymatic specificity. `specificity` may be:
 - `"full"`: both peptide termini must be enzymatic (the historical behavior),
 - `"semi"`: at least one peptide terminus must be enzymatic,
 - `"semi-n"`: the N terminus may be non-enzymatic; the C terminus must be enzymatic,
-- `"semi-c"`: the C terminus may be non-enzymatic; the N terminus must be enzymatic.
+- `"semi-c"`: the C terminus may be non-enzymatic; the N terminus must be enzymatic,
+- `"none"`: enumerate every length-valid subsequence without using cleavage or
+  missed-cleavage constraints.
 
-Protein termini count as enzymatic.
+Protein termini count as enzymatic when `regex` is present. Under `"none"`, a
+regex still annotates enzymatic termini for downstream scoring. Passing
+`regex = nothing` selects no-enzyme digestion and all termini are annotated zero.
 
 With `nterm_met_excision = true` and a sequence starting with `M`, every peptide
 that begins at residue 1 is also emitted starting at residue 2 (the form left
@@ -118,7 +122,7 @@ and `PEPTIDEK`. Residue 2 then counts as an enzymatic N terminus, the length
 window is applied to the excised form itself, and no missed cleavage is charged.
 """
 function digest_sequence(sequence::AbstractString,
-                         regex::Regex,
+                         regex::Union{Regex,Nothing},
                          max_length::Int,
                          min_length::Int,
                          missed_cleavages::Int,
@@ -126,6 +130,13 @@ function digest_sequence(sequence::AbstractString,
                          nterm_met_excision::Bool = false
                         )::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
     normalized = normalize_digest_specificity(specificity)
+
+    if isnothing(regex) && normalized != "none"
+        throw(ArgumentError(
+            "a cleavage regex is required when specificity is '$normalized'; " *
+            "no-enzyme digestion must use specificity 'none'"
+        ))
+    end
 
     if normalized == "full"
         return _digest_fully_specific_sequence(
@@ -137,9 +148,11 @@ function digest_sequence(sequence::AbstractString,
 
     sequence_length = length(sequence)
     cleavage_mask = falses(sequence_length)
-    for site in eachmatch(regex, sequence, overlap = true)
-        1 <= site.offset <= sequence_length || continue
-        cleavage_mask[site.offset] = true
+    if !isnothing(regex)
+        for site in eachmatch(regex, sequence, overlap = true)
+            1 <= site.offset <= sequence_length || continue
+            cleavage_mask[site.offset] = true
+        end
     end
 
     # Prefix counts make the missed-cleavage test O(1) for every emitted peptide.
@@ -155,11 +168,12 @@ function digest_sequence(sequence::AbstractString,
         push!(specific_ends, sequence_length)
     end
 
-    excise_start = nterm_met_excision && startswith(sequence, 'M')
+    excise_start = !isnothing(regex) && nterm_met_excision && startswith(sequence, 'M')
     @inline start_is_enzymatic(start_idx::Int) =
-        start_idx == 1 || (excise_start && start_idx == 2) || cleavage_mask[start_idx - 1]
+        !isnothing(regex) &&
+        (start_idx == 1 || (excise_start && start_idx == 2) || cleavage_mask[start_idx - 1])
     @inline end_is_enzymatic(end_idx::Int) =
-        end_idx == sequence_length || cleavage_mask[end_idx]
+        !isnothing(regex) && (end_idx == sequence_length || cleavage_mask[end_idx])
     @inline function internal_cleavages(start_idx::Int, end_idx::Int)
         end_idx <= start_idx && return 0
         before_end = cleavage_prefix[end_idx - 1]
@@ -171,8 +185,12 @@ function digest_sequence(sequence::AbstractString,
     starts = UInt32[]
     enzymatic_termini = UInt8[]
 
-    function emit_candidate!(start_idx::Int, end_idx::Int, start_enzymatic::Bool)
-        internal_cleavages(start_idx, end_idx) <= missed_cleavages || return
+    function emit_candidate!(start_idx::Int, end_idx::Int, start_enzymatic::Bool;
+                             enforce_missed_cleavages::Bool = true)
+        if enforce_missed_cleavages &&
+           internal_cleavages(start_idx, end_idx) > missed_cleavages
+            return
+        end
         end_enzymatic = end_is_enzymatic(end_idx)
         push!(peptides, String(@view sequence[start_idx:end_idx]))
         push!(starts, UInt32(start_idx))
@@ -186,6 +204,19 @@ function digest_sequence(sequence::AbstractString,
         min_end > sequence_length && continue
         max_end = min(start_idx + max_length - 1, sequence_length)
         start_enzymatic = start_is_enzymatic(start_idx)
+
+        # Nonspecific digestion enumerates every length-valid subsequence. When
+        # an enzyme is configured its rule is retained only as metadata: it
+        # annotates termini and internal missed cleavages but does not filter
+        # candidates. With no enzyme, the empty cleavage mask makes both
+        # enzymatic-termini and missed-cleavage metadata zero.
+        if normalized == "none"
+            for end_idx in min_end:max_end
+                emit_candidate!(start_idx, end_idx, start_enzymatic;
+                                enforce_missed_cleavages = false)
+            end
+            continue
+        end
 
         # semi-c allows an arbitrary C terminus but requires an enzymatic N
         # terminus. General semi digestion does the same for enzymatic starts.
@@ -219,11 +250,13 @@ Enzymatically digest protein sequences from FASTA entries into peptides.
 # Parameters
 - `fasta::Vector{FastaEntry}`: FASTA entries to digest
 - `proteome_id::String`: Proteome identifier to assign to resulting peptides
-- `regex::Regex`: Enzyme cleavage pattern (default: trypsin-like, cleaves after K or R except when followed by P)
+- `regex::Union{Regex,Nothing}`: Enzyme cleavage pattern, or `nothing` for
+  no-enzyme digestion (valid only with `specificity="none"`)
 - `max_length::Int`: Maximum peptide length to include (default: 40)
 - `min_length::Int`: Minimum peptide length to include (default: 8)
 - `missed_cleavages::Int`: Maximum missed cleavages allowed (default: 1)
-- `specificity::AbstractString`: `"full"`, `"semi"`, `"semi-n"`, or `"semi-c"` (default: `"full"`)
+- `specificity::AbstractString`: `"full"`, `"semi"`, `"semi-n"`, `"semi-c"`,
+  or `"none"` (default: `"full"`)
 - `nterm_met_excision::Bool`: Also emit each protein N-terminal peptide without its initiator Met, so
   both `MPEPTIDEK` and `PEPTIDEK` enter the library (default: `true`). See [`digest_sequence`](@ref).
 
@@ -270,7 +303,7 @@ peptides = digest_fasta(
 """
 function digest_fasta(fasta::Vector{FastaEntry},
                      proteome_id::String;
-                     regex::Regex = r"[KR][^P|$]",
+                     regex::Union{Regex,Nothing} = r"[KR][^P|$]",
                      max_length::Int = 40,
                      min_length::Int = 8,
                      missed_cleavages::Int = 1,
