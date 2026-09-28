@@ -208,7 +208,6 @@ function importScripts()
             "serialization.jl",
             "isotopes.jl",
             "isotopeSplines.jl",
-            "directLFQ.jl",
             "maxLFQ.jl",
             "sparseMaxLFQ.jl",
             "normalizeQuant.jl",

@@ -57,14 +57,14 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `maxLFQ.quantification_method` | String | `"sparsemaxlfq"` | Protein quantification method: `"sparsemaxlfq"`, `"maxlfq"`, or `"directlfq"`. |
+| `maxLFQ.quantification_method` | String | `"sparsemaxlfq"` | Protein quantification method: `"sparsemaxlfq"` or `"maxlfq"`. |
 | `maxLFQ.run_to_run_normalization` | Bool | `true` | Apply between-run median-spline normalization to peak areas. |
 | `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
 
 Protein quantification defaults to sparse MaxLFQ with 16 partner proposals per
 run and a fixed seed, plus connections that preserve the full overlap graph’s
 connected components. It uses shared-precursor ratios on those selected run pairs;
-results can differ from full MaxLFQ. For comparisons, select `"maxlfq"` or `"directlfq"`.
+results can differ from full MaxLFQ. For comparisons, select `"maxlfq"`.
 The selected method and its settings are saved in `protein_quantification.json`.
 
 ### Output

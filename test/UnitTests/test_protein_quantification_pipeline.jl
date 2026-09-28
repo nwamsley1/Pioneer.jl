@@ -1,6 +1,6 @@
-using Test, DataFrames, Arrow
+using Test, DataFrames, Arrow, JSON
 
-@testset "directLFQ chunked protein output" begin
+@testset "MaxLFQ methods chunked protein output" begin
     mktempdir() do dir
         function observations(protein, nprec)
             DataFrame(inferred_protein_group=fill(protein, 3nprec),
@@ -25,19 +25,20 @@ using Test, DataFrames, Arrow
             push!(refs, Pioneer.PSMFileReference(path))
         end
         seqs = ["PEPTIDE$i" for i in 1:101]
-        for (column, factor) in ((:peak_area, 1), (:peak_area_normalized, 10))
-            path = joinpath(dir, "$column.arrow")
+        for method in (:sparsemaxlfq, :maxlfq),
+            (column, factor) in ((:peak_area, 1), (:peak_area_normalized, 10))
+            path = joinpath(dir, "$(method)_$column.arrow")
             Pioneer.LFQ_chunked(refs, path, column, ["r1","r2","r3"], seqs,
                 fill(missing, 101), fill(missing, 101), 0.01f0, Dict("A"=>"human", "B"=>"yeast");
-                batch_size=2, quantification_method=:directlfq)
+                batch_size=2, quantification_method=method)
             out = DataFrame(Arrow.Table(path))
             @test nrow(out) == 5
             @test out.protein == ["A","A","A","B","B"]
             @test out.file_name == ["r1","r2","r3","r1","r2"]
             @test out.species == ["human","human","human","yeast","yeast"]
             @test out.n_precursors == [101,101,101,1,1]
-            @test out.n_precursors_quantified == [100,100,100,1,1]
-            @test out.abundance ≈ factor .* [1000,2000,4000,10,20] rtol=2e-6
+            @test out.n_precursors_quantified == [101,101,101,1,1]
+            @test out.abundance ≈ factor .* [1010,2020,4040,10,20] rtol=2e-6
             @test out.total_peak_area ≈ factor .* [1010,2020,4040,10,20]
             @test out.qval == fill(0.001f0, 5)
         end
@@ -48,7 +49,7 @@ end
     defaults = JSON.parsefile(joinpath(@__DIR__, "..", "..", "assets", "example_config", "defaultSearchParams.json"))
     @test defaults["maxLFQ"]["quantification_method"] == "sparsemaxlfq"
     mktempdir() do dir
-        for method in ("sparsemaxlfq", "directlfq", "maxlfq")
+        for method in ("sparsemaxlfq", "maxlfq")
             defaults["maxLFQ"]["quantification_method"] = method
             path = joinpath(dir, "params.json")
             write(path, JSON.json(defaults))
@@ -61,10 +62,12 @@ end
         write(path, JSON.json(defaults))
         selected = Pioneer.ProteinQuantificationSearchParameters(Pioneer.parse_pioneer_parameters(path))
         @test selected.quantification_method == :sparsemaxlfq
-        defaults["maxLFQ"]["quantification_method"] = "typo"
-        path = joinpath(dir, "bad.json")
-        write(path, JSON.json(defaults))
-        @test_throws Pioneer.InvalidParametersError Pioneer.checkParams(path)
+        for unsupported in ("typo", "directlfq")
+            defaults["maxLFQ"]["quantification_method"] = unsupported
+            path = joinpath(dir, "bad.json")
+            write(path, JSON.json(defaults))
+            @test_throws Pioneer.InvalidParametersError Pioneer.checkParams(path)
+        end
     end
 end
 

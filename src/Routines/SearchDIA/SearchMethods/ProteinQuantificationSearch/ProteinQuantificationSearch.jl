@@ -22,7 +22,7 @@ Search method for normalization, protein quantification, and output.
 
 This search:
 1. Normalizes quantitative values across runs
-2. Quantifies proteins with sparse MaxLFQ, MaxLFQ, or directLFQ
+2. Quantifies proteins with sparse MaxLFQ or full MaxLFQ
 3. Generates long and wide format results
 4. Writes per-run summary statistics
 """
@@ -318,13 +318,6 @@ function summarize_results!(
         merge!(quantification_metadata, Dict(
             "partners" => SPARSE_MAXLFQ_PARTNERS,
             "seed" => SPARSE_MAXLFQ_SEED,
-        ))
-    elseif params.quantification_method == :directlfq
-        merge!(quantification_metadata, Dict(
-            "reference_revision" => DIRECTLFQ_REFERENCE_REVISION,
-            "max_precursors" => DIRECTLFQ_MAX_PRECURSORS,
-            "reference_precursors" => DIRECTLFQ_REFERENCE_PRECURSORS,
-            "min_valid_precursors_per_run" => 1,
         ))
     end
     write(joinpath(getDataOutDir(search_context), "protein_quantification.json"),
