@@ -708,6 +708,10 @@ end
 Random.seed!(1776);
 
 #Import Pioneer Files 
+# Vendored formats (folded in from TimsSlices.jl, source commit b3e6d12): timsTOF .d -> .tdfs conversion and the
+# .tdfs container, as the submodule Pioneer.TimsSlices. Loaded before the structs that read .tdfs.
+include(joinpath("vendor", "TimsSlices", "TimsSlices.jl"))
+
 include("importScripts.jl")
 files_loaded = importScripts()
 

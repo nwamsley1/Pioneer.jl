@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "b2d446b06df474c13b15d5be465806405780d577"
+project_hash = "c7b6121dfede7394f91632ee0f5dd1aea1e5b777"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -1391,7 +1391,7 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.4"
 
 [[deps.Pioneer]]
-deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "TimsSlices"]
+deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "JSON3", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "Mmap", "NumericalIntegration", "Optim", "Plots", "Polynomials", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SQLite", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "Zstd_jll"]
 path = "."
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 version = "0.10.0"
@@ -1961,14 +1961,6 @@ version = "0.5.29"
 
     [deps.TimerOutputs.weakdeps]
     FlameGraphs = "08572546-2f56-4bcf-ba4e-bab62c3a3f89"
-
-[[deps.TimsSlices]]
-deps = ["Arrow", "JSON3", "Mmap", "Printf", "SQLite", "Zstd_jll"]
-git-tree-sha1 = "4824beca737f868b0cffd9fdaf999ad8cbc319bf"
-repo-rev = "master"
-repo-url = "https://github.com/nwamsley1/TimsSlices.jl"
-uuid = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
-version = "0.2.0"
 
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"

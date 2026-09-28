@@ -1,5 +1,5 @@
 # convertBruker input handling: what counts as a Bruker bundle, and the errors for inputs that are not. The
-# conversion itself is TimsSlices.convert, tested in TimsSlices.jl and end to end by the timsTOF searches.
+# conversion itself is TimsSlices.convert_run (src/vendor/TimsSlices), tested in test/UnitTests/formats/timsslices and end to end by the timsTOF searches.
 
 using Test
 using Pioneer

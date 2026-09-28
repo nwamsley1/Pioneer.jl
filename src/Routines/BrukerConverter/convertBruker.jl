@@ -24,9 +24,10 @@ const CONVERT_BRUKER_APP_NAME = "convertBruker"
 
 Convert Bruker timsTOF diaPASEF `.d` bundles to `.tdfs` runs for SearchDIA. `path` is one `.d` folder or a folder
 containing them. Each bundle becomes `<output_dir>/<name>.tdfs`; `output_dir` defaults to `tdfs_out` next to the
-bundles. Uses TimsSlices' default slicing (8 IM scans per slice, IM sigma 5 scans, m/z sigma 3 bins, summed
-intensities, the 1,500 most intense centroids kept per MS2 slice, MS1 uncapped), the settings Pioneer's timsTOF
-search was validated with. Returns the `.tdfs` paths.
+bundles. Uses the default slicing of `TimsSlices` (`src/vendor/TimsSlices`): slices every 0.0065 1/K0 with an IM
+Gaussian of 0.004325 1/K0 and an m/z Gaussian of 0.3125 ns of flight time, each converted to scans / TOF bins for
+the run (8 scans, 5 scans and 2.5 bins on the timsTOF Ultra), summed intensities, the 1,500 most intense centroids
+kept per MS2 slice, MS1 uncapped. Returns the `.tdfs` paths.
 """
 function convertBruker(path::AbstractString; output_dir::AbstractString = "")
     src = rstrip(expanduser(String(path)), ['/', '\\'])
@@ -49,7 +50,7 @@ function convertBruker(path::AbstractString; output_dir::AbstractString = "")
     for (i, d) in enumerate(bundles)
         name = replace(basename(d), r"\.d$"i => "")
         println("\n[$i/$(length(bundles))] $name")
-        t = @elapsed paths = TimsSlices.convert(d, out; name = name)
+        t = @elapsed paths = TimsSlices.convert_run(d, out; name = name)
         push!(written, paths.tdfs)
         println("[$i/$(length(bundles))] $name done in $(round(t; digits = 1)) s")
     end
