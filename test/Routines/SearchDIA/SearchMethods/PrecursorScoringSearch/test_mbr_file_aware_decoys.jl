@@ -496,10 +496,7 @@ end
 end
 
 @testset "MBR row gather matches the block-stacked matrix" begin
-    # `_mbr_feature_matrix` used to build the whole (1 + NCF) * n_candidates x n_features expansion,
-    # but it was only ever consumed as x[train_rows, :] / x[test_rows, :]. `_mbr_gather_feature_rows`
-    # produces those subsets directly, so it must agree with the full matrix exactly -- including the
-    # missing -> 0.0f0 convention and the global row numbering.
+    # Independent dense reference checks block ordering and missing-to-zero conversion.
     ncf = Pioneer.MBR_N_COUNTERFACTUALS
     n_candidates = 37
     n_features = 4
@@ -514,7 +511,8 @@ end
             df[!, false_features[k][j]] = col
         end
     end
-    x = Pioneer._mbr_feature_matrix(df, true_features, false_features)
+    x = vcat((Float32.(coalesce.(Matrix(df[:, cols]), 0))
+              for cols in vcat([true_features], false_features) )...)
     n_rows = (1 + ncf) * n_candidates
     @test size(x) == (n_rows, n_features)
     @test Pioneer._mbr_gather_feature_rows(

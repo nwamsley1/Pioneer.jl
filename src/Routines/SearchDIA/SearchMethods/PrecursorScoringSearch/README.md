@@ -29,7 +29,8 @@ directory. Experiment-wide FDR and integrated MBR processing run downstream.
 Retained LightGBM models contain trees without training datasets. Training
 memory includes the pool, a temporary filtered subset, and native LightGBM
 workspace; final prediction holds one file's feature matrices at a time.
-The pool cap controls training size; `max_psms_in_memory` is currently unused.
+The pool cap controls training size; the protein-scoring memory setting does not
+change this precursor pool.
 
 Debug logs report sampling, per-fold fitting, pool prediction, q-value
 calculation, and final prediction timings, plus file progress every 100 files.

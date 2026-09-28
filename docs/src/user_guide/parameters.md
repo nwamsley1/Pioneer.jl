@@ -11,7 +11,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 * **`global.q_value_threshold`** — final FDR cutoff for output (default `0.01`). Loosen to `0.05` for exploratory work.
 * **`search.n_isotopes`** — number of fragment isotopes used in matching (default `2`, M and M+1). Set `1` for non-Altimeter libraries that do not model M+1 intensities (Prosit, UniSpec).
 * **`acquisition.nce`** — initial NCE guess for the pre-search before NCE tuning (default `26`, suitable for Thermo Orbitrap/Astral). If the auto-fitted NCE in the QC plot is far from this value, re-run with a closer guess.
-* **`optimization.machine_learning.max_psm_memory_mb`** — memory budget for in-memory LightGBM training (default `2000` MB). Raise on workstations with more RAM; lower to force the out-of-memory path earlier.
+* **`optimization.machine_learning.max_psm_memory_mb`** — table-size budget for run-level protein training (default `2000` MB). Larger tables use a representative training pool. This is not a total search RAM limit; precursor training uses its own fixed pool cap.
 * **`maxLFQ.run_to_run_normalization`** — apply between-run median-spline normalization to peak areas (default `true`). Turn off when between-run intensity differences are biological rather than systematic.
 
 ### Global
@@ -36,7 +36,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Memory budget (MB) for in-memory PSM scoring. Above this, ScoringSearch switches to the out-of-memory path. |
+| `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Table-size budget (MB) for run-level protein training; larger tables use a representative training pool. Does not limit total search RAM. |
 
 ### Optimization (Chromatogram Integration)
 
@@ -62,7 +62,9 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
 
 Protein quantification defaults to sparse MaxLFQ with 16 partner proposals per
-run and a fixed seed. For comparisons, select `"maxlfq"` or `"directlfq"`.
+run and a fixed seed, plus connections that preserve the full overlap graph’s
+connected components. It uses shared-precursor ratios on those selected run pairs;
+results can differ from full MaxLFQ. For comparisons, select `"maxlfq"` or `"directlfq"`.
 The selected method and its settings are saved in `protein_quantification.json`.
 
 ### Output

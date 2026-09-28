@@ -22,7 +22,7 @@ Search method for normalization, protein quantification, and output.
 
 This search:
 1. Normalizes quantitative values across runs
-2. Quantifies proteins with directLFQ or MaxLFQ
+2. Quantifies proteins with sparse MaxLFQ, MaxLFQ, or directLFQ
 3. Generates long and wide format results
 4. Writes per-run summary statistics
 """
@@ -299,7 +299,7 @@ function summarize_results!(
 
     # Chunked precursor CSV writing (bounded memory per chunk)
     @user_info "Writing precursor tables..."
-    precursors_wide_path = writePrecursorCSV_chunked(
+    writePrecursorCSV_chunked(
         chunk_refs,
         getDataOutDir(search_context),
         all_file_names,
@@ -353,7 +353,7 @@ function summarize_results!(
 
     @user_info "Writing protein group results..."
     # Export protein groups through bounded buffers.
-    proteins_wide_path = writeProteinGroupsCSV(
+    writeProteinGroupsCSV(
         results.proteins_long_path,
         getSequence(precursors),
         getIsotopicMods(precursors),

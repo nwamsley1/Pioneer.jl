@@ -35,14 +35,14 @@ end
                 for first in 1:137:nrow(frame)
                     Pioneer._mbr_store_features!(store, frame[first:min(first+136, nrow(frame)), :])
                 end
-                @test (store.io === nothing) == (budget > 1)
-                @test store.bytes <= budget
+                @test (store.data.io === nothing) == (budget > 1)
+                @test store.data.bytes <= budget
                 @test readdir(dir) == (budget > 1 ? String[] : ["features.bin"])
                 @test Pioneer._mbr_available_feature_sets(store.schema) == (tf, ff)
                 @test Pioneer._mbr_gather_feature_rows(store, tf, ff, rows, 1200) == expected
                 @test size(Pioneer._mbr_gather_feature_rows(store, tf, ff, Int[], 1200)) == (0, length(tf))
                 @test_throws BoundsError Pioneer._mbr_gather_feature_rows(store, tf, ff, [4801], 1200)
-                budget == 1 && @test isempty(store.blocks)
+                budget == 1 && @test isempty(store.data.blocks)
             finally
                 close(store)
             end

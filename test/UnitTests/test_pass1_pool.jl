@@ -155,3 +155,20 @@ pass1_pool_predictions(model, X) = clamp.(
         end
     end
 end
+
+@testset "Unified precursor scoring entry point" begin
+    mktempdir() do dir
+        path = pass1_pool_test_write(joinpath(dir, "run.arrow"), collect(1:120))
+        frame = DataFrame(Arrow.Table(path); copycols=true)
+        frame[!, first(Pioneer.ADVANCED_FEATURE_SET)] = Float32.(frame.target)
+        Arrow.write(path, frame)
+        for mbr in (false, true)
+            @test Pioneer.score_precursor_isotope_traces([path]; match_between_runs=mbr) === nothing
+            sidecar = Arrow.Table(path * Pioneer.PASS1_SIDECAR_SUFFIX)
+            @test sidecar.precursor_idx == frame.precursor_idx
+            @test sidecar.scan_idx == frame.scan_idx
+            @test all(isfinite, sidecar.trace_prob_prepass)
+            @test all(mbr ? isfinite : isnan, sidecar.trace_prob_infold)
+        end
+    end
+end

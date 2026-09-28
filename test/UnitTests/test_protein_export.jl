@@ -79,7 +79,7 @@ end
 
 @testset "Protein export spill file count" begin
     mktempdir() do dir
-        store = Pioneer.ProteinExportStore(joinpath(dir, "records.bin"), 1024^2)
+        store = Pioneer.DataFrameBlockStore(joinpath(dir, "records.bin"), 1024^2)
         try
             Pioneer._store_protein_block!(store,
                 DataFrame(file_name=["run"], abundance=Float32[1]))

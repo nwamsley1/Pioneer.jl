@@ -90,3 +90,16 @@ reported as 100 × their mean over identified target precursors.
 | `missed_cleavage_percentage` | 100 × mean missed cleavages among identified target precursors; can exceed 100 |
 | `ms2_mass_tol_low/high/unit`, `ms1_mass_tol_low/high/unit` | Fragment / precursor mass tolerance the search settled on (`ppm` or `Da` depending on the fitted model; MS1 empty when no MS1 model was fit) |
 | `gradient_length_min`, `n_ms1_scans`, `n_ms2_scans` | Run length (last retention time, minutes) and scan counts |
+
+### Calibration QC
+
+The summary includes `<stage>_calibration_qc` and `<stage>_calibration_qc_reason` for RT, MS2 mass
+error, MS1 mass error, quadrupole, and NCE calibration. Statuses are `normal`,
+`suspicious`, `warning`, `failed`, or `not_assessed`. Suspicious means a per-file
+screening criterion was exceeded; it does not mean the fit failed. The reason
+column identifies the criterion, fallback, or insufficient support.
+
+Each calibration stage plots the first 50 files, plus up to 50 additional files
+flagged suspicious, warning, or failed, in input order. Selection is independent
+for each stage. All files receive summary statuses, including those not plotted.
+The final combined QC plot report is no longer generated.

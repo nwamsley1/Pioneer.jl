@@ -24,7 +24,7 @@ classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
-# (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
+# (in score_psms.jl::score_precursor_isotope_traces).
 #
 # Important: MBR transfer features are not in this list. They are computed
 # from the integrated receiver chromatogram after Pass-1 and are consumed by

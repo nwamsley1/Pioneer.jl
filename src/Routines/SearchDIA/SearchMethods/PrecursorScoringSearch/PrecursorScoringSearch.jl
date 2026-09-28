@@ -45,22 +45,9 @@ struct PrecursorScoringSearchResults <: SearchResults
 end
 
 """
-    FORCE_OOM
-
-Developer toggle: force the out-of-memory scoring path even when PSMs would
-fit in memory. Used to test/profile the OOM path without a deliberately
-oversized dataset. Production runs leave this `false`.
-"""
-const FORCE_OOM = false
-
-"""
 Parameters for scoring search.
 """
 struct PrecursorScoringSearchParameters <: SearchParameters
-    # In-memory PSM memory budget; OOM path triggers when bytes-per-row * Q
-    # exceeds this.
-    max_psm_memory_mb::Float64
-
     q_value_threshold::Float32
 
     # When false, skip post-integration donor/counterfactual feature
@@ -69,14 +56,12 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     calibrate_huber::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
-        ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
         mbr = hasproperty(global_params, :match_between_runs) ?
                 Bool(global_params.match_between_runs) : true
 
         new(
-            Float64(ml_params.max_psm_memory_mb),
             _resolve_q_value_threshold(global_params),
             mbr,
             get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber",
@@ -326,11 +311,6 @@ function summarize_results!(
 
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
 
-    # Set up output folders. PSM intermediates all live in `main_search_psms/`
-    # since 2026-05-20 — MainSearch writes fold-split files there,
-    # PrecursorScoring reads/merges/MBR-folds in place, and only the
-    # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
-    main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
@@ -359,17 +339,9 @@ function summarize_results!(
     end
 
     step1_time = @elapsed begin
-        max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
-        @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
         _pmark(:setup)
         score_precursor_isotope_traces(
-            main_search_psms_folder,
-            valid_fold_paths,
-            getPrecursors(getSpecLib(search_context)),
-            getFragmentLookupTable(getSpecLib(search_context)),
-            max_psms,
-            params.q_value_threshold,
-            FORCE_OOM;
+            valid_fold_paths;
             match_between_runs = params.match_between_runs,
         )
     end

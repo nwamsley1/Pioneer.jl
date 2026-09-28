@@ -806,65 +806,18 @@ end
 
 # Small exports retain owned blocks in memory. Larger exports use one seekable
 # spool with block offsets, independent of the number of protein groups.
-mutable struct ProteinExportStore
-    path::String
-    budget::Int
-    bytes::Int
-    blocks::Vector{DataFrame}
-    offsets::Vector{Int64}
-    row_ends::Vector{Int}
-    io::Union{Nothing, IOStream}
-    cached_index::Int
-    cached_block::DataFrame
-end
-
-ProteinExportStore(path, budget) = ProteinExportStore(
-    path, budget, 0, DataFrame[], Int64[], Int[], nothing, 0, DataFrame())
-
-function Base.close(store::ProteinExportStore)
-    store.io === nothing || close(store.io)
-end
-
-function _store_protein_block!(store::ProteinExportStore, part)
+function _store_protein_block!(store::DataFrameBlockStore, part)
     block = DataFrame(part; copycols=true)
     if hasproperty(block, :peptides)
         # Arrow list elements otherwise retain the input record buffer.
         block[!, :peptides] = [collect(ids) for ids in block.peptides]
     end
-    bytes = store.io === nothing ? Base.summarysize(block) : 0
-    if store.io === nothing && store.bytes + bytes > store.budget
-        store.io = open(store.path, "w+")
-        for saved in store.blocks
-            push!(store.offsets, position(store.io))
-            Serialization.serialize(store.io, saved)
-        end
-        empty!(store.blocks)
-        store.bytes = 0
-    end
-    if store.io === nothing
-        push!(store.blocks, block)
-        store.bytes += bytes
-    else
-        push!(store.offsets, position(store.io))
-        Serialization.serialize(store.io, block)
-    end
-    push!(store.row_ends, (isempty(store.row_ends) ? 0 : last(store.row_ends)) + nrow(block))
+    _store_dataframe_block!(store, block)
     return nothing
 end
 
-function _protein_export_block(store::ProteinExportStore, index)
-    store.io === nothing && return store.blocks[index]
-    if store.cached_index != index
-        store.cached_block = DataFrame()
-        seek(store.io, store.offsets[index])
-        store.cached_block = Serialization.deserialize(store.io)::DataFrame
-        store.cached_index = index
-    end
-    return store.cached_block
-end
-
 struct ProteinExportBatches
-    store::ProteinExportStore
+    store::DataFrameBlockStore
     first_row::Int
     last_row::Int
 end
@@ -875,12 +828,12 @@ function Base.iterate(batches::ProteinExportBatches, row=batches.first_row)
     index = searchsortedfirst(store.row_ends, row)
     first = index == 1 ? 1 : store.row_ends[index-1] + 1
     last = min(store.row_ends[index], batches.last_row)
-    return view(_protein_export_block(store, index), row-first+1:last-first+1, :), last+1
+    return view(_dataframe_block(store, index; cache=true), row-first+1:last-first+1, :), last+1
 end
 
 function _spool_protein_export(long_path, dir, group_key, metadata_columns,
                                gene_map, protein_map, budget, row_limit, write_csv)
-    store = ProteinExportStore(joinpath(dir, "records.bin"), 2budget)
+    store = DataFrameBlockStore(joinpath(dir, "records.bin"), 2budget)
     catalog = DataFrame()
     seen = Set{Tuple}()
     precursor_ids = Set{UInt32}()
@@ -942,7 +895,7 @@ function _spool_protein_export(long_path, dir, group_key, metadata_columns,
             end
         end
         finish_group!()
-        store.io === nothing || flush(store.io)
+        flush(store)
         if !isempty(catalog)
             sort!(catalog, [order(:n_precursors_total, rev=true), order(:global_pg_score, rev=true), group_key...])
         end

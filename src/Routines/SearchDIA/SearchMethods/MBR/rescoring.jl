@@ -4,21 +4,13 @@
 # Licensed under AGPL v3+; see LICENSE.
 
 # Candidate features stay in bounded blocks; only labels, IDs and scores span the search.
-mutable struct _MBRFeatureStore
-    path::String
-    budget::Int
-    bytes::Int
-    blocks::Vector{DataFrame}
-    offsets::Vector{Int64}
-    row_ends::Vector{Int}
+struct _MBRFeatureStore
+    data::DataFrameBlockStore
     schema::DataFrame
-    io::Union{Nothing, IOStream}
 end
-function _MBRFeatureStore(path; budget::Int=64*1024^2)
-    budget > 0 || throw(ArgumentError("MBR feature cache budget must be positive"))
-    return _MBRFeatureStore(path, budget, 0, DataFrame[], Int64[], Int[], DataFrame(), nothing)
-end
-Base.close(store::_MBRFeatureStore) = store.io === nothing ? nothing : close(store.io)
+_MBRFeatureStore(path; budget::Int=64*1024^2) =
+    _MBRFeatureStore(DataFrameBlockStore(path, budget), DataFrame())
+Base.close(store::_MBRFeatureStore) = close(store.data)
 
 function _mbr_store_features!(store::_MBRFeatureStore, frame::DataFrame)
     columns = unique(vcat(MBR_FTR_FEATURES_TRUE,
@@ -26,31 +18,8 @@ function _mbr_store_features!(store::_MBRFeatureStore, frame::DataFrame)
     filter!(col -> hasproperty(frame, col), columns)
     block = select(frame, columns; copycols=true)
     append!(store.schema, block[1:0, :]; cols=:union)
-    bytes = store.io === nothing ? Base.summarysize(block) : 0
-    if store.io === nothing && store.bytes + bytes > store.budget
-        store.io = open(store.path, "w+")
-        for saved in store.blocks
-            push!(store.offsets, position(store.io))
-            Serialization.serialize(store.io, saved)
-        end
-        empty!(store.blocks)
-        store.bytes = 0
-    end
-    if store.io === nothing
-        push!(store.blocks, block)
-        store.bytes += bytes
-    else
-        push!(store.offsets, position(store.io))
-        Serialization.serialize(store.io, block)
-    end
-    push!(store.row_ends, (isempty(store.row_ends) ? 0 : last(store.row_ends)) + nrow(frame))
+    _store_dataframe_block!(store.data, block)
     return nothing
-end
-
-function _mbr_feature_block(store::_MBRFeatureStore, index)
-    store.io === nothing && return store.blocks[index]
-    seek(store.io, store.offsets[index])
-    return Serialization.deserialize(store.io)::DataFrame
 end
 
 function _mbr_copy_feature_rows!(dest, src, positions)
@@ -62,21 +31,21 @@ end
 function _mbr_gather_feature_rows(store::_MBRFeatureStore, true_features, false_features,
                                   rows::AbstractVector{Int}, n_candidates::Int)
     dest = Matrix{Float32}(undef, length(rows), length(true_features))
-    positions = [Int[] for _ in store.row_ends]
+    positions = [Int[] for _ in store.data.row_ends]
     for (position, row) in enumerate(rows)
         1 <= row <= (1 + length(false_features)) * n_candidates || throw(BoundsError(rows, position))
         candidate = mod(row - 1, n_candidates) + 1
-        push!(positions[searchsortedfirst(store.row_ends, candidate)], position)
+        push!(positions[searchsortedfirst(store.data.row_ends, candidate)], position)
     end
     columns = unique(vcat(true_features, false_features...))
     for index in eachindex(positions)
         selected = positions[index]
         isempty(selected) && continue
-        first_row = index == 1 ? 1 : store.row_ends[index-1] + 1
-        n = store.row_ends[index] - first_row + 1
+        first_row = index == 1 ? 1 : store.data.row_ends[index-1] + 1
+        n = store.data.row_ends[index] - first_row + 1
         local_rows = [div(rows[p] - 1, n_candidates) * n +
                       mod(rows[p] - 1, n_candidates) + 2 - first_row for p in selected]
-        block = _mbr_feature_block(store, index)
+        block = _dataframe_block(store.data, index)
         # Match the unioned in-memory table: absent feature values gather as zero.
         if any(col -> !hasproperty(block, col), columns)
             block = copy(block)
@@ -237,7 +206,7 @@ function load_postintegration_mbr_candidates(
             end
         end
     end
-    feature_store === nothing || feature_store.io === nothing || flush(feature_store.io)
+    feature_store === nothing || flush(feature_store.data)
     # Recovery-sidecar writing also requires the ID columns when no candidates survive.
     candidates = if feature_store !== nothing && !isempty(metadata)
         metadata
@@ -307,10 +276,7 @@ function load_postintegration_mbr_frame(file_paths::Vector{String})
     return isempty(parts) ? DataFrame() : vcat(parts...; cols = :union)
 end
 
-# Runs over the FULL staged frame, so it is the widest of the MBR row loops. `frame.col` infers as
-# AbstractVector and `frame[row, col]` additionally does a Dict{Symbol,Int} lookup per cell, so the
-# loop below is moved behind a barrier that receives the columns. Measured at n = 391,370 with a
-# 100-column frame: 300.4 ms / 71.7 MB inline versus 0.8 ms / 0.1 MB here, identical output.
+# Resolve DataFrame columns once so the row loop specializes on their concrete types.
 function _mbr_candidate_mask(
     frame::DataFrame,
     q_value_threshold::Float32,
@@ -332,7 +298,6 @@ function _mbr_candidate_mask_kernel(
     n = length(global_qval_col)
     candidates = falses(n)
     @inbounds for row in 1:n
-        # Each q-value column used to be fetched twice per row (isfinite, then the comparison).
         global_qval = Float32(global_qval_col[row])
         run_qval = Float32(qval_col[row])
         global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
@@ -405,13 +370,7 @@ end
         _mbr_false_feature(stem, counterfactual_idx)
 end
 
-# Rank and margin of one pairing against the other three, for a single stem. Extracted so the column
-# accesses specialise: `frame[row, col]` is a two-argument getindex doing a Dict{Symbol,Int} lookup
-# PER CELL, and this runs 4 stems x 4 blocks x ~4 comparisons per row. Measured on the candidate
-# frame (n = 40,150): 474.9 ms / 92.7 MB inline versus 3.5 ms / 5.0 MB here, identical output.
-#
-# `cols` is a Tuple so it arrives concretely typed -- tuples are covariant, so the kernel specialises
-# on the real column types even though the caller can only infer `Tuple`.
+# A concrete column tuple avoids per-cell DataFrame lookups in rank/margin comparisons.
 function _mbr_contrast_rank_margin(cols::Tuple, source_idx::Int, n::Int)
     ranks = fill(-1.0f0, n)
     margins = fill(-1.0f0, n)
@@ -558,13 +517,8 @@ end
 """
     _mbr_sample_positions(n, limit) -> Vector{Int}
 
-The 1-based positions `_mbr_evenly_spaced_sample` would pick out of a length-`n` list, without
-needing the list. Lets the capped branch of `_mbr_training_rows` emit only the rows it keeps rather
-than materialising every eligible row index first: selecting 1.875M negatives out of, say, 60M
-eligible ones used to allocate a 60M-element `Vector{Int}` (480 MB) purely to index into it.
-
-Positions are strictly increasing, so a single ordered pass over the candidates can match them off
-in lockstep.
+Return increasing, evenly spaced positions without allocating all eligible row indices.
+A single ordered pass can match these positions to the selected candidates.
 """
 function _mbr_sample_positions(n::Int, limit::Int)
     limit >= 0 || throw(ArgumentError("MBR training limit must be nonnegative"))
@@ -763,18 +717,7 @@ function _mbr_training_rows(
     )
 end
 
-# Row indices into `x` for each CV fold: the block-0 row of every candidate held out in that fold,
-# plus each counterfactual block that actually exists for it.
-#
-# This used to be rebuilt inside _mbr_fit_oof_iteration, i.e. on all 16 calls (2 folds x 8
-# semi-supervised iterations), from `folds`, `present` and n_candidates -- all three fixed for the
-# whole search, so all 16 builds produced identical vectors. It is now built once. Measured at
-# N = 391,370 with 3 counterfactuals: 487.5 ms / 271.2 MB rebuilt versus 11.9 ms / 33.9 MB hoisted.
-# The inline version also had no sizehint!, so most of that allocation was geometric regrowth; the
-# count-then-fill below removes it.
-#
-# Only `positive_top` changes between iterations (the semi-supervised label update), and it does not
-# enter this calculation -- so the hoist is value-preserving, not an approximation.
+# Held-out candidate and available counterfactual rows, built once for all iterations.
 function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
     n_candidates, n_counterfactuals = size(present)
     rows_by_fold = Vector{Vector{Int}}()
@@ -901,63 +844,6 @@ function _mbr_fit_oof_iteration(
     return scores, last_classifier
 end
 
-# Function barrier for the scatter below. `candidate_frame[!, col]` infers as AbstractVector, so
-# indexing it in a loop IN THE SAME FUNCTION makes every element a dynamic dispatch that boxes its
-# result. Measured on a representative 200,000-row x 104-column frame with 12 threads, identical
-# output: 806.7 ms / 713.3 MB inline versus 9.7 ms / 79.4 MB through this barrier (82.8x) -- for a
-# matrix that is itself only 79.3 MB, i.e. the inline version allocated 9x its own output in boxes.
-@inline function _mbr_fill_feature_block!(
-    x::Matrix{Float32},
-    column,
-    offset::Int,
-    n_candidates::Int,
-    feature_idx::Int,
-)
-    @inbounds for candidate_idx in 1:n_candidates
-        value = column[candidate_idx]
-        x[offset + candidate_idx, feature_idx] =
-            value === missing ? 0.0f0 : Float32(value)
-    end
-    return nothing
-end
-
-function _mbr_feature_matrix(
-    candidate_frame::DataFrame,
-    true_features::Vector{Symbol},
-    false_features::Vector{Vector{Symbol}},
-)
-    n_candidates = nrow(candidate_frame)
-    n_features = length(true_features)
-    n_blocks = 1 + length(false_features)
-    x = Matrix{Float32}(
-        undef,
-        n_blocks * n_candidates,
-        n_features,
-    )
-    Threads.@threads for feature_idx in 1:n_features
-        _mbr_fill_feature_block!(
-            x,
-            candidate_frame[!, true_features[feature_idx]],
-            0,
-            n_candidates,
-            feature_idx,
-        )
-        for counterfactual_idx in eachindex(false_features)
-            _mbr_fill_feature_block!(
-                x,
-                candidate_frame[
-                    !,
-                    false_features[counterfactual_idx][feature_idx],
-                ],
-                counterfactual_idx * n_candidates,
-                n_candidates,
-                feature_idx,
-            )
-        end
-    end
-    return x
-end
-
 """
     MBR_PREDICT_ROW_BATCH
 
@@ -967,7 +853,7 @@ experiment size; predictions are per-row independent so batching does not change
 const MBR_PREDICT_ROW_BATCH = 1_000_000
 
 # Typed kernel for the gather below. `candidate_frame[!, col]` infers as AbstractVector, so reading
-# it directly in the loop would dispatch per element (the same reason _mbr_fill_feature_block! exists).
+# it directly in the loop would dispatch per element.
 function _mbr_gather_kernel!(
     dest::Matrix{Float32},
     column::AbstractVector,
@@ -988,11 +874,8 @@ end
 
 Materialise just the requested rows of the block-stacked feature matrix.
 
-`_mbr_feature_matrix` built the whole `(1 + MBR_N_COUNTERFACTUALS) * n_candidates` x n_features
-expansion up front, but it was only ever consumed as `x[train_rows, :]` and `x[test_rows, :]` --
-never as a whole. Gathering on demand keeps the identical row numbering (global row `r` is block
-`(r-1) ÷ n_candidates`, candidate `(r-1) % n_candidates + 1`) while making memory a function of the
-rows actually requested rather than of the experiment size.
+Global row `r` identifies block `(r-1) ÷ n_candidates` and candidate
+`(r-1) % n_candidates + 1`. Memory scales with the requested rows.
 
 Rows are grouped by block first so each (block, feature) pair reads one concrete column, which is
 what lets the kernel specialise.
@@ -1041,8 +924,6 @@ function _mbr_semisupervised_oof(
 )
     preparation_started = time()
     n_candidates = nrow(candidate_frame)
-    # The block-stacked matrix is no longer materialised; _mbr_fit_oof_iteration gathers the rows it
-    # needs. _mbr_feature_matrix is retained as the reference implementation of the layout.
     present = falses(n_candidates, MBR_N_COUNTERFACTUALS)
     @inbounds for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
         missing = candidate_frame[
