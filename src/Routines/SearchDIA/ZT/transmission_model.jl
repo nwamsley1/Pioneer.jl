@@ -58,8 +58,8 @@ function getQuadTransmissionBounds(qtm::ZTTriangleModel{T}, centerMz::T,
 end
 
 # Support is exactly the triangle's base: beyond +/-h transmission is zero, so there is no
-# reason to consider a precursor there. This is what lets `metascan_k` be DERIVED rather than
-# configured -- the expansion needs to reach exactly as far as the support does.
+# reason to consider a precursor there. `k_fit = floor(h / bin_step)` is that support in bins;
+# the searches use its inner half (`zt_search_k`).
 getPrecMinBound(f::ZTTriangleFunction{T}) where {T<:AbstractFloat} = f.center_mz - f.half_width_mz
 getPrecMaxBound(f::ZTTriangleFunction{T}) where {T<:AbstractFloat} = f.center_mz + f.half_width_mz
 

@@ -30,7 +30,8 @@ Fields:
 - `nominal_width` median recorded `isolationWidthMz` (Da). Used only for the tiling check.
 - `bins_per_ramp` median MS2 scans per centerMz ramp (a "cycle" per `compute_cycle_idxs`;
                   MS1 scans are not delimiters, they inherit the current cycle index).
-- `metascan_k`    expansion half-width in bins. A config value, identical for every file.
+- `metascan_k`    expansion half-width in bins: `ZT_METASCAN_K_DEFAULT` through quad tuning,
+                  then `zt_search_k` of the fitted profile.
 - `transmission_fwhm` FWHM (Da) of the effective transmission profile. A PHYSICAL property of
                   the acquisition, deliberately independent of `metascan_k`: `k` decides how much
                   of the profile we sample, not what shape it has.
@@ -62,7 +63,7 @@ closer to Gaussian), so the tails would drag the slope; but too small a core see
 convex apex and the slope comes out too shallow. Expressed as a fraction of h, not in Da or
 bins, so every method fits the same part of its own profile.
 
-Measured (A_REP1, both methods, k configured = 6):
+Measured (A_REP1, both methods, k = 6):
 - 5 Da:  0.62 h (= the validated 4.0 Da window) -> h 6.48, k_implied 6, R² 0.92;
          0.50 h -> h 6.65, k_implied 7, R² 0.89, -78 precursors.
 - 10 Da: 0.31 h (a fixed 4 Da) -> h 13.59, k_implied 7, R² 0.905, IQR 3.3 Da;
@@ -85,7 +86,6 @@ const ZT_GEOM_SAMPLE_CYCLES = 8
 Default effective transmission FWHM (Da). Measured on the reference ZT 5Da data by two
 independent routes — isotope-ratio integration (6.30 Da) and a Razo fit with its width bound
 relaxed (6.84-6.97 Da) — agreeing with a weight-profile fit from the prior effort (~6.7 Da).
-Override per acquisition with `acquisition.transmission_fwhm_mz`.
 """
 const ZT_TRANSMISSION_FWHM_DEFAULT = 6.5f0
 
@@ -231,7 +231,7 @@ zt_with_metascan_k(g::ZTGeometry, k::Integer) =
     zt_with_template_h(g::ZTGeometry, h::Real) -> ZTGeometry
 
 Same geometry with the fitted transmission half-base installed, so `zt_transmission_template`
-returns the measured triangle rather than the configured Gaussian.
+returns the measured triangle rather than the default Gaussian.
 """
 zt_with_template_h(g::ZTGeometry, h::Real) =
     ZTGeometry(g.bin_step, g.nominal_width, g.bins_per_ramp, g.metascan_k, g.transmission_fwhm,
