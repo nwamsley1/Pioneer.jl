@@ -286,6 +286,9 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     irt_errors::Dict{Int64, Float32}
     rt_tolerances::Dict{Int64, RTBinnedTolerance}
     irt_obs::Dict{UInt32, Float32}
+    # Max best-PSM weight per precursor across all files' passing PSMs, accumulated in
+    # build_rt_indices! for the chromatogram right-tail extension; freed after selection.
+    precursor_max_weight::Base.Ref{Union{Nothing, AbstractPrecursorMap{Float32}}}
     pg_score_to_qval::Ref{Any}
     pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
     global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
@@ -340,6 +343,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Float32}(),
             Dict{Int64, RTBinnedTolerance}(),
             Dict{UInt32, Float32}(),
+            Ref{Union{Nothing, AbstractPrecursorMap{Float32}}}(nothing),
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,

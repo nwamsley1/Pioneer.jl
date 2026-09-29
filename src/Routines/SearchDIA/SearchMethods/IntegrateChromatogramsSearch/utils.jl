@@ -1364,6 +1364,69 @@ function _mbr_phase_diag_report()
 end
 
 #==========================================================
+Right-tail extension of the extraction window
+==========================================================#
+# Very abundant precursors tail to the right past the symmetric RT window, which cuts the
+# tail off and anchors the linear baseline on it. The top CHROM_RHS_TOP_FRAC of precursors,
+# ranked by their maximum best-PSM weight across all files, get their window extended to
+# psm_rt + CHROM_RHS_MULT * tol on the right in every file; the left edge is unchanged.
+# Chosen on a streptavidin pull-down (truncated right edges 47 -> 16 of 153), with MTAC and
+# Olsen three-proteome fold changes, CVs and IDs unchanged. Extending every precursor
+# compressed ratios and cost IDs, so the extension is deliberately limited to the top few %.
+const CHROM_RHS_TOP_FRAC = 0.05f0
+const CHROM_RHS_MULT = 3.0f0
+
+# Libraries up to this many precursors keep the per-precursor max weight in a dense Vector
+# (<= 4 MB); larger ones use a Dict, whose size follows the precursors actually observed
+# (1.5% of an 8.5M-precursor library across 15 Astral runs).
+const RHS_DENSE_MAX_PRECURSORS = 2^20
+
+"""
+    init_precursor_max_weight!(search_context) -> AbstractPrecursorMap{Float32}
+
+Create the per-precursor max-weight accumulator that build_rt_indices! fills while it
+reads each file's final passing-PSM table.
+"""
+function init_precursor_max_weight!(search_context::SearchContext)
+    n = search_context.n_precursors
+    m = n <= RHS_DENSE_MAX_PRECURSORS ? DensePrecMap{Float32}(n) :
+                                        SparsePrecMap{Float32}(sizehint = 1 << 18)
+    search_context.precursor_max_weight[] = m
+    return m
+end
+
+# Function barrier: specialises on the concrete map and column types.
+function accumulate_max_weight!(m::AbstractPrecursorMap{Float32}, pids, ws)
+    @inbounds for i in eachindex(pids)
+        p = UInt32(pids[i])
+        # floatmin keeps zero-weight precursors (e.g. MBR rows) in the pool: both backings
+        # treat an exact zero as unset. Positive weights are unchanged.
+        w = max(Float32(ws[i]), floatmin(Float32))
+        w > m[p] && (m[p] = w)
+    end
+    return nothing
+end
+
+"""
+    select_rhs_precursors(m, q) -> (selected, n_observed, threshold)
+
+Precursors whose max weight is at or above the (1 - q) quantile over all observed
+precursors. Targets and decoys are pooled: the label is never read.
+"""
+function select_rhs_precursors(m::AbstractPrecursorMap{Float32}, q::Float32)
+    vals = Float32[v for (_, v) in active_keys(m)]
+    isempty(vals) && return Set{UInt32}(), 0, Inf32
+    k = clamp(ceil(Int, (1 - q) * length(vals)), 1, length(vals))
+    threshold = partialsort!(vals, k)
+    selected = Set{UInt32}(UInt32(p) for (p, v) in active_keys(m) if v >= threshold)
+    return selected, length(vals), threshold
+end
+
+# (psm_rt, right-window multiplier) for a precursor; RT-only maps (Huber calibration) get 1.
+@inline rt_and_rhs(m::Dict{UInt32, Float32}, k::UInt32) = (get(m, k, NaN32), 1.0f0)
+@inline rt_and_rhs(m::Dict{UInt32, NTuple{2, Float32}}, k::UInt32) = get(m, k, (NaN32, 1.0f0))
+
+#==========================================================
 Chromatogram Building Functions
 ==========================================================#
 """
@@ -1434,7 +1497,7 @@ function collect_rt_window_precursors!(
     precursor_transmission::Vector{Float32},
     isotope_err_bounds::Tuple{I, I},
     min_fraction_transmitted::Float32,
-    precursor_rt_map::Union{Dict{UInt32, Float32}, Nothing},
+    precursor_rt_map::Union{Dict{UInt32, Float32}, Dict{UInt32, NTuple{2, Float32}}, Nothing},
     scan_rt::Float32,
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
     rt_tol_fallback::Float32) where {I<:Integer}
@@ -1452,10 +1515,11 @@ function collect_rt_window_precursors!(
             (!isnothing(precursors_passing) && prec_idx ∉ precursors_passing) && continue
 
             if has_rt_filter
-                prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
+                prec_rt_val, rhs_mult = rt_and_rhs(precursor_rt_map, prec_idx)
                 if !isnan(prec_rt_val)
                     prec_tol = rt_binned_tol !== nothing ? get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
-                    abs(scan_rt - prec_rt_val) > prec_tol && continue
+                    d = scan_rt - prec_rt_val            # > 0: scan is after the PSM apex
+                    ((d > prec_tol * rhs_mult) | (-d > prec_tol)) && continue
                 end
             end
 
@@ -1505,7 +1569,8 @@ function extract_chromatograms(
     search_context::SearchContext,
     params::IntegrateChromatogramSearchParameters,
     ms_file_idx::Int64,
-    chrom_type::CHROMATOGRAM
+    chrom_type::CHROMATOGRAM;
+    rhs_extended::Set{UInt32} = Set{UInt32}(),
 )
     if typeof(chrom_type)==typeof(MS2CHROM())
         ms_order_select = 2
@@ -1519,13 +1584,13 @@ function extract_chromatograms(
     # This eliminates race conditions when multiple threads call passing_psms[!, :precursor_idx]
     precursor_set = Set(passing_psms[!, :precursor_idx])  # shared read-only across threads (was N copies)
 
-    # Build precursor RT map for per-precursor symmetric window filtering
+    # Per-precursor RT and right-window multiplier (CHROM_RHS_MULT for rhs_extended, else 1)
     _pids = passing_psms[!, :precursor_idx]::Vector{UInt32}
     _rts = passing_psms[!, :rt]::Vector{Float32}
-    precursor_rt_map = Dict{UInt32, Float32}()
+    precursor_rt_map = Dict{UInt32, NTuple{2, Float32}}()
     sizehint!(precursor_rt_map, length(_pids))
     for i in eachindex(_pids)
-        precursor_rt_map[_pids[i]] = _rts[i]
+        precursor_rt_map[_pids[i]] = (_rts[i], _pids[i] in rhs_extended ? CHROM_RHS_MULT : 1.0f0)
     end
 
     # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
@@ -1575,7 +1640,7 @@ function build_chromatograms(
     spectra::MassSpecData,
     scan_range::Vector{Int64},
     precursors_passing::Set{UInt32},
-    precursor_rt_map::Dict{UInt32, Float32},
+    precursor_rt_map::Dict{UInt32, NTuple{2, Float32}},
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     search_data::SearchDataStructures,
@@ -1673,7 +1738,9 @@ function build_chromatograms(
             rt_tol_local = irt_tol / max(local_slope, 0.01f0)
         end
 
-        rt_bin_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local, lt=(r,x)->r.lb<x) - 1, 1)
+        # A scan at rt must reach precursors whose apex is up to CHROM_RHS_MULT * tol earlier
+        # (right-tail extension), so only the lower bin edge moves.
+        rt_bin_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local * CHROM_RHS_MULT, lt=(r,x)->r.lb<x) - 1, 1)
         rt_bin_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol_local, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         prec_mz_new = getCenterMz(spectra, scan_idx)
