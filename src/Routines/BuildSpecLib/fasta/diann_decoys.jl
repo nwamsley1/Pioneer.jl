@@ -293,8 +293,8 @@ function apply_diann_decoy_style!(lib_path::String)
     lib_params = get(config, "library_params", Dict())
     frag_bin_tol_ppm = Float32(get(lib_params, "frag_bin_tol_ppm", 10.0))
     rt_bin_tol = Float32(get(lib_params, "rt_bin_tol", 1.0))
-    partition_width = Float32(get(lib_params, "prec_partition_width", 5.0))
-    id_type = frag_index_local_id_type(lib_params)
+    partition_width = prec_partition_width(lib_params)
+    id_type = resolve_and_record_local_id_type(temp_lib, frag_index_local_id_request(lib_params), partition_width, lib_path)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol, id_type=id_type)

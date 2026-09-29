@@ -109,6 +109,11 @@ end
 # precursors / 855 protein groups against Altimeter's 1,822 / 902 -- 89% Jaccard
 # overlap on precursors, which is the expected level of agreement between two
 # independent fragment predictors rather than a degenerate subset.
+# The Prosit fixture is also built with UInt32 fragment-index local IDs
+# (`frag_index_local_id_type = "UInt32"`), while the Altimeter fixture resolves "auto" to UInt16 (it is tiny).
+# The fragment-index search specialises on the index type, not the fragment lookup type, so the two fixtures
+# together precompile both index variants; a real library whose partitions exceed 65,535 precursors resolves
+# "auto" to UInt32, and without this its first search would pay the UInt32 compile at startup.
 maybe_run("BuildSpecLib_prosit") do
     Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end

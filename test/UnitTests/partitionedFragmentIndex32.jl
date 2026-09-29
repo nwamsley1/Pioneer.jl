@@ -4,7 +4,8 @@ using Pioneer: SoAFragBins, LocalFragment, LocalFragment32, Counter, LocalPartit
     local_id_type, max_local_precs, local_fragment_type, local_partition_type, local_index_type,
     getFragBins, getRTBins, getFragments, getSkipHints, getPartitions, getPartition, getNPartitions,
     get_partition_range, getPrecID, getScore, _build_local_partition, _score_partition_hinted!,
-    SimpleFrag, EmitToBuffer, CountFilter, emit_candidates!, FragIndexScratch, prepare!, scratch_counters
+    SimpleFrag, EmitToBuffer, CountFilter, emit_candidates!, FragIndexScratch, prepare!, scratch_counters,
+    resolve_local_id_type
 
 # UInt32-ID variant of the partitioned fragment index. The UInt16 variant is covered by
 # partitionedFragmentIndex.jl / buildPartitionedIndex.jl; here each check compares the two.
@@ -118,6 +119,27 @@ end
         wp = emit_candidates!(EmitToBuffer(CountFilter(UInt8(3)), nothing), c, l2g, 5, 0.0f0, 0.0f0,
                               0.0f0, 0.0f0, Float32[], 1, si, pid, 0)
         @test wp == 2 && sort(pid[1:wp]) == UInt32[6, 139_998] && all(==(Int32(5)), si[1:wp])
+    end
+
+    @testset "resolve_local_id_type (\"auto\" / explicit)" begin
+        rng = Random.MersenneTwister(3)
+        small = Float32.(400 .+ 600 .* rand(rng, 50_000))                 # ~420 per 5 Da bin
+        @test resolve_local_id_type("auto", small, 5.0f0) == (UInt16, 0, 120)
+        # one 5 Da bin (500-505) holding 70,000 precursors: UInt16 would split it -> UInt32
+        dense = vcat(small, Float32.(500 .+ 4.9 .* rand(rng, 70_000)))
+        id, n_over, n_bins = resolve_local_id_type("auto", dense, 5.0f0)
+        @test id === UInt32 && n_over == 1 && n_bins == 120
+        # a wider width merges more precursors per bin: 10 Da bins of the small set still fit
+        @test first(resolve_local_id_type("auto", small, 10.0f0)) === UInt16
+        # exactly at the limit fits; one more does not
+        edge = vcat(fill(500.0f0, MAX_LOCAL_PRECS), [600.0f0])
+        @test first(resolve_local_id_type("auto", edge, 5.0f0)) === UInt16
+        @test first(resolve_local_id_type("auto", vcat(edge, [500.0f0]), 5.0f0)) === UInt32
+        # explicit values ignore the counts
+        @test first(resolve_local_id_type("UInt16", dense, 5.0f0)) === UInt16
+        @test first(resolve_local_id_type("UInt32", small, 5.0f0)) === UInt32
+        @test first(resolve_local_id_type("auto", Float32[], 5.0f0)) === UInt16
+        @test_throws ArgumentError resolve_local_id_type("UInt64", small, 5.0f0)
     end
 
     @testset "FragIndexScratch UInt32 counters" begin

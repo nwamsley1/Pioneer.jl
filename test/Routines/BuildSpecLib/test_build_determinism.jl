@@ -111,6 +111,14 @@ end
         lib16 = _build_keap1(tmp, "fi16", 1844)
         lib32 = _build_keap1(tmp, "fi32", 1844;
             library_params_extra = "\"frag_index_local_id_type\": \"UInt32\", \"prec_partition_width\": 10.0")
+        # "auto" (the default) on this small library: every 5 Da bin fits, so UInt16; the resolved type and width
+        # are recorded in config.json
+        cfg16 = Pioneer.JSON.parsefile(joinpath(lib16, "config.json"))["library_params"]
+        @test cfg16["frag_index_local_id_type"] == "auto"
+        @test cfg16["frag_index_local_id_type_resolved"] == "UInt16"
+        @test cfg16["prec_partition_width_resolved"] == 5.0
+        cfg32 = Pioneer.JSON.parsefile(joinpath(lib32, "config.json"))["library_params"]
+        @test cfg32["frag_index_local_id_type_resolved"] == "UInt32" && cfg32["prec_partition_width_resolved"] == 10.0
         # the library payload does not depend on the index variant
         for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.jls")
             @test read(joinpath(lib16, f)) == read(joinpath(lib32, f))

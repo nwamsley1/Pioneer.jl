@@ -15,6 +15,34 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+"Initial partition (1-based) of a precursor m/z: `partition_width` bins from the smallest precursor m/z."
+@inline _initial_partition(pmz, min_prec_mz, partition_width, n_initial) =
+    clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1, 1, n_initial)
+
+"""
+    resolve_local_id_type(requested, prec_mzs, partition_width) -> (id_type, n_over, n_bins)
+
+Local precursor ID type of the fragment index. `requested` is `"UInt16"`, `"UInt32"` or `"auto"`. With `"auto"`,
+UInt32 is chosen only when some `partition_width` bin of precursor m/z holds more precursors than a UInt16 partition
+can (`MAX_LOCAL_PRECS`), i.e. when the ID width rather than `partition_width` would set the partition layout (UInt16
+would split those bins, e.g. 5 Da into ~2.5 Da on a 10 M-precursor library). Returns the type, the number of bins
+over the limit, and the number of bins.
+"""
+function resolve_local_id_type(requested::AbstractString, prec_mzs::AbstractVector{<:Real}, partition_width::Real)
+    requested in ("auto", "UInt16", "UInt32") ||
+        throw(ArgumentError("frag_index_local_id_type must be \"auto\", \"UInt16\" or \"UInt32\" (got \"$requested\")"))
+    isempty(prec_mzs) && return (requested == "UInt32" ? UInt32 : UInt16), 0, 0
+    lo, hi = extrema(prec_mzs)
+    n = max(1, ceil(Int, (hi - lo) / partition_width))
+    counts = zeros(Int, n)
+    for pmz in prec_mzs
+        counts[_initial_partition(pmz, lo, partition_width, n)] += 1
+    end
+    n_over = count(>(MAX_LOCAL_PRECS), counts)
+    id_type = requested == "UInt16" ? UInt16 : requested == "UInt32" ? UInt32 : (n_over > 0 ? UInt32 : UInt16)
+    return id_type, n_over, n
+end
+
 """
     build_partitioned_index_from_lib(spec_lib; partition_width=5.0f0,
         frag_bin_tol_ppm=2.5f0, rt_bin_tol=3.0f0,
@@ -68,7 +96,7 @@ function build_partitioned_index_from_lib(
     initial_partition_pids = [UInt32[] for _ in 1:n_initial]
     for pid in UInt32(1):UInt32(n_precursors)
         pmz = prec_mzs[pid]
-        k = clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1, 1, n_initial)
+        k = _initial_partition(pmz, min_prec_mz, partition_width, n_initial)
         push!(initial_partition_pids[k], pid)
     end
 

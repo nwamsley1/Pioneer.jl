@@ -1,6 +1,38 @@
-"Fragment-index local ID type from `library_params[\"frag_index_local_id_type\"]` (\"UInt16\" default, or \"UInt32\")."
-frag_index_local_id_type(library_params) =
-    get(library_params, "frag_index_local_id_type", "UInt16") == "UInt32" ? UInt32 : UInt16
+"Requested fragment-index local ID type: `library_params[\"frag_index_local_id_type\"]`, `\"auto\"` when absent."
+frag_index_local_id_request(library_params) = String(get(library_params, "frag_index_local_id_type", "auto"))
+
+"""
+Precursor-m/z partition width (Da) of the fragment index: `library_params[\"prec_partition_width\"]` when set, else
+10 Da for ion-mobility (timsTOF) libraries (`im_model` set; 25 Da diaPASEF windows) and 5 Da otherwise.
+"""
+function prec_partition_width(library_params)
+    haskey(library_params, "prec_partition_width") && return Float32(library_params["prec_partition_width"])
+    return isempty(String(get(library_params, "im_model", ""))) ? 5.0f0 : 10.0f0
+end
+
+"""
+    resolve_and_record_local_id_type(temp_lib, requested, partition_width, spec_lib_path) -> Type
+
+Resolve the fragment-index local ID type once per library (`resolve_local_id_type`), so the main and presearch
+indexes always agree, log the choice, and record it in the library's `config.json`
+(`library_params.frag_index_local_id_type_resolved`).
+"""
+function resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real, spec_lib_path::AbstractString)
+    id_type, n_over, n_bins = resolve_local_id_type(requested, getMz(getPrecursors(temp_lib)), partition_width)
+    why = requested == "auto" ?
+        (n_over > 0 ? "$n_over of $n_bins $(partition_width)-Da bins exceed $MAX_LOCAL_PRECS precursors" :
+                      "every $(partition_width)-Da bin fits in $MAX_LOCAL_PRECS precursors") : "set explicitly"
+    @user_info "Fragment index: $(partition_width) Da partitions, $(id_type) local precursor IDs ($why)"
+    cfg_path = joinpath(spec_lib_path, "config.json")
+    if isfile(cfg_path)
+        cfg = JSON.parsefile(cfg_path)
+        lp = get!(cfg, "library_params", Dict{String, Any}())
+        lp["frag_index_local_id_type_resolved"] = string(id_type)
+        lp["prec_partition_width_resolved"] = partition_width
+        write(cfg_path, JSON.json(cfg, 2))
+    end
+    return id_type
+end
 
 """
     sort_detailed_fragments_by_mz!(frags, prec_ranges) -> Int
@@ -136,7 +168,7 @@ function buildPionLib(spec_lib_path::String,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
                       partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
-                      id_type::Type{<:Unsigned} = UInt16, # fragment-index partition-local precursor ID type
+                      id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -222,6 +254,7 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
@@ -293,7 +326,7 @@ function buildPionLib(spec_lib_path::String,
                       model_type::InstrumentAgnosticModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
                       partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
-                      id_type::Type{<:Unsigned} = UInt16, # fragment-index partition-local precursor ID type
+                      id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -314,6 +347,7 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
