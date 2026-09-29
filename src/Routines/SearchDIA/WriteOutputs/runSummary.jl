@@ -81,7 +81,7 @@ function _accumulate_run_summary!(
     peak_area::AbstractVector, peak_area_normalized, mbr_recovered,
     irt_error::AbstractVector, rt_fwhm::AbstractVector, points_integrated::AbstractVector,
     charge::AbstractVector, missed_cleavage::AbstractVector)
-    for i in eachindex(ms_file_idx)
+    for i in 1:length(ms_file_idx)  # ChainedVector indices are not shared across columns
         target[i] || continue
         s = stats[ms_file_idx[i]]
         s.precursors_identified += 1
