@@ -42,7 +42,12 @@ function expand(tdfs_dir::AbstractString, arrow_path::AbstractString; log::IO = 
         append!(rows.retention_time, view(sl.retention_time, r)); append!(rows.center_mz, view(sl.center_mz, r))
         append!(rows.isolation_width, view(sl.isolation_width, r)); append!(rows.collision_energy_ev, view(sl.collision_energy_ev, r))
         append!(rows.window_ce, view(sl.window_ce, r))
-        append!(rows.tic, view(sl.tic, r)); append!(rows.n_peaks, view(sl.n_peaks, r)); append!(rows.peak_offset, view(sl.peak_offset, r))
+        append!(rows.tic, view(sl.tic, r))
+        # format 2 has no base peak column: recompute it from the decoded peaks, as the converter does
+        hasproperty(sl, :base_peak_intensity) ? append!(rows.base_peak_intensity, view(sl.base_peak_intensity, r)) :
+            append!(rows.base_peak_intensity, (Float32(maximum(view(blk.intensity, slice_range(blk, j)); init = zero(eltype(blk.intensity))) / t.int_scale)
+                                               for j in 1:blk.n_slices))
+        append!(rows.n_peaks, view(sl.n_peaks, r)); append!(rows.peak_offset, view(sl.peak_offset, r))
         append!(rows.block_size, view(sl.block_size, r))
         write_frame!(aw, fm, rows, blk)
     end

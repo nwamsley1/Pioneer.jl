@@ -32,14 +32,28 @@ using SHA
     @test TS.n_frames(t) == 279 && TS.n_slices(t) == 12_414
     d = Pioneer.TdfsMassSpecData(c.tdfs)
     pbuf = Pioneer.PeakDecodeBuffer()
-    npk = 0; sint = 0.0; sorted = true
+    npk = 0; sint = 0.0; sorted = true; bp_ok = true
     for i in 1:length(d)
         mz, it = Pioneer.getPeaks!(pbuf, d, i)
         npk += length(mz); sint += sum(Float64, it; init = 0.0); sorted &= issorted(mz)
+        bp_ok &= Pioneer.getBasePeakIntensity(d, i) === (isempty(it) ? 0f0 : maximum(it))   # format 3: the slice's largest intensity
     end
-    @test length(d) == 12_414 && sorted
+    @test length(d) == 12_414 && sorted && bp_ok
     @test isapprox(npk, 10_951_008; rtol = identical ? 0 : 1e-4)
     @test isapprox(sint, 1.522929679e9; rtol = identical ? 1e-9 : 1e-4)
+
+    # a format-2 .tdfs (no base_peak_intensity column) still reads: base peak missing, expand recomputes it
+    v2 = joinpath(out, "v2.tdfs"); cp(c.tdfs, v2)
+    sl = TS.Arrow.Table(joinpath(c.tdfs, "slices.arrow"))
+    rm(joinpath(v2, "slices.arrow"))
+    TS.Arrow.write(joinpath(v2, "slices.arrow"), NamedTuple(k => getproperty(sl, k) for k in propertynames(sl) if k != :base_peak_intensity))
+    m = read(joinpath(v2, "meta.json"), String)
+    write(joinpath(v2, "meta.json"), replace(m, r"\"format_version\": *3" => "\"format_version\": 2"))
+    @test TS.open_tdfs(v2).meta["format_version"] == 2
+    @test ismissing(Pioneer.getBasePeakIntensity(Pioneer.TdfsMassSpecData(v2), 1))
+    a3 = TS.Arrow.Table(TS.expand(c.tdfs, joinpath(out, "v3.arrow"); log = devnull))
+    a2 = TS.Arrow.Table(TS.expand(v2, joinpath(out, "v2.arrow"); log = devnull))
+    @test collect(a2.basePeakIntensity) == collect(a3.basePeakIntensity) == Float32[Pioneer.getBasePeakIntensity(d, i) for i in 1:length(d)]
 
     # convertBruker (the pioneer convert-bruker entry point) on the fixture
     paths = convertBruker(FIXTURE_D; output_dir = joinpath(out, "cb"))

@@ -34,7 +34,7 @@ mutable struct SliceArrowWriter
     mz::Vector{Union{Missing, Float32}}
     intensity::Vector{Union{Missing, Float32}}
     starts::Vector{Int}
-    retention_time::Vector{Float32}; tic::Vector{Float32}
+    retention_time::Vector{Float32}; tic::Vector{Float32}; base_peak_intensity::Vector{Float32}
     center_mz::Vector{Union{Missing, Float32}}; isolation_width::Vector{Union{Missing, Float32}}
     ce_field::Vector{Union{Missing, Float32}}; ce_ev::Vector{Float32}
     ms_order::Vector{UInt8}; cycle_idx::Vector{Int32}; frame_id::Vector{Int32}; im_scan::Vector{UInt16}; window_group::Vector{UInt8}
@@ -44,7 +44,7 @@ end
 function SliceArrowWriter(path::AbstractString, meta::Dict{String, String}, cal::LinearMzCal, bin_scale::Integer, int_scale::Real, lo_mz::Real, hi_mz::Real)
     w = open(Arrow.Writer, String(path); metadata = meta)
     SliceArrowWriter(String(path), w, Float32(lo_mz), Float32(hi_mz), cal, Int(bin_scale), Float64(int_scale), 0, 0,
-                     Union{Missing, Float32}[], Union{Missing, Float32}[], Int[1], Float32[], Float32[],
+                     Union{Missing, Float32}[], Union{Missing, Float32}[], Int[1], Float32[], Float32[], Float32[],
                      Union{Missing, Float32}[], Union{Missing, Float32}[], Union{Missing, Float32}[], Float32[],
                      UInt8[], Int32[], Int32[], UInt16[], UInt8[], 0)
 end
@@ -60,7 +60,7 @@ function write_frame!(w::SliceArrowWriter, fm::FrameMeta, rows::SliceRows, blk::
             push!(w.intensity, Float32(blk.intensity[k] / w.int_scale))   # stored integers are int_scale x intensity
         end
         push!(w.starts, length(w.mz) + 1)
-        push!(w.retention_time, rows.retention_time[j]); push!(w.tic, rows.tic[j])
+        push!(w.retention_time, rows.retention_time[j]); push!(w.tic, rows.tic[j]); push!(w.base_peak_intensity, rows.base_peak_intensity[j])
         push!(w.center_mz, ms1 ? missing : rows.center_mz[j]); push!(w.isolation_width, ms1 ? missing : rows.isolation_width[j])
         push!(w.ce_field, ms1 ? missing : rows.window_ce[j]); push!(w.ce_ev, rows.collision_energy_ev[j])
         push!(w.ms_order, ms1 ? 0x01 : 0x02); push!(w.cycle_idx, w.cycle); push!(w.frame_id, fm.frame_id)
@@ -77,7 +77,7 @@ function flush_batch!(w::SliceArrowWriter)
     int_views = [view(w.intensity, w.starts[r]:w.starts[r+1]-1) for r in 1:n]
     tbl = (mz_array = mz_views, intensity_array = int_views,
            scanHeader = fill("", n), scanNumber = Int32.(w.scan_number+1:w.scan_number+n), packetType = zeros(Int32, n),
-           retentionTime = w.retention_time, lowMz = fill(w.lo_mz, n), highMz = fill(w.hi_mz, n), TIC = w.tic,
+           retentionTime = w.retention_time, lowMz = fill(w.lo_mz, n), highMz = fill(w.hi_mz, n), TIC = w.tic, basePeakIntensity = w.base_peak_intensity,
            centerMz = w.center_mz, isolationWidthMz = w.isolation_width,
            collisionEnergyField = w.ce_field, collisionEnergyEvField = w.ce_ev,
            msOrder = w.ms_order, cycle_idx = w.cycle_idx, frameId = w.frame_id, imScan = w.im_scan, windowGroup = w.window_group)
@@ -86,7 +86,7 @@ function flush_batch!(w::SliceArrowWriter)
     w.scan_number += Int32(n)
     # Arrow.Writer serialises asynchronously from the columns it was handed: give it ownership and start new ones
     w.mz = Union{Missing, Float32}[]; w.intensity = Union{Missing, Float32}[]; w.starts = Int[1]
-    for f in (:retention_time, :tic, :center_mz, :isolation_width, :ce_field, :ce_ev, :ms_order, :cycle_idx, :frame_id, :im_scan, :window_group)
+    for f in (:retention_time, :tic, :base_peak_intensity, :center_mz, :isolation_width, :ce_field, :ce_ev, :ms_order, :cycle_idx, :frame_id, :im_scan, :window_group)
         setfield!(w, f, similar(getfield(w, f), 0))
     end
     w
