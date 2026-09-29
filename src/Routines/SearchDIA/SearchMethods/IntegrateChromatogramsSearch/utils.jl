@@ -1483,6 +1483,21 @@ function collect_rt_window_precursors!(
     return size
 end
 
+"""
+    spectra_has_base_peak(spectra) -> Bool
+
+Whether per-scan base-peak intensities can be read (checked once per file, not per scan).
+"""
+function spectra_has_base_peak(spectra::MassSpecData)
+    length(spectra) == 0 && return false
+    try
+        getBasePeakIntensity(spectra, 1)
+        return true
+    catch
+        return false
+    end
+end
+
 function extract_chromatograms(
     spectra::MassSpecData,
     passing_psms::DataFrame,
@@ -1610,6 +1625,8 @@ function build_chromatograms(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     has_rt_tol = haskey(getRtTolerances(search_context), ms_file_idx)
     rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
+    # Files converted without a basePeakIntensity column fall back to the flat Huber ceiling.
+    has_base_peak = spectra_has_base_peak(spectra)
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
     mass_error_model = getMassErrorModel(search_context, ms_file_idx)
@@ -1726,11 +1743,15 @@ function build_chromatograms(
 
             initialize_weights!(id_to_col, weights, precursor_weights)
 
+            max_weight = has_base_peak ?
+                huber_max_weight(getBasePeakIntensity(spectra, scan_idx)) :
+                HUBER_DEFAULT_MAX_WEIGHT
             solve_deconvolution!(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
-                params.max_iter_outer, params.max_diff)
+                params.max_iter_outer, params.max_diff;
+                max_weight = max_weight)
             # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
             # (MS2MBRChromObject has no other score field), so the five aggregate metrics
             # getDistanceMetrics computes are not calculated.
