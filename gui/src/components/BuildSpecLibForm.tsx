@@ -1080,6 +1080,25 @@ export function BuildSpecLibForm({
           </div>
           <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
         </div>
+        <div
+          style={{
+            marginTop: 14,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            gap: 14,
+            alignItems: 'end',
+          }}
+        >
+          <NumField fieldKey="isolationWindowWidth" value={params.isolationWindowWidth} onChange={onParam} />
+          <div style={{ ...HINT, paddingBottom: 8 }}>
+            {(() => {
+              const w = Number(params.isolationWindowWidth)
+              if (!Number.isFinite(w) || w <= 0) return 'Fragment-index partitions: enter a width.'
+              const p = Math.min(Math.max(w, 2.5), 10)
+              return `Fragment-index partitions of ${parseFloat(p.toFixed(2))} Da${p !== w ? ' (clamped to 2.5-10 Da)' : ''}.`
+            })()}
+          </div>
+        </div>
       </section>
 
       <section style={CARD}>

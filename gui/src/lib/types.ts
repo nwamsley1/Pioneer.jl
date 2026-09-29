@@ -228,6 +228,10 @@ export interface BuildParams {
   /** Bruker timsTOF library: predict ion mobility too, emitted as
    *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
   timsTOF: boolean
+  /** Approximate isolation window width (m/z) of the acquisition method, emitted as
+   *  `library_params.isolation_window_width`. Pioneer clamps it to 2.5-10 Da for the fragment
+   *  index's precursor partition width. Turning timsTOF on sets 25 (diaPASEF windows). */
+  isolationWindowWidth: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -283,6 +287,8 @@ export const BUILD_DEFAULTS: BuildParams = {
   libPath: '',
   predictionModel: 'altimeter',
   timsTOF: false,
+  // Pioneer's default (defaultBuildLibParams.json): 5 Da partitions, the safe middle.
+  isolationWindowWidth: '5',
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
   // form emits what Pioneer would have defaulted to anyway.

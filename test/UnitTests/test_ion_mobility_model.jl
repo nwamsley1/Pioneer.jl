@@ -62,7 +62,7 @@ end
     end
 end
 
-@testset "check_params_bsp — im_model / prec_partition_width" begin
+@testset "check_params_bsp — im_model / isolation_window_width / prec_partition_width" begin
     defaults_path = Pioneer.asset_path("example_config", "defaultBuildLibParams.json")
     base = JSON.parsefile(defaults_path)
     base["fasta_paths"] = ["dummy.fasta"]; base["fasta_names"] = ["DUMMY"]
@@ -75,19 +75,30 @@ end
     @test p["library_params"]["im_model"] == "alphapept_ccs"
     @test p["library_params"]["prec_partition_width"] == 10.0
 
-    # Defaults: empty im_model (skip); no width in the template, so it resolves to 5 Da, or 10 Da for an ion-mobility
-    # (timsTOF) library; an explicit width always wins. Local ID type defaults to "auto".
+    # Defaults: empty im_model (skip); the template's isolation_window_width of 5 gives 5 Da partitions, and so does a
+    # config without the key; the width is the isolation window clamped to [2.5, 10] Da, for timsTOF libraries too;
+    # an explicit prec_partition_width always wins. Local ID type defaults to "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
     @test p0["library_params"]["im_model"] == ""
+    @test p0["library_params"]["isolation_window_width"] == 5.0
     @test !haskey(p0["library_params"], "prec_partition_width")
     @test Pioneer.prec_partition_width(p0["library_params"]) == 5.0f0
+    @test Pioneer.prec_partition_width(Dict{String, Any}()) == 5.0f0
+    for (w, expect) in ((25.0, 10.0f0), (14.7, 10.0f0), (10.0, 10.0f0), (4.4, 4.4f0), (2.9, 2.9f0), (2.0, 2.5f0), (1, 2.5f0))
+        c = deepcopy(base); c["library_params"]["isolation_window_width"] = w
+        @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(c))["library_params"]) == expect
+    end
+    bad4 = deepcopy(base); bad4["library_params"]["isolation_window_width"] = 0
+    @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad4))
     @test p0["library_params"]["frag_index_local_id_type"] == "auto"
     @test Pioneer.frag_index_local_id_request(p0["library_params"]) == "auto"
     @test Pioneer.frag_index_local_id_request(Dict{String, Any}()) == "auto"
     tims = deepcopy(base); tims["library_params"]["im_model"] = "alphapept_ccs"
+    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == 5.0f0
+    tims["library_params"]["isolation_window_width"] = 25.0     # diaPASEF windows
     @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == 10.0f0
-    @test Pioneer.prec_partition_width(p["library_params"]) == 10.0f0
-    tims5 = deepcopy(tims); tims5["library_params"]["prec_partition_width"] = 5.0
+    @test Pioneer.prec_partition_width(p["library_params"]) == 10.0f0            # explicit prec_partition_width = 10
+    tims5 = deepcopy(tims); tims5["library_params"]["prec_partition_width"] = 5.0  # explicit width beats the window
     @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims5))["library_params"]) == 5.0f0
     for v in ("auto", "UInt16", "UInt32")
         c = deepcopy(base); c["library_params"]["frag_index_local_id_type"] = v

@@ -1,7 +1,7 @@
 # Fragment index: precursor partition width (2026-09-29)
 
 The fragment index splits precursors into m/z partitions of `library_params.prec_partition_width` Da (a BuildSpecLib
-parameter, fixed into the library; default 5 Da, 10 Da when `im_model` is set). Each scan scores the precursors of
+parameter, fixed into the library; at the time of the sweep: default 5 Da, 10 Da when `im_model` is set). Each scan scores the precursors of
 every partition overlapping its isolation window: partitions much wider than the window score out-of-window
 precursors that are discarded later, partitions much narrower than it cost a fixed overhead per partition visited.
 This sweep measures that trade-off on five datasets. Companion to [UINT32_LOCAL_IDS.md](UINT32_LOCAL_IDS.md).
@@ -40,6 +40,13 @@ This sweep measures that trade-off on five datasets. Companion to [UINT32_LOCAL_
   widths with no trend: small index changes move the scoring result a lot there (see the tuning-fragility item).
 - **Recommendation: keep the defaults** (5 Da; 10 Da for timsTOF), within about 1% of the fastest width everywhere tested.
   2.5 Da is never worse on narrow-window data but the gain is too small for a new default.
+
+## Adopted rule
+
+BuildSpecLib takes the approximate acquisition isolation window width, `library_params.isolation_window_width` (m/z,
+GUI field "Isolation window width"), and uses `prec_partition_width = clamp(isolation_window_width, 2.5, 10)` Da.
+Unset, it is 5 (5 Da partitions), which avoids the worst case at either end (within 4% of the fastest width on every
+dataset above). An explicit `prec_partition_width` still overrides. The GUI prefills 25 for a timsTOF library.
 
 ## Results
 

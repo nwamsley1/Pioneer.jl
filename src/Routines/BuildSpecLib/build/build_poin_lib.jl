@@ -2,12 +2,15 @@
 frag_index_local_id_request(library_params) = String(get(library_params, "frag_index_local_id_type", "auto"))
 
 """
-Precursor-m/z partition width (Da) of the fragment index: `library_params[\"prec_partition_width\"]` when set, else
-10 Da for ion-mobility (timsTOF) libraries (`im_model` set; 25 Da diaPASEF windows) and 5 Da otherwise.
+Precursor-m/z partition width (Da) of the fragment index: `library_params[\"prec_partition_width\"]` when set (an
+explicit override), else the approximate acquisition isolation window width `library_params[\"isolation_window_width\"]`
+(m/z, default 5) clamped to [2.5, 10] Da. The fastest width tracks the isolation window, but partitions narrower than
+about 2.5 Da or wider than 10 Da cost time (dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md); 5 Da, the default, is
+within about 4% of the fastest on every dataset measured.
 """
 function prec_partition_width(library_params)
     haskey(library_params, "prec_partition_width") && return Float32(library_params["prec_partition_width"])
-    return isempty(String(get(library_params, "im_model", ""))) ? 5.0f0 : 10.0f0
+    return clamp(Float32(get(library_params, "isolation_window_width", 5.0)), 2.5f0, 10.0f0)
 end
 
 """

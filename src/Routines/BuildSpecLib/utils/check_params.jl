@@ -195,9 +195,16 @@ function check_params_bsp(json_string::String)
     # Optional. Absent means flat bounds, which is what every params file
     # written before this key existed expects.
     parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
-    # Optional. Precursor-m/z partition width (Da) of the fragment index. Default
-    # (prec_partition_width in build_poin_lib.jl): 10 Da when im_model is set
-    # (timsTOF, 25 Da diaPASEF windows), else 5 Da.
+    # Optional. Approximate acquisition isolation window width (m/z); the fragment
+    # index's precursor partition width is this clamped to [2.5, 10] Da (default 5;
+    # prec_partition_width in build_poin_lib.jl).
+    if haskey(library_params, "isolation_window_width")
+        check_param(library_params, "isolation_window_width", Real)
+        library_params["isolation_window_width"] > 0 || throw(InvalidParametersError(
+            "isolation_window_width must be > 0", library_params))
+    end
+    # Optional. Explicit precursor-m/z partition width (Da), overriding the one
+    # derived from isolation_window_width.
     if haskey(library_params, "prec_partition_width")
         check_param(library_params, "prec_partition_width", Real)
         library_params["prec_partition_width"] > 0 || throw(InvalidParametersError(
