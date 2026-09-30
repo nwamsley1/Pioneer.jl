@@ -3,6 +3,37 @@
 # Restores the robust solver used before the Poisson MM integration path,
 # adapted to the current AbstractSparseDesignMatrix interface.
 
+"""
+Default upper bracket for the Huber bisection fallback when the caller has no
+scan-specific bound. Callers that know the scan's base peak should pass
+`max_weight = HUBER_MAX_WEIGHT_PER_BASE_PEAK * base_peak` instead.
+"""
+const HUBER_DEFAULT_MAX_WEIGHT = 1.0f12
+
+"""
+Bisection ceiling as a multiple of the scan's base-peak intensity. A weight satisfies
+weight <= y/h <= base_peak/h_max, so weight/base_peak is bounded by 1/h_max, a library
+property. Measured on a 15-file Astral run (1.4M chromatograms): max observed ratio
+3.2e4 (short, weakly fragmenting peptides), p99.99 1.4e4; 1e4 would have clipped 134
+precursors. 1e5 leaves ~3x margin over the worst case.
+"""
+const HUBER_MAX_WEIGHT_PER_BASE_PEAK = 1.0f5
+
+"""
+    huber_max_weight(base_peak) -> Float32
+
+Bisection ceiling for a scan: `HUBER_MAX_WEIGHT_PER_BASE_PEAK * base_peak`, or
+`HUBER_DEFAULT_MAX_WEIGHT` when the base peak is unavailable or unusable (`missing`,
+`nothing`, NaN, Inf, <= 0) or the product overflows Float32. Type-stable, non-allocating.
+"""
+@inline huber_max_weight(::Union{Missing, Nothing}) = HUBER_DEFAULT_MAX_WEIGHT
+@inline function huber_max_weight(base_peak::Real)
+    bp = Float32(base_peak)
+    (isfinite(bp) & (bp > 0.0f0)) || return HUBER_DEFAULT_MAX_WEIGHT
+    w = HUBER_MAX_WEIGHT_PER_BASE_PEAK * bp
+    return isfinite(w) ? w : HUBER_DEFAULT_MAX_WEIGHT
+end
+
 struct HuberSolver <: DeconvolutionSolver
     delta::Float32
     lambda::Float32
@@ -155,7 +186,8 @@ function huber_newton_bisection!(
     accuracy_newton::Float32,
     accuracy_bisection::Float32,
     regularization_type::RegularizationType,
-    rel_tol::Float32 = 0.01f0,
+    rel_tol::Float32 = 0.01f0;
+    max_weight::Float32 = HUBER_DEFAULT_MAX_WEIGHT,
 ) where {Ti<:Integer}
     n = 0
     X_init = X1[col]
@@ -167,7 +199,10 @@ function huber_newton_bisection!(
             L1, L2 = getHuberDerivatives!(Hs, r, col, delta, lambda, X1[col], regularization_type)
             update_rule = L1 / L2
 
-            if isnan(update_rule)
+            # In the Huber linear regime (|r| >> delta) L2 ~ delta^3/|r|^3 can underflow to
+            # zero, making the step Inf; hand those columns to bisection instead of letting
+            # max(x - Inf, 0) zero the weight.
+            if isnan(update_rule) || !isfinite(update_rule) || iszero(L2)
                 n = max_iter_newton
                 break
             end
@@ -191,15 +226,17 @@ function huber_newton_bisection!(
         end
 
         if n == max_iter_newton
-            X0 = X1[col]
             X1[col] = 0.0f0
-            updateHuberResiduals!(Hs, r, col, X1[col], X0)
+            # Recompute r = Hw - y exactly. Undoing a diverged Newton iterate (1e19+) through
+            # updateHuberResiduals! cancels catastrophically in Float32 and wipes the observed
+            # intensities out of r, corrupting every other column in the scan.
+            initResiduals!(r, Hs, X1)
             L1 = getHuberL1(Hs, r, col, delta, lambda, X1[col], regularization_type)
 
             if sign(L1) != 1
                 _ = huber_bisection!(
                     Hs, r, X1, col, delta, lambda, 0.0f0,
-                    min(max(max_x1, 0.0f0), 1.0f11),
+                    min(max(max_x1, 0.0f0), max_weight),
                     L1, max_iter_bisection, accuracy_bisection,
                     regularization_type,
                 )
@@ -223,6 +260,8 @@ function solveHuber!(
     accuracy_bisection::Float32,
     relative_convergence_threshold::Float32,
     regularization_type::RegularizationType,
+    ;
+    max_weight::Float32 = HUBER_DEFAULT_MAX_WEIGHT,
 ) where {Ti<:Integer}
     newton_rel_tol = relative_convergence_threshold
 
@@ -237,7 +276,8 @@ function solveHuber!(
                 accuracy_newton,
                 accuracy_bisection,
                 regularization_type,
-                newton_rel_tol,
+                newton_rel_tol;
+                max_weight = max_weight,
             ))
 
             if !iszero(X1[col])
@@ -265,7 +305,8 @@ function with_huber_delta(solver::HuberSolver, delta::Float32)
     )
 end
 
-function solve_deconvolution!(solver::HuberSolver, Hs, r, w, colnorm2, mu, y, max_iter, conv)
+function solve_deconvolution!(solver::HuberSolver, Hs, r, w, colnorm2, mu, y, max_iter, conv;
+                              max_weight::Float32 = HUBER_DEFAULT_MAX_WEIGHT)
     initResiduals!(r, Hs, w)
     return solveHuber!(
         Hs,
@@ -279,6 +320,7 @@ function solve_deconvolution!(solver::HuberSolver, Hs, r, w, colnorm2, mu, y, ma
         solver.accuracy_newton,
         solver.accuracy_bisection,
         conv,
-        solver.reg_type,
+        solver.reg_type;
+        max_weight = max_weight,
     )
 end

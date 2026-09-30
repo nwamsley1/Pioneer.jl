@@ -42,6 +42,7 @@ Results container for chromatogram integration search.
 """
 struct IntegrateChromatogramSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}  # PSM rows for one file after integration
+    rhs_extended::Set{UInt32}  # precursors with the right-tail window extension (all files)
 end
 
 function _resolve_chromatogram_trace_type(
@@ -209,8 +210,18 @@ function write_intermediate_chromatogram_debug_plots(
 end
 
 function init_search_results(::IntegrateChromatogramSearchParameters, search_context::SearchContext)
+    # Right-tail extension: choose once per search from the per-precursor max weight that
+    # build_rt_indices! accumulated, so a precursor is extended in every file or none.
+    max_weight = search_context.precursor_max_weight[]
+    rhs_extended = Set{UInt32}()
+    if max_weight !== nothing
+        rhs_extended, n_obs, threshold = select_rhs_precursors(max_weight, CHROM_RHS_TOP_FRAC)
+        search_context.precursor_max_weight[] = nothing
+        @debug_l1 "Chromatogram RHS extension: $(length(rhs_extended)) / $(n_obs) precursors (max weight >= $(threshold))"
+    end
     return IntegrateChromatogramSearchResults(
-        Ref(DataFrame())
+        Ref(DataFrame()),
+        rhs_extended,
     )
 end
 
@@ -372,7 +383,8 @@ function process_file!(
         search_context,
         params,
         ms_file_idx,
-        MS2CHROM(),
+        MS2CHROM();
+        rhs_extended = results.rhs_extended,
     )
     if _sdiag
         MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa

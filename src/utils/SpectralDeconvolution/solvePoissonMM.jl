@@ -249,22 +249,22 @@ function solvePoissonMM_fast!(Hs::AbstractSparseDesignMatrix{Ti, T},
 end
 
 # ── Dispatch function ──
-function solve_deconvolution!(::OLSSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(::OLSSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv; _...)  # max_weight is Huber-only
     initResiduals!(r, Hs, w)
     return solveOLS!(Hs, r, w, colnorm2, max_iter, conv)
 end
 
-function solve_deconvolution!(s::AdaptiveLassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(s::AdaptiveLassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv; _...)  # max_weight is Huber-only
     return solveIteratedAdaptiveLasso!(Hs, r, w, colnorm2,
         eltype(w)(s.λ_rel), eltype(w)(s.γ), eltype(w)(s.ε_rel), s.n_iters,
         max_iter, conv)
 end
 
-function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv; _...)  # max_weight is Huber-only
     return solveLasso!(Hs, r, w, colnorm2, eltype(w)(s.λ_rel), max_iter, conv)
 end
 
-function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv; _...)  # max_weight is Huber-only
     # Resize residuals for downstream getDistanceMetrics (which recomputes r from scratch)
     if length(r) < Hs.m
         append!(r, zeros(eltype(r), Hs.m - length(r)))
