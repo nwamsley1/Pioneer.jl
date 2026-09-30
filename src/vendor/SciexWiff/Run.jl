@@ -71,3 +71,20 @@ function read_scan!(buf::ScanBuffer, run::WiffRun, r::Integer)
     end
     decode_block!(buf, run.scan, ix.meta_start[r], ix.block_offset[r], ix.block_size[r])
 end
+
+"""
+    base_peak(bpi, bin, sb) -> (mz, intensity)
+
+A scan's base peak: the vendor's, from its Idx record (intensity `bpi` and TOF bin `bin`, converted to m/z
+with the scan's calibration), or, when the Idx lacks either (the bin is 0 on every ZT Scan DIA MS2 record),
+the most intense point of the decoded profile scan in `sb`, which is how the vendor defines it. Both are in
+the profile's intensity units, not the centroids' (area) units. `(NaN, 0.0)` for an empty scan.
+"""
+function base_peak(bpi::Real, bin::Real, sb::ScanBuffer)
+    bpi > 0 && bin > 0 && return bin_to_mz(Float64(bin), sb.cal_a, sb.cal_b), Float64(bpi)
+    sb.n == 0 && return NaN, 0.0
+    k = argmax(view(sb.intensity, 1:sb.n))
+    return mz(sb, k), Float64(sb.intensity[k])
+end
+base_peak(run::WiffRun, r::Integer, sb::ScanBuffer) =
+    base_peak(run.index.base_peak_intensity[r], run.index.base_peak_bin[r], sb)

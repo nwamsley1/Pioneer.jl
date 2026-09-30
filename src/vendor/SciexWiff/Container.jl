@@ -23,6 +23,8 @@ Base.@kwdef mutable struct ScanRows
     low_mz::Vector{Float32} = Float32[]
     high_mz::Vector{Float32} = Float32[]
     tic::Vector{Float32} = Float32[]           # the instrument's TIC (Idx), as msConvert reports it
+    base_peak_mz::Vector{Float32} = Float32[]          # vendor base peak (Idx), else the profile maximum
+    base_peak_intensity::Vector{Float32} = Float32[]   # profile units, not the stored centroids' (see `base_peak`)
     center_mz::Vector{Float32} = Float32[]     # NaN for MS1
     isolation_width::Vector{Float32} = Float32[]
     cal_a::Vector{Float64} = Float64[]
@@ -52,6 +54,7 @@ function write_scan!(w::ScxsWriter, row::NamedTuple, zbytes::AbstractVector{UInt
     push!(r.record, row.record); push!(r.cycle, row.cycle); push!(r.experiment, row.experiment)
     push!(r.ms_order, row.ms_order); push!(r.retention_time, row.retention_time)
     push!(r.low_mz, row.low_mz); push!(r.high_mz, row.high_mz); push!(r.tic, row.tic)
+    push!(r.base_peak_mz, row.base_peak_mz); push!(r.base_peak_intensity, row.base_peak_intensity)
     push!(r.center_mz, row.center_mz); push!(r.isolation_width, row.isolation_width)
     push!(r.cal_a, row.cal_a); push!(r.cal_b, row.cal_b); push!(r.n_peaks, row.n_peaks)
     push!(r.block_offset, w.offset); push!(r.block_size, Int32(length(zbytes)))

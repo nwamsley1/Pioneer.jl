@@ -21,6 +21,10 @@ using SHA
                     for l in Iterators.drop(eachline(joinpath(@__DIR__, "fixtures", "fixture_scxs_sha256.csv")), 1))
     identical = all(bytes2hex(open(sha256, joinpath(scxs, fn))) == h for (fn, h) in expected)
     identical || @warn "fixture .scxs not byte-identical to the reference on this platform; checking totals instead"
+    # base peak: the vendor's (Idx) intensity on every stored scan (SWATH: the Idx carries it)
+    f = SciexWiff.open_scxs(scxs)
+    @test f.scans.base_peak_intensity == Float32.(r.index.base_peak_intensity[kept])
+    @test all(isfinite, f.scans.base_peak_mz)
     d = Pioneer.loadMassSpecData(scxs)
     @test d isa Pioneer.ScxsMassSpecData && length(d) == 8_916
     pbuf = Pioneer.PeakDecodeBuffer(); npk = 0; sint = 0.0; sorted = true

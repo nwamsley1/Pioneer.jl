@@ -18,6 +18,7 @@ end
     c = S.BlockCodec()
     rows = [(record = Int32(r), cycle = Int32(1), experiment = Int16(r), ms_order = UInt8(r == 1 ? 1 : 2),
              retention_time = 1f0, low_mz = 100f0, high_mz = 1500f0, tic = 10f0,
+             base_peak_mz = 500f0 + r, base_peak_intensity = 7f0 * r,
              center_mz = r == 1 ? NaN32 : 500f0, isolation_width = r == 1 ? NaN32 : 3f0,
              cal_a = 4.9e-4, cal_b = -13.7, n_peaks = Int32(r == 2 ? 0 : 3)) for r in 1:3]
     peaks = [(UInt32[10, 20, 30], UInt32[1, 2, 3]), (UInt32[], UInt32[]), (UInt32[7, 8, 9], UInt32[4, 5, 6])]
@@ -28,6 +29,7 @@ end
     close(w)
     f = open_scxs(dir)
     @test S.n_scans(f) == 3 && f.meta["n_peaks"] == 6
+    @test f.scans.base_peak_mz == Float32[501, 502, 503] && f.scans.base_peak_intensity == Float32[7, 14, 21]
     b = UInt32[]; i = UInt32[]
     for s in 1:3
         np = S.read_block!(b, i, c, f, s)
