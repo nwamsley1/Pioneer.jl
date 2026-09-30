@@ -21,22 +21,27 @@ using SHA
                     for l in Iterators.drop(eachline(joinpath(@__DIR__, "fixtures", "fixture_scxs_sha256.csv")), 1))
     identical = all(bytes2hex(open(sha256, joinpath(scxs, fn))) == h for (fn, h) in expected)
     identical || @warn "fixture .scxs not byte-identical to the reference on this platform; checking totals instead"
-    # base peak: the vendor's (Idx) intensity on every stored scan (SWATH: the Idx carries it)
     f = SciexWiff.open_scxs(scxs)
     # not declared ZT: plain name, acquisition_type swath; declaring it adds the Q1 bin grid
     @test f.meta["acquisition_type"] == "swath" && f.meta["acquisition_type_source"] == "user"
     zm = SciexWiff.acquisition_metadata(r; zt_scan = true)
     @test zm["acquisition_type"] == "zt_scan_dia" && parse(Int, zm["q1_bins_per_cycle"]) == 173
-    @test f.scans.base_peak_intensity == Float32.(r.index.base_peak_intensity[kept])
-    @test all(isfinite, f.scans.base_peak_mz)
     d = Pioneer.loadMassSpecData(scxs)
     @test d isa Pioneer.ScxsMassSpecData && length(d) == 8_916
-    pbuf = Pioneer.PeakDecodeBuffer(); npk = 0; sint = 0.0; sorted = true
+    pbuf = Pioneer.PeakDecodeBuffer(); npk = 0; sint = 0.0; sorted = true; bp_int_ok = true; bp_mz_ok = true
     for i in 1:length(d)
         mz, it = Pioneer.getPeaks!(pbuf, d, i)
         npk += length(mz); sint += sum(Float64, it; init = 0.0); sorted &= issorted(mz)
+        # base peak: the scan's most intense centroid, as read back (centroid units, like the .tdfs base peak)
+        if isempty(it)
+            bp_int_ok &= Pioneer.getBasePeakIntensity(d, i) === 0f0; bp_mz_ok &= isnan(Pioneer.getBasePeakMz(d, i))
+        else
+            k = argmax(it)
+            bp_int_ok &= Pioneer.getBasePeakIntensity(d, i) === it[k]
+            bp_mz_ok &= isapprox(Pioneer.getBasePeakMz(d, i), mz[k]; rtol = 1e-6)
+        end
     end
-    @test sorted
+    @test sorted && bp_int_ok && bp_mz_ok
     @test isapprox(npk, 5_054_136; rtol = identical ? 0 : 1e-4)
     @test isapprox(sint, 5.356238101387197e8; rtol = identical ? 1e-9 : 1e-4)
 

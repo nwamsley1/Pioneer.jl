@@ -408,7 +408,7 @@ export function ConvertRawForm({
             </div>
             <div style={noteStyle({ level: params.ztScan ? '' : 'warn', msg: '' })}>
               {params.ztScan === 'yes'
-                ? 'Runs are written as <name>.zt.scxs and searched in ZT mode.'
+                ? 'Runs are written as <name>.zt.scxs and marked as ZT Scan DIA.'
                 : params.ztScan === 'no'
                   ? 'Runs are written as <name>.scxs.'
                   : 'Choose one: the .wiff file does not say which it is.'}

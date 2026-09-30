@@ -29,6 +29,8 @@ struct ScxsMassSpecData <: MassSpecData
     low_mz::Vector{Float32}
     high_mz::Vector{Float32}
     tic::Vector{Float32}
+    base_peak_mz::Union{Nothing, Vector{Float32}}          # nothing for an .scxs written before the columns existed
+    base_peak_intensity::Union{Nothing, Vector{Float32}}
     center_mz::Vector{Union{Missing, Float32}}
     isolation_width::Vector{Union{Missing, Float32}}
     ms_order::Vector{UInt8}
@@ -58,6 +60,8 @@ function ScxsMassSpecData(dir::String)
         Vector{Int64}(t.block_offset), Vector{Int32}(t.block_size), Vector{Int32}(t.n_peaks),
         Vector{Float64}(t.cal_a), Vector{Float64}(t.cal_b), Float64(meta["bin_scale"]), Float64(meta["int_scale"]),
         Vector{Float32}(t.retention_time), Vector{Float32}(t.low_mz), Vector{Float32}(t.high_mz), Vector{Float32}(t.tic),
+        hasproperty(t, :base_peak_mz) ? Vector{Float32}(t.base_peak_mz) : nothing,
+        hasproperty(t, :base_peak_intensity) ? Vector{Float32}(t.base_peak_intensity) : nothing,
         nan_to_missing(t.center_mz), nan_to_missing(t.isolation_width), Vector{UInt8}(t.ms_order),
         Vector{UInt32}(t.cycle),
     )
@@ -116,8 +120,8 @@ getPrecursorMz(d::ScxsMassSpecData, i::Integer) = getCenterMz(d, i)
 getCollisionEnergyEv(::ScxsMassSpecData, ::Integer)::Float32 = 0f0     # as for mzML-converted Arrow
 getScanHeader(::ScxsMassSpecData, ::Integer) = ""
 getScanNumber(::ScxsMassSpecData, i::Integer) = Int32(i)
-getBasePeakMz(::ScxsMassSpecData, ::Integer) = missing
-getBasePeakIntensity(::ScxsMassSpecData, ::Integer) = missing
+getBasePeakMz(d::ScxsMassSpecData, i::Integer) = d.base_peak_mz === nothing ? missing : d.base_peak_mz[i]
+getBasePeakIntensity(d::ScxsMassSpecData, i::Integer) = d.base_peak_intensity === nothing ? missing : d.base_peak_intensity[i]
 
 getRetentionTimes(d::ScxsMassSpecData) = d.retention_time
 getLowMzs(d::ScxsMassSpecData) = d.low_mz

@@ -23,8 +23,8 @@ Base.@kwdef mutable struct ScanRows
     low_mz::Vector{Float32} = Float32[]
     high_mz::Vector{Float32} = Float32[]
     tic::Vector{Float32} = Float32[]           # the instrument's TIC (Idx), as msConvert reports it
-    base_peak_mz::Vector{Float32} = Float32[]          # vendor base peak (Idx), else the profile maximum
-    base_peak_intensity::Vector{Float32} = Float32[]   # profile units, not the stored centroids' (see `base_peak`)
+    base_peak_mz::Vector{Float32} = Float32[]          # the most intense stored centroid (NaN for an empty scan)
+    base_peak_intensity::Vector{Float32} = Float32[]   # its intensity, centroid units (see `centroid_base_peak`)
     center_mz::Vector{Float32} = Float32[]     # NaN for MS1
     isolation_width::Vector{Float32} = Float32[]
     cal_a::Vector{Float64} = Float64[]

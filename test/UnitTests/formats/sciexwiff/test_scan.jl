@@ -64,21 +64,6 @@ end
     @test_throws S.ScanFormatError S.decode_block!(sb, file[1:end-8], ms, ff, sz)  # truncated
 end
 
-@testset "base peak: vendor value, else the profile maximum" begin
-    file, ms, ff, sz = synthetic_block([1, 5, 9], [7, 300, 40])
-    sb = ScanBuffer(); S.decode_block!(sb, file, ms, ff, sz)
-    # the vendor's intensity and TOF bin
-    mz_v, i_v = S.base_peak(1234.0, 1_000_000 + 8 * 5, sb)
-    @test i_v == 1234.0 && mz_v ≈ S.bin_to_mz(1_000_040.0, sb.cal_a, sb.cal_b)
-    # no bin (ZT Scan DIA MS2 records) or no intensity: the profile maximum
-    for (bpi, bin) in ((1234.0, 0.0), (0.0, 1_000_040.0))
-        m, i = S.base_peak(bpi, bin, sb)
-        @test i == 300.0 && m ≈ S.mz(sb, 2)
-    end
-    m, i = S.base_peak(0.0, 0.0, ScanBuffer())
-    @test isnan(m) && i == 0.0
-end
-
 @testset "centroid" begin
     # one Gaussian peak (σ = 1 step) centred between steps, on a sparse single-ion background
     μ = 500.3

@@ -64,6 +64,19 @@ function quantize!(wk::Worker, p::ConvertParams)
     n
 end
 
+"""
+    centroid_base_peak(wk, n, p, a, b) -> (mz, intensity)
+
+The scan's base peak: its most intense stored centroid (`wk.qbin[1:n]`, `wk.qint[1:n]`), with m/z and intensity
+computed exactly as both outputs decode them, so it equals the maximum of the scan's peak list (centroid units,
+like the `.tdfs` base peak). `(NaN32, 0f0)` for a scan with no centroids.
+"""
+function centroid_base_peak(wk::Worker, n::Int, p::ConvertParams, a::Float64, b::Float64)
+    n == 0 && return NaN32, 0f0
+    k = argmax(view(wk.qint, 1:n))
+    Float32(bin_to_mz(Float64(wk.qbin[k]) / p.bin_scale, a, b)), Float32(wk.qint[k] / p.int_scale)
+end
+
 function process_scan!(wk::Worker, run::WiffRun, r::Int, p::ConvertParams, want_arrow::Bool, want_scxs::Bool)
     t0 = time_ns()
     read_scan!(wk.sb, run, r)
@@ -85,11 +98,11 @@ function process_scan!(wk::Worker, run::WiffRun, r::Int, p::ConvertParams, want_
     wk.t_decode += (t1 - t0) / 1e9; wk.t_centroid += (t2 - t1) / 1e9; wk.t_encode += (t3 - t2) / 1e9
     cyc, ex = cycle_experiment(run, r)
     w = window(run, r); lo, hi = scan_range(run, r)
-    bp_mz, bp_int = base_peak(run, r, wk.sb)
+    bp_mz, bp_int = centroid_base_peak(wk, n, p, a, b)
     row = (record = Int32(r), cycle = Int32(cyc), experiment = Int16(ex), ms_order = UInt8(ex == 1 ? 1 : 2),
            retention_time = Float32(retention_time_min(run, r)), low_mz = Float32(lo), high_mz = Float32(hi),
            tic = Float32(run.index.tic[r]),
-           base_peak_mz = Float32(bp_mz), base_peak_intensity = Float32(bp_int),
+           base_peak_mz = bp_mz, base_peak_intensity = bp_int,
            center_mz = w === nothing ? NaN32 : Float32(center(w)), isolation_width = w === nothing ? NaN32 : Float32(width(w)),
            cal_a = a, cal_b = b, n_peaks = Int32(n))
     ScanResult(row, n, mz, it, z)
