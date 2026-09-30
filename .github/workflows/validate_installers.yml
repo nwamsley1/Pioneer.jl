@@ -179,7 +179,6 @@ jobs:
           "$PIONEER" convert-raw \
             "$RAW_FIXTURE" \
             --output-dir "$SMOKE_DIR/raw_arrow" \
-            --concurrent-files 1 \
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 
@@ -330,7 +329,6 @@ jobs:
           & $pioneer convert-raw `
             $rawFixture `
             --output-dir (Join-Path $smokeDir 'raw_arrow') `
-            --concurrent-files 1 `
             --threads-per-file 2
           $rawArrowFiles = Get-ChildItem -Path (Join-Path $smokeDir 'raw_arrow') -Filter *.arrow -Recurse
           if ($rawArrowFiles.Count -eq 0) {
@@ -458,7 +456,6 @@ jobs:
           "$PIONEER" convert-raw \
             "$RAW_FIXTURE" \
             --output-dir "$SMOKE_DIR/raw_arrow" \
-            --concurrent-files 1 \
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 
@@ -616,7 +613,6 @@ jobs:
           "$PIONEER" convert-raw \
             "$RAW_FIXTURE" \
             --output-dir "$SMOKE_DIR/raw_arrow" \
-            --concurrent-files 1 \
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 

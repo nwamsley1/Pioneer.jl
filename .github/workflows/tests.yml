@@ -54,6 +54,12 @@ jobs:
         run: |
           julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
+      # Vendor-format fixtures (and the yeast precompile data) in temp/zenodo, for test/UnitTests/formats
+      - name: Precompile / fixture data
+        uses: ./.github/actions/precompile-data
+        with:
+          cache-key: precompile-data-v3-yeast-formats
+
       - name: Run tests
         run: julia --threads auto --code-coverage=all --project=. -e 'using Pkg; Pkg.test(coverage=true)'
 

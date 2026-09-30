@@ -19,6 +19,7 @@ function _test_integrated_mbr_donor(
         -1.0f0,
         0.0f0,
         irt,
+        0.0f0,          # im_obs: no ion-mobility data
         5.0f0,
         spectrum,
         UInt8(0x03),
@@ -346,6 +347,7 @@ end
         -1.0f0,
         10.0f0,
         10.0f0,
+        0.0f0,          # receiver_im: no ion-mobility data
         5.0f0,
         spectrum,
         temporal_trace,
@@ -359,8 +361,10 @@ end
     )
 
     @test length(values) == length(Pioneer.MBR_PAIRED_FEATURE_STEMS)
-    @test values[19] == 1.0f0
-    @test values[20] == donor.trace_prob
+    # look features up by name: positions shift whenever a paired feature is added (e.g. the observed-IM diffs)
+    feat(stem) = values[findfirst(==(stem), Pioneer.MBR_PAIRED_FEATURE_STEMS)]
+    @test feat("MBR_single_donor") == 1.0f0
+    @test feat("MBR_best_hellinger_source_prob") == donor.trace_prob
 end
 
 @testset "paired post-integration MBR model produces OOF transfer scores" begin

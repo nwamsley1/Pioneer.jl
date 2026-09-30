@@ -14,7 +14,7 @@ Use the bundled [PioneerConverter](https://github.com/nwamsley1/PioneerConverter
 pioneer convert-raw /path/to/raw/or/folder --output-dir /path/to/arrow --skip-existing
 ```
 
-This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, `--concurrent-files`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
+This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
 
 ## MzML to Arrow IPC (Sciex)
 For mzML-formatted data, use:

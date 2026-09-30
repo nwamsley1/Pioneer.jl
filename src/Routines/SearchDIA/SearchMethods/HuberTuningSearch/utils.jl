@@ -126,6 +126,7 @@ function process_huber_calibration_scans!(
     corr_mz = getScanCorrectedMz(search_data)
     obs_low = getScanObsLow(search_data)
     obs_high = getScanObsHigh(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     isotopes_buf = getIsotopes(search_data)
     prec_trans_buf = getPrecursorTransmission(search_data)
     id_to_col = getIdToCol(search_data)
@@ -200,8 +201,7 @@ function process_huber_calibration_scans!(
             continue
         end
 
-        scan_mz = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(
             corr_mz, obs_low, obs_high,
             mass_error_model, scan_mz, scan_int, Float32(rt),
@@ -219,7 +219,8 @@ function process_huber_calibration_scans!(
             scan_int, 0f0, Float32(Inf),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             chrom_params.n_frag_isotopes,
-            chrom_params.isotope_err_bounds,
+            chrom_params.isotope_err_bounds;
+            scan_ev = getCollisionEnergyEv(spectra, scan_idx),
         )
 
         if nmatches > 2

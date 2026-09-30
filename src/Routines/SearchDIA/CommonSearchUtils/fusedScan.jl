@@ -209,7 +209,7 @@ Flush a per-precursor `FusedScratch` to `SparseArrayFused` `H` as column
 
 Returns `(updated_entry, updated_miss_row)`.
 """
-function finalize_column!(H::SparseArrayFused{Ti,T}, col::UInt16,
+function finalize_column!(H::SparseArrayFused{Ti,T}, col::UInt32,
                           s::FusedScratch, entry::Int,
                           miss_row_start::UInt32) where {Ti, T}
     n_match = s.n

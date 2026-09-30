@@ -97,3 +97,12 @@ data/precompile/arrow_out/
 # Unlike the ecoli fixtures above this one is downloaded rather than derived, because building a
 # library at build time puts Koina on the critical path of every release.
 temp/
+
+# Outputs of the precompile workload's timsTOF targets (src/build/snoop.jl)
+data/precompile/ecoli_tims_tdfs/
+data/precompile/ecoli_tims_results/
+data/precompile/sciex_scxs/
+data/precompile/sciex_results/
+# Libraries built by the precompile workload (src/build/snoop.jl); generated, never committed
+data/precompile/ecoli_small_altimeter.poin/
+data/precompile/ecoli_small_prosit.poin/

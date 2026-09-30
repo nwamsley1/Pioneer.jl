@@ -299,7 +299,7 @@ function getApexScan(
 end
 
 """
-getIntegrationBounds!(u2, u, N, apex_scan, n_pad) -> UnitRange
+getIntegrationBounds!(u2, u, N, apex_scan, n_pad, boundary_floor) -> UnitRange
 
 Find the start/stop scan indices of a chromatographic peak whose apex
 (in the *unpadded* region) is at `apex_scan`.
@@ -309,6 +309,11 @@ Find the start/stop scan indices of a chromatographic peak whose apex
 * `N`  - length of the **central** window (without padding)
 * `apex_scan` - 1-based apex position inside the central window
 * `n_pad` - number of padded samples on each side
+* `boundary_floor` - the search starts at `apex_scan ± boundary_floor` and only ever
+  walks outward, so the returned range always contains it. This is the narrowest peak
+  the picker can return, and it must scale with the peak width in cycles: the same
+  constant is a different fraction of a peak on a 5-minute gradient than on a 60-minute
+  one. Callers that know the run's cycle time and peak width should pass a scaled value.
 
 Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).
 """
@@ -316,7 +321,8 @@ function getIntegrationBounds!(u2::Vector{Float32},
                             u::Vector{Float32},
                             N::Int,
                             apex_scan::Int,
-                            n_pad::Int)::UnitRange{Int}
+                            n_pad::Int,
+                            boundary_floor::Int = 2)::UnitRange{Int}
 
     # indices in the *padded* coordinate system
     pad_start   = n_pad + 1                   # first index of the real window
@@ -325,10 +331,12 @@ function getIntegrationBounds!(u2::Vector{Float32},
 
     #return pad_start:pad_end
 
-    # initialise search bounds (clamp to valid padded range). Start the boundary
-    # search at apex ± 2 (not ± 1) so the integrated peak is at least 5 scans wide.
-    start = max(apex_padded - 2, pad_start)
-    stop  = min(apex_padded + 2, pad_end)
+    # initialise search bounds (clamp to valid padded range). The search starts at
+    # apex ± boundary_floor and only walks outward, so this is the narrowest peak the
+    # picker can return (default 2, i.e. at least 5 scans wide).
+    bf = max(boundary_floor, 1)
+    start = max(apex_padded - bf, pad_start)
+    stop  = min(apex_padded + bf, pad_end)
 
     # ──────────────── search to the right (RH boundary) ────────────────
     # 1. advance to first local maximum of u2  (peak of d²/dt² < 0)
@@ -603,7 +611,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0))
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_floor::Int = 2)
 
     m = length(rt_col)
     # Helper functions (WHSmooth!, fillU2!, getApexScan, getIntegrationBounds!,
@@ -636,7 +645,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         z,
         m,
         apex_scan,
-        n_pad
+        n_pad,
+        boundary_floor
     )
     fallback_scan_range = ensureMinimumScanRange(scan_range, apex_scan, m)
     forced_boundary_range = getForcedBoundaryRange(
@@ -840,7 +850,8 @@ function integrate_chrom(chrom::SubDataFrame,
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0))
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_floor::Int = 2)
     return integrate_chrom(
         chrom[!, :rt],
         chrom[!, :scan_idx],
@@ -860,5 +871,177 @@ function integrate_chrom(chrom::SubDataFrame,
         debug_apex_scan = debug_apex_scan,
         forced_boundary_start_scan = forced_boundary_start_scan,
         forced_boundary_stop_scan = forced_boundary_stop_scan,
+        boundary_floor = boundary_floor,
     )
+end
+
+# ─────────────────────────── 2D (ion-mobility) chromatogram integration ───────────────────────────
+#
+# On slice data a precursor's deconvolved weights are a GRID: retention-time cycles by ion-mobility
+# scans. The 1D path above cannot be used, because `sort_chromatograms_for_integration!` orders rows
+# by (precursor, rt) only -- it never collapses the mobility axis -- so integrate_chrom would receive
+# 9-17 points per cycle as a single jagged trace. That is why the 1D integrator gives 84-106%
+# replicate CVs on timsTOF data and leaves ~80% of precursors without an area.
+#
+# The scheme below was chosen by measurement on twelve-file HYE runs (see docs/bruker_timstof_quant.md):
+#
+#   apex      seeded at the best PSM's cell, then hill-climbed on the 8-neighbourhood
+#   IM band   apex +/- CHROM_IM_BAND_K0 in 1/K0, converted to scans with the file's own calibration
+#             line. Mobility peak width is a physical constant (0.018 1/K0 FWHM, stable across
+#             gradients and instruments), so this is fixed rather than fitted per precursor --
+#             per-precursor mobility bounds measured WORSE on every metric.
+#   RT bounds the existing 1D picker, run on the RT marginal summed over the band. RT peak width is
+#             NOT constant in cycles (2.76 at 15 min vs 1.42 at 5 min), so this one must be fitted.
+#   baseline  flat: the median cell outside the region, times the region's cell count.
+#   area      plain sum over the region. A 2D trapezoid rule measured worse (14.9% vs 12.9% CV).
+
+"Per-thread scratch for `integrate_chrom_2d`. Buffers grow to the largest grid seen and are reused."
+mutable struct Chrom2DScratch
+    grid::Vector{Float32}        # nrow x ncol, column-major
+    marginal::Vector{Float32}
+    outside::Vector{Float32}
+    row_rt::Vector{Float32}
+    row_scan::Vector{Int32}
+    col_im::Vector{Int32}
+    row_of::Vector{Int32}        # per input row: grid row
+    col_of::Vector{Int32}        # per input row: grid column
+    ones_buf::Vector{Float32}
+    local_scan::Vector{Int32}    # 1:nrow, handed to the 1D picker as its scan-index column
+end
+
+Chrom2DScratch() = Chrom2DScratch(Float32[], Float32[], Float32[], Float32[], Int32[], Int32[],
+                                  Int32[], Int32[], Float32[], Int32[])
+
+"""
+    integrate_chrom_2d(rt, scan_idx, cycle, im_scan, intensity, apex_scan, im_half_scans, sc, ws, state, λ)
+
+Integrate one precursor's 2D weight grid. Returns
+`(area, apex_row_scan_idx, points_integrated, start_scan, stop_scan, quant_withheld)`; `area` is 0
+when there is no usable peak. `im_half_scans` is the mobility half-band in IM-scan units.
+"""
+function integrate_chrom_2d(
+    rt::AbstractVector{Float32},
+    scan_idx::AbstractVector{UInt32},
+    cycle::AbstractVector{UInt32},
+    im_scan::AbstractVector{UInt16},
+    intensity::AbstractVector{Float32},
+    apex_scan::Int,
+    im_half_scans::Int,
+    sc::Chrom2DScratch,
+    ws::WHWorkspace,
+    state::Chromatogram,
+    λ::Float32,
+)
+    n = length(rt)
+    n == 0 && return (0.0f0, UInt32(0), UInt32(0), UInt32(0), UInt32(0), false)
+
+    # ---- axes. Rows are distinct cycles (input is sorted by rt, so cycles are non-decreasing);
+    # columns are distinct IM scans, which are NOT sorted within a cycle, so they are collected
+    # and sorted once.
+    resize!(sc.row_of, n); resize!(sc.col_of, n)
+    empty!(sc.row_rt); empty!(sc.row_scan); empty!(sc.col_im)
+    @inbounds for i in 1:n
+        c = Int32(cycle[i])
+        if isempty(sc.row_scan) || sc.row_scan[end] != c
+            push!(sc.row_scan, c); push!(sc.row_rt, rt[i])
+        end
+        sc.row_of[i] = Int32(length(sc.row_scan))
+        push!(sc.col_im, Int32(im_scan[i]))
+    end
+    # dedupe in place on the sorted vector: Base's unique! builds a hash set, which allocates on
+    # every call in what is a per-precursor hot path.
+    # QuickSort explicitly: the default algorithm allocates a scratch buffer per call, which in a
+    # per-precursor hot path is hundreds of megabytes of churn over a file.
+    sort!(sc.col_im; alg = QuickSort)
+    let m = 0
+        @inbounds for i in eachindex(sc.col_im)
+            (m == 0 || sc.col_im[i] != sc.col_im[m]) && (m += 1; sc.col_im[m] = sc.col_im[i])
+        end
+        resize!(sc.col_im, m)
+    end
+    nrow = length(sc.row_scan); ncol = length(sc.col_im)
+    (nrow >= 3 && ncol >= 1) || return (0.0f0, UInt32(0), UInt32(0), UInt32(0), UInt32(0), false)
+
+    resize!(sc.grid, nrow * ncol); fill!(sc.grid, 0.0f0)
+    @inbounds for i in 1:n
+        c = searchsortedfirst(sc.col_im, Int32(im_scan[i]))
+        sc.col_of[i] = Int32(c)
+        w = intensity[i]
+        isfinite(w) && w > 0.0f0 && (sc.grid[(c - 1) * nrow + sc.row_of[i]] += w)
+    end
+    grid = sc.grid                       # local binding: no closure capture in the loops below
+
+    # ---- apex: seed at the PSM's cell, climb the 8-neighbourhood
+    ar = clamp(Int(sc.row_of[apex_scan]), 1, nrow)
+    ac = clamp(Int(sc.col_of[apex_scan]), 1, ncol)
+    while true
+        br = ar; bc = ac; bv = @inbounds grid[(ac - 1) * nrow + ar]
+        for dc in -1:1, dr in -1:1
+            r = ar + dr; c = ac + dc
+            (1 <= r <= nrow && 1 <= c <= ncol) || continue
+            v = @inbounds grid[(c - 1) * nrow + r]
+            v > bv && (bv = v; br = r; bc = c)
+        end
+        (br == ar && bc == ac) && break
+        ar = br; ac = bc
+    end
+    @inbounds(grid[(ac - 1) * nrow + ar]) > 0.0f0 || return (0.0f0, UInt32(0), UInt32(0), UInt32(0), UInt32(0), false)
+
+    # ---- mobility band, in IM-scan units around the apex column
+    apex_im = sc.col_im[ac]
+    lo_c = ac; while lo_c > 1 && apex_im - sc.col_im[lo_c - 1] <= im_half_scans; lo_c -= 1; end
+    hi_c = ac; while hi_c < ncol && sc.col_im[hi_c + 1] - apex_im <= im_half_scans; hi_c += 1; end
+
+    # ---- RT marginal over the band, then the existing 1D picker for the RT bounds
+    resize!(sc.marginal, nrow); fill!(sc.marginal, 0.0f0)
+    @inbounds for c in lo_c:hi_c, r in 1:nrow
+        sc.marginal[r] += grid[(c - 1) * nrow + r]
+    end
+    resize!(sc.ones_buf, nrow); fill!(sc.ones_buf, 1.0f0)
+    resize!(sc.row_scan, nrow)
+    avg_cycle_time = nrow > 1 ? (sc.row_rt[nrow] - sc.row_rt[1]) / (nrow - 1) : 1.0f0
+    resize!(sc.local_scan, nrow)
+    @inbounds for i in 1:nrow; sc.local_scan[i] = Int32(i); end
+    r = integrate_chrom(sc.row_rt, sc.local_scan, sc.marginal, sc.ones_buf, ar, ws, state,
+                        Float32(avg_cycle_time), λ; n_pad = 0)
+    reset!(state)
+    lo_r = r[4] == UInt32(0) ? max(1, ar - 2) : Int(r[4])
+    hi_r = r[5] == UInt32(0) ? min(nrow, ar + 2) : Int(r[5])
+    lo_r = clamp(lo_r, 1, nrow); hi_r = clamp(hi_r, lo_r, nrow)
+
+    # ---- flat baseline from the cells outside the region, then plain summation
+    empty!(sc.outside)
+    @inbounds for c in 1:ncol, rr in 1:nrow
+        (lo_r <= rr <= hi_r && lo_c <= c <= hi_c) && continue
+        push!(sc.outside, grid[(c - 1) * nrow + rr])
+    end
+    base = isempty(sc.outside) ? 0.0f0 : _median_inplace(sc.outside)
+    ncell = (hi_r - lo_r + 1) * (hi_c - lo_c + 1)
+    total = 0.0f0
+    @inbounds for c in lo_c:hi_c, rr in lo_r:hi_r
+        total += grid[(c - 1) * nrow + rr]
+    end
+    area = max(total - ncell * base, 0.0f0)
+
+    # the apex cell's scan index, and the region's first/last scan, for the PSM columns
+    apex_sidx = UInt32(0); start_sidx = UInt32(0); stop_sidx = UInt32(0)
+    @inbounds for i in 1:n
+        rr = Int(sc.row_of[i])
+        rr == ar && Int(sc.col_of[i]) == ac && (apex_sidx = scan_idx[i])
+        rr == lo_r && (start_sidx == UInt32(0) || scan_idx[i] < start_sidx) && (start_sidx = scan_idx[i])
+        rr == hi_r && scan_idx[i] > stop_sidx && (stop_sidx = scan_idx[i])
+    end
+    npts = UInt32(hi_r - lo_r + 1)
+    return (area, apex_sidx, npts, start_sidx, stop_sidx, false)
+end
+
+"Median of `v`, destroying its order. Empty input is caller's responsibility."
+@inline function _median_inplace(v::Vector{Float32})
+    n = length(v)
+    # QuickSort explicitly: the default algorithm allocates a scratch buffer, and partialsort!
+    # offers no way to choose the algorithm. n here is the number of cells outside the integration
+    # region, a few hundred at most, so a full sort is cheap.
+    sort!(v; alg = QuickSort)
+    m = n >> 1
+    return isodd(n) ? @inbounds(v[m + 1]) : @inbounds(0.5f0 * (v[m] + v[m + 1]))
 end

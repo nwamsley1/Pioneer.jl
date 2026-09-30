@@ -197,6 +197,9 @@ function build_mbr_integrated_donor_dict(
             hasproperty(tbl, col) ||
                 error("Integrated MBR donor selection requires column $col in $path")
         end
+        # Optional: absent on tables written before observed mobility was recorded, and on data
+        # without ion mobility at all. Falls back to 0, which makes the paired feature a constant.
+        has_im_obs = hasproperty(tbl, :im_obs)
         frag_cols = ntuple(
             rank -> getproperty(tbl, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]),
             8,
@@ -219,6 +222,7 @@ function build_mbr_integrated_donor_dict(
                 Float32(getproperty(tbl, MBR_INTEGRATED_APEX_IRT_COLUMN)[row])
             n_scans =
                 Float32(getproperty(tbl, MBR_INTEGRATED_N_SCANS_COLUMN)[row])
+            im_obs = has_im_obs ? Float32(tbl.im_obs[row]) : 0.0f0
             irt_pred = Float32(tbl.irt_pred[row])
             donor = _MBRDonorEntry(
                 score,
@@ -230,6 +234,7 @@ function build_mbr_integrated_donor_dict(
                 )[row]),
                 irt_pred - irt_obs,
                 irt_obs,
+                im_obs,
                 n_scans,
                 integrated_frag_sqrt,
                 UInt8(getproperty(
@@ -573,12 +578,27 @@ end
     return abs(receiver_irt - donor.irt_obs)
 end
 
+@inline function _mbr_observed_im_diff(
+    receiver_im::Float32,
+    donor::Union{Nothing, _MBRDonorEntry},
+)
+    # Both sides are the per-file calibration line evaluated at the PSM's IM scan, so this is a
+    # difference in 1/K0 and is comparable between runs. A real transfer of the same ion should be
+    # near zero: mobility is an intrinsic property, reproducible to ~0.001 1/K0 across runs, unlike
+    # retention time which drifts. Zero on data without ion mobility, where it carries no signal.
+    donor !== nothing &&
+        isfinite(receiver_im) &&
+        isfinite(donor.im_obs) || return -1.0f0
+    return abs(receiver_im - donor.im_obs)
+end
+
 function _mbr_feature_values(
     receiver_pid::UInt32,
     receiver_weight::Float32,
     receiver_explained::Float32,
     receiver_irt_pred::Float32,
     receiver_irt::Float32,
+    receiver_im::Float32,
     receiver_n_scans::Float32,
     receiver_temporal_mean::NTuple{8, Float32},
     receiver_temporal_trace::AbstractVector,
@@ -632,6 +652,8 @@ function _mbr_feature_values(
         ),
         _mbr_observed_irt_diff(receiver_irt, donor),
         _mbr_observed_irt_diff(receiver_irt, worst_donor),
+        _mbr_observed_im_diff(receiver_im, donor),
+        _mbr_observed_im_diff(receiver_im, worst_donor),
         worst_donor === nothing ? 1.0f0 : 0.0f0,
         hellinger_donor.trace_prob,
         _mbr_hellinger_from_sqrt(
@@ -748,6 +770,7 @@ function compute_postintegration_mbr_features!(
         MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
     )
     has_irt_pred = hasproperty(main, :irt_pred)
+    has_main_im_obs = hasproperty(main, :im_obs)
 
     # DIAGNOSTIC (PIONEER_MBR_ROW_DIAG=1): split the ~43 GB still in this loop into true-donor
     # featurisation, counterfactual DONOR SELECTION, and counterfactual featurisation.
@@ -792,6 +815,7 @@ function compute_postintegration_mbr_features!(
         receiver_weight = Float32(weight_column[row])
         receiver_explained = Float32(explained_column[row])
         receiver_irt = Float32(irt_column[row])
+        receiver_im = has_main_im_obs ? Float32(main.im_obs[row]) : 0.0f0
         receiver_irt_pred = has_irt_pred ?
             Float32(main.irt_pred[row]) :
             pools.irt_by_pid[Int(receiver_pid)]
@@ -818,6 +842,7 @@ function compute_postintegration_mbr_features!(
             receiver_explained,
             receiver_irt_pred,
             receiver_irt,
+            receiver_im,
             receiver_n_scans,
             receiver_temporal_mean,
             receiver_temporal_trace,
@@ -865,6 +890,7 @@ function compute_postintegration_mbr_features!(
                 receiver_explained,
                 receiver_irt_pred,
                 receiver_irt,
+                receiver_im,
                 receiver_n_scans,
                 receiver_temporal_mean,
                 receiver_temporal_trace,

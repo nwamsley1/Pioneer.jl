@@ -133,3 +133,21 @@ function parse_koina_batch(model::RetentionTimeModel,
 
     return KoinaBatchResult(df, 1, nothing)
 end
+
+"""
+Parse results for ion-mobility models: a single `ccs` output tensor (n × 1).
+"""
+function parse_koina_batch(model::IonMobilityModel,
+                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+    df = DataFrame()
+
+    for col in response["outputs"]
+        if col["name"] == "ccs"
+            df[!, :ccs] = Float32.(col["data"])::Vector{Float32}
+        end
+    end
+    hasproperty(df, :ccs) || throw(ArgumentError(
+        "IonMobilityModel response is missing a 'ccs' output"))
+
+    return KoinaBatchResult(df, 1, nothing)
+end

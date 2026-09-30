@@ -714,7 +714,7 @@ function finalize_postintegration_mbr!(
         q_value_threshold = q_value_threshold,
     )
     @debug_l1 "Post-integration MBR donors: precursors=$(length(donor_dict)), " *
-              "entries=$(sum(length, values(donor_dict)))"
+              "entries=$(sum(length, values(donor_dict); init = 0))"
 
     _mark(:eligibility)
     # Base.gc_bytes() is process-global, so the row-loop probes inside

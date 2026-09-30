@@ -355,6 +355,8 @@ interface Props {
   onRemoveFasta: (idx: number) => void
   onBrowseLibPath: () => void
   onBrowseCalibration: () => void
+  /** Pick a Bruker .tdfs or SCIEX .scxs run (a folder) as the calibration file. */
+  onBrowseCalibrationTdfs: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
   onEnzyme: (id: string) => void
@@ -380,6 +382,7 @@ export function BuildSpecLibForm({
   onRemoveFasta,
   onBrowseLibPath,
   onBrowseCalibration,
+  onBrowseCalibrationTdfs,
   onModField,
   onRemoveMod,
   onEnzyme,
@@ -818,7 +821,9 @@ export function BuildSpecLibForm({
             data-key="calibrationFile"
             value={params.calibrationFile}
             onChange={(e) => onParam('calibrationFile', e.target.value)}
-            placeholder="/path/to/one_run.arrow  (optional)"
+            placeholder={
+              '/path/to/one_run.arrow, .tdfs or .scxs  (optional)'
+            }
             style={{
               flex: 1,
               padding: '9px 12px',
@@ -836,8 +841,18 @@ export function BuildSpecLibForm({
             className="pio-browse"
             onClick={onBrowseCalibration}
             style={BROWSE}
+            title="A converted Thermo / Sciex run (.arrow file)"
           >
-            Browse
+            Browse .arrow
+          </button>
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onBrowseCalibrationTdfs}
+            style={BROWSE}
+            title="A converted Bruker .tdfs or SCIEX .scxs run (a folder): select the folder and click Open"
+          >
+            Browse .tdfs / .scxs
           </button>
         </div>
         )}
@@ -847,10 +862,12 @@ export function BuildSpecLibForm({
               marginTop: 9,
               fontSize: 12,
               lineHeight: 1.4,
-              color: calibNote.level === 'error' ? '#C0392B' : '#B45309',
+              color:
+                calibNote.level === 'error' ? '#C0392B' : calibNote.level === 'warn' ? '#B45309' : '#667085',
             }}
           >
-            ⚠&nbsp; {calibNote.msg}
+            {calibNote.level ? '\u26a0\u00a0 ' : ''}
+            {calibNote.msg}
           </div>
         )}
 
@@ -1043,6 +1060,45 @@ export function BuildSpecLibForm({
               {selectedModel.peptideLength.max} residues.
             </>
           )}
+        </div>
+        <div
+          style={{
+            marginTop: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+              Bruker timsTOF library
+            </div>
+            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
+              Also predict ion mobility (AlphaPeptDeep CCS). Needed to search timsTOF .tdfs data.
+            </div>
+          </div>
+          <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
+        </div>
+        <div
+          style={{
+            marginTop: 14,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            gap: 14,
+            alignItems: 'end',
+          }}
+        >
+          <NumField fieldKey="isolationWindowWidth" value={params.isolationWindowWidth} onChange={onParam} />
+          <div style={{ ...HINT, paddingBottom: 8 }}>
+            {(() => {
+              const w = Number(params.isolationWindowWidth)
+              if (!Number.isFinite(w) || w <= 0) return 'Fragment-index partitions: enter a width.'
+              // Mirrors prec_partition_width in Pioneer (build_poin_lib.jl): nearest of 2.5, 5 and 10 Da.
+              const p = w < 3.75 ? 2.5 : w < 7.5 ? 5 : 10
+              return `Fragment-index partitions of ${p} Da.`
+            })()}
+          </div>
         </div>
       </section>
 

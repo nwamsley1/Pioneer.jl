@@ -42,6 +42,7 @@ Results container for chromatogram integration search.
 """
 struct IntegrateChromatogramSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}  # PSM rows for one file after integration
+    rhs_extended::Set{UInt32}  # precursors with the right-tail window extension (all files)
 end
 
 function _resolve_chromatogram_trace_type(
@@ -209,8 +210,18 @@ function write_intermediate_chromatogram_debug_plots(
 end
 
 function init_search_results(::IntegrateChromatogramSearchParameters, search_context::SearchContext)
+    # Right-tail extension: choose once per search from the per-precursor max weight that
+    # build_rt_indices! accumulated, so a precursor is extended in every file or none.
+    max_weight = search_context.precursor_max_weight[]
+    rhs_extended = Set{UInt32}()
+    if max_weight !== nothing
+        rhs_extended, n_obs, threshold = select_rhs_precursors(max_weight, CHROM_RHS_TOP_FRAC)
+        search_context.precursor_max_weight[] = nothing
+        @debug_l1 "Chromatogram RHS extension: $(length(rhs_extended)) / $(n_obs) precursors (max weight >= $(threshold))"
+    end
     return IntegrateChromatogramSearchResults(
-        Ref(DataFrame())
+        Ref(DataFrame()),
+        rhs_extended,
     )
 end
 
@@ -372,7 +383,8 @@ function process_file!(
         search_context,
         params,
         ms_file_idx,
-        MS2CHROM(),
+        MS2CHROM();
+        rhs_extended = results.rhs_extended,
     )
     if _sdiag
         MBR_STEP_DIAG[:extract_bytes] += Base.gc_bytes() - _sa
@@ -418,6 +430,25 @@ function process_file!(
         MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
         _st = time(); _sa = Base.gc_bytes()
     end
+    # Ion-mobility data: attach the grid coordinates the 2D integrator needs, and convert the
+    # mobility band from 1/K0 to IM scans with this file's scan-to-1/K0 slope (im_half_width_scans),
+    # so a band specified in 1/K0 lands on the right number of scans whatever the ramp was.
+    # No mobility or no slope -> 1D path.
+    im_half_scans = 0
+    let im_scans_v = getImScans(spectra)
+        if im_scans_v !== nothing && nrow(chromatograms) > 0
+            im_half_scans = im_half_width_scans(CHROM_IM_BAND_K0, spectra, search_context, ms_file_idx)
+            if im_half_scans > 0
+                cyc_v = getCycleIdxs(spectra)
+                sidx = chromatograms[!, :scan_idx]
+                chromatograms[!, :cycle_idx] = UInt32[UInt32(cyc_v[s]) for s in sidx]
+                chromatograms[!, :im_scan] = UInt16[UInt16(im_scans_v[s]) for s in sidx]
+                @user_info "2D chromatogram integration: mobility band ±$(CHROM_IM_BAND_K0) 1/K0 = ±$(im_half_scans) IM scans"
+            else
+                @user_warn "Ion-mobility data but no usable IM calibration line; falling back to 1D integration"
+            end
+        end
+    end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
     if _sdiag
         MBR_STEP_DIAG[:sort_bytes] += Base.gc_bytes() - _sa
@@ -455,6 +486,7 @@ function process_file!(
             passing_psms[!, :quant_withheld],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
+            im_half_scans = im_half_scans,
         )
         if _sdiag
             MBR_STEP_DIAG[:integrate_bytes] += Base.gc_bytes() - _sa

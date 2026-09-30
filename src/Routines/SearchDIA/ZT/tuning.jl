@@ -6,10 +6,13 @@ const TUNING_ZT_Q1_BINS = 15
 """
     tuning_scan_priority(geom, spectra) -> Vector{Int32}
 
-MS2 scan order for parameter tuning: develop's TIC-first order, or on a scanning-quad file the
-Q1-stratified order (`get_ms2_scan_priority_order_q1`).
+MS2 scan order for parameter tuning: develop's TIC-first order; on an ion-mobility file the order
+stratified over (isolation window, IM bin) within each RT bin (`get_ms2_scan_priority_order_im`); on
+a scanning-quad file the Q1-stratified order (`get_ms2_scan_priority_order_q1`).
 """
-tuning_scan_priority(::Nothing, spectra::MassSpecData) = get_ms2_scan_priority_order(spectra)
+tuning_scan_priority(::Nothing, spectra::MassSpecData) = getImScans(spectra) === nothing ?
+    get_ms2_scan_priority_order(spectra) :
+    get_ms2_scan_priority_order_im(spectra, TUNING_IM_BINS)
 tuning_scan_priority(::ZTGeometry, spectra::MassSpecData) =
     get_ms2_scan_priority_order_q1(spectra, TUNING_ZT_Q1_BINS)
 

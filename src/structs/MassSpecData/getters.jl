@@ -132,13 +132,38 @@ getIsolationWidthMzs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.data[:isolationWidthMz]::_MSDataCol{Union{Missing,T},T}
 getMsOrders(ms_data::NonIonMobilityData{T}) where T =
     ms_data.data[:msOrder]::_MSDataCol{UInt8,UInt8}
+# Ion-mobility scan index per row (timsTOF packet files carry an `imScan` column);
+# `nothing` for files without one. Not a hot-path accessor.
+getImScans(::MassSpecData) = nothing
+# 1/K0 per IM scan (absolute value) from the instrument's mobility calibration; `nothing` when the file does not
+# carry one (only `.tdfs` data does).
+getImSlope(::MassSpecData) = nothing
+# The instrument's IM scan -> 1/K0 line as (1/K0 at scan 0, signed slope); `nothing` when the file does not carry
+# one (only `.tdfs` data does).
+getImCalibration(::MassSpecData) = nothing
+getImScans(ms_data::NonIonMobilityData) =
+    hasproperty(ms_data.data, :imScan) ? ms_data.data[:imScan] : nothing
+# TIMS frame id per row (timsTOF packet files carry a `frameId` column); `nothing` otherwise.
+getFrameIds(::MassSpecData) = nothing
+getFrameIds(ms_data::NonIonMobilityData) =
+    hasproperty(ms_data.data, :frameId) ? ms_data.data[:frameId] : nothing
+# Per-scan collision energy in eV (timsTOF packets carry the ramp value; mzML-converted
+# files store 0). 0 when the column is absent. Read once per scan, not per precursor.
+getCollisionEnergyEvs(ms_data::NonIonMobilityData) =
+    hasproperty(ms_data.data, :collisionEnergyEvField) ? ms_data.data[:collisionEnergyEvField] : nothing
+function getCollisionEnergyEv(ms_data::NonIonMobilityData, scan_idx::Integer)::Float32
+    col = getCollisionEnergyEvs(ms_data)
+    col === nothing && return 0f0
+    v = col[scan_idx]
+    return ismissing(v) ? 0f0 : Float32(v)
+end
 getCycleIdxs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.cycle_idxs === nothing ? ms_data.data[:cycle_idx] : ms_data.cycle_idxs
 
 """
     getAcquisitionMetadata(ms_data) -> Union{Nothing, AbstractDict{String,String}}
 
-File-level acquisition metadata a converter recorded in the Arrow schema (e.g. SciexWiff writes
+File-level acquisition metadata a converter recorded in the Arrow schema or `.scxs` meta.json (SciexWiff writes
 `acquisition_type = "zt_scan_dia"` and the Q1 bin geometry), or `nothing` when there is none.
 """
 getAcquisitionMetadata(::MassSpecData) = nothing

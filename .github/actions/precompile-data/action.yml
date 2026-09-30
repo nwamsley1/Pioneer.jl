@@ -26,6 +26,10 @@ runs:
     #
     # ZENODO_RECORD must be updated when the artifact is re-uploaded, and cache-key bumped with it --
     # otherwise CI serves a cached copy of the old fixture and the yeast target searches stale data.
+    #
+    # FORMATS_RECORD holds the vendor-format fixtures (test/fixtures/tools/make_{d,wiff}_fixture.jl): a truncated
+    # timsTOF .d and a truncated SCIEX .wiff + .wiff.scan, used by the unit tests (test/UnitTests/formats) and the
+    # convertBruker / SearchDIA_tdfs / convertSciex / SearchDIA_scxs snoop targets. Same rule: bump cache-key with it.
     - name: Download precompile data (if cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
@@ -77,3 +81,12 @@ runs:
         # target failure 40 minutes into the build.
         test -f yeast_small_altimeter.poin/partitioned_fragment_index.jls
         for f in yeast_rep1 yeast_rep2 yeast_lowsignal; do test -f "yeast_raw/${f}.arrow"; done
+
+        FORMATS_RECORD=23023765
+        for z in ecoli_tims_d_fixture sciex_wiff_fixture; do
+          fetch "https://zenodo.org/records/${FORMATS_RECORD}/files/${z}.zip" "${z}.zip"
+          unzip -q -o "${z}.zip"
+          rm "${z}.zip"
+        done
+        test -f ecoli_tims_fixture.d/analysis.tdf && test -f ecoli_tims_fixture.d/analysis.tdf_bin
+        test -f sciex_wiff_fixture/BenchSample_B_nswath4_25ng.wiff && test -f sciex_wiff_fixture/BenchSample_B_nswath4_25ng.wiff.scan

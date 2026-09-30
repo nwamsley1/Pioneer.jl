@@ -485,8 +485,8 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
                               obs_low::Vector{Float32},
                               obs_high::Vector{Float32},
                               mem::AbstractMassErrorModel,
-                              scan_mz::AbstractArray{Union{Missing, Float32}},
-                              scan_int::AbstractArray{Union{Missing, Float32}},
+                              scan_mz::AbstractArray{<:Union{Missing, Float32}},
+                              scan_int::AbstractArray{<:Union{Missing, Float32}},
                               scan_rt::Float32)
     n = length(scan_mz)
     if length(corrected) < n
@@ -773,7 +773,7 @@ function run_fused!(
     kind::K,
     Hs::SparseArrayFused{UInt32, Float32},
     unscored_psms::AbstractVector{<:UnscoredPSM{Float32}},
-    id_to_col::AbstractPrecursorMap{UInt16},
+    id_to_col::AbstractPrecursorMap{UInt32},
     scratch::FusedScratch,
     scan_corrected_mz::Vector{Float32},
     scan_obs_low::Vector{Float32},
@@ -792,14 +792,15 @@ function run_fused!(
     iso_splines::IsotopeSplineModel,
     quad_transmission_func::QuadTransmissionFunction,
     mem::AbstractMassErrorModel,
-    scan_int::AbstractArray{Union{Missing, Float32}},
+    scan_int::AbstractArray{<:Union{Missing, Float32}},
     scan_irt::Float32,
     irt_tol::Float32,
     frag_mz_bounds::Tuple{Float32, Float32},
     n_frag_isotopes::Int64,
     isotope_err_bounds::Tuple{I, I};
     m_rank::Int64 = 3,
-    scan_idx::Int64 = 0   # for blacklist lookup; 0 disables
+    scan_idx::Int64 = 0,   # for blacklist lookup; 0 disables
+    scan_ev::Float32 = 0f0 # scan collision energy (eV) for CE-keyed NCE models; 0 = unknown
 ) where {K<:FusedSearchKind, I<:Integer}
 
     reset!(Hs)
@@ -808,7 +809,7 @@ function run_fused!(
 
     n_peaks = peak_mz_len
     entry = 0
-    col = UInt16(0)
+    col = UInt32(0)
     miss_row = UInt32(n_peaks)
     nmatches = 0
     nmisses = 0
@@ -836,7 +837,7 @@ function run_fused!(
         end
 
         prec_sulfur = prec_sulfur_counts[prec_idx]
-        spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz)
+        spline_data = getSplineData(ion_list, intensity_model, prec_charge, prec_mz, scan_ev)
 
         # Outer iso-pass loop: 1 iteration for FusedStandard (compiler
         # removes the wrapper), 3 for FusedQuadEst (one pass per isotope
@@ -858,7 +859,7 @@ function run_fused!(
 
             reset_fused_scratch!(scratch)
             col_started = false
-            this_col = UInt16(0)
+            this_col = UInt32(0)
             lower = 1
 
             frag_range = getPrecFragRange(ion_list, prec_idx)
@@ -908,7 +909,7 @@ function run_fused!(
                         int_obs = ismissing(raw_int) ? 0f0 : Float32(raw_int)
 
                         if !col_started
-                            col += UInt16(1)
+                            col += UInt32(1)
                             this_col = col
                             id_to_col[match_column_id(kind, prec_idx, iso_pass)] = this_col
                             col_started = true
@@ -999,8 +1000,8 @@ function run_fused_masserr!(
     precursors_passed::AbstractVector{UInt32},
     prec_range::UnitRange{Int64},
     mem::AbstractMassErrorModel,
-    scan_mz::AbstractArray{Union{Missing, Float32}},
-    scan_int::AbstractArray{Union{Missing, Float32}},
+    scan_mz::AbstractArray{<:Union{Missing, Float32}},
+    scan_int::AbstractArray{<:Union{Missing, Float32}},
     scan_rt::Float32;
     max_rank::Int = 6,
     min_ion_position::Int = 4)

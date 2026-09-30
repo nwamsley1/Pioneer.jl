@@ -88,7 +88,7 @@ All three are properties of the packaged distribution, not of this app:
     count. Verified with `Threads.ngcthreads()`.
 - **ConvertRAW is not a Julia program and has no params file.** It is a separate
   .NET 8 binary taking a positional RAW path plus flags
-  (`-o/--output-dir`, `--skip-existing`, `-n/--concurrent-files`,
+  (`-o/--output-dir`, `--skip-existing`,
   `-t/--threads-per-file`, `-b/--batch-size`, `--scan-chunk-size`). The design
   invented a `{input:{mode,path},output:{path}}` JSON for it; no such file
   exists. `runner::Invocation` models the two shapes, and the Julia thread
@@ -166,24 +166,13 @@ cp -r converter/PioneerConverter-osx-x64/bin/* "$PIONEER_HOME/bin/"
 cp -r converter/PioneerConverter-osx-x64/lib/* "$PIONEER_HOME/lib/"
 ```
 
-It parallelises on two nested levels, so the knobs multiply
-(`Parallel.ForEach` over files, each file split across `ScanReaderWorker`s from
-Thermo's `RawFileReaderFactory.CreateThreadManager`):
+It converts RAW files sequentially. Within the current file, scan extraction,
+ordered Arrow assembly, and writing can overlap. `--threads-per-file` controls
+scan-reader workers (default: 3). The GUI passes only within-file tuning options
+for RAW conversion; the removed file-concurrency option is not emitted.
 
-| flag | default | effect |
-|---|---|---|
-| `--concurrent-files` | 2 | files converted at once |
-| `--threads-per-file` | 3 | scan-reader threads within each file (1 = sequential, no thread manager) |
-
-Defaults give ~6 threads total. The form shows the product live, and the Julia
-thread picker is hidden on this page because it does nothing here.
-
-Because the two knobs *multiply*, individually reasonable values can still
-exceed the machine — so unlike the Julia picker (clamped at its own control),
-this is enforced at run time: `convertThreadsNote` blocks the run when
-`concurrent-files × threads-per-file` exceeds the logical core count. The form
-and the validator share `convertTotalThreads`, so the readout and the block
-cannot disagree.
+The Julia thread picker is hidden on this page because PioneerConverter is a
+.NET program. The separate mzML converter still has a files-at-a-time setting.
 
 ## The log drawer emulates a terminal
 

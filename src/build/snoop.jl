@@ -109,6 +109,11 @@ end
 # precursors / 855 protein groups against Altimeter's 1,822 / 902 -- 89% Jaccard
 # overlap on precursors, which is the expected level of agreement between two
 # independent fragment predictors rather than a degenerate subset.
+# The Prosit fixture is also built with UInt32 fragment-index local IDs
+# (`frag_index_local_id_type = "UInt32"`), while the Altimeter fixture resolves "auto" to UInt16 (it is tiny).
+# The fragment-index search specialises on the index type, not the fragment lookup type, so the two fixtures
+# together precompile both index variants; a real library whose partitions exceed 65,535 precursors resolves
+# "auto" to UInt32, and without this its first search would pay the UInt32 compile at startup.
 maybe_run("BuildSpecLib_prosit") do
     Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end
@@ -251,6 +256,47 @@ end
 # degrading the artifact. Bump the precompile-data cache-key whenever the artifact is regenerated.
 maybe_run("SearchDIA_yeast") do
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
+end
+
+
+##########################################
+# timsTOF: .d -> .tdfs conversion and search
+##########################################
+# The truncated E. coli diaPASEF fixture from the Zenodo artifact (temp/zenodo/ecoli_tims_fixture.d, made by
+# test/fixtures/tools/make_d_fixture.jl): 90 s, one isolation window per MS2 frame (537.5 / 562.5 m/z). Searched
+# against the committed E. coli test library, which carries alphapept_ccs 1/K0, it reaches ~750 precursors at 1% FDR,
+# so every stage runs on .tdfs data: TdfsMassSpecData decoding, the IM candidate gate, IM calibration and features,
+# the 2D chromatogram. Without these targets the first timsTOF search in a built app compiles all of that at startup.
+const TDFS_FIXTURE_D = joinpath(root, "..", "..", "temp", "zenodo", "ecoli_tims_fixture.d")
+const TDFS_FIXTURE_OUT = joinpath(data_dir, "precompile", "ecoli_tims_tdfs")
+convert_tdfs_fixture() = (rm(TDFS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertBruker(TDFS_FIXTURE_D; output_dir = TDFS_FIXTURE_OUT))
+maybe_run("convertBruker") do
+    convert_tdfs_fixture()
+end
+maybe_run("SearchDIA_tdfs") do
+    isdir(TDFS_FIXTURE_OUT) || convert_tdfs_fixture()    # so the target also works alone via the `cmd` filter
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_tdfs.json"))
+end
+
+
+##########################################
+# SCIEX: .wiff -> .scxs conversion and search
+##########################################
+# The truncated SCIEX SWATH fixture from the Zenodo artifact (temp/zenodo/sciex_wiff_fixture, made by
+# test/fixtures/tools/make_wiff_fixture.jl): a three-proteome ZenoTOF run cut to 30-50 min and to the windows inside
+# the committed E. coli test library's precursor range, which it searches to ~340 precursors at 1% FDR, so every
+# stage runs on ScxsMassSpecData. Converting first also compiles convertSciex and the SciexWiff reader.
+const SCXS_FIXTURE_WIFF = joinpath(root, "..", "..", "temp", "zenodo", "sciex_wiff_fixture", "BenchSample_B_nswath4_25ng.wiff")
+const SCXS_FIXTURE_OUT = joinpath(data_dir, "precompile", "sciex_scxs")
+convert_scxs_fixture() = (rm(SCXS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertSciex(SCXS_FIXTURE_WIFF; output_dir = SCXS_FIXTURE_OUT, zt_scan = false))
+maybe_run("convertSciex") do
+    convert_scxs_fixture()
+end
+maybe_run("SearchDIA_scxs") do
+    isdir(SCXS_FIXTURE_OUT) || convert_scxs_fixture()    # so the target also works alone via the `cmd` filter
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_scxs.json"))
 end
 
 
