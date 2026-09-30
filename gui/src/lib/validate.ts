@@ -56,7 +56,7 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     max: null,
     step: 0.5,
     int: false,
-    info: 'The approximate width of the isolation windows your DIA method acquires: about 2-4 for narrow-window Orbitrap Astral or SCIEX methods, about 15 for Exploris, 25 for timsTOF diaPASEF. Pioneer sizes the fragment index from it (partitions of this width, clamped to 2.5-10 Da), which only changes search speed. Leave 5 if unsure: it is within a few percent of the fastest on every instrument tested.',
+    info: 'The approximate width of the isolation windows your DIA method acquires: about 2-4 for narrow-window Orbitrap Astral or SCIEX methods, about 15 for Exploris, 25 for timsTOF diaPASEF. Pioneer sizes the fragment index from it (partitions of 2.5, 5 or 10 Da, whichever is nearest), which only changes search speed. Leave 5 if unsure: it is within a few percent of the fastest on every instrument tested.',
   },
   fragMzMin: { label: 'Fragment m/z min', min: 0, max: null, step: 10, int: false },
   fragMzMax: { label: 'Fragment m/z max', min: 0, max: null, step: 10, int: false },

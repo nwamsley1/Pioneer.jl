@@ -58,7 +58,7 @@
 
     "comment_library": "=== Library m/z bounds ===",
     "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
-    "comment_library_index": "=== isolation_window_width: approximate isolation window width (m/z) of the acquisition method, e.g. ~2-4 for narrow-window Orbitrap Astral / SCIEX, ~15 for Exploris, 25 for timsTOF diaPASEF; the fragment index's precursor partition width is this clamped to 2.5-10 Da (default 5). prec_partition_width (optional) sets the partition width directly instead. frag_index_local_id_type: 'auto' (UInt32 local IDs only when a partition would exceed 65,535 precursors), 'UInt16' or 'UInt32'. im_model: Koina ion-mobility model ('alphapept_ccs' or 'im2deep') adding ccs / inv_ion_mobility precursor columns; empty skips it ===",
+    "comment_library_index": "=== isolation_window_width: approximate isolation window width (m/z) of the acquisition method, e.g. ~2-4 for narrow-window Orbitrap Astral / SCIEX, ~15 for Exploris, 25 for timsTOF diaPASEF; the fragment index's precursor partition width is this snapped to the nearest of 2.5, 5 and 10 Da (default 5). prec_partition_width (optional) sets the partition width directly instead. frag_index_local_id_type: 'auto' (UInt32 local IDs only when a partition would exceed 65,535 precursors), 'UInt16' or 'UInt32'. im_model: Koina ion-mobility model ('alphapept_ccs' or 'im2deep') adding ccs / inv_ion_mobility precursor columns; empty skips it ===",
     "library_params": {
         "auto_detect_frag_bounds": true,
         "frag_mz_min": 150.0,

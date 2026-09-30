@@ -196,7 +196,7 @@ function check_params_bsp(json_string::String)
     # written before this key existed expects.
     parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
     # Optional. Approximate acquisition isolation window width (m/z); the fragment
-    # index's precursor partition width is this clamped to [2.5, 10] Da (default 5;
+    # index's precursor partition width is this snapped to 2.5, 5 or 10 Da (default 5;
     # prec_partition_width in build_poin_lib.jl).
     if haskey(library_params, "isolation_window_width")
         check_param(library_params, "isolation_window_width", Real)

@@ -229,7 +229,7 @@ export interface BuildParams {
    *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
   timsTOF: boolean
   /** Approximate isolation window width (m/z) of the acquisition method, emitted as
-   *  `library_params.isolation_window_width`. Pioneer clamps it to 2.5-10 Da for the fragment
+   *  `library_params.isolation_window_width`. Pioneer snaps it to 2.5, 5 or 10 Da for the fragment
    *  index's precursor partition width. Turning timsTOF on sets 25 (diaPASEF windows). */
   isolationWindowWidth: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z

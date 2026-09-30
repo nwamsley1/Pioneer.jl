@@ -76,7 +76,7 @@ end
     @test p["library_params"]["prec_partition_width"] == 10.0
 
     # Defaults: empty im_model (skip); the template's isolation_window_width of 5 gives 5 Da partitions, and so does a
-    # config without the key; the width is the isolation window clamped to [2.5, 10] Da, for timsTOF libraries too;
+    # config without the key; the width is the isolation window snapped to 2.5, 5 or 10 Da, for timsTOF libraries too;
     # an explicit prec_partition_width always wins. Local ID type defaults to "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
     @test p0["library_params"]["im_model"] == ""
@@ -84,7 +84,8 @@ end
     @test !haskey(p0["library_params"], "prec_partition_width")
     @test Pioneer.prec_partition_width(p0["library_params"]) == 5.0f0
     @test Pioneer.prec_partition_width(Dict{String, Any}()) == 5.0f0
-    for (w, expect) in ((25.0, 10.0f0), (14.7, 10.0f0), (10.0, 10.0f0), (4.4, 4.4f0), (2.9, 2.9f0), (2.0, 2.5f0), (1, 2.5f0))
+    for (w, expect) in ((25.0, 10.0f0), (14.7, 10.0f0), (7.5, 10.0f0), (7.4, 5.0f0), (4.4, 5.0f0), (3.75, 5.0f0),
+                        (3.7, 2.5f0), (2.9, 2.5f0), (2.0, 2.5f0), (1, 2.5f0))
         c = deepcopy(base); c["library_params"]["isolation_window_width"] = w
         @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(c))["library_params"]) == expect
     end

@@ -38,15 +38,30 @@ This sweep measures that trade-off on five datasets. Companion to [UINT32_LOCAL_
   counts on repeat, so differences are the candidate order changing the downstream result, not noise.
 - **Exception, low-load data:** on SCP 250 pg the IDs swing 5% at 1% FDR and 44% at 0.1% FDR (3,846-5,535) across
   widths with no trend: small index changes move the scoring result a lot there (see the tuning-fragility item).
-- **Recommendation: keep the defaults** (5 Da; 10 Da for timsTOF), within about 1% of the fastest width everywhere tested.
-  2.5 Da is never worse on narrow-window data but the gain is too small for a new default.
+- **Outcome:** the width comes from the acquisition's isolation window, snapped to 2.5, 5 or 10 Da (next section).
+  The previous defaults (5 Da; 10 Da for timsTOF) were already within about 1-4% of the fastest width everywhere, so
+  the gain is mostly avoiding the bad cases.
 
 ## Adopted rule
 
 BuildSpecLib takes the approximate acquisition isolation window width, `library_params.isolation_window_width` (m/z,
-GUI field "Isolation window width"), and uses `prec_partition_width = clamp(isolation_window_width, 2.5, 10)` Da.
-Unset, it is 5 (5 Da partitions), which avoids the worst case at either end (within 4% of the fastest width on every
-dataset above). An explicit `prec_partition_width` still overrides. The GUI prefills 25 for a timsTOF library.
+GUI field "Isolation window width"), and snaps it to the nearest of 2.5, 5 and 10 Da for `prec_partition_width`:
+below 3.75 gives 2.5, below 7.5 gives 5, otherwise 10. Unset, it is 5 (5 Da partitions), which avoids the worst case
+at either end. An explicit `prec_partition_width` still overrides. The GUI prefills 25 for a timsTOF library.
+
+Snapping, not clamping (`clamp(window, 2.5, 10)`, tried first): at the window's exact width the two narrow-window
+datasets were no faster (rule-check tables below). On the three-species SCIEX library 2.9 Da pushes 8 of 233
+partitions past 65,535 precursors, so "auto" picks UInt32 local IDs; the fragment index is then 28% slower than at
+2.5 Da (UInt16) without the fewer-partitions gain of 5 Da, and the search +4.1% vs 5 Da. What matters is the window's
+size class. Snapping picks the measured-fastest width on every dataset:
+
+| data | window | snapped width | measured fastest |
+|---|---|---|---|
+| Olsen Astral | 2 Th | 2.5 Da | 2.5 ≈ 5 Da |
+| SCIEX ZT | 2.9 Da | 2.5 Da | 2.5 ≈ 5 Da |
+| SCP 250 pg | 4.4 Th | 5 Da | flat |
+| Olsen Exploris | 14.7 Th | 10 Da | 10 Da (flat) |
+| Bruker diaPASEF | 25 Da | 10 Da | 10 Da |
 
 ## Results
 
@@ -107,4 +122,20 @@ dataset above). An explicit `prec_partition_width` still overrides. The GUI pref
 | 5 | UInt32 | 135 | 66.3 (68.8 / 63.9) | +2.2% | 12.1 | 0.3 | 11,030 | 3,846 | 3,734 | 2,581 |
 | 10 | UInt32 | 68 | 65.3 (65.1 / 65.5) | +0.6% | 13.3 | 0.5 | 11,234 | 5,038 | 4,112 | 3,010 |
 | 25 | UInt32 | 27 | 70.8 (72.6 / 68.9) | +9.0% | 14.0 | 1.1 | 11,588 | 4,393 | 4,113 | 3,087 |
+
+### Rule check: SCIEX at its window width, 2.9 Da, vs 2.5 and 5 Da (one session)
+
+| width (Da) | local IDs | partitions | total s (pass 1 / 2) | vs fastest | Main Search s | fragment index s | precursors 1% | precursors 0.1% | protein groups 1% | protein groups 0.1% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2.5 | UInt16 | 270 | 304.5 (308.4 / 300.6) | +1.3% | 156.6 | 18.1 | 298,830 | 218,756 | 27,268 | 25,636 |
+| 2.9 | UInt32 | 233 | 313.0 (314.0 / 312.0) | +4.1% | 163.0 | 23.1 | 299,886 | 218,203 | 27,158 | 25,205 |
+| 5 | UInt32 | 135 | 300.6 (300.8 / 300.4) | +0.0% | 157.8 | 20.6 | 298,458 | 221,328 | 27,207 | 25,329 |
+
+### Rule check: SCP at its window width, 4.4 Da, vs 2.5 and 5 Da (one session)
+
+| width (Da) | local IDs | partitions | total s (pass 1 / 2) | vs fastest | Main Search s | fragment index s | precursors 1% | precursors 0.1% | protein groups 1% | protein groups 0.1% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2.5 | UInt16 | 270 | 70.6 (80.1 / 61.1) | +18.1% | 13.6 | 0.3 | 11,318 | 5,535 | 4,032 | 2,575 |
+| 4.4 | UInt32 | 154 | 62.8 (65.1 / 60.5) | +5.0% | 12.7 | 0.3 | 11,415 | 3,312 | 4,144 | 2,599 |
+| 5 | UInt32 | 135 | 59.8 (59.7 / 59.9) | +0.0% | 11.5 | 0.3 | 11,030 | 3,846 | 3,734 | 2,581 |
 

@@ -1094,8 +1094,9 @@ export function BuildSpecLibForm({
             {(() => {
               const w = Number(params.isolationWindowWidth)
               if (!Number.isFinite(w) || w <= 0) return 'Fragment-index partitions: enter a width.'
-              const p = Math.min(Math.max(w, 2.5), 10)
-              return `Fragment-index partitions of ${parseFloat(p.toFixed(2))} Da${p !== w ? ' (clamped to 2.5-10 Da)' : ''}.`
+              // Mirrors prec_partition_width in Pioneer (build_poin_lib.jl): nearest of 2.5, 5 and 10 Da.
+              const p = w < 3.75 ? 2.5 : w < 7.5 ? 5 : 10
+              return `Fragment-index partitions of ${p} Da.`
             })()}
           </div>
         </div>
