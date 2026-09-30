@@ -23,7 +23,7 @@ if not defined PIONEER_VERSION set "PIONEER_VERSION=unknown"
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml convert-bruker
+set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex
 rem empirical params-empirical 
 
 :parse_args
@@ -137,6 +137,8 @@ echo   convert-mzml ^<data_path^> [options]
 echo                                                 Convert mzML files
 echo   convert-bruker ^<d_path^> [--output-dir ^<dir^>]
 echo                                                 Convert Bruker timsTOF .d folders to .tdfs
+echo   convert-sciex ^<wiff_path^> [--output-dir ^<dir^>]
+echo                                                 Convert SCIEX .wiff/.wiff.scan runs to .scxs
 echo.
 echo Examples:
 echo   pioneer params-predict yeast.poin fasta/ --params-path predict_params.json
@@ -193,6 +195,7 @@ if /I "%SUBCOMMAND%"=="params-search" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 if /I "%SUBCOMMAND%"=="convert-bruker" set SUBCOMMAND=convertBruker
+if /I "%SUBCOMMAND%"=="convert-sciex" set SUBCOMMAND=convertSciex
 if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
 

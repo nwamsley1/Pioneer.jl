@@ -143,11 +143,14 @@ function _mass_tol_columns(models::Dict{Int64, AbstractMassErrorModel}, i::Int)
     return (getLeftTol(m), getRightTol(m), _mass_tol_unit(m))
 end
 
-# Scan-level metadata straight from the raw file (memory-mapped Arrow, or the .tdfs slice table).
+# Scan-level metadata straight from the raw file (memory-mapped Arrow, or the .tdfs / .scxs scan table).
 function _raw_file_columns(path::String)
     if is_tdfs_path(path)
         sl = TimsSlices.open_tdfs(path).slices
         orders = sl.ms_order; rts = sl.retention_time
+    elseif is_scxs_path(path)
+        tbl = Arrow.Table(joinpath(path, "scans.arrow"))
+        orders = tbl[:ms_order]; rts = tbl[:retention_time]
     else
         tbl = Arrow.Table(path)
         orders = tbl[:msOrder]
