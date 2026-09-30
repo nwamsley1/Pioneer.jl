@@ -466,8 +466,13 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
-  // convertBruker and convertSciex take the input and the output folder and nothing else.
-  if (s.format === 'bruker' || s.format === 'sciex') return args
+  // convertBruker takes the input and the output folder and nothing else; convertSciex also
+  // takes the ZT Scan DIA answer, which it would otherwise ask for on a terminal it does not have.
+  if (s.format === 'sciex') {
+    if (s.ztScan) args.push(s.ztScan === 'yes' ? '--zt' : '--no-zt')
+    return args
+  }
+  if (s.format === 'bruker') return args
   if (s.skipExisting) args.push('--skip-existing')
 
   if (s.format === 'mzml') {

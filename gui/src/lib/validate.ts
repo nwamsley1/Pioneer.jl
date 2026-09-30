@@ -748,6 +748,10 @@ export function validateConvertRun(
   }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
   if (outputNote.level === 'error') return { key: 'convertOutput', msg: outputNote.msg }
+  // The .wiff does not record the scan mode, so SCIEX conversion always asks.
+  if (p.inputMode === 'folder' && p.format === 'sciex' && !p.ztScan) {
+    return { key: 'convertZtScan', msg: 'Say whether these SCIEX runs are ZT Scan DIA.' }
+  }
   // Only the fields the converters that will actually run read. A list can hold
   // both formats, so it is checked against both; a stale batch size left over
   // from a RAW run must not block an mzML-only conversion that ignores it.

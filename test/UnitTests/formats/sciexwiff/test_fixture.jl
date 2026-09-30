@@ -41,6 +41,9 @@ using SHA
     @test isapprox(sint, 5.356238101387197e8; rtol = identical ? 1e-9 : 1e-4)
 
     # convertSciex (the pioneer convert-sciex entry point) on the fixture
-    paths = convertSciex(FIXTURE_WIFF; output_dir = joinpath(out, "cs"))
+    paths = redirect_stdout(devnull) do
+        convertSciex(FIXTURE_WIFF; output_dir = joinpath(out, "cs"), zt_scan = false)
+    end
     @test length(paths) == 1 && length(Pioneer.loadMassSpecData(only(paths))) == 8_916
+    @test basename(only(paths)) == "BenchSample_B_nswath4_25ng.scxs"
 end

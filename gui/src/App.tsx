@@ -404,7 +404,8 @@ export default function App() {
         const saved = JSON.parse(raw)
         if (saved.search) setSearch((p) => ({ ...p, ...saved.search }))
         if (saved.build) setBuild((p) => ({ ...p, ...saved.build }))
-        if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert }))
+        // Not the ZT Scan DIA answer: SCIEX conversion asks it afresh for every batch.
+        if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert, ztScan: '' }))
         if (saved.command) setCommand(saved.command)
         if (typeof saved.threads === 'number') setThreads(saved.threads)
         if (typeof saved.jobName === 'string') setJobName(saved.jobName)
@@ -696,7 +697,7 @@ export default function App() {
           // whole point of the list is that a batch arrives at once. The mode
           // follows what was dropped, so neither has to be chosen first.
           if (isDir) {
-            setConvert((c) => ({ ...c, input: path, inputMode: 'folder' }))
+            setConvert((c) => ({ ...c, input: path, inputMode: 'folder', ztScan: c.input === path ? c.ztScan : '' }))
           } else {
             setConvert((c) => {
               const have = new Set(c.inputFiles)
@@ -1033,6 +1034,8 @@ export default function App() {
         // files -- switch the format" possible, and that message is more use
         // than an empty box.
         if (key === 'inputMode' && value !== p.inputMode) next.input = ''
+        // A different SCIEX batch is asked again whether it is ZT Scan DIA.
+        if (key === 'input' && value !== p.input) next.ztScan = ''
         return next
       })
     else if (key === 'predictionModel') switchModel(value)

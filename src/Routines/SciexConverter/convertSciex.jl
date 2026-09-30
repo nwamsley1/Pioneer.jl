@@ -21,15 +21,20 @@
 const CONVERT_SCIEX_APP_NAME = "convertSciex"
 
 """
-    convertSciex(path; output_dir = "") -> Vector{String}
+    convertSciex(path; output_dir = "", zt_scan = nothing) -> Vector{String}
 
-Convert SCIEX `.wiff` + `.wiff.scan` SWATH runs to `.scxs` runs for SearchDIA. `path` is one `.wiff` file or a
-folder containing them; each `X.wiff` needs its `X.wiff.scan` (or `X.scan`) beside it. Each run becomes
+Convert SCIEX `.wiff` + `.wiff.scan` runs to `.scxs` runs for SearchDIA. `path` is one `.wiff` file or a folder
+containing them; each `X.wiff` needs its `X.wiff.scan` (or `X.scan`) beside it. Each run becomes
 `<output_dir>/<name>.scxs`; `output_dir` defaults to `scxs_out` next to the input. `.wiff2`-only runs are not
 supported (the `.wiff2` format is encrypted); convert those with msConvert and `convertMzML`. Uses SciexWiff's
 default centroiding. Returns the `.scxs` paths.
+
+`zt_scan`: whether the batch is ZT Scan DIA. The `.wiff` does not record the scan mode, so it is always asked:
+`nothing` prompts on an interactive terminal (default No) and is an error otherwise. ZT runs are written as
+`<name>.zt.scxs` with `acquisition_type = zt_scan_dia` in their metadata.
 """
-function convertSciex(path::AbstractString; output_dir::AbstractString = "")
+function convertSciex(path::AbstractString; output_dir::AbstractString = "",
+                      zt_scan::Union{Nothing, Bool} = nothing)
     src = rstrip(expanduser(String(path)), ['/', '\\'])
     is_wiff(p) = isfile(p) && endswith(lowercase(p), ".wiff")
     runs = if is_wiff(src)
@@ -40,13 +45,15 @@ function convertSciex(path::AbstractString; output_dir::AbstractString = "")
         throw(ArgumentError("$path is not a SCIEX .wiff file or a folder containing them"))
     end
     isempty(runs) && throw(ArgumentError("No SCIEX .wiff files in $path"))
+    zt = zt_scan === nothing ? ask_zt_scan() : zt_scan
     out = isempty(output_dir) ? joinpath(is_wiff(src) ? dirname(src) : src, "scxs_out") : expanduser(String(output_dir))
     mkpath(out)
 
     println("$(CONVERT_SCIEX_APP_NAME) $(get_pioneer_version())")
     println("Input : $(length(runs)) .wiff file$(length(runs) == 1 ? "" : "s") from $src")
     println("Output: $out  (threads: $(Threads.nthreads()))")
-    params = SciexWiff.ConvertParams(format = :scxs)
+    println("Mode  : ", zt ? "ZT Scan DIA (runs written as <name>.zt.scxs)" : "SWATH / stepped DIA")
+    params = SciexWiff.ConvertParams(format = :scxs, zt_scan = zt)
     written = String[]
     for (i, w) in enumerate(runs)
         name = splitext(basename(w))[1]
@@ -56,6 +63,25 @@ function convertSciex(path::AbstractString; output_dir::AbstractString = "")
         println("[$i/$(length(runs))] $name done in $(round(t; digits = 1)) s")
     end
     return written
+end
+
+"""
+    ask_zt_scan(; input = stdin, output = stdout, interactive = input isa Base.TTY) -> Bool
+
+Ask whether the batch being converted is ZT Scan DIA (default No). The `.wiff` does not record the scan mode,
+so SCIEX conversion always asks; without an interactive terminal pass `--zt` / `--no-zt` (CLI) or `zt_scan`.
+"""
+function ask_zt_scan(; input::IO = stdin, output::IO = stdout, interactive::Bool = input isa Base.TTY)
+    interactive || throw(ArgumentError(
+        "Is this batch ZT Scan DIA data? No terminal to ask: pass --zt or --no-zt " *
+        "(or zt_scan = true / false to convertSciex)"))
+    while true
+        print(output, "Is this batch ZT Scan DIA data? [y/N] "); flush(output)
+        a = lowercase(strip(readline(input)))
+        a in ("", "n", "no") && return false
+        a in ("y", "yes") && return true
+        println(output, "Please answer y or n.")
+    end
 end
 
 function show_convert_sciex_help(io::IO = stdout)
@@ -68,6 +94,9 @@ function show_convert_sciex_help(io::IO = stdout)
     println(io)
     println(io, "Options:")
     println(io, "  -o, --output-dir <path>   Output directory for .scxs runs (default: <input_dir>/scxs_out)")
+    println(io, "      --zt                  The runs are ZT Scan DIA (written as <name>.zt.scxs)")
+    println(io, "      --no-zt               The runs are not ZT Scan DIA (SWATH / stepped DIA)")
+    println(io, "                            Without either, you are asked (default No); required when not on a terminal")
     println(io, "      --version             Show version information")
     println(io, "  -h, --help                Show help information")
 end
@@ -84,7 +113,7 @@ function main_convertSciex(argv = ARGS)::Cint
             println("$(CONVERT_SCIEX_APP_NAME) $(get_pioneer_version())")
             return 0
         end
-        path = ""; output_dir = ""
+        path = ""; output_dir = ""; zt_scan = nothing
         i = 1
         while i <= length(args)
             a = args[i]
@@ -92,6 +121,10 @@ function main_convertSciex(argv = ARGS)::Cint
                 i += 1
                 i > length(args) && throw(ArgumentError("Missing value for $a"))
                 output_dir = args[i]
+            elseif a == "--zt" || a == "--no-zt"
+                zt_scan === nothing || zt_scan == (a == "--zt") ||
+                    throw(ArgumentError("--zt and --no-zt cannot both be given"))
+                zt_scan = a == "--zt"
             elseif startswith(a, "-")
                 throw(ArgumentError("Unknown option: $a"))
             elseif isempty(path)
@@ -101,7 +134,7 @@ function main_convertSciex(argv = ARGS)::Cint
             end
             i += 1
         end
-        convertSciex(path; output_dir = output_dir)
+        convertSciex(path; output_dir = output_dir, zt_scan = zt_scan)
     catch e
         println(sprint(showerror, e))
         e isa ArgumentError && show_convert_sciex_help()

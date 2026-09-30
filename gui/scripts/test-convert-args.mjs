@@ -39,11 +39,15 @@ try {
     '/data/input.raw', '--output-dir', '/ssd/output', '--skip-existing',
     '--concurrent-files', '8', '--skip-header',
   ])
-  // convertBruker / convertSciex take the input and the output folder only
+  // convertBruker takes the input and the output folder only (convertSciex too, until the ZT question is answered)
   for (const [format, exe] of [['bruker', 'convertBruker'], ['sciex', 'convertSciex']]) {
     assert.deepEqual(buildConvertArgs({ ...raw, format }), ['/data/input.raw', '--output-dir', '/ssd/output'])
     assert(convertCommandLine({ ...raw, format }).startsWith(exe + ' '))
   }
+  // convertSciex also takes the ZT Scan DIA answer, which the GUI always asks for
+  assert.deepEqual(buildConvertArgs({ ...raw, format: 'sciex', ztScan: 'no' }), ['/data/input.raw', '--output-dir', '/ssd/output', '--no-zt'])
+  assert.deepEqual(buildConvertArgs({ ...raw, format: 'sciex', ztScan: 'yes' }), ['/data/input.raw', '--output-dir', '/ssd/output', '--zt'])
+  assert.equal(CONVERT_DEFAULTS.ztScan, '', 'the ZT question starts unanswered')
   const { defaultConvertOutput } = require('./config.js')
   assert.equal(defaultConvertOutput({ ...raw, format: 'sciex', input: '/data/run.wiff' }), '/data/scxs_out')
   assert.equal(defaultConvertOutput({ ...raw, format: 'sciex', input: '/data/sciex/' }), '/data/sciex/scxs_out')

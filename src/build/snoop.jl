@@ -285,7 +285,7 @@ end
 const SCXS_FIXTURE_WIFF = joinpath(root, "..", "..", "temp", "zenodo", "sciex_wiff_fixture", "BenchSample_B_nswath4_25ng.wiff")
 const SCXS_FIXTURE_OUT = joinpath(data_dir, "precompile", "sciex_scxs")
 convert_scxs_fixture() = (rm(SCXS_FIXTURE_OUT; force = true, recursive = true);
-                          Pioneer.convertSciex(SCXS_FIXTURE_WIFF; output_dir = SCXS_FIXTURE_OUT))
+                          Pioneer.convertSciex(SCXS_FIXTURE_WIFF; output_dir = SCXS_FIXTURE_OUT, zt_scan = false))
 maybe_run("convertSciex") do
     convert_scxs_fixture()
 end

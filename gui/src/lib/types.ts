@@ -350,6 +350,10 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. Both
    *  converters use the same default, so this note holds either way. */
   outputDir: string
+  /** SCIEX only: whether the runs are ZT Scan DIA. The .wiff does not record the
+   *  scan mode, so it is always asked: '' is unanswered and blocks conversion;
+   *  'yes' writes <name>.zt.scxs marked zt_scan_dia, 'no' plain .scxs. */
+  ztScan: '' | 'yes' | 'no'
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
    *
@@ -379,6 +383,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   inputFiles: [],
   outputDir: '',
+  ztScan: '',
   skipExisting: false,
   threadsPerFile: '3',
   batchSize: '1000',

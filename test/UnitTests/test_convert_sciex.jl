@@ -4,7 +4,7 @@
 
 using Test
 using Pioneer
-using Pioneer: convertSciex, main_convertSciex
+using Pioneer: convertSciex, main_convertSciex, ask_zt_scan
 
 @testset "convertSciex input handling" begin
     root = mktempdir()
@@ -28,12 +28,21 @@ using Pioneer: convertSciex, main_convertSciex
     @test redirect_stdout(devnull) do
         main_convertSciex(["--help"])
     end == 0
+    @test redirect_stdout(devnull) do
+        main_convertSciex(["--zt", "--no-zt", empty])
+    end == 1
+
+    # ZT Scan DIA is always asked: y / n / Enter (No); an error with no terminal to ask on
+    ask(s) = ask_zt_scan(; input = IOBuffer(s), output = devnull, interactive = true)
+    @test ask("\n") == false && ask("n\n") == false && ask("y\n") == true && ask("YES\n") == true
+    @test ask("maybe\ny\n") == true
+    @test_throws ArgumentError ask_zt_scan(; input = IOBuffer("y\n"), output = devnull, interactive = false)
 
     wiff = get(ENV, "PIONEER_TEST_WIFF", "")
     if !isempty(wiff)
         out = mktempdir()
         paths = redirect_stdout(devnull) do
-            convertSciex(wiff; output_dir = out)
+            convertSciex(wiff; output_dir = out, zt_scan = false)
         end
         @test length(paths) == 1 && Pioneer.is_scxs_path(only(paths))
         d = Pioneer.loadMassSpecData(only(paths))

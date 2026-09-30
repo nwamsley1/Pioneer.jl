@@ -394,6 +394,27 @@ export function ConvertRawForm({
             </div>
           )}
         </div>
+        {isSciex && (
+          <div data-key="convertZtScan" style={{ marginTop: 14 }}>
+            {/* The .wiff does not record the scan mode, so this is always asked and has no preset answer. */}
+            <label style={LABEL}>Are these runs ZT Scan DIA?</label>
+            <div style={SEG_TRACK}>
+              <button type="button" onClick={() => onParam('ztScan', 'no')} style={seg(params.ztScan === 'no')}>
+                No — SWATH / stepped DIA (usual)
+              </button>
+              <button type="button" onClick={() => onParam('ztScan', 'yes')} style={seg(params.ztScan === 'yes')}>
+                Yes — ZT Scan DIA
+              </button>
+            </div>
+            <div style={noteStyle({ level: params.ztScan ? '' : 'warn', msg: '' })}>
+              {params.ztScan === 'yes'
+                ? 'Runs are written as <name>.zt.scxs and searched in ZT mode.'
+                : params.ztScan === 'no'
+                  ? 'Runs are written as <name>.scxs.'
+                  : 'Choose one: the .wiff file does not say which it is.'}
+            </div>
+          </div>
+        )}
         {inputNote.msg && (
           <div style={noteStyle(inputNote)}>
             {inputNote.level ? '\u26a0  ' : ''}
