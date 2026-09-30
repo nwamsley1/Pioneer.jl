@@ -711,6 +711,8 @@ Random.seed!(1776);
 # Vendored formats (folded in from TimsSlices.jl, source commit b3e6d12): timsTOF .d -> .tdfs conversion and the
 # .tdfs container, as the submodule Pioneer.TimsSlices. Loaded before the structs that read .tdfs.
 include(joinpath("vendor", "TimsSlices", "TimsSlices.jl"))
+# SCIEX .wiff/.wiff.scan reader and .wiff -> .scxs conversion (folded in from SciexWiff.jl, source commit e4d9097).
+include(joinpath("vendor", "SciexWiff", "SciexWiff.jl"))
 
 include("importScripts.jl")
 files_loaded = importScripts()
@@ -830,7 +832,7 @@ function __init__()
     get!(ENV, "GKS_WSTYPE", "100")
 end
 
-export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker,
+export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker, convertSciex,
        get_pioneer_version, setup_windows_lightgbm,
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

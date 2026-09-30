@@ -271,11 +271,12 @@ export async function pickFolders(title: string): Promise<string[]> {
   return picked
 }
 
-/** The run a picked file stands for. A timsTOF `.tdfs` run is a folder, which a file dialog cannot select, so
- *  choosing any file inside one (its `slices.arrow`, say) means the run itself. Anything else is returned as is. */
+/** The run a picked file stands for. A timsTOF `.tdfs` or SCIEX `.scxs` run is a folder, which a file dialog cannot
+ *  select, so choosing any file inside one (its `slices.arrow` / `scans.arrow`, say) means the run itself. Anything
+ *  else is returned as is. */
 export function asRunPath(file: string): string {
   const parent = file.trim().replace(/[\\/][^\\/]*$/, '')
-  return /\.tdfs$/i.test(parent) ? parent : file
+  return /\.(tdfs|scxs)$/i.test(parent) ? parent : file
 }
 
 /** Where to write a new library.

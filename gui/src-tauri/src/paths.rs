@@ -28,6 +28,11 @@ pub struct PathInfo {
     /// `.d` bundles (need converting first; not counted).
     pub tdfs_count: usize,
     pub d_count: usize,
+    /// SCIEX data: converted `.scxs` runs (directories; searchable, also
+    /// counted in `ms_file_count`) and raw `.wiff` files (need converting
+    /// first; not counted).
+    pub scxs_count: usize,
+    pub wiff_count: usize,
     /// True when this directory holds a config.json we could load.
     pub has_config_json: bool,
     /// True when this directory looks like an unpacked `.pion` spectral
@@ -113,12 +118,17 @@ pub fn inspect(path: &str) -> PathInfo {
     info.is_file = meta.is_file();
     info.extension = extension_of(&p);
 
-    // A `.tdfs` run or `.d` bundle is itself one MS data item, even though it is
-    // a directory; its contents are not MS files of their own.
+    // A `.tdfs` / `.scxs` run or `.d` bundle is itself one MS data item, even
+    // though it is a directory; its contents are not MS files of their own.
     if info.is_dir {
-        match bruker_dir_kind(&p) {
+        match run_dir_kind(&p) {
             "tdfs" => {
                 info.tdfs_count = 1;
+                info.ms_file_count = 1;
+                return info;
+            }
+            "scxs" => {
+                info.scxs_count = 1;
                 info.ms_file_count = 1;
                 return info;
             }
@@ -140,6 +150,8 @@ pub fn inspect(path: &str) -> PathInfo {
                 "arrow" => info.arrow_count = 1,
                 _ => {}
             }
+        } else if is_wiff_name(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()) {
+            info.wiff_count = 1;
         }
         return info;
     }
@@ -175,12 +187,17 @@ pub fn inspect(path: &str) -> PathInfo {
                             info.arrow_count += 1;
                             info.ms_file_count += 1;
                         }
-                        _ => match bruker_dir_kind(&entry.path()) {
+                        _ => match run_dir_kind(&entry.path()) {
                             "tdfs" => {
                                 info.tdfs_count += 1;
                                 info.ms_file_count += 1;
                             }
+                            "scxs" => {
+                                info.scxs_count += 1;
+                                info.ms_file_count += 1;
+                            }
                             "d" => info.d_count += 1,
+                            _ if is_wiff_name(name.as_ref()) && entry.path().is_file() => info.wiff_count += 1,
                             _ => {}
                         },
                     }
@@ -194,9 +211,16 @@ pub fn inspect(path: &str) -> PathInfo {
     info
 }
 
-/// "tdfs" for a timsTOF `.tdfs` run directory, "d" for a Bruker `.d` bundle,
-/// "" for anything else. Both are directories, so a name alone is not enough.
-fn bruker_dir_kind(p: &Path) -> &'static str {
+/// True for a SCIEX `.wiff` file name (not `.wiff2`, which is encrypted and
+/// unsupported, and not `.wiff.scan`, which is the `.wiff`'s data file).
+fn is_wiff_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".wiff")
+}
+
+/// "tdfs" for a timsTOF `.tdfs` run directory, "scxs" for a SCIEX `.scxs` run
+/// directory, "d" for a Bruker `.d` bundle, "" for anything else. All are
+/// directories, so a name alone is not enough.
+fn run_dir_kind(p: &Path) -> &'static str {
     if !p.is_dir() {
         return "";
     }
@@ -206,6 +230,8 @@ fn bruker_dir_kind(p: &Path) -> &'static str {
         .unwrap_or_default();
     if lower.ends_with(".tdfs") {
         "tdfs"
+    } else if lower.ends_with(".scxs") {
+        "scxs"
     } else if lower.ends_with(".d") {
         "d"
     } else {
@@ -213,11 +239,11 @@ fn bruker_dir_kind(p: &Path) -> &'static str {
     }
 }
 
-/// The `.arrow` files and `.tdfs` run directories directly inside a folder, as
-/// full paths in name order.
+/// The `.arrow` files and `.tdfs` / `.scxs` run directories directly inside a
+/// folder, as full paths in name order.
 ///
 /// What a per-file search of a folder fans out over: SearchDIA reads exactly
-/// the `.arrow` files and `.tdfs` directories at the top level of its ms_data
+/// the `.arrow` files and `.tdfs` / `.scxs` directories at the top level of its ms_data
 /// directory, so this is the same set a folder-mode run would search as one
 /// experiment.
 pub fn list_arrow_files(dir: &str) -> Result<Vec<String>, String> {
@@ -231,7 +257,7 @@ pub fn list_arrow_files(dir: &str) -> Result<Vec<String>, String> {
         .filter(|entry| {
             let path = entry.path();
             (path.is_file() && ms_extension_of(&entry.file_name().to_string_lossy()) == "arrow")
-                || bruker_dir_kind(&path) == "tdfs"
+                || matches!(run_dir_kind(&path), "tdfs" | "scxs")
         })
         .map(|entry| entry.path().to_string_lossy().into_owned())
         .collect();
@@ -289,9 +315,9 @@ pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<Strin
     let mut seen: Vec<String> = Vec::with_capacity(files.len());
     for file in files {
         let src = PathBuf::from(file);
-        // A `.tdfs` run is a directory; SearchDIA reads it through a link.
-        let tdfs_dir = bruker_dir_kind(&src) == "tdfs";
-        if !src.is_file() && !tdfs_dir {
+        // A `.tdfs` / `.scxs` run is a directory; SearchDIA reads it through a link.
+        let run_dir = matches!(run_dir_kind(&src), "tdfs" | "scxs");
+        if !src.is_file() && !run_dir {
             return Err(format!("{file} is not a file"));
         }
         let name = src
@@ -313,7 +339,7 @@ pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<Strin
         if dst.symlink_metadata().is_ok() {
             let _ = std::fs::remove_file(&dst);
         }
-        if tdfs_dir {
+        if run_dir {
             symlink_dir(&src, &dst)?;
             seen.push(name);
             continue;
@@ -456,6 +482,67 @@ mod bruker_tests {
         // A plain directory that is not a run is still refused.
         let other = d.join("raw.d").to_string_lossy().into_owned();
         assert!(stage_files(&format!("{id}-d"), "ms_data", &[other]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod sciex_tests {
+    use super::{inspect, list_arrow_files, stage_files};
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("pioneer-sciex-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Converted SCIEX runs are `.scxs` directories (searchable); raw `.wiff`
+    /// files are counted but need converting, and their `.wiff.scan` / `.wiff2`
+    /// companions are not runs of their own.
+    fn sciex_folder(tag: &str) -> std::path::PathBuf {
+        let d = scratch(tag);
+        for run in ["a.scxs", "b.scxs"] {
+            std::fs::create_dir_all(d.join(run)).unwrap();
+            std::fs::write(d.join(run).join("scans.arrow"), b"x").unwrap();
+        }
+        std::fs::write(d.join("raw.wiff"), b"w").unwrap();
+        std::fs::write(d.join("raw.wiff.scan"), b"s").unwrap();
+        std::fs::write(d.join("raw.wiff2"), b"e").unwrap();
+        std::fs::write(d.join("c.arrow"), b"c").unwrap();
+        std::fs::write(d.join("not_a_run.scxs"), b"a file, not a run").unwrap();
+        d
+    }
+
+    #[test]
+    fn inspect_counts_scxs_runs_and_wiff_files() {
+        let d = sciex_folder("inspect");
+        let info = inspect(d.to_str().unwrap());
+        assert_eq!(info.scxs_count, 2, "only directories named .scxs are runs");
+        assert_eq!(info.wiff_count, 1, ".wiff.scan and .wiff2 are not .wiff runs");
+        assert_eq!(info.ms_file_count, 3, ".scxs runs and .arrow files are searchable, .wiff is not");
+        let run = inspect(d.join("a.scxs").to_str().unwrap());
+        assert_eq!((run.scxs_count, run.ms_file_count, run.arrow_count), (1, 1, 0));
+        let wiff = inspect(d.join("raw.wiff").to_str().unwrap());
+        assert_eq!((wiff.wiff_count, wiff.ms_file_count), (1, 0));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn listing_and_staging_include_scxs_runs() {
+        let d = sciex_folder("list");
+        let names: Vec<String> = list_arrow_files(d.to_str().unwrap())
+            .unwrap()
+            .iter()
+            .map(|p| std::path::Path::new(p).file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["a.scxs", "b.scxs", "c.arrow"]);
+        let id = format!("test-scxs-{}", std::process::id());
+        let dir = stage_files(&id, "ms_data", &[d.join("a.scxs").to_string_lossy().into_owned()]).unwrap();
+        let staged = std::path::Path::new(&dir).join("a.scxs");
+        assert!(staged.is_dir(), "the staged run must read as a directory");
+        assert_eq!(std::fs::read(staged.join("scans.arrow")).unwrap(), b"x");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&d);
     }

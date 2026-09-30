@@ -355,7 +355,7 @@ interface Props {
   onRemoveFasta: (idx: number) => void
   onBrowseLibPath: () => void
   onBrowseCalibration: () => void
-  /** Pick a Bruker .tdfs run (a folder) as the calibration file. */
+  /** Pick a Bruker .tdfs or SCIEX .scxs run (a folder) as the calibration file. */
   onBrowseCalibrationTdfs: () => void
   onModField: (kind: 'fixed' | 'variable', idx: number, field: keyof ModEntry, value: string) => void
   onRemoveMod: (kind: 'fixed' | 'variable', idx: number) => void
@@ -822,7 +822,7 @@ export function BuildSpecLibForm({
             value={params.calibrationFile}
             onChange={(e) => onParam('calibrationFile', e.target.value)}
             placeholder={
-              '/path/to/one_run.arrow or .tdfs  (optional)'
+              '/path/to/one_run.arrow, .tdfs or .scxs  (optional)'
             }
             style={{
               flex: 1,
@@ -850,9 +850,9 @@ export function BuildSpecLibForm({
             className="pio-browse"
             onClick={onBrowseCalibrationTdfs}
             style={BROWSE}
-            title="A converted Bruker timsTOF run (.tdfs folder): select the folder and click Open"
+            title="A converted Bruker .tdfs or SCIEX .scxs run (a folder): select the folder and click Open"
           >
-            Browse Bruker .tdfs
+            Browse .tdfs / .scxs
           </button>
         </div>
         )}
