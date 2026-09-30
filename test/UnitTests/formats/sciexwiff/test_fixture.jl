@@ -23,6 +23,10 @@ using SHA
     identical || @warn "fixture .scxs not byte-identical to the reference on this platform; checking totals instead"
     # base peak: the vendor's (Idx) intensity on every stored scan (SWATH: the Idx carries it)
     f = SciexWiff.open_scxs(scxs)
+    # not declared ZT: plain name, acquisition_type swath; declaring it adds the Q1 bin grid
+    @test f.meta["acquisition_type"] == "swath" && f.meta["acquisition_type_source"] == "user"
+    zm = SciexWiff.acquisition_metadata(r; zt_scan = true)
+    @test zm["acquisition_type"] == "zt_scan_dia" && parse(Int, zm["q1_bins_per_cycle"]) == 173
     @test f.scans.base_peak_intensity == Float32.(r.index.base_peak_intensity[kept])
     @test all(isfinite, f.scans.base_peak_mz)
     d = Pioneer.loadMassSpecData(scxs)

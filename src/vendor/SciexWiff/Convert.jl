@@ -5,12 +5,15 @@ using Printf
 
 """
     ConvertParams(; centroid = CentroidParams(), bin_scale = 4, int_scale = 10.0, zstd_level = 3,
-                    format = :both, batch_scans = 4096)
+                    format = :both, batch_scans = 4096, zt_scan = false)
 
 - `bin_scale`: stored bin = round(bin_scale · centroid position in raw TOF units). One raw unit is ≈ 1.2 ppm
   at m/z 400, so the default 4 rounds positions to ≈ 0.3 ppm.
 - `int_scale`: stored intensity = round(int_scale · intensity); centroids that round to 0 are dropped.
 - `format`: `:arrow`, `:scxs` or `:both`. Both outputs hold exactly the same (quantised) peaks.
+- `zt_scan`: the run is ZT Scan DIA. The `.wiff` does not record the scan mode, so the caller must say; outputs
+  are then named `<name>.zt.scxs` / `<name>.zt.arrow` and carry `acquisition_type = zt_scan_dia` and the Q1 bin
+  grid. Refused for runs whose window table cannot be ZT.
 """
 Base.@kwdef struct ConvertParams
     centroid::CentroidParams = CentroidParams()
@@ -19,7 +22,11 @@ Base.@kwdef struct ConvertParams
     zstd_level::Int = 3
     format::Symbol = :both
     batch_scans::Int = 4096
+    zt_scan::Bool = false
 end
+
+"Output file stem: runs declared ZT Scan DIA are named `<name>.zt`, so they read `X.zt.scxs` / `X.zt.arrow`."
+output_stem(name::AbstractString, zt_scan::Bool) = zt_scan ? name * ".zt" : String(name)
 
 "Everything one worker task owns."
 mutable struct Worker
@@ -103,8 +110,11 @@ function convert_run(wiff::AbstractString, out_dir::AbstractString; params::Conv
     records = [r for r in 1:length(run) if run.index.block_size[r] > 0]
     mkpath(out_dir)
     want_arrow = p.format in (:arrow, :both); want_scxs = p.format in (:scxs, :both)
-    arrow_path = want_arrow ? joinpath(out_dir, name * ".arrow") : nothing
-    scxs_path = want_scxs ? joinpath(out_dir, name * ".scxs") : nothing
+    # declared by the user (the .wiff does not record the scan mode); checked before any file is written
+    acq = acquisition_metadata(run; zt_scan = p.zt_scan)
+    stem = output_stem(name, p.zt_scan)
+    arrow_path = want_arrow ? joinpath(out_dir, stem * ".arrow") : nothing
+    scxs_path = want_scxs ? joinpath(out_dir, stem * ".scxs") : nothing
     cp = p.centroid
     meta = Dict{String, Any}(
         "source" => basename(wiff), "source_scan" => basename(run.scan_path), "sample" => sample,
@@ -114,8 +124,11 @@ function convert_run(wiff::AbstractString, out_dir::AbstractString; params::Conv
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "mz_formula" => "(cal_a * (stored_bin / bin_scale / 40 - cal_b))^2",
         "converter" => "Pioneer.jl $(pkgversion(parentmodule(@__MODULE__))) (SciexWiff, from e4d9097)", "converted_at" => Libc.strftime("%Y-%m-%dT%H:%M:%SZ", time()))
-    aw = want_arrow ? PioneerArrowWriter(arrow_path; metadata = Dict("source" => basename(wiff), "converter" => meta["converter"],
-        "centroid" => string(cp), "bin_scale" => string(p.bin_scale), "int_scale" => string(p.int_scale))) : nothing
+    # the acquisition facts (e.g. `acquisition_type = zt_scan_dia`) go into both outputs, so a search can tell
+    # the acquisition from the file alone
+    merge!(meta, acq)
+    aw = want_arrow ? PioneerArrowWriter(arrow_path; metadata = merge(Dict("source" => basename(wiff), "converter" => meta["converter"],
+        "centroid" => string(cp), "bin_scale" => string(p.bin_scale), "int_scale" => string(p.int_scale)), acq)) : nothing
     sw = want_scxs ? ScxsWriter(scxs_path, meta) : nothing
 
     nt = Threads.nthreads()

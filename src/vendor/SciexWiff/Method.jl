@@ -45,3 +45,30 @@ function read_scan_ranges(cf::CFB.CompoundFile, n::Integer)
     end
     out
 end
+
+"UTF-16LE runs of printable ASCII (length ≥ 4) in a stream."
+function _utf16_strings(s::Vector{UInt8})
+    out = String[]; cur = Char[]
+    for o in 1:2:length(s)-1
+        u = UInt16(s[o]) | UInt16(s[o+1]) << 8
+        if 0x20 <= u < 0x7f
+            push!(cur, Char(u))
+        else
+            length(cur) >= 4 && push!(out, String(cur)); empty!(cur)
+        end
+    end
+    length(cur) >= 4 && push!(out, String(cur))
+    out
+end
+
+"The acquisition method's name (the file name of the method, without its folder), or \"\"."
+function read_method_name(cf::CFB.CompoundFile)
+    p = "MethodSubtree/Method1/AcqMethodFileInfoStm"
+    CFB.has_stream(cf, p) || return ""
+    strs = _utf16_strings(CFB.read_stream(cf, p))
+    isempty(strs) && return ""
+    name = last(split(first(strs), '\\'))
+    # the stream runs the save date on after the name
+    name = split(name, ',')[1]
+    replace(name, r"\d?(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday).*$" => "")
+end
