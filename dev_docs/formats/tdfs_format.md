@@ -4,7 +4,7 @@ One directory per converted timsTOF run. Everything a reader needs is inside; th
 
 ```
 <name>.tdfs/
-  meta.json      format_version (2), source, calibration, converter parameters, counts (see below)
+  meta.json      format_version (3), source, calibration, converter parameters, counts (see below)
   frames.arrow   one row per converted frame (MS1 and diaPASEF MS2 frames, in acquisition order)
   slices.arrow   one row per slice (= one Pioneer scan), in frame order, then window, then IM scan; each row
                  carries the byte offset and size of the slice's block
@@ -67,6 +67,7 @@ extra state.
 | collision_energy_ev | Float32 | the CE ramp evaluated at the slice scan (0 for MS1) |
 | window_ce | Float32 | the window table's CE (NaN for MS1) |
 | tic | Float32 | sum of the slice's stored intensities |
+| base_peak_intensity | Float32 | the slice's largest stored intensity, 0 for an empty slice (format 3; absent in format 2) |
 | n_peaks | Int32 | peaks in the slice |
 | peak_offset | Int64 | 1-based start of the slice's peaks in the frame's decoded peak arrays |
 | block_offset, block_size | Int64, Int32 | the slice's zstd block in `blocks.bin` |
@@ -75,7 +76,7 @@ extra state.
 
 ## meta.json
 
-`format_version` (2), `source`, `source_bin_bytes`, `instrument`, `mz_cal_sqrt_intercept`, `mz_cal_sqrt_slope`,
+`format_version` (3; readers also accept 2, which lacks `base_peak_intensity`), `source`, `source_bin_bytes`, `instrument`, `mz_cal_sqrt_intercept`, `mz_cal_sqrt_slope`,
 `im_scan0_1overK0`, `im_slope_1overK0_per_scan`, `ce_ev_intercept`, `ce_ev_slope_per_scan`, `NumScans`, `n_bins`,
 `mz_lo`, `mz_hi`, `OneOverK0AcqRangeLower/Upper`, `params` (every `ConvertParams` field; files from before 0.1 also
 carry `cull_thr_ms1` / `cull_thr_ms2` and the removed quantile-cull params), `bin_scale`, `int_scale`, `zstd_level`, `converter`,

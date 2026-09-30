@@ -75,10 +75,26 @@ end
     @test p["library_params"]["im_model"] == "alphapept_ccs"
     @test p["library_params"]["prec_partition_width"] == 10.0
 
-    # Defaults: empty im_model (skip), 5 Da partitions.
+    # Defaults: empty im_model (skip); no width in the template, so it resolves to 5 Da, or 10 Da for an ion-mobility
+    # (timsTOF) library; an explicit width always wins. Local ID type defaults to "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
     @test p0["library_params"]["im_model"] == ""
-    @test p0["library_params"]["prec_partition_width"] == 5.0
+    @test !haskey(p0["library_params"], "prec_partition_width")
+    @test Pioneer.prec_partition_width(p0["library_params"]) == 5.0f0
+    @test p0["library_params"]["frag_index_local_id_type"] == "auto"
+    @test Pioneer.frag_index_local_id_request(p0["library_params"]) == "auto"
+    @test Pioneer.frag_index_local_id_request(Dict{String, Any}()) == "auto"
+    tims = deepcopy(base); tims["library_params"]["im_model"] = "alphapept_ccs"
+    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == 10.0f0
+    @test Pioneer.prec_partition_width(p["library_params"]) == 10.0f0
+    tims5 = deepcopy(tims); tims5["library_params"]["prec_partition_width"] = 5.0
+    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims5))["library_params"]) == 5.0f0
+    for v in ("auto", "UInt16", "UInt32")
+        c = deepcopy(base); c["library_params"]["frag_index_local_id_type"] = v
+        @test Pioneer.check_params_bsp(JSON.json(c))["library_params"]["frag_index_local_id_type"] == v
+    end
+    bad3 = deepcopy(base); bad3["library_params"]["frag_index_local_id_type"] = "UInt64"
+    @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad3))
 
     bad = deepcopy(base); bad["library_params"]["im_model"] = "nope"
     @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad))

@@ -19,7 +19,9 @@
 # slices.arrow (with each slice's block offset and size), meta.json. See docs/format.md.
 using Arrow, JSON3, Mmap
 
-const TDFS_FORMAT_VERSION = 2
+const TDFS_FORMAT_VERSION = 3
+# Versions the reader accepts. 3 added slices.arrow `base_peak_intensity`; a version-2 file reads without it.
+const TDFS_READABLE_VERSIONS = (2, 3)
 
 "Per-frame metadata carried from the .d (or the tdfs) to the writers."
 struct FrameMeta
@@ -41,11 +43,12 @@ mutable struct SliceRows
     collision_energy_ev::Vector{Float32}   # CE ramp at the slice scan (0 for MS1)
     window_ce::Vector{Float32}             # the window table's CE (NaN for MS1)
     tic::Vector{Float32}
+    base_peak_intensity::Vector{Float32}   # the slice's largest stored intensity (0 for an empty slice)
     n_peaks::Vector{Int32}
     peak_offset::Vector{Int64}         # 1-based start of the slice's peaks in the frame's peak arrays
     block_size::Vector{Int32}          # compressed bytes of the slice's block (0 for an empty slice)
 end
-SliceRows() = SliceRows(UInt16[], Int32[], Float32[], Float32[], Float32[], Float32[], Float32[], Float32[], Int32[], Int64[], Int32[])
+SliceRows() = SliceRows(UInt16[], Int32[], Float32[], Float32[], Float32[], Float32[], Float32[], Float32[], Float32[], Int32[], Int64[], Int32[])
 Base.length(r::SliceRows) = length(r.im_scan)
 function Base.empty!(r::SliceRows)
     for n in fieldnames(SliceRows); empty!(getfield(r, n)); end
@@ -68,13 +71,14 @@ function slice_rows!(rows::SliceRows, fm::FrameMeta, blk::SliceBlock, scan::Vect
     @inbounds for j in 1:blk.n_slices
         s = scan[j]; w = wins[window[j]]
         r = slice_range(blk, j)
-        tic = 0.0
-        for k in r; tic += blk.intensity[k]; end
+        tic = 0.0; bp = zero(eltype(blk.intensity))
+        for k in r; x = blk.intensity[k]; tic += x; bp = max(bp, x); end
         push!(rows.im_scan, UInt16(s)); push!(rows.window, window[j])
         push!(rows.retention_time, Float32((fm.rt_s + s * dt) / 60))
         push!(rows.center_mz, ms1 ? NaN32 : w.center); push!(rows.isolation_width, ms1 ? NaN32 : w.width)
         push!(rows.collision_energy_ev, ms1 ? 0f0 : Float32(ce_at(ce, s))); push!(rows.window_ce, ms1 ? NaN32 : w.ce)
-        push!(rows.tic, Float32(tic / int_scale)); push!(rows.n_peaks, Int32(length(r))); push!(rows.peak_offset, Int64(first(r)))
+        push!(rows.tic, Float32(tic / int_scale)); push!(rows.base_peak_intensity, Float32(bp / int_scale))
+        push!(rows.n_peaks, Int32(length(r))); push!(rows.peak_offset, Int64(first(r)))
         push!(rows.block_size, Int32(0))
     end
     rows
@@ -142,7 +146,7 @@ function Base.close(w::TdfsWriter)
         (frame_row = w.s_frame_row, slice_in_frame = w.s_slice_in_frame, frame_id = w.s_frame_id, im_scan = r.im_scan,
          window = r.window, ms_order = w.s_ms_order, cycle_idx = w.s_cycle_idx, window_group = w.s_window_group,
          retention_time = r.retention_time, center_mz = r.center_mz, isolation_width = r.isolation_width,
-         collision_energy_ev = r.collision_energy_ev, window_ce = r.window_ce, tic = r.tic, n_peaks = r.n_peaks, peak_offset = r.peak_offset,
+         collision_energy_ev = r.collision_energy_ev, window_ce = r.window_ce, tic = r.tic, base_peak_intensity = r.base_peak_intensity, n_peaks = r.n_peaks, peak_offset = r.peak_offset,
          block_offset = w.s_block_offset, block_size = r.block_size))
     m = copy(w.meta)
     m["format_version"] = TDFS_FORMAT_VERSION
@@ -168,7 +172,8 @@ end
 
 function open_tdfs(dir::AbstractString)
     meta = Dict{String, Any}(JSON3.read(read(joinpath(dir, "meta.json"), String), Dict{String, Any}))
-    Int(meta["format_version"]) == TDFS_FORMAT_VERSION || error("tdfs format version $(meta["format_version"]) (reader is $TDFS_FORMAT_VERSION)")
+    Int(meta["format_version"]) in TDFS_READABLE_VERSIONS ||
+        error("tdfs format version $(meta["format_version"]) (reader reads $(join(TDFS_READABLE_VERSIONS, ", ")))")
     load(name) = (t = Arrow.Table(joinpath(dir, name)); NamedTuple(k => collect(getproperty(t, k)) for k in propertynames(t)))
     frames = load("frames.arrow"); slices = load("slices.arrow")
     blocks = open(joinpath(dir, "blocks.bin"), "r") do io

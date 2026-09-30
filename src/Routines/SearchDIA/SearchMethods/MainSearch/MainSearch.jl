@@ -501,11 +501,13 @@ function process_search_results!(
     best_psms[!, :irt_obs] .= new_rt_model.(best_psms[!, :rt])
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
 
-    # Ion-mobility calibration (packet data): per-charge library 1/K0 vs packet IM
-    # scan line from high-confidence PSMs; writes :im_error (sigma units) for every
-    # row, zeros when the file or library carries no mobility data.
+    # Ion-mobility calibration (packet data): the z2 library 1/K0 vs packet IM scan line,
+    # refit from high-confidence PSMs or else the file's tuning / median line; writes the
+    # signed :im_error (z2 sigma units) for every row, zeros when there is no line.
+    im_fallback = get(getImModel(search_context, ms_file_idx), 2, nothing)
     im_models = add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
-                              getPrecursors(getSpecLib(search_context)), ms_file_idx)
+                              getPrecursors(getSpecLib(search_context)), ms_file_idx;
+                              fallback = im_fallback)
     setImModel!(search_context, ms_file_idx, im_models)
     if !isempty(im_models)
         append!(results.im_plot_objects,

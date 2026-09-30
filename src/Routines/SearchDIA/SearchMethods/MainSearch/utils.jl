@@ -53,55 +53,95 @@ function recalibrate_rt!(
 end
 
 """
-    fit_im_lines(scan, pred, charge, calib; min_calib=100)
+    fit_im_line(scan, pred, calib; min_calib=100)
 
-Per-charge ion-mobility calibration lines. For the calibration rows (`calib`), fits
-library-predicted 1/K0 = a + b * packet IM scan index by least squares, once pooled
-over all charges (key 0) and once per charge with at least `min_calib` rows, with
-sigma = 1.4826 * MAD of the residuals (floored at 1e-4). Returns a
-`Dict{Int, NTuple{3,Float32}}` of (a, b, sigma); empty when the pooled set is too small.
+Ion-mobility calibration line on the rows flagged by `calib`: library-predicted
+1/K0 = a + b * packet IM scan index by least squares, with sigma = 1.4826 * MAD of the
+residuals (floored at 1e-4). Returns `(a, b, sigma)`, or `nothing` with fewer than
+`min_calib` rows. Callers pass the z2 rows: one line serves every charge, because the
+library predictor's z3 / z4 values sit on the z2 line with wider scatter (see
+IM_GATE_SIGMA_MULT), and z2 is the only charge with enough PSMs in every file.
 """
-function fit_im_lines(
+function fit_im_line(
     scan::AbstractVector{Float32},
     pred::AbstractVector{Float32},
-    charge::AbstractVector,
     calib::AbstractVector{Bool};
     min_calib::Int = 100
 )
-    models = Dict{Int, NTuple{3, Float32}}()
-    function fit(idx)
-        x = scan[idx]; y = pred[idx]
-        xm = mean(x); ym = mean(y)
-        vx = sum((x .- xm) .^ 2)
-        b = vx > 0 ? sum((x .- xm) .* (y .- ym)) / vx : 0f0
-        a = ym - b * xm
-        r = y .- (a .+ b .* x)
-        s = 1.4826f0 * median(abs.(r .- median(r)))
-        return (Float32(a), Float32(b), max(Float32(s), 1f-4))
-    end
-    all_idx = findall(calib)
-    length(all_idx) < min_calib && return models
-    models[0] = fit(all_idx)
-    for z in unique(charge[all_idx])
-        idx = findall(i -> calib[i] && charge[i] == z, eachindex(calib))
-        length(idx) >= min_calib && (models[Int(z)] = fit(idx))
-    end
-    return models
+    idx = findall(calib)
+    length(idx) < min_calib && return nothing
+    x = scan[idx]; y = pred[idx]
+    xm = mean(x); ym = mean(y)
+    vx = sum((x .- xm) .^ 2)
+    b = vx > 0 ? sum((x .- xm) .* (y .- ym)) / vx : 0f0
+    a = ym - b * xm
+    r = y .- (a .+ b .* x)
+    s = 1.4826f0 * median(abs.(r .- median(r)))
+    return (Float32(a), Float32(b), max(Float32(s), 1f-4))
 end
 
 """
-    add_im_error!(best_psms, scores, spectra, precursors, ms_file_idx; min_prob=0.9, min_calib=100)
+    fill_missing_im_lines!(search_context, n_files)
+
+After ParameterTuning: give every file without its own z2 line (fewer than
+TUNING_IM_MIN_CALIB z2 PSMs, or tuning failed) the median of the other files' lines, so
+the IM gate, `im_error` and `im_obs` exist for every file. When every file has an
+instrument calibration (`.tdfs`), the median is taken in instrument 1/K0 units at two
+anchor mobilities and mapped back to each receiving file's IM scan scale, so files with
+different scan ranges combine correctly; otherwise it is taken in scan units. O(n_files),
+no file I/O. Does nothing when no file has a line (no gate; `im_error` 0 everywhere).
+"""
+fill_missing_im_lines!(search_context::SearchContext, n_files::Integer) =
+    fill_missing_im_lines!(search_context.im_models, search_context.im_cals, n_files)
+
+function fill_missing_im_lines!(
+    models::Dict{Int64, Dict{Int, NTuple{3, Float32}}},
+    cals::Dict{Int64, NTuple{2, Float32}},
+    n_files::Integer
+)
+    has_line(i) = haskey(get(models, Int64(i), Dict{Int, NTuple{3, Float32}}()), 2)
+    donors = [i for i in 1:n_files if has_line(i)]
+    receivers = [i for i in 1:n_files if !has_line(i)]
+    (isempty(donors) || isempty(receivers)) && return nothing
+    if all(i -> haskey(cals, Int64(i)), 1:n_files)
+        k1, k2 = 0.8f0, 1.2f0                         # anchor 1/K0 values
+        # line pred = a + b * scan, instrument k0 = c0 + m * scan  =>  pred at k0 = a + b * (k0 - c0) / m
+        at(i, k) = ((a, b, _) = models[i][2]; (c0, m) = cals[i]; a + b * (k - c0) / m)
+        y1 = median(at(i, k1) for i in donors)
+        y2 = median(at(i, k2) for i in donors)
+        B = (y2 - y1) / (k2 - k1); A = y1 - B * k1  # median line: pred = A + B * k0
+        s = median(models[i][2][3] for i in donors)
+        for i in receivers
+            c0, m = cals[i]
+            models[i] = Dict(2 => (Float32(A + B * c0), Float32(B * m), Float32(s)))
+        end
+    else
+        med(j) = Float32(median(models[i][2][j] for i in donors))
+        line = (med(1), med(2), med(3))
+        for i in receivers
+            models[i] = Dict(2 => line)
+        end
+    end
+    @user_info "IM calibration: $(length(receivers)) file(s) without their own z2 line use the median of $(length(donors)) other file(s)"
+    return nothing
+end
+
+"""
+    add_im_error!(best_psms, scores, spectra, precursors, ms_file_idx; fallback=nothing, min_prob=0.9, min_calib=100)
 
 Per-file ion-mobility calibration after initial LightGBM scoring (ion-mobility packet
-data). Fits per-charge lines of library-predicted 1/K0 against the packet's IM scan
-index on high-confidence target PSMs (score > `min_prob`) via `fit_im_lines`, and writes
-`im_error` = |predicted 1/K0 - line(scan)| / sigma for every row, and `im_obs` = line(scan),
-the observed mobility on the library's 1/K0 scale (signed, and comparable between runs). Charges with fewer
-than `min_calib` calibration PSMs use the pooled line. When the file has no IM scan
-column or the library no mobility predictions, `im_error` is 0 everywhere — the column
-always exists because ScoringSearch takes its feature list from the first file's schema.
-Returns the fitted lines (`Dict{Int, NTuple{3,Float32}}`, empty when nothing was fit) so
-the caller can store them on the SearchContext for downstream stages.
+data). Refits the z2 line of library-predicted 1/K0 against the packet's IM scan index on
+high-confidence z2 target PSMs (score > `min_prob`, `fit_im_line`); with fewer than
+`min_calib` it uses `fallback` (the file's ParameterTuning line, or the median line from
+`fill_missing_im_lines!`). Writes, for every row and every charge,
+`im_error` = (predicted 1/K0 - line(scan)) / sigma, SIGNED and in z2 sigma units (the
+scoring model also sees :charge, so it learns each charge's offset and spread around the
+line), and `im_obs` = line(scan), the observed mobility on the library's 1/K0 scale
+(comparable between runs). Without an IM scan column or library mobility both are 0;
+on mobility data with no line at all, `im_error` is 0 and `im_obs` NaN (MBR reads
+non-finite as missing). Either way the value is the same for every file of the search;
+the columns always exist because ScoringSearch takes its feature list from the first
+file's schema. Returns `Dict(2 => line)`, empty when there is none, for the SearchContext.
 """
 function add_im_error!(
     best_psms::DataFrame,
@@ -109,15 +149,16 @@ function add_im_error!(
     spectra::MassSpecData,
     precursors,
     ms_file_idx::Int64;
+    fallback::Union{Nothing, NTuple{3, Float32}} = nothing,
     min_prob::Float32 = 0.9f0,
     min_calib::Int = 100
 )
     n = nrow(best_psms)
     im_error = zeros(Float32, n)
     # Observed mobility on the library's 1/K0 scale, i.e. the calibration line evaluated at the PSM's
-    # IM scan. Unlike im_error (an absolute, sigma-normalised residual) this is signed and comparable
-    # BETWEEN runs, which is what a donor/receiver mobility comparison needs. Zero when there is no
-    # mobility data, so the column always exists.
+    # IM scan. Unlike im_error (a sigma-normalised residual) this is comparable BETWEEN runs, which is
+    # what a donor/receiver mobility comparison needs. Zero on data without ion mobility (as before);
+    # NaN on mobility data with no line, which MBR reads as missing.
     im_obs = zeros(Float32, n)
     im_scans = getImScans(spectra)
     im_lib = getInvIonMobility(precursors)
@@ -129,29 +170,26 @@ function add_im_error!(
     scan = Float32[Float32(im_scans[si]) for si in best_psms[!, :scan_idx]]
     pred = Float32[Float32(im_lib[pid]) for pid in best_psms[!, :precursor_idx]]
     charge = best_psms[!, :charge]
-    calib = (scores .> min_prob) .& best_psms[!, :target]
-    models = fit_im_lines(scan, pred, charge, calib; min_calib = min_calib)
-    if isempty(models)
-        @debug_l1 "IM calibration (file $ms_file_idx): fewer than $min_calib high-confidence PSMs, im_error = 0"
+    calib = (scores .> min_prob) .& best_psms[!, :target] .& (charge .== 2)
+    own = fit_im_line(scan, pred, calib; min_calib = min_calib)
+    line = own !== nothing ? own : fallback
+    if line === nothing
+        @debug_l1 "IM calibration (file $ms_file_idx): no z2 line (fewer than $min_calib high-confidence z2 PSMs, no fallback), im_error = 0"
         best_psms[!, :im_error] = im_error
-        best_psms[!, :im_obs] = im_obs
-        return models
+        best_psms[!, :im_obs] = fill(NaN32, n)
+        return Dict{Int, NTuple{3, Float32}}()
     end
-    pooled = models[0]
+    a, b, s = line
     @inbounds for i in 1:n
-        a, b, s = get(models, Int(charge[i]), pooled)
         obs = a + b * scan[i]
         im_obs[i] = obs
-        im_error[i] = abs(pred[i] - obs) / s
+        im_error[i] = (pred[i] - obs) / s
     end
     best_psms[!, :im_error] = im_error
     best_psms[!, :im_obs] = im_obs
-    for (z, (a, b, s)) in sort(collect(models))
-        n_z = z == 0 ? count(calib) : count(i -> calib[i] && Int(charge[i]) == z, eachindex(calib))
-        @debug_l1 "  IM line " * (z == 0 ? "pooled" : "z=$z") * " (file $ms_file_idx): pred 1/K0 = " *
-                  "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $n_z"
-    end
-    return models
+    @debug_l1 "  IM line z=2 (file $ms_file_idx, " * (own !== nothing ? "own" : "fallback") * "): pred 1/K0 = " *
+              "$(round(a, digits=4)) + ($(round(b, digits=6))) * scan, sigma = $(round(s, digits=4)), n_calib = $(count(calib))"
+    return Dict(2 => line)
 end
 
 """
@@ -159,8 +197,9 @@ end
 
 QC plots for the per-file ion-mobility calibration (`add_im_error!`): page 1 scatters the
 calibration PSMs (score > `min_prob`, target) as packet IM scan vs library 1/K0 per charge
-with the fitted lines and +/- 3 sigma bands; page 2 overlays per-charge residual histograms
-of the calibration targets and of all decoys. Returns a vector of two plots.
+with the z2 line used for every charge and its +/- 3 sigma band; page 2 overlays per-charge
+residual histograms (around that line) of the calibration targets and of all decoys.
+Returns a vector of two plots.
 """
 function plot_im_calibration(
     best_psms::DataFrame,
@@ -178,7 +217,7 @@ function plot_im_calibration(
     charge = Int.(best_psms[!, :charge])
     target = best_psms[!, :target]
     calib = (scores .> min_prob) .& target
-    pooled = models[0]
+    a, b, s = models[2]
     colors = Dict(1 => :gray, 2 => :steelblue, 3 => :darkorange, 4 => :seagreen, 5 => :purple)
     zs = sort(unique(charge[calib]))
     xs = range(minimum(scan), maximum(scan); length = 100)
@@ -188,20 +227,17 @@ function plot_im_calibration(
               titlefontsize = 9, legend = :topright, legendfontsize = 7)
     for z in zs
         idx = findall(calib .& (charge .== z))
-        a, b, s = get(models, z, pooled)
-        col = get(colors, z, :black)
-        own = haskey(models, z) ? "" : " (pooled line)"
-        scatter!(p1, scan[idx], pred[idx], ms = 1.5, ma = 0.25, msw = 0, color = col,
-                 label = "z=$z n=$(length(idx))$own")
-        plot!(p1, xs, a .+ b .* xs, color = col, lw = 2,
-              label = "z=$z: $(round(a, digits = 4)) + ($(round(b, digits = 6)))*scan, sigma $(round(s, digits = 4))")
-        plot!(p1, xs, a .+ b .* xs .+ 3s, color = col, ls = :dash, lw = 1, label = "")
-        plot!(p1, xs, a .+ b .* xs .- 3s, color = col, ls = :dash, lw = 1, label = "")
+        scatter!(p1, scan[idx], pred[idx], ms = 1.5, ma = 0.25, msw = 0, color = get(colors, z, :black),
+                 label = "z=$z n=$(length(idx))")
     end
+    # the one z2 line used for every charge
+    plot!(p1, xs, a .+ b .* xs, color = :black, lw = 2,
+          label = "z2 line: $(round(a, digits = 4)) + ($(round(b, digits = 6)))*scan, sigma $(round(s, digits = 4))")
+    plot!(p1, xs, a .+ b .* xs .+ 3s, color = :black, ls = :dash, lw = 1, label = "")
+    plot!(p1, xs, a .+ b .* xs .- 3s, color = :black, ls = :dash, lw = 1, label = "")
 
     panels = Plots.Plot[]
     for z in zs
-        a, b, s = get(models, z, pooled)
         resid(idx) = pred[idx] .- (a .+ b .* scan[idx])
         r_t = resid(findall(calib .& (charge .== z)))
         r_d = resid(findall(.!target .& (charge .== z)))

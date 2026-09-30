@@ -1458,7 +1458,7 @@ const CHROM_IM_BAND_K0 = 0.021f0
 
 A mobility half-width in 1/K0 as a whole number of IM scans for this file, rounded UP so the window never
 covers less than asked for. Uses the instrument's scan-to-1/K0 slope (`getImSlope`, from the `.tdfs`
-calibration); files without one (Arrow packet files) use the slope of the pooled IM line fitted in MainSearch.
+calibration); files without one (Arrow packet files) use the slope of the file's z2 IM line.
 0 when neither is available.
 """
 function im_half_width_scans(half_width_k0::Float32, spectra::MassSpecData, search_context::SearchContext,

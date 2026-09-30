@@ -195,13 +195,20 @@ function check_params_bsp(json_string::String)
     # Optional. Absent means flat bounds, which is what every params file
     # written before this key existed expects.
     parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
-    # Optional. Precursor-m/z partition width (Da) of the fragment index; 5 Da
-    # is the historical hardcoded value. Wider partitions suit wide isolation
-    # windows (e.g. 25 Da diaPASEF).
+    # Optional. Precursor-m/z partition width (Da) of the fragment index. Default
+    # (prec_partition_width in build_poin_lib.jl): 10 Da when im_model is set
+    # (timsTOF, 25 Da diaPASEF windows), else 5 Da.
     if haskey(library_params, "prec_partition_width")
         check_param(library_params, "prec_partition_width", Real)
         library_params["prec_partition_width"] > 0 || throw(InvalidParametersError(
             "prec_partition_width must be > 0", library_params))
+    end
+    # Optional. Partition-local precursor ID type of the fragment index: "auto"
+    # (default: UInt32 only when some prec_partition_width bin exceeds 65,535
+    # precursors, which UInt16 would split), "UInt16" or "UInt32".
+    if haskey(library_params, "frag_index_local_id_type")
+        get(library_params, "frag_index_local_id_type", "") in ("auto", "UInt16", "UInt32") || throw(InvalidParametersError(
+            "frag_index_local_id_type must be \"auto\", \"UInt16\" or \"UInt32\"", library_params))
     end
     # Optional. Koina ion-mobility (CCS) model; empty or absent skips the
     # prediction and the library has no `ccs` / `inv_ion_mobility` columns.

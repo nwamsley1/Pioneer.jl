@@ -288,10 +288,14 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
     rt_tolerances::Dict{Int64, RTBinnedTolerance}
-    # Per-file ion-mobility calibration (packet data): charge => (a, b, sigma) with
-    # library 1/K0 ~ a + b * packet IM scan index; key 0 is the pooled line. Empty
-    # for files without mobility data. Fit by MainSearch (add_im_error!).
+    # Per-file ion-mobility calibration (packet data): 2 => (a, b, sigma), the z2 line
+    # library 1/K0 ~ a + b * packet IM scan index, used for every charge. Empty for files
+    # without mobility data. Fit in ParameterTuning (files short of PSMs get the median
+    # line, fill_missing_im_lines!), refit by MainSearch (add_im_error!).
     im_models::Dict{Int64, Dict{Int, NTuple{3, Float32}}}
+    # Per-file instrument IM scan -> 1/K0 line (getImCalibration), recorded in ParameterTuning
+    # while the file is open so the median line can be formed without reopening files.
+    im_cals::Dict{Int64, NTuple{2, Float32}}
     irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
     pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
@@ -347,6 +351,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Float32}(),
             Dict{Int64, RTBinnedTolerance}(),
             Dict{Int64, Dict{Int, NTuple{3, Float32}}}(),  # im_models
+            Dict{Int64, NTuple{2, Float32}}(),  # im_cals
             Dict{UInt32, Float32}(),
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
@@ -548,6 +553,8 @@ getRtTolerance(s::SearchContext, ms_file_idx::Int64) = s.rt_tolerances[ms_file_i
 # Per-file ion-mobility lines (see the im_models field); an empty Dict means no IM model.
 getImModel(s::SearchContext, ms_file_idx::Integer) = get(s.im_models, Int64(ms_file_idx), Dict{Int, NTuple{3, Float32}}())
 setImModel!(s::SearchContext, ms_file_idx::Integer, model::Dict{Int, NTuple{3, Float32}}) = (s.im_models[Int64(ms_file_idx)] = model)
+getImCal(s::SearchContext, ms_file_idx::Integer) = get(s.im_cals, Int64(ms_file_idx), nothing)
+setImCal!(s::SearchContext, ms_file_idx::Integer, cal::NTuple{2, Float32}) = (s.im_cals[Int64(ms_file_idx)] = cal)
 getHuberDelta(s::SearchContext) = s.huber_delta[]
 # Use library iRT array directly — O(1) indexing, no Dict overhead
 getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
