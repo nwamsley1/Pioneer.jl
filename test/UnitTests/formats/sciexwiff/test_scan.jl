@@ -47,6 +47,17 @@ end
     @test sb.cal_a == 4.9e-4 && sb.cal_b == -13.7
     @test S.bin_to_mz(S.mz_to_bin(512.25, sb.cal_a, sb.cal_b), sb.cal_a, sb.cal_b) ≈ 512.25
 
+    # the last data byte may be 0xff (intensity 255 = `7c ff`), directly before the 0xff padding
+    for last in (255, 0xffff, 0x01ff, 0xffffffff)
+        f2, ms2, ff2, sz2 = synthetic_block([1, 5, 9], [7, 300, last])
+        S.decode_block!(sb, f2, ms2, ff2, sz2)
+        @test sb.n == 3 && sb.intensity[1:3] == UInt32[7, 300, last]
+    end
+    # 0xff inside the data (not followed only by padding) is still an error
+    f3, ms3, ff3, sz3 = synthetic_block([1, 2], [3, 4])
+    f3[ff3 + 10] = 0xff
+    @test_throws S.ScanFormatError S.decode_block!(sb, f3, ms3, ff3, sz3)
+
     bad = copy(file); bad[ff+1] = 0x00
     @test_throws S.ScanFormatError S.decode_block!(sb, bad, ms, ff, sz)
     @test_throws S.ScanFormatError S.decode_block!(sb, file, ms + 1, ff, sz)     # metadata misaligned

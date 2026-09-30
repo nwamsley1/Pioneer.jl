@@ -57,11 +57,8 @@ function decode_block!(buf::ScanBuffer, s::AbstractVector{UInt8}, meta_start::In
         (s[ff+1] == 0xff && s[ff+2] == 0xff && s[ff+3] == 0xff && s[ff+4] == 0xff && s[ff+9] == 0x00) ||
             throw(ScanFormatError("no block marker at $ff"))
         start = _rd(UInt32, s, ff + 4)
-        while stop > ff + 9 && s[stop] == 0xff
-            stop -= 1
-        end
     end
-    # every token is at least one byte, so this bounds the peak count
+    # every token is at least one byte, so this bounds the peak count (padding included)
     cap = stop - Int(ff) - 9
     length(buf.bin) < cap && (resize!(buf.bin, cap); resize!(buf.intensity, cap))
     bins = buf.bin; ints = buf.intensity
@@ -79,7 +76,12 @@ function decode_block!(buf::ScanBuffer, s::AbstractVector{UInt8}, meta_start::In
         elseif c == 0xfe
             d = (UInt64(s[i+2]) | UInt64(s[i+3]) << 8 | UInt64(s[i+4]) << 16 | UInt64(s[i+5]) << 24) + 1; i += 5
         else
-            throw(ScanFormatError("0xff delta prefix inside block at $ff (byte $i)"))
+            # 0xff never starts a token: it is the padding to a multiple of 4, which runs to the block end. The
+            # last data byte can itself be 0xff (e.g. `7c ff`, intensity 255), so padding is found here, not by
+            # stripping trailing 0xff bytes.
+            all(k -> s[k] == 0xff, i+1:stop) ||
+                throw(ScanFormatError("0xff delta prefix inside block at $ff (byte $i)"))
+            break
         end
         i < stop || throw(ScanFormatError("block at $ff ends inside a token"))
         v = s[i+1]
