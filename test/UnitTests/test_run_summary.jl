@@ -68,6 +68,18 @@
     @test a.protein_groups_identified == 2 && a.protein_groups_quantified == 1
     @test b.protein_groups_identified == 1 && b.protein_groups_quantified == 0
 
+    # A multi-batch Arrow table reads back as ChainedVector columns whose chunk-aware
+    # indices are only valid for their own column; this used to throw.
+    batch(f, t) = (ms_file_idx = UInt32[f], target = Bool[t], sequence = ["PEPK"],
+        peak_area = Union{Missing, Float32}[1], peak_area_normalized = Union{Missing, Float32}[1],
+        mbr_recovered = Bool[false], irt_error = Float16[0], rt_fwhm = Float16[0.1],
+        points_integrated = UInt32[3], charge = UInt8[2], missed_cleavage = UInt8[0])
+    io = IOBuffer()
+    Arrow.write(io, Tables.partitioner([batch(1, true), batch(2, false), batch(2, true)]))
+    multi = [RunSummaryStats("x"), RunSummaryStats("y")]
+    accumulate_run_summary!(multi, Arrow.Table(take!(io)))
+    @test multi[1].precursors_identified == 1 && multi[2].precursors_identified == 1
+
     @test Pioneer._median_or_missing(Float32[]) === missing
     @test Pioneer._mass_tol_unit(Pioneer.MassErrorModel(0.0f0, (10.0f0, 12.0f0))) == "ppm"
     @test Pioneer._mass_tol_columns(Dict{Int64, Pioneer.AbstractMassErrorModel}(), 1) === (missing, missing, missing)
