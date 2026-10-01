@@ -415,14 +415,14 @@ function apply_mainsearch_irt_refinement_model!(
 end
 
 """
-    refine_mainsearch_irt_predictions!(psms, refinement_psms, strategy)
+    fit_mainsearch_irt_refinement(refinement_psms, strategy)
+        -> (models, training_target_precursors, t_qval, t_fit)
 
-Fit an out-of-fold iRT correction from the narrow, one-row-per-precursor
-`refinement_psms` table and apply it to every row in `psms`. The fit table is
-read-only and is discarded by MainSearch after this call.
+Fit the out-of-fold iRT correction from the narrow, one-row-per-precursor
+`refinement_psms` table: for each cv fold, a model trained on the other folds'
+passing target precursors. `models` is empty when no fold had enough evidence.
 """
-function refine_mainsearch_irt_predictions!(
-    psms::DataFrame,
+function fit_mainsearch_irt_refinement(
     refinement_psms::DataFrame,
     strategy::MainSearchIrtRefinement,
 )
@@ -462,7 +462,23 @@ function refine_mainsearch_irt_predictions!(
         models[fold] = model
     end
 
-    training_target_precursors = sort!(unique(training_target_precursors))
+    return models, sort!(unique(training_target_precursors)), t_qval, t_fit
+end
+
+"""
+    refine_mainsearch_irt_predictions!(psms, refinement_psms, strategy)
+
+Fit an out-of-fold iRT correction from the narrow, one-row-per-precursor
+`refinement_psms` table and apply it to every row in `psms`. The fit table is
+read-only and is discarded by MainSearch after this call.
+"""
+function refine_mainsearch_irt_predictions!(
+    psms::DataFrame,
+    refinement_psms::DataFrame,
+    strategy::MainSearchIrtRefinement,
+)
+    models, training_target_precursors, t_qval, t_fit =
+        fit_mainsearch_irt_refinement(refinement_psms, strategy)
     if isempty(models)
         return (
             refined = false,

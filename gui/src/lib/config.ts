@@ -152,6 +152,8 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
 export const BUILD_OWNED_PATHS = [
   'library_path',
   'library_params.prediction_model',
+  'library_params.im_model',
+  'library_params.isolation_window_width',
   'library_params.auto_detect_frag_bounds',
   'library_params.frag_mz_min',
   'library_params.frag_mz_max',
@@ -236,6 +238,9 @@ export function buildLibJsonBase(s: BuildParams): Json {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
     library_params: {
       prediction_model: s.predictionModel,
+      // Omitted when off: Pioneer reads an absent im_model as "no ion mobility".
+      ...(s.timsTOF ? { im_model: 'alphapept_ccs' } : {}),
+      isolation_window_width: num(s.isolationWindowWidth, 5),
       auto_detect_frag_bounds: s.autoDetectFragBounds,
       frag_mz_min: num(s.fragMzMin, 150),
       frag_mz_max: num(s.fragMzMax, 2020),
@@ -302,6 +307,8 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   }
 
   const lp = isObj(obj.library_params) ? obj.library_params : {}
+  if ('im_model' in lp) set.timsTOF = String(lp.im_model ?? '').trim() !== ''
+  if (lp.isolation_window_width != null) set.isolationWindowWidth = String(lp.isolation_window_width)
   if ('auto_detect_frag_bounds' in lp) {
     set.autoDetectFragBounds = !!lp.auto_detect_frag_bounds
   }
@@ -462,6 +469,13 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 export function buildConvertArgs(s: ConvertParams): string[] {
   const args: string[] = [s.input.trim()]
   if (s.outputDir.trim()) args.push('--output-dir', s.outputDir.trim())
+  // convertBruker takes the input and the output folder and nothing else; convertSciex also
+  // takes the ZT Scan DIA answer, which it would otherwise ask for on a terminal it does not have.
+  if (s.format === 'sciex') {
+    if (s.ztScan) args.push(s.ztScan === 'yes' ? '--zt' : '--no-zt')
+    return args
+  }
+  if (s.format === 'bruker') return args
   if (s.skipExisting) args.push('--skip-existing')
 
   if (s.format === 'mzml') {
@@ -496,10 +510,30 @@ export function downloadCommandLine(s: DownloadParams): string {
   return ['DownloadSpecLib', ...buildDownloadArgs(s).map(quote)].join(' ')
 }
 
+/** Where a folder-mode conversion writes when no output folder is given: the
+ *  converters' own defaults, `arrow_out` (Thermo, mzML), `tdfs_out` (Bruker) or
+ *  `scxs_out` (SCIEX) inside the input folder -- beside it when the input is
+ *  itself a `.d` or a `.wiff`. */
+export function defaultConvertOutput(s: ConvertParams): string {
+  const input = s.input.trim().replace(/[\\/]$/, '')
+  if (s.format === 'sciex') {
+    return /\.wiff$/i.test(input) ? `${input.replace(/[\\/][^\\/]*$/, '')}/scxs_out` : `${input}/scxs_out`
+  }
+  if (s.format !== 'bruker') return `${input}/arrow_out`
+  return /\.d$/i.test(input) ? `${input.replace(/[\\/][^\\/]*$/, '')}/tdfs_out` : `${input}/tdfs_out`
+}
+
 /** The command line as a user would type it, for the preview panel. */
 export function convertCommandLine(s: ConvertParams): string {
   const quote = (a: string) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)
-  const exe = s.format === 'mzml' ? 'convertMzML' : 'PioneerConverter'
+  const exe =
+    s.format === 'mzml'
+      ? 'convertMzML'
+      : s.format === 'bruker'
+        ? 'convertBruker'
+        : s.format === 'sciex'
+          ? 'convertSciex'
+          : 'PioneerConverter'
   return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
 }
 

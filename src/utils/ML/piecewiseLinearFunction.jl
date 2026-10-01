@@ -204,6 +204,82 @@ function (m::BinnedMedianNceModel)(x::AbstractVector, charge::AbstractVector)
     return map((xi, ci) -> m(xi, ci), x, charge)
 end
 
+# Three-argument form: the scan's collision energy (eV). Models that key on
+# precursor m/z ignore it.
+(m::NceModel)(mz::AbstractFloat, charge::Integer, ::AbstractFloat) = m(mz, charge)
+@inline nce_cache_slot(m::BinnedMedianNceModel, mz::AbstractFloat, charge::Integer, ::AbstractFloat) =
+    nce_cache_slot(m, mz, charge)
+
+# ============================================================================
+# Collision-energy-keyed NCE model (timsTOF packets)
+# ============================================================================
+#
+# On a timsTOF the collision energy is an eV ramp along the ion-mobility scan, so
+# every scan (packet) has its own energy and precursors in the same m/z window are
+# fragmented at different energies. Expressed on Thermo's NCE scale,
+#     nominal_nce = eV * 500 / (mz * f(z)),   f = 1.0, 0.9, 0.85, 0.8 for z = 1..4,
+# the best Altimeter NCE tracks nominal NCE monotonically (E. coli diaPASEF: ~2 NCE
+# units below it for 2+ and 3+). This model bins the tuning precursors by
+# (nominal NCE, charge) and takes medians — the same machinery as
+# `BinnedMedianNceModel`, with nominal NCE in place of precursor m/z as the bin axis.
+"""
+    CeBinnedNceModel{T}
+
+Binned-median NCE model keyed on the scan's collision energy. `inner` is a
+`BinnedMedianNceModel` fitted with nominal NCE as its x axis (its `mz_min` /
+`bin_width` fields hold nominal-NCE bin edges). Evaluated as
+`model(prec_mz, charge, scan_ev)`; a scan without a collision energy (`scan_ev <= 0`)
+gets `default_nce`.
+"""
+struct CeBinnedNceModel{T<:AbstractFloat} <: NceModel{T}
+    inner::BinnedMedianNceModel{T}
+end
+
+# Thermo HCD charge-state correction factors: absolute eV = NCE * (mz / 500) * f(z).
+@inline nce_charge_factor(z::Integer) = z <= 1 ? 1.0f0 : z == 2 ? 0.9f0 : z == 3 ? 0.85f0 : 0.8f0
+@inline nominal_nce(ev::AbstractFloat, mz::AbstractFloat, charge::Integer) =
+    Float32(ev) * 500f0 / (Float32(mz) * nce_charge_factor(charge))
+
+@inline function nce_cache_slot(m::CeBinnedNceModel, mz::AbstractFloat, charge::Integer, ev::AbstractFloat)
+    ev > zero(ev) || return 0
+    return nce_cache_slot(m.inner, nominal_nce(ev, mz, charge), charge)
+end
+
+function (m::CeBinnedNceModel{T})(mz::AbstractFloat, charge::Integer, ev::AbstractFloat) where {T}
+    slot = nce_cache_slot(m, mz, charge, ev)
+    return slot == 0 ? m.inner.default_nce : @inbounds(m.inner.medians[slot])
+end
+(m::CeBinnedNceModel)(::AbstractFloat, ::Integer) = m.inner.default_nce   # no scan energy available
+(m::CeBinnedNceModel)() = m.inner.default_nce
+(m::CeBinnedNceModel)(x::AbstractVector, charge::AbstractVector) = map((xi, ci) -> m(xi, ci), x, charge)
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::CeBinnedNceModel)
+    knots = getKnots(lookup)
+    data = [prepare_spline_fractions(nce, knots) for nce in model.inner.medians]
+    default_data = prepare_spline_fractions(model.inner.default_nce, knots)
+    return BinnedSplineIntensityModel(model, data, default_data)
+end
+
+"""
+    fit_ce_binned_median_nce(ev, mz, nce, charge, default_nce; min_per_bin=50)
+
+Fit a `CeBinnedNceModel`: per charge, equal-width bins over the precursors' nominal
+NCE (from each precursor's scan eV, m/z and charge) with at least `min_per_bin`
+precursors each, taking the median best NCE per bin.
+"""
+function fit_ce_binned_median_nce(
+    ev::AbstractVector,
+    mz::AbstractVector{T},
+    nce::AbstractVector{T},
+    charge::AbstractVector,
+    default_nce::T;
+    min_per_bin::Int = 50
+) where {T<:AbstractFloat}
+    nominal = T[nominal_nce(ev[i], mz[i], charge[i]) for i in eachindex(ev)]
+    return CeBinnedNceModel{T}(fit_binned_median_nce(nominal, nce, charge, default_nce; min_per_bin = min_per_bin))
+end
+
 function fit_binned_median_nce(
     mz::AbstractVector{T},
     nce::AbstractVector{T},

@@ -188,6 +188,11 @@ getNumVariableModifications(lp::LibraryPrecursors) =
 @inline _num_variable_modifications_at(values, structural_mods, precursor_idx::Integer) =
     UInt8(values[precursor_idx])
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
+# Ion-mobility columns exist only in libraries built with `library_params.im_model`;
+# `nothing` otherwise.
+getCCS(lp::LibraryPrecursors) = hasproperty(lp.data, :ccs) ? lp.data[:ccs] : nothing
+getInvIonMobility(lp::LibraryPrecursors) =
+    hasproperty(lp.data, :inv_ion_mobility) ? lp.data[:inv_ion_mobility] : nothing
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
 getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]

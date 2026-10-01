@@ -49,6 +49,7 @@ function execute_search(
     search_results = init_search_results(search_type, search_parameters, search_context)
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
+        zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
@@ -133,7 +134,7 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
 
     if ms_order_select == 2
     thread_tasks, total_peaks = partitionScansToThreads(
-        getMzArrays(ms_table),
+        getPeakCounts(ms_table),
         getRetentionTimes(ms_table),
         getCenterMzs(ms_table),
         getMsOrders(ms_table),
@@ -142,7 +143,7 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
     )
     else
     thread_tasks, total_peaks = partitionScansToThreadsMS1(
-        getMzArrays(ms_table),
+        getPeakCounts(ms_table),
         getRetentionTimes(ms_table),
         getCenterMzs(ms_table),
         getMsOrders(ms_table),
@@ -168,7 +169,7 @@ function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_
     rt_values = Float32[getRetentionTime(original_data, actual_idx) for actual_idx in actual_scan_indices]
     center_mz_values = Union{Missing, Float32}[getCenterMz(original_data, actual_idx) for actual_idx in actual_scan_indices]
     ms_orders = UInt8[getMsOrder(original_data, actual_idx) for actual_idx in actual_scan_indices]
-    mz_arrays = [getMzArray(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    peak_counts = Int32[getPeakCount(original_data, actual_idx) for actual_idx in actual_scan_indices]
 
     @debug_l2 "partition_scans(IndexedMassSpecData): Processing $(length(actual_scan_indices)) scans"
     @debug_l2 "partition_scans(IndexedMassSpecData): RT range: $(minimum(rt_values)) - $(maximum(rt_values))"
@@ -176,7 +177,7 @@ function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_
     # Use the existing partitioning logic but with extracted data
     if ms_order_select == 2
         thread_tasks, total_peaks = partitionScansToThreadsIndexed(
-            mz_arrays,
+            peak_counts,
             rt_values,
             center_mz_values,
             ms_orders,
@@ -186,7 +187,7 @@ function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_
         )
     else
         thread_tasks, total_peaks = partitionScansToThreadsMS1Indexed(
-            mz_arrays,
+            peak_counts,
             rt_values,
             center_mz_values,
             ms_orders,
@@ -278,7 +279,7 @@ function initSimpleSearchContext(
         [MassErrSample() for _ in range(1, M)],            # mass_err_samples
         # id_to_col: reset per scan, ~5k active. Hint to 8k = 8192 next pow2,
         # avoids rehash on busy scans.
-        SparsePrecMap{UInt16}(sizehint=8192),
+        SparsePrecMap{UInt32}(sizehint=8192),
         iso_splines,
         [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),
@@ -303,6 +304,8 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),  # scan_corrected_mz
         zeros(Float32, 5000),  # scan_obs_low
         zeros(Float32, 5000),  # scan_obs_high
+        NaN32,                 # deconv_tol: no per-file override
+        PeakDecodeBuffer(),    # decode_buf
     )
 end
 

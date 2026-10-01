@@ -109,6 +109,9 @@ struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     lgbm_buffers::LGBMMatrixBuffers
     sortperm_workspace::Int32SortPermWorkspace
+    # Per-file ion-mobility calibration QC plots (packet data), written as one PDF in
+    # summarize_results! (qc_plots/ion_mobility_model/ion_mobility_plots.pdf).
+    im_plot_objects::Vector{Any}
 end
 
 #==========================================================
@@ -141,6 +144,7 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
         DataFrame(),
         LGBMMatrixBuffers(),
         Int32SortPermWorkspace(),
+        Any[],
     )
 end
 
@@ -291,6 +295,9 @@ function process_file!(
     file_name = getParsedFileName(search_context, ms_file_idx)
 
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
+    # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
+    # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
+    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx))
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -306,7 +313,8 @@ function process_file!(
     # contiguous-by-scan invariant: linear sweep for run boundaries
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
-    t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
+    t_scan_comp = zt_collapsed ? 0.0 :
+        @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
     # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
@@ -316,7 +324,8 @@ function process_file!(
     # precursor-sorted input. The per-precursor chromatogram-feature passes
     # (ms1_corr_*, frag_*) run later in process_search_results! after the
     # precursor sort, since they group by :precursor_idx.
-    t_ms1 = @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+    t_ms1 = zt_collapsed ? 0.0 :
+        @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
 
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
     # passes (chrom features, best-per-precursor) can then fast-path their
@@ -343,21 +352,26 @@ function process_file!(
 end
 
 """
-Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+    _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                center_mzs, isolation_widths, bitvec_rank_table)
+
+First half of per-file scoring with the whole post-deconvolution table in memory: prescore
+features, LightGBM, iRT refinement, best scan per precursor. Returns the best-per-precursor table
+and what the second half needs from the full table, or `nothing` when there are no PSMs.
 """
-function process_search_results!(
+function _mainsearch_best_in_memory!(
     results::MainSearchResults,
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::MassSpecData
+    spectra::MassSpecData,
+    center_mzs,
+    isolation_widths,
+    bitvec_rank_table,
 ) where {P<:MainSearchParameters}
 
-    t_start = time()
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
-    center_mzs = getCenterMzs(spectra)
-    isolation_widths = getIsolationWidthMzs(spectra)
 
     # Compute prescore features
     t_prepare = @elapsed @alloc_bucket "prepare_psm_features" prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
@@ -391,7 +405,6 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
-    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
@@ -451,6 +464,54 @@ function process_search_results!(
     end
     best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
 
+    return (
+        best_psms = best_psms,
+        # every meta-PSM's final score and label (the global PEP), and the rows the trace
+        # features read: here the whole in-memory table
+        all_scores = psms[!, :lgbm_score],
+        all_targets = psms[!, :target],
+        trace_input = (best, mask, peps) -> (psms, mask, peps),
+        cleanup = () -> nothing,
+        n_total_psms = n_total_psms,
+        timings = (prepare = t_prepare, competition = t_competition, apex = t_apex, ms1 = t_ms1,
+                   lgbm_start = t_lgbm_start, lgbm_end = t_lgbm_end, lgbm = lgbm_timings),
+    )
+end
+
+"""
+Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+"""
+function process_search_results!(
+    results::MainSearchResults,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+) where {P<:MainSearchParameters}
+
+    t_start = time()
+    file_name = getParsedFileName(search_context, ms_file_idx)
+    center_mzs = getCenterMzs(spectra)
+    isolation_widths = getIsolationWidthMzs(spectra)
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+
+    # Scanning-quad files searched in more than one chunk keep their meta-PSMs on disk, merged into
+    # precursor-complete files, and are scored file by file (ZT/partitioned_scoring.jl).
+    zt_parts = getZTPsmPartitions(search_context, ms_file_idx)
+    stage = zt_parts === nothing ?
+        _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                    center_mzs, isolation_widths, bitvec_rank_table) :
+        zt_mainsearch_best_partitioned!(zt_parts, results, params, search_context, ms_file_idx,
+                                        spectra, center_mzs, isolation_widths, bitvec_rank_table)
+    stage === nothing && return nothing
+    best_psms = stage.best_psms
+    n_total_psms = stage.n_total_psms
+    t_prepare = stage.timings.prepare; t_competition = stage.timings.competition
+    t_apex = stage.timings.apex; t_ms1 = stage.timings.ms1
+    t_lgbm_start = stage.timings.lgbm_start; t_lgbm_end = stage.timings.lgbm_end
+    lgbm_timings = stage.timings.lgbm
+    precursors = getPrecursors(getSpecLib(search_context))
+
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
     _b_pep = Base.gc_bytes()
@@ -496,11 +557,26 @@ function process_search_results!(
     new_rt_model = getRtIrtModel(search_context, ms_file_idx)
     best_psms[!, :irt_obs] .= new_rt_model.(best_psms[!, :rt])
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
+
+    # Ion-mobility calibration (packet data): the z2 library 1/K0 vs packet IM scan line,
+    # refit from high-confidence PSMs or else the file's tuning / median line; writes the
+    # signed :im_error (z2 sigma units) for every row, zeros when there is no line.
+    im_fallback = get(getImModel(search_context, ms_file_idx), 2, nothing)
+    im_models = add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
+                              getPrecursors(getSpecLib(search_context)), ms_file_idx;
+                              fallback = im_fallback)
+    setImModel!(search_context, ms_file_idx, im_models)
+    if !isempty(im_models)
+        append!(results.im_plot_objects,
+                plot_im_calibration(best_psms, best_psms[!, :lgbm_prob], spectra,
+                                    getPrecursors(getSpecLib(search_context)), im_models,
+                                    getParsedFileName(search_context, ms_file_idx)))
+    end
     t_recal = time()
 
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
-        psms[!, :lgbm_score],
-        psms[!, :target],
+        stage.all_scores,
+        stage.all_targets,
         results.sortperm_workspace,
     )
     @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
@@ -517,15 +593,17 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
+    trace_psms, trace_mask, trace_pep_values = stage.trace_input(best_psms, trace_pass_mask, trace_peps)
     @alloc_bucket "trace_and_fragment_features" add_trace_and_fragment_features!(
         best_psms,
-        psms,
-        trace_pass_mask;
+        trace_psms,
+        trace_mask;
         bitvec_rank_table = bitvec_rank_table,
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
-        pep_values = trace_peps,
+        pep_values = trace_pep_values,
     )
+    trace_psms = nothing; stage.cleanup()
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 
@@ -633,6 +711,14 @@ function summarize_results!(
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     precursors = getPrecursors(getSpecLib(search_context))
     lib_irt = getIrt(precursors)
+
+    # Ion-mobility calibration QC (packet data only): one PDF, a page pair per file.
+    if !isempty(results.im_plot_objects)
+        im_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ion_mobility_model")
+        mkpath(im_dir)
+        save_multipage_pdf(Plots.Plot[p for p in results.im_plot_objects], joinpath(im_dir, "ion_mobility_plots.pdf"))
+        empty!(results.im_plot_objects)
+    end
 
     # Step 1: Per-fold global prescore aggregation → RT-binned tolerance only.
     # No PSM filter is applied here; the per-file PEP filter upstream already

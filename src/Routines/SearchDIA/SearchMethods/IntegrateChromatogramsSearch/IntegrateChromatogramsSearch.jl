@@ -404,6 +404,9 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    # Scanning-quad (ZT): one point per precursor per cycle (ZT/chromatogram_collapse.jl).
+    zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
+    chromatograms = zt_collapse_chromatograms(zt_geom, chromatograms, spectra, search_context)
     if nrow(chromatograms) > 0
         # WH smoothing uses precursor transmission as both a correction factor
         # and an observation weight. Separate-trace mode also uses isotope
@@ -420,11 +423,31 @@ function process_file!(
             getIsolationWidthMzs(spectra),
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
+        zt_reset_transmission!(zt_geom, chromatograms)
     end
     if _sdiag
         MBR_STEP_DIAG[:isotopes_bytes] += Base.gc_bytes() - _sa
         MBR_STEP_DIAG[:isotopes_ms] += round(Int, (time() - _st) * 1000)
         _st = time(); _sa = Base.gc_bytes()
+    end
+    # Ion-mobility data: attach the grid coordinates the 2D integrator needs, and convert the
+    # mobility band from 1/K0 to IM scans with this file's scan-to-1/K0 slope (im_half_width_scans),
+    # so a band specified in 1/K0 lands on the right number of scans whatever the ramp was.
+    # No mobility or no slope -> 1D path.
+    im_half_scans = 0
+    let im_scans_v = getImScans(spectra)
+        if im_scans_v !== nothing && nrow(chromatograms) > 0
+            im_half_scans = im_half_width_scans(CHROM_IM_BAND_K0, spectra, search_context, ms_file_idx)
+            if im_half_scans > 0
+                cyc_v = getCycleIdxs(spectra)
+                sidx = chromatograms[!, :scan_idx]
+                chromatograms[!, :cycle_idx] = UInt32[UInt32(cyc_v[s]) for s in sidx]
+                chromatograms[!, :im_scan] = UInt16[UInt16(im_scans_v[s]) for s in sidx]
+                @user_info "2D chromatogram integration: mobility band ±$(CHROM_IM_BAND_K0) 1/K0 = ±$(im_half_scans) IM scans"
+            else
+                @user_warn "Ion-mobility data but no usable IM calibration line; falling back to 1D integration"
+            end
+        end
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
     if _sdiag
@@ -463,6 +486,7 @@ function process_file!(
             passing_psms[!, :quant_withheld],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
+            im_half_scans = im_half_scans,
         )
         if _sdiag
             MBR_STEP_DIAG[:integrate_bytes] += Base.gc_bytes() - _sa
