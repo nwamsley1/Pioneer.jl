@@ -128,7 +128,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
                                          spectra::MassSpecData, center_mzs, isolation_widths,
                                          bitvec_rank_table)
     dir = dirname(first(parts))                       # the chunk files, sorted by (precursor, scan)
-    cleanup = () -> (rm(dir; recursive = true, force = true); setZTPsmPartitions!(search_context, ms_file_idx, nothing))
+    cleanup = () -> (_zt_rm_dir(dir); setZTPsmPartitions!(search_context, ms_file_idx, nothing))
     n_meta = sum(p -> length(Arrow.Table(p).precursor_idx), parts)
     if n_meta < ZT_PARTITION_MIN_ROWS
         # the in-memory table: chunks in cycle order, stably sorted by precursor (as process_file!)
@@ -150,7 +150,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
         f = joinpath(dir, "part_$(lpad(length(featured) + 1, 4, '0')).featured.arrow")
         Arrow.write(f, df); push!(featured, f); push!(n_rows, nrow(df))
     end
-    foreach(rm, parts)
+    foreach(safeRm, parts)                            # Windows: chunks may still be memory-mapped
     n_total = sum(n_rows)
     @user_info "ZT main search: merged $(length(parts)) chunk files into $(length(featured)) " *
                "precursor-complete parts in $(round(t_merge; digits = 1))s " *
@@ -275,4 +275,17 @@ function _zt_trace_rows(featured, n_rows, best::DataFrame, mask::AbstractVector{
         off += n_rows[i]
     end
     return (isempty(tabs) ? DataFrame() : reduce(vcat, tabs)), mask[sel], peps[sel]
+end
+
+"""Remove the ZT chunk directory; on Windows a still-mapped Arrow file can block this, so a failure
+only warns (the directory is under temp_data)."""
+function _zt_rm_dir(dir::String)
+    try
+        rm(dir; recursive = true, force = true)
+    catch e
+        GC.gc(true)
+        try rm(dir; recursive = true, force = true) catch
+            @user_warn "Could not remove ZT chunk directory $dir: $(sprint(showerror, e))"
+        end
+    end
 end
