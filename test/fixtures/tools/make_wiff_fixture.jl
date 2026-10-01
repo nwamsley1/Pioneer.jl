@@ -1,5 +1,5 @@
-# Build the truncated SCIEX SWATH `.wiff` + `.wiff.scan` test fixture (published on Zenodo; see
-# dev_docs/formats/FOLD_TIMSSLICES_SCIEXWIFF.md) from a full run.
+# Build the truncated SCIEX SWATH `.wiff` + `.wiff.scan` test fixture (published on Zenodo, record 23023765) from a
+# full run.
 #
 #   julia --project=<Pioneer> make_wiff_fixture.jl <source.wiff> <out_dir> [rt_lo_min rt_hi_min prec_lo prec_hi]
 #
