@@ -178,6 +178,14 @@ end
         @test c.width == 5.0 && c.main == "partitioned_fragment_index.jls" && c.window == Float64(2.9f0)
         @test Pioneer.choose_fragment_index(lib16, String[]).width == 5.0       # no data: the first index
         @test Pioneer.choose_fragment_index(lib32, [narrow]).width == 10.0      # a single index is always used
+        # timsTOF data always gets the widest class, whatever its window width; the .tdfs is not even read
+        tdfs = mkpath(joinpath(tmp, "run.tdfs"))
+        c = Pioneer.choose_fragment_index(lib16, [tdfs])
+        @test c.width == 10.0 && c.tims && c.window === nothing
+        @test Pioneer.target_partition_width(2.9, true) == 10.0
+        @test Pioneer.target_partition_width(nothing, true) == 10.0
+        @test [Pioneer.target_partition_width(w, false) for w in (2.0, 3.7, 3.75, 7.4, 7.5, 25.0)] == [2.5, 2.5, 5.0, 5.0, 10.0, 10.0]
+        @test Pioneer.target_partition_width(nothing, false) === nothing
         legacy = mktempdir()                                                    # no descriptor: an older library
         c = Pioneer.choose_fragment_index(legacy, [wide])
         @test c.width === nothing && c.main == "partitioned_fragment_index.jls"
