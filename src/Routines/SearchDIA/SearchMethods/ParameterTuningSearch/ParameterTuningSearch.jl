@@ -182,7 +182,9 @@ function initialize_models!(search_context, ms_file_idx, params)
 
     # Quad transmission: trust the stated isolation width with a hard
     # square cutoff during tuning, before any file-specific Razo fit.
-    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
+    # (Scanning-quad files keep the model installed from their geometry; ZT/tuning.jl.)
+    zt_keeps_quad_model(getZTGeometry(search_context, ms_file_idx)) ||
+        setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
 end
 
 
@@ -635,12 +637,7 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        # Ion-mobility packet files: stratify within each RT bin over (isolation
-        # window, IM bin) so adjacent-scan duplicates of one precursor and one
-        # dense window cannot dominate (see get_ms2_scan_priority_order_im).
-        scan_priority = getImScans(spectra) === nothing ?
-            get_ms2_scan_priority_order(spectra) :
-            get_ms2_scan_priority_order_im(spectra, TUNING_IM_BINS)
+        scan_priority = tuning_scan_priority(getZTGeometry(search_context, ms_file_idx), spectra)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true

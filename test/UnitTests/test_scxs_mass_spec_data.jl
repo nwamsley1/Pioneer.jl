@@ -13,7 +13,7 @@ using Pioneer: ScxsMassSpecData, PeakDecodeBuffer, getPeaks!, loadMassSpecData, 
                getRetentionTimes, getTICs, getCenterMzs, getMsOrders, getCycleIdxs, getImScans
 
 "Write a .scxs with the given per-scan (bins, intensities); calibration and metadata are fixed test values."
-function write_test_scxs(dir, scans; bin_scale = 4, int_scale = 10.0, cal_a = 4.9e-4, cal_b = -13.7)
+function write_test_scxs(dir, scans; bin_scale = 4, int_scale = 10.0, cal_a = 4.9e-4, cal_b = -13.7, extra_meta = "")
     mkpath(dir)
     codec = TimsSlices.BlockCodec(); offs = Int64[]; sizes = Int32[]; off = 0
     open(joinpath(dir, "blocks.bin"), "w") do io
@@ -32,7 +32,7 @@ function write_test_scxs(dir, scans; bin_scale = 4, int_scale = 10.0, cal_a = 4.
         tic = Float32.(100 .* (1:n)), center_mz = Float32.(ifelse.(ms1, NaN32, 401.45f0)),
         isolation_width = Float32.(ifelse.(ms1, NaN32, 2.9f0)), cal_a = fill(cal_a, n), cal_b = fill(cal_b, n),
         n_peaks = Int32[length(s[1]) for s in scans], block_offset = offs, block_size = sizes))
-    write(joinpath(dir, "meta.json"), """{"format_version": 1, "bin_scale": $bin_scale, "int_scale": $int_scale}""")
+    write(joinpath(dir, "meta.json"), """{"format_version": 1, "bin_scale": $bin_scale, "int_scale": $int_scale$extra_meta}""")
     dir
 end
 
@@ -66,6 +66,15 @@ end
         @test length(first(getPeaks!(buf, other, 1))) == 1
         @test_throws BoundsError getPeaks!(buf, d, 5)
         @test_throws ErrorException getMzArray(d, 1)
+
+        # acquisition metadata from meta.json decides ZT mode, as the Arrow schema metadata does for .arrow
+        @test Pioneer.getAcquisitionMetadata(d)["bin_scale"] == "4" && !Pioneer.zt_mode(d)
+        zt = loadMassSpecData(write_test_scxs(joinpath(mktempdir(), "r.zt.scxs"), scans;
+            extra_meta = ", \"acquisition_type\": \"zt_scan_dia\", \"q1_bin_step_mz\": \"1.0221\""))
+        @test Pioneer.zt_mode(zt) && Pioneer.getAcquisitionMetadata(zt)["q1_bin_step_mz"] == "1.0221"
+        sw = loadMassSpecData(write_test_scxs(joinpath(mktempdir(), "s.scxs"), scans;
+            extra_meta = ", \"acquisition_type\": \"swath\""))
+        @test !Pioneer.zt_mode(sw)
     end
 
     dir = get(ENV, "PIONEER_TEST_SCXS", "")

@@ -35,6 +35,7 @@ struct ScxsMassSpecData <: MassSpecData
     isolation_width::Vector{Union{Missing, Float32}}
     ms_order::Vector{UInt8}
     cycle_idx::Vector{UInt32}
+    metadata::Dict{String,String}               # meta.json as strings (e.g. acquisition_type), like Arrow metadata
 end
 
 const SCXS_FORMAT_VERSION = 1
@@ -63,7 +64,7 @@ function ScxsMassSpecData(dir::String)
         hasproperty(t, :base_peak_mz) ? Vector{Float32}(t.base_peak_mz) : nothing,
         hasproperty(t, :base_peak_intensity) ? Vector{Float32}(t.base_peak_intensity) : nothing,
         nan_to_missing(t.center_mz), nan_to_missing(t.isolation_width), Vector{UInt8}(t.ms_order),
-        Vector{UInt32}(t.cycle),
+        Vector{UInt32}(t.cycle), Dict{String,String}(String(k) => string(v) for (k, v) in meta),
     )
 end
 
@@ -132,3 +133,4 @@ getIsolationWidthMzs(d::ScxsMassSpecData) = d.isolation_width
 getMsOrders(d::ScxsMassSpecData) = d.ms_order
 getCycleIdxs(d::ScxsMassSpecData) = d.cycle_idx
 getCollisionEnergyEvs(::ScxsMassSpecData) = nothing
+getAcquisitionMetadata(d::ScxsMassSpecData) = d.metadata

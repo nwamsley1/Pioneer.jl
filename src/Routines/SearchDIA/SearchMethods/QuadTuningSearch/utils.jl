@@ -43,7 +43,7 @@ function post_design_matrix!(search_data::SearchDataStructures,
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff))
+        params.max_iter_outer, deconv_tol(search_data, params.max_diff)))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
         zero_negligible_weights!(weights, Hs.n)
@@ -846,7 +846,7 @@ function _quad_process_scan!(
         getMu(search_data),
         getObserved(search_data),
         params.max_iter_outer,
-        params.max_diff)
+        deconv_tol(search_data, params.max_diff))
 
     # Record results (reads Hs.colptr + matched_at(Hs, j) per column).
     _quad_record_scan_results!(

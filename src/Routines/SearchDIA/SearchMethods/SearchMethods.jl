@@ -49,6 +49,7 @@ function execute_search(
     search_results = init_search_results(search_type, search_parameters, search_context)
 
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
+        zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
@@ -303,6 +304,7 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),  # scan_corrected_mz
         zeros(Float32, 5000),  # scan_obs_low
         zeros(Float32, 5000),  # scan_obs_high
+        NaN32,                 # deconv_tol: no per-file override
         PeakDecodeBuffer(),    # decode_buf
     )
 end

@@ -247,10 +247,21 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_corrected_mz::Vector{Float32}
     scan_obs_low::Vector{Float32}
     scan_obs_high::Vector{Float32}
+    # Deconvolution convergence tolerance for the file being searched, overriding the stage's own
+    # `max_diff`; NaN (the default) means no override. Set per file by `zt_prepare_file!`.
+    deconv_tol::Float32
     # Peak decode buffer for `.tdfs` data (`getPeaks!`). Owned by the task using this struct, so decoded peaks
     # cannot be overwritten by another task. Unused for Arrow-backed data.
     decode_buf::PeakDecodeBuffer
 end
+
+"""
+    deconv_tol(search_data, default) -> Float32
+
+The deconvolution convergence tolerance for the current file: the per-file override when one is set
+(scanning-quad files), otherwise the stage's `default`.
+"""
+@inline deconv_tol(sd::SimpleLibrarySearch, default::Real) = isnan(sd.deconv_tol) ? Float32(default) : sd.deconv_tol
 
 """
 Primary search context holding all data structures and state for search execution.
@@ -275,6 +286,10 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
+    # Scanning-quad (ZT) Q1 bin lattice, per file, filled lazily on first touch.
+    # `nothing` = checked and not a scanning acquisition. Key absent = not yet checked.
+    zt_geometry::Dict{Int64, Union{Nothing, ZTGeometry}}
+    zt_file_state::Dict{Int64, ZTFileState}
     mass_error_model::Dict{Int64, AbstractMassErrorModel}
     ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
@@ -342,6 +357,8 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
+            Dict{Int64, Union{Nothing, ZTGeometry}}(),
+            Dict{Int64, ZTFileState}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, NceModel}(),

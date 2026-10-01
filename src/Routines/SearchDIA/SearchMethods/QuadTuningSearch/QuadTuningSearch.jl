@@ -194,6 +194,10 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
+    # Scanning-quad files fit the transmission triangle instead (ZT/quad_tuning.jl).
+    zt_g = getZTGeometry(search_context, ms_file_idx)
+    zt_g === nothing || return zt_quad_tuning!(results, params, search_context, ms_file_idx, spectra, zt_g)
+
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.5f0))
 
     # Get file name for debugging
@@ -347,6 +351,7 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
 
+    getZTGeometry(search_context, ms_file_idx) === nothing || return nothing   # ZT keeps its own model
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
 end
 

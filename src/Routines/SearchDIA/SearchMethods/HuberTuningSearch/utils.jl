@@ -238,7 +238,7 @@ function process_huber_calibration_scans!(
                     solver,
                     Hs, residuals, weights, colnorm2,
                     getMu(search_data), getObserved(search_data),
-                    chrom_params.max_iter_outer, chrom_params.max_diff,
+                    chrom_params.max_iter_outer, deconv_tol(search_data, chrom_params.max_diff),
                 )
                 update_precursor_weights!(id_to_col, weights, precursor_weights)
 

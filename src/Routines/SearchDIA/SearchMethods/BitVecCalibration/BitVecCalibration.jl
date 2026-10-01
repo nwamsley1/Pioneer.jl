@@ -301,7 +301,10 @@ function process_file!(
     precursors = getPrecursors(spec_lib)
     is_decoy = getIsDecoy(precursors)
     partitioned_index = get_fragment_index(spec_lib, params)
-    qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Scanning-quad files calibrate on the narrow candidacy box the fragment index uses
+    # (ZT/candidacy.jl), not the wide transmission model: that costs 2,008 IDs on A_REP1.
+    qtm = zt_candidacy_quad_model(getZTGeometry(search_context, ms_file_idx),
+                                  getQuadTransmissionModel(search_context, ms_file_idx))
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)

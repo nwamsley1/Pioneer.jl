@@ -159,3 +159,12 @@ function getCollisionEnergyEv(ms_data::NonIonMobilityData, scan_idx::Integer)::F
 end
 getCycleIdxs(ms_data::NonIonMobilityData{T}) where T =
     ms_data.cycle_idxs === nothing ? ms_data.data[:cycle_idx] : ms_data.cycle_idxs
+
+"""
+    getAcquisitionMetadata(ms_data) -> Union{Nothing, AbstractDict{String,String}}
+
+File-level acquisition metadata a converter recorded in the Arrow schema or `.scxs` meta.json (SciexWiff writes
+`acquisition_type = "zt_scan_dia"` and the Q1 bin geometry), or `nothing` when there is none.
+"""
+getAcquisitionMetadata(::MassSpecData) = nothing
+getAcquisitionMetadata(ms_data::NonIonMobilityData) = Arrow.getmetadata(ms_data.data)

@@ -107,6 +107,12 @@ function library_search(
         get_fragment_index(spec_lib, params)
     end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    # Scanning-quad (ZT) files: a narrow candidacy box and a meta-scan-wide deconvolution box
+    # (ZT/candidacy.jl). Both are `qtm` on every other file.
+    zt_geom = getZTGeometry(search_context, ms_file_idx)
+    qtm_frag = zt_candidacy_quad_model(zt_geom, qtm)
+    qtm_deconv = zt_deconv_quad_model(zt_geom, params, qtm)
+
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt = getRtIrtModel(search_context, ms_file_idx)
     precursors = getPrecursors(spec_lib)
@@ -177,7 +183,7 @@ function library_search(
     #
     precursors_passed, scores_passed = searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-        Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol,
+        Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol,
         getMz(precursors);
         score_filter = score_filter, max_peaks = max_peaks,
         scratch = getFragIndexScratch(search_context),
@@ -197,7 +203,11 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
-    # --- 2b. Build precursor index ---
+    # --- 2b. Scanning-quad (ZT): re-anchor, expand across the meta-scan, thin (ZT/candidacy.jl) ---
+    precursors_passed = zt_expand_candidates!(zt_geom, params, scan_to_prec_idx, precursors_passed,
+                                              spectra, all_scan_idxs, getMz(precursors))
+
+    # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
     # --- 3. Threaded scan processing, once per NCE model ---
@@ -206,14 +216,14 @@ function library_search(
     # (selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse!).
     # When nce_tag is not nothing (NCE tuning), tag each result with the NCE value.
     t_deconv_start = time()
-    all_results = map(nce_entries) do (nce_model, nce_tag)
+    _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
-        tasks = map(thread_tasks) do thread_task
+        tasks = map(tt) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                intensity_model, qtm, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
@@ -233,6 +243,12 @@ function library_search(
         end
         return result
     end
+    # Scanning-quad (ZT) main search deconvolves and collapses in cycle-aligned chunks
+    # (ZT/chunked_main_search.jl); `nothing` everywhere else.
+    zt_psms = zt_chunked_deconvolution(zt_geom, params, _deconv_body, spectra, search_context,
+                                       ms_file_idx, scan_to_prec_idx)
+    zt_psms === nothing || return zt_psms
+    all_results = _deconv_body(thread_tasks)
     t_deconv = time() - t_deconv_start
 
     t_post_start = time()

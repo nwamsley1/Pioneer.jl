@@ -404,6 +404,9 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    # Scanning-quad (ZT): one point per precursor per cycle (ZT/chromatogram_collapse.jl).
+    zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
+    chromatograms = zt_collapse_chromatograms(zt_geom, chromatograms, spectra, search_context)
     if nrow(chromatograms) > 0
         # WH smoothing uses precursor transmission as both a correction factor
         # and an observation weight. Separate-trace mode also uses isotope
@@ -420,6 +423,7 @@ function process_file!(
             getIsolationWidthMzs(spectra),
             compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
+        zt_reset_transmission!(zt_geom, chromatograms)
     end
     if _sdiag
         MBR_STEP_DIAG[:isotopes_bytes] += Base.gc_bytes() - _sa

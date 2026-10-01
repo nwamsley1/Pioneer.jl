@@ -32,6 +32,11 @@ include("./UnitTests/test_download_speclib.jl")
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
 
+# Scanning-quad (ZT) meta-scan expansion + collapse
+include("./UnitTests/test_zt_expand_to_metascans.jl")
+include("./UnitTests/test_zt_metascan_collapse.jl")
+include("./UnitTests/test_zt_map_any_hit_to_center.jl")
+
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
@@ -105,6 +110,8 @@ include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_post
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
 include("./UnitTests/test_scoring_semisupervised.jl")
 include("./UnitTests/test_run_summary.jl")
+include("./UnitTests/test_zt_mode.jl")
+include("./UnitTests/test_zt_partition_merge.jl")
 include("./UnitTests/test_file_name_labels.jl")
 
 # FileOperations pipeline

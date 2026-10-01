@@ -26,4 +26,8 @@
     # Nothing distinguishes the runs: the full name stands in.
     @test Pioneer.distinguishingFileNames(["same_name", "same_name"]) == ["same_name", "same_name"]
     @test Pioneer.distinguishingFileNames(["only_one"]) == ["only_one"]
+
+    # convertSciex's `.zt` belongs to the extension, not the run name
+    @test Pioneer.parseFileNames(["/d/run1.zt.scxs", "/d/run2.zt.arrow", "/d/run3.scxs", "/d/zt.arrow"]) ==
+          ["run1", "run2", "run3", "zt"]
 end
