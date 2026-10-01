@@ -161,6 +161,8 @@ struct PioneerScanElement
     lowMz::Float32
     highMz::Float32
     TIC::Float32
+    basePeakMz::Float32
+    basePeakIntensity::Float32
     centerMz::Union{Missing, Float32}
     isolationWidthMz::Union{Missing, Float32}
     collisionEnergyField::Union{Missing, Float32}
@@ -312,6 +314,17 @@ function parse_optional_cv_param(::Type{T},
 end
 
 
+"""
+    array_base_peak(mz_array, intensity_array) -> (mz, intensity)
+
+The most intense peak of a spectrum, `(NaN32, 0f0)` when it has none.
+"""
+function array_base_peak(mz_array::AbstractVector{Float32}, intensity_array::AbstractVector{Float32})
+    isempty(intensity_array) && return NaN32, 0.0f0
+    k = argmax(intensity_array)
+    return mz_array[k], intensity_array[k]
+end
+
 function parseScanDictToScanElement(
     spectrum_dict::Dict{String, String},
     scan_number::Int64,
@@ -343,6 +356,10 @@ function parseScanDictToScanElement(
         parse_optional_cv_param(Float32, spectrum_dict, "total ion current"),
         sum(intensity_array; init = zero(Float32))
     )
+    # The most intense stored peak, not the mzML's MS:1000504/1000505: those can come from the vendor's
+    # profile data and sit below the largest centroid (0.29x on SCIEX SWATH), and the Huber weight ceiling
+    # (huber_max_weight) assumes no intensity in the scan exceeds the base peak. As for .scxs and .tdfs.
+    basePeakMz, basePeakIntensity = array_base_peak(mz_array, intensity_array)
     collisionEnergyField = parse_optional_cv_param(
         Float32,
         spectrum_dict,
@@ -359,6 +376,8 @@ function parseScanDictToScanElement(
         lowMz,
         highMz,
         TIC,
+        basePeakMz,
+        basePeakIntensity,
         centerMz,
         isolationWidthMz,
         collisionEnergyField,
