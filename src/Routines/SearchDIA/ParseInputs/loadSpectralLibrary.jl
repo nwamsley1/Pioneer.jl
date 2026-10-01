@@ -73,40 +73,40 @@ function median_ms2_isolation_width(ms_path::AbstractString)
 end
 
 """
-    target_partition_width(window, tims) -> Float64
+    target_partition_width(window) -> Union{Nothing, Float64}
 
-The precursor partition width (Da) that suits the data: always 10 Da for timsTOF (`tims`) data, whatever its
-window width (10 Da was fastest on diaPASEF, and ion mobility spreads each window's precursors further);
-otherwise the size class of the MS2 isolation window `window` (m/z): below 3.75 → 2.5 Da, below 7.5 → 5, else 10
-(dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md). `nothing` when the window is unknown and the data not timsTOF.
+The precursor partition width (Da) that suits data whose MS2 isolation windows are `window` m/z wide: its size
+class, below 3.75 → 2.5 Da, below 7.5 → 5, else 10 (dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md). The same
+for every instrument: the fragment index's work per scan is set by how many m/z partitions the isolation window
+overlaps (timsTOF's mobility gate filters candidates after the index). Standard diaPASEF (25 m/z) → 10 Da.
+`nothing` when the window is unknown.
 """
-target_partition_width(window, tims::Bool) =
-    tims ? 10.0 : window === nothing ? nothing : window < 3.75 ? 2.5 : window < 7.5 ? 5.0 : 10.0
+target_partition_width(window) =
+    window === nothing ? nothing : window < 3.75 ? 2.5 : window < 7.5 ? 5.0 : 10.0
 
 """
-    choose_fragment_index(lib_dir, ms_paths) -> (main, presearch, width, window, tims)
+    choose_fragment_index(lib_dir, ms_paths) -> (main, presearch, width, window)
 
 The fragment index to search with. A library listing several (`fragment_indices.json`) offers one per precursor
-partition width; the one nearest (in ratio) to `target_partition_width` of the data is used. The data is the first
-MS file: a search's files share an acquisition method. Its window, the median MS2 isolation width, is read only
-for non-timsTOF data. A library without the descriptor has its single index under the historical names (`width`
-`nothing`); with no target (window unknown) the library's first index is used.
+partition width; the one nearest (in ratio) to `target_partition_width` of the data's window is used. The window is
+the median MS2 isolation width of the first MS file: a search's files share an acquisition method. A library without
+the descriptor has its single index under the historical names (`width` `nothing`); with the window unknown, the
+library's first index is used.
 """
 function choose_fragment_index(lib_dir::AbstractString, ms_paths::AbstractVector{<:AbstractString})
-    tims = !isempty(ms_paths) && is_tdfs_path(first(ms_paths))
     legacy = (main = "partitioned_fragment_index.jls", presearch = "presearch_partitioned_fragment_index.jls",
-              width = nothing, window = nothing, tims = tims)
+              width = nothing, window = nothing)
     desc_path = joinpath(lib_dir, FRAGMENT_INDEX_DESCRIPTOR)
     isfile(desc_path) || return legacy
     entries = JSON.parsefile(desc_path)["indexes"]
-    window = isempty(ms_paths) || tims ? nothing : median_ms2_isolation_width(first(ms_paths))
-    target = target_partition_width(window, tims)
+    window = isempty(ms_paths) ? nothing : median_ms2_isolation_width(first(ms_paths))
+    target = target_partition_width(window)
     e = first(entries)
     if target !== nothing && length(entries) > 1
         e = entries[argmin([abs(log(Float64(x["partition_width_da"]) / target)) for x in entries])]
     end
     return (main = String(e["main"]), presearch = String(e["presearch"]),
-            width = Float64(e["partition_width_da"]), window = window, tims = tims)
+            width = Float64(e["partition_width_da"]), window = window)
 end
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
