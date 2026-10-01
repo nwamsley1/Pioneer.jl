@@ -29,11 +29,6 @@ function build_protein_global_qval_dict(
     scores = Float32[global_pg_score_dict[k] for k in keys_vec]
     targets = Bool[k[2] for k in keys_vec]
 
-    perm = sortperm(collect(zip(scores, targets)); by = x -> (-x[1], -x[2]))
-    permute!(keys_vec, perm)
-    permute!(scores, perm)
-    permute!(targets, perm)
-
     qvals = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
 
@@ -48,7 +43,7 @@ end
 """
     update_psms_with_protein_scores_refs(paired_refs::Vector{PairedSearchFiles},
                                          pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
-                                         pg_score_to_qval::Interpolations.Extrapolation,
+                                         pg_score_to_qval,
                                          global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
 
 Update PSMs with model-scored `pg_score` values and q-values using references.
@@ -56,7 +51,7 @@ Update PSMs with model-scored `pg_score` values and q-values using references.
 function update_psms_with_protein_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
     pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
-    pg_score_to_qval::Interpolations.Extrapolation,
+    pg_score_to_qval,
     global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
     for paired_ref in paired_refs

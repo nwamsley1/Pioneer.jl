@@ -84,11 +84,13 @@ end
         dfm = DataFrame(sequence = ["AAAAAKPK", "PEMTK"], mods = Union{Missing, String}[missing, "(5,K,Unimod:737)"],
                         koina_sequence = ["AAAAAKPK", "PEMTK[UNIMOD:737]"],
                         precursor_charge = UInt8[2, 2], mz = Float32[393.24, 400.0])
-        Pioneer.Arrow.write(inp, dfm)
+        # new files: Windows cannot overwrite the memory-mapped ones read above
+        inp2 = joinpath(d, "in_mods.arrow"); outp2 = joinpath(d, "out_mods.arrow")
+        Pioneer.Arrow.write(inp2, dfm)
         Pioneer.with_koina_client(client) do
-            Pioneer.predict_ion_mobility(inp, outp, "im2deep")
+            Pioneer.predict_ion_mobility(inp2, outp2, "im2deep")
         end
-        @test nrow(DataFrame(Pioneer.Arrow.Table(outp))) == 2
+        @test nrow(DataFrame(Pioneer.Arrow.Table(outp2))) == 2
     end
 end
 

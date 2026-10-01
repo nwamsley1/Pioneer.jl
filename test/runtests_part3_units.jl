@@ -21,16 +21,22 @@ println("dir ", @__DIR__)
 
 include("./UnitTests/test_psm_container.jl")
 include("./UnitTests/test_scoring_workspace.jl")
+include("./UnitTests/test_lightgbm_training_release.jl")
+include("./UnitTests/test_dataframe_block_store.jl")
+include("./UnitTests/test_mbr_feature_store.jl")
 include("./UnitTests/test_fast_df_sort.jl")
 include("./UnitTests/test_parallel_mainsearch_sortperm.jl")
 
 # Quantification tests
 include("./UnitTests/test_maxLFQ.jl")
+include("./UnitTests/test_protein_quantification_pipeline.jl")
+include("./UnitTests/test_protein_export.jl")
 include("./UnitTests/test_normalizeQuant.jl")
 include("./UnitTests/test_download_speclib.jl")
 
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
+include("./UnitTests/test_score_groups.jl")
 
 # Scanning-quad (ZT) meta-scan expansion + collapse
 include("./UnitTests/test_zt_expand_to_metascans.jl")
@@ -109,9 +115,17 @@ include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_wide_win
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_file_aware_decoys.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_empirical_spectra_hellinger.jl")
 include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_postintegration_pipeline.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_candidate_sidecars.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_donor_index.jl")
+include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_mbr_donor_availability.jl")
 include("./UnitTests/test_mainsearch_irt_refinement.jl")
 include("./UnitTests/test_scoring_semisupervised.jl")
+include("./UnitTests/test_pass1_pool.jl")
+include("./UnitTests/test_scored_fold_merge.jl")
 include("./UnitTests/test_run_summary.jl")
+include("./UnitTests/test_sparse_maxlfq.jl")
+include("./UnitTests/test_calibration_qc.jl")
+include("./UnitTests/test_precursor_long_export.jl")
 include("./UnitTests/test_zt_mode.jl")
 include("./UnitTests/test_zt_partition_merge.jl")
 include("./UnitTests/test_file_name_labels.jl")

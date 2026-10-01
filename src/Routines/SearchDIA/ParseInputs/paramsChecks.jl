@@ -86,7 +86,6 @@ function checkParams(json_path::String)
 
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Real)
-    check_param(ml_params, "pep_bin_size", Integer)
 
     check_param(opt_params, "chromatogram_integration", Dict)
     chrom_params = opt_params["chromatogram_integration"]
@@ -114,6 +113,11 @@ function checkParams(json_path::String)
     # Validate MaxLFQ parameters
     output = params["maxLFQ"]
     check_param(output, "run_to_run_normalization", Bool)
+    if haskey(output, "quantification_method")
+        check_param(output, "quantification_method", String)
+        output["quantification_method"] in ("sparsemaxlfq", "maxlfq") ||
+            throw(InvalidParametersError("maxLFQ.quantification_method must be sparsemaxlfq or maxlfq", params))
+    end
 
     # Validate output parameters
     output = params["output"]

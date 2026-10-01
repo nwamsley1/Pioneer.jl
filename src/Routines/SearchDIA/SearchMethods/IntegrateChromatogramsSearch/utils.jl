@@ -1107,12 +1107,6 @@ function _add_mbr_integrated_kernel!(
     psm_peak_area,
     psm_isotopes,
 )
-    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): per-phase bytes/time inside this function, accumulated
-    # across files. Chromatogram Integration allocates 77.7 GB on this branch vs 4.3 GB without MBR;
-    # this attributes that to the four index-building phases vs the per-row write loop.
-    _diag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
-    _t0 = time(); _a0 = Base.gc_bytes()
-
     # Chromatograms are sorted [:precursor_idx, :rt] (SeperateTraces: [:precursor_idx,
     # :isotopes_captured, :rt]) by sort_chromatograms_for_integration! at
     # IntegrateChromatogramsSearch.jl:354, BEFORE this runs at :386. So every precursor's rows are
@@ -1155,14 +1149,6 @@ function _add_mbr_integrated_kernel!(
         end
     end
 
-    if _diag
-        MBR_PHASE_DIAG[:rows_by_pid_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:rows_by_pid_ms] += round(Int, (time() - _t0) * 1000)
-        MBR_PHASE_DIAG[:n_chrom_rows] += n_chrom
-        MBR_PHASE_DIAG[:n_psm_rows] += n
-        MBR_PHASE_DIAG[:n_pids] += n_groups
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # SeperateTraces stores rows grouped by isotope set, so scan_idx is not monotonic across a
     # precursor. Reproduce the old per-precursor sort with ONE Int32 permutation (4 B/row) instead
@@ -1178,22 +1164,6 @@ function _add_mbr_integrated_kernel!(
         nothing
     end
 
-    if _diag
-        # Read the phase timers FIRST. The monotonicity check below is an O(n_chrom) diagnostic; when
-        # it ran before this read it was timed as part of the phase and inflated the reported cost of
-        # this block by ~8.4 s -- a diagnostic measuring itself.
-        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
-        # Assumption check for the combined-trace fast path: the stored order must be scan order.
-        if scan_order === nothing
-            bad = 0
-            @inbounds for g in 1:n_groups, r in (Int(group_lo[g]) + 1):Int(group_hi[g])
-                UInt32(scan_column[r]) <= UInt32(scan_column[r - 1]) && (bad += 1)
-            end
-            MBR_PHASE_DIAG[:nonmonotonic_rows] += bad
-        end
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # Correlation features are a function of the precursor's whole chromatogram group, so compute
     # one per group into a concretely-typed vector (was Dict{UInt32, NamedTuple}, abstract).
@@ -1224,11 +1194,6 @@ function _add_mbr_integrated_kernel!(
         )
     end
 
-    if _diag
-        MBR_PHASE_DIAG[:correlation_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:correlation_ms] += round(Int, (time() - _t0) * 1000)
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # Bind every column touched in the loop ONCE. `df[row, ::Symbol]` and `df.col` each do a
     # Dict{Symbol,Int} lookup and return an abstractly-typed column, so the ~34 accesses per row
@@ -1356,41 +1321,7 @@ function _add_mbr_integrated_kernel!(
                 _chrom_hellinger_score_from_sqrt(fragment_sqrt, fitted_sqrt)
         end
     end
-    if _diag
-        MBR_PHASE_DIAG[:perrow_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:perrow_ms] += round(Int, (time() - _t0) * 1000)
-        MBR_PHASE_DIAG[:n_files] += 1
-        _mbr_phase_diag_report()
-    end
     return passing_psms
-end
-
-# Accumulators for the phase diagnostic above. Printed after every file so a crash mid-run still
-# leaves usable numbers.
-const MBR_PHASE_DIAG = Dict{Symbol, Int}(
-    :rows_by_pid_bytes => 0, :rows_by_pid_ms => 0,
-    :neighbors_bytes => 0,   :neighbors_ms => 0,
-    :correlation_bytes => 0, :correlation_ms => 0,
-    :perrow_bytes => 0,      :perrow_ms => 0,
-    :n_chrom_rows => 0, :n_psm_rows => 0, :n_pids => 0, :n_neighbors => 0, :n_files => 0,
-    :nonmonotonic_rows => 0,
-)
-
-function _mbr_phase_diag_report()
-    d = MBR_PHASE_DIAG
-    gb(x) = round(x / 2^30, digits = 2)
-    tot = d[:rows_by_pid_bytes] + d[:neighbors_bytes] + d[:correlation_bytes] + d[:perrow_bytes]
-    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
-    @user_info """
-    MBR phase diagnostic (cumulative over $(d[:n_files]) file(s)):
-      chrom rows=$(d[:n_chrom_rows])  psm rows=$(d[:n_psm_rows])  pids=$(d[:n_pids])  neighbors entries=$(d[:n_neighbors])
-      combined-mode non-scan-ordered rows (MUST be 0): $(d[:nonmonotonic_rows])
-      rows_by_pid  + rows_by_trace : $(gb(d[:rows_by_pid_bytes])) GB  $(d[:rows_by_pid_ms]) ms  ($(pct(d[:rows_by_pid_bytes]))%)
-      neighbors Dict + sort!       : $(gb(d[:neighbors_bytes])) GB  $(d[:neighbors_ms]) ms  ($(pct(d[:neighbors_bytes]))%)
-      correlation_by_pid           : $(gb(d[:correlation_bytes])) GB  $(d[:correlation_ms]) ms  ($(pct(d[:correlation_bytes]))%)
-      per-row write loop           : $(gb(d[:perrow_bytes])) GB  $(d[:perrow_ms]) ms  ($(pct(d[:perrow_bytes]))%)
-      TOTAL in this function       : $(gb(tot)) GB"""
-    return nothing
 end
 
 #==========================================================
@@ -2329,7 +2260,7 @@ function process_final_psms!(
     end
     psms[!, :accession_numbers] = accession_numbers
 
-    # No sort here. MaxLFQSearch sorts the merged PSMs by :inferred_protein_group
+    # No sort here. ProteinQuantificationSearch sorts the merged PSMs by :inferred_protein_group
     # before its chunked-merge so chunk boundaries align with protein-group
     # boundaries. ProteinInferenceSearch (which runs between this method and
     # MaxLFQ) is what populates :inferred_protein_group, so a sort by that

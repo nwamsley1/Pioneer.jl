@@ -211,8 +211,8 @@ end
 """
     plot_zt_triangle(fit, psms, spectra, precursors, geom, fname) -> Vector{Plots.Plot}
 
-QC for the ZT transmission triangle, returned as plot objects so they join the combined
-`quad_transmission_plots.pdf` written by `summarize_results!`, exactly like the Razo plots.
+QC for the ZT transmission triangle, returned as plot objects; `zt_quad_tuning!` writes them as
+quadrupole calibration pages for the files the calibration QC selects, like the Razo plots.
 
 1. pooled empirical profile with the fitted triangle. Points are per-Δm/z medians of `w / a`,
    where `a` is that meta-scan's OWN fitted intercept — scale-free, and it pins nothing.
@@ -464,6 +464,11 @@ function zt_quad_tuning!(results::QuadTuningSearchResults, params::QuadTuningSea
                                   iso_splines = _iso) :
         (nothing, Int[])
     setQuadModel(results, _sq)
+    # process_search_results! returns early for ZT files, so the QC record is made here.
+    record_calibration_qc!(search_context.calibration_qc, :quadrupole, ms_file_idx,
+        assess_calibration_qc(:quadrupole, _nfit, (NaN, NaN, NaN, NaN);
+            min_support=ZT_QUAD_MIN_METASCANS, fallback=_fit === nothing))
+    plot_selected = select_calibration_plot!(search_context.calibration_qc, :quadrupole, ms_file_idx)
     if _fit === nothing
         # No fitted profile: search with half the provisional half-width, and the Gaussian template.
         _g = zt_with_metascan_k(_g, zt_search_k(ZT_METASCAN_K_DEFAULT))
@@ -471,18 +476,22 @@ function zt_quad_tuning!(results::QuadTuningSearchResults, params::QuadTuningSea
                    "($(nrow(_psms)) PSM rows over $_ncyc cycles, $_nfit fittable meta-scans; " *
                    "bins-per-metascan 1..10 = $(_hist[1:min(10,length(_hist))])) " *
                    "— searching with k=$(_g.metascan_k)"
+        plot_selected && calibration_notice!(search_context, :quadrupole, ms_file_idx)
     else
         # The fitted triangle is REPORTED, not installed. Deconvolving under it (weights divided
         # by T, outer bins near zero) lost 3,088 precursors on A_REP1 (27,926 -> 24,838) versus
         # the flat meta-scan box, which stays the model.
-        append!(results.quad_plot_objects,
-                plot_zt_triangle(_fit, _psms, spectra,
-                                 getPrecursors(getSpecLib(search_context)), _g,
-                                 getParsedFileName(search_context, ms_file_idx);
-                                 iso_splines = _iso))
-        push!(results.per_file_models,
-              (getParsedFileName(search_context, ms_file_idx), ZTTriangleModel(_fit.h),
-               Float64(_g.nominal_width)))
+        if plot_selected
+            render_calibration_safely(search_context, :quadrupole, ms_file_idx) do
+                fname = calibration_qc_title(search_context, :quadrupole, ms_file_idx,
+                    getParsedFileName(search_context, ms_file_idx))
+                for page in plot_zt_triangle(_fit, _psms, spectra,
+                                             getPrecursors(getSpecLib(search_context)), _g, fname;
+                                             iso_splines = _iso)
+                    write_calibration_page!(search_context, :quadrupole, page)
+                end
+            end
+        end
         # The fit sets the search k (zt_search_k) and the collapse template: the meta-scan
         # collapse uses the transmission template as matched filter (fitted/shadow spectra)
         # and as the feature template (zt_tri_cosine / zt_tri_pcor).

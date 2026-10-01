@@ -224,10 +224,12 @@ function getB(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
     n_runs = size(X, 2)
     Atb = zeros(Float64, n_runs)
     valid_pairs = 0
+    ratios = Float64[]
+    sizehint!(ratios, size(X, 1))
 
     for left_idx in 1:(n_runs - 1)
         for right_idx in (left_idx + 1):n_runs
-            ratios = Float64[]
+            empty!(ratios)
             for peptide_idx in axes(X, 1)
                 left_val = X[peptide_idx, left_idx]
                 right_val = X[peptide_idx, right_idx]
@@ -240,7 +242,7 @@ function getB(X::AbstractMatrix{Union{Missing, T}}) where {T<:Real}
                 continue
             end
 
-            ratio_median = median(ratios)
+            ratio_median = median!(ratios)
             Atb[left_idx] -= ratio_median
             Atb[right_idx] += ratio_median
             valid_pairs += 1
@@ -304,20 +306,20 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
         return Vector{Union{Missing, Float32}}(missing, n_runs)
     end
 
-    AtA = getA(X)
     Atb, valid_pairs = getB(X)
     if valid_pairs == 0
         return Vector{Union{Missing, Float32}}(missing, n_runs)
     end
 
+    AtA = getA(X)
     system_matrix = Matrix{Float64}(undef, n_runs + 1, n_runs + 1)
-    system_matrix[1:n_runs, 1:n_runs] = 2.0 .* AtA
+    system_matrix[1:n_runs, 1:n_runs] .= 2.0 .* AtA
     system_matrix[1:n_runs, end] .= 1.0
     system_matrix[end, 1:n_runs] .= 1.0
     system_matrix[end, end] = 0.0
 
     rhs = Vector{Float64}(undef, n_runs + 1)
-    rhs[1:n_runs] = 2.0 .* Atb
+    rhs[1:n_runs] .= 2.0 .* Atb
     rhs[end] = 0.0
 
     solution = system_matrix \ rhs
@@ -334,7 +336,7 @@ function solve_maxlfq_component(X::AbstractMatrix{Union{Missing, T}}) where {T<:
 
     estimates = Vector{Union{Missing, Float32}}(missing, n_runs)
     for run_idx in 1:n_runs
-        scaled_estimate = solution[run_idx] + log2_scale
+        scaled_estimate = relative_profile[run_idx] + log2_scale
         if isfinite(scaled_estimate)
             estimates[run_idx] = scaled_estimate
         end
@@ -528,7 +530,8 @@ function getProtAbundance(protein::String,
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
                             total_peak_area_out::Vector{Union{Missing, Float32}},
-                            n_precursors_quantified_out::Vector{Union{Missing, UInt32}})
+                            n_precursors_quantified_out::Vector{Union{Missing, UInt32}};
+                            quantification_method::Symbol = :maxlfq)
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -585,9 +588,9 @@ function getProtAbundance(protein::String,
                             total_peak_area_out::Vector{Union{Missing, Float32}},
                             n_precursors_quantified_out::Vector{Union{Missing, UInt32}},
                             experiments_out::Vector{Union{Missing, I}}, 
-                            S::Matrix{Union{Missing, S_T}},
+                            quant_counts::AbstractVector{UInt32},
                             P::BitMatrix,
-                            total_peak_area::AbstractVector{Union{Missing, Float32}}) where {A<:Real,S_T<:Real,I<:Integer}
+                            total_peak_area::AbstractVector{Union{Missing, Float32}}) where {A<:Real,I<:Integer}
         
         function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                                 row_idx::Int64,
@@ -595,7 +598,7 @@ function getProtAbundance(protein::String,
                                 P::BitMatrix)
             #Each column of P is an experiment; each row is a precursor of this protein group.
             #Report the precursors that SCORED the group -- those observed in the run -- not the
-            #subset that could be quantified. Quantification still uses S; see getPresence.
+            #subset that could be quantified; see getPresence.
             for j in axes(P, 2)
                 sample_peptides = Vector{Union{Missing, UInt32}}(undef, size(P, 1))
                 for i in axes(P, 1)
@@ -620,14 +623,7 @@ function getProtAbundance(protein::String,
             target_out[row_idx + i] = target
             entrap_id_out[row_idx + i] = entrap_id
             total_peak_area_out[row_idx + i] = total_peak_area[i + 1]
-            # Precursors this run actually contributed to quantification: the non-missing
-            # entries of S. Reported alongside n_precursors (the scoring set) so the two
-            # populations stay distinguishable in the output.
-            total_quant = 0
-            @inbounds for k in axes(S, 1)
-                total_quant += ismissing(S[k, i + 1]) ? 0 : 1
-            end
-            n_precursors_quantified_out[row_idx + i] = UInt32(total_quant)
+            n_precursors_quantified_out[row_idx + i] = quant_counts[i + 1]
         end
         appendPeptides!(peptides_out, 
                         row_idx,
@@ -635,13 +631,21 @@ function getProtAbundance(protein::String,
                         P)
     end
 
-    #ixj matrix where rows are for experiments and columns are for peptides. Each entry is the abundance of the peptide
-    #in the given experiment, or missing if peptide j was not seen in experiment i. 
-    S = getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
     P = getPresence(peptides, peptides_dict, experiments, experiments_dict, M, N)
-    X = get_log2_intensity_matrix(S)
-    total_peak_area = get_total_peak_area(S)
-    log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
+    if quantification_method in (:maxlfq, :sparsemaxlfq)
+        S = getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
+        X = get_log2_intensity_matrix(S)
+        if quantification_method == :sparsemaxlfq
+            result = solve_sparse_maxlfq(X, run_pg_scores)
+            log2_abundances, component_labels = result.estimates, result.component_labels
+        else
+            log2_abundances, component_labels = solve_maxlfq(X, run_pg_scores)
+        end
+        total_peak_area = get_total_peak_area(S)
+        quant_counts = UInt32[count(!ismissing, col) for col in eachcol(S)]
+    else
+        throw(ArgumentError("Unknown protein quantification method: $quantification_method"))
+    end
     quantified_runs = findall(x -> !ismissing(x), total_peak_area)
     if length(quantified_runs) == 1
         run_idx = only(quantified_runs)
@@ -651,7 +655,7 @@ function getProtAbundance(protein::String,
     # Debug: Check if all abundances are missing/NaN/Inf
     n_valid_abundances = sum(!ismissing(x) && isfinite(x) for x in log2_abundances)
     if n_valid_abundances == 0
-        @debug_l2 "MaxLFQ produced all invalid abundances for protein=$protein n_peptides=$M n_experiments=$N"
+        @debug_l2 "Protein quantification ($quantification_method) produced all invalid abundances for protein=$protein n_peptides=$M n_experiments=$N"
     elseif maximum(component_labels; init = 0) > 1
         @debug_l2 "MaxLFQ protein solved with disconnected components: protein=$protein component_labels=$component_labels"
     end
@@ -684,7 +688,7 @@ function getProtAbundance(protein::String,
                    total_peak_area_out,
                    n_precursors_quantified_out,
                    experiments_out,
-                   S,
+                   quant_counts,
                    P,
                    total_peak_area)
 
@@ -741,6 +745,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             q_value_threshold::Float32,
             accession_to_species::Dict{String, String};
             output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
+            quantification_method::Symbol = :maxlfq,
             batch_size = 100000,
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
     
@@ -759,7 +764,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
     # Main processing logic (inlined from original LFQ function)
-    nfiles = length(unique(prot[!, :ms_file_idx]))
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     @assert issorted(prot[!, :inferred_protein_group]) "LFQ input must be sorted by :inferred_protein_group (ascending)"
 
@@ -801,8 +805,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             subdf,
             [:target, :entrapment_group_id, :inferred_protein_group]
         )
-        ngroups = length(gpsms)
-        nrows = nfiles*ngroups
+        group_run_counts = [length(unique(data.ms_file_idx)) for data in gpsms]
+        nrows = sum(group_run_counts)
         
         # Pre-allocate the batch with missing values
         out = Dict(
@@ -822,6 +826,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :n_precursors_quantified => Vector{Union{Missing, UInt32}}(missing, nrows),
         )
 
+        output_row = 1
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
             # Species is derived from the accessions inside the inferred protein
             # group, not from the per-PSM :species column. Per-PSM species can
@@ -840,7 +845,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             species_agg = join(sort!(collect(species_set)), ';')
 
             getProtAbundance(protein[:inferred_protein_group],
-                                (group_idx*nfiles) - nfiles + 1,
+                                output_row,
                                 protein[:target],
                                 protein[:entrapment_group_id],
                                 species_agg,
@@ -866,8 +871,10 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:pg_score],
                                 out[:global_pg_score],
                                 out[:total_peak_area],
-                                out[:n_precursors_quantified]
+                                out[:n_precursors_quantified];
+                                quantification_method=quantification_method
                             )
+            output_row += group_run_counts[group_idx]
         end
         out = DataFrame(out)
         n_precursors, n_modified_peptides, n_peptides = countProteinSupport(
@@ -949,13 +956,14 @@ function LFQ_chunked(
     q_value_threshold::Float32,
     accession_to_species::Dict{String, String};
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
-    batch_size::Int = 100000
+    batch_size::Int = 100000,
+    quantification_method::Symbol = :maxlfq
 )
     n_chunks = length(chunk_refs)
     # Skip progress bar when there's only one chunk — ProgressBars shows
     # "Inf:Inf, InfGs/it" on n=1 (rate divide-by-zero).
     pbar = n_chunks > 1 ? ProgressBar(total=n_chunks) : nothing
-    pbar !== nothing && set_description(pbar, "MaxLFQ chunks:")
+    pbar !== nothing && set_description(pbar, "Protein quantification chunks:")
     writer_ref = Ref{Union{Nothing, Arrow.Writer}}(nothing)
     try
         for chunk_ref in chunk_refs
@@ -967,7 +975,8 @@ function LFQ_chunked(
                 q_value_threshold,
                 accession_to_species;
                 output_schema_policy=output_schema_policy,
-                batch_size=batch_size, writer_ref=writer_ref)
+                batch_size=batch_size, writer_ref=writer_ref,
+                quantification_method=quantification_method)
             pbar !== nothing && update(pbar)
         end
     finally

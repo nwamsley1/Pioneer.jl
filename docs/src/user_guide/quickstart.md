@@ -70,10 +70,9 @@ See [Parameter Configuration](parameters.md) for a description of each option.
 
 Every search writes `run_summary.tsv` next to the result tables: one row per
 raw file with QC metrics in the spirit of DIA-NN's `report.stats.tsv`.
-*Identified* counts everything passing the q-value threshold; *quantified* is
-the subset with a positive peak area (the same rule that blanks
-`peak_area` in the tables). All distribution statistics are medians over the
-identified precursors of that run.
+*Identified* counts target IDs regardless of abundance, including missing values.
+*Quantified* counts the subset with positive abundance. Missed cleavages are
+reported as 100 × their mean over identified target precursors.
 
 | Column | Description |
 |---|---|
@@ -87,6 +86,20 @@ identified precursors of that run.
 | `median_irt_error` | Median absolute iRT prediction error |
 | `median_rt_fwhm` | Median RT span (min) of the scans at or above half the apex intensity; 0 when only the apex scan qualifies (fast gradients / few points per peak) |
 | `median_points_integrated` | Median number of scans integrated per peak |
-| `median_peptide_length`, `median_charge`, `median_missed_cleavages` | Peptide-property medians |
+| `median_peptide_length`, `median_charge` | Peptide-property medians |
+| `missed_cleavage_percentage` | 100 × mean missed cleavages among identified target precursors; can exceed 100 |
 | `ms2_mass_tol_low/high/unit`, `ms1_mass_tol_low/high/unit` | Fragment / precursor mass tolerance the search settled on (`ppm` or `Da` depending on the fitted model; MS1 empty when no MS1 model was fit) |
 | `gradient_length_min`, `n_ms1_scans`, `n_ms2_scans` | Run length (last retention time, minutes) and scan counts |
+
+### Calibration QC
+
+The summary includes `<stage>_calibration_qc` and `<stage>_calibration_qc_reason` for RT, MS2 mass
+error, MS1 mass error, quadrupole, and NCE calibration. Statuses are `normal`,
+`suspicious`, `warning`, `failed`, or `not_assessed`. Suspicious means a per-file
+screening criterion was exceeded; it does not mean the fit failed. The reason
+column identifies the criterion, fallback, or insufficient support.
+
+Each calibration stage plots the first 50 files, plus up to 50 additional files
+flagged suspicious, warning, or failed, in input order. Selection is independent
+for each stage. All files receive summary statuses, including those not plotted.
+The final combined QC plot report is no longer generated.

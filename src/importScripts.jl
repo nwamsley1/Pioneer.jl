@@ -147,6 +147,8 @@ function importScripts()
     # Sort utilities (needed by ML and FileOperations)
     safe_include!(joinpath(package_root, "src", "utils", "sortUtils.jl"))
 
+    safe_include!(joinpath(package_root, "src", "utils", "dataFrameBlockStore.jl"))
+
     # Parallel utilities (used by threading patterns across SearchDIA)
     safe_include!(joinpath(package_root, "src", "utils", "parallelUtils.jl"))
 
@@ -173,6 +175,7 @@ function importScripts()
     include_files!(
         joinpath(package_root, "src", "utils", "ML"),
         [
+            "scoreGroups.jl",
             "fdrUtilities.jl",
             "ftrUtilities.jl",
             "probitRegression.jl",
@@ -208,11 +211,13 @@ function importScripts()
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
+            "sparseMaxLFQ.jl",
             "normalizeQuant.jl",
             "proteinInference.jl",
             "runSimilarity.jl",
             "profile.jl",
-            "pdfUtils.jl"
+            "pdfUtils.jl",
+            "calibrationQC.jl"
         ]
     )
 
@@ -271,7 +276,7 @@ function importScripts()
     include_files!(
         joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
-            "utils.jl",                        # get_qvalue_spline + other helpers
+            "utils.jl",                        # Arrow score calibration helpers
             "model_config.jl",                 # Model configuration
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
