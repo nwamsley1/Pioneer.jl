@@ -300,16 +300,9 @@ function check_params_bsp(json_string::String)
     # Optional. Absent means flat bounds, which is what every params file
     # written before this key existed expects.
     parse_frag_bounds_spec(get(library_params, "frag_bounds", nothing))
-    # Optional. Approximate acquisition isolation window width (m/z); the fragment
-    # index's precursor partition width is this snapped to 2.5, 5 or 10 Da (default 5;
-    # prec_partition_width in build_poin_lib.jl).
-    if haskey(library_params, "isolation_window_width")
-        check_param(library_params, "isolation_window_width", Real)
-        library_params["isolation_window_width"] > 0 || throw(InvalidParametersError(
-            "isolation_window_width must be > 0", library_params))
-    end
-    # Optional. Explicit precursor-m/z partition width (Da), overriding the one
-    # derived from isolation_window_width.
+    # Optional, undocumented (experiments). One fragment index at this precursor-m/z
+    # partition width (Da) instead of the 5 and 10 Da indexes SearchDIA chooses
+    # between (fragment_index_widths in build_poin_lib.jl).
     if haskey(library_params, "prec_partition_width")
         check_param(library_params, "prec_partition_width", Real)
         library_params["prec_partition_width"] > 0 || throw(InvalidParametersError(

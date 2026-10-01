@@ -883,7 +883,7 @@ end
 # 9-17 points per cycle as a single jagged trace. That is why the 1D integrator gives 84-106%
 # replicate CVs on timsTOF data and leaves ~80% of precursors without an area.
 #
-# The scheme below was chosen by measurement on twelve-file HYE runs (see docs/bruker_timstof_quant.md):
+# The scheme below was chosen by measurement on twelve-file HYE runs (see dev_docs/bruker/timstof_quant.md):
 #
 #   apex      seeded at the best PSM's cell, then hill-climbed on the 8-neighbourhood
 #   IM band   apex +/- CHROM_IM_BAND_K0 in 1/K0, converted to scans with the file's own calibration

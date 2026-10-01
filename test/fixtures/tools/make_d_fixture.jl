@@ -1,5 +1,4 @@
-# Build the truncated timsTOF diaPASEF `.d` test fixture (published on Zenodo; see
-# dev_docs/formats/FOLD_TIMSSLICES_SCIEXWIFF.md) from a full run.
+# Build the truncated timsTOF diaPASEF `.d` test fixture (published on Zenodo, record 23023765) from a full run.
 #
 #   julia --project=<Pioneer> make_d_fixture.jl <source.d> <out.d> [rt_lo_s rt_hi_s prec_lo prec_hi]
 #

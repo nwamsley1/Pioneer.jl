@@ -1106,27 +1106,6 @@ export function BuildSpecLibForm({
           </div>
           <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
         </div>
-        <div
-          style={{
-            marginTop: 14,
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-            gap: 14,
-            alignItems: 'end',
-          }}
-        >
-          <NumField fieldKey="isolationWindowWidth" value={params.isolationWindowWidth} onChange={onParam} />
-          <div style={{ ...HINT, paddingBottom: 8 }}>
-            {(() => {
-              const w = Number(params.isolationWindowWidth)
-              if (!Number.isFinite(w) || w <= 0) return 'Fragment-index partitions: enter a width.'
-              // Mirrors prec_partition_width in Pioneer (build_poin_lib.jl): nearest of 2.5, 5 and 10 Da.
-              const p = w < 3.75 ? 2.5 : w < 7.5 ? 5 : 10
-              return `Fragment-index partitions of ${p} Da.`
-            })()}
-          </div>
-        </div>
-
         <h2 style={{ ...H2, margin: '18px 0 5px' }}>Retention time prediction</h2>
         <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
           Which model predicts retention times. Each knows a different set of
