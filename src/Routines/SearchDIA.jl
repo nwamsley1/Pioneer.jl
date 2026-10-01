@@ -198,7 +198,12 @@ function SearchDIA(params_path::String)
         # === Initialize spectral library and search context ===
         @user_info "Loading Spectral Library..."
         lib_timing = @timed begin
-            SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
+            frag_index = choose_fragment_index(SPEC_LIB_DIR, MS_TABLE_PATHS)
+            frag_index.width === nothing ||
+                @user_info "Fragment index: $(frag_index.width) Da partitions" *
+                    (frag_index.window === nothing ? " (MS2 isolation width unknown)" :
+                     " (MS2 isolation windows ~$(round(frag_index.window; digits = 1)) m/z)")
+            SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params; fragment_index = frag_index)
             check_library_ion_mobility(MS_TABLE_PATHS,
                 getInvIonMobility(getPrecursors(SPEC_LIB)) !== nothing, SPEC_LIB_DIR)
             nothing

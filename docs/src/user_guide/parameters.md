@@ -171,9 +171,7 @@ predict; every other fragment model assumes carbamidomethyl-C.
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
 | `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
-| `library_params.isolation_window_width` | Float | `5.0` | Approximate isolation window width (m/z) of the acquisition method (about 2-4 for narrow-window Orbitrap Astral or SCIEX, about 15 for Exploris, 25 for timsTOF diaPASEF). The fragment index's precursor partition width is this value snapped to the nearest of 2.5, 5 and 10 Da (below 3.75: 2.5; below 7.5: 5; otherwise 10): partitions in the window's size class are fastest, and narrower or much wider ones cost search time. The default of 5 is within a few percent of the fastest on every instrument tested. |
-| `library_params.prec_partition_width` | Float | from `isolation_window_width` | Explicit precursor-m/z width (Da) of the fragment-index partitions, overriding the value derived from `isolation_window_width`. |
-| `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective width drops below `prec_partition_width` (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
+| `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective partition width drops below its nominal width (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
 
 ### Prediction Models
 
@@ -211,8 +209,10 @@ A successful `BuildSpecLib` run writes a `.poin` directory containing:
 | `proteins_table.arrow` | Protein metadata. |
 | `detailed_fragments.jls` | Per-precursor fragment ions, m/z-sorted within each precursor. |
 | `precursor_to_fragment_indices.jls` | Per-precursor fragment range pointers. |
-| `partitioned_fragment_index.jls` | MainSearch partitioned fragment index. |
-| `presearch_partitioned_fragment_index.jls` | Pre-search partitioned fragment index. |
+| `partitioned_fragment_index.jls` | MainSearch partitioned fragment index (5 Da precursor partitions). |
+| `presearch_partitioned_fragment_index.jls` | Pre-search partitioned fragment index (5 Da). |
+| `partitioned_fragment_index_w10.jls`, `presearch_partitioned_fragment_index_w10.jls` | The same two indexes with 10 Da partitions. SearchDIA loads one pair per search, chosen from the data's MS2 isolation windows (10 Da for windows of 7.5 m/z or wider, such as timsTOF diaPASEF). |
+| `fragment_indices.json` | Lists the fragment indexes and their partition widths. Libraries built before it existed have only the 5 Da pair. |
 | `spline_knots.jls` | Spline knots for `SplineCompactFrag` libraries (Altimeter). |
 | `config.json` | Snapshot of the validated build parameters. |
 | `build_log.txt` | Build log. |
