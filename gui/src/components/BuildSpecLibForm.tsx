@@ -1080,26 +1080,6 @@ export function BuildSpecLibForm({
           </div>
           <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
         </div>
-        <div
-          style={{
-            marginTop: 14,
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-            gap: 14,
-            alignItems: 'end',
-          }}
-        >
-          <NumField fieldKey="isolationWindowWidth" value={params.isolationWindowWidth} onChange={onParam} />
-          <div style={{ ...HINT, paddingBottom: 8 }}>
-            {(() => {
-              const w = Number(params.isolationWindowWidth)
-              if (!Number.isFinite(w) || w <= 0) return 'Fragment-index partitions: enter a width.'
-              // Mirrors prec_partition_width in Pioneer (build_poin_lib.jl): nearest of 2.5, 5 and 10 Da.
-              const p = w < 3.75 ? 2.5 : w < 7.5 ? 5 : 10
-              return `Fragment-index partitions of ${p} Da.`
-            })()}
-          </div>
-        </div>
       </section>
 
       <section style={CARD}>

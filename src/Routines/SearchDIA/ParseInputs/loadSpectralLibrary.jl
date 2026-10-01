@@ -59,8 +59,48 @@ end
 =#
 
 
+"""
+    median_ms2_isolation_width(ms_path) -> Union{Nothing, Float64}
+
+The median MS2 isolation window width (m/z) of one MS data file; `nothing` without MS2 isolation metadata.
+"""
+function median_ms2_isolation_width(ms_path::AbstractString)
+    spectra = loadMassSpecData(ms_path)
+    orders = getMsOrders(spectra); widths = getIsolationWidthMzs(spectra)
+    w = Float64[Float64(widths[i]) for i in eachindex(orders)
+                if orders[i] == 2 && !ismissing(widths[i]) && isfinite(widths[i]) && widths[i] > 0]
+    return isempty(w) ? nothing : median(w)
+end
+
+"""
+    choose_fragment_index(lib_dir, ms_paths) -> (main, presearch, width, window)
+
+The fragment index to search with. A library listing several (`fragment_indices.json`) offers one per precursor
+partition width; the width that suits the data is the isolation window's size class (below 3.75 m/z → 2.5 Da,
+below 7.5 → 5, else 10; dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md), and the library's width nearest to it
+(in ratio) is used. The window is the median MS2 isolation width of the first MS file: a search's files share an
+acquisition method. A library without the descriptor has its single index under the historical names (`width`
+`nothing`), as does a search whose window cannot be read (the library's first index).
+"""
+function choose_fragment_index(lib_dir::AbstractString, ms_paths::AbstractVector{<:AbstractString})
+    legacy = (main = "partitioned_fragment_index.jls", presearch = "presearch_partitioned_fragment_index.jls",
+              width = nothing, window = nothing)
+    desc_path = joinpath(lib_dir, FRAGMENT_INDEX_DESCRIPTOR)
+    isfile(desc_path) || return legacy
+    entries = JSON.parsefile(desc_path)["indexes"]
+    window = isempty(ms_paths) ? nothing : median_ms2_isolation_width(first(ms_paths))
+    e = first(entries)
+    if window !== nothing && length(entries) > 1
+        target = window < 3.75 ? 2.5 : window < 7.5 ? 5.0 : 10.0
+        e = entries[argmin([abs(log(Float64(x["partition_width_da"]) / target)) for x in entries])]
+    end
+    return (main = String(e["main"]), presearch = String(e["presearch"]),
+            width = Float64(e["partition_width_da"]), window = window)
+end
+
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
-                             params::PioneerParameters)
+                             params::PioneerParameters;
+                             fragment_index = choose_fragment_index(SPEC_LIB_DIR, String[]))
     # Note: Can't use @user_info here as LoggingSystem is loaded after ParseInputs
     # This message will be captured by the logging system when SearchDIA runs
     spec_lib = Dict{String, Any}()
@@ -132,9 +172,9 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
-    # Load partitioned fragment indexes
-    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "partitioned_fragment_index.jls"))
-    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "presearch_partitioned_fragment_index.jls"))
+    # Load the partitioned fragment indexes of the chosen width (choose_fragment_index)
+    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.main))
+    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.presearch))
 
     # Load the BuildSpecLib config (if present) for output policy and for
     # reconstructing variable-modification counts in older precursor tables.

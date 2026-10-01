@@ -1084,17 +1084,6 @@ export default function App() {
   const onToggle = (key: string) => {
     if (isSearch) setSearch((p) => ({ ...p, [key]: !p[key as keyof SearchParams] }))
     else if (isConvert) setConvert((p) => ({ ...p, [key]: !p[key as keyof ConvertParams] }))
-    else if (key === 'timsTOF')
-      // A timsTOF library searches 25 Da diaPASEF windows: move the window width with the toggle, unless the
-      // user has set their own value.
-      setBuild((p) => ({
-        ...p,
-        timsTOF: !p.timsTOF,
-        isolationWindowWidth:
-          !p.timsTOF && p.isolationWindowWidth === '5' ? '25'
-          : p.timsTOF && p.isolationWindowWidth === '25' ? '5'
-          : p.isolationWindowWidth,
-      }))
     else setBuild((p) => ({ ...p, [key]: !p[key as keyof BuildParams] }))
   }
 

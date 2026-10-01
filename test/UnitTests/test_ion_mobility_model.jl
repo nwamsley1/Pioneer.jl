@@ -1,7 +1,7 @@
 # Tests for the ion-mobility (CCS) Koina model path in BuildSpecLib:
 # request preparation, response parsing, the offline synthetic client, the
-# CCS -> 1/K0 conversion, and parameter validation of `im_model` /
-# `prec_partition_width`.
+# CCS -> 1/K0 conversion, and parameter validation of `im_model` and the
+# fragment index's partition widths.
 
 using Test
 using JSON
@@ -62,7 +62,7 @@ end
     end
 end
 
-@testset "check_params_bsp — im_model / isolation_window_width / prec_partition_width" begin
+@testset "check_params_bsp — im_model / fragment index widths" begin
     defaults_path = Pioneer.asset_path("example_config", "defaultBuildLibParams.json")
     base = JSON.parsefile(defaults_path)
     base["fasta_paths"] = ["dummy.fasta"]; base["fasta_names"] = ["DUMMY"]
@@ -75,32 +75,23 @@ end
     @test p["library_params"]["im_model"] == "alphapept_ccs"
     @test p["library_params"]["prec_partition_width"] == 10.0
 
-    # Defaults: empty im_model (skip); the template's isolation_window_width of 5 gives 5 Da partitions, and so does a
-    # config without the key; the width is the isolation window snapped to 2.5, 5 or 10 Da, for timsTOF libraries too;
-    # an explicit prec_partition_width always wins. Local ID type defaults to "auto".
+    # Defaults: empty im_model (skip); a 5 and a 10 Da fragment index (SearchDIA picks one from the data), for
+    # timsTOF libraries too; the hidden prec_partition_width override builds that one width. Local ID type "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
     @test p0["library_params"]["im_model"] == ""
-    @test p0["library_params"]["isolation_window_width"] == 5.0
     @test !haskey(p0["library_params"], "prec_partition_width")
-    @test Pioneer.prec_partition_width(p0["library_params"]) == 5.0f0
-    @test Pioneer.prec_partition_width(Dict{String, Any}()) == 5.0f0
-    for (w, expect) in ((25.0, 10.0f0), (14.7, 10.0f0), (7.5, 10.0f0), (7.4, 5.0f0), (4.4, 5.0f0), (3.75, 5.0f0),
-                        (3.7, 2.5f0), (2.9, 2.5f0), (2.0, 2.5f0), (1, 2.5f0))
-        c = deepcopy(base); c["library_params"]["isolation_window_width"] = w
-        @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(c))["library_params"]) == expect
-    end
-    bad4 = deepcopy(base); bad4["library_params"]["isolation_window_width"] = 0
-    @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad4))
+    @test !haskey(p0["library_params"], "isolation_window_width")
+    @test Pioneer.fragment_index_widths(p0["library_params"]) == (5.0f0, 10.0f0)
+    @test Pioneer.fragment_index_widths(Dict{String, Any}()) == (5.0f0, 10.0f0)
     @test p0["library_params"]["frag_index_local_id_type"] == "auto"
     @test Pioneer.frag_index_local_id_request(p0["library_params"]) == "auto"
     @test Pioneer.frag_index_local_id_request(Dict{String, Any}()) == "auto"
     tims = deepcopy(base); tims["library_params"]["im_model"] = "alphapept_ccs"
-    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == 5.0f0
-    tims["library_params"]["isolation_window_width"] = 25.0     # diaPASEF windows
-    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == 10.0f0
-    @test Pioneer.prec_partition_width(p["library_params"]) == 10.0f0            # explicit prec_partition_width = 10
-    tims5 = deepcopy(tims); tims5["library_params"]["prec_partition_width"] = 5.0  # explicit width beats the window
-    @test Pioneer.prec_partition_width(Pioneer.check_params_bsp(JSON.json(tims5))["library_params"]) == 5.0f0
+    @test Pioneer.fragment_index_widths(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == (5.0f0, 10.0f0)
+    @test Pioneer.fragment_index_widths(p["library_params"]) == (10.0f0,)        # explicit prec_partition_width = 10
+    @test Pioneer.fragment_index_files(5.0f0, true) == ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
+    @test Pioneer.fragment_index_files(10.0f0, false) == ("partitioned_fragment_index_w10.jls", "presearch_partitioned_fragment_index_w10.jls")
+    @test Pioneer.fragment_index_files(2.5f0, false)[1] == "partitioned_fragment_index_w2.5.jls"
     for v in ("auto", "UInt16", "UInt32")
         c = deepcopy(base); c["library_params"]["frag_index_local_id_type"] = v
         @test Pioneer.check_params_bsp(JSON.json(c))["library_params"]["frag_index_local_id_type"] == v

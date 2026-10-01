@@ -2,34 +2,142 @@
 frag_index_local_id_request(library_params) = String(get(library_params, "frag_index_local_id_type", "auto"))
 
 """
-Precursor-m/z partition width (Da) of the fragment index: `library_params[\"prec_partition_width\"]` when set (an
-explicit override), else the approximate acquisition isolation window width `library_params[\"isolation_window_width\"]`
-(m/z, default 5) snapped to the nearest of 2.5, 5 and 10 Da (below 3.75 -> 2.5, below 7.5 -> 5, else 10). The fastest
-width tracks the window's size class, not its exact value: a width just above 2.5 Da can push the largest partitions
-past 65,535 precursors and so to UInt32 local IDs without the gain of fewer partitions, and partitions narrower than
-2.5 Da or wider than 10 Da cost time (dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md).
+Precursor-m/z partition widths (Da) BuildSpecLib builds a fragment index for. SearchDIA loads one of them per search,
+chosen from the data's isolation windows (`choose_fragment_index`): the fastest width tracks the window's size class,
+5 Da for narrow-window Orbitrap / SCIEX data and 10 Da for wide windows (timsTOF diaPASEF, Exploris)
+(dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md).
 """
-function prec_partition_width(library_params)
-    haskey(library_params, "prec_partition_width") && return Float32(library_params["prec_partition_width"])
-    w = Float32(get(library_params, "isolation_window_width", 5.0))
-    return w < 3.75f0 ? 2.5f0 : w < 7.5f0 ? 5.0f0 : 10.0f0
+const FRAGMENT_INDEX_WIDTHS = (5.0f0, 10.0f0)
+
+"The library file listing its fragment indexes (`write_fragment_indexes`); absent in libraries with a single index."
+const FRAGMENT_INDEX_DESCRIPTOR = "fragment_indices.json"
+
+"""
+    fragment_index_widths(library_params) -> Tuple
+
+The widths to build: `FRAGMENT_INDEX_WIDTHS`, or only `library_params["prec_partition_width"]` when that hidden
+override is set (experiments).
+"""
+fragment_index_widths(library_params) = haskey(library_params, "prec_partition_width") ?
+    (Float32(library_params["prec_partition_width"]),) : FRAGMENT_INDEX_WIDTHS
+
+"""
+    fragment_index_files(width, first) -> (main, presearch)
+
+File names of one width's index pair. The library's first width keeps the historical names, so a Pioneer that
+predates multiple indexes reads it; the others are suffixed with the width (`partitioned_fragment_index_w10.jls`).
+"""
+function fragment_index_files(width::Real, first::Bool)
+    first && return ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
+    tag = isinteger(width) ? string(Int(width)) : string(width)
+    return ("partitioned_fragment_index_w$tag.jls", "presearch_partitioned_fragment_index_w$tag.jls")
 end
 
 """
-    resolve_and_record_local_id_type(temp_lib, requested, partition_width, spec_lib_path) -> Type
+    write_fragment_indexes(spec_lib_path, temp_lib, widths, id_type_request; frag_bin_tol_ppm, frag_bin_tol_mda,
+                           rt_bin_tol, y_start_index, b_start_index, include_p_index)
 
-Resolve the fragment-index local ID type once per library (`resolve_local_id_type`), so the main and presearch
-indexes always agree, log the choice, and record it in the library's `config.json`
-(`library_params.frag_index_local_id_type_resolved`).
+Build and write the main and presearch fragment indexes of every partition width in `widths`, and the descriptor
+`fragment_indices.json` listing them. The fragment selection is computed once and shared by all of them
+(`select_index_fragments`); each width resolves its own local ID type. `temp_lib`'s fragments must still be in rank
+order (see `sort_detailed_fragments_by_mz!`); the selection copies what it needs, so they may be re-sorted after.
 """
-function resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real, spec_lib_path::AbstractString)
+function write_fragment_indexes(spec_lib_path::AbstractString, temp_lib, widths, id_type_request::AbstractString;
+                                frag_bin_tol_ppm::Float32, frag_bin_tol_mda::Float32 = 2.0f0, rt_bin_tol::Float32,
+                                y_start_index::UInt8 = UInt8(4), b_start_index::UInt8 = UInt8(3),
+                                include_p_index::Bool = false, keep_entries = Dict{String, Any}[])
+    sel = select_index_fragments(temp_lib; y_start_index = y_start_index, b_start_index = b_start_index,
+                                 include_p_index = include_p_index)
+    entries = Dict{String, Any}[keep_entries...]
+    for (j, w) in enumerate(widths)
+        first = j == 1 && isempty(keep_entries)   # the library's first index takes the historical names
+        id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, w, spec_lib_path; record = first)
+        main_file, presearch_file = fragment_index_files(w, first)
+        for (file, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
+            index = build_partitioned_index_from_selection(sel; partition_width = Float32(w),
+                frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,
+                id_type = id_type)
+            serialize_to_jls(joinpath(spec_lib_path, file), index)
+        end
+        push!(entries, Dict{String, Any}("partition_width_da" => w, "local_id_type" => string(id_type),
+                                         "main" => main_file, "presearch" => presearch_file))
+    end
+    sort!(entries, by = e -> Float64(e["partition_width_da"]))
+    write(joinpath(spec_lib_path, FRAGMENT_INDEX_DESCRIPTOR),
+          JSON.json(Dict{String, Any}("format_version" => 1, "indexes" => entries), 2))
+    return nothing
+end
+
+"""
+    add_fragment_indexes!(lib_path) -> Vector{Float32}
+
+Give an existing library the fragment indexes of `FRAGMENT_INDEX_WIDTHS` it lacks, without predicting anything
+again, and write its `fragment_indices.json`. A library built before the descriptor existed has one index, under
+the historical names, at `library_params.prec_partition_width_resolved` from its `config.json` (5 Da when absent:
+the only width there was); it is kept and listed. The new indexes are built from the stored fragments put back in
+rank order (`getRank`; the order `buildPionLib` indexes), with the tolerances the library was built with. Returns
+the widths added.
+"""
+function add_fragment_indexes!(lib_path::AbstractString)
+    cfg = isfile(joinpath(lib_path, "config.json")) ? JSON.parsefile(joinpath(lib_path, "config.json")) : Dict{String, Any}()
+    lp = get(cfg, "library_params", Dict{String, Any}())
+    desc_path = joinpath(lib_path, FRAGMENT_INDEX_DESCRIPTOR)
+    keep = if isfile(desc_path)
+        Dict{String, Any}[e for e in JSON.parsefile(desc_path)["indexes"]]
+    else
+        w0 = Float32(get(lp, "prec_partition_width_resolved", 5.0))
+        main_file, presearch_file = fragment_index_files(w0, true)
+        [Dict{String, Any}("partition_width_da" => w0,
+                           "local_id_type" => String(get(lp, "frag_index_local_id_type_resolved", "UInt16")),
+                           "main" => main_file, "presearch" => presearch_file)]
+    end
+    have = Set(Float32(e["partition_width_da"]) for e in keep)
+    widths = Tuple(w for w in FRAGMENT_INDEX_WIDTHS if !(w in have))
+    isempty(widths) && return Float32[]
+
+    frags = deserialize_from_jls(joinpath(lib_path, "detailed_fragments.jls"))
+    pid_to_fid = deserialize_from_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"))
+    Threads.@threads :static for k in 1:length(pid_to_fid)-1      # stored m/z-sorted -> rank order
+        lo, hi = Int(pid_to_fid[k]), Int(pid_to_fid[k+1]) - 1
+        lo < hi && sort!(view(frags, lo:hi), by = getRank, alg = InsertionSort)
+    end
+    precursors = SetPrecursors(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
+    proteins = SetProteins(Arrow.Table(joinpath(lib_path, "proteins_table.arrow")))
+    empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
+    temp_lib = if eltype(frags) <: SplineCompactFrag || eltype(frags) <: SplineDetailedFrag
+        knots = deserialize_from_jls(joinpath(lib_path, "spline_knots.jls"))
+        SplineFragmentIndexLibrary(empty_pfi, empty_pfi, precursors, proteins,
+                                   SplineFragmentLookup(frags, pid_to_fid, Tuple(knots)), OutputSchemaPolicy())
+    else
+        FragmentIndexLibrary(empty_pfi, empty_pfi, precursors, proteins,
+                             StandardFragmentLookup(frags, pid_to_fid), OutputSchemaPolicy())
+    end
+    # the tolerances the library's index was built with: buildPionLib's, or the DIA-NN decoy rebuild's
+    diann = get(get(cfg, "fasta_digest_params", Dict{String, Any}()), "decoy_method", "") == "diann_mutation"
+    write_fragment_indexes(lib_path, temp_lib, widths, frag_index_local_id_request(lp);
+        frag_bin_tol_ppm = Float32(get(lp, "frag_bin_tol_ppm", diann ? 10.0 : 0.0)),
+        frag_bin_tol_mda = Float32(get(lp, "frag_bin_tol_mda", 2.0)),
+        rt_bin_tol = diann ? Float32(get(lp, "rt_bin_tol", 1.0)) : 3.0f0,
+        keep_entries = keep)
+    return collect(Float32, widths)
+end
+
+"""
+    resolve_and_record_local_id_type(temp_lib, requested, partition_width, spec_lib_path; record = true) -> Type
+
+Resolve the fragment-index local ID type of one partition width (`resolve_local_id_type`), so its main and presearch
+indexes agree, and log the choice. With `record`, also record it in the library's `config.json`
+(`library_params.frag_index_local_id_type_resolved`, `prec_partition_width_resolved`: the library's first index).
+"""
+function resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real, spec_lib_path::AbstractString;
+                                          record::Bool = true)
     id_type, n_over, n_bins = resolve_local_id_type(requested, getMz(getPrecursors(temp_lib)), partition_width)
     why = requested == "auto" ?
         (n_over > 0 ? "$n_over of $n_bins $(partition_width)-Da bins exceed $MAX_LOCAL_PRECS precursors" :
                       "every $(partition_width)-Da bin fits in $MAX_LOCAL_PRECS precursors") : "set explicitly"
     @user_info "Fragment index: $(partition_width) Da partitions, $(id_type) local precursor IDs ($why)"
     cfg_path = joinpath(spec_lib_path, "config.json")
-    if isfile(cfg_path)
+    if record && isfile(cfg_path)
         cfg = JSON.parsefile(cfg_path)
         lp = get!(cfg, "library_params", Dict{String, Any}())
         lp["frag_index_local_id_type_resolved"] = string(id_type)
@@ -172,7 +280,7 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
-                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      index_widths = FRAGMENT_INDEX_WIDTHS,   # precursor-m/z partition widths (Da) to build an index for
                       id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
@@ -259,19 +367,9 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
-    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
-
-    partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=rt_bin_tol_ppm,
-        y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index, id_type=id_type)
-
-    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=typemax(Float32),
-        y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index, id_type=id_type)
+    write_fragment_indexes(spec_lib_path, temp_lib, index_widths, id_type_request;
+        frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda, rt_bin_tol=rt_bin_tol_ppm,
+        y_start_index=y_start_index, b_start_index=b_start_index, include_p_index=include_p_index)
 
     # Sort detailed_frags by m/z within each precursor (run_fused! pre-condition).
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
@@ -285,9 +383,6 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
-
-    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
-    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     # Arrow tables can keep Windows file handles alive until GC runs.
     # Release references before BuildSpecLib removes the intermediate Arrow files.
@@ -330,7 +425,7 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::InstrumentAgnosticModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
-                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      index_widths = FRAGMENT_INDEX_WIDTHS,   # precursor-m/z partition widths (Da) to build an index for
                       id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
@@ -352,26 +447,14 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
-    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
-
-    partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=rt_bin_tol_ppm,
-        y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index, id_type=id_type)
-
-    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=typemax(Float32),
-        y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index, id_type=id_type)
+    write_fragment_indexes(spec_lib_path, temp_lib, index_widths, id_type_request;
+        frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda, rt_bin_tol=rt_bin_tol_ppm,
+        y_start_index=y_start_index, b_start_index=b_start_index, include_p_index=include_p_index)
 
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
 
     serialize_to_jls(joinpath(spec_lib_path, "detailed_fragments.jls"), detailed_frags)
     serialize_to_jls(joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"), pid_to_fid)
-    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
-    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     detailed_frags = nothing
     pid_to_fid = nothing
