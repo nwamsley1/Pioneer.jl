@@ -1,5 +1,5 @@
 import { DEFAULT_CLEAVAGE } from './enzymes'
-import { modEntry } from './koinaMods'
+import { DEFAULT_RT_MODEL, modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
 
@@ -7,7 +7,7 @@ export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'conv
  *  ConvertRAW page drives two different binaries, so the workflow the user
  *  picked and the program that ends up being spawned are not the same thing.
  *  Mirrors the Rust `pioneer::Command` enum. */
-export type BackendCommand = CommandId | 'convertmzml'
+export type BackendCommand = CommandId | 'convertmzml' | 'convertbruker' | 'convertsciex'
 
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
@@ -225,6 +225,15 @@ export interface BuildParams {
   libPath: string
   /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
   predictionModel: string
+  /** Bruker timsTOF library: predict ion mobility too, emitted as
+   *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
+  timsTOF: boolean
+  /** Approximate isolation window width (m/z) of the acquisition method, emitted as
+   *  `library_params.isolation_window_width`. Pioneer snaps it to 2.5, 5 or 10 Da for the fragment
+   *  index's precursor partition width. Turning timsTOF on sets 25 (diaPASEF windows). */
+  isolationWindowWidth: string
+  /** Key into RT_MODELS (koinaMods.ts); emitted as `library_params.rt_model`. */
+  rtModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -279,6 +288,10 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
+  timsTOF: false,
+  // Pioneer's default (defaultBuildLibParams.json): 5 Da partitions, the safe middle.
+  isolationWindowWidth: '5',
+  rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
   // form emits what Pioneer would have defaulted to anyway.
@@ -324,7 +337,7 @@ export const BUILD_DEFAULTS: BuildParams = {
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
  *  can hold both. */
-export type ConvertFormat = 'raw' | 'mzml'
+export type ConvertFormat = 'raw' | 'mzml' | 'bruker' | 'sciex'
 
 /** ConvertRAW's two converters are both driven entirely by CLI flags — there is
  *  no params JSON for either. Defaults are each converter's own. */
@@ -346,6 +359,10 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. Both
    *  converters use the same default, so this note holds either way. */
   outputDir: string
+  /** SCIEX only: whether the runs are ZT Scan DIA. The .wiff does not record the
+   *  scan mode, so it is always asked: '' is unanswered and blocks conversion;
+   *  'yes' writes <name>.zt.scxs marked zt_scan_dia, 'no' plain .scxs. */
+  ztScan: '' | 'yes' | 'no'
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
    *
@@ -375,6 +392,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   inputFiles: [],
   outputDir: '',
+  ztScan: '',
   skipExisting: false,
   threadsPerFile: '3',
   batchSize: '1000',
@@ -473,6 +491,12 @@ export interface PathInfo {
   raw_count: number
   mzml_count: number
   arrow_count: number
+  /** Bruker timsTOF directories: `.tdfs` runs (searchable) and raw `.d` bundles. */
+  tdfs_count: number
+  d_count: number
+  /** SCIEX: `.scxs` runs (directories, searchable) and raw `.wiff` files. */
+  scxs_count: number
+  wiff_count: number
   has_config_json: boolean
   is_pion_library: boolean
   error: string | null
@@ -488,6 +512,10 @@ export const EMPTY_PATH_INFO: PathInfo = {
   raw_count: 0,
   mzml_count: 0,
   arrow_count: 0,
+  tdfs_count: 0,
+  d_count: 0,
+  scxs_count: 0,
+  wiff_count: 0,
   has_config_json: false,
   is_pion_library: false,
   error: null,

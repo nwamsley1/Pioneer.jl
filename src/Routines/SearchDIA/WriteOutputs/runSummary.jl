@@ -284,10 +284,11 @@ function accumulate_run_summary!(acc::RunSummaryAccumulator, tbl)
     return acc
 end
 
+# Function barrier: the column types are only known once the table is opened.
 function _accumulate_run_summary!(acc::RunSummaryAccumulator, ms_file_idx, target, sequence,
     peak_area, peak_area_normalized, mbr_recovered, irt_error, rt_fwhm, points_integrated,
     charge, missed_cleavage)
-    for i in axes(ms_file_idx, 1)
+    for i in 1:length(ms_file_idx)  # ChainedVector indices are not shared across columns
         target[i] || continue
         run = ms_file_idx[i]
         s = acc.stats[run]
@@ -363,11 +364,19 @@ function _mass_tol_columns(models::Dict{Int64, AbstractMassErrorModel}, i::Int)
     return (getLeftTol(m), getRightTol(m), _mass_tol_unit(m))
 end
 
-# Scan-level metadata straight from the (memory-mapped) raw file.
+# Scan-level metadata straight from the raw file (memory-mapped Arrow, or the .tdfs / .scxs scan table).
 function _raw_file_columns(path::String)
-    tbl = Arrow.Table(path)
-    orders = tbl[:msOrder]
-    rts = tbl[:retentionTime]
+    if is_tdfs_path(path)
+        sl = TimsSlices.open_tdfs(path).slices
+        orders = sl.ms_order; rts = sl.retention_time
+    elseif is_scxs_path(path)
+        tbl = Arrow.Table(joinpath(path, "scans.arrow"))
+        orders = tbl[:ms_order]; rts = tbl[:retention_time]
+    else
+        tbl = Arrow.Table(path)
+        orders = tbl[:msOrder]
+        rts = tbl[:retentionTime]
+    end
     n_ms1 = count(==(UInt8(1)), orders)
     n_ms2 = length(orders) - n_ms1
     gradient = isempty(rts) ? missing : Float32(maximum(rts))

@@ -189,6 +189,10 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
+    # Scanning-quad files fit the transmission triangle instead (ZT/quad_tuning.jl).
+    zt_g = getZTGeometry(search_context, ms_file_idx)
+    zt_g === nothing || return zt_quad_tuning!(results, params, search_context, ms_file_idx, spectra, zt_g)
+
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.5f0))
 
     # Get file name for debugging
@@ -216,8 +220,7 @@ function process_file!(
             # Test array access - this will fail if there are type mismatches
             test_scan_idx = findfirst(i -> getMsOrder(spectra, i) == 2, 1:length(spectra))
             if test_scan_idx !== nothing
-                _ = getMzArray(spectra, test_scan_idx)
-                _ = getIntensityArray(spectra, test_scan_idx)
+                _ = getPeaks!(PeakDecodeBuffer(), spectra, test_scan_idx)
             end
         catch type_error
             if isa(type_error, MethodError) || contains(string(type_error), "SubArray")
@@ -240,6 +243,29 @@ function process_file!(
             return results
         end
         window_width = first(window_widths)
+
+        # Bruker ion-mobility packet data (timsTOF): the quad model is never fit. A packet
+        # is one IM scan of one frame, so its precursor isotope ratios are far too noisy for
+        # a transmission fit (E. coli 50 ng: pure scatter over the whole 25 Da window); the
+        # reported isolation window is trusted as a square model instead.
+        if getImScans(spectra) !== nothing
+            @user_info "QuadTuning [$file_name]: ion-mobility packet data, using the reported $(window_width) m/z isolation window as a square transmission model"
+            square_model = SquareQuadModel(0.0f0)
+            setQuadModel(results, square_model)
+            # The reported window is the model by design, not a fallback: record it as assessed.
+            record_calibration_qc!(search_context.calibration_qc, :quadrupole, ms_file_idx,
+                assess_calibration_qc(:quadrupole, 0, (NaN, NaN, NaN, NaN); min_support=0))
+            if select_calibration_plot!(search_context.calibration_qc, :quadrupole, ms_file_idx)
+                render_calibration_safely(search_context, :quadrupole, ms_file_idx) do
+                    fname = calibration_qc_title(search_context, :quadrupole, ms_file_idx,
+                        getParsedFileName(search_context, ms_file_idx))
+                    write_calibration_page!(search_context, :quadrupole,
+                        plot_quad_model(square_model, window_width, results, fname; note = "reported window"))
+                end
+            end
+            return results
+        end
+
         # Build scan priority index (metadata only, no peak data)
         scan_index = build_quad_scan_priority_index(spectra)
 
@@ -323,6 +349,7 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
 
+    getZTGeometry(search_context, ms_file_idx) === nothing || return nothing   # ZT keeps its own model
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
     if calibration_qc_record(search_context.calibration_qc, :quadrupole, ms_file_idx).status == QC_NOT_ASSESSED
         record_calibration_qc!(search_context.calibration_qc, :quadrupole, ms_file_idx,

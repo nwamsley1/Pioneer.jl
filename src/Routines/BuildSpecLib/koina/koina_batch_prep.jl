@@ -141,3 +141,12 @@ function prepare_koina_batch(model::RetentionTimeModel,
 
     return json_batches
 end
+
+"""
+Prepare batch request for ion-mobility (CCS) models. Same two inputs as the
+spline path (`peptide_sequences`, `precursor_charges`), and that builder does not
+consult the model name, so delegate to it.
+"""
+prepare_koina_batch(model::IonMobilityModel, data::DataFrame;
+                    batch_size::Int = 1000)::Vector{String} =
+    prepare_koina_batch(SplineCoefficientModel(model.name), data; batch_size = batch_size)

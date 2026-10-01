@@ -119,17 +119,42 @@ end
 
 """
 Parse results for retention time prediction models.
+
+The prediction lands in the `:rt` column whatever the model called its output
+tensor (`RT_MODEL_CONFIGS[model.name].output`: `rt` for Chronologer, `irt` for
+the Prosit models), so callers never see the difference.
 """
 function parse_koina_batch(model::RetentionTimeModel,
                           response::Dict{String,Any})::KoinaBatchResult{Nothing}
     df = DataFrame()
+    output = RT_MODEL_CONFIGS[model.name].output
 
     for col in response["outputs"]
-        col_name = Symbol(col["name"])
-        if col_name == :rt
-            df[!, col_name] = Float32.(col["data"])
+        if Symbol(col["name"]) == output
+            df[!, :rt] = Float32.(col["data"])
         end
     end
+    hasproperty(df, :rt) || error(
+        "Koina response for $(model.name) has no '$(output)' output; got: " *
+        join((string(col["name"]) for col in response["outputs"]), ", "))
+
+    return KoinaBatchResult(df, 1, nothing)
+end
+
+"""
+Parse results for ion-mobility models: a single `ccs` output tensor (n × 1).
+"""
+function parse_koina_batch(model::IonMobilityModel,
+                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+    df = DataFrame()
+
+    for col in response["outputs"]
+        if col["name"] == "ccs"
+            df[!, :ccs] = Float32.(col["data"])::Vector{Float32}
+        end
+    end
+    hasproperty(df, :ccs) || throw(ArgumentError(
+        "IonMobilityModel response is missing a 'ccs' output"))
 
     return KoinaBatchResult(df, 1, nothing)
 end

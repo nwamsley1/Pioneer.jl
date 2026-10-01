@@ -311,6 +311,7 @@ function _pt_mass_err_thread_task(
     corr_mz   = getScanCorrectedMz(sd)
     obs_low   = getScanObsLow(sd)
     obs_high  = getScanObsHigh(sd)
+    decode_buf = getDecodeBuffer(sd)
     samples   = getMassErrSamples(sd)
     sample_idx = 0
 
@@ -318,8 +319,7 @@ function _pt_mass_err_thread_task(
         (scan_idx == 0 || scan_idx > length(spectra)) && continue
         ismissing(scan_to_prec_idx[scan_idx]) && continue
 
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         scan_rt = Float32(getRetentionTime(spectra, scan_idx))
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                           mem, scan_mz, scan_int, scan_rt)

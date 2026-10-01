@@ -178,15 +178,16 @@ function SearchDIA(params_path::String)
             end
 
             # Find all Arrow files in MS data directory
-            MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) 
+            # .arrow files, .tdfs directories (TimsSlices timsTOF slices) and .scxs directories (SciexWiff SCIEX scans)
+            MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file)
                             for file in readdir(MS_DATA_DIR)
-                            if isfile(joinpath(MS_DATA_DIR, file)) && 
-                               match(r"\.arrow$", file) != nothing]
+                            if is_ms_data_path(joinpath(MS_DATA_DIR, file))]
 
             if length(MS_TABLE_PATHS) <= 0
-                @user_error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
+                @user_error "No .arrow files or .tdfs / .scxs directories found in ms_data directory: " * MS_DATA_DIR
                 return
             end
+            check_ms_data_vendors(MS_TABLE_PATHS)
 
             nothing
         end
@@ -197,6 +198,8 @@ function SearchDIA(params_path::String)
         @user_info "Loading Spectral Library..."
         lib_timing = @timed begin
             SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
+            check_library_ion_mobility(MS_TABLE_PATHS,
+                getInvIonMobility(getPrecursors(SPEC_LIB)) !== nothing, SPEC_LIB_DIR)
             nothing
         end
 

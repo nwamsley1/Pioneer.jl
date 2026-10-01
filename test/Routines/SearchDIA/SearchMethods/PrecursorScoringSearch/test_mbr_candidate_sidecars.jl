@@ -149,7 +149,7 @@ end
             end
             Arrow.write(mixed_path, main)
             donors = Dict(pid => [Pioneer._MBRDonorEntry(
-                0.9f0, pid, 100.0f0, -1.0f0, 0.0f0, 10.0f0, 5.0f0,
+                0.9f0, pid, 100.0f0, -1.0f0, 0.0f0, 10.0f0, 0.0f0, 5.0f0,
                 spectrum, UInt8(0x03), UInt16(2), UInt32(2),
             )] for pid in UInt32[1, 2, 3, 6, 7])
             pools = Pioneer._MBRPartnerPools(
@@ -182,7 +182,7 @@ end
             @test !any(produced.MBR_best_is_missing_true)
             @test all(produced.MBR_best_is_missing_false)
             expected = Pioneer._mbr_feature_values(
-                UInt32(2), 100.0f0, -1.0f0, 10.0f0, 10.0f0, 5.0f0,
+                UInt32(2), 100.0f0, -1.0f0, 10.0f0, 10.0f0, 0.0f0, 5.0f0,
                 spectrum, trace, UInt8(0x03), only(donors[UInt32(2)]),
                 UInt32(1), nothing, clusters, nothing, donors,
             )

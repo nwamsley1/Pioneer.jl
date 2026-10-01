@@ -20,11 +20,13 @@
 
 Run names used for the `file_name` column and the wide-table headers: the
 full file name with the extension removed. Names are never shortened, so
-`20240101_lab_sampleA.arrow` stays `20240101_lab_sampleA`.
+`20240101_lab_sampleA.arrow` stays `20240101_lab_sampleA`. The `.zt` that
+convertSciex adds to ZT Scan DIA outputs is part of the extension:
+`run1.zt.scxs` is run `run1`.
 """
 function parseFileNames(
     ms_table_paths::Vector{String})
-    file_names = first.(splitext.(basename.(ms_table_paths)))
+    file_names = [String(chopsuffix(first(splitext(basename(p))), ".zt")) for p in ms_table_paths]
     for (i, fname) in enumerate(file_names)
         if fname == ""
             file_names[i] = string(i)

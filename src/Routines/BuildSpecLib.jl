@@ -177,6 +177,9 @@ function BuildSpecLib(params_path::String)
                 @user_info "Using prediction model: $prediction_model"
                 frag_annotation_type = MODEL_CONFIGS[prediction_model].annotation_type
                 koina_model_type = MODEL_CONFIGS[prediction_model].model_type
+                # Retention-time model, validated (and defaulted) by check_params_bsp.
+                rt_model = String(_params.library_params["rt_model"])
+                @user_info "Using retention time model: $rt_model"
                 nothing
             end
             timings["Model Validation"] = model_timing
@@ -198,15 +201,30 @@ function BuildSpecLib(params_path::String)
 
             @user_info "Predicting retention times..."
             rt_timing = @timed begin
-                predict_retention_times(chronologer_in_path, chronologer_out_path)
+                predict_retention_times(chronologer_in_path, chronologer_out_path; rt_model = rt_model)
                 nothing
             end
             timings["Retention Time Prediction"] = rt_timing
+
+            # Optional ion-mobility prediction appends `ccs` and
+            # `inv_ion_mobility` columns; it writes a new file, so track
+            # which file feeds parse_chronologer_output.
+            predictions_path = chronologer_out_path
+            im_model = String(get(_params.library_params, "im_model", ""))
+            if !isempty(im_model)
+                @user_info "Predicting ion mobility with $im_model..."
+                im_timing = @timed begin
+                    predictions_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt_im.arrow")
+                    predict_ion_mobility(chronologer_out_path, predictions_path, im_model)
+                    nothing
+                end
+                timings["Ion Mobility Prediction"] = im_timing
+            end
             # Parse results and prepare for fragment prediction
             parse_timing = @timed begin
                 iso_mod_to_mass = Dict{String, Float32}()
                 precursors_arrow_path = parse_chronologer_output(
-                    chronologer_out_path,
+                    predictions_path,
                     lib_dir,
                     Dict{String,Int8}(),
                     iso_mod_to_mass,
@@ -221,6 +239,7 @@ function BuildSpecLib(params_path::String)
                 GC.gc()
                 safeRm(chronologer_in_path; force=true)
                 safeRm(chronologer_out_path; force=true)
+                safeRm(predictions_path; force=true)
                 dir, filename = splitdir(precursors_arrow_path)
                 raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
                 safeRm(raw_fragments_arrow_path; force=true)
@@ -379,6 +398,10 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
+                for col in (:ccs, :inv_ion_mobility)   # present only when im_model was set
+                    hasproperty(precursors_table, col) &&
+                        (precursors_table[!, col] = Float32.(precursors_table[!, col]))
+                end
                 precursors_table[!, :start_idx] =
                     [UInt32.(collect(starts)) for starts in precursors_table[!, :start_idx]]
                 precursors_table[!, :num_variable_modifications] = UInt8.(
@@ -460,6 +483,8 @@ function BuildSpecLib(params_path::String)
                 3.0f0,          # rt_bin_tol
                 koina_model_type;
                 frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
+                partition_width = prec_partition_width(_params.library_params),
+                id_type_request = frag_index_local_id_request(_params.library_params),
                 detailed_frags = detailed_frags,
                 pid_to_fid = pid_to_fid
             )

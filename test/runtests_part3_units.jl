@@ -38,6 +38,11 @@ include("./UnitTests/test_download_speclib.jl")
 include("./UnitTests/test_fdr_utilities.jl")
 include("./UnitTests/test_score_groups.jl")
 
+# Scanning-quad (ZT) meta-scan expansion + collapse
+include("./UnitTests/test_zt_expand_to_metascans.jl")
+include("./UnitTests/test_zt_metascan_collapse.jl")
+include("./UnitTests/test_zt_map_any_hit_to_center.jl")
+
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
@@ -61,14 +66,25 @@ include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 # Partitioned fragment index tests
 include("./UnitTests/partitionedFragmentIndex.jl")
 include("./UnitTests/buildPartitionedIndex.jl")
+include("./UnitTests/partitionedFragmentIndex32.jl")
 include("./UnitTests/test_build_fragment_index_exact.jl")
 include("./UnitTests/test_synthetic_koina.jl")
+include("./UnitTests/test_ion_mobility_model.jl")
+include("./UnitTests/test_im_error.jl")
+include("./UnitTests/test_im_gate_and_windows.jl")
+include("./UnitTests/test_convert_bruker.jl")
+include("./UnitTests/test_convert_sciex.jl")
+include("./UnitTests/test_ms_data_checks.jl")
+include("./UnitTests/test_ms1_lookup_im.jl")
+include("./UnitTests/test_frag_corr_im.jl")
 include("./UnitTests/test_koina_http_retry.jl")
 include("./Routines/BuildSpecLib/fragments/test_get_frag_bounds.jl")
 include("./integration/test_buildspeclib_synthetic.jl")
 include("./Routines/BuildSpecLib/test_build_determinism.jl")
 include("./UnitTests/test_buildspeclib_filter_equivalence.jl")
 include("./UnitTests/test_mod_site_conflicts.jl")
+include("./UnitTests/test_rt_model_selection.jl")
+include("./UnitTests/test_model_mod_support.jl")
 include("./UnitTests/test_cleavage_presets.jl")
 
 # Parallel utilities
@@ -110,6 +126,8 @@ include("./UnitTests/test_run_summary.jl")
 include("./UnitTests/test_sparse_maxlfq.jl")
 include("./UnitTests/test_calibration_qc.jl")
 include("./UnitTests/test_precursor_long_export.jl")
+include("./UnitTests/test_zt_mode.jl")
+include("./UnitTests/test_zt_partition_merge.jl")
 include("./UnitTests/test_file_name_labels.jl")
 
 # FileOperations pipeline

@@ -59,6 +59,7 @@ function execute_search(::HuberTuningSearch, search_context::SearchContext, para
         for file_idx in ProgressBar(files)
             idx = Int64(file_idx)
             spectra = getMSData(getMSData(search_context), idx)
+            zt_prepare_file!(search_context, params, idx, spectra)   # per-file deconvolution tolerance (ZT/context.jl)
             process_file!(results, tuning_params, search_context, idx, spectra)
         end
         summarize_results!(results, tuning_params, search_context)

@@ -15,12 +15,22 @@ const TUNING_INTENSITY_FILTER_QUANTILE = Float32(0.5)
 
 # ParameterTuningSearch-specific
 const TUNING_FRAG_ERR_QUANTILE = Float32(0.01)
-const TUNING_MIN_SAMPLES = Int64(1200)          # PSM target for collection phase
+const TUNING_MIN_SAMPLES = Int64(1200)          # unique-precursor target for collection phase
+const TUNING_MAX_PSMS_PER_PRECURSOR = 3         # cap per precursor before counting convergence (ported from feat/zt-scanning-v2)
+const TUNING_IM_BINS = 8                        # ion-mobility files: IM bins per (RT bin, isolation window) in the scan priority order
 const TUNING_MAX_PRESEARCH_ITERS = Int64(10)
 const TUNING_MAX_Q_VALUE = Float32(0.01)
 const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter for wide scout
 const TUNING_MAX_FRAGS_FOR_MASS_ERR = UInt8(3)  # Fragments per PSM for mass error estimation
 const TUNING_MIN_COLLECT_SCANS = Int64(5000)    # Minimum initial scan estimate for collection
+# Second-order stopping (accumulate_psms!): the scan-priority order draws the richest scans first, so the
+# marginal yield of each batch decays. Once the decay is established, the yield of ALL remaining scans is
+# bounded by a geometric series; if that bound cannot reach the target, the tier backs off immediately
+# instead of extrapolating the cumulative rate to the end of the file.
+# Convergence unit per phase. The scout counts PSM rows (its only output is the outer m/z tolerance, which
+# 500-1,000 PSMs from the richest scans pin down as well as thousands from the whole file). Collection keeps the
+# best TUNING_MAX_PSMS_PER_PRECURSOR PSMs per precursor and counts the remaining rows, so a few persistent ions
+# cannot fill the target on their own (breadth for the RT / mass fits) without demanding 1,200 distinct precursors.
 const TUNING_CALIBRATION_BIN_SIZE = Int64(200)  # Equal-count bins for mass-error calibration summaries
 const TUNING_MZ_BIAS_BIN_SIZE = Int64(100)      # Denser bins for m/z-dependent bias medians
 const TUNING_MZ_BIAS_KNOTS = Int64(24)          # Knots for binned m/z-dependent bias spline
@@ -49,6 +59,8 @@ const TUNING_GAUSSIAN_COVERAGE = Float64(0.95)
 
 # iRT tolerance: σ_iRT × this multiplier
 const TUNING_IRT_TOL_SIGMA = Int64(3)
+# Minimum target PSMs (per charge, and pooled) to fit an ion-mobility line in tuning.
+const TUNING_IM_MIN_CALIB = 50
 
 # Score tier backoff and top-N fragment requirement
 const TUNING_SCORE_TIERS = (UInt8(8), UInt8(7), UInt8(6), UInt8(5))

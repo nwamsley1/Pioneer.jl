@@ -1,3 +1,44 @@
+"Requested fragment-index local ID type: `library_params[\"frag_index_local_id_type\"]`, `\"auto\"` when absent."
+frag_index_local_id_request(library_params) = String(get(library_params, "frag_index_local_id_type", "auto"))
+
+"""
+Precursor-m/z partition width (Da) of the fragment index: `library_params[\"prec_partition_width\"]` when set (an
+explicit override), else the approximate acquisition isolation window width `library_params[\"isolation_window_width\"]`
+(m/z, default 5) snapped to the nearest of 2.5, 5 and 10 Da (below 3.75 -> 2.5, below 7.5 -> 5, else 10). The fastest
+width tracks the window's size class, not its exact value: a width just above 2.5 Da can push the largest partitions
+past 65,535 precursors and so to UInt32 local IDs without the gain of fewer partitions, and partitions narrower than
+2.5 Da or wider than 10 Da cost time (dev_docs/fragment_index/PARTITION_WIDTH_SWEEP.md).
+"""
+function prec_partition_width(library_params)
+    haskey(library_params, "prec_partition_width") && return Float32(library_params["prec_partition_width"])
+    w = Float32(get(library_params, "isolation_window_width", 5.0))
+    return w < 3.75f0 ? 2.5f0 : w < 7.5f0 ? 5.0f0 : 10.0f0
+end
+
+"""
+    resolve_and_record_local_id_type(temp_lib, requested, partition_width, spec_lib_path) -> Type
+
+Resolve the fragment-index local ID type once per library (`resolve_local_id_type`), so the main and presearch
+indexes always agree, log the choice, and record it in the library's `config.json`
+(`library_params.frag_index_local_id_type_resolved`).
+"""
+function resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real, spec_lib_path::AbstractString)
+    id_type, n_over, n_bins = resolve_local_id_type(requested, getMz(getPrecursors(temp_lib)), partition_width)
+    why = requested == "auto" ?
+        (n_over > 0 ? "$n_over of $n_bins $(partition_width)-Da bins exceed $MAX_LOCAL_PRECS precursors" :
+                      "every $(partition_width)-Da bin fits in $MAX_LOCAL_PRECS precursors") : "set explicitly"
+    @user_info "Fragment index: $(partition_width) Da partitions, $(id_type) local precursor IDs ($why)"
+    cfg_path = joinpath(spec_lib_path, "config.json")
+    if isfile(cfg_path)
+        cfg = JSON.parsefile(cfg_path)
+        lp = get!(cfg, "library_params", Dict{String, Any}())
+        lp["frag_index_local_id_type_resolved"] = string(id_type)
+        lp["prec_partition_width_resolved"] = partition_width
+        write(cfg_path, JSON.json(cfg, 2))
+    end
+    return id_type
+end
+
 """
     sort_detailed_fragments_by_mz!(frags, prec_ranges) -> Int
 
@@ -131,6 +172,8 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::SplineCoefficientModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
+                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -216,18 +259,19 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     # Sort detailed_frags by m/z within each precursor (run_fused! pre-condition).
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
@@ -286,6 +330,8 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::InstrumentAgnosticModel;
                       frag_bin_tol_mda::Float32 = 2.0f0,
+                      partition_width::Float32 = 5.0f0,   # precursor-m/z partition width (Da)
+                      id_type_request::AbstractString = "auto", # fragment-index local ID type: auto | UInt16 | UInt32
                       detailed_frags = nothing,
                       pid_to_fid = nothing,
                       )
@@ -306,18 +352,19 @@ function buildPionLib(spec_lib_path::String,
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+    id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, partition_width, spec_lib_path)
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        partition_width=partition_width, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
         rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
-        include_p_index=include_p_index)
+        include_p_index=include_p_index, id_type=id_type)
 
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
 

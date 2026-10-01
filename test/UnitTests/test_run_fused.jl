@@ -88,7 +88,7 @@ function make_fused_fixture(;
     # id_to_col: map prec_id -> column. FusedQuadEst uses (prec_id-1)*3 + iso_pass,
     # so size is 3*n_precursors + 1; for Standard it's just n_precursors.
     id_to_col_size = max(3 * n_precursors + 1, 16)
-    id_to_col = DensePrecMap{UInt16}(id_to_col_size)
+    id_to_col = DensePrecMap{UInt32}(id_to_col_size)
 
     # Scratch: small initial cap so growth path is exercisable.
     scratch = FusedScratch(8)
@@ -222,7 +222,7 @@ end
         @test fx.Hs.n == 1          # one column allocated
         @test fx.Hs.n_vals == 2     # two entries in that column
         # id_to_col must record the column for prec_idx=1 (Standard maps to prec_idx).
-        @test fx.id_to_col[1] == UInt16(1)
+        @test fx.id_to_col[1] == UInt32(1)
         # MainUnscoredPSM should have been updated for col=1.
         @test fx.unscored_psms[1].precursor_idx == UInt32(1)
         # Both peaks landed in the matched buffer (rows 1 and 2).
@@ -269,7 +269,7 @@ end
         @test fx.Hs.n == 0          # no column allocated (col_started never true)
         @test fx.Hs.n_vals == 0
         # id_to_col stays untouched for prec_idx=1.
-        @test fx.id_to_col[1] == UInt16(0)
+        @test fx.id_to_col[1] == UInt32(0)
     end
 
     # ------------------------------------------------------------
@@ -280,7 +280,7 @@ end
         @test n_match == 0
         @test n_miss  == 0          # filter triggers `continue`, no fragments seen
         @test fx.Hs.n == 0
-        @test fx.id_to_col[1] == UInt16(0)
+        @test fx.id_to_col[1] == UInt32(0)
     end
 
     # ------------------------------------------------------------
@@ -292,7 +292,7 @@ end
         @test n_match == 0
         @test n_miss  == 0
         @test fx.Hs.n == 0
-        @test fx.id_to_col[1] == UInt16(0)
+        @test fx.id_to_col[1] == UInt32(0)
     end
 
     # ------------------------------------------------------------
@@ -427,9 +427,9 @@ end
         @test fx.Hs.n == 3
         # match_column_id for FusedQuadEst: key = (prec-1)*3 + pass
         # prec=1 → keys 1, 2, 3 each map to a column
-        @test fx.id_to_col[1] == UInt16(1)
-        @test fx.id_to_col[2] == UInt16(2)
-        @test fx.id_to_col[3] == UInt16(3)
+        @test fx.id_to_col[1] == UInt32(1)
+        @test fx.id_to_col[2] == UInt32(2)
+        @test fx.id_to_col[3] == UInt32(3)
     end
 
     # ------------------------------------------------------------
@@ -653,8 +653,8 @@ end
         @test n_match == 1                   # only precursor 2 contributes
         @test n_miss  == 0
         @test fx.Hs.n == 1                   # one column allocated (for precursor 2)
-        @test fx.id_to_col[1] == UInt16(0)   # precursor 1 never started a column
-        @test fx.id_to_col[2] == UInt16(1)
+        @test fx.id_to_col[1] == UInt32(0)   # precursor 1 never started a column
+        @test fx.id_to_col[2] == UInt32(1)
     end
 
     # ------------------------------------------------------------
@@ -787,10 +787,10 @@ end
         @test n_match == 2                       # precursor 1 + 4
         @test n_miss  == 1                       # precursor 2's miss (col not allocated → discarded)
         @test fx.Hs.n == 2                       # only 2 columns
-        @test fx.id_to_col[1] == UInt16(1)       # precursor 1 got column 1
-        @test fx.id_to_col[2] == UInt16(0)       # precursor 2 had no match
-        @test fx.id_to_col[3] == UInt16(0)       # precursor 3 had no fragments
-        @test fx.id_to_col[4] == UInt16(2)       # precursor 4 got column 2
+        @test fx.id_to_col[1] == UInt32(1)       # precursor 1 got column 1
+        @test fx.id_to_col[2] == UInt32(0)       # precursor 2 had no match
+        @test fx.id_to_col[3] == UInt32(0)       # precursor 3 had no fragments
+        @test fx.id_to_col[4] == UInt32(2)       # precursor 4 got column 2
     end
 
     # ------------------------------------------------------------
@@ -1020,7 +1020,7 @@ end
             h = fx.Hs
             @test (h.n, h.m, h.n_vals) == (1, 3count, 3count)
             @test h.colptr[1:2] == UInt32[1, 3count + 1]
-            @test fx.id_to_col[1] == UInt16(1)
+            @test fx.id_to_col[1] == UInt32(1)
             matched = [i for i in 1:h.n_vals if Pioneer.matched_at(h, i)]
             @test h.rowval[matched] == UInt32.(1:count + 1)
             @test h.x[matched] == Float32.(100:100:100 * (count + 1))
@@ -1081,7 +1081,32 @@ end
             @test isequal(fx.Hs.nzval[entries], predicted .* scale)
             @test [Pioneer.isotope_at(fx.Hs, i) for i in entries] == UInt8[0, 1, 2, 3]
             @test [Pioneer.matched_at(fx.Hs, i) for i in entries] == [true, false, false, false]
-            @test fx.id_to_col[pass] == UInt16(pass)
+            @test fx.id_to_col[pass] == UInt32(pass)
         end
+    end
+
+    # ------------------------------------------------------------
+    @testset "more than 65,535 matched precursors in one scan (UInt32 columns)" begin
+        # timsTOF MS1 slices at 50 ng match > 65,535 precursors at the scout's +/-100 ppm; with UInt16
+        # columns `col + 1` wrapped to 0 and Hs.colptr[0] was written. 70,000 precursors, one fragment each,
+        # every fragment on its own peak.
+        n = 70_000
+        frag_mz = Float32[200.0f0 + 0.02f0 * i for i in 1:n]
+        frags = [(UInt32(i), frag_mz[i], 1000.0f0, UInt8(0)) for i in 1:n]
+        fx = make_fused_fixture(
+            n_precursors = n,
+            prec_mzs = fill(500.0f0, n), prec_charges = fill(UInt8(2), n),
+            prec_sulfur_counts = fill(UInt8(0), n), prec_irts = fill(50.0f0, n),
+            frags = frags, prec_frag_ranges = UInt64.(1:n + 1),
+            peak_mz = frag_mz, peak_int = fill(1500.0f0, n),
+            prec_range = 1:n,
+        )
+        n_match, n_miss = call_run_fused!(fx; frag_mz_bounds = (100.0f0, 5000.0f0))
+        @test n_match == n
+        @test fx.Hs.n == n
+        @test fx.id_to_col[n] == UInt32(n)
+        @test fx.id_to_col[65_536] == UInt32(65_536)
+        @test fx.Hs.colptr[n + 1] == UInt32(fx.Hs.n_vals + 1)
+        @test fx.Hs.colptr[65_536] < fx.Hs.colptr[65_537] <= fx.Hs.colptr[n + 1]
     end
 end

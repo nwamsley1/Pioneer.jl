@@ -151,6 +151,16 @@ Header-parsing regex patterns can be configured three ways:
 | `fixed_mods.{pattern, mass, name}` | [String], [Float], [String] | Cys carbamidomethyl (`Unimod:4`, +57.021464 Da) | Fixed modifications. |
 | `isotope_mod_groups` | [Object] | `[]` | Multiplexed labelling channels. |
 
+Modification names must be UNIMOD accessions (`Unimod:<id>`); they are sent to
+Koina verbatim. Before any prediction is requested, every fixed and variable
+modification (accession and residue) is checked against what the selected
+`prediction_model` **and** `rt_model` were trained on, and a build whose
+modifications either model cannot predict is refused — the error names the
+offending modifications and the models that would accept the whole selection.
+Leaving cysteine without a fixed modification means *unmodified cysteine*, which
+only `prosit_2025_40ptm` (fragments) and both retention-time models can
+predict; every other fragment model assumes carbamidomethyl-C.
+
 ### Collision Energy
 
 | Parameter | Type | Default | Description |
@@ -166,6 +176,17 @@ Header-parsing regex patterns can be configured three ways:
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
+| `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
+| `library_params.isolation_window_width` | Float | `5.0` | Approximate isolation window width (m/z) of the acquisition method (about 2-4 for narrow-window Orbitrap Astral or SCIEX, about 15 for Exploris, 25 for timsTOF diaPASEF). The fragment index's precursor partition width is this value snapped to the nearest of 2.5, 5 and 10 Da (below 3.75: 2.5; below 7.5: 5; otherwise 10): partitions in the window's size class are fastest, and narrower or much wider ones cost search time. The default of 5 is within a few percent of the fastest on every instrument tested. |
+| `library_params.prec_partition_width` | Float | from `isolation_window_width` | Explicit precursor-m/z width (Da) of the fragment-index partitions, overriding the value derived from `isolation_window_width`. |
+| `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective width drops below `prec_partition_width` (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
+
+### Prediction Models
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
+| `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
 
 ### Top-level
 

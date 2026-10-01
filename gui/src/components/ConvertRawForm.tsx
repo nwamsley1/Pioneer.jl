@@ -15,7 +15,7 @@
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
-import { convertGroups, formatOfFile, type ConvertGroup } from '../lib/config'
+import { convertGroups, defaultConvertOutput, formatOfFile, type ConvertGroup } from '../lib/config'
 import type { ConvertFormat, ConvertParams } from '../lib/types'
 import { type Note } from '../lib/validate'
 
@@ -219,6 +219,10 @@ export function ConvertRawForm({
   // In list mode each file names its own converter, so the format toggle has
   // nothing to decide and is hidden. `format` still drives the folder-mode copy.
   const isMzml = !byFiles && params.format === 'mzml'
+  const isBruker = !byFiles && params.format === 'bruker'
+  const isSciex = !byFiles && params.format === 'sciex'
+  // Bruker (.d folders) and SCIEX (.wiff + .wiff.scan pairs) are converted per folder or per run, never from a list.
+  const folderOnly = isBruker || isSciex
   const groups = convertGroups(params.inputFiles)
   const unreadable = params.inputFiles.filter((f) => formatOfFile(f) === null)
 
@@ -229,15 +233,27 @@ export function ConvertRawForm({
   const defaultOut = byFiles
     ? 'required for a list of files'
     : params.input.trim()
-      ? `${params.input.trim()}/arrow_out`
-      : '<input folder>/arrow_out'
+      ? defaultConvertOutput(params)
+      : isBruker
+        ? '<input folder>/tdfs_out'
+        : isSciex
+          ? '<input folder>/scxs_out'
+          : '<input folder>/arrow_out'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
           <h2 style={H2}>
-            {byFiles ? 'Convert files' : isMzml ? 'Convert mzML files' : 'Convert raw files'}
+            {byFiles
+              ? 'Convert files'
+              : isMzml
+                ? 'Convert mzML files'
+                : isBruker
+                  ? 'Convert Bruker timsTOF data'
+                  : isSciex
+                    ? 'Convert SCIEX data'
+                    : 'Convert raw files'}
           </h2>
         </div>
         <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
@@ -247,6 +263,26 @@ export function ConvertRawForm({
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code> files to
               Arrow, which is what SearchDIA reads. The list can mix the two — each format goes to
               its own converter, as its own run.
+            </>
+          ) : isBruker ? (
+            <>
+              Convert Bruker timsTOF diaPASEF{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.d</code> folders to{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.tdfs</code> runs, which
+              is what SearchDIA reads for timsTOF data. Search them with a library built with the
+              timsTOF option on.
+            </>
+          ) : isSciex ? (
+            <>
+              Convert SCIEX SWATH{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff</code> runs (each
+              with its{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff.scan</code> beside it)
+              to{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.scxs</code> runs, which
+              SearchDIA reads directly. Runs that have only a{' '}
+              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff2</code> are not
+              supported; convert those to mzML with msConvert.
             </>
           ) : isMzml ? (
             <>
@@ -269,7 +305,7 @@ export function ConvertRawForm({
           <button
             type="button"
             onClick={() => onParam('format', 'raw')}
-            style={seg(!isMzml)}
+            style={seg(!isMzml && !isBruker && !isSciex)}
           >
             Thermo .raw
           </button>
@@ -280,10 +316,27 @@ export function ConvertRawForm({
           >
             .mzML
           </button>
+          <button
+            type="button"
+            onClick={() => onParam('format', 'bruker')}
+            style={seg(isBruker)}
+          >
+            Bruker .d
+          </button>
+          <button
+            type="button"
+            onClick={() => onParam('format', 'sciex')}
+            style={seg(isSciex)}
+          >
+            SCIEX .wiff
+          </button>
         </div>
 
         <label style={LABEL}>Input</label>
-        <div style={{ ...SEG_TRACK, marginBottom: 12 }}>
+        {/* A .d bundle is a folder, which the file list cannot hold, so Bruker is
+            folder-only: the folder can be one .d or a folder of them. SCIEX is too: a
+            .wiff needs its .wiff.scan beside it, which a staged file list would not carry. */}
+        <div style={{ ...SEG_TRACK, marginBottom: 12, display: folderOnly ? 'none' : undefined }}>
           <button
             type="button"
             onClick={() => onParam('inputMode', 'files')}
@@ -316,7 +369,15 @@ export function ConvertRawForm({
                 data-key="convertInput"
                 value={params.input}
                 onChange={(e) => onParam('input', e.target.value)}
-                placeholder={isMzml ? '/path/to/mzml/folder' : '/path/to/raw/folder'}
+                placeholder={
+                  isMzml
+                    ? '/path/to/mzml/folder'
+                    : isBruker
+                      ? '/path/to/run.d or folder'
+                      : isSciex
+                        ? '/path/to/run.wiff or folder'
+                        : '/path/to/raw/folder'
+                }
                 style={{
                   flex: 1,
                   padding: '9px 12px',
@@ -333,6 +394,27 @@ export function ConvertRawForm({
             </div>
           )}
         </div>
+        {isSciex && (
+          <div data-key="convertZtScan" style={{ marginTop: 14 }}>
+            {/* The .wiff does not record the scan mode, so this is always asked and has no preset answer. */}
+            <label style={LABEL}>Are these runs ZT Scan DIA?</label>
+            <div style={SEG_TRACK}>
+              <button type="button" onClick={() => onParam('ztScan', 'no')} style={seg(params.ztScan === 'no')}>
+                No — SWATH / stepped DIA (usual)
+              </button>
+              <button type="button" onClick={() => onParam('ztScan', 'yes')} style={seg(params.ztScan === 'yes')}>
+                Yes — ZT Scan DIA
+              </button>
+            </div>
+            <div style={noteStyle({ level: params.ztScan ? '' : 'warn', msg: '' })}>
+              {params.ztScan === 'yes'
+                ? 'Runs are written as <name>.zt.scxs and marked as ZT Scan DIA.'
+                : params.ztScan === 'no'
+                  ? 'Runs are written as <name>.scxs.'
+                  : 'Choose one: the .wiff file does not say which it is.'}
+            </div>
+          </div>
+        )}
         {inputNote.msg && (
           <div style={noteStyle(inputNote)}>
             {inputNote.level ? '\u26a0  ' : ''}
@@ -376,7 +458,7 @@ export function ConvertRawForm({
 
         <div
           style={{
-            display: 'flex',
+            display: folderOnly ? 'none' : 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 14,
@@ -461,7 +543,15 @@ export function ConvertRawForm({
             {/* Disjoint sets, not a shared set with some fields disabled: none
                 of PioneerConverter's knobs has a counterpart in convertMzML,
                 so showing them greyed out would only suggest otherwise. */}
-            {isMzml ? (
+            {isBruker ? (
+              <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+                None. Slicing uses the settings Pioneer&rsquo;s timsTOF search was validated with.
+              </div>
+            ) : isSciex ? (
+              <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
+                None. Centroiding uses SciexWiff&rsquo;s defaults, validated against msConvert&rsquo;s.
+              </div>
+            ) : isMzml ? (
               <>
                 <div
                   style={{

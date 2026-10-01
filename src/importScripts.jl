@@ -117,6 +117,8 @@ function importScripts()
             "MassSpecData/getters.jl",
             "MassSpecData/FilteredMassSpecData.jl",
             "MassSpecData/IndexedMassSpecData.jl",
+            "MassSpecData/TdfsMassSpecData.jl",
+            "MassSpecData/ScxsMassSpecData.jl",
             "ChromObject.jl",
             "Counter.jl",
             "Ion.jl",
@@ -238,6 +240,10 @@ function importScripts()
     # fusedScan defines FusedScratch, which SearchTypes references as a field
     # on SimpleLibrarySearch — must load first.
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "fusedScan.jl"))
+    # Scanning-quad (ZT): ZTGeometry is a SearchContext field, so it loads before SearchTypes.
+    # The rest of ZT/ loads after LibrarySearch.jl, below.
+    include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"),
+                   ["geometry.jl", "transmission_model.jl"])
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
     # Include remaining files using safe import for directories
@@ -369,6 +375,19 @@ function importScripts()
 
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
 
+    # Scanning-quad (ZT) search: the hooks the search methods call, and their implementations.
+    # Last, because the hooks dispatch on the search methods' parameter and result types.
+    include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"), [
+        "context.jl",               # per-file ZT state: geometry, mode, solver tolerance
+        "tuning.jl",                # ParameterTuningSearch hooks
+        "quad_tuning.jl",           # QuadTuningSearch: transmission triangle fit
+        "candidacy.jl",             # library_search: re-anchor, expand, thin
+        "metascan_collapse.jl",     # MainSearch: per-bin PSMs -> meta-PSMs
+        "chunked_main_search.jl",   # MainSearch: chunked deconvolution + collapse
+        "partitioned_scoring.jl",   # MainSearch: multi-chunk files scored from disk
+        "chromatogram_collapse.jl", # IntegrateChromatogramsSearch hooks
+    ])
+
 
 
 
@@ -437,6 +456,8 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "BrukerConverter", "convertBruker.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "SciexConverter", "convertSciex.jl"))
 
     return files_loaded
 end

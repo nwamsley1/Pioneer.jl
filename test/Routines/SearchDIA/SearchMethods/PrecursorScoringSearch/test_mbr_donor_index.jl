@@ -3,7 +3,7 @@ using Pioneer
 
 @testset "Indexed integrated MBR donors preserve selection" begin
     function donor(pid, run, score, weight)
-        Pioneer._MBRDonorEntry(score, UInt32(pid), weight, -1f0, 0f0, 10f0,
+        Pioneer._MBRDonorEntry(score, UInt32(pid), weight, -1f0, 0f0, 10f0, 0f0,
             5f0, (1f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0), 0x03, UInt16(2), UInt32(run))
     end
     rng = MersenneTwister(812)

@@ -12,6 +12,16 @@ import type {
   ModEntry,
   PathInfo,
 } from './types'
+import { predictionModelById } from './types'
+import {
+  findMod,
+  isFreeCys,
+  modelAllowsFreeCys,
+  rtModelById,
+  rtModelsAccepting,
+  rtUnsupportedResidues,
+  siteAllowed,
+} from './koinaMods'
 
 export interface NumSpec {
   label: string
@@ -49,6 +59,14 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     step: 1,
     int: true,
     info: 'How many distinct peptides a protein group needs before it is reported. Counted per run, not across the experiment: a protein seen by two peptides in one file and one in another is kept for the first and dropped from the second at a threshold of 2.',
+  },
+  isolationWindowWidth: {
+    label: 'Isolation window width (m/z)',
+    min: 0.1,
+    max: null,
+    step: 0.5,
+    int: false,
+    info: 'The approximate width of the quadrupole isolation windows for the DIA acquisition method. This only changes search speed. If unsure, leave at 5 for SCIEX and Thermo instruments and 10 for Bruker instruments.',
   },
   fragMzMin: { label: 'Fragment m/z min', min: 0, max: null, step: 10, int: false },
   fragMzMax: { label: 'Fragment m/z max', min: 0, max: null, step: 10, int: false },
@@ -133,10 +151,29 @@ export function msDataNote(value: string, info: PathInfo): Note {
           msg: 'Unsupported type — Pioneer reads .raw, .mzML or .arrow (a folder is fine too).',
         }
   }
-  if (info.ms_file_count === 0) {
-    return { level: 'error', msg: 'No .raw, .mzML or .arrow files in this folder.' }
+  // A .tdfs / .scxs run is a folder, but it is one run, not a folder of them.
+  if (info.extension === 'tdfs' || info.extension === 'scxs') {
+    return {
+      level: 'error',
+      msg: `This is a single .${info.extension} run. Choose the folder that holds it, or use Chosen files.`,
+    }
   }
-  if (info.raw_count > 0 && info.arrow_count === 0) {
+  if (info.ms_file_count === 0) {
+    if (info.d_count > 0) {
+      return {
+        level: 'error',
+        msg: `${info.d_count} Bruker .d folder${info.d_count > 1 ? 's' : ''} found and no .tdfs — convert them first.`,
+      }
+    }
+    if (info.wiff_count > 0) {
+      return {
+        level: 'error',
+        msg: `${info.wiff_count} SCIEX .wiff file${info.wiff_count > 1 ? 's' : ''} found and no .scxs — convert them first.`,
+      }
+    }
+    return { level: 'error', msg: 'No .raw, .mzML, .arrow, .tdfs or .scxs data in this folder.' }
+  }
+  if (info.raw_count > 0 && info.arrow_count === 0 && info.tdfs_count === 0 && info.scxs_count === 0) {
     // SearchDIA reads Arrow; .raw still needs converting first.
     return {
       level: 'warn',
@@ -254,9 +291,24 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   }
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This file does not exist.' }
-  if (info.is_dir) return { level: 'error', msg: 'Choose a single MS data file, not a folder.' }
-  if (info.extension && !MS_EXTENSIONS.includes(info.extension)) {
-    return { level: 'error', msg: 'Expected a .raw, .mzML or .arrow file.' }
+  if (info.is_dir) {
+    // A timsTOF .tdfs run is a folder. Its bounds are read differently from a Thermo file's.
+    if (info.extension === 'tdfs') {
+      return {
+        level: '',
+        msg: 'timsTOF run: one fixed fragment range for every window (the widest MS2 scan range), and the precursor range from the outer edges of the diaPASEF windows.',
+      }
+    }
+    // A SCIEX .scxs run is a folder too; its bounds are read as for an .arrow file.
+    if (info.extension === 'scxs') return NONE
+    return { level: 'error', msg: 'Choose a single MS data file or a .tdfs / .scxs run, not a folder.' }
+  }
+  // BuildSpecLib reads the calibration run as Arrow; convert .raw / .mzML first.
+  if (info.extension !== 'arrow') {
+    return {
+      level: 'error',
+      msg: 'Expected an .arrow file or a .tdfs / .scxs run (convert .raw / .mzML / .wiff first).',
+    }
   }
   return NONE
 }
@@ -451,6 +503,8 @@ export function validateBuildRun(
   }
   const conflict = modSiteConflict(p.fixedMods, p.variableMods)
   if (conflict) return { key: 'variableMods', msg: conflict }
+  const support = modelSupportBlock(p)
+  if (support) return support
   // Only when they are actually used: with auto-detection on these come from
   // the reference file and whatever is in the fields is ignored.
   if (!p.autoDetectFragBounds) {
@@ -468,6 +522,55 @@ export function validateBuildRun(
       for (const key of ['fragCeilingSlope', 'fragCeilingIntercept'] as const) {
         const err = numError(key, p[key])
         if (err) return { key, msg: `Fragment ceiling ${NUM_SPECS[key].label}: ${err}.` }
+      }
+    }
+  }
+  return null
+}
+
+/** A modification -- or an unmodified cysteine -- that the fragment model or
+ *  the retention-time model cannot predict. Mirrors `check_model_mod_support`
+ *  in Pioneer, which refuses the build on the same grounds; catching it here
+ *  keeps the refusal from arriving only after the run is queued. The message
+ *  names the two ways out: change the modifications, or switch model. */
+export function modelSupportBlock(p: BuildParams): RunBlock | null {
+  const frag = predictionModelById(p.predictionModel)
+  const rt = rtModelById(p.rtModel)
+  const alt = rtModelsAccepting(p.fixedMods, p.variableMods).filter((m) => m.id !== rt.id)
+  const orSwitch = alt.length
+    ? ` Remove it, or switch the retention-time model to ${alt.map((m) => m.label).join(' or ')}.`
+    : ' Remove it: no retention-time model supports the whole selection.'
+  for (const [kind, mods] of [
+    ['fixed', p.fixedMods],
+    ['variable', p.variableMods],
+  ] as const) {
+    for (const m of mods) {
+      const label = m.label || m.name
+      const def = findMod(p.predictionModel, m.name)
+      if (def === null || !siteAllowed(def, m.pattern)) {
+        return {
+          key: `${kind}Mods`,
+          msg: `${frag.label} cannot predict ${label}${def ? ` on ${m.pattern}` : ''}. Remove it, or choose a fragment model that supports it.`,
+        }
+      }
+      const bad = rtUnsupportedResidues(p.rtModel, m.name, m.pattern)
+      if (bad.length) {
+        return {
+          key: 'rtModel',
+          msg: `${rt.label} cannot predict retention times for ${label} on ${bad.join(', ')}.${orSwitch}`,
+        }
+      }
+    }
+  }
+  if (isFreeCys(p.fixedMods)) {
+    const offenders = [
+      ...(modelAllowsFreeCys(p.predictionModel) ? [] : [frag.label]),
+      ...(rt.freeCys ? [] : [rt.label]),
+    ]
+    if (offenders.length) {
+      return {
+        key: modelAllowsFreeCys(p.predictionModel) ? 'rtModel' : 'fixedMods',
+        msg: `Unmodified cysteine needs a fragment model and a retention-time model trained on it — ${offenders.join(' and ')} ${offenders.length > 1 ? 'are' : 'is'} not. Add Carbamidomethyl on C, or switch model.`,
       }
     }
   }
@@ -589,6 +692,30 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return { level: 'error', msg: 'This path does not exist.' }
 
+  // Bruker bundles are folders: the input is one `.d` or a folder of them.
+  if (p.format === 'bruker') {
+    if (info.is_file) return { level: 'error', msg: 'Choose a .d folder, or a folder of them.' }
+    if (info.d_count === 0) return { level: 'error', msg: 'No Bruker .d folders here.' }
+    return {
+      level: '',
+      msg: `${info.d_count} .d folder${info.d_count > 1 ? 's' : ''} to convert to .tdfs.`,
+    }
+  }
+
+  // SCIEX input is one .wiff (its .wiff.scan beside it) or a folder of them.
+  if (p.format === 'sciex') {
+    if (info.is_file) {
+      return info.wiff_count === 1
+        ? { level: '', msg: '1 .wiff run to convert to .scxs (its .wiff.scan must sit beside it).' }
+        : { level: 'error', msg: 'Choose a SCIEX .wiff file, or a folder of them.' }
+    }
+    if (info.wiff_count === 0) return { level: 'error', msg: 'No SCIEX .wiff files here.' }
+    return {
+      level: '',
+      msg: `${info.wiff_count} .wiff run${info.wiff_count > 1 ? 's' : ''} to convert to .scxs.`,
+    }
+  }
+
   const mzml = p.format === 'mzml'
   const label = mzml ? '.mzML' : '.raw'
   const count = mzml ? info.mzml_count : info.raw_count
@@ -616,6 +743,22 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
 export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
   if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
   if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
+  if (p.format === 'sciex') {
+    return info.scxs_count > 0
+      ? {
+          level: 'warn',
+          msg: `This folder already holds ${info.scxs_count} .scxs run${info.scxs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+        }
+      : NONE
+  }
+  if (p.format === 'bruker') {
+    return info.tdfs_count > 0
+      ? {
+          level: 'warn',
+          msg: `This folder already holds ${info.tdfs_count} .tdfs run${info.tdfs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+        }
+      : NONE
+  }
   if (info.exists && info.arrow_count > 0) {
     // Nothing to warn about once the files are being left alone: the warning
     // existed only to offer this setting, and telling someone to enable what
@@ -674,6 +817,10 @@ export function validateConvertRun(
   }
   if (inputNote.level === 'error') return { key: 'convertInput', msg: inputNote.msg }
   if (outputNote.level === 'error') return { key: 'convertOutput', msg: outputNote.msg }
+  // The .wiff does not record the scan mode, so SCIEX conversion always asks.
+  if (p.inputMode === 'folder' && p.format === 'sciex' && !p.ztScan) {
+    return { key: 'convertZtScan', msg: 'Say whether these SCIEX runs are ZT Scan DIA.' }
+  }
   // Only the fields the converters that will actually run read. A list can hold
   // both formats, so it is checked against both; a stale batch size left over
   // from a RAW run must not block an mzML-only conversion that ignores it.

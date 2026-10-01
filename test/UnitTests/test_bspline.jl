@@ -235,4 +235,61 @@ end
     test_model(empty_binned_model, ((400f0, UInt8(2)),))
 end
 
+@testset "collision-energy-keyed NCE model (CeBinnedNceModel)" begin
+    lookup = Pioneer.SplineFragmentLookup(
+        Pioneer.SplineCompactFrag{4,Float32}[], UInt64[1], TEST_KNOTS)
+
+    # Thermo normalisation: absolute eV = NCE * (mz/500) * f(z)
+    @test Pioneer.nominal_nce(30f0 * 0.9f0 * (600f0 / 500f0), 600f0, 2) ≈ 30f0
+    @test Pioneer.nominal_nce(30f0 * 0.85f0 * (600f0 / 500f0), 600f0, 3) ≈ 30f0
+    @test Pioneer.nce_charge_factor(1) == 1.0f0 && Pioneer.nce_charge_factor(4) == 0.8f0 == Pioneer.nce_charge_factor(5)
+
+    # Two charges, two nominal-NCE bins each: 2+ bins [25,30) -> 24, [30,35] -> 29; 3+ bins -> 26, 31
+    inner = Pioneer.BinnedMedianNceModel{Float32}(
+        Float32[24, 29, 26, 31],
+        (0x00, 0x01, 0x03, 0x00, 0x00, 0x00),
+        (0x00, 0x02, 0x02, 0x00, 0x00, 0x00),
+        (0f0, 25f0, 25f0, 0f0, 0f0, 0f0),
+        (0f0, 5f0, 5f0, 0f0, 0f0, 0f0),
+        27f0,
+    )
+    model = Pioneer.CeBinnedNceModel{Float32}(inner)
+    ev_for(nce, mz, z) = nce * (mz / 500f0) * Pioneer.nce_charge_factor(z)   # inverse of nominal_nce
+    @test model(600f0, 2, ev_for(27f0, 600f0, 2)) == 24f0
+    @test model(600f0, 2, ev_for(33f0, 600f0, 2)) == 29f0
+    @test model(600f0, 3, ev_for(27f0, 600f0, 3)) == 26f0
+    @test model(600f0, 3, ev_for(33f0, 600f0, 3)) == 31f0
+    @test model(600f0, 4, ev_for(33f0, 600f0, 4)) == 31f0     # 4+ falls back to the nearest fitted charge
+    @test model(600f0, 2, 0f0) == 27f0                         # no scan energy -> default
+    @test model(600f0, 2) == 27f0 && model() == 27f0
+
+    # prepared model: getSplineData with the scan energy selects the bin's spline fractions
+    prepared = Pioneer.prepare_fragment_intensity_model(lookup, model)
+    @test prepared isa Pioneer.BinnedSplineIntensityModel
+    for (mz, z, nce) in ((600f0, UInt8(2), 27f0), (600f0, UInt8(2), 33f0), (800f0, UInt8(3), 33f0))
+        ev = ev_for(nce, mz, Int(z))
+        @test isequal(Pioneer.getSplineData(lookup, prepared, z, mz, ev),
+                      Pioneer.prepare_spline_fractions(model(mz, z, ev), TEST_KNOTS))
+    end
+    @test isequal(Pioneer.getSplineData(lookup, prepared, UInt8(2), 600f0),      # 4-arg form = ev 0 -> default
+                  Pioneer.prepare_spline_fractions(27f0, TEST_KNOTS))
+    # m/z-keyed models ignore the scan energy
+    mz_model = Pioneer.PiecewiseNceModel(500f0, 0.01f0, 20f0, 25f0, 1f0)
+    @test mz_model(400f0, 2, 40f0) == mz_model(400f0, 2)
+
+    # fit: precursors whose best NCE is nominal NCE - 2 (+ noise) recover that per bin
+    ev = Float32[]; mz = Float32[]; nce = Float32[]; z = UInt8[]
+    for zz in (2, 3), k in 1:400
+        m = 400f0 + 600f0 * (k / 400)
+        nominal = 25f0 + 12f0 * ((k % 20) / 20)
+        push!(ev, ev_for(nominal, m, zz)); push!(mz, m); push!(z, UInt8(zz))
+        push!(nce, round(nominal - 2f0 + (isodd(k) ? 0.4f0 : -0.4f0)))
+    end
+    fit = Pioneer.fit_ce_binned_median_nce(ev, mz, nce, z, 30f0; min_per_bin = 50)
+    @test fit isa Pioneer.CeBinnedNceModel{Float32}
+    for zz in (2, 3), nominal in (26f0, 30f0, 35f0)
+        @test abs(fit(700f0, zz, ev_for(nominal, 700f0, zz)) - (nominal - 2f0)) <= 1.5f0
+    end
+end
+
 end # top-level testset
