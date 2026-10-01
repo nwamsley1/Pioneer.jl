@@ -102,6 +102,15 @@ Helper function to predict CCS values using a Koina ion-mobility model.
 """
 function predict_ccs_koina(table::DataFrame, im_model::String)::Vector{Float32}
     model = IonMobilityModel(im_model)
+    if hasproperty(table, :sequence) && hasproperty(table, :mods)
+        cfg = IM_MODEL_CONFIGS[im_model]
+        dropped = Dict{String, Int}()
+        seqs = [im_koina_sequence(s, m, cfg, dropped) for (s, m) in zip(table.sequence, table.mods)]
+        isempty(dropped) || @user_warn "Ion-mobility model $im_model cannot encode " *
+            join(("$k ($v precursors)" for (k, v) in sort!(collect(dropped))), ", ") *
+            "; their residues are predicted as unmodified for CCS. Fragments and retention times keep them."
+        table = DataFrame(koina_sequence = seqs, precursor_charge = table.precursor_charge)
+    end
     batches = prepare_koina_batch(model, table, batch_size=1000)
     results = make_koina_batch_requests(batches, KOINA_URLS[im_model])
     ccs = Float32[]
@@ -111,6 +120,43 @@ function predict_ccs_koina(table::DataFrame, im_model::String)::Vector{Float32}
     length(ccs) == nrow(table) || error(
         "ion-mobility model $im_model returned $(length(ccs)) values for $(nrow(table)) precursors")
     return ccs
+end
+
+"""
+    im_koina_sequence(sequence, mods, cfg, dropped) -> String
+
+The Koina sequence for an ion-mobility model from a precursor's `sequence` and
+`mods` ("(1,n,Unimod:1)(7,M,Unimod:35)"): each modification `cfg.supported_mods`
+covers at its site is written as `[UNIMOD:n]`, N-terminal ones as a ProForma
+prefix when `cfg.nterm_prefix`; any other is left off, so its residue is
+predicted as unmodified, and counted in `dropped` ("Unimod:2062 on C" => n).
+"""
+function im_koina_sequence(sequence::AbstractString, mods, cfg, dropped::Dict{String, Int})
+    ismissing(mods) && return String(sequence)
+    prefix = ""
+    on_residue = [String[] for _ in 1:length(sequence)]
+    for m in parseMods(mods)
+        name = getModName(m.match)
+        site = only(split(m.match, ',')[2])
+        id = unimod_id(name)
+        if id === nothing || !occursin(site, get(cfg.supported_mods, id, ""))
+            key = "$name on $(_site_label(site))"
+            dropped[key] = get(dropped, key, 0) + 1
+            continue
+        end
+        if site == 'n' && cfg.nterm_prefix
+            prefix *= "[UNIMOD:$id]"
+        else
+            push!(on_residue[getModIndex(m.match)], "[UNIMOD:$id]")
+        end
+    end
+    io = IOBuffer()
+    isempty(prefix) || print(io, prefix, '-')
+    for (i, aa) in enumerate(sequence)
+        print(io, aa)
+        foreach(t -> print(io, t), on_residue[i])
+    end
+    return String(take!(io))
 end
 
 """

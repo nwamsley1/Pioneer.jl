@@ -852,9 +852,47 @@ const KOINA_URLS = Dict(
     "im2deep" => "https://koina.wilhelmlab.org:443/v2/models/IM2Deep/infer",
 )
 
-# Valid `library_params.im_model` values. Both take (peptide_sequences,
-# precursor_charges) and return a `ccs` tensor in Å².
-const IM_MODEL_NAMES = Set(["alphapept_ccs", "im2deep"])
+# Ion-mobility (CCS) models, selected by `library_params.im_model`. Both take
+# (peptide_sequences, precursor_charges) and return a `ccs` tensor in Å².
+#
+# `supported_mods`: the modifications the model can encode, as for MODEL_CONFIGS
+# but not a refusal -- predict_ccs_koina leaves any other modification off the
+# CCS request, so its residue is predicted as unmodified. Listed for every
+# modification a fragment or retention-time model accepts (check_model_mod_support
+# refuses the rest before this point), at every site those models accept it.
+# Each (modification, site) was sent to the live Koina endpoint (2026-10-01);
+# the reasons are in each model's Koina preprocessing (github.com/wilhelm-lab/koina):
+#   - alphapept_ccs looks each modification up by residue in AlphaPeptDeep's
+#     table (AlphaPept_Preprocess_ProForma/mod_df.csv) and fails the whole
+#     request on a pair it lacks; DBIA is not in it.
+#   - im2deep encodes a modification by its UNIMOD composition, on any residue,
+#     and fails on isotope-labelled ones (TMT6plex, TMTpro, iTRAQ 4/8-plex,
+#     Acetyl:2H(3), Propionyl:13C(3)).
+# `nterm_prefix`: send N-terminal modifications in ProForma form
+# ("[UNIMOD:1]-PEPTIDE"), which AlphaPeptDeep reads as the terminus, rather than
+# on the first residue; IM2Deep drops terminal groups, so it gets them on the
+# first residue.
+const IM2DEEP_ANY_SITE = "ACDEFGHIKLMNPQRSTVWYnc"
+const IM_MODEL_CONFIGS = Dict{String, @NamedTuple{supported_mods::ModSupport, nterm_prefix::Bool}}(
+    "alphapept_ccs" => (
+        supported_mods = ModSupport(
+            1 => "Kn", 4 => "CK", 7 => "NQR", 21 => "HSTY", 26 => "C", 27 => "E", 28 => "Q",
+            34 => "CDEHIKLNQR", 35 => "CHKMPW", 36 => "KR", 37 => "K", 43 => "ST", 56 => "K",
+            58 => "K", 59 => "K", 64 => "K", 121 => "K", 214 => "K", 312 => "C", 535 => "K",
+            730 => "K", 737 => "Kn", 739 => "Kn", 1263 => "K", 1289 => "K", 1293 => "K",
+            1848 => "K", 1990 => "K", 2016 => "K",
+        ),
+        nterm_prefix = true,
+    ),
+    "im2deep" => (
+        supported_mods = ModSupport(a => IM2DEEP_ANY_SITE for a in (
+            1, 4, 7, 21, 26, 27, 28, 34, 35, 36, 37, 43, 58, 64, 121, 312, 535, 739,
+            1263, 1289, 1293, 1848, 1990, 2062)),
+        nterm_prefix = false,
+    ),
+)
+# Valid `library_params.im_model` values.
+const IM_MODEL_NAMES = Set(keys(IM_MODEL_CONFIGS))
 
 # Retention-time models, selected by `library_params.rt_model`. Every one takes
 # the same single `peptide_sequences` input as the fragment models (sequence with
