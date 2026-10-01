@@ -526,7 +526,7 @@ function fit_nce_from_psms!(
     if select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx)
         render_calibration_safely(search_context, :nce, ms_file_idx) do
             if any(charge -> count(==(charge), best_nce.charge) >= 10, charges)
-                plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges, x_vals, x_label)
+                plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges; x_vals, x_label)
             else
                 calibration_notice!(search_context, :nce, ms_file_idx)
             end
@@ -535,7 +535,9 @@ function fit_nce_from_psms!(
     return nce_model
 end
 
-function plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges, x_vals, x_label)
+# `bins_model` is the m/z- or eV-binned median model; timsTOF passes its eV-keyed x values and label.
+function plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges;
+                               x_vals = best_nce[!, :prec_mz], x_label = "Precursor m/z")
     # Generate per-charge diagnostic plots
     parsed_fname = calibration_qc_title(search_context, :nce, ms_file_idx, getParsedFileName(search_context, ms_file_idx))
     plot_rng = MersenneTwister(1844 + ms_file_idx)

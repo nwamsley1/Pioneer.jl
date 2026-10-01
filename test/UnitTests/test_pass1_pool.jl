@@ -159,7 +159,7 @@ end
 @testset "Unified precursor scoring entry point" begin
     mktempdir() do dir
         path = pass1_pool_test_write(joinpath(dir, "run.arrow"), collect(1:120))
-        frame = DataFrame(Arrow.Table(path); copycols=true)
+        frame = DataFrame(Arrow.Table(read(path)); copycols=true)  # in memory: `path` is overwritten next (Windows)
         frame[!, first(Pioneer.ADVANCED_FEATURE_SET)] = Float32.(frame.target)
         Arrow.write(path, frame)
         for mbr in (false, true)

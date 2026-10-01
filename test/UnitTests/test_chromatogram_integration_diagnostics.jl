@@ -151,7 +151,10 @@ end
     # A straight line is entirely baseline: none of it survives, so the apex is
     # driven to exactly zero and integration is skipped before the rule is reached.
     @test apex_subtracted == 0.0f0
-    @test window_area(slope_dbg.baseline_subtracted, slope_dbg) == 0.0f0
+    # Float32 rounding in the endpoint-anchored line can leave a residual of ~1e-7 of the signal,
+    # depending on whether the CPU fuses multiply-adds; anything above that would be real signal.
+    @test window_area(slope_dbg.baseline_subtracted, slope_dbg) <=
+          1.0f-5 * window_area(slope_dbg.wh_smoothed, slope_dbg)
     @test slope_dbg.status == "skipped_zero_apex"
     @test area == 0.0f0
     @test !withheld

@@ -50,7 +50,7 @@ end
         @test long.file_name == ["r3","r1","r2","r2","r1","r3"]
         @test long.peptides[1] == "_AAA_.2;_BBB_.2;_CCC_.2"
         @test ismissing(long.peptides[end])
-        @test isequal(select(DataFrame(Arrow.Table(path)), names(rows)), rows)
+        @test isequal(select(DataFrame(Arrow.Table(read(path))), names(rows)), rows)  # in memory: `path` is overwritten below
         @test read(path) == original
         @test !any(startswith(".protein_export_"), readdir(dir))
 
@@ -64,12 +64,14 @@ end
         # Failed exports preserve existing output and remove scratch files.
         previous = read(wide_path)
         bad = copy(rows[1:2, :]); bad.file_name .= "r1"
+        GC.gc()  # release earlier memory-mapped reads of `path`; Windows cannot overwrite a mapped file
         Arrow.write(path, bad)
         @test_throws ArgumentError Pioneer.writeProteinGroupsCSV(path, args...; memory_budget_bytes=1)
         @test read(wide_path) == previous
         @test !any(startswith(".protein_export_"), readdir(dir))
 
         # Empty inputs still produce readable, consistently typed output.
+        GC.gc()
         Arrow.write(path, rows[1:0, :])
         Pioneer.writeProteinGroupsCSV(path, args...; write_csv=false)
         @test nrow(DataFrame(Arrow.Table(wide_path))) == 0
@@ -128,6 +130,7 @@ end
         @test result.entrap_id == [1,0]
         @test result.r1 == Float32[10,10]
         # Noncontiguous input groups are rejected rather than silently duplicated.
+        GC.gc()  # release the export's memory-mapped read of `path`; Windows cannot overwrite a mapped file
         Arrow.write(path, vcat(target[1:1,:], decoy, target[2:2,:]))
         @test_throws ArgumentError Pioneer.writeProteinGroupsCSV(path, String[],
             Union{Missing,String}[], Union{Missing,String}[], UInt8[], ["r1","r2"], proteins;

@@ -25,8 +25,21 @@ function _write_mbr_candidate_fixture(directory, name, qval, global_qval, donor_
     return path, features
 end
 
+# Copy a run (and the listed sidecars) into a fresh subdirectory. Windows cannot overwrite a file that
+# an earlier read still has memory-mapped, so each phase that rewrites a file works on its own copy.
+function _fresh_mbr_copy(path, tag; sidecars = (Pioneer.PASS1_SIDECAR_SUFFIX,))
+    directory = mkpath(joinpath(dirname(dirname(path)), tag))
+    copied = joinpath(directory, basename(path))
+    cp(path, copied; force = true)
+    for suffix in sidecars
+        cp(path * suffix, copied * suffix; force = true)
+    end
+    return copied
+end
+
 @testset "candidate-only MBR feature sidecars" begin
-    mktempdir() do directory
+    mktempdir() do root
+        directory = mkpath(joinpath(root, "fixture"))
         empty_path, empty_features = _write_mbr_candidate_fixture(
             directory, "empty", fill(0.005f0, 3), fill(0.005f0, 3),
             falses(3), Bool[true, false, true],
@@ -45,12 +58,18 @@ end
         rows_by_file = [Int[], [2, 6], [1, 2, 3]]
         dense = Pioneer.load_postintegration_mbr_candidates(paths, 0.01f0)
         sparse_features = DataFrame[]
+        sparse_paths = String[]
         for (path, features, rows) in zip(paths, [empty_features, mixed_features, all_features], rows_by_file)
             sparse = features[rows, :]
             insertcols!(sparse, 1, :row_idx => Int64.(rows))
-            Arrow.write(path * Pioneer.MBR_SIDECAR_SUFFIX, sparse)
+            sparse_path = _fresh_mbr_copy(path, "sparse")
+            Arrow.write(sparse_path * Pioneer.MBR_SIDECAR_SUFFIX, sparse)
             push!(sparse_features, sparse)
+            push!(sparse_paths, sparse_path)
         end
+        # From here on the runs carry candidate-only (sparse) sidecars.
+        paths = sparse_paths
+        empty_path, mixed_path, all_path = sparse_paths
 
         sparse = Pioneer.load_postintegration_mbr_candidates(paths, 0.01f0)
         @test isequal(sparse.candidates, dense.candidates)
@@ -96,6 +115,8 @@ end
             cursor += length(rows)
         end
 
+        empty_path = _fresh_mbr_copy(empty_path, "empty_rescoring";
+            sidecars = (Pioneer.PASS1_SIDECAR_SUFFIX, Pioneer.MBR_SIDECAR_SUFFIX))
         empty = Pioneer.load_postintegration_mbr_candidates([empty_path], 0.01f0)
         @test nrow(empty.candidates) == 0
         Pioneer.apply_postintegration_mbr_rescoring!(empty.candidates;
@@ -107,29 +128,37 @@ end
         ) == 1
 
         @testset "invalid row mappings are rejected" begin
-            sidecar_path = mixed_path * Pioneer.MBR_SIDECAR_SUFFIX
+            n_invalid = 0
+            # a fresh copy of the mixed run carrying `invalid` as its MBR sidecar
+            function with_invalid(invalid)
+                n_invalid += 1
+                path = _fresh_mbr_copy(mixed_path, "invalid_$n_invalid")
+                Arrow.write(path * Pioneer.MBR_SIDECAR_SUFFIX, invalid)
+                return path
+            end
             for rows in ([0, 6], [2, 8], [2, 2], [6, 2])
                 invalid = copy(sparse_features[2])
                 invalid.row_idx = Int64.(rows)
-                Arrow.write(sidecar_path, invalid)
-                @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([mixed_path], 0.01f0)
-                @test_throws ErrorException Pioneer.load_postintegration_mbr_frame([mixed_path])
+                invalid_path = with_invalid(invalid)
+                @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([invalid_path], 0.01f0)
+                @test_throws ErrorException Pioneer.load_postintegration_mbr_frame([invalid_path])
             end
             invalid = copy(sparse_features[2])
             invalid.scan_idx[1] += UInt32(1)
-            Arrow.write(sidecar_path, invalid)
-            @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([mixed_path], 0.01f0)
-            @test_throws ErrorException Pioneer.load_postintegration_mbr_frame([mixed_path])
+            invalid_path = with_invalid(invalid)
+            @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([invalid_path], 0.01f0)
+            @test_throws ErrorException Pioneer.load_postintegration_mbr_frame([invalid_path])
             for row in (1, 3, 4, 7)
                 invalid = mixed_features[[row], :]
                 insertcols!(invalid, 1, :row_idx => Int64[row])
-                Arrow.write(sidecar_path, invalid)
-                @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([mixed_path], 0.01f0)
+                invalid_path = with_invalid(invalid)
+                @test_throws ErrorException Pioneer.load_postintegration_mbr_candidates([invalid_path], 0.01f0)
             end
         end
 
         @testset "feature producer writes candidate rows only" begin
-            main = DataFrame(Arrow.Table(mixed_path); copycols=true)
+            mixed_path = _fresh_mbr_copy(mixed_path, "producer_candidates")
+            main = DataFrame(Arrow.Table(read(mixed_path)); copycols=true)
             n = nrow(main)
             spectrum = (1.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
             trace = Float32[1, 1, 0, 0, 0, 0, 0, 0, 0]
@@ -190,6 +219,7 @@ end
             @test isequal(Tuple(produced[1, true_columns]), expected)
 
             main.qval .= 0.005f0
+            mixed_path = _fresh_mbr_copy(mixed_path, "producer_no_candidates")
             Arrow.write(mixed_path, main)
             stats = Ref{Any}()
             Pioneer.compute_postintegration_mbr_features!(

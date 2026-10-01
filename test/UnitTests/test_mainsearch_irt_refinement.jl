@@ -91,13 +91,15 @@ end
                 [first_path, second_path], requested
             ) == [:discriminant]
 
-            Arrow.write(second_path, (
+            # a new file, not an overwrite: Windows cannot replace the memory-mapped `second_path`
+            varied_path = joinpath(temp_dir, "second_varied.arrow")
+            Arrow.write(varied_path, (
                 precursor_idx = UInt32[3, 4],
                 discriminant = Float32[0.3, 0.4],
                 num_enzymatic_termini = UInt8[1, 2],
             ))
             @test Pioneer._resolve_available_features(
-                [first_path, second_path], requested
+                [first_path, varied_path], requested
             ) == requested
         end
     end

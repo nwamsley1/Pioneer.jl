@@ -129,7 +129,7 @@
             mktempdir() do dir
                 valid_fold = write_scored_fold_fixture(dir, "run_fold0", [6, 3])
                 fold = write_scored_fold_fixture(dir, "run_fold1", [4, 1])
-                predictions = DataFrame(Arrow.Table(fold.pass1_path); copycols=true)
+                predictions = DataFrame(Arrow.Table(read(fold.pass1_path)); copycols=true)  # in memory: the file is replaced or removed below (Windows)
                 if mismatch === :missing_predictions
                     rm(fold.pass1_path)
                 else

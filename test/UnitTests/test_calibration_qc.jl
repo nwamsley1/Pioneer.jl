@@ -122,7 +122,9 @@ struct CalibrationTestSpectra end
 Base.length(::CalibrationTestSpectra) = 2
 Pioneer.getMsOrder(::CalibrationTestSpectra, i) = i == 1 ? 1 : 2
 Pioneer.getRetentionTime(::CalibrationTestSpectra, i) = Float32(i)
+Pioneer.getImScans(::CalibrationTestSpectra) = nothing   # no ion mobility
 Pioneer.getMzArray(::CalibrationTestSpectra, i) = Float32[500,500+Pioneer.C13_C12_MASS_DIFF_F32/2,500+Pioneer.C13_C12_MASS_DIFF_F32]
+Pioneer.getPeaks!(::Pioneer.PeakDecodeBuffer, s::CalibrationTestSpectra, i::Integer) = (Pioneer.getMzArray(s, i), ones(Float32, 3))
 struct CalibrationTestLibrary end
 struct CalibrationTestPrecursors end
 Pioneer.getSpecLib(::TestCalibrationContext) = CalibrationTestLibrary()
