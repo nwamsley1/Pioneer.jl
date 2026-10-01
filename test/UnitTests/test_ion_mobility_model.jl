@@ -27,6 +27,26 @@ const _SyntheticKoinaClient  = Pioneer.SyntheticKoinaClient
         _IonMobilityModel("alphapept_ccs"), Dict{String,Any}("outputs" => Any[]))
 end
 
+@testset "im_koina_sequence — modifications the CCS model cannot encode are left off" begin
+    ap = Pioneer.IM_MODEL_CONFIGS["alphapept_ccs"]; im2 = Pioneer.IM_MODEL_CONFIGS["im2deep"]
+    dropped = Dict{String, Int}()
+    @test Pioneer.im_koina_sequence("PEPTIDEK", missing, ap, dropped) == "PEPTIDEK"
+    # AlphaPeptDeep: N-terminal acetyl as a ProForma prefix, oxidation and carbamidomethyl on their residues
+    mods = "(1,n,Unimod:1)(2,M,Unimod:35)(4,C,Unimod:4)"
+    @test Pioneer.im_koina_sequence("AMGCK", mods, ap, dropped) == "[UNIMOD:1]-AM[UNIMOD:35]GC[UNIMOD:4]K"
+    # IM2Deep drops terminal groups, so the N-terminal acetyl rides on the first residue
+    @test Pioneer.im_koina_sequence("AMGCK", mods, im2, dropped) == "A[UNIMOD:1]M[UNIMOD:35]GC[UNIMOD:4]K"
+    @test isempty(dropped)
+    # A peptide with some encodable and some not: only the unencodable ones go, their residues plain
+    tmt = "(1,n,Unimod:737)(3,M,Unimod:35)(5,K,Unimod:737)"
+    @test Pioneer.im_koina_sequence("PEMTK", tmt, im2, dropped) == "PEM[UNIMOD:35]TK"
+    @test dropped == Dict("Unimod:737 on N-term" => 1, "Unimod:737 on K" => 1)
+    @test Pioneer.im_koina_sequence("PEMTK", tmt, ap, dropped) == "[UNIMOD:737]-PEM[UNIMOD:35]TK[UNIMOD:737]"
+    @test Pioneer.im_koina_sequence("ACK", "(2,C,Unimod:2062)", ap, dropped) == "ACK"     # DBIA: not in AlphaPeptDeep's table
+    @test Pioneer.im_koina_sequence("ACK", "(2,C,Unimod:2062)", im2, dropped) == "AC[UNIMOD:2062]K"
+    @test dropped["Unimod:2062 on C"] == 1
+end
+
 @testset "ccs_to_inv_ion_mobility" begin
     # AAAAAKPK 2+ (m/z 393.24) with AlphaPept CCS 316.2 Å² is ~0.776 Vs/cm²
     # by AlphaPeptDeep's Mason-Schamp conversion.
@@ -59,6 +79,16 @@ end
         @test hasproperty(t, :ccs) && hasproperty(t, :inv_ion_mobility)
         @test eltype(t.inv_ion_mobility) == Float32
         @test all(0.5 .< t.inv_ion_mobility .< 2.0)
+
+        # with sequence + mods the request is rebuilt per model; an unencodable modification only warns
+        dfm = DataFrame(sequence = ["AAAAAKPK", "PEMTK"], mods = Union{Missing, String}[missing, "(5,K,Unimod:737)"],
+                        koina_sequence = ["AAAAAKPK", "PEMTK[UNIMOD:737]"],
+                        precursor_charge = UInt8[2, 2], mz = Float32[393.24, 400.0])
+        Pioneer.Arrow.write(inp, dfm)
+        Pioneer.with_koina_client(client) do
+            Pioneer.predict_ion_mobility(inp, outp, "im2deep")
+        end
+        @test nrow(DataFrame(Pioneer.Arrow.Table(outp))) == 2
     end
 end
 

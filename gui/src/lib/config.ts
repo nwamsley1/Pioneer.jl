@@ -153,6 +153,7 @@ export const BUILD_OWNED_PATHS = [
   'library_path',
   'library_params.prediction_model',
   'library_params.im_model',
+  'library_params.rt_model',
   'library_params.auto_detect_frag_bounds',
   'library_params.frag_mz_min',
   'library_params.frag_mz_max',
@@ -239,6 +240,7 @@ export function buildLibJsonBase(s: BuildParams): Json {
       prediction_model: s.predictionModel,
       // Omitted when off: Pioneer reads an absent im_model as "no ion mobility".
       ...(s.timsTOF ? { im_model: 'alphapept_ccs' } : {}),
+      rt_model: s.rtModel,
       auto_detect_frag_bounds: s.autoDetectFragBounds,
       frag_mz_min: num(s.fragMzMin, 150),
       frag_mz_max: num(s.fragMzMax, 2020),
@@ -306,6 +308,8 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
 
   const lp = isObj(obj.library_params) ? obj.library_params : {}
   if ('im_model' in lp) set.timsTOF = String(lp.im_model ?? '').trim() !== ''
+  if (str(lp.prediction_model) !== undefined) set.predictionModel = str(lp.prediction_model)
+  if (str(lp.rt_model) !== undefined) set.rtModel = str(lp.rt_model)
   if ('auto_detect_frag_bounds' in lp) {
     set.autoDetectFragBounds = !!lp.auto_detect_frag_bounds
   }

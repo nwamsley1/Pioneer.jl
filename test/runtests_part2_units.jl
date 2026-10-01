@@ -50,6 +50,7 @@ include("./UnitTests/formats/sciexwiff/runtests.jl")    # vendored SciexWiff (sr
 include("./UnitTests/test_tdfs_mass_spec_data.jl")
 include("./UnitTests/test_scxs_mass_spec_data.jl")
 include("./UnitTests/test_scan_priority_im.jl")
+include("./UnitTests/test_mzml_base_peak.jl")
 include("./UnitTests/LoggingTests.jl")
 include("./UnitTests/LogTruncationTests.jl")
 

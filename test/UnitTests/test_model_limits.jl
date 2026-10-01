@@ -28,6 +28,8 @@
         instruments = Set([]),
         fragmentation_type = nothing,
         peptide_length = (min = 7, max = 30),
+        supported_mods = Pioneer.BASE_MODS,
+        free_cys = false,
     )
     try
         # Fully inside the model's range: untouched.
