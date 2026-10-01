@@ -27,6 +27,7 @@ This search:
 4. Writes per-run summary statistics
 """
 struct ProteinQuantificationSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinQuantificationSearch) = false   # works from the PSM files; per-file hooks are empty
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here

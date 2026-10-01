@@ -142,6 +142,7 @@ on mobility data with no line at all, `im_error` is 0 and `im_obs` NaN (MBR read
 non-finite as missing). Either way the value is the same for every file of the search;
 the columns always exist because ScoringSearch takes its feature list from the first
 file's schema. Returns `Dict(2 => line)`, empty when there is none, for the SearchContext.
+With `qc = Ref((0, false))` it also reports `(n_calib, own_line)` for the calibration QC record.
 """
 function add_im_error!(
     best_psms::DataFrame,
@@ -151,7 +152,8 @@ function add_im_error!(
     ms_file_idx::Int64;
     fallback::Union{Nothing, NTuple{3, Float32}} = nothing,
     min_prob::Float32 = 0.9f0,
-    min_calib::Int = 100
+    min_calib::Int = 100,
+    qc::Union{Nothing, Base.RefValue{Tuple{Int, Bool}}} = nothing
 )
     n = nrow(best_psms)
     im_error = zeros(Float32, n)
@@ -172,6 +174,7 @@ function add_im_error!(
     charge = best_psms[!, :charge]
     calib = (scores .> min_prob) .& best_psms[!, :target] .& (charge .== 2)
     own = fit_im_line(scan, pred, calib; min_calib = min_calib)
+    qc === nothing || (qc[] = (count(calib), own !== nothing))
     line = own !== nothing ? own : fallback
     if line === nothing
         @debug_l1 "IM calibration (file $ms_file_idx): no z2 line (fewer than $min_calib high-confidence z2 PSMs, no fallback), im_error = 0"

@@ -48,7 +48,8 @@ function execute_search(
     Random.seed!(1844)
     search_results = init_search_results(search_type, search_parameters, search_context)
 
-    for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
+    # Stages without per-file work skip opening every raw file (a .tdfs open loads its side table).
+    for (ms_file_idx, spectra) in (uses_per_file_spectra(search_type) ? ProgressBar(enumerate(msdr)) : ())
         zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
@@ -59,6 +60,14 @@ function execute_search(
 
     return nothing#search_results
 end
+
+"""
+    uses_per_file_spectra(search_type) -> Bool
+
+Whether `execute_search` opens each raw file and runs the per-file hooks (`process_file!`,
+`process_search_results!`, `reset_results!`). Stages whose hooks do nothing return `false`.
+"""
+uses_per_file_spectra(::SearchMethod) = true
 
 #==========================================================
 Required Interface Methods

@@ -1,6 +1,6 @@
 """Per-file calibration QC. Statuses and reason flags are stored without strings."""
 @enum CalibrationQCStatus::UInt8 QC_NOT_ASSESSED QC_NORMAL QC_SUSPICIOUS QC_WARNING QC_FAILED
-const CALIBRATION_QC_STAGES = (:rt, :ms2_mass, :ms1_mass, :quadrupole, :nce)
+const CALIBRATION_QC_STAGES = (:rt, :ms2_mass, :ms1_mass, :quadrupole, :nce, :ion_mobility)
 const CALIBRATION_QC_BASELINE_LIMIT = 50
 const CALIBRATION_QC_SUSPICIOUS_LIMIT = 50
 const QC_LOW_SUPPORT = UInt16(1)
@@ -17,12 +17,12 @@ end
 CalibrationQCRecord() = CalibrationQCRecord(QC_NOT_ASSESSED, 0, 0, (NaN32, NaN32, NaN32, NaN32))
 
 mutable struct CalibrationQCState
-    records::NTuple{5,Vector{CalibrationQCRecord}}
-    selected::NTuple{5,Set{Int}}
-    pages::NTuple{5,Vector{String}}
+    records::NTuple{6,Vector{CalibrationQCRecord}}
+    selected::NTuple{6,Set{Int}}
+    pages::NTuple{6,Vector{String}}
 end
-CalibrationQCState() = CalibrationQCState(ntuple(_ -> CalibrationQCRecord[], 5),
-    ntuple(_ -> Set{Int}(), 5), ntuple(_ -> String[], 5))
+CalibrationQCState() = CalibrationQCState(ntuple(_ -> CalibrationQCRecord[], 6),
+    ntuple(_ -> Set{Int}(), 6), ntuple(_ -> String[], 6))
 _qc_stage(stage::Symbol) = something(findfirst(==(stage), CALIBRATION_QC_STAGES))
 _qc_name(s::CalibrationQCStatus) = ("not_assessed", "normal", "suspicious", "warning", "failed")[Int(s)+1]
 
@@ -34,6 +34,7 @@ const CALIBRATION_QC_METRICS = (
     (:unused, :residual_mad_ppm, :residual_trend_ppm, :unused),
     (:edge_coverage, :log_ratio_rmse, :unused, :parameter_at_bound),
     (:fitted_charge_coverage, :unused, :weak_nce_fraction, :endpoint_fraction),
+    (:unused, :unused, :unused, :unused),   # ion mobility: support and fallback only
 )
 const CALIBRATION_QC_LIMITS = (
     (0.5f0, 0.05f0, 0.01f0, Inf32),
@@ -41,6 +42,7 @@ const CALIBRATION_QC_LIMITS = (
     (-Inf32, 10.0f0, 5.0f0, Inf32),
     (0.5f0, 0.5f0, Inf32, 0.5f0),
     (0.5f0, Inf32, 0.5f0, 0.5f0),
+    (-Inf32, Inf32, Inf32, Inf32),
 )
 
 function assess_calibration_qc(stage, n, metrics; min_support=1, fallback=false, failed=false)
@@ -227,6 +229,8 @@ end
 function add_calibration_qc_columns!(table, state::CalibrationQCState, n)
     for stage in CALIBRATION_QC_STAGES
         records = [calibration_qc_record(state, stage, i) for i in 1:n]
+        # Ion mobility is assessed only on ion-mobility data; other searches keep their columns as they were.
+        stage === :ion_mobility && all(r -> r.status == QC_NOT_ASSESSED, records) && continue
         table[!, Symbol(stage, "_calibration_qc")] = [_qc_name(r.status) for r in records]
         table[!, Symbol(stage, "_calibration_qc_reason")] = [calibration_qc_reason(stage, r) for r in records]
     end

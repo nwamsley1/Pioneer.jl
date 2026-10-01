@@ -23,6 +23,7 @@ protein-level q-value calculation after chromatogram integration and protein
 inference have completed.
 """
 struct ProteinScoringSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinScoringSearch) = false   # works from the PSM files; per-file hooks are empty
 
 struct ProteinScoringSearchResults <: SearchResults end
 

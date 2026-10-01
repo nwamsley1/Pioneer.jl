@@ -22,6 +22,7 @@ Search method for annotating integrated passing precursor tables with inferred
 protein groups and protein-quant eligibility flags.
 """
 struct ProteinInferenceSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinInferenceSearch) = false   # works from the PSM files; per-file hooks are empty
 
 mutable struct ProteinInferenceSearchResults <: SearchResults
     protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}}

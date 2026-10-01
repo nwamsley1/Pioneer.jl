@@ -105,9 +105,6 @@ struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     lgbm_buffers::LGBMMatrixBuffers
     sortperm_workspace::Int32SortPermWorkspace
-    # Per-file ion-mobility calibration QC plots (packet data), written as one PDF in
-    # summarize_results! (qc_plots/ion_mobility_model/ion_mobility_plots.pdf).
-    im_plot_objects::Vector{Any}
 end
 
 #==========================================================
@@ -140,7 +137,6 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
         DataFrame(),
         LGBMMatrixBuffers(),
         Int32SortPermWorkspace(),
-        Any[],
     )
 end
 
@@ -558,15 +554,31 @@ function process_search_results!(
     # refit from high-confidence PSMs or else the file's tuning / median line; writes the
     # signed :im_error (z2 sigma units) for every row, zeros when there is no line.
     im_fallback = get(getImModel(search_context, ms_file_idx), 2, nothing)
+    im_qc = Ref((0, false))
     im_models = add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
                               getPrecursors(getSpecLib(search_context)), ms_file_idx;
-                              fallback = im_fallback)
+                              fallback = im_fallback, qc = im_qc)
     setImModel!(search_context, ms_file_idx, im_models)
-    if !isempty(im_models)
-        append!(results.im_plot_objects,
-                plot_im_calibration(best_psms, best_psms[!, :lgbm_prob], spectra,
-                                    getPrecursors(getSpecLib(search_context)), im_models,
-                                    getParsedFileName(search_context, ms_file_idx)))
+    # Calibration QC and bounded plots (first files plus suspicious ones), as for the other stages.
+    if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing
+        n_calib, own_line = im_qc[]
+        record_calibration_qc!(search_context.calibration_qc, :ion_mobility, ms_file_idx,
+            assess_calibration_qc(:ion_mobility, n_calib, (NaN, NaN, NaN, NaN);
+                min_support = 100, fallback = !own_line, failed = isempty(im_models)))
+        if select_calibration_plot!(search_context.calibration_qc, :ion_mobility, ms_file_idx)
+            if isempty(im_models)
+                calibration_notice!(search_context, :ion_mobility, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :ion_mobility, ms_file_idx) do
+                    fname = calibration_qc_title(search_context, :ion_mobility, ms_file_idx,
+                        getParsedFileName(search_context, ms_file_idx))
+                    for page in plot_im_calibration(best_psms, best_psms[!, :lgbm_prob], spectra,
+                                                    getPrecursors(getSpecLib(search_context)), im_models, fname)
+                        write_calibration_page!(search_context, :ion_mobility, page)
+                    end
+                end
+            end
+        end
     end
     t_recal = time()
 
@@ -708,13 +720,9 @@ function summarize_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     lib_irt = getIrt(precursors)
 
-    # Ion-mobility calibration QC (packet data only): one PDF, a page pair per file.
-    if !isempty(results.im_plot_objects)
-        im_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ion_mobility_model")
-        mkpath(im_dir)
-        save_multipage_pdf(Plots.Plot[p for p in results.im_plot_objects], joinpath(im_dir, "ion_mobility_plots.pdf"))
-        empty!(results.im_plot_objects)
-    end
+    # Ion-mobility calibration QC (packet data only): the selected files' pages as one PDF.
+    finish_calibration_report!(search_context, :ion_mobility,
+        joinpath(getDataOutDir(search_context), "qc_plots", "ion_mobility_model", "ion_mobility_plots.pdf"))
 
     # Step 1: Per-fold global prescore aggregation → RT-binned tolerance only.
     # No PSM filter is applied here; the per-file PEP filter upstream already

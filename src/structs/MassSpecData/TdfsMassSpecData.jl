@@ -70,13 +70,15 @@ function TdfsMassSpecData(dir::String)
     n = length(sl.frame_row)
     nan_to_missing(v) = Union{Missing, Float32}[isnan(x) ? missing : Float32(x) for x in v]
     mz_lo = Float32(file.meta["mz_lo"]); mz_hi = Float32(file.meta["mz_hi"])
+    # `convert` shares the column open_tdfs already collected when the type matches (no second copy).
     TdfsMassSpecData(
         file, Threads.atomic_add!(_TDFS_NEXT_UID, 1), n,
-        Vector{Float32}(sl.retention_time), fill(mz_lo, n), fill(mz_hi, n), Vector{Float32}(sl.tic),
-        hasproperty(sl, :base_peak_intensity) ? Vector{Float32}(sl.base_peak_intensity) : nothing,
+        convert(Vector{Float32}, sl.retention_time), fill(mz_lo, n), fill(mz_hi, n), convert(Vector{Float32}, sl.tic),
+        hasproperty(sl, :base_peak_intensity) ? convert(Vector{Float32}, sl.base_peak_intensity) : nothing,
         nan_to_missing(sl.center_mz), nan_to_missing(sl.isolation_width),
-        Vector{Float32}(sl.collision_energy_ev), Vector{UInt8}(sl.ms_order), Vector{UInt32}(sl.cycle_idx),
-        Vector{UInt16}(sl.im_scan), Vector{Int32}(sl.frame_id), Vector{Int32}(sl.n_peaks),
+        convert(Vector{Float32}, sl.collision_energy_ev), convert(Vector{UInt8}, sl.ms_order),
+        convert(Vector{UInt32}, sl.cycle_idx), convert(Vector{UInt16}, sl.im_scan),
+        convert(Vector{Int32}, sl.frame_id), convert(Vector{Int32}, sl.n_peaks),
         Float32(abs(file.meta["im_slope_1overK0_per_scan"])),
         (Float32(file.meta["im_scan0_1overK0"]), Float32(file.meta["im_slope_1overK0_per_scan"])),
     )

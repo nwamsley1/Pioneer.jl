@@ -367,8 +367,9 @@ end
 # Scan-level metadata straight from the raw file (memory-mapped Arrow, or the .tdfs / .scxs scan table).
 function _raw_file_columns(path::String)
     if is_tdfs_path(path)
-        sl = TimsSlices.open_tdfs(path).slices
-        orders = sl.ms_order; rts = sl.retention_time
+        # memory-mapped, two columns only (open_tdfs would load the whole slice table)
+        tbl = Arrow.Table(joinpath(path, "slices.arrow"))
+        orders = tbl[:ms_order]; rts = tbl[:retention_time]
     elseif is_scxs_path(path)
         tbl = Arrow.Table(joinpath(path, "scans.arrow"))
         orders = tbl[:ms_order]; rts = tbl[:retention_time]

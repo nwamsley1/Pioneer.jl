@@ -25,6 +25,7 @@ integrator. Protein inference + protein-group scoring are now downstream
 (`ProteinInferenceSearch`, `ProteinScoringSearch`).
 """
 struct PrecursorScoringSearch <: SearchMethod end
+uses_per_file_spectra(::PrecursorScoringSearch) = false   # works from the PSM files; per-file hooks are empty
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here

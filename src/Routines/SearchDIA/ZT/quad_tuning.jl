@@ -211,8 +211,8 @@ end
 """
     plot_zt_triangle(fit, psms, spectra, precursors, geom, fname) -> Vector{Plots.Plot}
 
-QC for the ZT transmission triangle, returned as plot objects so they join the combined
-`quad_transmission_plots.pdf` written by `summarize_results!`, exactly like the Razo plots.
+QC for the ZT transmission triangle, returned as plot objects; `zt_quad_tuning!` writes them as
+quadrupole calibration pages for the files the calibration QC selects, like the Razo plots.
 
 1. pooled empirical profile with the fitted triangle. Points are per-Δm/z medians of `w / a`,
    where `a` is that meta-scan's OWN fitted intercept — scale-free, and it pins nothing.
