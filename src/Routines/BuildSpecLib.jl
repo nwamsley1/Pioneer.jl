@@ -177,6 +177,9 @@ function BuildSpecLib(params_path::String)
                 @user_info "Using prediction model: $prediction_model"
                 frag_annotation_type = MODEL_CONFIGS[prediction_model].annotation_type
                 koina_model_type = MODEL_CONFIGS[prediction_model].model_type
+                # Retention-time model, validated (and defaulted) by check_params_bsp.
+                rt_model = String(_params.library_params["rt_model"])
+                @user_info "Using retention time model: $rt_model"
                 nothing
             end
             timings["Model Validation"] = model_timing
@@ -198,7 +201,7 @@ function BuildSpecLib(params_path::String)
 
             @user_info "Predicting retention times..."
             rt_timing = @timed begin
-                predict_retention_times(chronologer_in_path, chronologer_out_path)
+                predict_retention_times(chronologer_in_path, chronologer_out_path; rt_model = rt_model)
                 nothing
             end
             timings["Retention Time Prediction"] = rt_timing
