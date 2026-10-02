@@ -979,8 +979,27 @@ function process_search_results!(
         fragments = state === nothing ? nothing : state.best_fragments
         model = getMassErrorModel(search_context, ms_file_idx)
         fallback = results.diagnostics.file_statuses[ms_file_idx].used_fallback
-        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx,
-            ms2_calibration_qc(fragments, model; fallback))
+        ms2_qc = heldout_ms2_calibration_qc(fragments, model,
+            getSequence(getPrecursors(getSpecLib(search_context))); fallback)
+        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx, ms2_qc.record)
+        qc_dir = joinpath(getDataOutDir(search_context), "qc_plots", "mass_error_plots")
+        mkpath(qc_dir)
+        if !isempty(ms2_qc.bins)
+            CSV.write(joinpath(qc_dir, name * "_heldout_bins.tsv"), DataFrame(ms2_qc.bins); delim='\t')
+        end
+        open(joinpath(qc_dir, name * "_heldout_qc.json"), "w") do io
+            JSON.print(io, Dict(
+                "status" => _qc_name(ms2_qc.record.status),
+                "reason" => calibration_qc_reason(:ms2_mass, ms2_qc.record),
+                "n_peptides" => ms2_qc.n_peptides,
+                "persistent_biased_peptide_fraction" => ms2_qc.record.metrics[2],
+                "global_median_bias_over_tolerance" => ms2_qc.record.metrics[3],
+                "outside_tolerance_fraction" => ms2_qc.record.metrics[4],
+                "global_median_error_mda" => get(ms2_qc, :global_median_error_mda, nothing),
+                "global_median_error_over_tolerance" => get(ms2_qc, :global_median_error_over_tolerance, nothing),
+                "assessment" => "five-fold peptide-sequence-held-out mass fits; matches selected with scout calibration",
+            ), 2)
+        end
         if select_calibration_plot!(search_context.calibration_qc, :ms2_mass, ms_file_idx)
             if fragments === nothing || isempty(fragments)
                 calibration_notice!(search_context, :ms2_mass, ms_file_idx)

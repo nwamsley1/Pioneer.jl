@@ -1049,7 +1049,7 @@ function run_fused_masserr!(
                 raw_int = scan_int[best_peak]
                 int_obs = ismissing(raw_int) ? 0f0 : Float32(raw_int)
 
-                samples[samples_idx] = MassErrSample(frag_mz, raw_mz, int_obs, scan_rt)
+                samples[samples_idx] = MassErrSample(frag_mz, raw_mz, int_obs, scan_rt, UInt32(prec_idx))
 
                 # Monotonic advance: next fragment's mono mz ≥ current,
                 # so its match peak index can't precede this one.
