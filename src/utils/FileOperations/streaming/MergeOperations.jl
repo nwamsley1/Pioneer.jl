@@ -338,33 +338,126 @@ function _add_to_nkey_heap!(
     push!(heap, values)
 end
 
-"""
-Write batch to file with proper error handling (type-stable version).
-"""
-function _write_batch_typed(
-    output_path::String, 
-    batch_df::DataFrame, 
-    n_writes::Int, 
-    n_rows::Int
-)
-    # Only write the rows we actually filled
-    data_to_write = n_rows < nrow(batch_df) ? batch_df[1:n_rows, :] : batch_df
-    
-    if n_writes == 0
-        # First write
-        if isfile(output_path)
-            # Force garbage collection to release any lingering file handles
-            GC.gc()
-            # Use Windows-safe removal with retries to avoid permission errors
-            safeRm(output_path)
+# A merge owns exactly one active output. IO ownership stays here rather than
+# inside Arrow so even a failed writer finalization cannot leave the file open.
+mutable struct _MergeOutput
+    path::String
+    temp_path::String
+    io::IOStream
+    writer::Arrow.Writer{IOStream}
+    closed::Bool
+    complete::Bool
+    publish_attempted::Bool
+    published::Bool
+end
+
+function _open_merge_output(path::String)
+    temp_path, io = mktemp(dirname(abspath(path)); cleanup=false)
+    try
+        writer = open(Arrow.Writer, io; file=false, ntasks=0, closeio=false)
+        # Arrow 2.x leaves its consumer task unbound. An IO failure must close
+        # the channel and wake blocked producers, rather than hang the merge.
+        Base.bind(writer.msgs, writer.task)
+        return _MergeOutput(path, temp_path, io, writer, false, false, false, false)
+    catch
+        try
+            close(io)
+            safeRm(temp_path; force=true)
+        catch cleanup_error
+            @warn "Failed to clean up merge writer construction" path=temp_path exception=(cleanup_error, catch_backtrace())
         end
-        open(output_path, "w") do io
-            Arrow.write(io, data_to_write; file=false)
-        end
-    else
-        # Append to existing file
-        Arrow.append(output_path, data_to_write)
+        rethrow()
     end
+end
+
+function _close_merge_output!(output::_MergeOutput)
+    output.closed && return nothing
+    # Do not retry Arrow finalization if it failed after closing its channel.
+    output.closed = true
+    try
+        close(output.writer)
+    finally
+        close(output.io)
+    end
+    output.complete = true
+    return nothing
+end
+
+function _publish_merge_output!(output::_MergeOutput)
+    _close_merge_output!(output)
+    output.complete || error("Cannot publish an incomplete merge output: $(output.temp_path)")
+    output.publish_attempted = true
+    # mv(...; force=true) can recursively remove an existing directory on Unix.
+    # A merge may replace a file, never a directory or a link to a directory.
+    isdir(output.path) && error("Merge destination is a directory: $(output.path)")
+    # Windows cannot replace a file while we still own its writer handle.
+    # safeRm handles old, unreachable mappings using its serialized GC fallback.
+    if Sys.iswindows()
+        safeRm(output.path; force=true)
+        ispath(output.path) && error("Merge destination is still present: $(output.path)")
+    end
+    mv(output.temp_path, output.path; force=!Sys.iswindows())
+    output.published = true
+    return nothing
+end
+
+function _cleanup_merge_output!(output::_MergeOutput)
+    output.published && return nothing
+    try
+        _close_merge_output!(output)
+    catch error
+        @warn "Failed to finalize merge output during cleanup" path=output.temp_path exception=(error, catch_backtrace())
+    end
+    if output.publish_attempted && output.complete
+        # Keep a completed stream recoverable if replacement/move failed.
+        @warn "Merge publication failed; completed temporary output retained" path=output.temp_path destination=output.path
+    else
+        try
+            safeRm(output.temp_path; force=true)
+        catch error
+            @warn "Failed to remove temporary merge output" path=output.temp_path exception=(error, catch_backtrace())
+        end
+    end
+    return nothing
+end
+
+function _with_merge_output(f, path::String)
+    output = _open_merge_output(path)
+    try
+        f(output)
+        _publish_merge_output!(output)
+    finally
+        # Preserve the original merge/publication exception if cleanup fails.
+        _cleanup_merge_output!(output)
+    end
+    return nothing
+end
+
+"""
+Submit filled rows to a persistent stream writer using owned column vectors.
+
+Arrow's unbuffered channel bounds pending messages, but the consumer can still
+be writing when Arrow.write returns. The merge may immediately refill batch_df,
+so even a full batch needs a snapshot. Nested Arrow values refer to read-only
+source tables; the merge only replaces outer vector entries, never their contents.
+
+Arrow 2.8 retains per-record-batch block metadata even in stream mode. This
+removes quadratic append scans, but does not claim constant writer metadata.
+"""
+function _write_batch_typed(output::_MergeOutput, batch_df::DataFrame, n_rows::Int)
+    Arrow.write(output.writer, batch_df[1:n_rows, :])
+    return nothing
+end
+
+function _validate_merge_destination(path::String, refs::Vector{<:FileReference})
+    destination = abspath(normpath(path))
+    for ref in refs
+        source = abspath(normpath(file_path(ref)))
+        same_path = Sys.iswindows() ? lowercase(destination) == lowercase(source) : destination == source
+        same_file = ispath(destination) && ispath(source) && Base.Filesystem.samefile(destination, source)
+        (same_path || same_file) && throw(ArgumentError("Merge output aliases an input file: $path"))
+    end
+    return nothing
 end
 
 #==========================================================
@@ -458,6 +551,9 @@ function stream_sorted_merge(
     # Validate inputs
     isempty(refs) && error("No files to merge")
     isempty(sort_keys) && error("At least one sort key must be specified")
+    batch_size > 0 || throw(ArgumentError("batch_size must be positive"))
+    max_fanin >= 2 || throw(ArgumentError("max_fanin must be at least 2"))
+    _validate_merge_destination(output_path, refs)
 
     # Hierarchical merge: stage in batches to avoid FD exhaustion
     if length(refs) > max_fanin
@@ -540,48 +636,43 @@ function _stream_sorted_merge_nkey_impl(
         end
     end
     
-    # Perform merge
-    row_idx = 1
-    n_writes = 0
-    
-    while !isempty(heap)
-        # Pop minimum/maximum element
-        heap_entry = pop!(heap)
-        table_idx = heap_entry[end]  # Last element is always table_idx
-        current_row_idx = table_indices[table_idx]
-        
-        # Store row location
-        sorted_tuples[row_idx] = (table_idx, current_row_idx)
-        
-        # Advance to next row in this table
-        table_indices[table_idx] += 1
-        next_row_idx = table_indices[table_idx]
-        
-        # Add next row to heap if available
-        if next_row_idx <= table_sizes[table_idx]
-            _add_to_nkey_heap!(heap, tables[table_idx], table_idx, next_row_idx, sort_keys)
-        end
-        
-        row_idx += 1
-        
-        # Write batch when full
-        if row_idx > batch_size
-            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
-            _write_batch_typed(output_path, batch_df, n_writes, batch_size)
-            n_writes += 1
-            row_idx = 1
-            if time() - last_progress >= 60
-                @debug_l1 "Sorted merge ($(basename(output_path))): keys=$(join(sort_keys, ',')) files=$(length(refs)) rows=$(n_writes * batch_size)/$total_rows elapsed=$(round(time() - started, digits=2))s"
-                last_progress = time()
+    _with_merge_output(output_path) do output
+        row_idx = 1
+        n_writes = 0
+
+        while !isempty(heap)
+            heap_entry = pop!(heap)
+            table_idx = heap_entry[end]
+            current_row_idx = table_indices[table_idx]
+            sorted_tuples[row_idx] = (table_idx, current_row_idx)
+
+            table_indices[table_idx] += 1
+            next_row_idx = table_indices[table_idx]
+            if next_row_idx <= table_sizes[table_idx]
+                _add_to_nkey_heap!(heap, tables[table_idx], table_idx, next_row_idx, sort_keys)
+            end
+
+            row_idx += 1
+            if row_idx > batch_size
+                _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
+                _write_batch_typed(output, batch_df, batch_size)
+                n_writes += 1
+                row_idx = 1
+                if time() - last_progress >= 60
+                    @debug_l1 "Sorted merge ($(basename(output_path))): keys=$(join(sort_keys, ',')) files=$(length(refs)) rows=$(n_writes * batch_size)/$total_rows elapsed=$(round(time() - started, digits=2))s"
+                    last_progress = time()
+                end
             end
         end
-    end
-    
-    # Write final partial batch
-    if row_idx > 1
-        final_rows = row_idx - 1
-        _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
-        _write_batch_typed(output_path, batch_df, n_writes, final_rows)
+
+        if row_idx > 1
+            final_rows = row_idx - 1
+            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
+            _write_batch_typed(output, batch_df, final_rows)
+        elseif n_writes == 0
+            # An all-empty merge still publishes a valid stream with its schema.
+            _write_batch_typed(output, batch_df, 0)
+        end
     end
     
     # Create output reference
@@ -601,8 +692,10 @@ end
                                 reverse, batch_size, max_chunk_bytes)
 
 Like `stream_sorted_merge` but splits the merged output into multiple chunk
-files, each not exceeding `max_chunk_bytes`.  Chunk boundaries are placed only
-at `group_key` transitions so every chunk contains only complete groups.
+files using `max_chunk_bytes` as an estimated byte target. The estimate uses
+source bytes per row, avoiding probes of an asynchronously written output.
+Chunk boundaries are placed only at `group_key` transitions so every chunk
+contains only complete groups (when the group key is a leading sort key).
 Each chunk always gets at least one complete group even if it exceeds the limit.
 
 Returns `Vector{<:FileReference}` — one per chunk, each marked as sorted.
@@ -619,6 +712,20 @@ function stream_sorted_merge_chunked(
 )
     isempty(refs) && error("No files to merge")
     isempty(sort_keys) && error("At least one sort key must be specified")
+    batch_size > 0 || throw(ArgumentError("batch_size must be positive"))
+    max_fanin >= 2 || throw(ArgumentError("max_fanin must be at least 2"))
+    max_chunk_bytes > 0 || throw(ArgumentError("max_chunk_bytes must be positive"))
+
+    # Validate prospective chunk destinations before staging loses the original
+    # input references. Later chunks are validated again before opening them.
+    for ref in refs
+        source_path = file_path(ref)
+        name = basename(ispath(source_path) ? realpath(source_path) : source_path)
+        candidate_name = Sys.iswindows() ? lowercase(name) : name
+        if occursin(r"^chunk_[0-9]{4,}\.arrow$", candidate_name)
+            _validate_merge_destination(joinpath(output_dir, name), [ref])
+        end
+    end
 
     # Hierarchical merge: stage in batches to avoid FD exhaustion
     if length(refs) > max_fanin
@@ -698,68 +805,88 @@ function _stream_sorted_merge_chunked_impl(
     prev_group = nothing      # group_key value of the most recently queued row
     rows_processed = 0
     rows_with_missing_group = 0
+    output = nothing
 
-    while !isempty(heap)
-        heap_entry = pop!(heap)
-        src_table_idx = heap_entry[end]
-        src_row_idx = table_indices[src_table_idx]
+    try
+        while !isempty(heap)
+            heap_entry = pop!(heap)
+            src_table_idx = heap_entry[end]
+            src_row_idx = table_indices[src_table_idx]
 
-        # Read this row's group key
-        row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
-        if ismissing(row_group)
-            rows_with_missing_group += 1
-        end
+            row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
+            if ismissing(row_group)
+                rows_with_missing_group += 1
+            end
 
-        # Chunk split check: group changed AND chunk exceeds size limit AND chunk has data
-        if prev_group !== nothing && !isequal(row_group, prev_group) &&
-           current_chunk_bytes >= max_chunk_bytes && (n_writes_in_chunk > 0 || row_idx > 1)
-            # Flush any pending rows to current chunk before splitting
-            if row_idx > 1
-                pending = row_idx - 1
-                _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, pending)
-                _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, pending)
+            # The byte target is soft: a complete group is never split. Keep
+            # source-based estimates rather than inspecting a file whose Arrow
+            # consumer may still be writing the most recently submitted batch.
+            if prev_group !== nothing && !isequal(row_group, prev_group) &&
+               current_chunk_bytes >= max_chunk_bytes && (n_writes_in_chunk > 0 || row_idx > 1)
+                if output === nothing
+                    _validate_merge_destination(chunk_path(), refs)
+                    output = _open_merge_output(chunk_path())
+                end
+                if row_idx > 1
+                    pending = row_idx - 1
+                    _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, pending)
+                    _write_batch_typed(output, batch_df, pending)
+                    row_idx = 1
+                end
+                _publish_merge_output!(output)
+                push!(chunk_paths, chunk_path())
+                output = nothing
+                chunk_idx += 1
+                n_writes_in_chunk = 0
+                current_chunk_bytes = 0.0
+            end
+
+            sorted_tuples[row_idx] = (src_table_idx, src_row_idx)
+            prev_group = row_group
+            rows_processed += 1
+            current_chunk_bytes += estimated_bytes_per_row
+
+            table_indices[src_table_idx] += 1
+            next_src_row = table_indices[src_table_idx]
+            if next_src_row <= table_sizes[src_table_idx]
+                _add_to_nkey_heap!(heap, tables[src_table_idx], src_table_idx, next_src_row, sort_keys)
+            end
+
+            row_idx += 1
+            if row_idx > batch_size
+                _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
+                if output === nothing
+                    _validate_merge_destination(chunk_path(), refs)
+                    output = _open_merge_output(chunk_path())
+                end
+                _write_batch_typed(output, batch_df, batch_size)
                 n_writes_in_chunk += 1
                 row_idx = 1
             end
-            # Finalize current chunk, start new one
-            push!(chunk_paths, chunk_path())
-            chunk_idx += 1
-            n_writes_in_chunk = 0
-            current_chunk_bytes = 0.0
         end
 
-        # Add row to batch
-        sorted_tuples[row_idx] = (src_table_idx, src_row_idx)
-        prev_group = row_group
-        rows_processed += 1
-        current_chunk_bytes += estimated_bytes_per_row
-
-        # Advance source table cursor
-        table_indices[src_table_idx] += 1
-        next_src_row = table_indices[src_table_idx]
-        if next_src_row <= table_sizes[src_table_idx]
-            _add_to_nkey_heap!(heap, tables[src_table_idx], src_table_idx, next_src_row, sort_keys)
+        if output === nothing
+            _validate_merge_destination(chunk_path(), refs)
+            output = _open_merge_output(chunk_path())
         end
-
-        row_idx += 1
-
-        # Write batch when full
-        if row_idx > batch_size
-            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
-            _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, batch_size)
-            n_writes_in_chunk += 1
-            row_idx = 1
-            current_chunk_bytes = isfile(chunk_path()) ? filesize(chunk_path()) : 0
+        if row_idx > 1
+            final_rows = row_idx - 1
+            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
+            _write_batch_typed(output, batch_df, final_rows)
+        elseif n_writes_in_chunk == 0
+            _write_batch_typed(output, batch_df, 0)
         end
+        _publish_merge_output!(output)
+        push!(chunk_paths, chunk_path())
+        output = nothing
+    catch
+        if !isempty(chunk_paths)
+            @warn "Chunked merge failed after publishing completed chunks" directory=abspath(output_dir) completed_chunks=length(chunk_paths)
+        end
+        rethrow()
+    finally
+        output === nothing || _cleanup_merge_output!(output)
     end
-
-    # Write final partial batch
-    if row_idx > 1
-        final_rows = row_idx - 1
-        _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
-        _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, final_rows)
-    end
-    push!(chunk_paths, chunk_path())
 
     if rows_with_missing_group > 0
         # Expected, not a fault: the message itself says these rows are filtered downstream. It fired on
