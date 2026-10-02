@@ -520,12 +520,13 @@ Returns:
 """
 function train_lgbm_for_irt_refinement(
     psms::DataFrame,
-    buffers::LGBMMatrixBuffers,
+    buffers::LGBMMatrixBuffers;
+    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
 )
     t0 = time()
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         psms;
-        features = collect(PRESCORE_FEATURES),
+        features = features,
         lgbm_hp = MAINSEARCH_LGBM_HP,
         buffers = buffers,
     )

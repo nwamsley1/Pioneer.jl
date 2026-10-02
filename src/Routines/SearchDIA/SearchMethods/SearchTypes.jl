@@ -436,6 +436,22 @@ function check_library_ion_mobility(paths::AbstractVector{<:AbstractString}, lib
           "(library_params.im_model = \"alphapept_ccs\" in the BuildSpecLib parameters).")
 end
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
+
+"""
+    has_ion_mobility(search_context)
+
+True when the search's runs carry ion mobility: timsTOF `.tdfs` data (`check_ms_data_vendors` keeps a search from
+mixing it with `.arrow` files).
+"""
+has_ion_mobility(sc::SearchContext) = any(is_tdfs_path, getMSData(sc).file_paths)
+
+# Precursor-model features that carry signal only on ion-mobility data. Elsewhere they are constant (0 or 1), so
+# searches without ion mobility leave them out of the LightGBM models.
+const ION_MOBILITY_FEATURES = (:im_error, :n_scans_in_window, :weight_frac_in_cycle)
+
+"`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility."
+model_features(features, ion_mobility::Bool) =
+    ion_mobility ? collect(features) : filter(f -> !(f in ION_MOBILITY_FEATURES), collect(features))
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference
