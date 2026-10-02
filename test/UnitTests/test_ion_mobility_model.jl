@@ -1,7 +1,7 @@
 # Tests for the ion-mobility (CCS) Koina model path in BuildSpecLib:
 # request preparation, response parsing, the offline synthetic client, the
-# CCS -> 1/K0 conversion, and parameter validation of `im_model` and the
-# fragment index's partition widths.
+# CCS -> 1/K0 conversion, dropping of a legacy `im_model` key, and parameter
+# validation of the fragment index's partition widths.
 
 using Test
 using JSON
@@ -94,23 +94,21 @@ end
     end
 end
 
-@testset "check_params_bsp — im_model / fragment index widths" begin
+@testset "check_params_bsp — legacy im_model / fragment index widths" begin
     defaults_path = Pioneer.asset_path("example_config", "defaultBuildLibParams.json")
     base = JSON.parsefile(defaults_path)
     base["fasta_paths"] = ["dummy.fasta"]; base["fasta_names"] = ["DUMMY"]
     base["library_path"] = "dummy_lib"; base["calibration_raw_file"] = ""
 
     ok = deepcopy(base)
-    ok["library_params"]["im_model"] = "alphapept_ccs"
     ok["library_params"]["prec_partition_width"] = 10.0
     p = Pioneer.check_params_bsp(JSON.json(ok))
-    @test p["library_params"]["im_model"] == "alphapept_ccs"
     @test p["library_params"]["prec_partition_width"] == 10.0
 
-    # Defaults: empty im_model (skip); a 5 and a 10 Da fragment index (SearchDIA picks one from the data), for
-    # timsTOF libraries too; the hidden prec_partition_width override builds that one width. Local ID type "auto".
+    # Defaults: no im_model (ion mobility is always predicted); a 5 and a 10 Da fragment index (SearchDIA picks one
+    # from the data); the hidden prec_partition_width override builds that one width. Local ID type "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
-    @test p0["library_params"]["im_model"] == ""
+    @test !haskey(p0["library_params"], "im_model")
     @test !haskey(p0["library_params"], "prec_partition_width")
     @test !haskey(p0["library_params"], "isolation_window_width")
     @test Pioneer.fragment_index_widths(p0["library_params"]) == (5.0f0, 10.0f0)
@@ -118,8 +116,13 @@ end
     @test p0["library_params"]["frag_index_local_id_type"] == "auto"
     @test Pioneer.frag_index_local_id_request(p0["library_params"]) == "auto"
     @test Pioneer.frag_index_local_id_request(Dict{String, Any}()) == "auto"
-    tims = deepcopy(base); tims["library_params"]["im_model"] = "alphapept_ccs"
-    @test Pioneer.fragment_index_widths(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == (5.0f0, 10.0f0)
+    # A legacy im_model key, whatever its value, is dropped rather than validated.
+    for v in ("alphapept_ccs", "", "nope")
+        legacy = deepcopy(base); legacy["library_params"]["im_model"] = v
+        pl = Pioneer.check_params_bsp(JSON.json(legacy))
+        @test !haskey(pl["library_params"], "im_model")
+        @test Pioneer.fragment_index_widths(pl["library_params"]) == (5.0f0, 10.0f0)
+    end
     @test Pioneer.fragment_index_widths(p["library_params"]) == (10.0f0,)        # explicit prec_partition_width = 10
     @test Pioneer.fragment_index_files(5.0f0, true) == ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
     @test Pioneer.fragment_index_files(10.0f0, false) == ("partitioned_fragment_index_w10.jls", "presearch_partitioned_fragment_index_w10.jls")
@@ -131,8 +134,6 @@ end
     bad3 = deepcopy(base); bad3["library_params"]["frag_index_local_id_type"] = "UInt64"
     @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad3))
 
-    bad = deepcopy(base); bad["library_params"]["im_model"] = "nope"
-    @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad))
     bad2 = deepcopy(base); bad2["library_params"]["prec_partition_width"] = -1
     @test_throws Exception Pioneer.check_params_bsp(JSON.json(bad2))
 end

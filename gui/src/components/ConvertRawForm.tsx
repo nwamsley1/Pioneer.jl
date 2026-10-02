@@ -269,8 +269,8 @@ export function ConvertRawForm({
               Convert Bruker timsTOF diaPASEF{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.d</code> folders to{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.tdfs</code> runs, which
-              is what SearchDIA reads for timsTOF data. Search them with a library built with the
-              timsTOF option on.
+              is what SearchDIA reads for timsTOF data. Every library Pioneer builds includes the
+              predicted ion mobility a timsTOF search needs.
             </>
           ) : isSciex ? (
             <>

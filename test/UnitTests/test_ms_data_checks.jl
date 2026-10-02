@@ -19,5 +19,5 @@ using Pioneer: check_ms_data_vendors, check_library_ion_mobility
     @test check_library_ion_mobility([arrow], false, "lib.poin") === nothing   # Thermo data needs none
     err = try check_library_ion_mobility([tdfs], false, "lib.poin"); nothing catch e; e end
     @test err isa ErrorException && occursin("no ion-mobility predictions", err.msg) &&
-          occursin("alphapept_ccs", err.msg)
+          occursin("rebuild it with this version", err.msg)
 end

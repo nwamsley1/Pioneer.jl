@@ -432,8 +432,8 @@ function check_library_ion_mobility(paths::AbstractVector{<:AbstractString}, lib
                                     library_path::AbstractString)
     (library_has_im || !any(is_tdfs_path, paths)) && return nothing
     error("The spectral library $(library_path) has no ion-mobility predictions, which searching timsTOF " *
-          ".tdfs data requires. Rebuild it with the timsTOF option on " *
-          "(library_params.im_model = \"alphapept_ccs\" in the BuildSpecLib parameters).")
+          ".tdfs data requires. It was built by an older Pioneer; rebuild it with this version, which " *
+          "predicts ion mobility for every library.")
 end
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]

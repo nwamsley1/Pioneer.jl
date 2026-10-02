@@ -176,7 +176,6 @@ predict; every other fragment model assumes carbamidomethyl-C.
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
-| `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
 | `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective partition width drops below its nominal width (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
 
 ### Prediction Models
@@ -185,6 +184,8 @@ predict; every other fragment model assumes carbamidomethyl-C.
 |---|---|---|---|
 | `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
 | `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
+
+Every library also gets predicted ion mobility (AlphaPeptDeep CCS, `ccs` and `inv_ion_mobility` precursor columns), so any library can search timsTOF data. This is not a parameter; an `im_model` key from an older config is ignored with a warning. A modification the CCS model cannot encode is left off the CCS request only, so that residue's CCS is predicted as unmodified (the build logs which modifications and how many precursors). The modification's mass still enters the CCS→1/K0 conversion, and fragments and retention times keep it.
 
 ### Top-level
 

@@ -848,12 +848,12 @@ const KOINA_URLS = Dict(
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "prosit_2024_ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2024_intensity_PTMs_gl/infer",
     "prosit_2025_40ptm" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2025_intensity_40PTM/infer",
-    # Ion-mobility (CCS) models; selected with `library_params.im_model`.
+    # Ion-mobility (CCS) models; every library uses LIBRARY_IM_MODEL.
     "alphapept_ccs" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPept_ccs_generic/infer",
     "im2deep" => "https://koina.wilhelmlab.org:443/v2/models/IM2Deep/infer",
 )
 
-# Ion-mobility (CCS) models, selected by `library_params.im_model`. Both take
+# Ion-mobility (CCS) models; every library is built with LIBRARY_IM_MODEL. Both take
 # (peptide_sequences, precursor_charges) and return a `ccs` tensor in Å².
 #
 # `supported_mods`: the modifications the model can encode, as for MODEL_CONFIGS
@@ -892,8 +892,9 @@ const IM_MODEL_CONFIGS = Dict{String, @NamedTuple{supported_mods::ModSupport, nt
         nterm_prefix = false,
     ),
 )
-# Valid `library_params.im_model` values.
-const IM_MODEL_NAMES = Set(keys(IM_MODEL_CONFIGS))
+# Every library predicts ion mobility with this model, whatever the instrument: the columns cost little and make
+# any library searchable on timsTOF data. Not a parameter (a `library_params.im_model` key is ignored).
+const LIBRARY_IM_MODEL = "alphapept_ccs"
 
 # Retention-time models, selected by `library_params.rt_model`. Every one takes
 # the same single `peptide_sequences` input as the fragment models (sequence with

@@ -225,9 +225,6 @@ export interface BuildParams {
   libPath: string
   /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
   predictionModel: string
-  /** Bruker timsTOF library: predict ion mobility too, emitted as
-   *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
-  timsTOF: boolean
   /** Key into RT_MODELS (koinaMods.ts); emitted as `library_params.rt_model`. */
   rtModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
@@ -284,7 +281,6 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
-  timsTOF: false,
   rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched

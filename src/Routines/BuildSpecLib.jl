@@ -206,20 +206,16 @@ function BuildSpecLib(params_path::String)
             end
             timings["Retention Time Prediction"] = rt_timing
 
-            # Optional ion-mobility prediction appends `ccs` and
-            # `inv_ion_mobility` columns; it writes a new file, so track
-            # which file feeds parse_chronologer_output.
-            predictions_path = chronologer_out_path
-            im_model = String(get(_params.library_params, "im_model", ""))
-            if !isempty(im_model)
-                @user_info "Predicting ion mobility with $im_model..."
-                im_timing = @timed begin
-                    predictions_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt_im.arrow")
-                    predict_ion_mobility(chronologer_out_path, predictions_path, im_model)
-                    nothing
-                end
-                timings["Ion Mobility Prediction"] = im_timing
+            # Ion-mobility prediction appends `ccs` and `inv_ion_mobility`
+            # columns to every library; it writes a new file, which feeds
+            # parse_chronologer_output.
+            @user_info "Predicting ion mobility with $LIBRARY_IM_MODEL..."
+            predictions_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt_im.arrow")
+            im_timing = @timed begin
+                predict_ion_mobility(chronologer_out_path, predictions_path, LIBRARY_IM_MODEL)
+                nothing
             end
+            timings["Ion Mobility Prediction"] = im_timing
             # Parse results and prepare for fragment prediction
             parse_timing = @timed begin
                 iso_mod_to_mass = Dict{String, Float32}()
@@ -398,7 +394,7 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
-                for col in (:ccs, :inv_ion_mobility)   # present only when im_model was set
+                for col in (:ccs, :inv_ion_mobility)   # ion-mobility prediction always adds them
                     hasproperty(precursors_table, col) &&
                         (precursors_table[!, col] = Float32.(precursors_table[!, col]))
                 end

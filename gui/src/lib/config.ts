@@ -152,6 +152,7 @@ export function extraLeafPaths(obj: Json | null, prefix = ''): string[] {
 export const BUILD_OWNED_PATHS = [
   'library_path',
   'library_params.prediction_model',
+  // No longer a setting (every library predicts ion mobility); owned so an old config's key is dropped.
   'library_params.im_model',
   'library_params.rt_model',
   'library_params.auto_detect_frag_bounds',
@@ -238,8 +239,6 @@ export function buildLibJsonBase(s: BuildParams): Json {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
     library_params: {
       prediction_model: s.predictionModel,
-      // Omitted when off: Pioneer reads an absent im_model as "no ion mobility".
-      ...(s.timsTOF ? { im_model: 'alphapept_ccs' } : {}),
       rt_model: s.rtModel,
       auto_detect_frag_bounds: s.autoDetectFragBounds,
       frag_mz_min: num(s.fragMzMin, 150),
@@ -307,7 +306,6 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   }
 
   const lp = isObj(obj.library_params) ? obj.library_params : {}
-  if ('im_model' in lp) set.timsTOF = String(lp.im_model ?? '').trim() !== ''
   if (str(lp.prediction_model) !== undefined) set.predictionModel = str(lp.prediction_model)
   if (str(lp.rt_model) !== undefined) set.rtModel = str(lp.rt_model)
   if ('auto_detect_frag_bounds' in lp) {

@@ -315,13 +315,11 @@ function check_params_bsp(json_string::String)
         get(library_params, "frag_index_local_id_type", "") in ("auto", "UInt16", "UInt32") || throw(InvalidParametersError(
             "frag_index_local_id_type must be \"auto\", \"UInt16\" or \"UInt32\"", library_params))
     end
-    # Optional. Koina ion-mobility (CCS) model; empty or absent skips the
-    # prediction and the library has no `ccs` / `inv_ion_mobility` columns.
-    im_model = get(library_params, "im_model", "")
-    if !(im_model isa String) || !(isempty(im_model) || im_model in IM_MODEL_NAMES)
-        throw(InvalidParametersError(
-            "im_model must be one of: $(join(sort(collect(IM_MODEL_NAMES)), ", ")) (or empty)",
-            library_params))
+    # Ion mobility is always predicted (LIBRARY_IM_MODEL); an `im_model` key from an older config is dropped.
+    if haskey(library_params, "im_model")
+        @user_warn "library_params.im_model is no longer a setting and is ignored: every library predicts " *
+                   "ion mobility with $LIBRARY_IM_MODEL."
+        delete!(library_params, "im_model")
     end
     # `instrument_type` and `prediction_model` are no longer schema fields:
     # BuildSpecLib only supports Altimeter (SplineCoefficientModel), whose
