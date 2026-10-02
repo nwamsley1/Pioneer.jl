@@ -374,11 +374,17 @@ function _close_merge_output!(output::_MergeOutput)
     output.closed && return nothing
     # Do not retry Arrow finalization if it failed after closing its channel.
     output.closed = true
+    io_was_open = isopen(output.io)
     try
         close(output.writer)
     finally
         close(output.io)
     end
+    # Arrow 2.x's close returns normally when its consumer task has already failed, and
+    # ignores the end-of-stream write to a closed IO, so neither failure reaches us on its
+    # own. A stream missing batches must never be marked complete and published.
+    io_was_open || error("Merge output IO was closed before finalization: $(output.temp_path)")
+    istaskfailed(output.writer.task) && throw(TaskFailedException(output.writer.task))
     output.complete = true
     return nothing
 end

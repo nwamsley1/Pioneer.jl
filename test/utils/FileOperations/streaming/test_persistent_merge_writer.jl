@@ -144,6 +144,29 @@ end
     end
 end
 
+@testset "consumer failure on the last batch is not published" begin
+    _with_merge_test_dir() do dir
+        destination = joinpath(dir, "last batch failure.arrow")
+        output = _open_merge_output(destination)
+        _write_batch_typed(output, DataFrame(id=Int64[1, 2]), 2)
+        # The final submission is accepted by the unbuffered channel before the
+        # consumer writes it; make that write fail and finalize straight after.
+        close(output.io)
+        try
+            _write_batch_typed(output, DataFrame(id=Int64[3]), 1)
+        catch
+        end
+        timedwait(() -> istaskdone(output.writer.task), 5.0)
+        @test istaskfailed(output.writer.task)
+        @test_throws Exception _close_merge_output!(output)
+        @test !output.complete
+        @test_throws Exception _publish_merge_output!(output)
+        _cleanup_merge_output!(output)
+        @test !ispath(destination)
+        @test !ispath(output.temp_path)
+    end
+end
+
 if Sys.iswindows()
     @testset "external Windows lock leaves old destination intact" begin
         _with_merge_test_dir() do dir
