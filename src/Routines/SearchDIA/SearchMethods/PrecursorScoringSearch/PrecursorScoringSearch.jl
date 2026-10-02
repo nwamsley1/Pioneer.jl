@@ -347,6 +347,7 @@ function summarize_results!(
         )
     end
     _pmark(:scoring)
+    scale_probe("PrecursorScoring", "pass1"; seconds = step1_time)
     @debug_l1 "ScoringSearch Pass-1 scoring complete: $(round(step1_time, digits = 2))s"
 
     @debug_l1 "ScoringSearch prediction attachment and fold merge starting: runs=$(length(valid_file_data))"
@@ -458,6 +459,8 @@ function summarize_results!(
             end
             @debug_l1 "Run similarity computation completed in " *
                 "$(round(run_similarity_time, digits = 2)) seconds"
+            scale_probe("PrecursorScoring", "run_similarity"; seconds = run_similarity_time)
+            scale_probe_size("PrecursorScoring", "run_similarity_atlas_size", results.run_similarity[])
         else
             results.run_similarity[] = nothing
         end
@@ -478,6 +481,7 @@ function summarize_results!(
                 fdr_scale_factor = fdr_scale,
             )
 
+        scale_probe_size("PrecursorScoring", "global_prob_dicts_size", (global_prob_dict, target_dict))
         # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         _pmark(:run_similarity)
         phase_started = time()

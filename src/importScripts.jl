@@ -146,6 +146,7 @@ function importScripts()
     
     # Sort utilities (needed by ML and FileOperations)
     safe_include!(joinpath(package_root, "src", "utils", "sortUtils.jl"))
+    safe_include!(joinpath(package_root, "src", "utils", "scaleProbe.jl"))
 
     safe_include!(joinpath(package_root, "src", "utils", "dataFrameBlockStore.jl"))
 

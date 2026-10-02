@@ -304,6 +304,7 @@ function process_file!(
         return results
     end
 
+    t_step = time()
     # Build retention time index for efficient precursor lookup
     rt_index = buildRtIndex(
         DataFrame(Arrow.Table(rt_index_path)),
@@ -314,6 +315,8 @@ function process_file!(
     # for protein-level FDR / PEP calibration. Final decoy suppression for
     # output happens later in ProteinQuantificationSearch when output.write_decoys=false.
     passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
+    scale_probe("Integrate", "load_inputs"; file_idx = ms_file_idx, seconds = time() - t_step,
+                value = nrow(passing_psms), measure = false)
 
     # Initialize the integration schema before the empty-file check so an
     # empty staged MBR file remains consumable by the post-integration pass.
@@ -357,6 +360,7 @@ function process_file!(
     end
 
     # Extract chromatograms for all passing PSMs
+    t_step = time()
     chromatograms, scan_tic = extract_chromatograms(
         spectra,
         passing_psms,
@@ -374,6 +378,8 @@ function process_file!(
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
     # Scanning-quad (ZT): one point per precursor per cycle (ZT/chromatogram_collapse.jl).
+    scale_probe("Integrate", "extract"; file_idx = ms_file_idx, seconds = time() - t_step,
+                value = nrow(chromatograms))
     zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
     chromatograms = zt_collapse_chromatograms(zt_geom, chromatograms, spectra, search_context)
     if nrow(chromatograms) > 0
@@ -414,6 +420,7 @@ function process_file!(
         end
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    t_step = time()
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
@@ -447,6 +454,9 @@ function process_file!(
             λ = params.wh_smoothing_strength,
             im_half_scans = im_half_scans,
         )
+        scale_probe("Integrate", "integrate"; file_idx = ms_file_idx, seconds = time() - t_step,
+                    measure = false)
+        t_step = time()
         if params.match_between_runs &&
            isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
             # OFFLINE-PROFILING HOOK (PIONEER_MBR_ARG_DUMP=<path>): serialise the exact argument
@@ -484,6 +494,8 @@ function process_file!(
                 )
                 passing_psms = passing_psms[selected_rows, :]
             end
+            scale_probe("Integrate", "mbr_features"; file_idx = ms_file_idx,
+                        seconds = time() - t_step, measure = false)
         end
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(

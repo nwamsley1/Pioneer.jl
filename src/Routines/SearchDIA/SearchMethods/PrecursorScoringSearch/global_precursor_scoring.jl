@@ -322,6 +322,7 @@ function build_global_precursor_score_dicts(
         return _build_single_run_precursor_score_dicts(refs, n_precursors)
 
     inputs = _collect_global_precursor_inputs(refs, n_precursors)
+    scale_probe_size("PrecursorScoring", "global_inputs_size", inputs)
     table = _build_global_precursor_feature_table(
         inputs,
         n_runs_total;

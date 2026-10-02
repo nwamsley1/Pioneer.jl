@@ -48,15 +48,27 @@ function execute_search(
     Random.seed!(1844)
     search_results = init_search_results(search_type, search_parameters, search_context)
 
+    stage = string(nameof(typeof(search_type)))
+    scale_probe(stage, "stage_start")
+    scale_probe_size(stage, "temp_structures_size", search_context.temp_structures)
     # Stages without per-file work skip opening every raw file (a .tdfs open loads its side table).
-    for (ms_file_idx, spectra) in (uses_per_file_spectra(search_type) ? ProgressBar(enumerate(msdr)) : ())
-        zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
-        process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-        process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-        reset_results!(search_results)
+    if uses_per_file_spectra(search_type)
+        for ms_file_idx in ProgressBar(1:n_files)
+            t_open = @elapsed spectra = getMSData(msdr, ms_file_idx)
+            scale_probe(stage, "open"; file_idx = ms_file_idx, seconds = t_open, measure = false)
+            zt_prepare_file!(search_context, params, ms_file_idx, spectra)   # scanning-quad (ZT/context.jl)
+            t = @elapsed process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+            scale_probe(stage, "process_file"; file_idx = ms_file_idx, seconds = t)   # memory with the file's results held
+            t = @elapsed process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+            scale_probe(stage, "process_results"; file_idx = ms_file_idx, seconds = t, measure = false)
+            t = @elapsed reset_results!(search_results)
+            scale_probe(stage, "reset"; file_idx = ms_file_idx, seconds = t)          # memory the stage keeps between files
+            scale_probe_size(stage, "results_size"; file_idx = ms_file_idx, obj = search_results)
+        end
     end
 
-    summarize_results!(search_results, search_parameters, search_context)
+    t_summary = @elapsed summarize_results!(search_results, search_parameters, search_context)
+    scale_probe(stage, "summarize"; seconds = t_summary)
 
     return nothing#search_results
 end
