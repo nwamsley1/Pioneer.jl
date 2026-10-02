@@ -186,7 +186,15 @@ function check_model_mod_support(params::Dict{String, Any})
                 "modification covers C (unmodified cysteine)")
         end
     end
-    isempty(problems) && return nothing
+    if isempty(problems)
+        # Only carbamidomethyl C and oxidised M are supported end to end; flag any other modification.
+        ptms = unique(label for (id, site, label) in selected if !occursin(site, get(BASE_MODS, id, "")))
+        isempty(ptms) || @user_warn "This library uses modifications other than carbamidomethylation (C) and " *
+            "oxidation (M): " * join(ptms, ", ") * ". Pioneer's support for PTMs is still undeveloped, and it " *
+            "does not score site localization: a modified precursor can be identified, but which residue " *
+            "carries the modification is not confirmed."
+        return nothing
+    end
 
     frag_ok = sort([n for (n, c) in MODEL_CONFIGS if accepts(c)])
     rt_ok = sort([n for (n, c) in RT_MODEL_CONFIGS if accepts(c)])

@@ -115,6 +115,26 @@ end
     end
 end
 
+@testset "warns about modifications beyond carbamidomethyl C and oxidised M" begin
+    _ms_console(p) = mktemp() do path, io
+        redirect_stdout(io) do
+            try
+                Pioneer.check_model_mod_support(p)
+            catch e
+                e isa Pioneer.InvalidParametersError || rethrow()
+            end
+        end
+        flush(io)
+        read(path, String)
+    end
+    @test !occursin("undeveloped", _ms_console(_ms_params(variable = _ms_mods(["Unimod:35"], ["M"]))))
+    out = _ms_console(_ms_params(frag = "prosit_2025_40ptm", variable = _ms_mods(["Unimod:21"], ["[STY]"])))
+    @test occursin("support for PTMs is still undeveloped", out) && occursin("site localization", out)
+    @test occursin("Unimod:21 on S", out)
+    # a refused selection (phospho on Altimeter) errors without the warning
+    @test !occursin("undeveloped", _ms_console(_ms_params(variable = _ms_mods(["Unimod:21"], ["[STY]"]))))
+end
+
 @testset "refused" begin
     @testset "free cysteine on a model that assumes carbamidomethyl" begin
         msg = _ms_error(_ms_params(fixed = _ms_mods(String[], String[])))
