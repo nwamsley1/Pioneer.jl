@@ -412,7 +412,8 @@ function _mainsearch_best_in_memory!(
     refinement_psms, lgbm_timings, lgbm_predictor =
         @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
             psms,
-            results.lgbm_buffers,
+            results.lgbm_buffers;
+            features = model_features(PRESCORE_FEATURES, has_ion_mobility(search_context)),
         )
     t_lgbm_end = time()
 

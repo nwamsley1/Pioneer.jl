@@ -344,6 +344,7 @@ function summarize_results!(
         score_precursor_isotope_traces(
             valid_fold_paths;
             match_between_runs = params.match_between_runs,
+            ion_mobility = has_ion_mobility(search_context),
         )
     end
     _pmark(:scoring)

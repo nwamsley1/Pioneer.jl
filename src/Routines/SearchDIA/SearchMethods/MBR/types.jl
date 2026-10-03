@@ -223,7 +223,7 @@ const MBR_RECEIVER_FEATURES = Symbol[
     :irt_error,
     # Mobility residual of the receiver itself, (predicted 1/K0 - observed) / sigma, signed. A transfer placed
     # at the right retention time but the wrong mobility is invisible to every other feature here.
-    # Identically zero on data without ion mobility, where LightGBM simply never splits on it.
+    # Identically zero on data without ion mobility, where it is left out of the model (MBR_ION_MOBILITY_FEATURES).
     :im_error,
     :poisson,
     :err_norm,
@@ -334,6 +334,14 @@ const MBR_FTR_FEATURES_TRUE = Symbol[
     MBR_RECEIVER_FEATURES...,
     MBR_SHARED_FEATURES...,
     (_mbr_true_feature(stem) for stem in MBR_MODEL_PAIRED_FEATURE_STEMS)...,
+]
+
+# Transfer-model features (true-pairing names) that carry signal only on ion-mobility data and are constant
+# elsewhere; searches without ion mobility leave them out (see _mbr_available_feature_sets).
+const MBR_ION_MOBILITY_FEATURES = Symbol[
+    :im_error,
+    _mbr_true_feature("MBR_best_observed_im_diff"),
+    _mbr_true_feature("MBR_worst_observed_im_diff"),
 ]
 
 function _mbr_ftr_features_false(counterfactual_idx::Int)
