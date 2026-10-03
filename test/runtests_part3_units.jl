@@ -46,6 +46,7 @@ include("./UnitTests/test_zt_map_any_hit_to_center.jl")
 # Fused per-precursor scan pipeline
 include("./UnitTests/test_fused_prec_filters.jl")
 include("./UnitTests/test_run_fused.jl")
+include("./UnitTests/test_scan_derived_mass_bound.jl")
 include("./UnitTests/test_isotope_interval_reuse.jl")
 include("./UnitTests/test_fragment_isotope_trace_intensities.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")

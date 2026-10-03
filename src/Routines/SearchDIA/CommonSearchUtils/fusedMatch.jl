@@ -480,6 +480,9 @@ Three parallel `Vector{Float32}`s (not a tuple-packed AoS) so SIMD
 bsearch primitives can load 8 adjacent values per operation.
 
 Returns the peak count so callers can size views without rechecking.
+An optional per-thread `scan_half_width` reference receives the maximum distance
+from a corrected peak to either stored acceptance bound, without a second pass.
+Calibration callers omit it and retain their collection window.
 """
 function prepare_scan_peaks!(corrected::Vector{Float32},
                               obs_low::Vector{Float32},
@@ -487,13 +490,15 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
                               mem::AbstractMassErrorModel,
                               scan_mz::AbstractArray{<:Union{Missing, Float32}},
                               scan_int::AbstractArray{<:Union{Missing, Float32}},
-                              scan_rt::Float32)
+                              scan_rt::Float32,
+                              scan_half_width::Union{Nothing, Base.RefValue{Float32}} = nothing)
     n = length(scan_mz)
     if length(corrected) < n
         resize!(corrected, n)
         resize!(obs_low, n)
         resize!(obs_high, n)
     end
+    widest = 0f0
     @inbounds for i in 1:n
         m = scan_mz[i]
         it = scan_int[i]
@@ -506,7 +511,13 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
             corrected[i] = c
             obs_low[i]   = lo
             obs_high[i]  = hi
+            if scan_half_width !== nothing && isfinite(c) && isfinite(lo) && isfinite(hi)
+                widest = max(widest, c - lo, hi - c)
+            end
         end
+    end
+    if scan_half_width !== nothing
+        scan_half_width[] = widest
     end
     return n
 end
@@ -682,6 +693,16 @@ peak-search bounds. Returned as a tuple so callers can destructure.
     (iso_mz - half_width, iso_mz + half_width)
 
 """
+    scan_match_window(iso_mz, half_width)
+
+Outward-rounded lookup bounds covering the stored per-peak Float32 intervals.
+The width is accumulated once per scan by `prepare_scan_peaks!`.
+"""
+@inline scan_match_window(iso_mz::Float32, half_width::Float32) =
+    (prevfloat(iso_mz - half_width), nextfloat(iso_mz + half_width))
+
+
+"""
     compute_ppm_err(theoretical_mz, observed_mz) -> Float32
 
 Signed ppm error between a theoretical iso m/z and the observed peak m/z.
@@ -800,6 +821,7 @@ function run_fused!(
     isotope_err_bounds::Tuple{I, I};
     m_rank::Int64 = 3,
     scan_idx::Int64 = 0,   # for blacklist lookup; 0 disables
+    scan_half_width::Union{Nothing, Float32} = nothing,
     scan_ev::Float32 = 0f0 # scan collision energy (eV) for CE-keyed NCE models; 0 = unknown
 ) where {K<:FusedSearchKind, I<:Integer}
 
@@ -881,7 +903,8 @@ function run_fused!(
                 frag_mz = getMz(frag)
                 frag_charge_inv = 1f0 / Float32(getFragCharge(frag))
 
-                half_width = conservative_half_width(mem, frag_mz)
+                half_width = scan_half_width === nothing ?
+                    conservative_half_width(mem, frag_mz) : scan_half_width
 
                 # Tighten per-iso bsearch `lo`: iso k's target is strictly greater
                 # than iso k-1's, so k's first-matching-peak ≥ k-1's anchor.
@@ -893,7 +916,8 @@ function run_fused!(
 
                     pred_int = isotopes_buf[iso_idx + 1] * iso_scale
 
-                    conservative_low, conservative_high = match_window(iso_mz, half_width)
+                    conservative_low, conservative_high = scan_half_width === nothing ?
+                        match_window(iso_mz, half_width) : scan_match_window(iso_mz, half_width)
 
                     # Bsearch from iso_anchor (≥ lower, monotonic across isos).
                     start_idx = bsearch_hybrid(scan_corrected_mz, conservative_low, iso_anchor, n_peaks)

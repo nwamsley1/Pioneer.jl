@@ -41,6 +41,7 @@ function process_scans_fused!(
     corr_mz         = getScanCorrectedMz(search_data)
     obs_low         = getScanObsLow(search_data)
     obs_high        = getScanObsHigh(search_data)
+    scan_half_width = params isa MainSearchParameters ? Ref(0f0) : nothing
     decode_buf      = getDecodeBuffer(search_data)
     isotopes_buf    = getIsotopes(search_data)
     prec_trans_buf  = getPrecursorTransmission(search_data)
@@ -79,7 +80,7 @@ function process_scans_fused!(
         # using the intensity/RT-aware MEM API.
         scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
-                                           mem, scan_mz, scan_int, scan_rt)
+                                           mem, scan_mz, scan_int, scan_rt, scan_half_width)
 
         quad_fn = getQuadTransmissionFunction(qtm,
             getCenterMz(spectra, scan_idx),
@@ -114,6 +115,7 @@ function process_scans_fused!(
                 isotope_err_bounds;
                 m_rank = last(getMinTopNofM(params)),
                 scan_idx = Int64(scan_idx),
+                scan_half_width = scan_half_width === nothing ? nothing : scan_half_width[],
                 scan_ev = getCollisionEnergyEv(spectra, scan_idx)
             )
             if nmatches ≤ 2
