@@ -50,6 +50,21 @@ end
     end
 end
 
+@testset "Ion-mobility features only in ion-mobility searches" begin
+    frame = mbr_store_fixture()
+    Pioneer._mbr_add_hellinger_contrasts!(frame)
+    tf, ff = Pioneer._mbr_available_feature_sets(frame)
+    tf0, ff0 = Pioneer._mbr_available_feature_sets(frame; ion_mobility = false)
+    @test all(f in tf for f in Pioneer.MBR_ION_MOBILITY_FEATURES)
+    @test tf0 == filter(f -> !(f in Pioneer.MBR_ION_MOBILITY_FEATURES), tf)
+    @test all(length(f) == length(tf0) for f in ff0)
+    @test !any(f -> occursin("observed_im_diff", String(f)), reduce(vcat, ff0))
+
+    features = [:weight, :im_error, :charge, :n_scans_in_window, :weight_frac_in_cycle]
+    @test Pioneer.model_features(features, true) == features
+    @test Pioneer.model_features(features, false) == [:weight, :charge]
+end
+
 @testset "Streamed MBR candidate loading and scoring" begin
     mktempdir() do dir
         frame = mbr_store_fixture()

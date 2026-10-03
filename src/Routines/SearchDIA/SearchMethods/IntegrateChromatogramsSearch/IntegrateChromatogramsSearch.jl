@@ -610,6 +610,7 @@ function summarize_results!(
             q_value_threshold = params.q_value_threshold,
             donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+            ion_mobility = has_ion_mobility(search_context),
             merged_path = joinpath(
                 getDataOutDir(search_context), "temp_data",
                 "merged_quant.arrow",
