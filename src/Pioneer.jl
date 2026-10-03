@@ -33,7 +33,6 @@ using JSON, JLD2
 using LinearAlgebra, LightXML, Logging
 using Measures
 using NumericalIntegration
-using Optim
 using Plots, Polynomials, ProgressBars, Printf
 using PooledArrays: PooledArray
 using Tables
