@@ -1,14 +1,22 @@
-# Persistent merge writers: implementation and pending validation
+# Persistent merge writers: implementation and validation
 
 This branch implements the first stage of the persistent merge writer plan.
 Each ordinary merge, hierarchical staging merge, and output chunk uses one
 `Arrow.Writer` instead of reopening and inspecting prior batches through
 `Arrow.append`.
 
-Tests and benchmarks have **not been run** for this implementation, at the
-user's request. The package was loaded before that request; that does not
-validate these edits. No branch has been pushed and no CI run has been started.
-Static Julia parsing and `git diff --check` passed.
+Validated on macOS (Julia 1.12.6, Arrow 2.8.1), 2026-10-02:
+
+- `test_stream_sorted_merge_basic.jl` and `test_persistent_merge_writer.jl`: 113/113 pass with
+  1 and 4 threads. The safe-file-ops, Arrow-operations and core-reference tests: 31/31.
+- `scripts/benchmark_merge_writer.jl`: the append strategy grows quadratically with the batch
+  count, the persistent writer linearly (512 batches: 3.65 s and 4.3 GB allocated vs 0.029 s and
+  34 MB); file sizes are identical.
+- End-to-end SWATH searches of 16 and 70 symlinked runs (70 exercises hierarchical staging):
+  every output table is identical to develop, column by column in row order. At this size the
+  merges are small (staged merge 16.1 s on develop, 14.2 s here).
+
+Native Windows results and a large search (thousands of runs) are still outstanding.
 
 ## Lifecycle and Windows behavior
 
@@ -26,7 +34,10 @@ Arrow's writer fields and needs regression coverage when upgrading Arrow.
 The implementation does not alter Arrow's block arrays or encoding internals.
 
 Finalization closes the writer, waits for its consumer through Arrow's close
-implementation, and closes the underlying IO in a `finally` block. Only then
+implementation, and closes the underlying IO in a `finally` block. Arrow 2.8's
+close returns normally when its consumer task has already failed and ignores the
+end-of-stream write to a closed IO, so finalization then checks both itself and
+raises, leaving the output incomplete and unpublished. Only after a clean close
 does the helper replace or rename the destination. Windows replacements use
 the existing `safeRm` policy and verify that the old destination path is gone.
 There are no new unsynchronized production `GC.gc()` calls.
@@ -88,7 +99,7 @@ job in `.github/workflows/tests.yml` is prepared to run it and the existing
 basic merge tests with one and four Julia threads once the branch reaches CI.
 Native Windows results are still required before claiming compatibility.
 
-## Commands to run later
+## Commands to rerun the checks
 
 Run from this worktree:
 
