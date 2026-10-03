@@ -1725,7 +1725,7 @@ function build_chromatograms(
     has_base_peak = spectra_has_base_peak(spectra)
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
-    mass_error_model = getMassErrorModel(search_context, ms_file_idx)
+    mass_error_model = chromatogram_mass_error_model(getMassErrorModel(search_context, ms_file_idx))
     quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)

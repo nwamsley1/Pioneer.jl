@@ -184,7 +184,7 @@ function process_huber_calibration_scans!(
     rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
-    mass_error_model = getMassErrorModel(search_context, ms_file_idx)
+    mass_error_model = chromatogram_mass_error_model(getMassErrorModel(search_context, ms_file_idx))
     quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)
@@ -200,6 +200,7 @@ function process_huber_calibration_scans!(
         for delta in params.delta_grid
     ]
 
+    scan_half_width = Ref(0f0)
     for scan_idx in scan_range
         ((scan_idx < 1) | (scan_idx > length(spectra))) && continue
         scan_key = UInt32(scan_idx)
@@ -248,7 +249,7 @@ function process_huber_calibration_scans!(
         scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(
             corr_mz, obs_low, obs_high,
-            mass_error_model, scan_mz, scan_int, Float32(rt),
+            mass_error_model, scan_mz, scan_int, Float32(rt), scan_half_width,
         )
 
         nmatches, nmisses = run_fused!(
@@ -264,6 +265,7 @@ function process_huber_calibration_scans!(
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             chrom_params.n_frag_isotopes,
             chrom_params.isotope_err_bounds;
+            scan_half_width = scan_half_width[],
             scan_ev = getCollisionEnergyEv(spectra, scan_idx),
         )
 

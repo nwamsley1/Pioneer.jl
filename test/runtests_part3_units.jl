@@ -57,6 +57,7 @@ include("./UnitTests/test_chromatogram_integration_trace_order.jl")
 include("./UnitTests/test_chromatogram_integration_bounds.jl")
 include("./UnitTests/test_chromatogram_integration_diagnostics.jl")
 include("./UnitTests/test_huber_tuning_global.jl")
+include("./UnitTests/test_chromatogram_mass_tolerance.jl")
 
 # FileOperations focused tests
 include("./utils/FileOperations/io/test_arrow_operations_basic.jl")

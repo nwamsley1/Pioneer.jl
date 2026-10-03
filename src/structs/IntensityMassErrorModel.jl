@@ -418,3 +418,46 @@ end
 @inline function getCorrectedMzAndBounds(m::ScoutCalibratedMassErrorModel, mz::Float32, intensity::Float32, ::Float32)
     return getCorrectedMzAndBounds(m, mz, intensity)
 end
+
+const CHROMATOGRAM_MASS_TOLERANCE_SCALE = 1.25f0
+
+"""
+    chromatogram_mass_error_model(model)
+
+Return a local model with 25% wider matching tolerances for chromatogram
+integration and its Huber calibration. Preserve mass corrections and fitted
+spread parameters; leave the original search-context model unchanged.
+"""
+function chromatogram_mass_error_model(m::IntensityMassErrorModel)
+    scale = typeof(m.k)(CHROMATOGRAM_MASS_TOLERANCE_SCALE)
+    return typeof(m)(
+        m.mz_bias_spline, m.intensity_bias_spline, m.spread_spline, m.rt_bias_spline,
+        m.mz_bias_extrap, m.int_bias_extrap, m.spread_extrap, m.rt_bias_extrap,
+        m.k * scale, m.conservative_tol_da * scale,
+        m.mz_spread_spline, m.mz_spread_extrap,
+        m.mz_spread_α, m.mz_spread_β, m.mz_spread_γ,
+        m.default_top3_ll, m.max_da_tolerance, m.rt_min, m.rt_max,
+    )
+end
+
+function chromatogram_mass_error_model(m::SimpleMassErrorModel)
+    scale = typeof(m.mass_offset)(CHROMATOGRAM_MASS_TOLERANCE_SCALE)
+    return typeof(m)(m.mass_offset, m.mass_tolerance .* scale)
+end
+
+function chromatogram_mass_error_model(m::LinearDaMassErrorModel)
+    scale = typeof(m.tolerance_da)(CHROMATOGRAM_MASS_TOLERANCE_SCALE)
+    return typeof(m)(m.intercept, m.slope, m.tolerance_da * scale)
+end
+
+function chromatogram_mass_error_model(m::LinearBiasPpmTolMassErrorModel)
+    scale = typeof(m.tolerance_ppm)(CHROMATOGRAM_MASS_TOLERANCE_SCALE)
+    return typeof(m)(m.intercept, m.slope, m.tolerance_ppm * scale)
+end
+
+function chromatogram_mass_error_model(m::ScoutCalibratedMassErrorModel)
+    scale = typeof(m.tolerance_da)(CHROMATOGRAM_MASS_TOLERANCE_SCALE)
+    return typeof(m)(m.mz_bias_spline, m.mz_bias_extrap,
+        m.intensity_bias_spline, m.int_bias_extrap, m.has_intensity_bias,
+        m.tolerance_da * scale)
+end
