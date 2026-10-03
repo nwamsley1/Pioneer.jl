@@ -144,3 +144,38 @@ Pioneer.getCharge(::CalibrationTestPrecursors) = UInt8[2]
     @test Pioneer.assess_calibration_qc(:ms1_mass,100,(NaN,1,6,NaN)).status == Pioneer.QC_SUSPICIOUS
     @test Pioneer.assess_calibration_qc(:nce,100,(0.25,NaN,0.1,0.1)).status == Pioneer.QC_SUSPICIOUS
 end
+
+@testset "Robust peptide-supported MS2 calibration QC" begin
+    model = Pioneer.MassErrorModel(0f0, (10f0, 10f0))
+    sample(i, error) = Pioneer.MassErrSample(500f0, 500f0 + Float32(error),
+        100f0, Float32(i), UInt32(i))
+    samples = [sample(i, 0) for i in 1:1000]
+    ids = collect(1:1000)
+    assess(s; groups=ids) = Pioneer.ms2_calibration_diagnostics(s, fill(model,length(s)); group_ids=groups)
+    @test assess(samples).record.status == Pioneer.QC_NORMAL
+
+    # One gross outlier cannot move a peptide median in a well-supported bin.
+    outlier = copy(samples)
+    outlier[1] = sample(1, 1)
+    @test assess(outlier).record.status == Pioneer.QC_NORMAL
+
+    # An isolated biased decile is a local diagnostic, not a whole-run flag.
+    isolated = [sample(i, i <= 100 ? 0.0025 : 0) for i in 1:1000]
+    @test assess(isolated).record.status == Pioneer.QC_NORMAL
+    persistent = [sample(i, i <= 200 ? 0.0025 : 0) for i in 1:1000]
+    result = assess(persistent)
+    @test result.record.status == Pioneer.QC_SUSPICIOUS
+    @test result.record.metrics[2] ≈ 0.2f0
+    @test occursin("persistent_biased_peptide_fraction", Pioneer.calibration_qc_reason(:ms2_mass,result.record))
+    @test count(b -> b.persistent_bias, result.bins) == 2
+
+    # Centered data can still have unacceptable actual-window coverage.
+    broad = [sample(i, isodd(i) ? 0.1 : -0.1) for i in 1:1000]
+    @test assess(broad).record.metrics[4] == 1f0
+    @test assess(broad).record.status == Pioneer.QC_SUSPICIOUS
+
+    # Fragment replication cannot manufacture independent peptide support.
+    repeated = repeat(samples[1:10], 100)
+    @test assess(repeated; groups=repeat(1:10,100)).record.status == Pioneer.QC_WARNING
+    @test_throws DimensionMismatch assess(samples; groups=1:999)
+end

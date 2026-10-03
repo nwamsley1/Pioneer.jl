@@ -30,7 +30,7 @@ _qc_name(s::CalibrationQCStatus) = ("not_assessed", "normal", "suspicious", "war
 # Coverage is a fraction; other units are encoded by the metric names below.
 const CALIBRATION_QC_METRICS = (
     (:rt_coverage, :residual_mad_fraction, :residual_trend_fraction, :unused),
-    (:unused, :residual_rms_over_tolerance, :max_binned_bias_over_tolerance, :outside_tolerance_fraction),
+    (:unused, :persistent_biased_peptide_fraction, :global_median_bias_over_tolerance, :outside_tolerance_fraction),
     (:unused, :residual_mad_ppm, :residual_trend_ppm, :unused),
     (:edge_coverage, :log_ratio_rmse, :unused, :parameter_at_bound),
     (:fitted_charge_coverage, :unused, :weak_nce_fraction, :endpoint_fraction),
@@ -38,7 +38,7 @@ const CALIBRATION_QC_METRICS = (
 )
 const CALIBRATION_QC_LIMITS = (
     (0.5f0, 0.05f0, 0.01f0, Inf32),
-    (-Inf32, 1.0f0, 0.25f0, 0.10f0),
+    (-Inf32, 0.10f0, 0.25f0, 0.10f0),
     (-Inf32, 10.0f0, 5.0f0, Inf32),
     (0.5f0, 0.5f0, Inf32, 0.5f0),
     (0.5f0, Inf32, 0.5f0, 0.5f0),
@@ -177,37 +177,140 @@ function rt_calibration_qc(rts, irts, model, scan_rts; min_support)
     return assess_calibration_qc(:rt,n,metrics; min_support)
 end
 
-function ms2_calibration_qc(samples, model; fallback=false)
-    n = samples === nothing ? 0 : length(samples)
-    n == 0 && return assess_calibration_qc(:ms2_mass,0,(NaN,NaN,NaN,NaN); min_support=50, fallback=true)
-    total = square = 0.0
-    outside = 0
-    mz_min, mz_max = extrema(s.theoretical_mz for s in samples)
-    intensity_min, intensity_max = extrema(log2(max(s.intensity, eps(Float32))) for s in samples)
-    sums = zeros(Float64, 10, 2)
-    counts = zeros(Int, 10, 2)
-    for s in samples
-        corrected, low, high = getCorrectedMzAndBounds(model, s.observed_mz, s.intensity, s.rt)
-        width = (high-low)/2
-        if !isfinite(width) || width <= 0 || !isfinite(corrected)
-            return assess_calibration_qc(:ms2_mass,n,(NaN,NaN,NaN,NaN); failed=true)
+# Thresholds are screening defaults, not validated fit acceptance criteria.
+const MS2_QC_MIN_PEPTIDES = 50
+const MS2_QC_BIAS_LIMIT = 0.25
+
+# Approximate 95% distribution-free median interval, using binomial ranks.
+# Each entry is one peptide median, so repeated fragments do not inflate support.
+function _qc_supported_median(values)
+    v = sort(Float64.(values))
+    n = length(v)
+    isempty(v) && return (median = NaN, low = NaN, high = NaN)
+    rank = max(1, floor(Int, n / 2 - 1.96 * sqrt(n) / 2))
+    return (median = median(v), low = v[rank], high = v[n - rank + 1])
+end
+
+_qc_bias_direction(m) = abs(m.median) <= MS2_QC_BIAS_LIMIT ? 0 :
+    m.low > 0 ? 1 : m.high < 0 ? -1 : 0
+
+"""
+    ms2_calibration_diagnostics(samples, models; group_ids)
+
+Assess robust residual centering on peptide medians. `models[i]` must exclude
+peptide `group_ids[i]` from its fit for an independent assessment. Equal-count
+peptide bins cover m/z, log2 intensity and RT. Local bias requires two adjacent
+bins in the same direction, at least 50 peptides per bin, and more than 10% of
+peptides affected on an axis. Report actual-window coverage separately.
+"""
+function ms2_calibration_diagnostics(samples, models; group_ids, fallback=false)
+    n = length(samples)
+    length(models) == length(group_ids) == n || throw(DimensionMismatch("MS2 QC input lengths differ"))
+    groups = Dict{Any, Vector{Int}}()
+    residuals = Vector{Float64}(undef, n)
+    errors_mda = similar(residuals)
+    outside = falses(n)
+    for (i, s) in enumerate(samples)
+        corrected, low, high = getCorrectedMzAndBounds(models[i], s.observed_mz, s.intensity, s.rt)
+        width = (high - low) / 2
+        if !isfinite(width) || width <= 0 || !isfinite(corrected) ||
+           !isfinite(s.theoretical_mz) || !isfinite(s.intensity) || s.intensity <= 0 || !isfinite(s.rt)
+            return (record = assess_calibration_qc(:ms2_mass,n,(NaN,NaN,NaN,NaN); failed=true),
+                    bins = NamedTuple[], n_peptides = 0)
         end
-        residual = (corrected-s.theoretical_mz)/width
-        isfinite(residual) || return assess_calibration_qc(:ms2_mass,n,(NaN,NaN,NaN,NaN); failed=true)
-        for (axis, x, low, high) in ((1,s.theoretical_mz,mz_min,mz_max),
-                                     (2,log2(max(s.intensity,eps(Float32))),intensity_min,intensity_max))
-            bin = _qc_bin(x, low, high)
-            sums[bin,axis] += residual; counts[bin,axis] += 1
+        residuals[i] = (corrected - s.theoretical_mz) / width
+        isfinite(residuals[i]) || return (
+            record=assess_calibration_qc(:ms2_mass,n,(NaN,NaN,NaN,NaN); failed=true),
+            bins=NamedTuple[], n_peptides=0)
+        errors_mda[i] = 1000 * (corrected - s.theoretical_mz)
+        outside[i] = !(low <= s.theoretical_mz <= high)
+        push!(get!(groups, group_ids[i], Int[]), i)
+    end
+    peptide_rows = collect(values(groups))
+    ng = length(peptide_rows)
+    peptide_residuals = [median(residuals[rows]) for rows in peptide_rows]
+    global_bias = _qc_supported_median(peptide_residuals)
+    supported_global_bias = ng >= MS2_QC_MIN_PEPTIDES && _qc_bias_direction(global_bias) != 0 ?
+        abs(global_bias.median) : 0.0
+    # Give every peptide equal weight in coverage, regardless of fragment count.
+    outside_fraction = ng == 0 ? NaN : mean(mean(outside[rows]) for rows in peptide_rows)
+    bins = NamedTuple[]
+    affected_fraction = 0.0
+    for (axis, coordinate) in ((:mz, s -> Float64(s.theoretical_mz)),
+                              (:intensity, s -> log2(Float64(s.intensity))),
+                              (:rt, s -> Float64(s.rt)))
+        coordinates = [median(coordinate(samples[i]) for i in rows) for rows in peptide_rows]
+        nbins = min(10, ng ÷ MS2_QC_MIN_PEPTIDES)
+        nbins == 0 && continue
+        # A constant coordinate has no local trend; global centering still applies.
+        minimum(coordinates) == maximum(coordinates) && continue
+        order = sortperm(coordinates)
+        chunks = [order[(fld((b-1)*ng,nbins)+1):fld(b*ng,nbins)] for b in 1:nbins]
+        stats = [_qc_supported_median(peptide_residuals[chunk]) for chunk in chunks]
+        directions = _qc_bias_direction.(stats)
+        persistent = [directions[b] != 0 &&
+            ((b > 1 && directions[b-1] == directions[b]) ||
+             (b < nbins && directions[b+1] == directions[b])) for b in 1:nbins]
+        fraction = sum(length(chunks[b]) for b in 1:nbins if persistent[b]; init=0) / ng
+        affected_fraction = max(affected_fraction, fraction)
+        for b in 1:nbins
+            chunk = chunks[b]
+            before = mean(mean(outside[peptide_rows[g]]) for g in chunk)
+            after = mean(mean(abs.(residuals[peptide_rows[g]] .- stats[b].median) .> 1) for g in chunk)
+            push!(bins, (axis=String(axis), bin=b, n_peptides=length(chunk),
+                coordinate_min=minimum(coordinates[chunk]), coordinate_max=maximum(coordinates[chunk]),
+                median_error_mda=median([median(errors_mda[peptide_rows[g]]) for g in chunk]),
+                median_error_over_tolerance=stats[b].median,
+                median_ci_low=stats[b].low, median_ci_high=stats[b].high,
+                persistent_bias=persistent[b], outside_tolerance_fraction=before,
+                diagnostic_recentered_outside_fraction=after,
+                diagnostic_net_coverage_gain=before-after))
         end
-        total += residual; square += residual^2
-        outside += !(low <= s.theoretical_mz <= high)
     end
-    bias = abs(total/n)
-    for i in eachindex(sums)
-        counts[i] >= 50 && (bias = max(bias, abs(sums[i]/counts[i])))
+    record = assess_calibration_qc(:ms2_mass,ng,
+        (NaN,affected_fraction,supported_global_bias,outside_fraction);
+        min_support=MS2_QC_MIN_PEPTIDES, fallback)
+    return (; record, bins, n_peptides=ng,
+        global_median_error_over_tolerance=global_bias.median,
+        global_median_error_mda=ng == 0 ? NaN : median([median(errors_mda[rows]) for rows in peptide_rows]))
+end
+
+# Compatibility entry point for simple models and synthetic diagnostics. Production
+# uses peptide-held-out models below, rather than scoring the installed fit's training data.
+function ms2_calibration_qc(samples, model; fallback=false, group_ids=nothing)
+    samples === nothing && (samples = MassErrSample[])
+    ids = group_ids === nothing ? collect(eachindex(samples)) : group_ids
+    return ms2_calibration_diagnostics(samples, fill(model,length(samples)); group_ids=ids, fallback).record
+end
+
+"""Fit five diagnostic models with whole peptide sequences held out; never install them."""
+function heldout_ms2_calibration_qc(samples, model, sequences; fallback=false)
+    if samples === nothing || isempty(samples)
+        return (record=ms2_calibration_qc(samples,model; fallback=true), bins=NamedTuple[], n_peptides=0)
     end
-    return assess_calibration_qc(:ms2_mass,n,(NaN,sqrt(square/n),bias,outside/n);
-        min_support=50, fallback)
+    if any(s -> !(1 <= s.precursor_idx <= length(sequences)), samples)
+        return (record=assess_calibration_qc(:ms2_mass,0,(NaN,NaN,NaN,NaN); min_support=50),
+                bins=NamedTuple[], n_peptides=0)
+    end
+    ids = [String(sequences[s.precursor_idx]) for s in samples]
+    unique_ids = sort!(unique(ids))
+    if length(unique_ids) < 2 * MS2_QC_MIN_PEPTIDES || !(model isa IntensityMassErrorModel)
+        # Do not label an in-sample or unsupported diagnostic as independent QC.
+        return (record=assess_calibration_qc(:ms2_mass,length(unique_ids),(NaN,NaN,NaN,NaN);
+                    min_support=2*MS2_QC_MIN_PEPTIDES, fallback=true), bins=NamedTuple[], n_peptides=length(unique_ids))
+    end
+    fold_by_id = Dict(id => mod1(i,5) for (i,id) in enumerate(unique_ids))
+    folds = [fold_by_id[id] for id in ids]
+    models = Vector{AbstractMassErrorModel}(undef,length(samples))
+    for fold in 1:5
+        train = samples[folds .!= fold]
+        diagnostic_model = fit_intensity_mass_error_model(train, model; k=Float32(model.k))
+        diagnostic_model isa IntensityMassErrorModel ||
+            return (record=assess_calibration_qc(:ms2_mass,length(unique_ids),(NaN,NaN,NaN,NaN); fallback=true),
+                    bins=NamedTuple[], n_peptides=length(unique_ids))
+        models[folds .== fold] .= Ref(diagnostic_model)
+    end
+    return ms2_calibration_diagnostics(samples, models; group_ids=ids, fallback)
 end
 
 _qc_bin(x, low, high) = high > low ? clamp(floor(Int, 10 * (x-low)/(high-low)) + 1, 1, 10) : 1
