@@ -419,12 +419,12 @@ end
     return getCorrectedMzAndBounds(m, mz, intensity)
 end
 
-const CHROMATOGRAM_MASS_TOLERANCE_SCALE = 1.25f0
+const CHROMATOGRAM_MASS_TOLERANCE_SCALE = 1.50f0
 
 """
     chromatogram_mass_error_model(model)
 
-Return a local model with 25% wider matching tolerances for chromatogram
+Return a local model with 50% wider matching tolerances for chromatogram
 integration and its Huber calibration. Preserve mass corrections and fitted
 spread parameters; leave the original search-context model unchanged.
 """
