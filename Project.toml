@@ -62,7 +62,7 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 Zstd_jll = "3161d3a3-bdf6-5164-811a-617609db77b4"
 
 [compat]
-AcceleratedKernels = "0.4.3"
+AcceleratedKernels = "0.4.3, 0.5"
 ArgParse = "1.2"
 Arrow = "2.8"
 ArrowTypes = "2.3"
