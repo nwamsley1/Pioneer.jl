@@ -159,7 +159,8 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     # ---- LightGBM: as _train_psm_classifier_with_fallback, without the whole-table matrix ----
     t_lgbm_start = time()
     lazy = DataFrame(Arrow.Table(featured); copycols = false)       # memory-mapped, read-only
-    available_features = filter(f -> hasproperty(lazy, f), collect(PRESCORE_FEATURES))
+    available_features = filter(f -> hasproperty(lazy, f),
+                                model_features(PRESCORE_FEATURES, has_ion_mobility(search_context)))
     if :num_enzymatic_termini in available_features
         et = lazy[!, :num_enzymatic_termini]; fv = isempty(et) ? nothing : first(et)
         (isempty(et) || all(v -> isequal(v, fv), et)) &&

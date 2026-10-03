@@ -723,6 +723,7 @@ function finalize_postintegration_mbr!(
     q_value_threshold::Float32,
     donor_q_threshold::Float32 = MBR_DONOR_Q_THRESHOLD,
     fdr_scale_factor::Float32,
+    ion_mobility::Bool = true,
     merged_path::String,
     pre_mbr_qval_spline = nothing,
     bitvec_rank_tables_by_file::Union{
@@ -771,7 +772,7 @@ function finalize_postintegration_mbr!(
             summary = apply_postintegration_mbr_rescoring!(frame;
                 alpha=q_value_threshold, q_value_threshold,
                 baseline_counts=(loaded.base_targets, loaded.base_decoys),
-                frame_is_candidates=true, feature_source=store)
+                frame_is_candidates=true, feature_source=store, ion_mobility)
             return loaded, frame, summary
         finally
             close(store)

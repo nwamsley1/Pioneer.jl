@@ -311,13 +311,14 @@ function _mbr_candidate_mask_kernel(
     return candidates
 end
 
-function _mbr_available_feature_sets(frame::DataFrame)
+function _mbr_available_feature_sets(frame::DataFrame; ion_mobility::Bool = true)
     true_features = Symbol[]
     false_features = [
         Symbol[] for _ in 1:MBR_N_COUNTERFACTUALS
     ]
     for feature in MBR_FTR_FEATURES_TRUE
         hasproperty(frame, feature) || continue
+        ion_mobility || !(feature in MBR_ION_MOBILITY_FEATURES) || continue
         if feature in MBR_RECEIVER_FEATURES ||
            feature in MBR_SHARED_FEATURES
             all_present = all(
@@ -1182,6 +1183,7 @@ function apply_postintegration_mbr_rescoring!(
     baseline_counts::Union{Nothing, Tuple{Int, Int}} = nothing,
     frame_is_candidates::Bool = false,
     feature_source::Union{Nothing, _MBRFeatureStore} = nothing,
+    ion_mobility::Bool = true,
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
@@ -1260,7 +1262,7 @@ function apply_postintegration_mbr_rescoring!(
         throw(ArgumentError("Stored MBR features require a candidate-only frame"))
     feature_source === nothing && _mbr_add_hellinger_contrasts!(candidates)
     true_features, false_features = _mbr_available_feature_sets(
-        feature_source === nothing ? candidates : feature_source.schema)
+        feature_source === nothing ? candidates : feature_source.schema; ion_mobility)
     @debug_l1 "MBR transfer model feature preparation: rows=$(nrow(candidates)), features=$(length(true_features)), elapsed=$(round(time() - preparation_started; digits=2))s"
     best_state, present = _mbr_semisupervised_oof(
         candidates,
