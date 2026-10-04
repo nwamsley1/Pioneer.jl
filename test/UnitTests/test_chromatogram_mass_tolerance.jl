@@ -41,8 +41,8 @@ end
             @test low <= lo <= center <= hi <= high
             # Widths are rounded to Float32 after scaling, rather than expanding
             # an already rounded interval. Allow one m/z ULP for that rounding.
-            @test abs((center - low) - 1.50f0 * (center - lo)) <= eps(center)
-            @test abs((high - center) - 1.50f0 * (hi - center)) <= eps(center)
+            @test abs((center - low) - 1.25f0 * (center - lo)) <= eps(center)
+            @test abs((high - center) - 1.25f0 * (hi - center)) <= eps(center)
         end
         @test original_fields == ntuple(i -> getfield(model, i), fieldcount(typeof(model)))
     end
@@ -50,7 +50,7 @@ end
     widened = Pioneer.chromatogram_mass_error_model(calibrated)
     for field in fieldnames(typeof(calibrated))
         expected = field in (:k, :conservative_tol_da) ?
-            getfield(calibrated, field) * 1.50f0 : getfield(calibrated, field)
+            getfield(calibrated, field) * 1.25f0 : getfield(calibrated, field)
         @test isequal(getfield(widened, field), expected)
     end
     @test Pioneer.laplace_log_density(widened, 500f0, 500.003f0, 1000f0) ==
@@ -59,7 +59,7 @@ end
     @testset "Newly accepted fragment survives the coarse lookup" begin
         mz, intensity, rt = 500f0, 1000f0, 35f0
         center, _, hi = Pioneer.getCorrectedMzAndBounds(calibrated, mz, intensity, rt)
-        target = center + 1.375f0 * (hi - center)
+        target = center + 1.125f0 * (hi - center)
         @test target > hi
         corrected, lows, highs = Float32[], Float32[], Float32[]
         width = Ref(0f0)
