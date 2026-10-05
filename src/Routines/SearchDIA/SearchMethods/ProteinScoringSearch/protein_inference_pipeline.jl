@@ -105,7 +105,7 @@ function estimate_peak_area_detection_model(df::DataFrame)
         return default_model
     end
 
-    best_peak_area_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
+    best_peak_area_by_protein_peptide = Dict{Tuple{UInt32, Bool, UInt8, UInt32}, Float64}()
 
     for i in 1:n_rows
         if df.use_for_protein_quant[i] != true
@@ -124,7 +124,7 @@ function estimate_peak_area_detection_model(df::DataFrame)
 
         target_val = Bool(df.target[i])
         entrap_val = UInt8(df.entrap_id[i])
-        key = (String(protein_name), target_val, entrap_val, UInt32(df.sequence_id[i]))
+        key = (UInt32(protein_name), target_val, entrap_val, UInt32(df.sequence_id[i]))
         if haskey(best_peak_area_by_protein_peptide, key)
             if peak_area_val > best_peak_area_by_protein_peptide[key]
                 best_peak_area_by_protein_peptide[key] = peak_area_val
@@ -141,8 +141,8 @@ function estimate_peak_area_detection_model(df::DataFrame)
     log_peak_areas = Float64[log(peak_area) for peak_area in values(best_peak_area_by_protein_peptide)]
     log_threshold = Float64(Statistics.quantile(log_peak_areas, 0.05))
 
-    protein_to_log_peak_areas = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
-    protein_to_top_log_peak_areas = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
+    protein_to_log_peak_areas = Dict{Tuple{UInt32, Bool, UInt8}, Vector{Float64}}()
+    protein_to_top_log_peak_areas = Dict{Tuple{UInt32, Bool, UInt8}, Vector{Float64}}()
     for ((protein_name, target_val, entrap_val, _), peak_area) in best_peak_area_by_protein_peptide
         protein_key = (protein_name, target_val, entrap_val)
         log_peak_area = log(peak_area)
@@ -746,22 +746,22 @@ for leave-one-run-out consensus scoring.
 """
 function _finalize_precursor_consensus(
     protein_run_votes::Dict{
-        Tuple{String, Bool, UInt8},
+        Tuple{UInt32, Bool, UInt8},
         Vector{ConsensusRunVote}
     },
-    protein_observed_run_count::Dict{Tuple{String, Bool, UInt8}, Int32}
+    protein_observed_run_count::Dict{Tuple{UInt32, Bool, UInt8}, Int32}
 )
     consensus_weight_sums =
-        Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
-    protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
+        Dict{Tuple{UInt32, Bool, UInt8, UInt32}, Float64}()
+    protein_total_vote = Dict{Tuple{UInt32, Bool, UInt8}, Float64}()
     selected_run_votes =
-        Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Vector{ConsensusRunVote}}()
     consensus_target_run_count =
-        Dict{Tuple{String, Bool, UInt8}, Int32}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Int32}()
     cached_consensus_weight_sums =
-        Dict{Tuple{String, Bool, UInt8}, Dict{UInt32, Float64}}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Dict{UInt32, Float64}}()
     cached_protein_total_vote =
-        Dict{Tuple{String, Bool, UInt8}, Float64}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Float64}()
 
     for (protein_key, run_votes) in protein_run_votes
         observed_runs = Int(get(
@@ -811,9 +811,9 @@ function _finalize_precursor_consensus(
     end
 
     relative_weight =
-        Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
+        Dict{Tuple{UInt32, Bool, UInt8, UInt32}, Float32}()
     protein_precursor_values =
-        Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Vector{Float32}}()
     for (
         (protein_name, target, entrap_id, precursor_idx),
         score_sum
@@ -833,8 +833,8 @@ function _finalize_precursor_consensus(
     end
 
     profiled_precursor_count =
-        Dict{Tuple{String, Bool, UInt8}, Int32}()
-    shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Int32}()
+    shape_strength = Dict{Tuple{UInt32, Bool, UInt8}, Float32}()
     for (protein_key, relative_weights) in protein_precursor_values
         profiled_precursor_count[protein_key] =
             Int32(length(relative_weights))
@@ -911,15 +911,15 @@ function build_precursor_consensus(
     q_value_threshold::Float32 = 0.01f0,
     protein_ambiguity_candidates::Dict{
         UInt32,
-        Vector{ProteinKey}
-    } = Dict{UInt32, Vector{ProteinKey}}()
+        Vector{PGKey}
+    } = Dict{UInt32, Vector{PGKey}}()
 )
-    protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
-    protein_observed_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    protein_run_votes = Dict{Tuple{UInt32, Bool, UInt8}, Vector{ConsensusRunVote}}()
+    protein_observed_run_count = Dict{Tuple{UInt32, Bool, UInt8}, Int32}()
     shared_protein_run_votes =
-        Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Vector{ConsensusRunVote}}()
     shared_protein_observed_run_count =
-        Dict{Tuple{String, Bool, UInt8}, Int32}()
+        Dict{Tuple{UInt32, Bool, UInt8}, Int32}()
     max_candidate_runs = _consensus_candidate_runs_to_keep(length(psm_refs))
     rollup_scratch = ProteinRollupScratch()   # reused across all groups (sequential loop)
 
@@ -931,9 +931,9 @@ function build_precursor_consensus(
         df = attach_precursor_text_ids!(load_dataframe(psm_ref), text_ids)
         prob_col = _protein_group_probability_column(df)
         run_unique_pg_score =
-            Dict{Tuple{String, Bool, UInt8}, Float32}()
+            Dict{Tuple{UInt32, Bool, UInt8}, Float32}()
 
-        for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
+        for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id]; sort = false)
             quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
             rollup = _build_protein_rollup(gdf, quant_mask, prob_col, rollup_scratch)
 
@@ -946,7 +946,7 @@ function build_precursor_consensus(
                 continue
             end
 
-            protein_name = String(protein_name_val)
+            protein_name = UInt32(protein_name_val)
             target = Bool(gdf.target[1])
             entrap_id = UInt8(gdf.entrap_id[1])
             protein_key = (protein_name, target, entrap_id)
@@ -977,7 +977,7 @@ function build_precursor_consensus(
         if !isempty(protein_ambiguity_candidates) &&
            hasproperty(df, :protein_ambiguity_id)
             shared_peak_area_by_protein = Dict{
-                Tuple{String, Bool, UInt8},
+                Tuple{UInt32, Bool, UInt8},
                 Dict{UInt32, Float32}
             }()
             ambiguity_mask =
@@ -993,7 +993,7 @@ function build_precursor_consensus(
                     candidates = get(
                         protein_ambiguity_candidates,
                         ambiguity_id,
-                        ProteinKey[]
+                        PGKey[]
                     )
                     isempty(candidates) && continue
 
@@ -1093,7 +1093,7 @@ Update the protein-to-CV-fold mapping from one annotated passing-PSM table,
 using the highest precursor score observed for each inferred protein group.
 """
 function _update_protein_cv_fold_mapping!(
-    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+    protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     df::DataFrame,
     precursors::LibraryPrecursors
 )
@@ -1104,7 +1104,7 @@ function _update_protein_cv_fold_mapping!(
 
     prob_col = _protein_group_probability_column(filtered_df)
 
-    for gdf in groupby(filtered_df, :inferred_protein_group)
+    for gdf in groupby(filtered_df, :inferred_protein_group; sort = false)
         best_score = typemin(Float32)
         best_precursor_idx = zero(UInt32)
 
@@ -1118,7 +1118,7 @@ function _update_protein_cv_fold_mapping!(
 
         best_precursor_idx == zero(UInt32) && continue
 
-        protein_name = String(gdf.inferred_protein_group[1])
+        protein_name = UInt32(gdf.inferred_protein_group[1])
         value = (best_score = best_score, cv_fold = UInt8(getCvFold(precursors, best_precursor_idx)))
         if !haskey(protein_to_cv_fold, protein_name)
             insert!(protein_to_cv_fold, protein_name, value)
@@ -1137,7 +1137,7 @@ Prepare the observed precursor peak areas and protein key used for shape scoring
 """
 function _shape_consensus_inputs(
     precursor_rows::AbstractVector,
-    protein_key::Tuple{String, Bool, UInt8},
+    protein_key::Tuple{UInt32, Bool, UInt8},
     precursor_consensus::NamedTuple
 )
     best_peak_area_by_precursor = Dict{UInt32, Float32}()
@@ -1153,7 +1153,7 @@ end
 
 function _shape_consensus_inputs(
     best_peak_area_by_precursor::AbstractDict{UInt32, <:Real},
-    protein_key::Tuple{String, Bool, UInt8},
+    protein_key::Tuple{UInt32, Bool, UInt8},
     precursor_consensus::NamedTuple
 )
     return (
@@ -1178,7 +1178,7 @@ intensity, but `tau` is still determined only by the matched consensus
 precursors.
 """
 function _active_consensus_profile(
-    protein_key::Tuple{String, Bool, UInt8},
+    protein_key::Tuple{UInt32, Bool, UInt8},
     precursor_consensus::NamedTuple;
     current_run_order::Union{Nothing, Int64} = nothing
 )
@@ -1249,7 +1249,7 @@ end
 
 function _precursor_consensus_prefix_features(
     precursor_profile,
-    protein_key::Tuple{String, Bool, UInt8},
+    protein_key::Tuple{UInt32, Bool, UInt8},
     precursor_consensus::NamedTuple;
     current_run_order::Union{Nothing, Int64} = nothing,
     min_profiled_precursors::Int = 1
@@ -1301,7 +1301,7 @@ function _precursor_consensus_prefix_features(
         )
     end
 
-    consensus_relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
+    consensus_relative_weight = Dict{Tuple{UInt32, Bool, UInt8, UInt32}, Float32}()
     consensus_precursors = active_consensus.consensus_precursors
     for precursor in consensus_precursors
         consensus_relative_weight[(shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor.first)] = precursor.second
@@ -1442,7 +1442,7 @@ function group_psms_by_protein(
 )
     if nrow(df) == 0
         return DataFrame(
-            protein_name = String[],
+            protein_name = UInt32[],
             species = String[],
             target = Bool[],
             entrap_id = UInt8[],
@@ -1465,7 +1465,7 @@ function group_psms_by_protein(
     df = df[.!ismissing.(df.inferred_protein_group), :]
     if nrow(df) == 0
         return DataFrame(
-            protein_name = String[],
+            protein_name = UInt32[],
             species = String[],
             target = Bool[],
             entrap_id = UInt8[],
@@ -1487,7 +1487,9 @@ function group_psms_by_protein(
 
     prob_col = _protein_group_probability_column(df)
     # Group by protein
-    grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
+    # sort = false: groups (and so the protein-group table rows, which the training pool samples
+    # by position) stay in first-appearance order with integer group IDs, as with names.
+    grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id]; sort = false)
 
     # Aggregate to protein groups. combine() runs the do-block multi-threaded
     # (threads=true default), so use one scratch per thread. The do-block is pure
@@ -1511,7 +1513,7 @@ function group_psms_by_protein(
         precursor_consensus_prefix_shape = 0.0f0
         if !isempty(rollup.precursor_rows)
             protein_key = (
-                String(gdf.inferred_protein_group[1]),
+                UInt32(gdf.inferred_protein_group[1]),
                 Bool(gdf.target[1]),
                 UInt8(gdf.entrap_id[1])
             )
@@ -1585,11 +1587,11 @@ candidate-specific consensus-shape scoring.
 function add_ambiguous_pg_score!(
     protein_groups::DataFrame,
     psms::DataFrame,
-    candidates_by_id::Dict{UInt32, Vector{ProteinKey}};
+    candidates_by_id::Dict{UInt32, Vector{PGKey}};
     q_value_threshold::Float32 = 0.01f0,
     shared_precursor_peak_areas::Union{
         Nothing,
-        Dict{ProteinKey, Dict{UInt32, Float32}}
+        Dict{PGKey, Dict{UInt32, Float32}}
     } = nothing
 )
     n_groups = nrow(protein_groups)
@@ -1602,11 +1604,11 @@ function add_ambiguous_pg_score!(
         return protein_groups
     end
 
-    group_row = Dict{ProteinKey, Int}()
+    group_row = Dict{PGKey, Int}()
     sizehint!(group_row, n_groups)
     @inbounds for i in 1:n_groups
-        group_row[ProteinKey(
-            String(protein_groups.protein_name[i]),
+        group_row[PGKey(
+            UInt32(protein_groups.protein_name[i]),
             Bool(protein_groups.target[i]),
             UInt8(protein_groups.entrap_id[i])
         )] = i
@@ -1621,7 +1623,7 @@ function add_ambiguous_pg_score!(
 
     for peptide_psms in groupby(ambiguous_psms, :protein_ambiguity_id)
         ambiguity_id = UInt32(peptide_psms.protein_ambiguity_id[1])
-        candidates = get(candidates_by_id, ambiguity_id, ProteinKey[])
+        candidates = get(candidates_by_id, ambiguity_id, PGKey[])
         isempty(candidates) && continue
         peptide_target = Bool(peptide_psms.target[1])
         peptide_entrap_id = UInt8(peptide_psms.entrap_id[1])
@@ -1661,8 +1663,8 @@ function add_ambiguous_pg_score!(
                 Float64(AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT)
             ambiguous_scores[row] += ambiguous_score * support / total_support
             if shared_precursor_peak_areas !== nothing
-                protein_key = ProteinKey(
-                    String(protein_groups.protein_name[row]),
+                protein_key = PGKey(
+                    UInt32(protein_groups.protein_name[row]),
                     Bool(protein_groups.target[row]),
                     UInt8(protein_groups.entrap_id[row])
                 )
@@ -1706,7 +1708,7 @@ left neutral because a singleton has no relative shape.
 function add_shared_precursor_consensus_shape!(
     protein_groups::DataFrame,
     shared_precursor_peak_areas::Dict{
-        ProteinKey,
+        PGKey,
         Dict{UInt32, Float32}
     },
     shared_precursor_consensus::NamedTuple;
@@ -1715,8 +1717,8 @@ function add_shared_precursor_consensus_shape!(
     shared_prefix_shape = zeros(Float32, nrow(protein_groups))
 
     @inbounds for row in axes(protein_groups, 1)
-        protein_key = ProteinKey(
-            String(protein_groups.protein_name[row]),
+        protein_key = PGKey(
+            UInt32(protein_groups.protein_name[row]),
             Bool(protein_groups.target[row]),
             UInt8(protein_groups.entrap_id[row])
         )
@@ -1771,7 +1773,7 @@ coverage and its detection-rate ratio remain all-peptide features.
 """
 function add_protein_features(
     protein_peptide_opportunities::Dict{
-        ProteinKey,
+        PGKey,
         ProteinPeptideOpportunityCounts
     }
 )
@@ -1792,8 +1794,8 @@ function add_protein_features(
         has_common_peptide_count = hasproperty(df, :n_common_peptides)
 
         for i in 1:n_rows
-            key = ProteinKey(
-                String(df.protein_name[i]),
+            key = PGKey(
+                UInt32(df.protein_name[i]),
                 Bool(df.target[i]),
                 UInt8(df.entrap_id[i])
             )
@@ -1937,7 +1939,8 @@ function _mbr_counterfactual_shadow_psms(
     selected_rows = Int[]
     for protein_psms in groupby(
         psms,
-        [:inferred_protein_group, :target, :entrap_id],
+        [:inferred_protein_group, :target, :entrap_id];
+        sort = false,
     )
         Bool(protein_psms.target[1]) || continue
         UInt8(protein_psms.entrap_id[1]) == zero(UInt8) || continue
@@ -2007,11 +2010,11 @@ function build_protein_group_tables(
     psm_refs::Vector{PSMFileReference},
     output_folder::String,
     protein_peptide_opportunities::Dict{
-        ProteinKey,
+        PGKey,
         ProteinPeptideOpportunityCounts
     };
     precursors::LibraryPrecursors,
-    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} = Dict{UInt32, Vector{ProteinKey}}(),
+    protein_ambiguity_candidates::Dict{UInt32, Vector{PGKey}} = Dict{UInt32, Vector{PGKey}}(),
     min_peptides::Int = 2,
     q_value_threshold::Float32 = 0.01f0
 )
@@ -2019,7 +2022,7 @@ function build_protein_group_tables(
 
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
-    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+    protein_to_cv_fold = Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
     counterfactual_shadow_protein_groups = DataFrame()
     indexed_refs = collect(enumerate(psm_refs))
 
@@ -2063,7 +2066,7 @@ function build_protein_group_tables(
         end
 
         shared_precursor_peak_areas =
-            Dict{ProteinKey, Dict{UInt32, Float32}}()
+            Dict{PGKey, Dict{UInt32, Float32}}()
         add_ambiguous_pg_score!(
             protein_groups_df,
             updated_psms,
@@ -2100,7 +2103,7 @@ function build_protein_group_tables(
             end
 
             shadow_shared_precursor_peak_areas =
-                Dict{ProteinKey, Dict{UInt32, Float32}}()
+                Dict{PGKey, Dict{UInt32, Float32}}()
             add_ambiguous_pg_score!(
                 shadow_groups,
                 shadow_psms,

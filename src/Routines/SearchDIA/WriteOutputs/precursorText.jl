@@ -53,10 +53,21 @@ function precursor_text_column(text::PrecursorOutputText, name::Symbol,
 end
 
 """
+    protein_group_name_column(text, groups) -> Vector{Union{Missing, String}}
+
+`:inferred_protein_group` as names: `pg_id`s are looked up; a column of names is returned as is.
+"""
+function protein_group_name_column(text::PrecursorOutputText, groups::AbstractVector)
+    nonmissingtype(eltype(groups)) <: AbstractString && return groups
+    names = text.protein_group_names
+    return Union{Missing, String}[ismissing(g) ? missing : names[g] for g in groups]
+end
+
+"""
     with_precursor_text(cols::NamedTuple, text) -> NamedTuple
 
 Insert the text columns into a precursor column table: `accession_numbers` and `species` just
-before `:peak_area_normalized`, the rest just after it.
+before `:peak_area_normalized`, the rest just after it. `:inferred_protein_group` becomes names.
 """
 function with_precursor_text(cols::NamedTuple, text::PrecursorOutputText)
     haskey(cols, :peak_area_normalized) ||
@@ -75,6 +86,8 @@ function with_precursor_text(cols::NamedTuple, text::PrecursorOutputText)
             for t in PRECURSOR_TEXT_COLUMNS_AFTER_NORMALIZED
                 push!(names, t); push!(values, text_col(t))
             end
+        elseif name === :inferred_protein_group
+            push!(names, name); push!(values, protein_group_name_column(text, col))
         else
             push!(names, name); push!(values, col)
         end

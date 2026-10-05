@@ -22,6 +22,7 @@ using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!
 using Pioneer: getHigh, Counter, IndexFragment
 using Pioneer: UniformSpline
 using Pioneer: ProteinKey, PeptideKey, InferenceResult
+using Pioneer: StringGroupNames, ProteinGroupRegistry, group_members, merge_group, group_isless
 using Pioneer: PeptideMod, matchVarMods, add_pair_indices!
 using Pioneer: digest_sequence, normalize_digest_specificity
 using Pioneer: getFixedMods!, countVarModCombinations

@@ -17,7 +17,7 @@ end
 @testset "Counterfactual protein training controls" begin
     @testset "one hardest shadow PSM is selected only for target MBR-only proteins" begin
         psms = DataFrame(
-            inferred_protein_group = ["P1", "P1", "P2", "P2", "D1"],
+            inferred_protein_group = UInt32[1, 1, 2, 2, 3],   # P1, P2, D1
             target = Bool[true, true, true, true, false],
             entrap_id = zeros(UInt8, 5),
             use_for_protein_quant = trues(5),
@@ -32,7 +32,7 @@ end
 
         shadows = Pioneer._mbr_counterfactual_shadow_psms(psms)
         @test nrow(shadows) == 1
-        @test shadows.inferred_protein_group == ["P1"]
+        @test shadows.inferred_protein_group == UInt32[1]
         @test shadows.precursor_idx == UInt32[2]
         @test shadows.prec_prob == Float32[0.7]
     end
@@ -69,7 +69,7 @@ end
 @testset "ProteinScoring MBR feature rollup" begin
     @testset "MBR recovered support becomes run-level protein features" begin
         psms = DataFrame(
-            inferred_protein_group = ["P_MBR", "P_MBR"],
+            inferred_protein_group = UInt32[1, 1],
             species_id = UInt32[1, 1],
             target = Bool[true, true],
             entrap_id = UInt8[0, 0],
@@ -104,7 +104,7 @@ end
 
     @testset "Mixed support tracks retained MBR evidence without changing pg_score input" begin
         psms = DataFrame(
-            inferred_protein_group = ["P_MIXED", "P_MIXED"],
+            inferred_protein_group = UInt32[1, 1],
             species_id = UInt32[1, 1],
             target = Bool[true, true],
             entrap_id = UInt8[0, 0],
@@ -151,7 +151,7 @@ end
 
     @testset "Non-MBR peptide count deduplicates sequences independently" begin
         psms = DataFrame(
-            inferred_protein_group = fill("P_OVERLAP", 3),
+            inferred_protein_group = fill(UInt32(1), 3),
             species_id = ones(UInt32, 3),
             target = trues(3),
             entrap_id = zeros(UInt8, 3),
@@ -200,8 +200,7 @@ end
 
     @testset "common peptide evidence uses specificity, cleavage, and variable modifications" begin
         psms = DataFrame(
-            inferred_protein_group =
-                ["P_SEMI", "P_FULL", "P_MISSED", "P_VARIABLE"],
+            inferred_protein_group = UInt32[4, 1, 2, 3],   # P_SEMI, P_FULL, P_MISSED, P_VARIABLE
             species_id = ones(UInt32, 4),
             target = trues(4),
             entrap_id = zeros(UInt8, 4),
@@ -227,8 +226,9 @@ end
                 _empty_precursor_consensus_for_mbr_feature_tests(),
             q_value_threshold = 0.01f0,
         )
+        pg_names = ["P_FULL", "P_MISSED", "P_VARIABLE", "P_SEMI"]
         common_by_protein = Dict(
-            String(row.protein_name) => Bool(row.any_common_peps)
+            pg_names[row.protein_name] => Bool(row.any_common_peps)
             for row in eachrow(protein_groups)
         )
 
@@ -237,12 +237,12 @@ end
         @test !common_by_protein["P_MISSED"]
         @test !common_by_protein["P_VARIABLE"]
 
-        full_row = only(eachrow(protein_groups[protein_groups.protein_name .== "P_FULL", :]))
+        full_row = only(eachrow(protein_groups[pg_names[protein_groups.protein_name] .== "P_FULL", :]))
         @test full_row.n_common_peptides == 1
         @test full_row.common_peptide_list == UInt32[1]  # FULLPEP
         for protein_name in ("P_SEMI", "P_MISSED", "P_VARIABLE")
             row = only(eachrow(
-                protein_groups[protein_groups.protein_name .== protein_name, :]
+                protein_groups[pg_names[protein_groups.protein_name] .== protein_name, :]
             ))
             @test row.n_common_peptides == 0
             @test isempty(row.common_peptide_list)

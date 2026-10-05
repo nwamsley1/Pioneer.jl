@@ -689,6 +689,10 @@ function writePrecursorCSV_chunked(
                         precursors_long[!, col] = precursor_text_column(
                             text, col, chunk_tbl.precursor_idx, chunk_tbl.ms_file_idx)
                     end
+                    if hasproperty(precursors_long, :inferred_protein_group)
+                        precursors_long[!, :inferred_protein_group] = protein_group_name_column(
+                            text, precursors_long.inferred_protein_group)
+                    end
                     if :num_enzymatic_termini in requested_cols &&
                        !hasproperty(precursors_long, :num_enzymatic_termini)
                         # Resume/output compatibility for chunks written before

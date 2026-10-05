@@ -16,12 +16,18 @@ among the library's distinct values in `String` sort order, so sorting IDs sorts
 - `sequence_id`: the peptide sequence.
 - `mods_id`: the `(structural_mods, isotopic_mods)` pair, with `missing` equal to `""`.
 - `species_id` / `species_names`: the canonical species string (`_canonical_species`).
+- `accession_set_id`: the `accession_numbers` string. `accession_set_members[id]` lists its
+  `;`-separated accessions, sorted and without duplicates, as IDs into `accession_names`
+  (the distinct accessions, sorted).
 """
 struct PrecursorTextIds
     sequence_id::Vector{UInt32}
     mods_id::Vector{UInt32}
     species_id::Vector{UInt32}
     species_names::Vector{String}
+    accession_set_id::Vector{UInt32}
+    accession_set_members::Vector{Vector{UInt32}}
+    accession_names::Vector{String}
 end
 
 struct StandardLibraryPrecursors <: LibraryPrecursors
@@ -219,23 +225,34 @@ function getPrecursorTextIds(lp::StandardLibraryPrecursors)
     canonical = Dict{Union{Missing, String}, String}()
     species = [get!(() -> _canonical_species(p), canonical, p) for p in getProteomeIdentifiers(lp)]
     species_id, species_names = _rank_ids(species, String)
-    lp.text_ids[] = PrecursorTextIds(sequence_id, mods_id, species_id, species_names)
+    accession_set_id, accession_sets = _rank_ids(getAccessionNumbers(lp), String)
+    accession_names = sort!(unique!(String[a for set in accession_sets for a in split(set, ';')]))
+    accession_rank = Dict(name => UInt32(i) for (i, name) in enumerate(accession_names))
+    accession_set_members = [sort!(unique!(UInt32[accession_rank[a] for a in split(set, ';')]))
+                             for set in accession_sets]
+    lp.text_ids[] = PrecursorTextIds(sequence_id, mods_id, species_id, species_names,
+                                     accession_set_id, accession_set_members, accession_names)
     return lp.text_ids[]
 end
 
 """
-    PrecursorOutputText(precursors, file_names)
+    PrecursorOutputText(precursors, file_names, protein_group_names = String[])
 
-The lookups needed to put library text back on precursor output rows.
+The lookups needed to put text back on precursor output rows: library text by
+`:precursor_idx`, file names by `:ms_file_idx`, and protein-group names by the `pg_id` in
+`:inferred_protein_group`.
 """
 struct PrecursorOutputText{P<:LibraryPrecursors}
     precursors::P
     text_ids::PrecursorTextIds
     file_names::Vector{String}
+    protein_group_names::Vector{String}
 end
 
-PrecursorOutputText(precursors::LibraryPrecursors, file_names::AbstractVector{<:AbstractString}) =
-    PrecursorOutputText(precursors, getPrecursorTextIds(precursors), String.(file_names))
+PrecursorOutputText(precursors::LibraryPrecursors, file_names::AbstractVector{<:AbstractString},
+                    protein_group_names::AbstractVector{<:AbstractString} = String[]) =
+    PrecursorOutputText(precursors, getPrecursorTextIds(precursors), String.(file_names),
+                        String.(protein_group_names))
 
 const PRECURSOR_TEXT_COLUMNS_BEFORE_NORMALIZED = (:accession_numbers, :species)
 const PRECURSOR_TEXT_COLUMNS_AFTER_NORMALIZED =

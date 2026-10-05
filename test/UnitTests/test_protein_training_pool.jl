@@ -7,7 +7,7 @@ end
 
 function protein_pool_test_rows(n)
     df = DataFrame(
-        protein_name = ["P$i" for i in 1:n],
+        protein_name = UInt32.(1:n),   # pg_ids
         target = isodd.(1:n),
         n_non_mbr_peptides = fill(Int64(2), n),
         species = fill("TEST", n),
@@ -138,7 +138,7 @@ end
     @testset "production path exceeds the previous limit and retains fallback" begin
         mktempdir() do dir
             actual = protein_pool_test_rows(100_001)
-            actual.protein_name .= "P1"
+            actual.protein_name .= UInt32(1)
             actual.target .= true
             actual.pg_score .= 2.0f0
             refs = protein_pool_test_refs(dir, actual, [1:50_000, 50_001:100_001])

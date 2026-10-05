@@ -289,7 +289,10 @@ function summarize_results!(
         :min_peptides => params.min_peptides
     ))
 
-    precursor_text = PrecursorOutputText(precursors, all_file_names)
+    inference_results = get_results(search_context, ProteinInferenceSearch)
+    protein_group_names = inference_results isa ProteinInferenceSearchResults ?
+        inference_results.protein_group_names : String[]
+    precursor_text = PrecursorOutputText(precursors, all_file_names, protein_group_names)
 
     # Chunked precursor CSV writing (bounded memory per chunk)
     @user_info "Writing precursor tables..."
@@ -330,7 +333,8 @@ function summarize_results!(
         build_accession_to_species(precursors),
         output_schema_policy = output_schema_policy,
         batch_size = params.batch_size,
-        quantification_method = params.quantification_method
+        quantification_method = params.quantification_method,
+        protein_group_names = protein_group_names
     )
     chunk_paths = [file_path(ref) for ref in chunk_refs]
 

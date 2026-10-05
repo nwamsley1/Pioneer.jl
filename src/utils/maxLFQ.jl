@@ -734,6 +734,10 @@ function build_accession_to_species(precursors)
     return accession_to_species
 end
 
+# :inferred_protein_group holds a pg_id (an index into the protein-group names) or a name.
+_protein_group_name(::Vector{String}, name::AbstractString) = String(name)
+_protein_group_name(names::Vector{String}, pg_id::Integer) = names[pg_id]
+
 # FileReference-based implementation with TransformPipeline preprocessing
 function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
@@ -747,6 +751,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
             quantification_method::Symbol = :maxlfq,
             batch_size = 100000,
+            protein_group_names::Vector{String} = String[],
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
     
     # Use eager DataFrame loading (allows editing for filtering)
@@ -801,9 +806,11 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         # single-species string. Keying on :species would split a single
         # inferred protein group into per-species rows. Aggregate the species
         # union below instead.
+        # sort = false keeps first-appearance group order whether the group is a name or a pg_id.
         gpsms = groupby(
             subdf,
-            [:target, :entrapment_group_id, :inferred_protein_group]
+            [:target, :entrapment_group_id, :inferred_protein_group];
+            sort = false
         )
         group_run_counts = [length(unique(data.ms_file_idx)) for data in gpsms]
         nrows = sum(group_run_counts)
@@ -835,8 +842,9 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             # human homolog), which would mislabel the group's organism. The
             # inferred_protein_group is the parsimonious accession set; its
             # species union is the species union of those accessions only.
+            protein_name = _protein_group_name(protein_group_names, protein[:inferred_protein_group])
             species_set = Set{String}()
-            for acc in split(String(protein[:inferred_protein_group]), ';')
+            for acc in split(protein_name, ';')
                 isempty(acc) && continue
                 sp = get(accession_to_species, String(acc), "")
                 isempty(sp) && continue
@@ -844,7 +852,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             end
             species_agg = join(sort!(collect(species_set)), ';')
 
-            getProtAbundance(protein[:inferred_protein_group],
+            getProtAbundance(protein_name,
                                 output_row,
                                 protein[:target],
                                 protein[:entrapment_group_id],
@@ -957,7 +965,8 @@ function LFQ_chunked(
     accession_to_species::Dict{String, String};
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     batch_size::Int = 100000,
-    quantification_method::Symbol = :maxlfq
+    quantification_method::Symbol = :maxlfq,
+    protein_group_names::Vector{String} = String[]
 )
     n_chunks = length(chunk_refs)
     # Skip progress bar when there's only one chunk — ProgressBars shows
@@ -976,7 +985,8 @@ function LFQ_chunked(
                 accession_to_species;
                 output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref,
-                quantification_method=quantification_method)
+                quantification_method=quantification_method,
+                protein_group_names=protein_group_names)
             pbar !== nothing && update(pbar)
         end
     finally
