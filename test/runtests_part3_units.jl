@@ -65,6 +65,7 @@ include("./utils/FileOperations/core/test_core_references_basic.jl")
 include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 include("./utils/FileOperations/streaming/test_persistent_merge_writer.jl")
 include("./utils/FileOperations/streaming/test_merge_column_gather.jl")
+include("./UnitTests/test_mbr_staged_selection.jl")
 
 # Partitioned fragment index tests
 include("./UnitTests/partitionedFragmentIndex.jl")
