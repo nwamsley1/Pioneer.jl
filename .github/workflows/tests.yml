@@ -7,7 +7,12 @@ on:
       - develop
     tags:
       - 'v*.*.*'
+    # Markdown-only commits (README, notes) cannot change test results. Tag pushes ignore path filters.
+    paths-ignore:
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
 
 concurrency:

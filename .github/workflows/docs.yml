@@ -7,7 +7,12 @@ on:
       - develop
     tags:
       - 'v*'
+    # The docs are built from docs/ (Markdown included), so only the README is ignored. Tag pushes ignore path filters.
+    paths-ignore:
+      - 'README.md'
   pull_request:
+    paths-ignore:
+      - 'README.md'
   workflow_dispatch:
 
 concurrency:
