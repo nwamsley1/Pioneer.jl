@@ -51,158 +51,54 @@ function _create_empty_dataframe(table::Arrow.Table, n_rows::Int)
     return df
 end
 
-# Type-stable fillColumn! implementations
-"""
-Specialized fillColumn! for numeric types (Float32, Float64, Int32, etc.)
-"""
-function fillColumn!(
-    batch_col::Vector{T},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-) where {T<:Real}
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::T
-    end
-end
-
-"""
-Specialized fillColumn! for nullable numeric types
-"""
-function fillColumn!(
-    batch_col::Vector{Union{Missing, T}},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-) where {T<:Real}
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Union{Missing, T}
-    end
-end
-
-"""
-Specialized fillColumn! for String types
-"""
-function fillColumn!(
-    batch_col::Vector{String},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-)
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::String
-    end
-end
-
-"""
-Specialized fillColumn! for nullable String types
-"""
-function fillColumn!(
-    batch_col::Vector{Union{Missing, String}},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-)
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Union{Missing, String}
-    end
-end
-
-"""
-Specialized fillColumn! for Boolean types
-"""
-function fillColumn!(
-    batch_col::Vector{Bool},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-)
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Bool
-    end
-end
-
-"""
-Specialized fillColumn! for UInt8 types (common for entrapment_group_id)
-"""
-function fillColumn!(
-    batch_col::Vector{UInt8},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-)
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::UInt8
-    end
-end
-
-"""
-Specialized fillColumn! for Tuple types
-"""
-function fillColumn!(
-    batch_col::Vector{Tuple{R,R}},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-) where {R<:Real}
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]::Tuple{R,R}
-    end
-end
-
-"""
-Specialized fillColumn! for AbstractArray types (handles List columns with array elements).
-This handles columns where each row contains an array (e.g., SubArray{Float32, ...}).
-No type assertion needed - Julia's dispatch ensures type safety.
-"""
-function fillColumn!(
-    batch_col::Vector{A},
-    col::Symbol,
-    sorted_tuples::Vector{Tuple{Int64, Int64}},
-    tables::Vector{Arrow.Table},
-    n_rows::Int
-) where {A<:AbstractArray}
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        batch_col[i] = tables[table_idx][col][row_idx]
-    end
-end
-
-# Generic fillColumn! implementations (fallback)
-function _fillColumn!(col::Vector{T}, col_symbol::Symbol, 
-                     sorted_tuples::Vector{Tuple{Int64, Int64}},
-                     tables::Vector{Arrow.Table}, n_rows::Int) where T
-    for i in 1:n_rows
-        table_idx, row_idx = sorted_tuples[i]
-        col[i] = Tables.getcolumn(tables[table_idx], col_symbol)[row_idx]
-    end
-end
-
-# Fill batch columns from sorted tuples (type-stable version)
+# Fill batch columns from sorted (table, row) locations.
+#
+# Each column is looked up once per batch for every input table, then gathered in a function
+# specialised on the concrete column types. Looking the column up by name inside the row loop
+# (one Symbol lookup, an untyped read and a boxed value per cell) made the merge ~3x slower and
+# allocate ~3x more.
 function _fill_batch_columns_nkey!(
-    batch_df::DataFrame, 
-    tables::Vector{Arrow.Table}, 
-    sorted_tuples::Vector{Tuple{Int64, Int64}}, 
+    batch_df::DataFrame,
+    tables::Vector{Arrow.Table},
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
     n_rows::Int
 )
     for col_name in names(batch_df)
         col_symbol = Symbol(col_name)
-        fillColumn!(batch_df[!, col_symbol], col_symbol, sorted_tuples, tables, n_rows)
+        # Concretely typed when every input stores the column with the same Arrow array type.
+        sources = map(table -> Tables.getcolumn(table, col_symbol), tables)
+        _gather_column!(batch_df[!, col_symbol], sources, sorted_tuples, n_rows)
     end
+    return batch_df
+end
+
+# Function barrier: one specialisation per (batch column, source column) type pair.
+function _gather_column!(
+    dest::AbstractVector,
+    sources::AbstractVector,
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
+    n_rows::Int
+)
+    _check_gather_types(dest, sources)
+    @inbounds for i in 1:n_rows
+        table_idx, row_idx = sorted_tuples[i]
+        dest[i] = sources[table_idx][row_idx]
+    end
+    return dest
+end
+
+# Keep a mismatched input an error, as the per-cell type assertions did, rather than letting
+# assignment convert it (e.g. Float64 into a Float32 batch column). A nullable source may feed a
+# non-nullable batch column: an actual `missing` value still fails on assignment.
+function _check_gather_types(dest::AbstractVector, sources::AbstractVector)
+    T = eltype(dest)
+    for source in sources
+        S = eltype(source)
+        # List columns: Arrow yields views of the batch's array type.
+        (nonmissingtype(S) <: nonmissingtype(T) || (T <: AbstractArray && S <: AbstractArray)) ||
+            throw(ArgumentError("Merge input column type $S does not match the batch column type $T"))
+    end
+    return nothing
 end
 
 #==========================================================
@@ -786,6 +682,8 @@ function _stream_sorted_merge_chunked_impl(
     total_source_rows = sum(table_sizes)
     estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes / total_source_rows : 0.0
     table_indices = ones(Int64, length(tables))
+    # Looked up once per merge, not by name for every row.
+    group_columns = map(table -> Tables.getcolumn(table, group_key), tables)
 
     batch_df = create_typed_dataframe(first(tables), batch_size)
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
@@ -819,7 +717,7 @@ function _stream_sorted_merge_chunked_impl(
             src_table_idx = heap_entry[end]
             src_row_idx = table_indices[src_table_idx]
 
-            row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
+            row_group = group_columns[src_table_idx][src_row_idx]
             if ismissing(row_group)
                 rows_with_missing_group += 1
             end
