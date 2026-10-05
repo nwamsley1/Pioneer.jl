@@ -142,6 +142,23 @@ pub struct Spec {
     pub threads: u32,
 }
 
+/// Pioneer's thread ceiling. Must match MAX_THREADS in the `pioneer` and
+/// `pioneer.bat` wrappers.
+pub const MAX_THREADS: u32 = 24;
+
+/// Clamp a requested thread count to [`MAX_THREADS`], with the warning to log
+/// when it had to be lowered.
+pub fn cap_threads(requested: u32) -> (u32, Option<String>) {
+    if requested > MAX_THREADS {
+        let msg = format!(
+            "Warning: Pioneer uses at most {MAX_THREADS} threads. {requested} were requested, so only {MAX_THREADS} threads were used."
+        );
+        (MAX_THREADS, Some(msg))
+    } else {
+        (requested, None)
+    }
+}
+
 /// Where the params file for a job is written.
 ///
 /// Kept after the run rather than deleted — it is the exact input Pioneer saw,
@@ -168,6 +185,8 @@ pub struct Started {
     /// The environment we actually set, so the log shows what ran rather than
     /// the frontend guessing at the same formula.
     pub env_summary: String,
+    /// Set when the requested thread count was above [`MAX_THREADS`].
+    pub thread_warning: Option<String>,
 }
 
 /// Spawn the job and stream its output as events.
@@ -208,19 +227,22 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     // JULIA_NUM_THREADS a direct bin/SearchDIA call defaults to a single thread.
     let mut env_summary = String::new();
     let mut envs: Vec<(String, String)> = Vec::new();
+    let mut thread_warning = None;
     if spec.command.is_julia() && !resolved.via_wrapper {
+        let (threads, warning) = cap_threads(spec.threads);
+        thread_warning = warning;
         // `JULIA_NUM_GC_THREADS` is the variable Julia actually reads — it is
         // the env form of `--gcthreads=N,M` (N marking, M concurrent sweeper).
         // `JULIA_GC_THREADS` is not a Julia variable and is silently ignored,
         // which leaves GC threads defaulting to the full worker count.
         // Matches the `pioneer` wrapper's own formula, `(threads + 1) / 2`,
         // i.e. ceil rather than floor — so the GUI and the shell script agree.
-        let gc = format!("{},1", ((spec.threads + 1) / 2).max(1));
-        envs.push(("JULIA_NUM_THREADS".into(), spec.threads.to_string()));
+        let gc = format!("{},1", ((threads + 1) / 2).max(1));
+        envs.push(("JULIA_NUM_THREADS".into(), threads.to_string()));
         envs.push(("JULIA_NUM_GC_THREADS".into(), gc.clone()));
         env_summary = format!(
             "JULIA_NUM_THREADS={} JULIA_NUM_GC_THREADS={}",
-            spec.threads, gc
+            threads, gc
         );
     }
 
@@ -331,7 +353,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
         let _ = app.emit("job-exit", event);
     });
 
-    Ok(Started { params_path: params_display, env_summary })
+    Ok(Started { params_path: params_display, env_summary, thread_warning })
 }
 
 /// Build and spawn one step of a job.
@@ -575,6 +597,18 @@ impl LineSplitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_count_is_capped_at_the_maximum() {
+        assert_eq!(cap_threads(1), (1, None));
+        assert_eq!(cap_threads(MAX_THREADS), (MAX_THREADS, None));
+        let (n, warning) = cap_threads(32);
+        assert_eq!(n, MAX_THREADS);
+        assert_eq!(
+            warning.as_deref(),
+            Some("Warning: Pioneer uses at most 24 threads. 32 were requested, so only 24 threads were used.")
+        );
+    }
 
     /// Feed bytes through the splitter and apply the frontend's replace rule,
     /// returning what the log pane would end up showing.

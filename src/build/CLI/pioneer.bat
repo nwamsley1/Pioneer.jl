@@ -112,7 +112,7 @@ echo.
 echo Usage: pioneer [options] ^<subcommand^> [subcommand-args...]
 echo.
 echo Options:
-echo   --threads N        Set number of Julia threads (default: auto)
+echo   --threads N        Set number of Julia threads (default: auto, at most 24)
 echo   --threads=N        Alternative syntax for setting threads
 echo   --help, -h         Show this help message
 echo   --version, -V      Show Pioneer version
@@ -181,6 +181,13 @@ if "%JULIA_NUM_THREADS%"=="auto" (
     set /a _THREAD_COUNT=%NUMBER_OF_PROCESSORS%
 ) else (
     set /a _THREAD_COUNT=%JULIA_NUM_THREADS%
+)
+rem Pioneer's thread ceiling (matches MAX_THREADS in the pioneer script and the GUI)
+set MAX_THREADS=24
+if %_THREAD_COUNT% GTR %MAX_THREADS% (
+    echo Warning: Pioneer uses at most %MAX_THREADS% threads. %_THREAD_COUNT% were requested, so only %MAX_THREADS% threads were used. 1>&2
+    set _THREAD_COUNT=%MAX_THREADS%
+    set JULIA_NUM_THREADS=%MAX_THREADS%
 )
 set /a _GC_MARK_THREADS=(_THREAD_COUNT + 1) / 2
 if %_GC_MARK_THREADS% LSS 1 set _GC_MARK_THREADS=1

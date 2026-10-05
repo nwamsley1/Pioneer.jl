@@ -9,6 +9,7 @@
  *  scroll position and gives each control exactly one home.
  */
 import type React from 'react'
+import { MAX_THREADS } from '../lib/backend'
 
 export interface TopBarProps {
   /** ConvertRAW has no thread control: PioneerConverter takes its own flag. */
@@ -122,7 +123,7 @@ export function TopBar({
                 if (!digits) return onThreads(0)
                 onThreads(Math.max(1, Math.min(maxThreads, parseInt(digits, 10))))
               }}
-              title={`${maxThreads} available · max ${maxThreads}`}
+              title={`${maxThreads} available · Pioneer uses at most ${MAX_THREADS}`}
               style={{
                 width: 40,
                 textAlign: 'center',

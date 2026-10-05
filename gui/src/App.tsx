@@ -418,9 +418,10 @@ export default function App() {
       .cpuCount()
       .then((n) => {
         setMaxThreads(n)
-        // Default to all cores but one, leaving the machine usable. A value
-        // already restored from disk wins, clamped to what this machine has.
-        setThreads((t) => (t > 0 ? Math.min(t, n) : Math.max(1, n - 1)))
+        // Default to all cores but one, leaving the machine usable, and no
+        // more than Pioneer's 24-thread cap. A value already restored from
+        // disk wins, clamped to what this machine has.
+        setThreads((t) => (t > 0 ? Math.min(t, n) : Math.max(1, Math.min(n - 1, backend.MAX_THREADS))))
       })
       .catch(() => setThreads((t) => (t > 0 ? t : 1)))
 
@@ -982,7 +983,7 @@ export default function App() {
 
     backend
       .startJob(next.id, backendCmd, next.invocation, next.threads)
-      .then(({ params_path, env_summary }) => {
+      .then(({ params_path, env_summary, thread_warning }) => {
         setJobs((prev) =>
           prev.map((j) =>
             j.id === next.id
@@ -991,6 +992,7 @@ export default function App() {
                   paramsPath: params_path,
                   logLines: [
                     ...j.logLines,
+                    ...(thread_warning ? [appLine(thread_warning)] : []),
                     ...(env_summary ? [appLine(env_summary)] : []),
                     appLine(`params: ${params_path}`),
                   ],

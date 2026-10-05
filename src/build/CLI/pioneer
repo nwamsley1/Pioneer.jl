@@ -59,7 +59,7 @@ show_help() {
     echo "Usage: pioneer [options] <subcommand> [subcommand-args...]"
     echo ""
     echo "Options:"
-    echo "  --threads N        Set number of Julia threads (default: auto)"
+    echo "  --threads N        Set number of Julia threads (default: auto, at most 24)"
     echo "  --threads=N        Alternative syntax for setting threads"
     echo "  --help, -h         Show this help message"
     echo "  --version, -V      Show Pioneer version"
@@ -182,6 +182,13 @@ else
     else
         _THREAD_COUNT=1
     fi
+fi
+# Pioneer's thread ceiling (matches MAX_THREADS in pioneer.bat and the GUI)
+MAX_THREADS=24
+if [ "$_THREAD_COUNT" -gt "$MAX_THREADS" ]; then
+    echo "Warning: Pioneer uses at most $MAX_THREADS threads. $_THREAD_COUNT were requested, so only $MAX_THREADS threads were used." >&2
+    _THREAD_COUNT=$MAX_THREADS
+    export JULIA_NUM_THREADS=$MAX_THREADS
 fi
 _GC_MARK_THREADS=$(( (_THREAD_COUNT + 1) / 2 ))
 if [ "$_GC_MARK_THREADS" -lt 1 ]; then

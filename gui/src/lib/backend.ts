@@ -80,10 +80,15 @@ export const listArrowFiles = (dir: string): Promise<string[]> =>
 export const listSpecLibs = (repo?: string): Promise<string> =>
   invoke('list_spec_libs', { repo: repo ?? null })
 
+/** Pioneer's thread ceiling; the backend clamps to it (runner.rs MAX_THREADS). */
+export const MAX_THREADS = 24
+
 export interface Started {
   params_path: string
   /** The environment the backend actually set, for the log header. */
   env_summary: string
+  /** Set when the requested thread count was above Pioneer's 24-thread cap. */
+  thread_warning: string | null
 }
 
 export const startJob = (
