@@ -70,7 +70,7 @@ end
     @testset "MBR recovered support becomes run-level protein features" begin
         psms = DataFrame(
             inferred_protein_group = ["P_MBR", "P_MBR"],
-            species = ["YEAST", "YEAST"],
+            species_id = UInt32[1, 1],
             target = Bool[true, true],
             entrap_id = UInt8[0, 0],
             use_for_protein_quant = Bool[true, true],
@@ -80,7 +80,8 @@ end
             prec_prob = Float32[0.12, 0.15],
             peak_area = Float32[1000.0, 800.0],
             base_pep_id = UInt32[101, 102],
-            sequence = ["PEPTIDEA", "PEPTIDEB"],
+            sequence_id = UInt32[1, 2],  # PEPTIDEA, PEPTIDEB
+            mods_id = ones(UInt32, 2),
             missed_cleavage = Int64[0, 0],
             Mox = Int64[0, 0],
             mbr_recovered = Bool[true, true],
@@ -104,7 +105,7 @@ end
     @testset "Mixed support tracks retained MBR evidence without changing pg_score input" begin
         psms = DataFrame(
             inferred_protein_group = ["P_MIXED", "P_MIXED"],
-            species = ["YEAST", "YEAST"],
+            species_id = UInt32[1, 1],
             target = Bool[true, true],
             entrap_id = UInt8[0, 0],
             use_for_protein_quant = Bool[true, true],
@@ -114,7 +115,8 @@ end
             prec_prob = Float32[0.20, 0.80],
             peak_area = Float32[500.0, 1500.0],
             base_pep_id = UInt32[201, 202],
-            sequence = ["PEPTIDEC", "PEPTIDED"],
+            sequence_id = UInt32[1, 2],  # PEPTIDEC, PEPTIDED
+            mods_id = ones(UInt32, 2),
             missed_cleavage = Int64[0, 0],
             Mox = Int64[0, 0],
             mbr_recovered = Bool[true, false],
@@ -150,7 +152,7 @@ end
     @testset "Non-MBR peptide count deduplicates sequences independently" begin
         psms = DataFrame(
             inferred_protein_group = fill("P_OVERLAP", 3),
-            species = fill("YEAST", 3),
+            species_id = ones(UInt32, 3),
             target = trues(3),
             entrap_id = zeros(UInt8, 3),
             use_for_protein_quant = trues(3),
@@ -160,7 +162,8 @@ end
             prec_prob = Float32[0.20, 0.30, 0.40],
             peak_area = Float32[500.0, 750.0, 1000.0],
             base_pep_id = UInt32[301, 301, 302],
-            sequence = ["PEPTIDEE", "PEPTIDEE", "PEPTIDEF"],
+            sequence_id = UInt32[1, 1, 2],  # PEPTIDEE, PEPTIDEE, PEPTIDEF
+            mods_id = ones(UInt32, 3),
             missed_cleavage = zeros(Int64, 3),
             Mox = zeros(Int64, 3),
             mbr_recovered = Bool[true, false, true],
@@ -199,7 +202,7 @@ end
         psms = DataFrame(
             inferred_protein_group =
                 ["P_SEMI", "P_FULL", "P_MISSED", "P_VARIABLE"],
-            species = fill("YEAST", 4),
+            species_id = ones(UInt32, 4),
             target = trues(4),
             entrap_id = zeros(UInt8, 4),
             use_for_protein_quant = trues(4),
@@ -209,7 +212,8 @@ end
             prec_prob = fill(0.9f0, 4),
             peak_area = fill(1000.0f0, 4),
             base_pep_id = UInt32[401, 402, 403, 404],
-            sequence = ["SEMIPEP", "FULLPEP", "MISSEDPEP", "PHOSPEP"],
+            sequence_id = UInt32[4, 1, 2, 3],  # SEMIPEP, FULLPEP, MISSEDPEP, PHOSPEP
+            mods_id = ones(UInt32, 4),
             missed_cleavage = Int64[0, 0, 1, 0],
             num_enzymatic_termini = UInt8[1, 2, 2, 2],
             num_variable_modifications = UInt8[0, 0, 0, 1],
@@ -235,7 +239,7 @@ end
 
         full_row = only(eachrow(protein_groups[protein_groups.protein_name .== "P_FULL", :]))
         @test full_row.n_common_peptides == 1
-        @test full_row.common_peptide_list == "FULLPEP"
+        @test full_row.common_peptide_list == UInt32[1]  # FULLPEP
         for protein_name in ("P_SEMI", "P_MISSED", "P_VARIABLE")
             row = only(eachrow(
                 protein_groups[protein_groups.protein_name .== protein_name, :]

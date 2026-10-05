@@ -105,7 +105,7 @@ function estimate_peak_area_detection_model(df::DataFrame)
         return default_model
     end
 
-    best_peak_area_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, String}, Float64}()
+    best_peak_area_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
 
     for i in 1:n_rows
         if df.use_for_protein_quant[i] != true
@@ -124,7 +124,7 @@ function estimate_peak_area_detection_model(df::DataFrame)
 
         target_val = Bool(df.target[i])
         entrap_val = UInt8(df.entrap_id[i])
-        key = (String(protein_name), target_val, entrap_val, String(df.sequence[i]))
+        key = (String(protein_name), target_val, entrap_val, UInt32(df.sequence_id[i]))
         if haskey(best_peak_area_by_protein_peptide, key)
             if peak_area_val > best_peak_area_by_protein_peptide[key]
                 best_peak_area_by_protein_peptide[key] = peak_area_val
@@ -309,13 +309,14 @@ const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
 const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
 const AMBIGUOUS_PROTEIN_SCORE_PSEUDOCOUNT = 1.0f0
 
+# Peptide identity is carried as library IDs (`PrecursorTextIds`): `sequence_id` for the
+# sequence and `mods_id` for the (structural_mods, isotopic_mods) pair.
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
     base_pep_id::UInt32,
-    sequence::String,
+    sequence_id::UInt32,
     charge::UInt8,
-    structural_mods::String,
-    isotopic_mods::String,
+    mods_id::UInt32,
     pep::Float32,
     prob::Float32,
     score::Float32,
@@ -323,9 +324,8 @@ const ProteinRollupPrecursorRow = @NamedTuple{
 }
 const ProteinRollupModifiedPeptideRow = @NamedTuple{
     base_pep_id::UInt32,
-    sequence::String,
-    structural_mods::String,
-    isotopic_mods::String,
+    sequence_id::UInt32,
+    mods_id::UInt32,
     log_none_sum::Float64,
     pep::Float32,
     prob::Float32,
@@ -334,7 +334,7 @@ const ProteinRollupModifiedPeptideRow = @NamedTuple{
     precursor_count::Int32
 }
 const ProteinRollupPeptideRow = @NamedTuple{
-    sequence::String,
+    sequence_id::UInt32,
     log_none_sum::Float64,
     pep::Float32,
     prob::Float32,
@@ -424,8 +424,8 @@ function _protein_mbr_summary(gdf::AbstractDataFrame, quant_mask::AbstractVector
     has_mbr_recovered = hasproperty(gdf, :mbr_recovered)
     recovered_precursors = 0
     retained_precursors = 0
-    recovered_peptides = Set{String}()
-    non_mbr_peptides = Set{String}()
+    recovered_peptides = Set{UInt32}()
+    non_mbr_peptides = Set{UInt32}()
 
     @inbounds for i in eachindex(quant_mask)
         quant_mask[i] || continue
@@ -433,9 +433,9 @@ function _protein_mbr_summary(gdf::AbstractDataFrame, quant_mask::AbstractVector
 
         if has_mbr_recovered && Bool(gdf.mbr_recovered[i])
             recovered_precursors += 1
-            push!(recovered_peptides, String(gdf.sequence[i]))
+            push!(recovered_peptides, UInt32(gdf.sequence_id[i]))
         else
-            push!(non_mbr_peptides, String(gdf.sequence[i]))
+            push!(non_mbr_peptides, UInt32(gdf.sequence_id[i]))
         end
     end
 
@@ -462,44 +462,38 @@ mutable struct ProteinRollupScratch
     prec_prob::Vector{Float32}
     prec_peak::Vector{Float32}
     prec_basepep::Vector{UInt32}
-    prec_seq::Vector{String}
+    prec_seq::Vector{UInt32}
     prec_charge::Vector{UInt8}
-    prec_smods::Vector{String}
-    prec_imods::Vector{String}
-    # modified-peptide level (dedup by (base_pep_id, structural_mods, isotopic_mods))
-    mod_pos::Dict{Tuple{UInt32, String, String}, Int}
-    mod_key::Vector{Tuple{UInt32, String, String}}
+    prec_mods::Vector{UInt32}
+    # modified-peptide level (dedup by (base_pep_id, mods_id))
+    mod_pos::Dict{Tuple{UInt32, UInt32}, Int}
+    mod_key::Vector{Tuple{UInt32, UInt32}}
     mod_logsum::Vector{Float64}
     mod_peak::Vector{Float32}
-    mod_seq::Vector{String}
+    mod_seq::Vector{UInt32}
     mod_count::Vector{Int32}
-    # peptide level (dedup by sequence)
-    pep_pos::Dict{String, Int}
-    pep_seq::Vector{String}
+    # peptide level (dedup by sequence_id)
+    pep_pos::Dict{UInt32, Int}
+    pep_seq::Vector{UInt32}
     pep_logsum::Vector{Float64}
     pep_peak::Vector{Float32}
     pep_count::Vector{Int32}
 end
 
 ProteinRollupScratch() = ProteinRollupScratch(
-    Dict{UInt32, Int}(), UInt32[], Float32[], Float32[], UInt32[], String[], UInt8[], String[], String[],
-    Dict{Tuple{UInt32, String, String}, Int}(), Tuple{UInt32, String, String}[], Float64[], Float32[], String[], Int32[],
-    Dict{String, Int}(), String[], Float64[], Float32[], Int32[],
+    Dict{UInt32, Int}(), UInt32[], Float32[], Float32[], UInt32[], UInt32[], UInt8[], UInt32[],
+    Dict{Tuple{UInt32, UInt32}, Int}(), Tuple{UInt32, UInt32}[], Float64[], Float32[], UInt32[], Int32[],
+    Dict{UInt32, Int}(), UInt32[], Float64[], Float32[], Int32[],
 )
 
 function _reset_rollup_scratch!(s::ProteinRollupScratch)
     empty!(s.prec_pos); empty!(s.prec_id); empty!(s.prec_prob); empty!(s.prec_peak)
-    empty!(s.prec_basepep); empty!(s.prec_seq); empty!(s.prec_charge)
-    empty!(s.prec_smods); empty!(s.prec_imods)
+    empty!(s.prec_basepep); empty!(s.prec_seq); empty!(s.prec_charge); empty!(s.prec_mods)
     empty!(s.mod_pos); empty!(s.mod_key); empty!(s.mod_logsum)
     empty!(s.mod_peak); empty!(s.mod_seq); empty!(s.mod_count)
     empty!(s.pep_pos); empty!(s.pep_seq); empty!(s.pep_logsum)
     empty!(s.pep_peak); empty!(s.pep_count)
     return s
-end
-
-@inline function _rollup_mods_or_empty(gdf, col::Symbol, i::Int)
-    (hasproperty(gdf, col) && !ismissing(gdf[!, col][i])) ? String(gdf[!, col][i]) : ""
 end
 
 """
@@ -526,8 +520,8 @@ function _build_protein_rollup(
     if !hasproperty(gdf, :peak_area)
         error("Missing required :peak_area column for protein roll-up")
     end
-    if !hasproperty(gdf, :base_pep_id)
-        error("Missing required :base_pep_id column for protein roll-up")
+    for col in (:base_pep_id, :sequence_id, :mods_id)
+        hasproperty(gdf, col) || error("Missing required :$(col) column for protein roll-up")
     end
 
     _reset_rollup_scratch!(s)
@@ -546,10 +540,9 @@ function _build_protein_rollup(
             push!(s.prec_prob, prob_val)
             push!(s.prec_peak, peak_area_val)
             push!(s.prec_basepep, UInt32(gdf.base_pep_id[i]))
-            push!(s.prec_seq, String(gdf.sequence[i]))
+            push!(s.prec_seq, UInt32(gdf.sequence_id[i]))
             push!(s.prec_charge, hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0))
-            push!(s.prec_smods, _rollup_mods_or_empty(gdf, :structural_mods, i))
-            push!(s.prec_imods, _rollup_mods_or_empty(gdf, :isotopic_mods, i))
+            push!(s.prec_mods, UInt32(gdf.mods_id[i]))
             s.prec_pos[precursor_idx] = length(s.prec_id)
         else
             s.prec_prob[pos] = max(s.prec_prob[pos], prob_val)
@@ -569,10 +562,9 @@ function _build_protein_rollup(
         push!(precursor_rows, (
             precursor_idx = s.prec_id[p],
             base_pep_id = s.prec_basepep[p],
-            sequence = s.prec_seq[p],
+            sequence_id = s.prec_seq[p],
             charge = s.prec_charge[p],
-            structural_mods = s.prec_smods[p],
-            isotopic_mods = s.prec_imods[p],
+            mods_id = s.prec_mods[p],
             pep = none_prob_val,
             prob = prob_val,
             score = score_val,
@@ -587,25 +579,21 @@ function _build_protein_rollup(
             peptide_rows = ProteinRollupPeptideRow[],
             pg_score = 0.0f0,
             n_peptides = 0,
-            peptide_list = String[],
+            peptide_list = UInt32[],
             top_pep_peak_area = 0.0f0
         )
     end
 
     # Modified-peptide level: dedup by (base_pep_id, structural_mods, isotopic_mods).
     for precursor_row in precursor_rows
-        mod_key = (
-            precursor_row.base_pep_id,
-            precursor_row.structural_mods,
-            precursor_row.isotopic_mods
-        )
+        mod_key = (precursor_row.base_pep_id, precursor_row.mods_id)
         log_none = _precursor_log_none_for_rollup(precursor_row.prob)
         mpos = get(s.mod_pos, mod_key, 0)
         if mpos == 0
             push!(s.mod_key, mod_key)
             push!(s.mod_logsum, log_none)
             push!(s.mod_peak, precursor_row.best_peak_area)
-            push!(s.mod_seq, precursor_row.sequence)
+            push!(s.mod_seq, precursor_row.sequence_id)
             push!(s.mod_count, Int32(1))
             s.mod_pos[mod_key] = length(s.mod_key)
         else
@@ -613,7 +601,7 @@ function _build_protein_rollup(
             if precursor_row.best_peak_area > s.mod_peak[mpos]
                 s.mod_peak[mpos] = precursor_row.best_peak_area
             end
-            s.mod_seq[mpos] = precursor_row.sequence
+            s.mod_seq[mpos] = precursor_row.sequence_id
             s.mod_count[mpos] += Int32(1)
         end
     end
@@ -625,9 +613,8 @@ function _build_protein_rollup(
         log_none_sum = s.mod_logsum[m]
         push!(modified_peptide_rows, (
             base_pep_id = s.mod_key[m][1],
-            sequence = s.mod_seq[m],
-            structural_mods = s.mod_key[m][2],
-            isotopic_mods = s.mod_key[m][3],
+            sequence_id = s.mod_seq[m],
+            mods_id = s.mod_key[m][2],
             log_none_sum = log_none_sum,
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
@@ -639,7 +626,7 @@ function _build_protein_rollup(
 
     # Peptide level: dedup by sequence.
     for modified_row in modified_peptide_rows
-        peptide_key = modified_row.sequence
+        peptide_key = modified_row.sequence_id
         ppos = get(s.pep_pos, peptide_key, 0)
         if ppos == 0
             push!(s.pep_seq, peptide_key)
@@ -662,7 +649,7 @@ function _build_protein_rollup(
     @inbounds for q in 1:npep
         log_none_sum = s.pep_logsum[q]
         push!(peptide_rows, (
-            sequence = s.pep_seq[q],
+            sequence_id = s.pep_seq[q],
             log_none_sum = log_none_sum,
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
@@ -673,7 +660,7 @@ function _build_protein_rollup(
     end
     pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
     top_pep_peak_area = isempty(peptide_rows) ? 0.0f0 : maximum(row.best_peak_area for row in peptide_rows)
-    peptide_list = sort!([row.sequence for row in peptide_rows])
+    peptide_list = sort!([row.sequence_id for row in peptide_rows])
 
     return (
         precursor_rows = precursor_rows,
@@ -920,6 +907,7 @@ unique `pg_score`.
 """
 function build_precursor_consensus(
     psm_refs::Vector{PSMFileReference};
+    text_ids::PrecursorTextIds,
     q_value_threshold::Float32 = 0.01f0,
     protein_ambiguity_candidates::Dict{
         UInt32,
@@ -940,7 +928,7 @@ function build_precursor_consensus(
             continue
         end
 
-        df = load_dataframe(psm_ref)
+        df = attach_precursor_text_ids!(load_dataframe(psm_ref), text_ids)
         prob_col = _protein_group_probability_column(df)
         run_unique_pg_score =
             Dict{Tuple{String, Bool, UInt8}, Float32}()
@@ -1426,6 +1414,20 @@ function _precursor_consensus_prefix_features(
 end
 
 """
+    attach_precursor_text_ids!(df, text_ids) -> df
+
+Add the in-memory peptide identity columns protein scoring keys on (`:sequence_id`,
+`:mods_id`, `:species_id`), looked up by `:precursor_idx`. They are never written to disk.
+"""
+function attach_precursor_text_ids!(df::DataFrame, text_ids::PrecursorTextIds)
+    precursor_idx = df.precursor_idx
+    df[!, :sequence_id] = text_ids.sequence_id[precursor_idx]
+    df[!, :mods_id] = text_ids.mods_id[precursor_idx]
+    df[!, :species_id] = text_ids.species_id[precursor_idx]
+    return df
+end
+
+"""
     group_psms_by_protein(df::DataFrame)
 
 Transform PSMs into protein groups by aggregating peptides.
@@ -1435,7 +1437,8 @@ function group_psms_by_protein(
     df::DataFrame;
     precursor_consensus::NamedTuple,
     current_run_order::Union{Nothing, Int64} = nothing,
-    q_value_threshold::Float32 = 0.01f0
+    q_value_threshold::Float32 = 0.01f0,
+    species_names::Union{Nothing, AbstractVector{String}} = nothing
 )
     if nrow(df) == 0
         return DataFrame(
@@ -1448,8 +1451,8 @@ function group_psms_by_protein(
             n_non_mbr_peptides = Int64[],
             single_non_mbr_peptide = Bool[],
             single_non_mbr_prefix_shape = Float32[],
-            peptide_list = String[],
-            common_peptide_list = String[],
+            peptide_list = Vector{UInt32}[],
+            common_peptide_list = Vector{UInt32}[],
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
@@ -1471,8 +1474,8 @@ function group_psms_by_protein(
             n_non_mbr_peptides = Int64[],
             single_non_mbr_peptide = Bool[],
             single_non_mbr_prefix_shape = Float32[],
-            peptide_list = String[],
-            common_peptide_list = String[],
+            peptide_list = Vector{UInt32}[],
+            common_peptide_list = Vector{UInt32}[],
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_peak_area = Float32[],
@@ -1499,8 +1502,8 @@ function group_psms_by_protein(
         n_peptides = rollup.n_peptides
         pg_score = rollup.pg_score
         top_pep_peak_area = rollup.top_pep_peak_area
-        species = if hasproperty(gdf, :species)
-            join(sort!(unique!(collect(skipmissing(String.(gdf.species))))), ';')
+        species = if species_names !== nothing && hasproperty(gdf, :species_id)
+            join(sort!(unique!([species_names[id] for id in gdf.species_id])), ';')
         else
             ""
         end
@@ -1538,7 +1541,7 @@ function group_psms_by_protein(
                 num_variable_modifications
             )
         end
-        common_peptides = sort!(unique!(String.(gdf.sequence[common_mask])))
+        common_peptides = sort!(unique!(UInt32.(gdf.sequence_id[common_mask])))
         n_common_peptides = length(common_peptides)
 
         DataFrame(
@@ -1551,8 +1554,8 @@ function group_psms_by_protein(
                 mbr_summary.non_mbr_peptides == 1 ?
                 precursor_consensus_prefix_shape :
                 0.0f0,
-            peptide_list = join(rollup.peptide_list, ";"),
-            common_peptide_list = join(common_peptides, ";"),
+            peptide_list = [rollup.peptide_list],
+            common_peptide_list = [common_peptides],
             pg_score = pg_score,
             any_common_peps = n_common_peptides > 0,
             top_pep_peak_area = top_pep_peak_area,
@@ -2020,8 +2023,10 @@ function build_protein_group_tables(
     counterfactual_shadow_protein_groups = DataFrame()
     indexed_refs = collect(enumerate(psm_refs))
 
+    text_ids = getPrecursorTextIds(precursors)
     precursor_consensus = build_precursor_consensus(
         psm_refs;
+        text_ids = text_ids,
         q_value_threshold = q_value_threshold,
         protein_ambiguity_candidates = protein_ambiguity_candidates
     )
@@ -2033,7 +2038,7 @@ function build_protein_group_tables(
             continue
         end
 
-        updated_psms = load_dataframe(psm_ref)
+        updated_psms = attach_precursor_text_ids!(load_dataframe(psm_ref), text_ids)
         _update_protein_cv_fold_mapping!(protein_to_cv_fold, updated_psms, precursors)
         peak_area_calibration = estimate_peak_area_detection_model(updated_psms)
 
@@ -2046,7 +2051,8 @@ function build_protein_group_tables(
             updated_psms;
             precursor_consensus = precursor_consensus,
             current_run_order = Int64(idx),
-            q_value_threshold = q_value_threshold
+            q_value_threshold = q_value_threshold,
+            species_names = text_ids.species_names
         )
 
         post_inference_pipeline = TransformPipeline() |>
@@ -2087,6 +2093,7 @@ function build_protein_group_tables(
                 precursor_consensus = precursor_consensus,
                 current_run_order = Int64(idx),
                 q_value_threshold = q_value_threshold,
+                species_names = text_ids.species_names,
             )
             for (desc, op) in post_inference_pipeline.operations
                 shadow_groups = op(shadow_groups)

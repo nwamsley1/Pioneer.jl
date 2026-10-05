@@ -93,8 +93,8 @@ end
 
 struct GlobalProteinInputs
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
-    observed_peptides::Dict{GlobalProteinKey, Set{String}}
-    observed_common_peptides::Dict{GlobalProteinKey, Set{String}}
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}}
+    observed_common_peptides::Dict{GlobalProteinKey, Set{UInt32}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
     max_n_common_peptides::Dict{GlobalProteinKey, Int}
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
@@ -106,7 +106,7 @@ end
 # Their input is necessarily interpreted as all-common.
 function GlobalProteinInputs(
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}},
-    observed_peptides::Dict{GlobalProteinKey, Set{String}},
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}},
     max_n_peptides::Dict{GlobalProteinKey, Int},
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int},
     folds::Dict{GlobalProteinKey, UInt8}
@@ -132,8 +132,8 @@ function _collect_global_protein_inputs(
     n_proteins::Int,
 )
     run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
-    observed_peptides = Dict{GlobalProteinKey, Set{String}}()
-    observed_common_peptides = Dict{GlobalProteinKey, Set{String}}()
+    observed_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
+    observed_common_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
     max_n_common_peptides = Dict{GlobalProteinKey, Int}()
     n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
@@ -169,21 +169,16 @@ function _collect_global_protein_inputs(
             )
 
             protein_peptides = get!(observed_peptides, key) do
-                Set{String}()
+                Set{UInt32}()
             end
-            for peptide in split(table.peptide_list[row], ';')
-                isempty(peptide) || push!(protein_peptides, String(peptide))
-            end
+            union!(protein_peptides, table.peptide_list[row])
 
             protein_common_peptides = get!(observed_common_peptides, key) do
-                Set{String}()
+                Set{UInt32}()
             end
             common_peptide_list = hasproperty(table, :common_peptide_list) ?
                 table.common_peptide_list[row] : table.peptide_list[row]
-            for peptide in split(common_peptide_list, ';')
-                isempty(peptide) ||
-                    push!(protein_common_peptides, String(peptide))
-            end
+            union!(protein_common_peptides, common_peptide_list)
 
             n_peptides = Int(table.n_peptides[row])
             n_common_peptides = hasproperty(table, :n_common_peptides) ?

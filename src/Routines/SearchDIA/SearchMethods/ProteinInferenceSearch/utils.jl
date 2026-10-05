@@ -211,36 +211,21 @@ end
 """
     add_peptide_metadata(precursors::LibraryPrecursors)
 
-Add peptide sequence and protein information from the precursor library.
+Add the per-precursor library columns protein inference needs. Text (sequence, accessions,
+species, modifications) is not added: it is looked up from the library by `:precursor_idx`.
 """
 function add_peptide_metadata(precursors::LibraryPrecursors)
     desc = "add_peptide_metadata"
 
     op = function(df)
-        all_sequences = getSequence(precursors)::AbstractVector{String}
-        all_accessions = getAccessionNumbers(precursors)::AbstractVector{String}
         all_is_decoys = getIsDecoy(precursors)::AbstractVector{Bool}
         all_entrap_ids = getEntrapmentGroupId(precursors)::AbstractVector{UInt8}
-        all_species = getProteomeIdentifiers(precursors)::AbstractVector{<:AbstractString}
         all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
         all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
-        all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
         all_num_variable_modifications = getNumVariableModifications(precursors)
 
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
         n_rows = length(precursor_idx)
-
-        sequences = Vector{String}(undef, n_rows)
-        for i in 1:n_rows
-            sequences[i] = all_sequences[precursor_idx[i]]
-        end
-        df.sequence = sequences
-
-        accessions = Vector{String}(undef, n_rows)
-        for i in 1:n_rows
-            accessions[i] = all_accessions[precursor_idx[i]]
-        end
-        df.accession_numbers = accessions
 
         is_decoy_vec = Vector{Bool}(undef, n_rows)
         for i in 1:n_rows
@@ -254,29 +239,11 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         end
         df.entrap_id = entrap_vec
 
-        species = Vector{String}(undef, n_rows)
-        for i in 1:n_rows
-            species[i] = join(sort(unique(split(coalesce(all_species[precursor_idx[i]], ""), ';'))), ';')
-        end
-        df.species = species
-
         base_pep_ids = Vector{UInt32}(undef, n_rows)
         for i in 1:n_rows
             base_pep_ids[i] = all_base_pep_ids[precursor_idx[i]]
         end
         df.base_pep_id = base_pep_ids
-
-        structural_mods = Vector{String}(undef, n_rows)
-        for i in 1:n_rows
-            structural_mods[i] = coalesce(all_structural_mods[precursor_idx[i]], "")
-        end
-        df.structural_mods = structural_mods
-
-        isotopic_mods = Vector{String}(undef, n_rows)
-        for i in 1:n_rows
-            isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
-        end
-        df.isotopic_mods = isotopic_mods
 
         num_variable_modifications = Vector{UInt8}(undef, n_rows)
         for i in 1:n_rows
@@ -304,28 +271,34 @@ function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecurso
         return InferenceResult(Dictionary{PeptideKey, ProteinKey}())
     end
 
-    unique_pairs = unique(df, [:sequence, :accession_numbers, :is_decoy, :entrap_id])
-    proteins_vec = Vector{ProteinKey}(undef, nrow(unique_pairs))
-    peptides_vec = Vector{PeptideKey}(undef, nrow(unique_pairs))
-
-    for (i, row) in enumerate(eachrow(unique_pairs))
-        proteins_vec[i] = ProteinKey(row.accession_numbers, !row.is_decoy, row.entrap_id)
-        peptides_vec[i] = PeptideKey(row.sequence, !row.is_decoy, row.entrap_id)
+    sequences = getSequence(precursors)
+    accessions = getAccessionNumbers(precursors)
+    precursor_idx = df.precursor_idx::AbstractVector{UInt32}
+    seen = Set{Tuple{String, String, Bool, UInt8}}()
+    proteins_vec = ProteinKey[]
+    peptides_vec = PeptideKey[]
+    for i in eachindex(precursor_idx)   # first occurrence of each tuple, in row order
+        pid = precursor_idx[i]
+        key = (String(sequences[pid]), String(accessions[pid]), Bool(df.is_decoy[i]), UInt8(df.entrap_id[i]))
+        key in seen && continue
+        push!(seen, key)
+        push!(proteins_vec, ProteinKey(key[2], !key[3], key[4]))
+        push!(peptides_vec, PeptideKey(key[1], !key[3], key[4]))
     end
 
     return infer_proteins(proteins_vec, peptides_vec)
 end
 
 """
-    add_inferred_protein_column(inference_result::InferenceResult)
+    add_inferred_protein_column(inference_result::InferenceResult, library_sequences)
 
 Add inferred protein-group assignments to PSMs.
 """
-function add_inferred_protein_column(inference_result::InferenceResult)
+function add_inferred_protein_column(inference_result::InferenceResult, library_sequences::AbstractVector)
     desc = "add_inferred_protein_column"
 
     op = function(df)
-        sequences = df.sequence::AbstractVector{String}
+        sequences = view(library_sequences, df.precursor_idx::AbstractVector{UInt32})
         is_decoy = df.is_decoy::AbstractVector{Bool}
         entrap_ids = df.entrap_id::AbstractVector{UInt8}
 
@@ -347,15 +320,15 @@ function add_inferred_protein_column(inference_result::InferenceResult)
 end
 
 """
-    add_quantification_flag(inference_result::InferenceResult)
+    add_quantification_flag(inference_result::InferenceResult, library_sequences)
 
 Mark peptides assigned to inferred protein groups as usable for protein quant/scoring.
 """
-function add_quantification_flag(inference_result::InferenceResult)
+function add_quantification_flag(inference_result::InferenceResult, library_sequences::AbstractVector)
     desc = "add_quantification_flag"
 
     op = function(df)
-        sequences = df.sequence::AbstractVector{String}
+        sequences = view(library_sequences, df.precursor_idx::AbstractVector{UInt32})
         is_decoy = df.is_decoy::AbstractVector{Bool}
         entrap_ids = df.entrap_id::AbstractVector{UInt8}
 
@@ -373,16 +346,16 @@ function add_quantification_flag(inference_result::InferenceResult)
 end
 
 """
-    add_protein_ambiguity_id(peptide_to_id)
+    add_protein_ambiguity_id(peptide_to_id, library_sequences)
 
 Annotate PSMs with the normalized ambiguous-peptide assignment ID. Zero denotes a peptide that
 is not ambiguous between multiple retained protein groups.
 """
-function add_protein_ambiguity_id(peptide_to_id::Dictionary{PeptideKey, UInt32})
+function add_protein_ambiguity_id(peptide_to_id::Dictionary{PeptideKey, UInt32}, library_sequences::AbstractVector)
     desc = "add_protein_ambiguity_id"
 
     op = function(df)
-        sequences = df.sequence::AbstractVector{String}
+        sequences = view(library_sequences, df.precursor_idx::AbstractVector{UInt32})
         is_decoy = df.is_decoy::AbstractVector{Bool}
         entrap_ids = df.entrap_id::AbstractVector{UInt8}
 
@@ -455,9 +428,9 @@ function run_protein_inference!(
             )
 
             update_pipeline = TransformPipeline() |>
-                add_inferred_protein_column(inference_result) |>
-                add_quantification_flag(inference_result) |>
-                add_protein_ambiguity_id(peptide_to_ambiguity_id)
+                add_inferred_protein_column(inference_result, getSequence(precursors)) |>
+                add_quantification_flag(inference_result, getSequence(precursors)) |>
+                add_protein_ambiguity_id(peptide_to_ambiguity_id, getSequence(precursors))
             apply_pipeline!(psm_ref, update_pipeline)
         end
 
@@ -531,14 +504,10 @@ function run_protein_inference!(
 
     for psm_ref in ProgressBar(passing_refs)
         exists(psm_ref) || continue
-        # By the time ProteinInference runs, IntegrateChromatograms has
-        # already populated :sequence, :accession_numbers, :species,
-        # :structural_mods, :isotopic_mods on the main file. We only need
-        # to add the 5 columns it does NOT already provide:
+        # Library text stays in the library (looked up by :precursor_idx downstream). Add:
         #   :entrap_id, :base_pep_id  (from library lookup)
         #   :inferred_protein_group, :use_for_protein_quant,
         #   :protein_ambiguity_id  (from inference)
-        # The old code redundantly overwrote the IntegrateChromatograms cols.
         pidx = materialize_columns(psm_ref, [:precursor_idx])[!, :precursor_idx]::AbstractVector{UInt32}
         n = length(pidx)
         entrap_ids    = Vector{UInt8}(undef, n)

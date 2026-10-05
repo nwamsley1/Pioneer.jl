@@ -26,7 +26,8 @@ function _ambiguous_scoring_psms(; qval::Float32 = 0.001f0)
         prec_prob = Float32[0.8],
         peak_area = Float32[1000.0],
         base_pep_id = UInt32[11],
-        sequence = ["SHARED"],
+        sequence_id = UInt32[1],
+        mods_id = UInt32[1],
         qval = Float32[qval],
         global_qval = Float32[0.001]
     )
@@ -431,11 +432,12 @@ end
         @test candidates_by_id[UInt32(1)] == [protein_a, protein_b]
 
         annotation = DataFrame(
-            sequence = ["SHARED", "UNASSIGNED"],
+            precursor_idx = UInt32[2, 1],
             is_decoy = Bool[false, false],
             entrap_id = UInt8[0, 0]
         )
-        add_protein_ambiguity_id(peptide_to_id).second(annotation)
+        library_sequences = ["UNASSIGNED", "SHARED"]
+        add_protein_ambiguity_id(peptide_to_id, library_sequences).second(annotation)
         @test annotation.protein_ambiguity_id == UInt32[1, 0]
 
     end

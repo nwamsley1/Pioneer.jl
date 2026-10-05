@@ -145,23 +145,11 @@ function reset_results!(::ProteinQuantificationSearchResults)
     return nothing
 end
 
-function precursor_output_string_pools(chunk_refs, policy::OutputSchemaPolicy)
-    distinct_values = Dict{Symbol, Set}()
-    for chunk_ref in chunk_refs
-        let tbl = Arrow.Table(file_path(chunk_ref))
-            for name in (:file_name, :species, :structural_mods)
-                output_column_enabled(policy, :precursors, name) || continue
-                hasproperty(tbl, name) || continue
-                column = Tables.getcolumn(tbl, name)
-                values = get!(distinct_values, name) do
-                    Set{eltype(column)}()
-                end
-                foreach(value -> push!(values, value), column)
-            end
-        end
-    end
-    return Dict(name => PooledArray(sort!(collect(values)); signed=true, compress=true)
-                for (name, values) in distinct_values)
+function precursor_output_string_pools(chunk_refs, policy::OutputSchemaPolicy, text::PrecursorOutputText)
+    names = Symbol[name for name in (:file_name, :species, :structural_mods)
+                   if output_column_enabled(policy, :precursors, name)]
+    return Dict(name => PooledArray(values; signed=true, compress=true)
+                for (name, values) in precursor_text_pools(chunk_refs, text, names))
 end
 
 function encode_precursor_output_strings(columns::NamedTuple, pools)
@@ -176,23 +164,26 @@ function encode_precursor_output_strings(columns::NamedTuple, pools)
 end
 
 """
-    write_precursor_long_arrow(path, chunk_refs, file_names, policy; run_to_run_normalization)
+    write_precursor_long_arrow(path, chunk_refs, text, policy; run_to_run_normalization)
 
 Stream precursor chunks into the final Arrow export and return per-run summary
-accumulators. Prebuild string dictionaries so their indices fit every chunk.
+accumulators. The library text columns are restored from `text`. Prebuild string
+dictionaries so their indices fit every chunk.
 """
 function write_precursor_long_arrow(
-    path::String, chunk_refs, file_names::Vector{String}, policy::OutputSchemaPolicy;
+    path::String, chunk_refs, text::PrecursorOutputText, policy::OutputSchemaPolicy;
     run_to_run_normalization::Bool,
 )
-    pools = precursor_output_string_pools(chunk_refs, policy)
+    file_names = text.file_names
+    pools = precursor_output_string_pools(chunk_refs, policy, text)
     isfile(path) && rm(path)
     run_stats = with_run_summary(file_names; temp_parent=dirname(abspath(path))) do accumulator
         open(Arrow.Writer, path; file=true, ntasks=0) do writer
             for chunk_ref in chunk_refs, tbl in Arrow.Stream(file_path(chunk_ref))
-                accumulate_run_summary!(accumulator, tbl)
+                full = with_precursor_text(Tables.columntable(tbl), text)
+                accumulate_run_summary!(accumulator, full)
                 columns = drop_uncomputed_normalized(
-                    blank_unquantified_areas(enabled_output_table(policy, :precursors, tbl)),
+                    blank_unquantified_areas(enabled_output_table(policy, :precursors, full)),
                     run_to_run_normalization,
                 )
                 Arrow.write(writer, encode_precursor_output_strings(columns, pools))
@@ -298,12 +289,14 @@ function summarize_results!(
         :min_peptides => params.min_peptides
     ))
 
+    precursor_text = PrecursorOutputText(precursors, all_file_names)
+
     # Chunked precursor CSV writing (bounded memory per chunk)
     @user_info "Writing precursor tables..."
     writePrecursorCSV_chunked(
         chunk_refs,
         getDataOutDir(search_context),
-        all_file_names,
+        precursor_text,
         params.run_to_run_normalization,
         proteins,
         output_schema_policy = output_schema_policy,
@@ -363,7 +356,7 @@ function summarize_results!(
     # The per-run summary is accumulated from the same chunks on this pass.
     @debug_l1 "Concatenating chunks to precursors_long.arrow..."
     run_stats = write_precursor_long_arrow(
-        precursors_long_path, chunk_refs, all_file_names, output_schema_policy;
+        precursors_long_path, chunk_refs, precursor_text, output_schema_policy;
         run_to_run_normalization = params.run_to_run_normalization,
     )
     chunk_refs = nothing

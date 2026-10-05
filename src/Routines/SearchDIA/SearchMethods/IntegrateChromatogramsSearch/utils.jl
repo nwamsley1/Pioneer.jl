@@ -2208,11 +2208,8 @@ Chromatogram Building Functions
 Process final PSMs after integration.
 
 # Added Columns
-- Protein information (accession numbers, indices)
+- `ms_file_idx`, `charge`
 - Peak areas and normalization
-- Sequence information
-- Modification details
-- File metadata
 """
 function process_final_psms!(
     psms::DataFrame,
@@ -2237,28 +2234,16 @@ function process_final_psms!(
         @debug_l1 "[$parsed_fname] $n_unquantified / $(nrow(psms)) PSMs identified " *
                   "but not quantified (peak_area == 0)"
     end
-    # Add columns
+    # Add columns. Library text (sequence, modifications, accessions, species, start positions)
+    # and the file name are not stored on the PSMs: they are functions of :precursor_idx and
+    # :ms_file_idx, and the final writers look them up (see `PrecursorTextIds`).
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
-    accession_numbers = Vector{String}(undef, n)
     ms_file_idxs = Vector{UInt16}(undef, n)
-    species = Vector{String}(undef, n)
     peak_area = Vector{Union{Missing, Float32}}(undef, n)
     peak_area_normalized = Vector{Union{Missing, Float32}}(undef, n)
-    structural_mods = Vector{Union{Missing, String}}(undef, n)
-    isotopic_mods = Vector{Union{Missing, String}}(undef, n)
     charge = Vector{UInt8}(undef, n)
-    sequence = Vector{String}(undef, n)
-    peptide_start_positions = Vector{String}(undef, n)
-    file_name = Vector{String}(undef, n)
     psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
-
-    accession_col = getAccessionNumbers(precursors)
-    for i in range(1, n)
-        pid = psms_precursor_idx[i]
-        accession_numbers[i] = accession_col[pid]
-    end
-    psms[!, :accession_numbers] = accession_numbers
 
     # No sort here. ProteinQuantificationSearch sorts the merged PSMs by :inferred_protein_group
     # before its chunked-merge so chunk boundaries align with protein-group
@@ -2266,37 +2251,19 @@ function process_final_psms!(
     # MaxLFQ) is what populates :inferred_protein_group, so a sort by that
     # column at this stage isn't possible anyway.
 
-    parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-    proteome_col = getProteomeIdentifiers(precursors)
-    structural_mods_col = getStructuralMods(precursors)
-    isotopic_mods_col = getIsotopicMods(precursors)
     charge_col = getCharge(precursors)
-    sequence_col = getSequence(precursors)
-    start_idx_col = getStartIdx(precursors)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        species[i] = join(sort(unique(split(coalesce(proteome_col[pid], ""),';'))),';')
         peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
-        structural_mods[i] = structural_mods_col[pid]
-        isotopic_mods[i] = isotopic_mods_col[pid]
         charge[i] = charge_col[pid]
-        sequence[i] = sequence_col[pid]
-        peptide_start_positions[i] = _format_start_idx(start_idx_col[pid])
-        file_name[i] = parsed_fname
     end
 
     psms[!,:ms_file_idx] = ms_file_idxs
-    psms[!,:species] = species
     psms[!,:peak_area] = peak_area
     psms[!,:peak_area_normalized] = peak_area_normalized
-    psms[!,:structural_mods] = structural_mods
-    psms[!,:isotopic_mods] = isotopic_mods
-    psms[!,:charge] = charge 
-    psms[!,:sequence] = sequence
-    psms[!,:peptide_start_positions] = peptide_start_positions
-    psms[!,:file_name] = file_name
-    
+    psms[!,:charge] = charge
+
     return nothing
 end
