@@ -112,8 +112,9 @@ Used by both `train_lgbm_for_irt_refinement` (MainSearch) and
 
 `buffers` supplies reusable backing stores for the feature matrices; the default
 allocates a fresh set per call, so callers that don't reuse buffers are
-unaffected. MainSearch passes a per-search set (see `MainSearchResults`) so the
-population-scaled matrices are built once and reused across every file.
+unaffected. MainSearch passes a per-search set (see `MainSearchResults`). No
+matrix holds every PSM: training rows are filled straight from the table's
+columns and predictions run in fixed-size batches (`predict_rows!`).
 """
 function train_psm_classifier_with_fallback(
     psms::DataFrame;
@@ -128,9 +129,8 @@ function train_psm_classifier_with_fallback(
     # vectors, and the inner CV closures capture the wrapped matrices — a capture
     # boxes the variable and does NOT root the backing store. Preserve the
     # vectors here, in a frame no closure captures, for the whole call.
-    b_all, b_train, b_test, b_infold =
-        buffers.all, buffers.train, buffers.test, buffers.infold
-    return GC.@preserve b_all b_train b_test b_infold _train_psm_classifier_with_fallback(
+    b_train, b_batch = buffers.train, buffers.batch
+    return GC.@preserve b_train b_batch _train_psm_classifier_with_fallback(
         psms;
         features = features,
         lgbm_hp = lgbm_hp,
@@ -170,8 +170,8 @@ function _train_psm_classifier_with_fallback(
     end
     n_features = length(available_features)
 
-    # Build feature matrix
-    X_all = feature_matrix!(buffers.all, psms, available_features)
+    # Feature columns; matrices are filled from these per row set (training rows, prediction batches).
+    cols = AbstractVector[psms[!, f] for f in available_features]
 
     # Two-fold cross-validation using existing cv_fold column
     cv_fold = psms[!, :cv_fold]
@@ -203,18 +203,16 @@ function _train_psm_classifier_with_fallback(
     min_fit_size = minimum(length(fit_idx) for (fit_idx, _, _) in fold_pairs)
     low_data = min_fit_size < LOW_DATA_THRESHOLD
 
-    # Size the slice buffers to the largest slice each will ever hold on this
-    # call, up front and once. Every row count is already known here (both folds'
-    # sub-sample sizes and both folds' full sizes), so nothing below resizes a
-    # buffer — a resize can move the data and would dangle a live wrap.
+    # Size the training buffer to the largest sub-sample it will hold on this
+    # call, up front and once, so nothing below resizes it while a training
+    # matrix wrapped from it is live (a resize can move the data). The batch
+    # buffer is sized by predict_rows! before it wraps anything.
     _size_matrix_buffer!(buffers.train, maximum(length, sub_positions; init = 0), n_features)
-    max_fold_rows = max(length(idx0), length(idx1))
-    _size_matrix_buffer!(buffers.test, max_fold_rows, n_features)
-    compute_infold && _size_matrix_buffer!(buffers.infold, max_fold_rows, n_features)
 
-    # LightGBM CV. Train/test matrices are gathered into the caller's pre-sized
-    # buffers rather than sliced into fresh matrices — same values, no per-file
-    # allocation. `bufs` is an explicit parameter (not a capture) so the closure
+    # LightGBM CV. Training matrices are filled from the columns into the
+    # caller's buffer, and the held-out (and in-fold) rows are scored in
+    # fixed-size batches — same values as slicing a whole-table matrix, without
+    # one. `bufs` is an explicit parameter (not a capture) so the closure
     # doesn't box it.
     # When compute_infold=true, also predicts on the FULL train fold per
     # iteration (rtv3: "memorization gap" — pairing OOF + in-fold scores lets
@@ -230,7 +228,7 @@ function _train_psm_classifier_with_fallback(
         for (fi, (fit_idx, full_train_idx, test_idx)) in enumerate(fold_pairs)
             sub_pos = fit_idx[sub_positions[fi]]
             ts = time()
-            X_tr = gather_rows!(bufs.train, X_all, sub_pos)
+            X_tr = rows_matrix!(bufs.train, cols, sub_pos)
             y_lbl = _prepare_labels(targets_col[sub_pos])
             t_slice += time() - ts
             if isempty(y_lbl) || length(unique(y_lbl)) == 1
@@ -251,9 +249,11 @@ function _train_psm_classifier_with_fallback(
                 LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1)
                 _detach_lightgbm_training_data!(cls)
                 t_fit += time() - tf
-                ts2 = time(); X_te = gather_rows!(bufs.test, X_all, test_idx); t_slice += time() - ts2
-                tp = time(); raw = LightGBM.predict(cls, X_te); t_predict += time() - tp
-                fold_scores[fi] = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+                lgbm_predict = X -> LightGBM.predict(cls, X)
+                tp = time()
+                fold_scores[fi] = predict_rows!(Vector{Float64}(undef, length(test_idx)), lgbm_predict,
+                                                bufs.batch, cols, test_idx)
+                t_predict += time() - tp
                 fold_predictors[fi] = (
                     kind = :lgbm,
                     value = NaN,
@@ -261,9 +261,10 @@ function _train_psm_classifier_with_fallback(
                     beta = nothing,
                 )
                 if compute_infold
-                    ts3 = time(); X_tr_full = gather_rows!(bufs.infold, X_all, full_train_idx); t_slice += time() - ts3
-                    tp2 = time(); raw_in = LightGBM.predict(cls, X_tr_full); t_predict += time() - tp2
-                    infold_scores[fi] = ndims(raw_in) == 2 ? dropdims(raw_in; dims=2) : raw_in
+                    tp2 = time()
+                    infold_scores[fi] = predict_rows!(Vector{Float64}(undef, length(full_train_idx)), lgbm_predict,
+                                                      bufs.batch, cols, full_train_idx)
+                    t_predict += time() - tp2
                 end
                 last_cls = cls
             end
@@ -281,7 +282,7 @@ function _train_psm_classifier_with_fallback(
     function _probit_cv()
         # Build Float64 fold DataFrames with intercept (ProbitRegression's z_score_bounds is typed Float64).
         function _mk_df(idx)
-            df = DataFrame(Float64.(X_all[idx, :]), :auto)
+            df = DataFrame(Float64.(rows_matrix(cols, idx)), :auto)
             df[!, :intercept] = ones(Float64, nrow(df))
             df
         end
@@ -444,15 +445,18 @@ function _train_psm_classifier_with_fallback(
     return all_scores, infold_all, last_classifier, info
 end
 
-function _predict_psm_classifier_fold(fold_predictor, X::AbstractMatrix)
-    n = size(X, 1)
+# Scores of the PSMs `rows` under one fold's predictor, aligned with `rows`. LightGBM predicts in fixed-size
+# batches from `batch_buf`; probit (low-data files only) builds its small Float64 table for the rows directly.
+function _predict_psm_classifier_fold(fold_predictor, cols::Vector{AbstractVector},
+                                      rows::AbstractVector{<:Integer}, batch_buf::Vector{Float32})
+    n = length(rows)
     if fold_predictor.kind == :constant
         return fill(Float64(fold_predictor.value), n)
     elseif fold_predictor.kind == :lgbm
-        raw = LightGBM.predict(fold_predictor.model, X)
-        return ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+        model = fold_predictor.model
+        return predict_rows!(Vector{Float64}(undef, n), X -> LightGBM.predict(model, X), batch_buf, cols, rows)
     elseif fold_predictor.kind == :probit
-        df = DataFrame(Float64.(X), :auto)
+        df = DataFrame(Float64.(rows_matrix(cols, rows)), :auto)
         df[!, :intercept] = ones(Float64, nrow(df))
         scores = zeros(Float64, nrow(df))
         chunks = Iterators.partition(1:nrow(df), max(1, cld(nrow(df), Threads.nthreads())))
@@ -468,10 +472,10 @@ function predict_psm_classifier_scores(
     predictor;
     buffers::LGBMMatrixBuffers = LGBMMatrixBuffers(),
 )
-    # As in train_psm_classifier_with_fallback: the matrices below are
-    # `unsafe_wrap` views into these vectors, so root them for the whole call.
-    b_all, b_test = buffers.all, buffers.test
-    return GC.@preserve b_all b_test _predict_psm_classifier_scores(psms, predictor, buffers)
+    # As in train_psm_classifier_with_fallback: the batch matrices are
+    # `unsafe_wrap` views into this vector, so root it for the whole call.
+    b_batch = buffers.batch
+    return GC.@preserve b_batch _predict_psm_classifier_scores(psms, predictor, buffers)
 end
 
 function _predict_psm_classifier_scores(
@@ -480,25 +484,16 @@ function _predict_psm_classifier_scores(
     buffers::LGBMMatrixBuffers,
 )
     available_features = Vector{Symbol}(predictor.available_features)
-    X_all = feature_matrix!(buffers.all, psms, available_features)
+    cols = AbstractVector[psms[!, f] for f in available_features]
     cv_fold = psms[!, :cv_fold]
     test_indices = [findall(cv_fold .== 0), findall(cv_fold .== 1)]
     scores = Vector{Float64}(undef, nrow(psms))
-    # Both folds gather into the same buffer, pre-sized to the larger of the two
-    # so the loop never resizes it. Each fold's matrix is fully consumed by the
-    # predict below before the next iteration overwrites it.
-    _size_matrix_buffer!(
-        buffers.test,
-        max(length(test_indices[1]), length(test_indices[2])),
-        length(available_features),
-    )
+    # Each fold's rows are scored in batches from the same buffer; a batch is
+    # fully consumed by its predict before the next one overwrites it.
     for fi in 1:2
         idx = test_indices[fi]
         isempty(idx) && continue
-        scores[idx] .= _predict_psm_classifier_fold(
-            predictor.fold_predictors[fi],
-            gather_rows!(buffers.test, X_all, idx),
-        )
+        scores[idx] .= _predict_psm_classifier_fold(predictor.fold_predictors[fi], cols, idx, buffers.batch)
     end
     return scores
 end
