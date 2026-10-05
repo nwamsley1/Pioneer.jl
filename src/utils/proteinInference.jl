@@ -292,8 +292,9 @@ function _infer_proteins_single_group(
                     # No merge needed - single protein
                     push!(merged_candidates, proteins[1])
                 else
-                    # Merge proteins with identical remaining peptide sets
-                    protein_names = sort([p.name for p in proteins])
+                    # Merge proteins with identical remaining peptide sets. Candidates may already
+                    # be merged groups, so join their member accessions, sorted.
+                    protein_names = sort!(unique!([String(m) for p in proteins for m in split(p.name, ";")]))
                     merged_protein = ProteinKey(
                         join(protein_names, ";"),
                         is_target,
@@ -318,9 +319,13 @@ function _infer_proteins_single_group(
             best_protein = nothing
             best_coverage = 0
 
+            # On equal coverage take the alphabetically first group (by its sorted members), so
+            # the choice does not depend on hash order.
             for protein in candidate_proteins
                 coverage = length(intersect(protein_to_peptides[protein], remaining_peptides))
-                if coverage > best_coverage
+                if coverage > best_coverage ||
+                   (coverage == best_coverage && coverage > 0 &&
+                    split(protein.name, ";") < split(best_protein.name, ";"))
                     best_coverage = coverage
                     best_protein = protein
                 end

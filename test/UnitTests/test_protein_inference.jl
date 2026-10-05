@@ -841,3 +841,21 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
     end
 
 end
+
+@testset "greedy ties break on the alphabetically first group" begin
+    # PQ is chosen for its unique peptide. The rest is a triangle: PY, PZ and PW each cover two
+    # remaining peptides, a three-way tie that PW wins. PY and PZ then cover the same remaining
+    # peptide and merge. Under the old hash-order rule the winner depended on the names' hashes.
+    rows = [("PQ", "UUU"), ("PQ;PY", "SSS"), ("PY;PZ", "AAA"), ("PZ;PW", "CCC"), ("PW;PY", "DDD")]
+    proteins = [ProteinKey(p, true, UInt8(0)) for (p, _) in rows]
+    peptides = [PeptideKey(s, true, UInt8(0)) for (_, s) in rows]
+    expected_assigned = Dict("UUU" => "PQ", "AAA" => "PY;PZ")
+    expected_ambiguous = Dict("SSS" => ["PQ", "PY;PZ"], "CCC" => ["PW", "PY;PZ"],
+                              "DDD" => ["PW", "PY;PZ"])
+    for order in ([1, 2, 3, 4, 5], [5, 4, 3, 2, 1], [3, 5, 1, 4, 2])
+        result = infer_proteins(proteins[order], peptides[order])
+        @test Dict(k.sequence => v.name for (k, v) in pairs(result.peptide_to_protein)) == expected_assigned
+        @test Dict(k.sequence => [c.name for c in v]
+                   for (k, v) in pairs(result.ambiguous_peptide_to_proteins)) == expected_ambiguous
+    end
+end
