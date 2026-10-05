@@ -30,11 +30,11 @@ function build_rt_indices!(
         t_file_start = time()
 
         # Read passing PSMs — these ARE the precursors for this file's RT index
-        tbl = Arrow.Table(file_path(ref))
-        pids = tbl[:precursor_idx]
-        rts = tbl[:rt]
+        tbl = load_staged_psms(file_path(ref), [:precursor_idx, :rt, :weight])
+        pids = tbl.precursor_idx
+        rts = tbl.rt
         n_precs = length(pids)
-        hasproperty(tbl, :weight) && accumulate_max_weight!(max_weight, pids, tbl[:weight])
+        hasproperty(tbl, :weight) && accumulate_max_weight!(max_weight, pids, tbl.weight)
 
         # Build RT index from passing precursors using empirical RT (not iRT)
         out_rts = Vector{Float32}(undef, n_precs)

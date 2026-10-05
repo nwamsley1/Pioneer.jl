@@ -54,10 +54,83 @@ end
            isfinite(global_q) && global_q <= q_value_threshold
 end
 
-# Takes REFS rather than paths: PrecursorScoringSearch now attaches :qval/:global_qval/:global_prob/
-# :global_pep/:pep as a row-aligned sidecar instead of materialising precursor_scored_psms, so the
-# candidate tables only carry them via their PSMFileReference. This function already rewrites every
-# row it keeps, so consolidating the sidecar here costs nothing extra.
+"""
+    write_staged_selection(staged_path, source_ref, rows)
+
+Record a staged MBR integration input as `rows` of `source_ref` (with its sidecars) instead of
+writing a copy of those rows.
+"""
+function write_staged_selection(staged_path::String, source_ref::PSMFileReference, rows::Vector{Int})
+    metadata = Dict(
+        "source" => file_path(source_ref),
+        "sidecars" => join((s.path for s in source_ref.sidecars), '\n'),
+    )
+    # A new file nothing has memory-mapped, so a direct write (with metadata) is safe.
+    Arrow.write(staged_path * MBR_SELECTION_SUFFIX, DataFrame(source_row = UInt32.(rows));
+                metadata = metadata)
+    return nothing
+end
+
+"""
+    load_staged_psms(path[, cols]) -> DataFrame
+
+The PSM table at `path`, or, while `path` is a staged MBR selection (before integration writes
+it), the selected rows of its source table and sidecars. `cols` limits the columns read.
+"""
+function load_staged_psms(path::String, cols::Union{Nothing, Vector{Symbol}} = nothing)
+    selection_path = path * MBR_SELECTION_SUFFIX
+    if !isfile(selection_path)
+        tbl = Arrow.Table(path)
+        cols === nothing && return DataFrame(Tables.columntable(tbl))
+        return DataFrame([c => collect(Tables.getcolumn(tbl, c)) for c in cols if hasproperty(tbl, c)])
+    end
+    selection = Arrow.Table(selection_path)
+    metadata = Arrow.getmetadata(selection)
+    sidecar_list = metadata["sidecars"]
+    source = PSMFileReference(metadata["source"];
+        sidecar_paths = isempty(sidecar_list) ? String[] : split(sidecar_list, '\n'))
+    rows = Int.(selection.source_row)
+    df = cols === nothing ? load_with_sidecars(source) :
+        materialize_columns(source, Symbol[c for c in cols if has_column_anywhere(source, c)])
+    return df[rows, :]
+end
+
+"""Remove the staged selection at `path` once the real table has been written there."""
+clear_staged_selection!(path::String) =
+    (isfile(path * MBR_SELECTION_SUFFIX) && safeRm(path * MBR_SELECTION_SUFFIX; force = true); nothing)
+
+# Function barrier: the column types are only known once the table is read.
+function _select_mbr_integration_rows(
+    precursor_idx, ms_file_idx, qval, global_qval,
+    donor_files::Dict{UInt32, Tuple{UInt32, UInt32}},
+    q_value_threshold::Float32,
+)
+    rows = Int[]
+    n_candidates = 0
+    @inbounds for row in eachindex(precursor_idx)
+        baseline = _mbr_initial_pass(qval[row], global_qval[row], q_value_threshold)
+        global_q = Float32(global_qval[row])
+        global_pass = isfinite(global_q) && global_q <= q_value_threshold
+        run_q = Float32(qval[row])
+        run_pass = isfinite(run_q) && run_q <= q_value_threshold
+        candidate =
+            global_pass && !run_pass &&
+            _mbr_has_cross_run_donor(
+                donor_files,
+                UInt32(precursor_idx[row]),
+                UInt32(ms_file_idx[row]),
+            )
+        (baseline || candidate) && push!(rows, row)
+        n_candidates += candidate
+    end
+    return rows, n_candidates
+end
+
+# Takes REFS rather than paths: PrecursorScoringSearch attaches :qval/:global_qval/:global_prob/
+# :global_pep/:pep as a row-aligned sidecar, so the candidate tables only carry them via their
+# PSMFileReference. Rows are chosen from the four columns the rule reads, and the staged input is
+# written as a row selection of the candidate table (see MBR_SELECTION_SUFFIX), not as a copy;
+# the sidecar is consolidated when integration loads the selection.
 function _stage_mbr_integration_inputs!(
     candidate_refs::Vector{PSMFileReference},
     output_folder::String,
@@ -75,43 +148,25 @@ function _stage_mbr_integration_inputs!(
         path = file_path(candidate_ref)
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing MBR Pass-1 sidecar at $pass1_path")
-        main = load_with_sidecars(candidate_ref)
+        decide = materialize_columns(candidate_ref, [:precursor_idx, :ms_file_idx, :qval, :global_qval])
         pass1 = DataFrame(Tables.columntable(Arrow.Table(pass1_path)))
-        nrow(main) == nrow(pass1) ||
+        nrow(decide) == nrow(pass1) ||
             error("MBR Pass-1 sidecar row-count mismatch at $pass1_path")
 
-        keep = falses(nrow(main))
-        @inbounds for row in 1:nrow(main)
-            baseline = _mbr_initial_pass(
-                main.qval[row],
-                main.global_qval[row],
-                q_value_threshold,
-            )
-            global_qval = Float32(main.global_qval[row])
-            global_pass =
-                isfinite(global_qval) &&
-                global_qval <= q_value_threshold
-            run_qval = Float32(main.qval[row])
-            run_pass =
-                isfinite(run_qval) &&
-                run_qval <= q_value_threshold
-            candidate =
-                global_pass && !run_pass &&
-                _mbr_has_cross_run_donor(
-                    donor_files,
-                    UInt32(main.precursor_idx[row]),
-                    UInt32(main.ms_file_idx[row]),
-                )
-            keep[row] = baseline || candidate
-            n_candidates += candidate
-        end
+        rows, file_candidates = _select_mbr_integration_rows(
+            decide.precursor_idx, decide.ms_file_idx, decide.qval, decide.global_qval,
+            donor_files, q_value_threshold,
+        )
+        n_candidates += file_candidates
 
         staged_path = joinpath(output_folder, basename(path))
-        writeArrow(staged_path, main[keep, :])
-        writeArrow(staged_path * PASS1_SIDECAR_SUFFIX, pass1[keep, :])
+        # The staged path may hold the q-value-filtered table; the selection supersedes it.
+        isfile(staged_path) && safeRm(staged_path; force = true)
+        write_staged_selection(staged_path, candidate_ref, rows)
+        writeArrow(staged_path * PASS1_SIDECAR_SUFFIX, pass1[rows, :])
         push!(refs, PSMFileReference(staged_path))
-        n_rows += count(keep)
-        rows_processed += nrow(main)
+        n_rows += length(rows)
+        rows_processed += nrow(decide)
         if time() - last_progress >= 60
             @debug_l1 "MBR integration input staging: files=$file_idx/$(length(candidate_refs)) rows=$rows_processed retained=$n_rows candidates=$n_candidates elapsed=$(round(time() - started, digits=2))s"
             last_progress = time()

@@ -313,7 +313,8 @@ function process_file!(
     # kept here — ProteinInferenceSearch and ProteinScoringSearch need them
     # for protein-level FDR / PEP calibration. Final decoy suppression for
     # output happens later in ProteinQuantificationSearch when output.write_decoys=false.
-    passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
+    # With MBR the input is a staged row selection of the scored table (load_staged_psms).
+    passing_psms = load_staged_psms(passing_psms_path)
 
     # Initialize the integration schema before the empty-file check so an
     # empty staged MBR file remains consumable by the post-integration pass.
@@ -542,6 +543,7 @@ function process_search_results!(
            !isempty(output_path) &&
            isfile(output_path * PASS1_SIDECAR_SUFFIX)
             writeArrow(output_path, passing_psms)
+            clear_staged_selection!(output_path)
         end
         return nothing
     end
@@ -550,6 +552,7 @@ function process_search_results!(
     if params.match_between_runs &&
        isfile(output_path * PASS1_SIDECAR_SUFFIX)
         writeArrow(output_path, passing_psms)
+        clear_staged_selection!(output_path)
         return nothing
     end
     # Process final PSMs

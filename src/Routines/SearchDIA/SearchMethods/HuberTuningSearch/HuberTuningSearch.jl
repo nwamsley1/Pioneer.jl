@@ -84,7 +84,7 @@ function process_file!(
         return results
     end
 
-    passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
+    passing_psms = load_staged_psms(passing_psms_path)
     isempty(passing_psms) && return results
 
     calibration_psms = select_huber_calibration_psms(

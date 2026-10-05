@@ -31,6 +31,11 @@ const MBR_MAX_NEGATIVE_TRAIN_PER_FOLD = 1_875_000
 const PASS1_SIDECAR_SUFFIX = ".pass1_sidecar.arrow"
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
+# A staged MBR integration input is a row selection of a scored PSM table rather than a copy:
+# `{staged path}.mbr_rows.arrow` holds the selected source rows (`source_row`, ascending) and
+# names the source table and its sidecars in its metadata. Readers before integration go through
+# `load_staged_psms`; integration writes the real table at the staged path and removes the selection.
+const MBR_SELECTION_SUFFIX = ".mbr_rows.arrow"
 
 # Training-only counterfactual evidence retained from the MBR transfer model.
 # The raw score and counterfactual block index are transient; the remapped
