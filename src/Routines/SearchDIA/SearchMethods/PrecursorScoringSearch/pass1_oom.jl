@@ -21,15 +21,20 @@ end
 function _count_psm_rows_by_fold(file_paths::Vector{String})
     n0 = 0; n1 = 0
     for fpath in file_paths
-        tbl = Arrow.Table(fpath)
-        n = length(tbl.cv_fold)
-        n == 0 && continue
-        fold_c = tbl.cv_fold
-        @inbounds for i in 1:n
-            f = UInt8(fold_c[i])
-            f == UInt8(0) && (n0 += 1; continue)
-            f == UInt8(1) && (n1 += 1; continue)
+        c0, c1 = with_arrow_table(fpath) do tbl
+            _count_fold_rows(tbl.cv_fold)
         end
+        n0 += c0; n1 += c1
+    end
+    return n0, n1
+end
+
+function _count_fold_rows(fold_c::AbstractVector)
+    n0 = 0; n1 = 0
+    @inbounds for i in eachindex(fold_c)
+        f = UInt8(fold_c[i])
+        f == UInt8(0) && (n0 += 1; continue)
+        f == UInt8(1) && (n1 += 1; continue)
     end
     return n0, n1
 end
@@ -42,9 +47,11 @@ end
 function _resolve_available_features(file_paths::Vector{String}, requested::Vector{Symbol})
     available = Symbol[]
     for fpath in file_paths
-        tbl = Arrow.Table(fpath)
-        length(tbl.precursor_idx) == 0 && continue
-        available = filter(f -> hasproperty(tbl, f), requested)
+        cols = with_arrow_table(fpath) do tbl
+            length(tbl.precursor_idx) == 0 ? nothing : filter(f -> hasproperty(tbl, f), requested)
+        end
+        cols === nothing && continue
+        available = cols
         break
     end
 
@@ -53,16 +60,20 @@ function _resolve_available_features(file_paths::Vector{String}, requested::Vect
         found_value = false
         varies = false
         for fpath in file_paths
-            tbl = Arrow.Table(fpath)
-            hasproperty(tbl, :num_enzymatic_termini) || continue
-            for value in tbl.num_enzymatic_termini
-                if !found_value
-                    first_value = value
-                    found_value = true
-                elseif !isequal(value, first_value)
-                    varies = true
-                    break
+            # Values are plain integers, so first_value never references the table.
+            first_value, found_value, varies = with_arrow_table(fpath) do tbl
+                fv, found, var = first_value, found_value, false
+                hasproperty(tbl, :num_enzymatic_termini) || return fv, found, var
+                for value in tbl.num_enzymatic_termini
+                    if !found
+                        fv = value
+                        found = true
+                    elseif !isequal(value, fv)
+                        var = true
+                        break
+                    end
                 end
+                return fv, found, var
             end
             varies && break
         end
@@ -151,17 +162,18 @@ function _select_pass1_sample_file!(
     sources0, y0, sources1, y1, fpath::String, file_idx::Int32,
     seen0::Int, seen1::Int, rng::AbstractRNG,
 )
-    tbl = Arrow.Table(fpath)
-    fold_c = tbl.cv_fold
-    target_c = tbl.target
-    n = length(fold_c)
-    n <= typemax(Int32) || throw(ArgumentError(
-        "Pass-1 source row indexes must fit in Int32: $fpath has $n rows",
-    ))
-    return _update_pass1_sample_sources!(
-        sources0, y0, sources1, y1, fold_c, target_c, file_idx,
-        seen0, seen1, rng,
-    )
+    return with_arrow_table(fpath) do tbl
+        fold_c = tbl.cv_fold
+        target_c = tbl.target
+        n = length(fold_c)
+        n <= typemax(Int32) || throw(ArgumentError(
+            "Pass-1 source row indexes must fit in Int32: $fpath has $n rows",
+        ))
+        _update_pass1_sample_sources!(
+            sources0, y0, sources1, y1, fold_c, target_c, file_idx,
+            seen0, seen1, rng,
+        )
+    end
 end
 
 function _update_pass1_sample_sources!(
@@ -218,13 +230,14 @@ function _gather_pass1_sample_file!(
     X0::Matrix{Float32}, X1::Matrix{Float32}, fpath::String,
     features::Vector{Symbol}, p0::Vector{Tuple{Int32, Int32}}, p1::Vector{Tuple{Int32, Int32}},
 )
-    tbl = Arrow.Table(fpath)
-    feat_cols = AbstractVector[getproperty(tbl, f) for f in features]
+    with_arrow_table(fpath) do tbl
+        feat_cols = AbstractVector[getproperty(tbl, f) for f in features]
 
-    # One column per task keeps writes disjoint. The barrier specializes the
-    # heterogeneous Arrow feature columns without per-value boxing.
-    Threads.@threads for j in eachindex(features)
-        _copy_sampled_column!(X0, X1, feat_cols[j], p0, p1, j)
+        # One column per task keeps writes disjoint. The barrier specializes the
+        # heterogeneous Arrow feature columns without per-value boxing.
+        Threads.@threads for j in eachindex(features)
+            _copy_sampled_column!(X0, X1, feat_cols[j], p0, p1, j)
+        end
     end
     return nothing
 end
@@ -360,27 +373,29 @@ function _predict_pass1_to_sidecar(
     fpath::String, features::Vector{Symbol},
     cls_trained_on::NamedTuple, compute_infold::Bool,
 )
-    tbl = Arrow.Table(fpath)
-    n = length(tbl.precursor_idx)
-    oof = Vector{Float32}(undef, n)
-    infold = fill(NaN32, n)
-    if n > 0
-        fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
-        idx0, idx1 = fold_rows.fold0, fold_rows.fold1
-        X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
-        oof[idx0] .= _predict_pass1_block(cls_trained_on.fold1, X0)
-        oof[idx1] .= _predict_pass1_block(cls_trained_on.fold0, X1)
-        if compute_infold
-            infold[idx0] .= _predict_pass1_block(cls_trained_on.fold0, X0)
-            infold[idx1] .= _predict_pass1_block(cls_trained_on.fold1, X1)
+    # Every column written to the sidecar is a copy, so the source can be unmapped after.
+    with_arrow_table(fpath) do tbl
+        n = length(tbl.precursor_idx)
+        oof = Vector{Float32}(undef, n)
+        infold = fill(NaN32, n)
+        if n > 0
+            fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
+            idx0, idx1 = fold_rows.fold0, fold_rows.fold1
+            X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
+            oof[idx0] .= _predict_pass1_block(cls_trained_on.fold1, X0)
+            oof[idx1] .= _predict_pass1_block(cls_trained_on.fold0, X1)
+            if compute_infold
+                infold[idx0] .= _predict_pass1_block(cls_trained_on.fold0, X0)
+                infold[idx1] .= _predict_pass1_block(cls_trained_on.fold1, X1)
+            end
         end
+        writeArrow(fpath * PASS1_SIDECAR_SUFFIX, DataFrame(
+            precursor_idx = collect(UInt32.(tbl.precursor_idx)),
+            scan_idx = collect(UInt32.(tbl.scan_idx)),
+            trace_prob_prepass = oof,
+            trace_prob_infold = infold,
+        ))
     end
-    writeArrow(fpath * PASS1_SIDECAR_SUFFIX, DataFrame(
-        precursor_idx = collect(UInt32.(tbl.precursor_idx)),
-        scan_idx = collect(UInt32.(tbl.scan_idx)),
-        trace_prob_prepass = oof,
-        trace_prob_infold = infold,
-    ))
     return nothing
 end
 

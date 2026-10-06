@@ -196,3 +196,18 @@ end
         @test state.iter == 1
     end
 end
+
+@testset "with_arrow_table unmaps the file on return" begin
+    mktempdir() do dir
+        path = pass1_pool_test_write(joinpath(dir, "run.arrow"), collect(1:50))
+        ids = Pioneer.with_arrow_table(tbl -> collect(tbl.precursor_idx), path)
+        @test ids == UInt32.(1:50)
+        # Windows refuses to delete a mapped file, so this also checks the unmap there.
+        rm(path)
+        @test !isfile(path)
+        path = pass1_pool_test_write(joinpath(dir, "err.arrow"), collect(1:5))
+        @test_throws ErrorException Pioneer.with_arrow_table(_ -> error("inside"), path)
+        rm(path)
+        @test !isfile(path)
+    end
+end

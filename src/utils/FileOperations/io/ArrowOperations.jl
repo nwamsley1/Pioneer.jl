@@ -23,10 +23,32 @@ sorting, writing, and file management with Windows compatibility.
 """
 
 using Arrow, DataFrames, Tables
+using Mmap: Mmap
 
 #==========================================================
 Arrow File Operations
 ==========================================================#
+
+"""
+    with_arrow_table(f, path)
+
+Memory-map `path`, call `f(Arrow.Table(...))`, and unmap the file before returning.
+
+`Arrow.Table(path)` releases its mapping only when the garbage collector finalizes it.
+A loop over many files that allocates little Julia memory rarely triggers a collection,
+so every visited file stays mapped and its touched pages count toward resident memory.
+`f` must copy what it needs: its result must not reference the table's columns, which
+become invalid when the file is unmapped.
+"""
+function with_arrow_table(f, path::AbstractString)
+    bytes = Mmap.mmap(path)
+    try
+        return f(Arrow.Table(bytes))
+    finally
+        # Mmap attaches its unmap finalizer to the array's backing Memory.
+        Base.finalize(bytes.ref.mem)
+    end
+end
 
 """
     sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
