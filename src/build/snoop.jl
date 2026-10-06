@@ -301,6 +301,25 @@ end
 
 
 ##########################################
+# SCIEX ZT Scan DIA (scanning quadrupole)
+##########################################
+# No ZT fixture is downloaded: synthetic `.zt.scxs` runs are generated from the Altimeter library the
+# BuildSpecLib target builds above (src/build/synthetic_zt.jl), so the scanning-quad search compiles
+# for ScxsMassSpecData without real ZT data. That library, not the committed test library, because its
+# fragment index holds the 8 fragments quad tuning's triangle fit requires. The check afterwards fails
+# the target if any ZT stage fell back to its non-ZT path.
+include(joinpath(root, "synthetic_zt.jl"))
+const ZT_SYNTH_LIBRARY = joinpath(data_dir, "precompile", "ecoli_small_altimeter.poin")
+maybe_run("SearchDIA_zt") do
+    isdir(ZT_SYNTH_LIBRARY) ||                  # so the target also works alone via the `cmd` filter
+        Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+    generate_synthetic_zt_runs(ZT_SYNTH_LIBRARY, joinpath(data_dir, "precompile", "synthetic_zt"))
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_zt.json"))
+    check_zt_search_ran(joinpath(data_dir, "precompile", "zt_results"))
+end
+
+
+##########################################
 # ConvertMzML
 ##########################################
 maybe_run("convertMzML") do
