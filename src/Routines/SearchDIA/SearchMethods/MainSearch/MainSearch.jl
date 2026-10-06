@@ -560,8 +560,7 @@ function process_search_results!(
                               fallback = im_fallback, qc = im_qc)
     setImModel!(search_context, ms_file_idx, im_models)
     if haskey(im_models, 2)
-        refine_im_error!(best_psms, getPrecursors(getSpecLib(search_context)), im_models[2][3];
-                         mode = params.im_refinement)
+        refine_im_error!(best_psms, getPrecursors(getSpecLib(search_context)), im_models[2][3])
     end
     # Calibration QC and bounded plots (first files plus suspicious ones), as for the other stages.
     if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing

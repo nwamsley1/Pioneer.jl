@@ -19,36 +19,18 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `global.q_value_threshold` | Float | `0.01` | Final FDR threshold applied to ScoringSearch output. |
-| `global.im_refinement` | String | `"auto"` | Ion-mobility prediction residual correction: `"none"`, `"charge"`, `"composition"`, `"charge_composition"`, or `"auto"`. Requires library mobility predictions and observed mobility data. |
 
-Mobility refinement fits charge-specific offset/slopes and optionally residue,
-modification and terminal-residue counts. `composition` shares composition
-coefficients between charges; `charge_composition` fits them separately.
-`auto` selects among these and no correction on an inner peptide-sequence holdout,
-requiring a reduction in median-plus-tail error without materially worsening the
-95th-percentile error. All corrections are applied on five outer sequence folds,
-keeping charge states and modifications of a peptide together. Training uses
-distinct target precursors with first-pass probability above 0.9 and q-value at
-most 0.01; charges need at least 100 training anchors.
+For data with library and observed ion mobility, Pioneer refines predictions
+using charge-specific offsets, slopes and residue/modification/terminal counts.
+Corrections use five peptide-sequence folds; charge states and modifications of
+a peptide stay together. Training uses distinct target precursors with first-pass
+probability above 0.9 and q-value at most 0.01. Charges with fewer than 100 training
+anchors retain their original predictions. Composition coefficients use ridge
+regularization and distinguish carbamidomethyl C and oxidized M.
 
 Refinement updates `im_error` before experiment-wide precursor and MBR scoring.
 It preserves observed mobility (`im_obs`), scan calibration and extraction windows.
-Output also records `im_pred`, `im_pred_refined` and `im_error_uncorrected` when
-refinement runs. Residue tokens currently distinguish carbamidomethyl C and
-oxidized M; other modifications do not receive separate coefficients.
-
-For a reproducible prediction benchmark, run a baseline with
-`global.im_refinement = "none"`, then use
-`scripts/evaluate_im_refinement.jl anchors library.poin output_dir [tdfs_dir]`.
-Prefer the baseline's retained `temp_data/main_search_psms` directory as `anchors`
-(`output.delete_temp = false`), selecting confident targets before IM-dependent
-experiment-wide scoring. A final `precursors_long.arrow` table is also supported.
-Run the benchmark after the baseline search finishes; its fold tables are merged
-and replaced during scoring.
-The optional `.tdfs` directory uses the instrument's recorded calibration as the
-observation, avoiding any peptide-fitted alignment in the evaluation targets.
-The benchmark excludes MBR recoveries and measures accuracy conditional on
-identification; search identification counts require a separate full search comparison.
+Output also records `im_pred`, `im_pred_refined` and `im_error_uncorrected`.
 
 ### Search
 

@@ -4,8 +4,7 @@
         "max_message_bytes": 4096
     },
     "global": {
-        "q_value_threshold": 0.01,
-        "im_refinement": "auto"
+        "q_value_threshold": 0.01
     },
     "search": {
         "n_isotopes": 2

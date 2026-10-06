@@ -1,62 +1,52 @@
 # Ion-mobility prediction residuals, in library 1/K0 units. The observed
 # mobility is never corrected: donor/receiver comparisons need a common scale.
-const IM_REFINEMENT_MODES = (:none, :charge, :composition, :charge_composition, :auto)
-
 struct ImCorrectionModel
     charges::Vector{Int}
-    mode::Symbol
     scale::Vector{Float64}
     beta::Vector{Float64}
 end
 
 """
-    im_sequence_fold(sequence; n_folds=5, salt=0)
+    im_sequence_fold(sequence; n_folds=5)
 
 Stable sequence-only fold assignment. All charge states, modifications and
 replicates of a peptide stay together; assignments do not depend on Julia's hash seed.
 """
-function im_sequence_fold(sequence::AbstractString; n_folds::Int = 5, salt::Int = 0)
+function im_sequence_fold(sequence::AbstractString; n_folds::Int = 5)
     n_folds > 1 || throw(ArgumentError("n_folds must exceed one"))
-    h = UInt64(0xcbf29ce484222325) ⊻ UInt64(salt)
+    h = UInt64(0xcbf29ce484222325)
     for b in codeunits(sequence)
         h = (h ⊻ UInt64(b)) * UInt64(0x100000001b3)
     end
     return Int(mod(h, UInt64(n_folds))) + 1
 end
 
-function _im_design(pred, charge, tokens, charges, mode)
+function _im_design(pred, charge, tokens, charges)
     nz = length(charges)
     nt = size(tokens, 2)
-    ncomp = mode === :composition ? nt : mode === :charge_composition ? nt * nz : 0
-    X = zeros(Float64, length(pred), 2nz + ncomp)
+    X = zeros(Float64, length(pred), (2 + nt) * nz)
     for i in eachindex(pred)
         k = findfirst(==(Int(charge[i])), charges)
         k === nothing && continue
         X[i, 2k - 1] = 1
         X[i, 2k] = pred[i]
-        if mode === :composition
-            X[i, (2nz + 1):end] .= view(tokens, i, :)
-        elseif mode === :charge_composition
-            lo = 2nz + (k - 1) * nt + 1
-            X[i, lo:(lo + nt - 1)] .= view(tokens, i, :)
-        end
+        lo = 2nz + (k - 1) * nt + 1
+        X[i, lo:(lo + nt - 1)] .= view(tokens, i, :)
     end
     return X
 end
 
 """
-    fit_im_correction(pred, obs, charge, tokens; mode=:composition,
-                      min_charge=100, ridge=10.0)
+    fit_im_correction(pred, obs, charge, tokens; min_charge=100, ridge=10.0)
 
-Fit `obs - pred` using charge-specific offset/slopes, optionally adding shared
-or charge-specific residue/modification/terminal counts. Ridge regularization
+Fit `obs - pred` using charge-specific offset/slopes and
+residue/modification/terminal counts. Ridge regularization
 acts on standardized composition features. Unsupported charges remain unchanged.
 Inputs must be finite, distinct high-confidence precursor anchors.
 """
 function fit_im_correction(pred, obs, charge, tokens;
-                           mode::Symbol = :composition, min_charge::Int = 100,
+                           min_charge::Int = 100,
                            ridge::Float64 = 10.0)
-    mode in IM_REFINEMENT_MODES[2:4] || throw(ArgumentError("invalid IM fit mode: $mode"))
     ridge >= 0 || throw(ArgumentError("ridge must be nonnegative"))
     n = length(pred)
     length(obs) == length(charge) == size(tokens, 1) == n || throw(DimensionMismatch("IM anchors"))
@@ -65,7 +55,7 @@ function fit_im_correction(pred, obs, charge, tokens;
     charges = sort([Int(z) for z in unique(charge) if count(==(z), charge) >= min_charge])
     isempty(charges) && return nothing
     rows = findall(z -> Int(z) in charges, charge)
-    X = _im_design(pred[rows], charge[rows], tokens[rows, :], charges, mode)
+    X = _im_design(pred[rows], charge[rows], tokens[rows, :], charges)
     # Scale without centering to retain charge indicator intercepts. Drop
     # unsupported/constant composition terms through their ridge penalty.
     scale = [max(sqrt(sum(abs2, view(X, :, j)) / length(rows)), 1e-8) for j in axes(X, 2)]
@@ -74,69 +64,36 @@ function fit_im_correction(pred, obs, charge, tokens;
     penalty[1:(2length(charges))] .= 1e-6
     beta = (X' * X + Diagonal(penalty)) \ (X' * (Float64.(obs[rows]) .- pred[rows]))
     all(isfinite, beta) || return nothing
-    return ImCorrectionModel(charges, mode, scale, beta)
+    return ImCorrectionModel(charges, scale, beta)
 end
 
 function predict_im_correction(model::ImCorrectionModel, pred, charge, tokens)
-    X = _im_design(pred, charge, tokens, model.charges, model.mode)
+    X = _im_design(pred, charge, tokens, model.charges)
     return (X ./ transpose(model.scale)) * model.beta
 end
 
-# Median plus tail loss favors useful search windows rather than correlation,
-# which is dominated by the mass/charge trend in the original predictions.
-_im_validation_loss(residual) = median(abs.(residual)) + 0.25quantile(abs.(residual), 0.95)
-
 """
-    crossfit_im_correction(pred, obs, charge, tokens, sequences;
-                          mode=:auto, min_charge=100)
+    crossfit_im_correction(pred, obs, charge, tokens, sequences; min_charge=100)
 
-Return out-of-fold predictions and selected modes. Each outer fold trains only
-on other peptide sequences. `auto` selects among the three correction models
-and no correction using a separate sequence holdout inside that training set;
-it requires at least 1% loss improvement and at most 2% degradation of p95 error.
+Return predictions corrected with charge-specific composition models on five
+sequence folds. Each fold trains only on other peptide sequences. Charges with
+insufficient training anchors retain the original predictions.
 """
 function crossfit_im_correction(pred, obs, charge, tokens, sequences;
-                                mode::Symbol = :auto, min_charge::Int = 100,
+                                min_charge::Int = 100,
                                 training_mask = trues(length(pred)), n_folds::Int = 5)
-    mode in IM_REFINEMENT_MODES || throw(ArgumentError("invalid IM refinement mode: $mode"))
     n = length(pred)
     length(obs) == length(charge) == length(sequences) == length(training_mask) == size(tokens, 1) == n ||
         throw(DimensionMismatch("IM crossfit inputs"))
     folds = im_sequence_fold.(sequences; n_folds = n_folds)
     refined = Float64.(pred)
-    selected = Dict{Int, Symbol}()
-    mode === :none && return (; refined, folds, selected)
     valid = training_mask .& isfinite.(pred) .& isfinite.(obs)
     for fold in 1:n_folds
         train = findall(valid .& (folds .!= fold))
         test = findall((folds .== fold) .& isfinite.(pred))
         isempty(train) && continue
-        chosen = mode
-        if mode === :auto
-            inner = im_sequence_fold.(sequences[train]; n_folds = 5, salt = 71)
-            tr = train[inner .!= 1]; va = train[inner .== 1]
-            chosen = :none
-            if length(va) >= min_charge && !isempty(tr)
-                raw = Float64.(obs[va]) .- pred[va]
-                best_loss = 0.99 * _im_validation_loss(raw)
-                tail_limit = 1.02quantile(abs.(raw), 0.95)
-                for candidate in IM_REFINEMENT_MODES[2:4]
-                    model = fit_im_correction(pred[tr], obs[tr], charge[tr], tokens[tr, :];
-                                              mode = candidate, min_charge = min_charge)
-                    model === nothing && continue
-                    residual = raw .- predict_im_correction(model, pred[va], charge[va], tokens[va, :])
-                    loss = _im_validation_loss(residual)
-                    if loss < best_loss && quantile(abs.(residual), 0.95) <= tail_limit
-                        chosen = candidate
-                        best_loss = loss
-                    end
-                end
-            end
-        end
-        selected[fold] = chosen
-        chosen === :none && continue
         model = fit_im_correction(pred[train], obs[train], charge[train], tokens[train, :];
-                                  mode = chosen, min_charge = min_charge)
+                                  min_charge = min_charge)
         model === nothing && continue
         correction = predict_im_correction(model, pred[test], charge[test], tokens[test, :])
         for (j, row) in enumerate(test)
@@ -144,7 +101,7 @@ function crossfit_im_correction(pred, obs, charge, tokens, sequences;
             isfinite(p) && p > 0 && (refined[row] = p)
         end
     end
-    return (; refined, folds, selected)
+    return (; refined, folds)
 end
 
 function im_composition_tokens(sequences, modifications)
@@ -160,15 +117,14 @@ function im_composition_tokens(sequences, modifications)
 end
 
 """
-    refine_im_error!(psms, precursors, sigma; mode=:auto)
+    refine_im_error!(psms, precursors, sigma)
 
 Correct library mobility predictions on sequence-held-out folds using target
 anchors with first-pass probability > 0.9 and q-value <= 0.01. Preserve `im_obs`
 and the existing scan calibration/gate. Both ordinary and partitioned searches
 use this best-per-precursor table before experiment-wide and MBR scoring.
 """
-function refine_im_error!(psms::DataFrame, precursors, sigma::Real; mode::Symbol = :auto)
-    mode === :none && return nothing
+function refine_im_error!(psms::DataFrame, precursors, sigma::Real)
     im_lib = getInvIonMobility(precursors)
     (im_lib === nothing || nrow(psms) == 0) && return nothing
     ids = psms.precursor_idx
@@ -190,11 +146,11 @@ function refine_im_error!(psms::DataFrame, precursors, sigma::Real; mode::Symbol
         end
     end
     result = crossfit_im_correction(pred, psms.im_obs, psms.charge, tokens, sequences;
-                                    mode = mode, training_mask = anchors)
+                                    training_mask = anchors)
     psms[!, :im_pred] = Float32.(pred)
     psms[!, :im_pred_refined] = Float32.(result.refined)
     psms[!, :im_error_uncorrected] = copy(psms.im_error)
     psms[!, :im_error] = Float32.((result.refined .- psms.im_obs) ./ max(Float64(sigma), 1e-6))
-    @debug_l1 "IM prediction refinement: anchors=$(count(anchors)), mode=$mode, folds=$(result.selected)"
+    @debug_l1 "IM prediction refinement: anchors=$(count(anchors))"
     return result
 end
