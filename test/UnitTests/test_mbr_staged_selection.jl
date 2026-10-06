@@ -22,7 +22,9 @@ import Pioneer
         @test !isfile(staged_path)
 
         expected = Pioneer.load_with_sidecars(source)[rows, :]
-        @test isequal(Pioneer.load_staged_psms(staged_path), expected)
+        loaded = Pioneer.load_staged_psms(staged_path)
+        @test isequal(loaded, expected)
+        @test eltype.(eachcol(loaded)) == eltype.(eachcol(expected))   # same column types, not just values
         @test isequal(Pioneer.load_staged_psms(staged_path, [:precursor_idx, :qval, :absent]),
                       expected[:, [:precursor_idx, :qval]])
 

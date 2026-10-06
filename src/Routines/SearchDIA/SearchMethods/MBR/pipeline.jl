@@ -90,9 +90,26 @@ function load_staged_psms(path::String, cols::Union{Nothing, Vector{Symbol}} = n
     source = PSMFileReference(metadata["source"];
         sidecar_paths = isempty(sidecar_list) ? String[] : split(sidecar_list, '\n'))
     rows = Int.(selection.source_row)
-    df = cols === nothing ? load_with_sidecars(source) :
-        materialize_columns(source, Symbol[c for c in cols if has_column_anywhere(source, c)])
-    return df[rows, :]
+    return _selected_rows(source, rows, cols)
+end
+
+# The selected rows of the source table and its sidecars, gathered column by column from the
+# memory-mapped Arrow files: never the whole table (staging keeps 12-31% of rows). Columns follow
+# `load_with_sidecars` order (main table, then each sidecar's), restricted to `cols` when given.
+function _selected_rows(source::PSMFileReference, rows::Vector{Int}, cols::Union{Nothing, Vector{Symbol}})
+    df = DataFrame()
+    wanted(c) = cols === nothing || c in cols
+    main = Arrow.Table(file_path(source))
+    for c in Tables.columnnames(main)
+        wanted(c) && (df[!, c] = Tables.getcolumn(main, c)[rows])
+    end
+    for s in source.sidecars
+        side = Arrow.Table(s.path)
+        for c in s.cols
+            wanted(c) && (df[!, c] = Tables.getcolumn(side, c)[rows])
+        end
+    end
+    return df
 end
 
 """Remove the staged selection at `path` once the real table has been written there."""

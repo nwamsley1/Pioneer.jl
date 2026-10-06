@@ -270,7 +270,8 @@ function _ensure_typed_missing_file_columns!(
     ::Type{T}) where {T<:AbstractFloat}
 
     n = nrow(df)
-    col_names = names(df)
+    # A Set: with one column per file, a Vector scan here was O(N^2) per batch.
+    col_names = Set(names(df))
     for fname in file_names
         if fname ∉ col_names || eltype(df[!, fname]) === Missing
             df[!, fname] = Vector{Union{Missing, T}}(missing, n)
