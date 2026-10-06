@@ -172,3 +172,27 @@ end
         end
     end
 end
+
+@testset "Pass-1 on small pools" begin
+    @testset "min_data_in_leaf only ever drops below the configured value on small pools" begin
+        hp = Pioneer.SCORING_LGBM_HP                       # min_data_in_leaf = 300
+        @test Pioneer._pass1_small_pool_hp(hp, 15_000).min_data_in_leaf == 300
+        @test Pioneer._pass1_small_pool_hp(hp, 2_500_000).min_data_in_leaf == 300
+        @test Pioneer._pass1_small_pool_hp(hp, 5_000).min_data_in_leaf == 100
+        @test Pioneer._pass1_small_pool_hp(hp, 700).min_data_in_leaf == 20
+        @test Pioneer._pass1_small_pool_hp(PASS1_POOL_TEST_HP, 700).min_data_in_leaf == 1
+        @test Pioneer._pass1_small_pool_hp((num_iterations = 4,), 700) == (num_iterations = 4,)
+    end
+
+    @testset "no iteration is trained without confident targets" begin
+        # Targets and decoys share one feature distribution: nothing passes q <= 0.01, so the
+        # semi-supervised mask would keep decoys only. The loop must stop at iteration 1.
+        rng = MersenneTwister(3)
+        n = 400
+        X0 = rand(rng, Float32, n, 2); X1 = rand(rng, Float32, n, 2)
+        y0 = rand(rng, Bool, n); y1 = rand(rng, Bool, n)
+        state = Pioneer._train_pass1_pool(X0, y0, X1, y1;
+            lgbm_hp = PASS1_POOL_TEST_HP, semisupervised = true)
+        @test state.iter == 1
+    end
+end
