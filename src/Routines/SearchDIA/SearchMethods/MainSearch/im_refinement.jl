@@ -40,7 +40,7 @@ end
     fit_im_correction(pred, obs, charge, tokens; min_charge=100, ridge=10.0)
 
 Fit `obs - pred` using charge-specific offset/slopes and
-residue/modification/terminal counts. Ridge regularization
+residue/modification/terminal counts and squared peptide length. Ridge regularization
 acts on standardized composition features. Unsupported charges remain unchanged.
 Inputs must be finite, distinct high-confidence precursor anchors.
 """
@@ -105,9 +105,11 @@ function crossfit_im_correction(pred, obs, charge, tokens, sequences;
 end
 
 function im_composition_tokens(sequences, modifications)
-    tokens = zeros(Float64, length(sequences), N_IRT_TOKENS)
+    tokens = zeros(Float64, length(sequences), N_IRT_TOKENS + 1)
     scratch = IrtCountScratch()
     for i in eachindex(sequences)
+        # Residue counts already encode linear length; this adds curvature.
+        tokens[i, end] = (length(sequences[i]) / 20)^2
         count_token_ids!(scratch, sequences[i], modifications[i])
         for id in scratch.touched
             tokens[i, id] = scratch.counts[id]

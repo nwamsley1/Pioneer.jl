@@ -21,7 +21,8 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `global.q_value_threshold` | Float | `0.01` | Final FDR threshold applied to ScoringSearch output. |
 
 For data with library and observed ion mobility, Pioneer refines predictions
-using charge-specific offsets, slopes and residue/modification/terminal counts.
+using charge-specific offsets, slopes, residue/modification/terminal counts,
+and squared peptide length.
 Corrections use five peptide-sequence folds; charge states and modifications of
 a peptide stay together. Training uses distinct target precursors with first-pass
 probability above 0.9 and q-value at most 0.01. Charges with fewer than 100 training

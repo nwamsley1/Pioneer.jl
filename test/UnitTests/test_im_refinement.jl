@@ -12,6 +12,12 @@ using Test, Random, Statistics, DataFrames, Pioneer
           0.001randn(rng, length(pred))
     result = Pioneer.crossfit_im_correction(pred, obs, charge, tokens, sequences;
                                              min_charge = 20)
+    curved_obs = obs .+ 0.2 .* (length.(sequences) ./ 20).^2
+    curved = Pioneer.crossfit_im_correction(pred, curved_obs, charge, tokens, sequences;
+                                             min_charge = 20)
+    linear = Pioneer.crossfit_im_correction(pred, curved_obs, charge, tokens[:, 1:end-1], sequences;
+                                             min_charge = 20)
+    @test median(abs.(curved.refined .- curved_obs)) < 0.75median(abs.(linear.refined .- curved_obs))
     @test median(abs.(result.refined .- obs)) < 0.002
     @test median(abs.(result.refined .- obs)) < 0.05median(abs.(pred .- obs))
     @test all(result.folds[1:3:end] .== result.folds[2:3:end])
