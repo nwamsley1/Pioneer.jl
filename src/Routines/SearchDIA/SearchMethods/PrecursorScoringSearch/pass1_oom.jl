@@ -256,11 +256,18 @@ function _fit_pass1_booster(
         constant_score = isempty(y) || !y[1] ? 0.0f0 : 1.0f0
         return (kind = :constant, value = constant_score, model = nothing)
     end
-    cls = build_lightgbm_classifier(; lgbm_hp...)
+    cls = build_lightgbm_classifier(; _pass1_small_pool_hp(lgbm_hp, length(y))...)
     LightGBM.fit!(cls, X, _prepare_labels(y); verbosity = -1)
     _detach_lightgbm_training_data!(cls)
     return cls
 end
+
+# `min_data_in_leaf` is tuned for pools of 10^5-10^6 rows. On a small pool (one short run) it leaves
+# every tree with a single split, nothing reaches q <= 0.01, and the search reports no precursors.
+# Lower it to one per 50 training rows, never under 20 and never above the configured value, so at
+# 15,000 rows and above (with the default 300) nothing changes.
+_pass1_small_pool_hp(hp::NamedTuple, n_rows::Integer) = haskey(hp, :min_data_in_leaf) ?
+    merge(hp, (min_data_in_leaf = min(Int(hp.min_data_in_leaf), max(20, Int(n_rows) ÷ 50)),)) : hp
 
 _pass1_importance_classifier(cls) = cls isa LightGBM.LGBMClassification ? cls : nothing
 
@@ -495,6 +502,16 @@ function _train_pass1_pool(
             @debug_l1 "  ScoringSearch semi-supervised stopping (Pass-1 training pool): " *
                        "hit max iterations $max_iterations; using iter $(best_state.iter) " *
                        "with pool targets=$(best_state.target_q01)"
+            break
+        end
+        # The next iteration trains each fold on its q-value-passing targets. A fold with none
+        # would learn from decoys alone and score every row the same, so stop and keep the best
+        # iteration so far, as the global scoring loop does (`iteration_valid`).
+        if !(any(view(targets, 1:n0) .& view(metrics.training_mask, 1:n0)) &&
+             any(view(targets, (n0 + 1):n_pool) .& view(metrics.training_mask, (n0 + 1):n_pool)))
+            @debug_l1 "  ScoringSearch semi-supervised stopping (Pass-1 training pool): " *
+                       "no pool target passes q≤$semisupervised_train_q_threshold in a fold; " *
+                       "using iter $(best_state.iter) with pool targets=$(best_state.target_q01)"
             break
         end
         previous_target_q01 = state.target_q01

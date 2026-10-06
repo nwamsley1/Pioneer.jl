@@ -35,6 +35,20 @@ function maybe_run(f, name)
     end
 end
 
+# A search that runs to the end without identifying anything compiles only its first stages: every later
+# stage runs on empty tables. That is a failure here, not a success. Totals, not per run: the yeast
+# target deliberately includes a run with no signal.
+function search_checked(config_path::AbstractString)
+    Pioneer.SearchDIA(config_path)
+    results = Pioneer.JSON.parsefile(config_path)["paths"]["results"]
+    results = isabspath(results) ? results : joinpath(root, "..", "..", results)
+    summary = joinpath(results, "run_summary.tsv")
+    isfile(summary) || error("$(basename(config_path)): no run_summary.tsv; the search produced no output tables")
+    n = sum(row -> parse(Int, split(row, '\t')[2]), readlines(summary)[2:end]; init = 0)
+    n > 0 || error("$(basename(config_path)): no precursors identified; stages after precursor scoring were not compiled")
+    return nothing
+end
+
 # Called once at the end of the script, after every target has had its turn, so a single run reports
 # *all* broken targets rather than stopping at the first -- which matters when each target takes
 # minutes.
@@ -197,8 +211,8 @@ maybe_run("SearchDIA") do
         joinpath(data_dir, "ecoli_test", "raw"),
         joinpath(data_dir, "precompile", "ecoli_raw_mixed"),
     )
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
 end
 
 # Search the Prosit library built above. Building it is not enough: the search side
@@ -214,7 +228,7 @@ maybe_run("SearchDIA_prosit") do
         joinpath(data_dir, "ecoli_test", "raw"),
         joinpath(data_dir, "precompile", "ecoli_raw_mixed"),
     )
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
 end
 
 
@@ -255,7 +269,7 @@ end
 # only because report_snoop_failures() rethrows: a stale library fails the build instead of
 # degrading the artifact. Bump the precompile-data cache-key whenever the artifact is regenerated.
 maybe_run("SearchDIA_yeast") do
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 end
 
 
@@ -276,7 +290,7 @@ maybe_run("convertBruker") do
 end
 maybe_run("SearchDIA_tdfs") do
     isdir(TDFS_FIXTURE_OUT) || convert_tdfs_fixture()    # so the target also works alone via the `cmd` filter
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_tdfs.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_tdfs.json"))
 end
 
 
@@ -296,7 +310,7 @@ maybe_run("convertSciex") do
 end
 maybe_run("SearchDIA_scxs") do
     isdir(SCXS_FIXTURE_OUT) || convert_scxs_fixture()    # so the target also works alone via the `cmd` filter
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_scxs.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_scxs.json"))
 end
 
 
@@ -314,7 +328,7 @@ maybe_run("SearchDIA_zt") do
     isdir(ZT_SYNTH_LIBRARY) ||                  # so the target also works alone via the `cmd` filter
         Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
     generate_synthetic_zt_runs(ZT_SYNTH_LIBRARY, joinpath(data_dir, "precompile", "synthetic_zt"))
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_zt.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_zt.json"))
     check_zt_search_ran(joinpath(data_dir, "precompile", "zt_results"))
 end
 
