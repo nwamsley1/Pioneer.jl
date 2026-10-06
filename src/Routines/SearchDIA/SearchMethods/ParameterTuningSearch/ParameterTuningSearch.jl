@@ -766,8 +766,9 @@ function process_file!(
                     # MainSearch MS1 features and IntegrateChromatogramsSearch.
                     try
                         ms1_coordinates = (Float32[], Float32[])
+                        ms1_precursor_ids = UInt32[]
                         ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx;
-                            qc_coordinates=ms1_coordinates)
+                            qc_coordinates=ms1_coordinates, qc_precursor_ids=ms1_precursor_ids)
                         parsed_fname_ms1 = getParsedFileName(search_context, ms_file_idx)
                         ms1_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ms1_mass_error_plots")
                         isdir(ms1_dir) || mkpath(ms1_dir)
@@ -782,16 +783,12 @@ function process_file!(
                             @debug_l1 "  MS1 model: insufficient residuals ($(length(ms1_residuals)))"
                         end
                         if fit !== nothing || any(i -> getMsOrder(spectra, i) == 1, 1:length(spectra))
-                            trend = if fit === nothing || !all(isfinite, (fit[2],fit[3]))
-                                NaN
-                            else
-                                corrected = ms1_residuals .- fit[2]
-                                maximum(_qc_binned_bias(xs, corrected) for xs in ms1_coordinates)
-                            end
+                            sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+                            ms1_group_ids = [String(sequences[pid]) for pid in ms1_precursor_ids]
                             record_calibration_qc!(search_context.calibration_qc, :ms1_mass, ms_file_idx,
-                                assess_calibration_qc(:ms1_mass,length(ms1_residuals),
-                                    (NaN,fit === nothing ? NaN : fit[3],trend,NaN);
-                                    min_support=10, failed=fit !== nothing && !all(isfinite, (fit[2],fit[3]))))
+                                ms1_calibration_qc(ms1_residuals, ms1_coordinates,
+                                    fit === nothing ? nothing : fit[1];
+                                    group_ids=ms1_group_ids))
                             if select_calibration_plot!(search_context.calibration_qc, :ms1_mass, ms_file_idx)
                                 if fit === nothing
                                     calibration_notice!(search_context, :ms1_mass, ms_file_idx)
@@ -962,8 +959,14 @@ function process_search_results!(
     state = results.current_iteration_state[]
     name = getParsedFileName(search_context, ms_file_idx)
     try
-        rt_record = rt_calibration_qc(results.rt, results.irt, getRtToIrtModel(results),
-            getRetentionTimes(spectra); min_support=MIN_PSMS_FOR_RT)
+        sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+        rt_psms = state === nothing ? nothing : state.best_psms
+        rt_rts = rt_psms === nothing ? Float32[] : rt_psms.rt
+        rt_irts = rt_psms === nothing ? Float32[] : rt_psms.irt_predicted
+        rt_group_ids = rt_psms === nothing ? String[] : [String(sequences[pid]) for pid in rt_psms.precursor_idx]
+        rt_record = rt_calibration_qc(rt_rts, rt_irts, getRtToIrtModel(results),
+            get(getIrtErrors(search_context), ms_file_idx, Inf32); group_ids=rt_group_ids,
+            fallback=results.diagnostics.file_statuses[ms_file_idx].used_fallback)
         record_calibration_qc!(search_context.calibration_qc, :rt, ms_file_idx, rt_record)
         if select_calibration_plot!(search_context.calibration_qc, :rt, ms_file_idx)
             if isempty(results.rt)
@@ -979,27 +982,8 @@ function process_search_results!(
         fragments = state === nothing ? nothing : state.best_fragments
         model = getMassErrorModel(search_context, ms_file_idx)
         fallback = results.diagnostics.file_statuses[ms_file_idx].used_fallback
-        ms2_qc = heldout_ms2_calibration_qc(fragments, model,
-            getSequence(getPrecursors(getSpecLib(search_context))); fallback)
-        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx, ms2_qc.record)
-        qc_dir = joinpath(getDataOutDir(search_context), "qc_plots", "mass_error_plots")
-        mkpath(qc_dir)
-        if !isempty(ms2_qc.bins)
-            CSV.write(joinpath(qc_dir, name * "_heldout_bins.tsv"), DataFrame(ms2_qc.bins); delim='\t')
-        end
-        open(joinpath(qc_dir, name * "_heldout_qc.json"), "w") do io
-            JSON.print(io, Dict(
-                "status" => _qc_name(ms2_qc.record.status),
-                "reason" => calibration_qc_reason(:ms2_mass, ms2_qc.record),
-                "n_peptides" => ms2_qc.n_peptides,
-                "persistent_biased_peptide_fraction" => ms2_qc.record.metrics[2],
-                "global_median_bias_over_tolerance" => ms2_qc.record.metrics[3],
-                "outside_tolerance_fraction" => ms2_qc.record.metrics[4],
-                "global_median_error_mda" => get(ms2_qc, :global_median_error_mda, nothing),
-                "global_median_error_over_tolerance" => get(ms2_qc, :global_median_error_over_tolerance, nothing),
-                "assessment" => "five-fold peptide-sequence-held-out mass fits; matches selected with scout calibration",
-            ), 2)
-        end
+        ms2_qc = ms2_calibration_qc(fragments, model, sequences; fallback)
+        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx, ms2_qc)
         if select_calibration_plot!(search_context.calibration_qc, :ms2_mass, ms_file_idx)
             if fragments === nothing || isempty(fragments)
                 calibration_notice!(search_context, :ms2_mass, ms_file_idx)

@@ -3,8 +3,7 @@
 # For each PSM accepted by the MS2 mass-error fit, look up the nearest MS1 scan
 # and find the closest peak to the precursor's predicted M+0/M+1/M+2 m/z within
 # ±MS1_DIAG_WINDOW_PPM. Record observed-vs-theoretical ppm residuals and write a
-# per-file histogram. Diagnostic only — does not fit a model or affect downstream
-# search behavior.
+# per-file histogram. These observations also fit the production MS1 model.
 
 const MS1_DIAG_WINDOW_PPM = 100.0f0
 const MS1_DIAG_TOL_K_MAD  = 5.0f0
@@ -55,10 +54,12 @@ PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
 the ppm residual of the closest peak to the precursor's M+0, M+1, M+2 isotopes
 within ±MS1_DIAG_WINDOW_PPM. Returns a flat vector of signed ppm residuals
 (positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
-matching theoretical m/z and scan RT values for within-file residual checks.
+matching theoretical m/z and scan RT values for within-file residual checks;
+`qc_precursor_ids` receives precursor IDs for grouping whole peptide sequences.
 """
 function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer;
-    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing)
+    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing,
+    qc_precursor_ids::Union{Nothing,Vector{UInt32}}=nothing)
     n = nrow(psms)
     n == 0 && return Float32[]
 
@@ -97,6 +98,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
                     push!(qc_coordinates[1], target)
                     push!(qc_coordinates[2], Float32(getRetentionTime(spectra, ms1_idx)))
                 end
+                qc_precursor_ids !== nothing && push!(qc_precursor_ids, pid)
             end
         end
     end
