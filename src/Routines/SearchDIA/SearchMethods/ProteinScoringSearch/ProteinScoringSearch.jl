@@ -107,12 +107,12 @@ function summarize_results!(
     protein_ambiguity_candidates = if protein_inference_results isa ProteinInferenceSearchResults
         protein_inference_results.protein_ambiguity_candidates
     else
-        Dict{UInt32, Vector{ProteinKey}}()
+        Dict{UInt32, Vector{PGKey}}()
     end
     protein_peptide_opportunities = if protein_inference_results isa ProteinInferenceSearchResults
         protein_inference_results.protein_peptide_opportunities
     else
-        Dict{ProteinKey, ProteinPeptideOpportunityCounts}()
+        Dict{PGKey, ProteinPeptideOpportunityCounts}()
     end
 
     run_protein_scoring!(

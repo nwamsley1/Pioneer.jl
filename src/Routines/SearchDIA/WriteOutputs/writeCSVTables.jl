@@ -492,9 +492,9 @@ const _PRECURSOR_CSV_SOURCE_ALIASES = Dict{Symbol, Symbol}(
     _precursor_csv_read_columns(tbl, requested_cols) -> Vector{Symbol}
 
 The columns to pull out of a merge chunk: every requested output column, plus the pre-rename
-spelling of each renamed one, plus the two the writer needs internally (`:precursor_idx` for batch
-boundaries and `:accession_numbers` for the gene-name mapping), intersected with the chunk schema
-and returned in the chunk's own column order.
+spelling of each renamed one, plus the two the writer needs to restore the library text
+(`:precursor_idx`, `:ms_file_idx`), intersected with the chunk schema and returned in the
+chunk's own column order.
 """
 function _precursor_csv_read_columns(tbl, requested_cols)
     wanted = Set{Symbol}(requested_cols)
@@ -502,7 +502,7 @@ function _precursor_csv_read_columns(tbl, requested_cols)
         out_name in wanted && push!(wanted, src_name)
     end
     push!(wanted, :precursor_idx)
-    push!(wanted, :accession_numbers)
+    push!(wanted, :ms_file_idx)
     return Symbol[c for c in propertynames(tbl) if c in wanted]
 end
 
@@ -527,7 +527,7 @@ function _foreach_precursor_wide_batch(f, df, keys, nfiles, budget, row_limit)
 end
 
 """
-    writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins; ...)
+    writePrecursorCSV_chunked(chunk_refs, out_dir, text, normalized, proteins; ...)
 
 Chunked version of writePrecursorCSV that processes merge chunks one at a time,
 keeping one input chunk in memory. The workspace budget sizes additional batches
@@ -537,7 +537,7 @@ Produces identical output files: precursors_long.tsv, precursors_wide.tsv, precu
 function writePrecursorCSV_chunked(
     chunk_refs::Vector{<:Any},
     out_dir::String,
-    file_names::Vector{String},
+    text::PrecursorOutputText,
     normalized::Bool,
     proteins::LibraryProteins;
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
@@ -547,6 +547,7 @@ function writePrecursorCSV_chunked(
 
     batch_size > 0 || throw(ArgumentError("batch_size must be positive"))
     memory_budget_bytes > 0 || throw(ArgumentError("memory_budget_bytes must be positive"))
+    file_names = text.file_names
 
     function makeWideFormat(
         longdf::AbstractDataFrame,
@@ -682,6 +683,15 @@ function writePrecursorCSV_chunked(
                     precursors_long = DataFrame()
                     for col in _precursor_csv_read_columns(chunk_tbl, requested_cols)
                         precursors_long[!, col] = chunk_tbl[col]
+                    end
+                    for col in PRECURSOR_TEXT_COLUMNS
+                        col === :accession_numbers || col in requested_cols || continue
+                        precursors_long[!, col] = precursor_text_column(
+                            text, col, chunk_tbl.precursor_idx, chunk_tbl.ms_file_idx)
+                    end
+                    if hasproperty(precursors_long, :inferred_protein_group)
+                        precursors_long[!, :inferred_protein_group] = protein_group_name_column(
+                            text, precursors_long.inferred_protein_group)
                     end
                     if :num_enzymatic_termini in requested_cols &&
                        !hasproperty(precursors_long, :num_enzymatic_termini)

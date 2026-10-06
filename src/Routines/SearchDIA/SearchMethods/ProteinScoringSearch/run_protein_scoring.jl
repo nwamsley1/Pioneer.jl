@@ -172,7 +172,7 @@ end
                                       max_in_memory_rows::Int64,
                                       qc_folder::String,
                                       precursors::LibraryPrecursors;
-                                      protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+                                      protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
 Fit and apply the run-level protein model.
 
@@ -191,7 +191,7 @@ function perform_run_level_protein_scoring(
     qc_folder::String,
     precursors::LibraryPrecursors;
     counterfactual_shadow_protein_groups::DataFrame = DataFrame(),
-    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+    protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     write_qc_plots::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
@@ -234,12 +234,12 @@ end
 function run_protein_scoring!(
     search_context::SearchContext;
     passing_refs::Vector{PSMFileReference},
-    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}} =
-        Dict{UInt32, Vector{ProteinKey}}(),
+    protein_ambiguity_candidates::Dict{UInt32, Vector{PGKey}} =
+        Dict{UInt32, Vector{PGKey}}(),
     protein_peptide_opportunities::Dict{
-        ProteinKey,
+        PGKey,
         ProteinPeptideOpportunityCounts
-    } = Dict{ProteinKey, ProteinPeptideOpportunityCounts}(),
+    } = Dict{PGKey, ProteinPeptideOpportunityCounts}(),
     max_in_memory_table_mb::Float64,
     q_value_threshold::Float32,
     min_peptides::Int64,

@@ -99,23 +99,30 @@ Protein group handling spans multiple modules:
 
 **Type-Safe Structures**:
 ```julia
-struct ProteinKey
-    name::String
+struct ProteinKey{N}        # N = String (a name) or UInt32 (an integer ID)
+    name::N
+    is_target::Bool
+    entrap_id::UInt8
+end
+const PGKey = ProteinKey{UInt32}   # after inference: the group's pg_id
+
+struct PeptideKey{S}        # S = String (a sequence) or UInt32 (library sequence_id)
+    sequence::S
     is_target::Bool
     entrap_id::UInt8
 end
 
-struct PeptideKey
-    sequence::String
-    is_target::Bool
-    entrap_id::UInt8
-end
-
-struct InferenceResult
-    peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
-    use_for_quant::Dictionary{PeptideKey, Bool}
+struct InferenceResult{P<:ProteinKey, Q<:PeptideKey}
+    peptide_to_protein::Dictionary{Q, P}
+    ambiguous_peptide_to_proteins::Dictionary{Q, Vector{P}}
 end
 ```
+
+**Integer intermediates**: PSM and protein-group tables carry no strings. Library text
+(sequence, mods, accessions, species, start positions) is looked up by `:precursor_idx`
+(`PrecursorTextIds`), file names by `:ms_file_idx`, and protein groups are `pg_id`s — the rank
+of the group name, so sorting IDs sorts names — with names in
+`ProteinInferenceSearchResults.protein_group_names`. Final writers restore the text.
 
 The `merge_sorted_protein_groups` function is critical for handling large datasets:
 ```julia

@@ -84,7 +84,7 @@ const GLOBAL_PROTEIN_LGBM_HP = (
 
 const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 100
 const GLOBAL_PROTEIN_MAX_TRAIN = 1_000_000
-const GlobalProteinKey = Tuple{String, Bool, UInt8}
+const GlobalProteinKey = Tuple{UInt32, Bool, UInt8}
 
 struct GlobalProteinRunScore
     ms_file_idx::UInt32
@@ -93,8 +93,8 @@ end
 
 struct GlobalProteinInputs
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
-    observed_peptides::Dict{GlobalProteinKey, Set{String}}
-    observed_common_peptides::Dict{GlobalProteinKey, Set{String}}
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}}
+    observed_common_peptides::Dict{GlobalProteinKey, Set{UInt32}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
     max_n_common_peptides::Dict{GlobalProteinKey, Int}
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
@@ -106,7 +106,7 @@ end
 # Their input is necessarily interpreted as all-common.
 function GlobalProteinInputs(
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}},
-    observed_peptides::Dict{GlobalProteinKey, Set{String}},
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}},
     max_n_peptides::Dict{GlobalProteinKey, Int},
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int},
     folds::Dict{GlobalProteinKey, UInt8}
@@ -126,14 +126,14 @@ end
 function _collect_global_protein_inputs(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{
-        String,
+        UInt32,
         @NamedTuple{best_score::Float32, cv_fold::UInt8},
     },
     n_proteins::Int,
 )
     run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
-    observed_peptides = Dict{GlobalProteinKey, Set{String}}()
-    observed_common_peptides = Dict{GlobalProteinKey, Set{String}}()
+    observed_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
+    observed_common_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
     max_n_common_peptides = Dict{GlobalProteinKey, Int}()
     n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
@@ -151,7 +151,7 @@ function _collect_global_protein_inputs(
     for ref in pg_refs
         table = Arrow.Table(file_path(ref))
         @inbounds for row in eachindex(table.protein_name)
-            protein_name = String(table.protein_name[row])
+            protein_name = UInt32(table.protein_name[row])
             key = (
                 protein_name,
                 Bool(table.target[row]),
@@ -169,21 +169,16 @@ function _collect_global_protein_inputs(
             )
 
             protein_peptides = get!(observed_peptides, key) do
-                Set{String}()
+                Set{UInt32}()
             end
-            for peptide in split(table.peptide_list[row], ';')
-                isempty(peptide) || push!(protein_peptides, String(peptide))
-            end
+            union!(protein_peptides, table.peptide_list[row])
 
             protein_common_peptides = get!(observed_common_peptides, key) do
-                Set{String}()
+                Set{UInt32}()
             end
             common_peptide_list = hasproperty(table, :common_peptide_list) ?
                 table.common_peptide_list[row] : table.peptide_list[row]
-            for peptide in split(common_peptide_list, ';')
-                isempty(peptide) ||
-                    push!(protein_common_peptides, String(peptide))
-            end
+            union!(protein_common_peptides, common_peptide_list)
 
             n_peptides = Int(table.n_peptides[row])
             n_common_peptides = hasproperty(table, :n_common_peptides) ?
@@ -317,7 +312,7 @@ function _build_global_protein_feature_table(
     end
 
     table = DataFrame(
-        protein_name = String[key[1] for key in protein_keys],
+        protein_name = UInt32[key[1] for key in protein_keys],
         target = Bool[key[2] for key in protein_keys],
         entrap_id = UInt8[key[3] for key in protein_keys],
         cv_fold = UInt8[inputs.folds[key] for key in protein_keys],
@@ -333,7 +328,7 @@ function _build_protein_score_dicts(
     scores::AbstractVector{<:Real},
 )
     global_score_dict = Dict{GlobalProteinKey, Float32}()
-    protein_key_score_dict = Dict{ProteinKey, Float32}()
+    protein_key_score_dict = Dict{PGKey, Float32}()
     sizehint!(global_score_dict, length(protein_keys))
     sizehint!(protein_key_score_dict, length(protein_keys))
 
@@ -341,7 +336,7 @@ function _build_protein_score_dicts(
         key = protein_keys[row]
         score = Float32(scores[row])
         global_score_dict[key] = score
-        protein_key_score_dict[ProteinKey(key...)] = score
+        protein_key_score_dict[PGKey(key...)] = score
     end
     return global_score_dict, protein_key_score_dict
 end
@@ -416,7 +411,7 @@ any training split has fewer than 100 targets or 100 decoys.
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{
-        String,
+        UInt32,
         @NamedTuple{best_score::Float32, cv_fold::UInt8},
     },
     n_proteins::Int,

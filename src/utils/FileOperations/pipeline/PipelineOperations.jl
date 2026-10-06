@@ -200,7 +200,7 @@ function add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V
 end
 
 """
-    add_dict_column_composite_key(new_col::Symbol, key_cols::Vector{Symbol}, lookup_dict::Dict{Tuple{String,Bool,UInt8},V}) where {V}
+    add_dict_column_composite_key(new_col::Symbol, key_cols::Vector{Symbol}, lookup_dict::Dict{Tuple{K,Bool,UInt8},V}) where {K,V}
 
 Add a new column by looking up values in a dictionary using multiple key columns to form a composite key.
 Specifically designed for protein groups which are identified by (protein_name, target, entrap_id).
@@ -208,7 +208,7 @@ Specifically designed for protein groups which are identified by (protein_name, 
 # Arguments
 - `new_col`: Name of the new column to create
 - `key_cols`: Vector of column names to use for creating composite keys (must be [:protein_name, :target, :entrap_id])
-- `lookup_dict`: Dictionary mapping tuple keys (String, Bool, UInt8) to values
+- `lookup_dict`: Dictionary mapping tuple keys (protein name or pg_id, Bool, UInt8) to values
 
 # Example
 ```julia
@@ -217,7 +217,7 @@ pipeline = TransformPipeline() |>
 ```
 """
 function add_dict_column_composite_key(new_col::Symbol, key_cols::Vector{Symbol},
-                                      lookup_dict::Dict{Tuple{String,Bool,UInt8},V}) where {V}
+                                      lookup_dict::Dict{Tuple{K,Bool,UInt8},V}) where {K,V}
     desc = "add_dict_column_composite_key($new_col from $(join(key_cols, ", ")))"
     op = function(df)
         # Verify key columns exist

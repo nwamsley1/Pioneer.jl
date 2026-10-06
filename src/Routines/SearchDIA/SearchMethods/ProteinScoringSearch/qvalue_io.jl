@@ -17,13 +17,13 @@
 
 """
     build_protein_global_qval_dict(global_pg_score_dict)
-    → Dict{Tuple{String,Bool,UInt8}, Float32}
+    → Dict{Tuple{K, Bool, UInt8}, Float32}   (K: the pg_id, or a name)
 
 Compute protein global q-values directly from score dictionary.
 """
 function build_protein_global_qval_dict(
-    global_pg_score_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
-)
+    global_pg_score_dict::Dict{Tuple{K, Bool, UInt8}, Float32}
+) where {K}
     n = length(global_pg_score_dict)
     keys_vec = collect(keys(global_pg_score_dict))
     scores = Float32[global_pg_score_dict[k] for k in keys_vec]
@@ -32,7 +32,7 @@ function build_protein_global_qval_dict(
     qvals = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
 
-    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    qval_dict = Dict{Tuple{K, Bool, UInt8}, Float32}()
     sizehint!(qval_dict, n)
     for i in 1:n
         qval_dict[keys_vec[i]] = qvals[i]
@@ -42,17 +42,17 @@ end
 
 """
     update_psms_with_protein_scores_refs(paired_refs::Vector{PairedSearchFiles},
-                                         pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
+                                         pg_name_to_global_pg_score::Dict{PGKey,Float32},
                                          pg_score_to_qval,
-                                         global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
+                                         global_pg_score_to_qval_dict::Dict{Tuple{UInt32, Bool, UInt8}, Float32})
 
 Update PSMs with model-scored `pg_score` values and q-values using references.
 """
 function update_psms_with_protein_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
-    pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
+    pg_name_to_global_pg_score::Dict{PGKey,Float32},
     pg_score_to_qval,
-    global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
+    global_pg_score_to_qval_dict::Dict{Tuple{UInt32, Bool, UInt8}, Float32}
 )
     for paired_ref in paired_refs
         psm_ref = paired_ref.psm_ref
@@ -64,7 +64,7 @@ function update_psms_with_protein_scores_refs(
         end
 
         pg_table = Arrow.Table(file_path(pg_ref))
-        pg_score_lookup = Dict{ProteinKey, Tuple{Float32, Float32}}()
+        pg_score_lookup = Dict{PGKey, Tuple{Float32, Float32}}()
         n_pg_rows = length(pg_table[:protein_name])
 
         for i in 1:n_pg_rows
