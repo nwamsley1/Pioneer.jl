@@ -179,10 +179,9 @@ end
     @test assess(persistent; tolerance=30.0).status == Pioneer.QC_NORMAL
     wide = [isodd(i) ? 8.0 : -8.0 for i in 1:n]
     @test assess(wide; tolerance=30.0).status == Pioneer.QC_NORMAL
-    @test assess(wide .* 2).metrics[4] == 1f0
-    @test assess(wide .* 2).status == Pioneer.QC_SUSPICIOUS
-    @test assess([i <= 100 ? 11.0 : 0.0 for i in 1:n]).status == Pioneer.QC_NORMAL
-    @test assess([i <= 101 ? 11.0 : 0.0 for i in 1:n]).status == Pioneer.QC_SUSPICIOUS
+    # Broad centered tails do not assess MS1 coverage or flag calibration bias.
+    @test isnan(assess(wide .* 2).metrics[4])
+    @test assess(wide .* 2).status == Pioneer.QC_NORMAL
     @test assess(fill(2.5,n)).status == Pioneer.QC_NORMAL
     global_bias = assess(fill(3.0,n))
     @test global_bias.metrics[3] ≈ 0.3f0
@@ -192,17 +191,11 @@ end
     uncertain = vcat(fill(2.0,490),fill(3.0,510))
     @test assess(uncertain; coordinates=constant_coords).metrics[3] == 0f0
 
-    # Repeated PSMs/isotopes do not manufacture peptide support or coverage weight.
+    # Repeated PSMs/isotopes do not manufacture peptide support.
     repeated_coords = (repeat(Float64.(1:10),100),repeat(Float64.(1:10),100))
     repeated = assess(fill(6.0,n); groups=repeat(1:10,100),coordinates=repeated_coords)
     @test repeated.status == Pioneer.QC_WARNING
     @test repeated.n == 10
-    mixed_errors = vcat(zeros(n),fill(100.0,1000))
-    mixed_ids = vcat(ids,fill(n+1,1000))
-    mixed_coords = (Float64.(mixed_ids),Float64.(mixed_ids))
-    coverage = assess(mixed_errors; groups=mixed_ids,coordinates=mixed_coords)
-    @test coverage.metrics[4] ≈ 1 / (n+1)
-    @test coverage.status == Pioneer.QC_NORMAL
     @test assess(zeros(n); tolerance=0).status == Pioneer.QC_FAILED
     @test assess(fill(NaN,n)).status == Pioneer.QC_FAILED
     @test_throws DimensionMismatch assess(zeros(n); groups=1:n-1)

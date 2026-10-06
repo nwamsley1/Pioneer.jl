@@ -31,7 +31,7 @@ _qc_name(s::CalibrationQCStatus) = ("not_assessed", "normal", "suspicious", "war
 const CALIBRATION_QC_METRICS = (
     (:unused, :persistent_biased_peptide_fraction, :global_median_bias_over_tolerance, :outside_tolerance_fraction),
     (:unused, :persistent_biased_peptide_fraction, :global_median_bias_over_tolerance, :outside_tolerance_fraction),
-    (:unused, :persistent_biased_peptide_fraction, :global_median_bias_over_tolerance, :outside_tolerance_fraction),
+    (:unused, :persistent_biased_peptide_fraction, :global_median_bias_over_tolerance, :unused),
     (:edge_coverage, :log_ratio_rmse, :unused, :parameter_at_bound),
     (:fitted_charge_coverage, :unused, :weak_nce_fraction, :endpoint_fraction),
     (:unused, :unused, :unused, :unused),   # ion mobility: support and fallback only
@@ -39,7 +39,7 @@ const CALIBRATION_QC_METRICS = (
 const CALIBRATION_QC_LIMITS = (
     (-Inf32, 0.10f0, 0.25f0, 0.10f0),
     (-Inf32, 0.10f0, 0.25f0, 0.10f0),
-    (-Inf32, 0.10f0, 0.25f0, 0.10f0),
+    (-Inf32, 0.10f0, 0.25f0, Inf32),
     (0.5f0, 0.5f0, Inf32, 0.5f0),
     (0.5f0, Inf32, 0.5f0, 0.5f0),
     (-Inf32, Inf32, Inf32, Inf32),
@@ -306,7 +306,7 @@ _qc_practical_bias_direction(m) = m.low > PEPTIDE_QC_BIAS_LIMIT ? 1 :
     ms1_calibration_diagnostics(errors_ppm, coordinates, biases, tolerances; group_ids)
 
 Assess MS1 residuals relative to production matching half-widths in ppm. Each
-peptide sequence contributes one median residual and equal weight to coverage.
+peptide sequence contributes one median residual.
 `coordinates` contains matching theoretical m/z and RT vectors. Local bias
 requires two adjacent equal-count bins in the same direction, with at least 50
 peptides per bin and a median interval entirely beyond 25% of tolerance.
@@ -338,7 +338,8 @@ function _peptide_calibration_qc(errors, coordinates, biases, tolerances;
     global_bias = _qc_supported_median(peptide_residuals)
     supported_global_bias = ng >= min_support && _qc_practical_bias_direction(global_bias) != 0 ?
         abs(global_bias.median) : 0.0
-    outside_fraction = ng == 0 ? NaN : mean(mean(abs.(residuals[r]) .> 1) for r in rows)
+    outside_fraction = stage === :rt && ng > 0 ?
+        mean(mean(abs.(residuals[r]) .> 1) for r in rows) : NaN
     affected_fraction = 0.0
     for coordinate in coordinates
         nbins = min(10, ng ÷ PEPTIDE_QC_MIN_SUPPORT)
