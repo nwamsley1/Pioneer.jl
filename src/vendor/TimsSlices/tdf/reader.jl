@@ -29,6 +29,7 @@ struct TdfFile
     im_cal::LinearImCal
     ce_ramp::CeRamp
     bin::IOStream               # analysis.tdf_bin (positioned reads; the stream position is never used)
+    bin_lock::ReentrantLock     # serialises seek+read where there is no positioned read (Windows)
     bin_size::Int64
     compression::Int
     max_scans::Int
@@ -50,7 +51,7 @@ function open_tdf(dir::AbstractString)
     compression = parse(Int, get(meta, "TimsCompressionType", "2"))
     compression == 2 || error("only TimsCompressionType 2 is supported (file has $compression)")
     bin = open(joinpath(dir, "analysis.tdf_bin"), "r")
-    TdfFile(String(dir), meta, frames, dia, cal, resid, timebase, imcal, ce, bin, filesize(bin), compression,
+    TdfFile(String(dir), meta, frames, dia, cal, resid, timebase, imcal, ce, bin, ReentrantLock(), filesize(bin), compression,
             isempty(frames.num_scans) ? 0 : Int(maximum(frames.num_scans)),
             isempty(frames.num_peaks) ? 0 : Int(maximum(frames.num_peaks)))
 end
@@ -85,11 +86,19 @@ function pread!(dst::Vector{UInt8}, f::TdfFile, off::Integer, n::Integer)
             done += r
         end
     else
-        lock(f.bin) do
-            seek(f.bin, off); unsafe_read(f.bin, pointer(dst), n)
-        end
+        _locked_read!(dst, f.bin, f.bin_lock, off, n)
     end
     dst
+end
+
+# No positioned read on Windows: seek and read under a lock so concurrent readers can't interleave.
+# The lock is the file's own: `lock(::IOStream)` is the generic no-op `lock(::IO)`.
+function _locked_read!(dst::Vector{UInt8}, io::IOStream, l::ReentrantLock, off::Integer, n::Integer)
+    lock(l) do
+        seek(io, off)
+        GC.@preserve dst unsafe_read(io, pointer(dst), n)
+    end
+    return dst
 end
 
 """
