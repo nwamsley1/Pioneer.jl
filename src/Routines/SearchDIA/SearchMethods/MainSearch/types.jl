@@ -82,6 +82,7 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
     # Pre-filter: require marginal candidates to appear in ≥ N scans
     prefilter_min_scan_count::Int64
+    im_refinement::Symbol
 
     function MainSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -104,6 +105,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         # the legacy nested location search.fragment_settings.n_isotopes
         # so old configs keep working.
         n_isotopes_val = _resolve_n_isotopes(quant_params)
+        im_refinement = Symbol(get(params.global_settings, :im_refinement, "auto"))
+        im_refinement in IM_REFINEMENT_MODES || throw(ArgumentError(
+            "global.im_refinement must be one of $(IM_REFINEMENT_MODES)"))
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             isotope_bounds,
@@ -136,6 +140,7 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             DEFAULT_INDEX_SEARCH_MIN_SCORE,
 
             0,                  # prefilter_min_scan_count (formerly fragment_index_search.prefilter_min_scan_count; never overridden)
+            im_refinement,
         )
     end
 end

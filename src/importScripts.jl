@@ -328,6 +328,7 @@ function importScripts()
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
         "irt_refinement.jl",             # predicted iRT refinement between LGBM passes
+        "im_refinement.jl",              # sequence-held-out ion-mobility residual correction
         "scoring.jl",                    # train_lgbm_for_irt_refinement (uses features)
         "utils.jl",                      # recalibrate_rt!
         "MainSearch.jl"                  # struct + interface (uses everything above)

@@ -81,9 +81,9 @@ const ADVANCED_FEATURE_SET = [
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
-    # Ion-mobility residual, signed, in z2 sigma units, from the file's z2 line (one line
-    # for every charge, MainSearch add_im_error!); 0 on files without mobility data.
-    # :charge lets the trees learn each charge's own offset and spread around that line.
+    # Ion-mobility residual, signed, in z2 sigma units. MainSearch can refine the
+    # prediction on held-out peptide sequences; the observed z2 calibration
+    # scale stays shared across charges. Zero on files without mobility data.
     :im_error, :charge,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
