@@ -27,3 +27,25 @@ using Pioneer: convertBruker, main_convertBruker
         main_convertBruker(["--help"])
     end == 0
 end
+
+@testset "TimsSlices locked read (the Windows pread! path)" begin
+    # pread! uses this on Windows, where there is no positioned read. Run it on every OS: it is the
+    # path that broke the Windows build (lock(f, ::IOStream) has no method; lock(::IOStream) is a no-op).
+    mktemp() do path, io
+        payload = UInt8.(0:255)
+        write(io, payload); flush(io); close(io)
+        open(path, "r") do stream
+            l = ReentrantLock()
+            dst = zeros(UInt8, 8)
+            Pioneer.TimsSlices._locked_read!(dst, stream, l, 100, 8)
+            @test dst == payload[101:108]
+            results = Vector{Vector{UInt8}}(undef, 30)
+            Threads.@threads for t in 1:30   # 8t + 16 <= 256 bytes
+                buf = zeros(UInt8, 16)
+                Pioneer.TimsSlices._locked_read!(buf, stream, l, 8t, 16)
+                results[t] = buf
+            end
+            @test all(results[t] == payload[8t+1:8t+16] for t in 1:30)
+        end
+    end
+end
