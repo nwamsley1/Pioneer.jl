@@ -47,6 +47,7 @@ data/test_build_spec_lib/**/output/*.poin/pioneer_search_log.log
 data/test_build_spec_lib/**/output/*.poin/pioneer_search_debug.log
 data/test_build_spec_lib/**/output/*.poin/pioneer_warnings.log
 data/test_build_spec_lib/**/output/*.poin/pioneer_search_report.txt
+data/test_build_spec_lib/**/output/*.poin/fasta/
 
 # Smoke-test build outputs
 data/keap1_*_test.poin/

@@ -220,5 +220,6 @@ A successful `BuildSpecLib` run writes a `.poin` directory containing:
 | `partitioned_fragment_index_w10.jls`, `presearch_partitioned_fragment_index_w10.jls` | The same two indexes with 10 Da partitions. SearchDIA loads one pair per search, chosen from the data's MS2 isolation windows (10 Da for windows of 7.5 m/z or wider, such as timsTOF diaPASEF). |
 | `fragment_indices.json` | Lists the fragment indexes and their partition widths. Libraries built before it existed have only the 5 Da pair. |
 | `spline_knots.jls` | Spline knots for `SplineCompactFrag` libraries (Altimeter). |
-| `config.json` | Snapshot of the validated build parameters. |
+| `config.json` | Snapshot of the validated build parameters, plus `pioneer_version`, `build_date` and `fasta_provenance` (name, size, SHA-256 and bundled path of each input FASTA). |
+| `fasta/` | Copies of every input FASTA, including contaminants. A `<fasta>.provenance.json` placed next to an input FASTA (for example with its UniProt release, source URL and download time) is copied too, and its fields are merged into that FASTA's `fasta_provenance` record. |
 | `build_log.txt` | Build log. |
