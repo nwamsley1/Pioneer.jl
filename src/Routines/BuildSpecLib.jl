@@ -76,6 +76,10 @@ function BuildSpecLib(params_path::String)
         lib_dir = params["_lib_dir"]
         mkpath(lib_dir)
 
+        # Copy the input FASTAs into the library and record what built it, so a
+        # published library can identify its inputs once it leaves this machine.
+        stamp_build_provenance!(params, lib_dir)
+
         # Write complete merged parameters to config.json (not just user input)
         params_out_path = joinpath(lib_dir, "config.json")
         params_json = JSON.json(params, 2)  # Pretty-print with 2-space indent

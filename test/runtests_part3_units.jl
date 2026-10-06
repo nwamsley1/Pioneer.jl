@@ -34,6 +34,7 @@ include("./UnitTests/test_protein_quantification_pipeline.jl")
 include("./UnitTests/test_protein_export.jl")
 include("./UnitTests/test_normalizeQuant.jl")
 include("./UnitTests/test_download_speclib.jl")
+include("./UnitTests/test_library_provenance.jl")
 
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
