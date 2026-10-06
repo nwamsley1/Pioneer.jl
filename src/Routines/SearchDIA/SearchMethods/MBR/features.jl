@@ -931,6 +931,16 @@ function compute_postintegration_mbr_features!(
     started = time()
     main = Arrow.Table(main_path)
     n = length(main.precursor_idx)
+    receiver_passed = _mbr_run_passed_by_file(
+        main.precursor_idx, main.ms_file_idx, main.qval, q_value_threshold,
+    )
+    eligibility = _MBRCounterfactualEligibility(eligibility.global_passed, receiver_passed)
+    receiver_run_clusters = _MBRReceiverRunClusters(
+        receiver_run_clusters.cluster_by_file,
+        receiver_run_clusters.cluster_sizes,
+        receiver_run_clusters.support_by_precursor,
+        receiver_passed,
+    )
     contexts = Dict{UInt32, _MBRDonorCollection}()
     rows, true_donors = _mbr_candidate_donors(
         main.qval, main.global_qval, main.precursor_idx, main.ms_file_idx,

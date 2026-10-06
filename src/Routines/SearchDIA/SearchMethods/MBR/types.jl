@@ -114,9 +114,32 @@ const _MBRIrtPool = NamedTuple{
 const EMPTY_MBR_IRT_POOL = (pids = UInt32[], irts = Float32[])
 _empty_mbr_irt_pool() = EMPTY_MBR_IRT_POOL
 
+# `run_passed_by_file` (and `_MBRReceiverRunClusters.passed_by_file`) hold only the receiver
+# runs of the file being featurised: `compute_postintegration_mbr_features!` builds them from
+# that file and attaches them. Keeping one ~2 MB BitSet per run for the whole experiment grew
+# linearly with the file count, while each file only ever queries its own runs.
 struct _MBRCounterfactualEligibility
     global_passed::BitSet
     run_passed_by_file::Dict{UInt32, BitSet}
+end
+
+_MBRCounterfactualEligibility(global_passed::BitSet) =
+    _MBRCounterfactualEligibility(global_passed, Dict{UInt32, BitSet}())
+
+"""
+    _mbr_run_passed_by_file(precursor_idx, ms_file_idx, qval, q_value_threshold)
+
+Precursors passing the run-level q-value gate, per run, for one table. Every run present in
+the table gets an entry, even if nothing in it passes.
+"""
+function _mbr_run_passed_by_file(precursor_idx, ms_file_idx, qval, q_value_threshold::Float32)
+    passed_by_file = Dict{UInt32, BitSet}()
+    @inbounds for row in eachindex(precursor_idx)
+        passed = get!(() -> BitSet(), passed_by_file, UInt32(ms_file_idx[row]))
+        q = Float32(qval[row])
+        isfinite(q) && q <= q_value_threshold && push!(passed, Int(precursor_idx[row]))
+    end
+    return passed_by_file
 end
 
 struct _MBRPartnerPools

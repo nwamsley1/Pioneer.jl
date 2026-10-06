@@ -179,7 +179,6 @@ function build_mbr_counterfactual_eligibility(
     q_value_threshold::Float32,
 )
     global_passed = BitSet()
-    run_passed_by_file = Dict{UInt32, BitSet}()
     for path in file_paths
         tbl = Arrow.Table(path)
         for col in (:precursor_idx, :ms_file_idx, :qval, :global_qval)
@@ -187,25 +186,14 @@ function build_mbr_counterfactual_eligibility(
                 error("MBR eligibility requires column $col in $path")
         end
         @inbounds for row in eachindex(tbl.precursor_idx)
-            pid = Int(tbl.precursor_idx[row])
-            file_idx = UInt32(tbl.ms_file_idx[row])
             global_qval = Float32(tbl.global_qval[row])
-            run_qval = Float32(tbl.qval[row])
             if isfinite(global_qval) && global_qval <= q_value_threshold
-                push!(global_passed, pid)
-            end
-            if isfinite(run_qval) && run_qval <= q_value_threshold
-                push!(
-                    get!(() -> BitSet(), run_passed_by_file, file_idx),
-                    pid,
-                )
+                push!(global_passed, Int(tbl.precursor_idx[row]))
             end
         end
     end
-    return _MBRCounterfactualEligibility(
-        global_passed,
-        run_passed_by_file,
-    )
+    # The run-level half is per receiver file; see `_MBRCounterfactualEligibility`.
+    return _MBRCounterfactualEligibility(global_passed)
 end
 
 @inline function _mbr_counterfactual_eligible(
