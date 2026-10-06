@@ -173,10 +173,11 @@ end
         @test result.n_rows == 3
         @test length(result.integration_refs) == 2
 
-        staged_run1 = DataFrame(Arrow.Table(
-            joinpath(output_directory, "run1.arrow"),
-        ))
+        # Staging writes a row selection of the annotated table, not a copy.
+        @test !isfile(joinpath(output_directory, "run1.arrow"))
+        staged_run1 = Pioneer.load_staged_psms(joinpath(output_directory, "run1.arrow"))
         @test staged_run1.precursor_idx == UInt32[1, 2]
+        @test names(staged_run1) == names(DataFrame(Arrow.Table(annotated_run1)))
         staged_pass1 = DataFrame(Arrow.Table(
             joinpath(output_directory, "run1.arrow") *
             Pioneer.PASS1_SIDECAR_SUFFIX,
