@@ -441,6 +441,7 @@ function searchFragmentIndexPartitionMajorHinted(
         max_peaks::Int = 0,
         scratch::Union{Nothing, FragIndexScratch} = nothing,
         im_gate::Union{Nothing, ImGate} = nothing,
+        emit_override::Union{Nothing, FragIndexEmitStrategy} = nothing,  # EXPERIMENT
         ) where {M<:AbstractMassErrorModel, Q<:QuadTransmissionModel,
                  P<:FragmentIndexSearchParameters}
 
@@ -489,7 +490,9 @@ function searchFragmentIndexPartitionMajorHinted(
     decode_bufs = [PeakDecodeBuffer() for _ in 1:n_threads]   # one per task below (.tdfs peaks)
 
     # ── 3. Build emit strategy (compile-time dispatch) ─────────────────────
-    emit_strategy = if pattern_accumulator !== nothing
+    emit_strategy = if emit_override !== nothing
+        emit_override
+    elseif pattern_accumulator !== nothing
         EmitToAccumulator(pattern_accumulator, precursor_irts, Float32(irt_tol))
     else
         EmitToBuffer(score_filter, im_gate)

@@ -190,6 +190,20 @@ function library_search(
         im_gate = build_im_gate(search_context, spectra, precursors, ms_file_idx))
     t_frag = time() - t_frag_start
 
+    # EXPERIMENT (immunopeptidomics feasibility): candidate counts after the fragment index.
+    if params isa MainSearchParameters && haskey(ENV, "PIONEER_SYNTH_DIR")
+        _synth_experiment(ENV["PIONEER_SYNTH_DIR"], ENV["PIONEER_SYNTH_INDEX"], ENV["PIONEER_SYNTH_OUT"],
+            search_context, spectra, params, ms_file_idx, all_scan_idxs, qtm_frag, qtm, mem, rt_to_irt,
+            Float32(irt_tol), bitvec_filter)
+        exit(0)
+    end
+    if params isa MainSearchParameters && haskey(ENV, "PIONEER_FI_STATS")
+        _fi_stats_dump(ENV["PIONEER_FI_STATS"], search_context, spectra, params, ms_file_idx,
+            partitioned_index, all_scan_idxs, scan_to_prec_idx, precursors_passed, precursors,
+            qtm, mem, rt_to_irt, Float32(irt_tol), bitvec_filter, t_frag)
+        get(ENV, "PIONEER_FI_STATS_EXIT", "0") == "1" && exit(0)
+    end
+
     # --- DEBUG: dump fragment index bitmask scores to Arrow and bail ---
     # Only dump during MainSearch, not tuning stages.
     # Applies RT and precursor m/z filtering (same as selectTransitions!) for realistic counts.
@@ -517,4 +531,247 @@ end
 
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
+end
+
+# EXPERIMENT (immunopeptidomics feasibility): per-scan fragment-index candidate counts before/after the exact
+# precursor-m/z (quad window + isotope bounds, per charge) and iRT filters that run_fused! applies, plus the
+# 256-pattern target/decoy tallies (m/z + iRT filtered, no LUT) and the learned LUT. Not for merge.
+function _fi_stats_dump(out_dir::AbstractString, search_context, spectra, params, ms_file_idx::Integer,
+        partitioned_index, all_scan_idxs::Vector{Int}, scan_to_prec_idx, precursors_passed::Vector{UInt32},
+        precursors, qtm, mem, rt_to_irt, irt_tol::Float32, bitvec_filter, t_frag::Float64)
+    mkpath(out_dir)
+    fname = getParsedFileName(search_context, ms_file_idx)
+    prec_mzs = getMz(precursors); prec_irts = getIrt(precursors)
+    prec_charges = getCharge(precursors); is_decoy = getIsDecoy(precursors)
+    iso_bounds = getIsotopeErrBounds(params)
+    n = length(all_scan_idxs)
+    scan_idx_v = Vector{Int}(undef, n); rt_v = Vector{Float32}(undef, n); center_v = Vector{Float32}(undef, n)
+    width_v = Vector{Float32}(undef, n); n_emit = zeros(Int, n); n_irt = zeros(Int, n); n_exact = zeros(Int, n)
+    n_exact_decoy = zeros(Int, n)
+    Threads.@threads for i in 1:n
+        scan_idx = all_scan_idxs[i]
+        rt = Float32(getRetentionTime(spectra, scan_idx)); scan_irt = Float32(rt_to_irt(rt))
+        qf = getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx))
+        scan_idx_v[i] = scan_idx; rt_v[i] = rt
+        center_v[i] = Float32(getCenterMz(spectra, scan_idx)); width_v[i] = Float32(getIsolationWidthMz(spectra, scan_idx))
+        r = scan_to_prec_idx[scan_idx]
+        ismissing(r) && continue
+        n_emit[i] = length(r)
+        for j in r
+            pid = precursors_passed[j]
+            passes_irt_filter(prec_irts[pid], scan_irt, irt_tol) || continue
+            n_irt[i] += 1
+            lo, hi = quad_window_with_iso_bounds(qf, prec_charges[pid], iso_bounds)
+            passes_prec_mz_filter(prec_mzs[pid], lo, hi) || continue
+            n_exact[i] += 1
+            n_exact_decoy[i] += is_decoy[pid]
+        end
+    end
+    CSV.write(joinpath(out_dir, "$(fname)_per_scan.csv"), DataFrame(scan_idx = scan_idx_v, rt = rt_v,
+        center_mz = center_v, iso_width = width_v, n_emit_postLUT = n_emit, n_irt = n_irt,
+        n_exact = n_exact, n_exact_decoy = n_exact_decoy))
+
+    # Pattern tallies over ALL scans, no LUT (accumulator applies charge-agnostic m/z bounds + iRT).
+    acc = PatternAccumulator(Threads.nthreads(), is_decoy; min_score = UInt8(1))
+    tmp_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    t0 = time()
+    searchFragmentIndexPartitionMajorHinted(tmp_idx, partitioned_index, spectra, all_scan_idxs,
+        Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol, prec_mzs;
+        pattern_accumulator = acc, precursor_irts = prec_irts, scratch = getFragIndexScratch(search_context))
+    t_acc = time() - t0
+    tc, dc = merge_accumulator(acc)
+    lut = bitvec_filter === nothing ? fill(true, 256) : bitvec_filter
+    CSV.write(joinpath(out_dir, "$(fname)_patterns.csv"), DataFrame(pattern = 0:255,
+        popcount = [count_ones(UInt8(p)) for p in 0:255], lut_pass = lut, targets = tc, decoys = dc))
+
+    summary = Dict(
+        "file" => fname, "n_ms2_scans" => n, "n_precursors_lib" => length(prec_mzs),
+        "irt_tol" => irt_tol, "iso_bounds" => collect(iso_bounds),
+        "n_partitions" => getNPartitions(partitioned_index), "index_type" => string(typeof(partitioned_index)),
+        "frag_index_time_s" => t_frag, "accumulator_pass_time_s" => t_acc,
+        "lut_patterns_pass" => count(lut), "lut_learned" => bitvec_filter !== nothing,
+        "emit_postLUT_total" => sum(n_emit), "irt_postLUT_total" => sum(n_irt),
+        "exact_postLUT_total" => sum(n_exact), "exact_postLUT_decoys" => sum(n_exact_decoy),
+        "acc_preLUT_total" => sum(tc) + sum(dc), "acc_preLUT_decoys" => sum(dc),
+        "acc_postLUT_total" => sum((tc .+ dc)[lut]), "acc_postLUT_decoys" => sum(dc[lut]),
+        "unique_precursors_emitted" => length(unique(precursors_passed)),
+    )
+    open(joinpath(out_dir, "$(fname)_summary.json"), "w") do io
+        JSON.print(io, summary, 2)
+    end
+    @user_info "FI_STATS $(fname): $(JSON.json(summary))"
+    _fi_capture_exact(out_dir, fname, search_context, spectra, params, partitioned_index, all_scan_idxs,
+        precursors, qtm, mem, rt_to_irt, irt_tol)
+    return nothing
+end
+
+# EXPERIMENT: capture (scan, precursor, bitmask) for every fragment-index candidate with >= min_bits matched bits
+# that passes the exact iRT and per-charge precursor m/z filters of run_fused!. The per-charge window is recovered
+# from the charge-agnostic scan bounds (built with iso/2) as in quad_window_with_iso_bounds.
+struct EmitExactCapture{F<:AbstractBitVecFilter, V1, V2, V3} <: FragIndexEmitStrategy
+    sf::F
+    prec_irts::V1
+    prec_charges::V2
+    irt_tol::Float32
+    iso_lo::Float32
+    iso_hi::Float32
+    si::Vector{Vector{Int32}}
+    pid::Vector{Vector{UInt32}}
+    score::Vector{Vector{UInt8}}
+    _v3::V3
+end
+
+@inline function emit_candidates!(s::EmitExactCapture, lc::Counter{I, UInt8},
+        l2g::Vector{UInt32}, si::Int, scan_irt::Float32, scan_im::Float32,
+        prec_lo::Float32, prec_hi::Float32,
+        precursor_mzs::AbstractVector{Float32},
+        tid::Int, si_buf::Vector{Int32}, pid_buf::Vector{UInt32}, wp::Int) where {I<:Unsigned}
+    quad_lo = prec_lo + C13_C12_MASS_DIFF_F32 * s.iso_lo / 2
+    quad_hi = prec_hi - C13_C12_MASS_DIFF_F32 * s.iso_hi / 2
+    @inbounds for i in 1:(lc.size - 1)
+        lid = lc.ids[i]
+        score = lc.counts[lid]
+        passes_filter(s.sf, score) || continue
+        pid = l2g[lid]
+        passes_irt_filter(s.prec_irts[pid], scan_irt, s.irt_tol) || continue
+        z = Float32(s.prec_charges[pid])
+        pmz = precursor_mzs[pid]
+        (pmz < quad_lo - C13_C12_MASS_DIFF_F32 * s.iso_lo / z || pmz > quad_hi + C13_C12_MASS_DIFF_F32 * s.iso_hi / z) && continue
+        push!(s.si[tid], Int32(si)); push!(s.pid[tid], pid); push!(s.score[tid], score)
+    end
+    return wp
+end
+
+function _fi_capture_exact(out_dir, fname, search_context, spectra, params, partitioned_index, all_scan_idxs,
+        precursors, qtm, mem, rt_to_irt, irt_tol::Float32)
+    nt = Threads.nthreads()
+    iso = getIsotopeErrBounds(params)
+    s = EmitExactCapture(CountFilter(UInt8(2)), getIrt(precursors), getCharge(precursors), irt_tol,
+        Float32(first(iso)), Float32(last(iso)),
+        [Int32[] for _ in 1:nt], [UInt32[] for _ in 1:nt], [UInt8[] for _ in 1:nt], nothing)
+    tmp_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    t0 = time()
+    searchFragmentIndexPartitionMajorHinted(tmp_idx, partitioned_index, spectra, all_scan_idxs,
+        nt, params, qtm, mem, rt_to_irt, irt_tol, getMz(precursors);
+        scratch = getFragIndexScratch(search_context), emit_override = s)
+    df = DataFrame(scan_idx = Int32[all_scan_idxs[i] for i in reduce(vcat, s.si)],
+                   precursor_idx = reduce(vcat, s.pid), bitmask = reduce(vcat, s.score))
+    Arrow.write(joinpath(out_dir, "$(fname)_exact_candidates_k2.arrow"), df)
+    @user_info "FI_STATS capture: $(nrow(df)) exact candidates with >=2 bits in $(round(time() - t0, digits=1)) s"
+end
+
+# EXPERIMENT: search a synthetic fragment index (experiments/immuno_synth/build_synth.jl): real library precursors
+# (same global ids) + fake ones. Re-runs bitvec calibration on it, then the fragment index with the resulting LUT,
+# and writes pattern tallies, the exact-filtered candidate capture and a summary to `out_dir`.
+function _synth_bitvec_lut(spectra, idx, params, qtm, mem, rt_to_irt, irt_tol::Float32, mzs, irts, is_decoy,
+        fdr_scale::Float64, scratch)
+    scan_priority = get_ms2_scan_priority_order(spectra)
+    total_ms2 = length(scan_priority)
+    shuffle!(MersenneTwister(1_800_017 + total_ms2), scan_priority)       # as BitVecCalibration.process_file!
+    tmp = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    tc = zeros(Int, 256); dc = zeros(Int, 256)
+    prev = 0; scan_target = min(BITVEC_INITIAL_SCANS, total_ms2); total = 0
+    while prev < total_ms2
+        acc = PatternAccumulator(Threads.nthreads(), is_decoy; min_score = UInt8(2))
+        searchFragmentIndexPartitionMajorHinted(tmp, idx, spectra, Int.(scan_priority[(prev+1):scan_target]),
+            Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol, mzs;
+            pattern_accumulator = acc, precursor_irts = irts, scratch = scratch)
+        btc, bdc = merge_accumulator(acc); tc .+= btc; dc .+= bdc
+        prev = scan_target; total = sum(tc) + sum(dc)
+        total >= BITVEC_MIN_TOTAL_COUNTS && break
+        remaining = total_ms2 - prev; remaining <= 0 && break
+        rate = total / max(prev, 1)
+        add = rate > 0 ? clamp(ceil(Int, (BITVEC_MIN_TOTAL_COUNTS - total) / rate * 1.5), 1, remaining) : min(prev, remaining)
+        scan_target = min(prev + add, total_ms2)
+    end
+    total >= BITVEC_COARSE_GROUP_THRESHOLD || @user_warn "synthetic calibration below coarse-group threshold"
+    lut = [((Float64(tc[i]) + 1) - fdr_scale * (Float64(dc[i]) + 1)) / (fdr_scale * (Float64(dc[i]) + 1)) >
+           Float64(BITVEC_MIN_EXCESS_RATE) for i in 1:256]
+    return lut, (scans = prev, counts = total, tc = tc, dc = dc)
+end
+
+function _synth_experiment(synth_dir::AbstractString, index_file::AbstractString, out_dir::AbstractString,
+        search_context, spectra, params, ms_file_idx::Integer, all_scan_idxs::Vector{Int}, qtm_frag, qtm, mem,
+        rt_to_irt, irt_tol::Float32, real_lut)
+    mkpath(out_dir)
+    fname = getParsedFileName(search_context, ms_file_idx)
+    t0 = time()
+    pt = Arrow.Table(joinpath(synth_dir, "precursors.arrow"))
+    mzs = Vector{Float32}(pt.mz); irts = Vector{Float32}(pt.irt); charges = Vector{UInt8}(pt.charge)
+    is_decoy = Vector{Bool}(pt.is_decoy); is_fake = Vector{Bool}(pt.is_fake)
+    ipath = joinpath(synth_dir, index_file)
+    idx = isdir(ipath) ? load_pieced_index(ipath) : deserialize_from_jls(ipath)
+    t_load = time() - t0
+    n_t = count(!, is_decoy); n_d = count(is_decoy); fdr_scale = n_t / n_d
+    scratch = getFragIndexScratch(search_context)
+    @user_info "SYNTH: loaded $(length(mzs)) precursors ($(count(is_fake)) fake), index $(index_file) in $(round(t_load, digits = 1)) s"
+
+    t1 = time()
+    lut, cal = _synth_bitvec_lut(spectra, idx, params, qtm_frag, mem, rt_to_irt, irt_tol, mzs, irts, is_decoy, fdr_scale, scratch)
+    t_cal = time() - t1
+    @user_info "SYNTH: calibration $(cal.scans) scans, $(cal.counts) counts, $(count(lut))/256 pass ($(round(t_cal, digits = 1)) s)"
+
+    # fragment index exactly as Main Search runs it, with the synthetic LUT
+    stpi = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    t2 = time()
+    passed, _ = searchFragmentIndexPartitionMajorHinted(stpi, idx, spectra, all_scan_idxs,
+        Threads.nthreads(), params, qtm_frag, mem, rt_to_irt, irt_tol, mzs;
+        score_filter = LUTFilter(lut), scratch = scratch)
+    t_fi = time() - t2
+    n_emit = length(passed); n_emit_fake = count(p -> is_fake[p], passed)
+    passed = nothing; GC.gc()
+
+    # exact-filtered capture with the synthetic LUT
+    nt = Threads.nthreads(); iso = getIsotopeErrBounds(params)
+    cap = EmitExactCapture(LUTFilter(lut), irts, charges, irt_tol, Float32(first(iso)), Float32(last(iso)),
+        [Int32[] for _ in 1:nt], [UInt32[] for _ in 1:nt], [UInt8[] for _ in 1:nt], nothing)
+    t3 = time()
+    searchFragmentIndexPartitionMajorHinted(stpi, idx, spectra, all_scan_idxs, nt, params, qtm_frag, mem,
+        rt_to_irt, irt_tol, mzs; scratch = scratch, emit_override = cap)
+    t_cap = time() - t3
+    cap_pid = reduce(vcat, cap.pid); cap_bm = reduce(vcat, cap.score)
+    cap_scan = Int32[all_scan_idxs[i] for i in reduce(vcat, cap.si)]
+    cap = nothing
+    Arrow.write(joinpath(out_dir, "$(fname)_exact_candidates_synthLUT.arrow"),
+        DataFrame(scan_idx = cap_scan, precursor_idx = cap_pid, bitmask = cap_bm))
+
+    # pre-LUT pattern tallies over all scans (m/z + iRT filtered), split by real/fake
+    acc_all = PatternAccumulator(nt, is_decoy; min_score = UInt8(1))
+    searchFragmentIndexPartitionMajorHinted(stpi, idx, spectra, all_scan_idxs, nt, params, qtm_frag, mem,
+        rt_to_irt, irt_tol, mzs; pattern_accumulator = acc_all, precursor_irts = irts, scratch = scratch)
+    tc, dc = merge_accumulator(acc_all)
+    real_only = .!is_fake .& .!is_decoy    # targets among real precursors; decoys tallied separately below
+    acc_real = PatternAccumulator(nt, .!real_only; min_score = UInt8(1))   # "target" = real target, "decoy" = everything else
+    searchFragmentIndexPartitionMajorHinted(stpi, idx, spectra, all_scan_idxs, nt, params, qtm_frag, mem,
+        rt_to_irt, irt_tol, mzs; pattern_accumulator = acc_real, precursor_irts = irts, scratch = scratch)
+    rt_tc, _ = merge_accumulator(acc_real)
+    rlut = real_lut === nothing ? fill(true, 256) : real_lut
+    CSV.write(joinpath(out_dir, "$(fname)_patterns.csv"), DataFrame(pattern = 0:255,
+        popcount = [count_ones(UInt8(p)) for p in 0:255], lut_synth = lut, lut_real = rlut,
+        cal_targets = cal.tc, cal_decoys = cal.dc, targets = tc, decoys = dc, real_targets = rt_tc))
+
+    seg(f) = count(i -> f(cap_pid[i]), eachindex(cap_pid))
+    uniq(f) = length(unique(p for p in cap_pid if f(p)))
+    summary = Dict(
+        "file" => fname, "index_file" => index_file, "n_ms2_scans" => length(all_scan_idxs),
+        "n_precursors" => length(mzs), "n_fake" => count(is_fake), "irt_tol" => irt_tol,
+        "n_partitions" => idx isa PiecedFragmentIndex ? sum(p -> p.n_partitions, idx.pieces) : getNPartitions(idx),
+        "n_pieces" => idx isa PiecedFragmentIndex ? length(idx.pieces) : 1, "index_type" => string(typeof(idx)),
+        "load_s" => t_load, "calibration_s" => t_cal, "frag_index_s" => t_fi, "capture_s" => t_cap,
+        "lut_synth_pass" => count(lut), "lut_real_pass" => count(rlut),
+        "cal_scans" => cal.scans, "cal_counts" => cal.counts,
+        "emit_postLUT_total" => n_emit, "emit_postLUT_fake" => n_emit_fake,
+        "exact_total" => length(cap_pid),
+        "exact_real_target" => seg(p -> !is_fake[p] && !is_decoy[p]), "exact_real_decoy" => seg(p -> !is_fake[p] && is_decoy[p]),
+        "exact_fake_target" => seg(p -> is_fake[p] && !is_decoy[p]), "exact_fake_decoy" => seg(p -> is_fake[p] && is_decoy[p]),
+        "unique_real_target" => uniq(p -> !is_fake[p] && !is_decoy[p]), "unique_real_decoy" => uniq(p -> !is_fake[p] && is_decoy[p]),
+        "unique_fake_target" => uniq(p -> is_fake[p] && !is_decoy[p]), "unique_fake_decoy" => uniq(p -> is_fake[p] && is_decoy[p]),
+        "preLUT_total" => sum(tc) + sum(dc), "preLUT_decoys" => sum(dc),
+        "maxrss_gb" => Sys.maxrss() / 2^30,
+    )
+    open(joinpath(out_dir, "$(fname)_summary.json"), "w") do io
+        JSON.print(io, summary, 2)
+    end
+    @user_info "SYNTH_SUMMARY $(JSON.json(summary))"
+    return nothing
 end
