@@ -38,6 +38,19 @@ function main_BuildSpecLib(argv=ARGS)::Cint
 end
 
 """
+    _record_stage!(timings, name, t)
+
+Store a stage's `@timed` result and log it right away with the process's peak RSS so far, so the stage that
+raises the peak is visible even when a later stage crashes before the final performance report.
+"""
+function _record_stage!(timings::Dict{String, Any}, name::String, t)
+    timings[name] = t
+    @user_info @sprintf("Stage %-32s %9.1f s  alloc %8.2f GB  peak RSS so far %7.2f GB",
+                        name, t.time, t.bytes / 1024^3, peak_rss() / 1024^3)
+    return t
+end
+
+"""
     BuildSpecLib(params_path::String)
 
 Main function to build a spectral library from parameters. Executes a series of steps:
@@ -54,8 +67,22 @@ Output:
 - Generates a spectral library in the specified output directory
 - Creates a detailed log file with timing and performance metrics
 - Returns nothing
+
+With the hidden experimental option
+`library_params.mock_predictions = true`, every Koina request is answered by `SyntheticKoinaClient` (fast, offline,
+non-physical predictions; `library_params.mock_frags_per_prec` fragments per precursor, default 20) to measure a
+build's memory and runtime without waiting on Koina. Such a library is not usable for searching.
 """
 function BuildSpecLib(params_path::String)
+    lp = get(JSON.parsefile(params_path), "library_params", Dict{String, Any}())
+    if get(lp, "mock_predictions", false) === true
+        client = SyntheticKoinaClient(n_frags_per_prec = Int(get(lp, "mock_frags_per_prec", 20)), realistic_ions = true)
+        return with_koina_client(() -> _build_spec_lib(params_path), client)
+    end
+    return _build_spec_lib(params_path)
+end
+
+function _build_spec_lib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
     timings = Dict{String, Any}()
@@ -130,7 +157,7 @@ function BuildSpecLib(params_path::String)
             )
             nothing
         end
-        timings["Directory Setup"] = setup_timing
+        _record_stage!(timings, "Directory Setup", setup_timing)
 
         # Get fragment bounds
         @user_info "Detecting fragment bounds..."
@@ -157,7 +184,7 @@ function BuildSpecLib(params_path::String)
             @user_info "Precursor m/z range: ($prec_mz_min, $prec_mz_max)"
             nothing
         end
-        timings["Fragment Bound Detection"] = bounds_timing
+        _record_stage!(timings, "Fragment Bound Detection", bounds_timing)
 
         N_PRECURSORS = 0
         N_FRAGMENTS = 0
@@ -186,7 +213,7 @@ function BuildSpecLib(params_path::String)
                 @user_info "Using retention time model: $rt_model"
                 nothing
             end
-            timings["Model Validation"] = model_timing
+            _record_stage!(timings, "Model Validation", model_timing)
 
             mz_to_ev_interp = missing
 
@@ -201,14 +228,14 @@ function BuildSpecLib(params_path::String)
                                         joinpath(lib_dir, "proteins_table.arrow"))
                 nothing
             end
-            timings["Chronologer Preparation"] = chrono_prep_timing
+            _record_stage!(timings, "Chronologer Preparation", chrono_prep_timing)
 
             @user_info "Predicting retention times..."
             rt_timing = @timed begin
                 predict_retention_times(chronologer_in_path, chronologer_out_path; rt_model = rt_model)
                 nothing
             end
-            timings["Retention Time Prediction"] = rt_timing
+            _record_stage!(timings, "Retention Time Prediction", rt_timing)
 
             # Optional ion-mobility prediction appends `ccs` and
             # `inv_ion_mobility` columns; it writes a new file, so track
@@ -222,7 +249,7 @@ function BuildSpecLib(params_path::String)
                     predict_ion_mobility(chronologer_out_path, predictions_path, im_model)
                     nothing
                 end
-                timings["Ion Mobility Prediction"] = im_timing
+                _record_stage!(timings, "Ion Mobility Prediction", im_timing)
             end
             # Parse results and prepare for fragment prediction
             parse_timing = @timed begin
@@ -249,7 +276,7 @@ function BuildSpecLib(params_path::String)
                 safeRm(raw_fragments_arrow_path; force=true)
                 nothing
             end
-            timings["Chronologer Output Processing"] = parse_timing
+            _record_stage!(timings, "Chronologer Output Processing", parse_timing)
 
             # Fragment-filter knobs. These are hardcoded for the Altimeter
             # spline path (the JSON's `library_params.max_frag_rank` etc. are
@@ -326,7 +353,7 @@ function BuildSpecLib(params_path::String)
                 )
                 nothing
             end
-            timings["Fragment Prediction"] = frag_predict_timing
+            _record_stage!(timings, "Fragment Prediction", frag_predict_timing)
 
             # Process predictions
             process_timing = @timed begin
@@ -445,7 +472,7 @@ function BuildSpecLib(params_path::String)
                 safeRm(precursors_arrow_path; force=true)
                 nothing
             end
-            timings["Prediction Processing"] = process_timing
+            _record_stage!(timings, "Prediction Processing", process_timing)
         end
 
         # Verify required files
@@ -461,7 +488,7 @@ function BuildSpecLib(params_path::String)
             end
             nothing
         end
-        timings["File Verification"] = verify_timing
+        _record_stage!(timings, "File Verification", verify_timing)
 
         # Build final indices
         @user_info "Building final library indices..."
@@ -495,7 +522,7 @@ function BuildSpecLib(params_path::String)
 
             nothing
         end
-        timings["Index Building"] = index_timing
+        _record_stage!(timings, "Index Building", index_timing)
 
         # Apply DIA-NN-style decoy conversion if requested
         decoy_method = get(params["fasta_digest_params"], "decoy_method", "shuffle")
@@ -505,7 +532,7 @@ function BuildSpecLib(params_path::String)
                 apply_diann_decoy_style!(lib_dir)
                 nothing
             end
-            timings["DIA-NN Decoy Conversion"] = diann_timing
+            _record_stage!(timings, "DIA-NN Decoy Conversion", diann_timing)
         end
 
         # Print performance report

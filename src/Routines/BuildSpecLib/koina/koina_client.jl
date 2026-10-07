@@ -57,10 +57,13 @@ struct SyntheticKoinaClient <: AbstractKoinaClient
     n_coef_per_frag::Int   # spline degree+1 for Altimeter (typically 4)
     n_frags_per_prec::Int  # number of fragments per precursor (typically 174 for Altimeter)
     n_knots::Int           # length of the global knot vector
+    # true: annotate each fragment as a b/y ion (charge 1-2) of its peptide with that ion's unmodified m/z, so
+    # fragments pass BuildSpecLib's ion filters (build-scale tests); false: arbitrary codes and m/z (unit tests)
+    realistic_ions::Bool
 end
 SyntheticKoinaClient(; n_coef_per_frag::Int = 4, n_frags_per_prec::Int = 174,
-                     n_knots::Int = 5) =
-    SyntheticKoinaClient(n_coef_per_frag, n_frags_per_prec, n_knots)
+                     n_knots::Int = 5, realistic_ions::Bool = false) =
+    SyntheticKoinaClient(n_coef_per_frag, n_frags_per_prec, n_knots, realistic_ions)
 
 """
     koina_request(client, json::String, model_url::String) -> Dict{String,Any}
@@ -328,13 +331,21 @@ function _synthetic_altimeter_response(client::SyntheticKoinaClient, sequences::
     mz = Vector{Float64}(undef, n_precs * F)
     annotations = Vector{Int32}(undef, n_precs * F)
 
+    ions = Tuple{Int32, Float64}[]
     @inbounds for i in 1:n_precs
         seq = sequences[i]
+        client.realistic_ions && _synthetic_by_ions!(ions, seq)
         for j in 1:F
-            # Synthetic mz: distinct per (seq, j) but in a plausible range.
-            mz[(i-1)*F + j] = 100.0 + 1900.0 * _stable_unit(seq, 100 + j)
-            # Synthetic annotation: small positive integer code.
-            annotations[(i-1)*F + j] = Int32((j - 1) % 256)
+            if client.realistic_ions && !isempty(ions)
+                code, ion_mz = ions[mod1(j, length(ions))]
+                mz[(i-1)*F + j] = ion_mz
+                annotations[(i-1)*F + j] = code
+            else
+                # Synthetic mz: distinct per (seq, j) but in a plausible range.
+                mz[(i-1)*F + j] = 100.0 + 1900.0 * _stable_unit(seq, 100 + j)
+                # Synthetic annotation: small positive integer code.
+                annotations[(i-1)*F + j] = Int32((j - 1) % 256)
+            end
             for k in 1:K
                 coefficients[(i-1)*K*F + (k-1)*F + j] =
                     Float64(_stable_unit(seq, 1000 + k * 1000 + j))
@@ -364,4 +375,36 @@ function _synthetic_altimeter_response(client::SyntheticKoinaClient, sequences::
                              "data" => coefficients),
         ]
     )
+end
+
+# Altimeter ion dictionary name -> code, loaded once for SyntheticKoinaClient(realistic_ions = true).
+const _SYNTH_ION_CODES = Ref{Dict{String, Int32}}()
+function _synthetic_ion_codes()
+    isassigned(_SYNTH_ION_CODES) ||
+        (_SYNTH_ION_CODES[] = Dict(v => k for (k, v) in get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))))
+    return _SYNTH_ION_CODES[]
+end
+
+"""
+    _synthetic_by_ions!(ions, koina_sequence) -> ions
+
+The b/y ions (positions 1..L-1, charges 1-2) of a Koina-format peptide (`[...]` modification tags ignored) that the
+Altimeter ion dictionary contains, as (code, unmodified m/z), in a deterministic peptide-specific order.
+"""
+function _synthetic_by_ions!(ions::Vector{Tuple{Int32, Float64}}, koina_sequence::AbstractString)
+    empty!(ions)
+    codes = _synthetic_ion_codes()
+    residues = replace(koina_sequence, r"\[[^\]]*\]" => "")
+    masses = [get(AA_to_mass, c, 0.0) for c in residues]
+    L = length(masses)
+    prefix = cumsum(masses)
+    for pos in 1:(L - 1), z in 1:2, isy in (true, false)
+        name = string(isy ? 'y' : 'b', pos, z == 1 ? "" : "^$z")
+        code = get(codes, name, nothing)
+        code === nothing && continue
+        m = isy ? prefix[L] - prefix[L - pos] + H2O : prefix[pos]
+        push!(ions, (code, (m + z * PROTON) / z))
+    end
+    sort!(ions, by = ion -> hash((koina_sequence, ion[1])))
+    return ions
 end
