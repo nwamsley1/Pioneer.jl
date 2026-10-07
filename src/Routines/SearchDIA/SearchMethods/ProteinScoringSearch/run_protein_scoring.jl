@@ -46,27 +46,34 @@ function load_run_level_protein_training_rows(
         pg_path = file_path(pg_ref)
         isfile(pg_path) || continue
 
-        tbl = Arrow.Table(pg_path)
-        n_rows = length(tbl[:protein_name])
-        n_rows == 0 && continue
+        # Columns are copied out (and checked to own their memory), so the file is unmapped afterwards.
+        chunk_df = with_arrow_table(pg_path) do tbl
+            n_rows = length(tbl[:protein_name])
+            n_rows == 0 && return nothing
 
-        available_columns = Set(propertynames(tbl))
-        missing_columns = [col for col in columns_to_load if !(col in available_columns)]
-        isempty(missing_columns) || error("Protein group file $pg_path is missing required columns: $missing_columns")
+            available_columns = Set(propertynames(tbl))
+            missing_columns = [col for col in columns_to_load if !(col in available_columns)]
+            isempty(missing_columns) || error("Protein group file $pg_path is missing required columns: $missing_columns")
 
-        rows = if row_indices === nothing
-            nothing
-        else
-            sample_end = searchsortedlast(row_indices, row_offset + n_rows)
-            selected = row_indices[sample_start:sample_end] .- row_offset
-            sample_start = sample_end + 1
-            selected
+            rows = if row_indices === nothing
+                nothing
+            else
+                sample_end = searchsortedlast(row_indices, row_offset + n_rows)
+                selected = row_indices[sample_start:sample_end] .- row_offset
+                sample_start = sample_end + 1
+                selected
+            end
+            row_offset += n_rows
+            chunk = DataFrame()
+            for col in columns_to_load
+                values = _owned_column(rows === nothing ? collect(tbl[col]) : tbl[col][rows])
+                _owns_memory(values) || error("Protein group column $col of $pg_path has type " *
+                                              "$(typeof(values)), which may still reference the mapped file")
+                chunk[!, col] = values
+            end
+            chunk
         end
-        row_offset += n_rows
-        chunk_df = DataFrame()
-        for col in columns_to_load
-            chunk_df[!, col] = rows === nothing ? collect(tbl[col]) : tbl[col][rows]
-        end
+        chunk_df === nothing && continue
 
         if ncol(all_protein_groups) == 0
             all_protein_groups = chunk_df

@@ -112,17 +112,19 @@ function _mbr_donor_score_floor(
     score_floor = qvalue_score_cutoff(; q_threshold=donor_q_threshold,
         temp_parent=isempty(file_paths) ? tempdir() : dirname(first(file_paths))) do emit
         for (file_idx, path) in enumerate(file_paths)
-            tbl = Arrow.Table(path)
-            hasproperty(tbl, :trace_prob_prepass) ||
-                error("MBR donor selection requires :trace_prob_prepass in $path")
-            if require_initial_pass
-                hasproperty(tbl, :qval) && hasproperty(tbl, :global_qval) ||
-                    error("Initial-pass donor floor requires q-value columns in $path")
-                rows += _emit_mbr_initial_scores(emit, tbl.trace_prob_prepass, tbl.target,
-                    tbl.qval, tbl.global_qval, q_value_threshold)
-            else
-                _emit_score_arrays(emit, tbl.trace_prob_prepass, tbl.target)
-                rows += length(tbl.target)
+            # Scores are emitted one by one, so the file is unmapped afterwards.
+            rows += with_arrow_table(path) do tbl
+                hasproperty(tbl, :trace_prob_prepass) ||
+                    error("MBR donor selection requires :trace_prob_prepass in $path")
+                if require_initial_pass
+                    hasproperty(tbl, :qval) && hasproperty(tbl, :global_qval) ||
+                        error("Initial-pass donor floor requires q-value columns in $path")
+                    _emit_mbr_initial_scores(emit, tbl.trace_prob_prepass, tbl.target,
+                        tbl.qval, tbl.global_qval, q_value_threshold)
+                else
+                    _emit_score_arrays(emit, tbl.trace_prob_prepass, tbl.target)
+                    length(tbl.target)
+                end
             end
             if time() - last_progress >= 60
                 @debug_l1 "MBR donor threshold grouping: files=$file_idx/$(length(file_paths)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
@@ -168,11 +170,13 @@ function _mbr_preintegration_donor_files(
     started = last_progress = time()
     rows_processed = 0
     for (file_idx, path) in enumerate(file_paths)
-        tbl = Arrow.Table(path)
-        _collect_mbr_donor_files!(
-            donor_files, tbl.precursor_idx, tbl.ms_file_idx, tbl.trace_prob_prepass, score_floor,
-        )
-        rows_processed += length(tbl.precursor_idx)
+        # Only scalars are kept, so the file is unmapped once it is indexed.
+        rows_processed += with_arrow_table(path) do tbl
+            _collect_mbr_donor_files!(
+                donor_files, tbl.precursor_idx, tbl.ms_file_idx, tbl.trace_prob_prepass, score_floor,
+            )
+            length(tbl.precursor_idx)
+        end
         if time() - last_progress >= 60
             @debug_l1 "MBR donor indexing: files=$file_idx/$(length(file_paths)) rows=$rows_processed precursors=$(length(donor_files)) elapsed=$(round(time() - started, digits=2))s"
             last_progress = time()

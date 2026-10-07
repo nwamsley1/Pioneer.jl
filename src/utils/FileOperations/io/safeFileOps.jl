@@ -18,6 +18,7 @@
 # Safe file operations for cross-platform compatibility
 
 const WINDOWS_DELETE_MAX_ATTEMPTS = 3
+const WINDOWS_DELETE_SETTLE_SECONDS = 2.0
 const _WINDOWS_DELETE_GC_LOCK = ReentrantLock()
 
 const _WINDOWS_FILE_ATTRIBUTE_NORMAL = UInt32(0x80)
@@ -63,8 +64,10 @@ Safely remove a file with Windows-specific handling for file locks and permissio
 - `force`: Force removal on Unix. Windows preserves its historical forced-delete behavior.
 
 # Implementation
-- On Windows: Normalize once, retry `DeleteFileW`, fall back to rename, then
-  use serialized garbage collection and forced removal as a last resort
+- On Windows: Normalize once and delete with `DeleteFileW`, waiting for a delete-pending
+  name to clear. If that fails (a still-mapped file on a network share), release dropped
+  mappings (`_release_dropped_mappings`) and retry. If the file is still held it warns and
+  returns rather than throwing, as the earlier `cmd.exe del` path effectively did.
 - On Unix: Standard rm() call
 
 This function handles common Windows file locking issues that occur with Arrow files
@@ -82,40 +85,82 @@ function safeRm(fpath::AbstractString; force::Bool=false)
     end
 
     win_path = _windows_path(path)
-    delete_error = nothing
+    code = _windows_delete(path, win_path)
+    code == 0 && return nothing
+    # On local NTFS a file this process has mapped can still be deleted; on a network
+    # share it cannot. A dropped Arrow table's mapping is released by a collection once
+    # no worker thread still holds the finished task that read it, so release those
+    # tasks, collect, and try again. Local deletes almost never get here.
+    @debug_l1 "Windows deletion failed for $path ($(_windows_error_message(code))); releasing dropped mappings"
+    _release_dropped_mappings()
     for attempt in 1:WINDOWS_DELETE_MAX_ATTEMPTS
-        code = _windows_delete_file(win_path)
-        # Not found means another caller removed it first.
-        code in (0, _WINDOWS_ERROR_FILE_NOT_FOUND, _WINDOWS_ERROR_PATH_NOT_FOUND) && return nothing
-        delete_error = ErrorException("DeleteFileW error $code: $(strip(Libc.FormatMessage(code)))")
-        @debug_l1 "Windows deletion failed on attempt $attempt for $path: $(sprint(showerror, delete_error))"
-        attempt < WINDOWS_DELETE_MAX_ATTEMPTS && sleep(0.1 * attempt)
+        code = _windows_delete(path, win_path)
+        code == 0 && return nothing
+        attempt < WINDOWS_DELETE_MAX_ATTEMPTS && sleep(0.1 * attempt)   # e.g. a virus scanner
     end
+    # Still held: by a table that is still referenced, or by another process. The
+    # cmd.exe del this replaced reported success even then, so callers never saw a
+    # failure here; keep it non-fatal and leave a warning.
+    @user_warn "Could not delete $path: $(_windows_error_message(code))"
+    return nothing
+end
 
-    backup_path = path * ".backup_" * string(time_ns())
+"""
+    _release_dropped_mappings()
+
+Give every default-pool thread a fresh task, so none still holds a finished task (and the
+data it captured, such as an Arrow record batch over a mapped file), then run a full
+collection, which unmaps files whose tables are no longer referenced. Collections are
+serialized: parallel MaxLFQ writes have crashed Julia on Windows when several threads
+entered GC.gc() at once.
+"""
+function _release_dropped_mappings()
     try
-        mv(path, backup_path; force=true)
-        @user_warn "Could not delete $path, renamed to $backup_path"
-        return nothing
-    catch rename_error
-        @debug_l1 "Windows rename fallback failed for $path: $(sprint(showerror, rename_error))"
-
-        # Parallel MaxLFQ writes have previously crashed Julia on Windows when
-        # several threads entered GC.gc() concurrently. Keep this last-resort
-        # collection serialized even though the deletion logic is centralized.
-        try
-            lock(_WINDOWS_DELETE_GC_LOCK) do
-                GC.gc(true)
-            end
-            rm(path; force=true)
-            return nothing
-        catch final_error
-            error(
-                "Unable to remove or rename file $path. " *
-                "Delete error: $(sprint(showerror, delete_error)). " *
-                "Rename error: $(sprint(showerror, rename_error)). " *
-                "Final removal error: $(sprint(showerror, final_error))."
-            )
+        Threads.@threads :static for _ in 1:Threads.nthreads(:default)
+            nothing
+        end
+    catch
+        # `:static` cannot run inside another threaded loop; queue one task per thread
+        # instead (best effort: the scheduler may not place one on every thread).
+        @sync for _ in 1:Threads.nthreads(:default)
+            Threads.@spawn nothing
         end
     end
+    lock(_WINDOWS_DELETE_GC_LOCK) do
+        GC.gc(true)
+    end
+    return nothing
 end
+
+"""
+    _windows_delete(path, win_path) -> UInt32
+
+Delete with `DeleteFileW`; return 0 once `path` is gone (a file that was already missing
+counts) or the Windows error code. After a successful call a network share can keep the
+name briefly in "delete pending" state, listed but unopenable, so a rename onto the same
+path would fail; wait up to `WINDOWS_DELETE_SETTLE_SECONDS` for the name to clear.
+"""
+function _windows_delete(path::String, win_path::String)
+    code = _windows_delete_file(win_path)
+    code in (_WINDOWS_ERROR_FILE_NOT_FOUND, _WINDOWS_ERROR_PATH_NOT_FOUND) && return UInt32(0)
+    code == 0 || return code
+    deadline = time() + WINDOWS_DELETE_SETTLE_SECONDS
+    while !_windows_name_gone(path)
+        if time() > deadline
+            @debug_l1 "Windows deletion of $path succeeded but the name was still listed after $(WINDOWS_DELETE_SETTLE_SECONDS) s"
+            break
+        end
+        sleep(0.01)
+    end
+    return UInt32(0)
+end
+
+# A delete-pending name makes stat fail (EACCES); that is not gone yet.
+_windows_name_gone(path::String) =
+    try
+        !(isfile(path) || islink(path))
+    catch
+        false
+    end
+
+_windows_error_message(code::UInt32) = "DeleteFileW error $code: $(rstrip(strip(Libc.FormatMessage(code)), '.'))"

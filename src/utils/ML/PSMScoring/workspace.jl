@@ -141,7 +141,7 @@ function prepare_training_data!(container::ArrowFilePSMContainer, config::Scorin
     isempty(file_groups) && return nothing
 
     for group in file_groups
-        df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+        df = load_arrow_dataframe(group.data_path)
 
         # Sort for locality
         fast_df_sort!(df, [:isotopes_captured, :precursor_idx, :ms_file_idx])
@@ -330,8 +330,8 @@ function process_fold!(
 
     # Per-file prediction for this fold (files are already per-fold)
     for group in get_file_groups_for_fold(container, fold)
-        data_df = DataFrame(Arrow.Table(group.data_path))
-        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+        data_df = load_arrow_dataframe(group.data_path)
+        scores_df = load_arrow_dataframe(group.scores_path)
 
         # Build temp container with data + scores columns for prediction
         for col in names(scores_df)
@@ -357,8 +357,8 @@ finalize_scoring!(ws::ArrowFileScoringWorkspace) =
 
 function _finalize_scoring_arrow!(container::ArrowFilePSMContainer)
     for group in container.file_groups
-        data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
-        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+        data_df = load_arrow_dataframe(group.data_path)
+        scores_df = load_arrow_dataframe(group.scores_path)
         data_df[!, :trace_prob] = scores_df.trace_prob
         writeArrow(group.data_path, data_df)
     end

@@ -248,10 +248,14 @@ function build_qvalue_spline_from_refs(
                 _emit_score_arrays(emit, table[!, score_col], table[!, :target])
                 rows += nrow(table)
             else
-                for table in Arrow.Stream(file_path(ref))
-                    scores, targets = Tables.getcolumn(table, score_col), Tables.getcolumn(table, :target)
-                    _emit_score_arrays(emit, scores, targets)
-                    rows += length(scores)
+                # Scores are emitted one by one, so the file is unmapped afterwards
+                # (these protein-group files are rewritten later, on worker threads).
+                with_arrow_stream(file_path(ref)) do stream
+                    for table in stream
+                        scores, targets = Tables.getcolumn(table, score_col), Tables.getcolumn(table, :target)
+                        _emit_score_arrays(emit, scores, targets)
+                        rows += length(scores)
+                    end
                 end
             end
         end

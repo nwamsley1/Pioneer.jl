@@ -755,7 +755,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
     
     # Use eager DataFrame loading (allows editing for filtering)
-    prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
+    prot = load_arrow_dataframe(file_path(prot_ref))
 
     # Filter out rows with missing inferred_protein_group values
     filter!(:inferred_protein_group => x -> !ismissing(x), prot)

@@ -137,20 +137,19 @@ function aggregate_prescore_globally!(search_context::SearchContext;
         !isfile(score_path) && continue
 
         t_r = time()
-        scores = Arrow.Table(score_path)
-        t_reads += time() - t_r
         n_valid_files += 1
-
-        t_l = time()
-        _aggregate_file_scores!(
-            scores[:precursor_idx], scores[:lgbm_prob],
-            scores[:n_above_hm], scores[:weight],
-            scores[:rt_fwhm], scores[:best_rt],
-            prec_probs_by_run, prec_best_prob,
-            prec_best_n_above_hm, prec_best_weight,
-            prec_best_rt_fwhm, prec_best_rt
-        )
-        t_loop += time() - t_l
+        # Only scalars are kept, so the file is unmapped once this file is aggregated.
+        t_loop += with_arrow_table(score_path) do scores
+            t_reads += time() - t_r
+            @elapsed _aggregate_file_scores!(
+                scores[:precursor_idx], scores[:lgbm_prob],
+                scores[:n_above_hm], scores[:weight],
+                scores[:rt_fwhm], scores[:best_rt],
+                prec_probs_by_run, prec_best_prob,
+                prec_best_n_above_hm, prec_best_weight,
+                prec_best_rt_fwhm, prec_best_rt
+            )
+        end
     end
 
     # Aggregate via log-odds; look up target/decoy from spectral library

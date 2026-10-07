@@ -63,18 +63,20 @@ function update_psms_with_protein_scores_refs(
             continue
         end
 
-        pg_table = Arrow.Table(file_path(pg_ref))
         pg_score_lookup = Dict{PGKey, Tuple{Float32, Float32}}()
-        n_pg_rows = length(pg_table[:protein_name])
+        # Only scalars are kept, so the protein-group file is unmapped afterwards.
+        with_arrow_table(file_path(pg_ref)) do pg_table
+            n_pg_rows = length(pg_table[:protein_name])
 
-        for i in 1:n_pg_rows
-            key = ProteinKey(
-                pg_table[:protein_name][i],
-                pg_table[:target][i],
-                pg_table[:entrap_id][i]
-            )
-            pep_val = pg_table[:pg_pep][i]
-            pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val)
+            for i in 1:n_pg_rows
+                key = ProteinKey(
+                    pg_table[:protein_name][i],
+                    pg_table[:target][i],
+                    pg_table[:entrap_id][i]
+                )
+                pep_val = pg_table[:pg_pep][i]
+                pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val)
+            end
         end
 
         # Compute the 5 new score columns without rewriting the whole PSM file.

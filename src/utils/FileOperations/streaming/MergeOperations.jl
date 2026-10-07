@@ -473,13 +473,17 @@ function stream_sorted_merge(
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
 
     # Determine types from first file
-    first_table = Arrow.Table(file_path(first(refs)))
-    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+    sort_types = with_arrow_table(file_path(first(refs))) do first_table
+        tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+    end
 
-    # Dispatch to N-key implementation
-    return _stream_sorted_merge_nkey_impl(
-        refs, output_path, sort_keys_tuple, sort_types, reverse_vec, batch_size
-    )
+    # Dispatch to N-key implementation. The sources are unmapped once the output is
+    # written, so callers can delete or replace them straight away.
+    return with_arrow_tables() do open_table
+        _stream_sorted_merge_nkey_impl(
+            refs, output_path, sort_keys_tuple, sort_types, reverse_vec, batch_size, open_table
+        )
+    end
 end
 
 """
@@ -491,7 +495,8 @@ function _stream_sorted_merge_nkey_impl(
     sort_keys::NTuple{N,Symbol},
     sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
-    batch_size::Int
+    batch_size::Int,
+    open_table = Arrow.Table
 ) where {N, M}
     started = last_progress = time()
     # Validate all files exist and have compatible schemas
@@ -505,9 +510,9 @@ function _stream_sorted_merge_nkey_impl(
             error("File $(file_path(ref)) is not sorted by the required keys: $(sort_keys). Use sort_file_by_keys! or mark_sorted! first.")
         end
     end
-    
+
     # Load all tables
-    tables = [Arrow.Table(file_path(ref)) for ref in refs]
+    tables = [open_table(file_path(ref)) for ref in refs]
     
     # Validate that all tables have the required sort columns
     for (i, table) in enumerate(tables)
@@ -641,13 +646,17 @@ function stream_sorted_merge_chunked(
     sort_keys_tuple = tuple(sort_keys...)
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
 
-    first_table = Arrow.Table(file_path(first(refs)))
-    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+    sort_types = with_arrow_table(file_path(first(refs))) do first_table
+        tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+    end
 
-    return _stream_sorted_merge_chunked_impl(
-        refs, output_dir, group_key, sort_keys_tuple, sort_types,
-        reverse_vec, batch_size, max_chunk_bytes
-    )
+    # The sources are unmapped once every chunk is written.
+    return with_arrow_tables() do open_table
+        _stream_sorted_merge_chunked_impl(
+            refs, output_dir, group_key, sort_keys_tuple, sort_types,
+            reverse_vec, batch_size, max_chunk_bytes, open_table
+        )
+    end
 end
 
 function _stream_sorted_merge_chunked_impl(
@@ -658,7 +667,8 @@ function _stream_sorted_merge_chunked_impl(
     sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int,
-    max_chunk_bytes::Int
+    max_chunk_bytes::Int,
+    open_table = Arrow.Table
 ) where {N, M}
     # Validate
     for ref in refs
@@ -668,7 +678,7 @@ function _stream_sorted_merge_chunked_impl(
         end
     end
 
-    tables = [Arrow.Table(file_path(ref)) for ref in refs]
+    tables = [open_table(file_path(ref)) for ref in refs]
     for (i, table) in enumerate(tables)
         available_columns = Set(Tables.columnnames(table))
         for key in sort_keys

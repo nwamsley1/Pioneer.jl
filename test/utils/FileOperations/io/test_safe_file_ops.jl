@@ -63,6 +63,22 @@ if Sys.iswindows()
             write(LONG_PATH_PREFIX * long_file, "temporary")
             safeRm(long_file)
             @test !isfile(LONG_PATH_PREFIX * long_file)
+
+            # A file held with no sharing cannot be deleted, renamed or collected away:
+            # safeRm warns and returns, as the cmd.exe del path it replaced did.
+            locked = joinpath(temp_dir, "locked.arrow")
+            write(locked, "temporary")
+            handle = ccall((:CreateFileW, "kernel32"), stdcall, Ptr{Cvoid},
+                (Cwstring, UInt32, UInt32, Ptr{Cvoid}, UInt32, UInt32, Ptr{Cvoid}),
+                locked, 0x80000000, 0, C_NULL, 3, 0x80, C_NULL)   # GENERIC_READ, no sharing
+            try
+                @test (safeRm(locked); true)
+                @test isfile(locked)
+            finally
+                ccall((:CloseHandle, "kernel32"), stdcall, Cint, (Ptr{Cvoid},), handle)
+            end
+            safeRm(locked)
+            @test !isfile(locked)
         end
     end
 end
