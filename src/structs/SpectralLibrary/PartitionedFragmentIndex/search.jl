@@ -424,7 +424,7 @@ Returns a flat vector of global precursor IDs (concatenated across all scans).
 """
 function searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-        pfi::AbstractLocalPartitionedFragmentIndex{Float32},
+        pfi::Union{AbstractLocalPartitionedFragmentIndex{Float32}, PiecedFragmentIndex},
         spectra::MassSpecData,
         all_scan_idxs::Vector{Int},
         n_threads::Int,
@@ -452,18 +452,14 @@ function searchFragmentIndexPartitionMajorHinted(
         _precompute_scan_properties(spectra, all_scan_idxs, rt_to_irt_spline, irt_tol, qtm, iso_bounds, n_scans)
     scan_ims = _scan_im_positions(spectra, all_scan_idxs)
 
-    # ── 2. Map partitions to scans ─────────────────────────────────────────
-    partition_to_scans = _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, n_scans)
-
-    # ── 3. Per-thread buffers (reused via FragIndexScratch when supplied) ──
+    # ── 2. Per-thread buffers (reused via FragIndexScratch when supplied) ──
     # Per-thread initial guess: n_scans*200 estimates TOTAL emitted candidates,
     # but each thread only handles a fraction, so divide by n_threads. The emit
     # buffers grow in place (doubling) if a thread exceeds this, and FragIndexScratch
     # is grow-only across files, so a low first-file guess self-corrects to the
     # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
+    # Counters are sized per index (piece) in `_search_index!`.
     est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
-    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
-    I = local_id_type(pfi)                     # counter ID type = the index's local ID type (UInt16 / UInt32)
     mz_buf_size = maximum(si -> getPeakCount(spectra, all_scan_idxs[si]),
                           1:n_scans; init=0)
     int_buf_size = max_peaks > 0 ? mz_buf_size : 0
@@ -471,7 +467,6 @@ function searchFragmentIndexPartitionMajorHinted(
     if scratch === nothing
         thread_si_bufs  = [Vector{Int32}(undef, est_per_thread) for _ in 1:n_threads]
         thread_pid_bufs = [Vector{UInt32}(undef, est_per_thread) for _ in 1:n_threads]
-        thread_counters = [Counter(I, UInt8, max_local + 1) for _ in 1:n_threads]
         thread_int_bufs = max_peaks > 0 ?
             [Vector{Float32}(undef, int_buf_size) for _ in 1:n_threads] :
             [Float32[] for _ in 1:n_threads]
@@ -481,50 +476,36 @@ function searchFragmentIndexPartitionMajorHinted(
         prepare!(scratch;
             n_threads = n_threads,
             est_per_thread = est_per_thread,
-            counter_size = max_local + 1,
+            counter_size = 0,
             int_buf_size = int_buf_size,
-            mz_buf_size = mz_buf_size,
-            id_type = I)
+            mz_buf_size = mz_buf_size)
         thread_si_bufs  = scratch.si
         thread_pid_bufs = scratch.pid
-        thread_counters = scratch_counters(scratch, I)
         thread_int_bufs = scratch.int_bufs
         thread_mz_low_bufs = scratch.mz_low_bufs
         thread_mz_high_bufs = scratch.mz_high_bufs
     end
-    thread_counts = zeros(Int, n_threads)
+    thread_counts = zeros(Int, n_threads)   # per-thread write positions, carried across index pieces
     decode_bufs = [PeakDecodeBuffer() for _ in 1:n_threads]   # one per task below (.tdfs peaks)
 
-    # ── 4. Build emit strategy (compile-time dispatch) ─────────────────────
+    # ── 3. Build emit strategy (compile-time dispatch) ─────────────────────
     emit_strategy = if pattern_accumulator !== nothing
         EmitToAccumulator(pattern_accumulator, precursor_irts, Float32(irt_tol))
     else
         EmitToBuffer(score_filter, im_gate)
     end
 
-    # ── 6. Partition-major parallel execution ──────────────────────────────
-    thread_times = zeros(Float64, n_threads)
+    # ── 4. Partition-major parallel execution, once per index piece ────────
     t_parallel_start = time()
-    tasks = map(1:n_threads) do tid
-        Threads.@spawn begin
-            t_thread = time()
-            thread_counts[tid] = _run_thread(tid, emit_strategy,
-                thread_counters[tid],
-                thread_si_bufs[tid], thread_pid_bufs[tid],
-                pfi, partition_to_scans, all_scan_idxs, spectra,
-                scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
-                scan_irts, scan_ims, precursor_mzs,
-                mem, linear_threshold, n_threads,
-                thread_int_bufs[tid], max_peaks,
-                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid],
-                decode_bufs[tid])
-            thread_times[tid] = time() - t_thread
-        end
+    for_each_index_piece(pfi, scan_prec_min, scan_prec_max) do index
+        _search_index!(index, emit_strategy, thread_counts, thread_si_bufs, thread_pid_bufs,
+            thread_int_bufs, thread_mz_low_bufs, thread_mz_high_bufs, decode_bufs, scratch,
+            all_scan_idxs, spectra, scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
+            scan_irts, scan_ims, precursor_mzs, mem, linear_threshold, n_threads, max_peaks)
     end
-    fetch.(tasks)
     t_parallel = time() - t_parallel_start
 
-    # ── 6. Collect results via counting sort ───────────────────────────────
+    # ── 5. Collect results via counting sort ───────────────────────────────
     precursors_passed, total = _collect_frag_index_results!(
         scan_to_prec_idx, thread_si_bufs, thread_pid_bufs, thread_counts,
         all_scan_idxs, n_scans, n_threads)
@@ -535,6 +516,50 @@ function searchFragmentIndexPartitionMajorHinted(
 
     scores_passed = UInt8[]
     return precursors_passed, scores_passed
+end
+
+"Calls `f(index)` once: a single partitioned index is its own only piece."
+for_each_index_piece(f, pfi::AbstractLocalPartitionedFragmentIndex, scan_prec_min, scan_prec_max) = f(pfi)
+
+"""
+Search one partitioned index (a whole index or one piece) for all scans, appending each thread's candidates after its
+current write position `thread_counts[tid]`. Function barrier: specializes on the index's local ID type.
+"""
+function _search_index!(pfi::AbstractLocalPartitionedFragmentIndex{Float32}, emit_strategy::E,
+        thread_counts::Vector{Int}, thread_si_bufs, thread_pid_bufs, thread_int_bufs,
+        thread_mz_low_bufs, thread_mz_high_bufs, decode_bufs, scratch::Union{Nothing, FragIndexScratch},
+        all_scan_idxs::Vector{Int}, spectra::MassSpecData,
+        scan_irt_lo::Vector{Float32}, scan_irt_hi::Vector{Float32},
+        scan_prec_min::Vector{Float32}, scan_prec_max::Vector{Float32},
+        scan_irts::Vector{Float32}, scan_ims::Vector{Float32},
+        precursor_mzs::AbstractVector{Float32}, mem::M, linear_threshold::UInt32,
+        n_threads::Int, max_peaks::Int) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel}
+    partition_to_scans = _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, length(all_scan_idxs))
+    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
+    I = local_id_type(pfi)                     # counter ID type = the index's local ID type (UInt16 / UInt32)
+    thread_counters = if scratch === nothing
+        [Counter(I, UInt8, max_local + 1) for _ in 1:n_threads]
+    else
+        prepare!(scratch; n_threads = n_threads, est_per_thread = 0, counter_size = max_local + 1,
+                 int_buf_size = 0, id_type = I)
+        scratch_counters(scratch, I)
+    end
+    tasks = map(1:n_threads) do tid
+        Threads.@spawn begin
+            thread_counts[tid] = _run_thread(tid, emit_strategy,
+                thread_counters[tid],
+                thread_si_bufs[tid], thread_pid_bufs[tid],
+                pfi, partition_to_scans, all_scan_idxs, spectra,
+                scan_irt_lo, scan_irt_hi, scan_prec_min, scan_prec_max,
+                scan_irts, scan_ims, precursor_mzs,
+                mem, linear_threshold, n_threads,
+                thread_int_bufs[tid], max_peaks,
+                thread_mz_low_bufs[tid], thread_mz_high_bufs[tid],
+                decode_bufs[tid], thread_counts[tid])
+        end
+    end
+    fetch.(tasks)
+    return nothing
 end
 
 # ── Helper functions ─────────────────────────────────────────────────────────
@@ -598,10 +623,10 @@ function _run_thread(tid::Int, emit::E,
         linear_threshold::UInt32, n_threads::Int,
         int_buf::Vector{Float32}, max_peaks::Int,
         mz_low_buf::Vector{Float32}, mz_high_buf::Vector{Float32},
-        decode_buf::PeakDecodeBuffer
+        decode_buf::PeakDecodeBuffer,
+        wp::Int = 0,                    # write position in si_buf / pid_buf to continue from
         ) where {E<:FragIndexEmitStrategy, M<:AbstractMassErrorModel, I<:Unsigned, P<:AbstractLocalPartitionedFragmentIndex{Float32}}
 
-    wp = 0
 
     for k in 1:pfi_ref.n_partitions
         relevant = partition_to_scans[k]

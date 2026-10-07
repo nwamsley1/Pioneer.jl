@@ -172,6 +172,26 @@ function build_partitioned_index_from_lib(
 end
 
 """
+    initial_partitions(prec_mzs, partition_width) -> Vector{Vector{UInt32}}
+
+Global precursor IDs per initial `partition_width` bin of precursor m/z, from the smallest precursor m/z (Step 1 of
+`build_partitioned_index_from_selection`). Building from a consecutive run of these bins (`build_index_pieces`)
+gives exactly the partitions a single index over all bins has.
+"""
+function initial_partitions(prec_mzs::AbstractVector{<:Real}, partition_width::Real)
+    isempty(prec_mzs) && return [UInt32[]]
+    min_prec_mz, max_prec_mz = Float32.(extrema(prec_mzs))
+    width = Float32(partition_width)
+    n_initial = max(1, ceil(Int, (max_prec_mz - min_prec_mz) / width))
+    @debug_l2 "build_partitioned_index: prec m/z [$(round(min_prec_mz, digits=2)), $(round(max_prec_mz, digits=2))], $(width) Da → $(n_initial) initial partitions"
+    pids = [UInt32[] for _ in 1:n_initial]
+    for pid in UInt32(1):UInt32(length(prec_mzs))
+        push!(pids[_initial_partition(Float32(prec_mzs[pid]), min_prec_mz, width, n_initial)], pid)
+    end
+    return pids
+end
+
+"""
     build_partitioned_index_from_selection(sel; partition_width, frag_bin_tol_ppm, frag_bin_tol_mda, rt_bin_tol, id_type)
 
 The partitioned index of one width from a precomputed `IndexFragSelection`; see `build_partitioned_index_from_lib`.
@@ -185,29 +205,10 @@ function build_partitioned_index_from_selection(
     frag_bin_tol_mda::Float32 = 2.0f0,
     rt_bin_tol::Float32 = 3.0f0,
     id_type::Type{<:Unsigned} = UInt16,
+    initial_partition_pids::Vector{Vector{UInt32}} = initial_partitions(sel.prec_mzs, partition_width),
 )
     max_local = max_local_precs(id_type)
     prec_mzs = sel.prec_mzs
-    n_precursors = length(prec_mzs)
-
-    # ── Step 1: Assign precursors to initial partitions by prec_mz ───────────
-    min_prec_mz = Float32(Inf)
-    max_prec_mz = Float32(-Inf)
-    for i in 1:n_precursors
-        pmz = prec_mzs[i]
-        min_prec_mz = min(min_prec_mz, pmz)
-        max_prec_mz = max(max_prec_mz, pmz)
-    end
-    n_initial = max(1, ceil(Int, (max_prec_mz - min_prec_mz) / partition_width))
-    @debug_l2 "build_partitioned_index: prec m/z [$(round(min_prec_mz, digits=2)), $(round(max_prec_mz, digits=2))], $(partition_width) Da → $(n_initial) initial partitions"
-
-    # Collect global precursor IDs per initial partition
-    initial_partition_pids = [UInt32[] for _ in 1:n_initial]
-    for pid in UInt32(1):UInt32(n_precursors)
-        pmz = prec_mzs[pid]
-        k = _initial_partition(pmz, min_prec_mz, partition_width, n_initial)
-        push!(initial_partition_pids[k], pid)
-    end
 
     # ── Step 2: Split partitions exceeding max_local (balanced halving) ───────
     final_partition_pids = Vector{UInt32}[]
@@ -225,6 +226,7 @@ function build_partitioned_index_from_selection(
         _split_balanced!(final_partition_pids, pids, prec_mzs)
     end
     n_partitions = length(final_partition_pids)
+    n_initial = length(initial_partition_pids)
     if n_partitions != n_initial
         @debug_l2 "build_partitioned_index: split to $(n_partitions) partitions ($(n_partitions - n_initial) extra from UInt16 limit)"
     end
@@ -350,6 +352,10 @@ function _build_local_partition(
     end
     resize!(soa.first_bins, frag_bin_idx)
     resize!(soa.last_bins, frag_bin_idx)
+    # resize! keeps the capacity (one slot per fragment); release it so a built index holds only what it uses
+    for v in (soa.lows, soa.highs, soa.first_bins, soa.last_bins)
+        sizehint!(v, length(v); shrink = true)
+    end
     rb_final = rt_bins[1:rt_bin_idx]
     skip_hints = _compute_skip_hints(soa, rb_final)
 
