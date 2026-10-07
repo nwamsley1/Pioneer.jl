@@ -67,7 +67,9 @@ The median MS2 isolation window width (m/z) of one MS data file; `nothing` witho
 function median_ms2_isolation_width(ms_path::AbstractString)
     spectra = loadMassSpecData(ms_path)
     orders = getMsOrders(spectra); widths = getIsolationWidthMzs(spectra)
-    w = Float64[Float64(widths[i]) for i in eachindex(orders)
+    # 1:length, not eachindex: in a multi-batch Arrow file the columns are ChainedVectors, and one column's
+    # ChainedVectorIndex cannot index another
+    w = Float64[Float64(widths[i]) for i in 1:length(orders)
                 if orders[i] == 2 && !ismissing(widths[i]) && isfinite(widths[i]) && widths[i] > 0]
     return isempty(w) ? nothing : median(w)
 end
