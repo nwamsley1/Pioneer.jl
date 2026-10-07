@@ -51,33 +51,46 @@ end
 function writeArrow(fpath::String, df::AbstractDataFrame; temp_dir::AbstractString=tempdir())
     _audit_log_write(fpath, df)
     fpath = normpath(fpath)
-    if Sys.iswindows()
-        # Create a unique temporary file
-        tpath = tempname(temp_dir) * ".arrow"
-        # Write to the temporary file
-        Arrow.write(tpath, df)
-        # Route replacement through the same normalized, retrying deletion
-        # path as every other Arrow cleanup operation.
-        safeRm(fpath; force=true)
+    tpath = tempname(temp_dir) * ".arrow"
+    try
+        if Sys.iswindows()
+            # Write to the temporary file
+            Arrow.write(tpath, df)
+            # Route replacement through the same normalized, retrying deletion
+            # path as every other Arrow cleanup operation.
+            safeRm(fpath; force=true)
 
-        # Move the temporary file to the final location
-        try
-            mv(tpath, fpath, force=true)
-        catch e
-            # If move fails, try copy and delete
+            # Move the temporary file to the final location
             try
-                cp(tpath, fpath, force=true)
-                rm(tpath, force=true)
-            catch
-                error("Unable to write to file: $fpath")
+                mv(tpath, fpath, force=true)
+            catch e
+                # If move fails, try copy and delete
+                try
+                    cp(tpath, fpath, force=true)
+                    rm(tpath, force=true)
+                catch
+                    error("Unable to write to file: $fpath")
+                end
+            end
+        else
+            # For Linux/MacOS, use temp file approach for safety
+            # This avoids Bus errors when writing to a file that may still be memory-mapped
+            Arrow.write(tpath, df)
+            mv(tpath, fpath, force=true)
+        end
+    catch e
+        @user_error "Arrow write failed: destination=$fpath temporary=$tpath: $(sprint(showerror, e))"
+        rethrow()
+    finally
+        # Failed writes (including errors on close) must not leave partial files
+        # consuming space. Never replace the original exception with cleanup errors.
+        if isfile(tpath)
+            try
+                safeRm(tpath; force=true)
+            catch cleanup_error
+                @user_warn "Unable to remove temporary Arrow file $tpath: $(sprint(showerror, cleanup_error))"
             end
         end
-    else
-        # For Linux/MacOS, use temp file approach for safety
-        # This avoids Bus errors when writing to a file that may still be memory-mapped
-        tpath = tempname(temp_dir) * ".arrow"
-        Arrow.write(tpath, df)
-        mv(tpath, fpath, force=true)
     end
     return nothing
 end

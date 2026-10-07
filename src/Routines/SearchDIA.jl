@@ -270,11 +270,7 @@ function SearchDIA(params_path::String)
         print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, rss_deltas)
         
     catch e
-        error_msg = try
-            "$(typeof(e)): $(e.msg)"
-        catch
-            "$(typeof(e))"
-        end
+        error_msg = sprint(showerror, e)
         @user_error "Search failed with error: $error_msg"
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)

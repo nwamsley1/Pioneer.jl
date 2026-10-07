@@ -1,3 +1,5 @@
+using Pioneer: _cleanup_scored_folds!
+
 @testset "Attach Pass-1 predictions while merging folds" begin
     function write_scored_fold_fixture(dir, name, ids; infold=:scores)
         path = joinpath(dir, name * ".arrow")
@@ -164,6 +166,20 @@
             @test_throws Exception Pioneer._merge_scored_folds!([fold.path], merged_path)
             @test !isfile(merged_path)
             @test all(path -> read(path) == original_bytes[path], fold.inputs)
+        end
+    end
+
+    @testset "Completed merge cleanup removes inputs and preserves output" begin
+        mktempdir() do dir
+            fold = write_scored_fold_fixture(dir, "run_fold0", [4, 1])
+            merged_path = joinpath(dir, "run.arrow")
+            result = Pioneer._merge_scored_folds!([fold.path], merged_path)
+            @test all(isfile, result.cleanup_paths)
+            _cleanup_scored_folds!(result.cleanup_paths)
+            @test isempty(result.cleanup_paths)
+            @test all(path -> !isfile(path), fold.inputs)
+            check_merged_table(merged_path, fold.expected)
+            _cleanup_scored_folds!(result.cleanup_paths)
         end
     end
 end

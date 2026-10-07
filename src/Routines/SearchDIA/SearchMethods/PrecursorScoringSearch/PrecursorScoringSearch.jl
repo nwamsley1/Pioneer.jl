@@ -373,6 +373,11 @@ function summarize_results!(
             merge_write += merged.write_seconds
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
         end
+        # Bound duplicate storage to one batch rather than the full experiment.
+        # The merge helper has returned, so its mmap references are out of scope.
+        if run_number % 100 == 0
+            _cleanup_scored_folds!(fold_paths_to_delete)
+        end
         if run_number % 100 == 0 || time() - last_merge_log >= 60
             @debug_l1 "ScoringSearch fold merge: runs=$run_number/$(length(valid_file_data)) " *
                 "rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s " *
@@ -386,13 +391,10 @@ function summarize_results!(
         "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
         "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
 
-    # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
+    # Remove the final partial batch after all merged outputs are written.
     @debug_l1 "ScoringSearch fold cleanup starting: files=$(length(fold_paths_to_delete))"
     cleanup_started = time()
-    GC.gc(false)
-    for fpath in fold_paths_to_delete
-        safeRm(fpath)
-    end
+    _cleanup_scored_folds!(fold_paths_to_delete)
     @debug_l1 "ScoringSearch fold cleanup complete: $(round(time() - cleanup_started, digits = 2))s"
 
     # Create references for second pass PSMs (now using merged files)

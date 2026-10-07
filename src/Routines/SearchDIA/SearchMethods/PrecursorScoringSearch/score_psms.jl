@@ -59,6 +59,24 @@ function score_precursor_isotope_traces(
 end
 
 """
+    _cleanup_scored_folds!(paths)
+
+Release completed merges' memory mappings, remove their source folds and
+sidecars, and empty the cleanup queue. Call only after merged outputs are written.
+"""
+function _cleanup_scored_folds!(paths::Vector{String})
+    isempty(paths) && return nothing
+    # Unlinked mmap files still occupy disk space on Unix until their mappings
+    # are released; Windows also requires release before deletion.
+    GC.gc(true)
+    for path in paths
+        safeRm(path)
+    end
+    empty!(paths)
+    return nothing
+end
+
+"""
     _merge_scored_folds!(fold_paths, merged_path)
 
 Attach Pass-1 predictions while merging one run's folds in input order. Return
