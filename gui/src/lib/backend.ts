@@ -32,6 +32,15 @@ export interface ExitEvent {
   message: string
 }
 
+/** One step of a multi-step job failed; the job continues with the rest. */
+export interface StepFailedEvent {
+  job_id: string
+  step: number
+  total: number
+  code: number | null
+  message: string
+}
+
 export const pioneerInfo = (): Promise<PioneerInfo> => invoke('pioneer_info')
 
 export const appVersion = (): Promise<string> => invoke('app_version')
@@ -147,6 +156,9 @@ export const onJobLine = (cb: (e: LineEvent) => void): Promise<UnlistenFn> =>
 
 export const onJobExit = (cb: (e: ExitEvent) => void): Promise<UnlistenFn> =>
   listen<ExitEvent>('job-exit', (e) => cb(e.payload))
+
+export const onJobStepFailed = (cb: (e: StepFailedEvent) => void): Promise<UnlistenFn> =>
+  listen<StepFailedEvent>('job-step-failed', (e) => cb(e.payload))
 
 /** Where pickers open.
  *

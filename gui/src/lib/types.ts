@@ -459,6 +459,9 @@ export interface Job {
   status: JobStatus
   logLines: LogLine[]
   failMsg: string
+  /** Steps of a multi-file job that failed while the job carried on, one
+   *  message each. Absent on jobs restored from before this existed. */
+  stepFailures?: string[]
   /** Serialized params, held so the job can be started when it reaches the
    *  front of the queue rather than at enqueue time. */
   paramsJson: string

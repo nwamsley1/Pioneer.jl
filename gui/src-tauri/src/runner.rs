@@ -66,6 +66,18 @@ pub struct ExitEvent {
     pub message: String,
 }
 
+/// One step of a multi-step job failing while the job carries on with the rest.
+#[derive(Clone, serde::Serialize)]
+pub struct StepFailedEvent {
+    pub job_id: String,
+    /// 1-based position of the failed step.
+    pub step: usize,
+    pub total: usize,
+    pub code: Option<i32>,
+    /// Human-readable, e.g. "Step 6 of 117 (run.raw) failed: exit code 1."
+    pub message: String,
+}
+
 /// Live child processes, keyed by job id.
 ///
 /// We keep only the pid and a cancel flag here — the `Child` itself is moved
@@ -255,6 +267,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     std::thread::spawn(move || {
         let mut child = first;
         let mut index = 0usize;
+        let mut failures: Vec<String> = Vec::new();
         let event = loop {
             // Drain both pipes to completion before the next step starts, so a
             // step's output cannot interleave with the tail of the one before.
@@ -284,25 +297,38 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
 
             index += 1;
             let last = index >= steps.len();
-            // A failed step ends the job: the steps of a sequence are the same
-            // command over different files, and continuing after one has failed
-            // would bury the failure under whatever came next.
-            if was_cancelled || !st.success() || last {
-                let success = st.success() && !was_cancelled;
+            // The steps of a sequence are the same command over different files,
+            // so one failed file does not stop the others. Each failure is
+            // reported as it happens (the GUI can stop the job from there) and
+            // again in the job's final status, which is not success while any
+            // step failed.
+            if multi && !was_cancelled && !st.success() {
+                let message = step_failure_message(index, steps.len(), &steps[index - 1], st.code());
+                let _ = app.emit(
+                    "job-step-failed",
+                    StepFailedEvent {
+                        job_id: job_id.clone(),
+                        step: index,
+                        total: steps.len(),
+                        code: st.code(),
+                        message: message.clone(),
+                    },
+                );
+                failures.push(message);
+            }
+            if was_cancelled || (!multi && !st.success()) || last {
+                let success = st.success() && !was_cancelled && failures.is_empty();
                 let code = st.code();
                 let message = if was_cancelled {
                     "Cancelled by user.".to_string()
                 } else if success {
                     String::new()
+                } else if multi {
+                    failed_steps_summary(&failures, steps.len())
                 } else {
-                    let where_ = if multi {
-                        format!(" on step {index} of {}", steps.len())
-                    } else {
-                        String::new()
-                    };
                     match code {
-                        Some(c) => format!("Pioneer exited with code {c}{where_}."),
-                        None => format!("Pioneer was terminated by a signal{where_}."),
+                        Some(c) => format!("Pioneer exited with code {c}."),
+                        None => "Pioneer was terminated by a signal.".to_string(),
                     }
                 };
                 break ExitEvent {
@@ -341,6 +367,38 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     });
 
     Ok(Started { params_path: params_display, env_summary })
+}
+
+/// The file a step works on, for messages: its first non-option argument.
+fn step_label(args: &[String]) -> Option<String> {
+    args.iter().find(|a| !a.starts_with('-')).map(|a| {
+        // Split on both separators rather than `Path::file_name`, which only knows
+        // the running platform's.
+        let trimmed = a.trim_end_matches(['/', '\\']);
+        trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).to_string()
+    })
+}
+
+fn step_failure_message(step: usize, total: usize, args: &[String], code: Option<i32>) -> String {
+    let what = match step_label(args) {
+        Some(l) => format!("Step {step} of {total} ({l})"),
+        None => format!("Step {step} of {total}"),
+    };
+    match code {
+        Some(c) => format!("{what} failed with exit code {c}."),
+        None => format!("{what} was terminated by a signal."),
+    }
+}
+
+/// The final status of a sequence in which some steps failed.
+fn failed_steps_summary(failures: &[String], total: usize) -> String {
+    const SHOWN: usize = 5;
+    let mut msg = format!("{} of {total} steps failed. ", failures.len());
+    msg.push_str(&failures.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(" "));
+    if failures.len() > SHOWN {
+        msg.push_str(&format!(" ({} more in the log.)", failures.len() - SHOWN));
+    }
+    msg
 }
 
 /// Build and spawn one step of a job.
@@ -667,6 +725,27 @@ mod tests {
     fn multi_line_cursor_up_removes_several() {
         let input = b"a\nb\nc\n\x1b[2Ax\n";
         assert_eq!(render(input), vec!["a", "x"]);
+    }
+    #[test]
+    fn step_failure_names_the_file() {
+        let args: Vec<String> = [r"D:\data\run6.raw", "--output-dir", "out", "--skip-existing"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(step_label(&args).as_deref(), Some("run6.raw"));
+        assert_eq!(
+            step_failure_message(6, 117, &args, Some(-532462766)),
+            "Step 6 of 117 (run6.raw) failed with exit code -532462766."
+        );
+        assert_eq!(step_failure_message(2, 3, &[], None), "Step 2 of 3 was terminated by a signal.");
+    }
+
+    #[test]
+    fn failed_steps_summary_lists_the_first_five() {
+        let f: Vec<String> = (1..=7).map(|i| format!("Step {i} failed.")).collect();
+        assert_eq!(failed_steps_summary(&f[..1], 117), "1 of 117 steps failed. Step 1 failed.");
+        let s = failed_steps_summary(&f, 117);
+        assert!(s.starts_with("7 of 117 steps failed. Step 1 failed."));
+        assert!(s.contains("Step 5 failed.") && !s.contains("Step 6 failed."));
+        assert!(s.ends_with("(2 more in the log.)"));
     }
 }
 

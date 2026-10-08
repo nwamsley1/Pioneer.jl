@@ -905,6 +905,27 @@ export default function App() {
       })
       .then(keep)
 
+    // A file in a multi-file job failed and the job carried on: record it and say
+    // so in the log. The drawer offers to stop the job from here.
+    backend
+      .onJobStepFailed(({ job_id, message }) => {
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === job_id
+              ? {
+                  ...j,
+                  stepFailures: [...(j.stepFailures ?? []), message],
+                  logLines: [
+                    ...j.logLines,
+                    { text: `WARNING: ${message} Continuing with the remaining files.`, stream: 'app' as const, transient: false },
+                  ],
+                }
+              : j,
+          ),
+        )
+      })
+      .then(keep)
+
     backend
       .onJobExit(({ job_id, success, cancelled, message }) => {
         setJobs((prev) =>
