@@ -79,13 +79,13 @@ function encode_range(bytes::AbstractVector{UInt8}, a::Int, b::Int)
 end
 
 function decode_seq(c::SeqCode)
-    io = IOBuffer()
-    for n in 1:SEQ_MAX_LENGTH
-        code = n <= 25 ? (c.hi >> (5 * (25 - n) + 3)) & 0x1f : (c.lo >> (5 * (50 - n) + 3)) & 0x1f
-        code == 0 && break
-        write(io, SEQ_ALPHABET[Int(code)])
+    n = seq_length(c)
+    v = Base.StringVector(n)
+    for i in 1:n
+        code = i <= 25 ? (c.hi >> (5 * (25 - i) + 3)) & 0x1f : (c.lo >> (5 * (50 - i) + 3)) & 0x1f
+        v[i] = UInt8(SEQ_ALPHABET[Int(code)])
     end
-    return String(take!(io))
+    return String(v)
 end
 
 "Number of residues of a packed sequence."
@@ -362,6 +362,7 @@ end
 
 "getModString of compact mods on `seq`: (position,residue,name) per mod, in buf order."
 function mods_string(seq::AbstractString, buf::Vector{Tuple{UInt8, UInt8}}, names::Vector{String})
+    isempty(buf) && return ""
     io = IOBuffer()
     for (pos, id) in buf
         print(io, '(', Int(pos), ',', seq[pos], ',', names[id], ')')
@@ -862,6 +863,21 @@ function _chunk_columns_alloc(n::Int, nce::Float32)
         isotope_mods = Vector{Union{Missing, String}}(missing, n))
 end
 
+"join((names[occ_protein[o]] for o in reverse(occ)), ';') with one allocation (none for one occurrence)."
+function join_occurrences(names::Vector{String}, occ_protein::Vector{UInt32}, occ::UnitRange{Int})
+    length(occ) == 1 && return names[occ_protein[first(occ)]]
+    n = length(occ) - 1
+    for o in occ; n += ncodeunits(names[occ_protein[o]]); end
+    v = Base.StringVector(n)
+    i = 1
+    for o in reverse(occ)
+        i > 1 && (v[i] = UInt8(';'); i += 1)
+        name = names[occ_protein[o]]
+        copyto!(v, i, codeunits(name), 1, ncodeunits(name)); i += ncodeunits(name)
+    end
+    return String(v)
+end
+
 "Fill output rows `js` of a chunk (one thread's share)."
 function _fill_rows!(cols::NamedTuple, src::TableSource, chunk::AbstractVector{UInt32}, js::UnitRange{Int},
                      tbuf::Vector{Tuple{UInt8, UInt8}}, trev::Vector{UInt8})
@@ -871,8 +887,8 @@ function _fill_rows!(cols::NamedTuple, src::TableSource, chunk::AbstractVector{U
         u = (Int(r) - 1) ÷ src.nz + 1; zi = (Int(r) - 1) % src.nz + 1
         k = unit_peptide(units, u)
         occ = peps.occ_offsets[k]:(peps.occ_offsets[k + 1] - 1)
-        cols.proteome_identifiers[j] = join((peps.protein_proteome[peps.occ_protein[o]] for o in reverse(occ)), ';')
-        cols.accession_number[j] = join((peps.protein_accession[peps.occ_protein[o]] for o in reverse(occ)), ';')
+        cols.proteome_identifiers[j] = join_occurrences(peps.protein_proteome, peps.occ_protein, occ)
+        cols.accession_number[j] = join_occurrences(peps.protein_accession, peps.occ_protein, occ)
         seq = decode_seq(unit_code(units, u))
         mods, nvar = unit_mods!(tbuf, trev, units, u)
         cols.sequence[j] = seq
@@ -906,6 +922,21 @@ function chunk_columns(src::TableSource, chunk::AbstractVector{UInt32})
         _fill_rows!(cols, src, chunk, js, Tuple{UInt8, UInt8}[], UInt8[])
     end
     return cols
+end
+
+"Write `rows` to `out_path` as one record batch per `chunk_rows`; returns (column build time, Arrow.write time)."
+function write_precursor_chunks(out_path::String, src::TableSource, rows::Vector{UInt32}, chunk_rows::Int)
+    t_build = 0.0; t_arrow = 0.0
+    writer = open(Arrow.Writer, out_path)
+    try
+        for chunk in Iterators.partition(rows, chunk_rows)
+            t_c = time(); cols = chunk_columns(src, chunk); t_build += time() - t_c
+            t_c = time(); Arrow.write(writer, cols); t_arrow += time() - t_c
+        end
+    finally
+        close(writer)
+    end
+    return t_build, t_arrow
 end
 
 "Log a phase's time with the process peak RSS so far and the live heap after a full collection."
@@ -1034,11 +1065,8 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     # alive at a time (Arrow.write over a lazy partitioner processes later partitions in @async tasks, letting the
     # producer run ahead and every chunk accumulate).
     src = TableSource(units, collect(charges), row_mz, unit_irt, pair_id, epair_id, nz, nce, cleavage)
-    open(Arrow.Writer, out_path) do writer
-        for chunk in Iterators.partition(rows, chunk_rows)
-            Arrow.write(writer, chunk_columns(src, chunk))
-        end
-    end
+    t_build, t_arrow = write_precursor_chunks(out_path, src, rows, chunk_rows)
+    @user_info @sprintf("Streaming build:   build columns %.1f s, Arrow.write %.1f s", t_build, t_arrow)
     t = _stream_phase("write", t)
     return out_path
 end
