@@ -130,23 +130,11 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
                             frag_bin_tol_mda::Float32 = 2.0f0,
                             rt_bin_tol::Float32 = 3.0f0,
                             id_type_request::AbstractString = "auto",
-                            max_piece_bytes::Integer = 4_000_000_000)
+                            max_piece_bytes::Integer = 4_000_000_000,
+                            bins_groups = index_piece_groups(sel, partition_width, max_piece_bytes))
     mkpath(dir)
-    bins = initial_partitions(sel.prec_mzs, partition_width)
+    bins, groups = bins_groups
     nfrag(pids) = sum(pid -> n_index_frags(sel, pid), pids; init = 0)
-    # upper bound: 8-byte fragments, 4-byte local->global ids, one 18-byte m/z bin per two fragments
-    est(k) = 17 * nfrag(bins[k]) + 4 * length(bins[k])
-
-    groups = UnitRange{Int}[]
-    lo, acc = 1, 0
-    for k in eachindex(bins)
-        e = est(k)
-        if acc > 0 && acc + e > max_piece_bytes
-            push!(groups, lo:(k - 1)); lo, acc = k, 0
-        end
-        acc += e
-    end
-    push!(groups, lo:length(bins))
 
     pieces = IndexPiece[]
     function build_group!(g::UnitRange{Int})
@@ -182,6 +170,78 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
             "pieces" => [Dict{String, Any}(string(f) => getfield(p, f) for f in fieldnames(IndexPiece)) for p in pieces]), 2)
     end
     return PiecedFragmentIndex(String(dir), pieces, partition_width)
+end
+
+"""
+    index_piece_groups(sel, partition_width, max_piece_bytes) -> (bins, groups)
+
+The initial precursor-m/z bins of `partition_width` and the runs of consecutive bins that `build_index_pieces`
+builds as pieces: grouped by an upper-bound size estimate (8-byte fragments, 4-byte local -> global ids, one 18-byte
+m/z bin per two fragments) of at most `max_piece_bytes`.
+"""
+function index_piece_groups(sel::IndexFragSelection, partition_width::Real, max_piece_bytes::Integer)
+    bins = initial_partitions(sel.prec_mzs, partition_width)
+    est(k) = 17 * sum(pid -> n_index_frags(sel, pid), bins[k]; init = 0) + 4 * length(bins[k])
+    groups = UnitRange{Int}[]
+    lo, acc = 1, 0
+    for k in eachindex(bins)
+        e = est(k)
+        if acc > 0 && acc + e > max_piece_bytes
+            push!(groups, lo:(k - 1)); lo, acc = k, 0
+        end
+        acc += e
+    end
+    push!(groups, lo:length(bins))
+    return bins, groups
+end
+
+"Upper-bound bytes of the whole partitioned index of `sel` (index_piece_groups's estimate)."
+estimated_index_bytes(sel::IndexFragSelection) = 17 * sum(Int, sel.counts; init = 0) + 4 * length(sel.counts)
+
+"""
+    spill_index_selection(sel, bins, groups, path) -> IndexFragSelection
+
+The same selection with each piece's (group's) fragments stored together in the file at `path` (memory-mapped), so
+building a piece reads one region instead of every page of `sel.frags`. One sequential pass over `sel.frags`.
+"""
+function spill_index_selection(sel::IndexFragSelection, bins::Vector{Vector{UInt32}}, groups::Vector{UnitRange{Int}},
+                               path::AbstractString)
+    n = length(sel.counts)
+    pid_group = zeros(UInt32, n)
+    region = zeros(Int, length(groups) + 1)                   # group g's fragments: region[g] + 1 : region[g + 1]
+    for (g, r) in enumerate(groups), k in r, pid in bins[k]
+        pid_group[pid] = g
+        region[g + 1] += n_index_frags(sel, pid)
+    end
+    cumsum!(region, region)
+    starts = Vector{Int}(undef, n)
+    filled = zeros(Int, length(groups))                       # fragments placed in each group so far
+    flushed = zeros(Int, length(groups))
+    bufs = [SimpleFrag{Float32}[] for _ in groups]
+    scratch = UInt8[]
+    T = SimpleFrag{Float32}
+    open(path, "w") do io
+        truncate(io, region[end] * sizeof(T))
+        for pid in 1:n
+            g = Int(pid_group[pid])
+            g == 0 && continue
+            starts[pid] = region[g] + filled[g] + 1
+            for fi in index_frag_range(sel, pid)
+                push!(bufs[g], sel.frags[fi])
+            end
+            filled[g] += n_index_frags(sel, pid)
+            if length(bufs[g]) >= 1 << 20
+                seek(io, (region[g] + flushed[g]) * sizeof(T)); _write_packed!(io, scratch, bufs[g])
+                flushed[g] += length(bufs[g]); empty!(bufs[g])
+            end
+        end
+        for g in eachindex(groups)
+            isempty(bufs[g]) && continue
+            seek(io, (region[g] + flushed[g]) * sizeof(T)); _write_packed!(io, scratch, bufs[g])
+        end
+    end
+    frags = open(io -> Mmap.mmap(io, Vector{T}, region[end]), path, "r")
+    return IndexFragSelection(frags, starts, sel.counts, sel.prec_mzs)
 end
 
 "Open the pieced fragment index in `dir` (reads only the manifest; pieces are loaded when searched)."

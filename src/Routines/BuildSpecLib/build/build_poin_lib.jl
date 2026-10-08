@@ -53,24 +53,45 @@ function write_fragment_indexes(spec_lib_path::AbstractString, temp_lib, widths,
     return nothing
 end
 
-"The same from the index fragments already selected (`IndexFragSelection`, e.g. by a streamed fragment build)."
+"""
+The same from the index fragments already selected (`IndexFragSelection`, e.g. by a streamed fragment build). An
+index whose estimated size exceeds `max_piece_bytes` is written as pieces (`build_index_pieces`) to a directory
+(`partitioned_fragment_index_pieces`, ...) instead of a `.jls`; its entry has `"pieced" => true`.
+"""
 function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSelection, widths,
                                 id_type_request::AbstractString;
                                 frag_bin_tol_ppm::Float32, frag_bin_tol_mda::Float32 = 2.0f0, rt_bin_tol::Float32,
-                                keep_entries = Dict{String, Any}[])
+                                keep_entries = Dict{String, Any}[], max_piece_bytes::Integer = 4_000_000_000)
     entries = Dict{String, Any}[keep_entries...]
+    pieced = estimated_index_bytes(sel) > max_piece_bytes
     for (j, w) in enumerate(widths)
         first = j == 1 && isempty(keep_entries)   # the library's first index takes the historical names
         id_type = resolve_and_record_local_id_type(sel.prec_mzs, id_type_request, w, spec_lib_path; record = first)
         main_file, presearch_file = fragment_index_files(w, first)
-        for (file, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
-            index = build_partitioned_index_from_selection(sel; partition_width = Float32(w),
-                frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,
-                id_type = id_type)
-            serialize_to_jls(joinpath(spec_lib_path, file), index)
+        if pieced
+            main_file, presearch_file = replace(main_file, ".jls" => "_pieces"), replace(presearch_file, ".jls" => "_pieces")
+            bins_groups = index_piece_groups(sel, w, max_piece_bytes)
+            spill_path = joinpath(spec_lib_path, "index_selection_w$(w).tmp")
+            sp = spill_index_selection(sel, bins_groups..., spill_path)
+            for (dir, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
+                build_index_pieces(sp, joinpath(spec_lib_path, dir); partition_width = Float32(w),
+                    frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,
+                    id_type_request = id_type_request, max_piece_bytes = max_piece_bytes, bins_groups = bins_groups)
+            end
+            sp = nothing; GC.gc()
+            safeRm(spill_path; force = true)
+        else
+            for (file, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
+                index = build_partitioned_index_from_selection(sel; partition_width = Float32(w),
+                    frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,
+                    id_type = id_type)
+                serialize_to_jls(joinpath(spec_lib_path, file), index)
+            end
         end
-        push!(entries, Dict{String, Any}("partition_width_da" => w, "local_id_type" => string(id_type),
-                                         "main" => main_file, "presearch" => presearch_file))
+        entry = Dict{String, Any}("partition_width_da" => w, "local_id_type" => string(id_type),
+                                  "main" => main_file, "presearch" => presearch_file)
+        pieced && (entry["pieced"] = true)
+        push!(entries, entry)
     end
     sort!(entries, by = e -> Float64(e["partition_width_da"]))
     write(joinpath(spec_lib_path, FRAGMENT_INDEX_DESCRIPTOR),

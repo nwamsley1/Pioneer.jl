@@ -109,6 +109,9 @@ function choose_fragment_index(lib_dir::AbstractString, ms_paths::AbstractVector
             width = Float64(e["partition_width_da"]), window = window)
 end
 
+"A fragment index: a serialized `.jls`, or a directory of index pieces (`load_pieced_index`)."
+load_fragment_index(path::AbstractString) = isdir(path) ? load_pieced_index(path) : deserialize_from_jls(path)
+
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters;
                              fragment_index = choose_fragment_index(SPEC_LIB_DIR, String[]))
@@ -164,8 +167,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
     # Load the partitioned fragment indexes of the chosen width (choose_fragment_index)
-    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.main))
-    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.presearch))
+    partitioned_index = load_fragment_index(joinpath(SPEC_LIB_DIR, fragment_index.main))
+    presearch_partitioned_index = load_fragment_index(joinpath(SPEC_LIB_DIR, fragment_index.presearch))
 
     # Load the BuildSpecLib config (if present) for output policy and for
     # reconstructing variable-modification counts in older precursor tables.
