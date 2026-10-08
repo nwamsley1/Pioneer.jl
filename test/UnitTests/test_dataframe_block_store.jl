@@ -24,3 +24,21 @@ using Test, Pioneer, DataFrames
         end
     end
 end
+
+@testset "block byte estimate (cache budget) tracks summarysize" begin
+    n = 1_000
+    numeric = DataFrame(a = rand(Float32, n), b = rand(UInt32, n), c = allowmissing(rand(Float64, n)))
+    # isbits / isbits-union columns are counted exactly (plus the union selector byte)
+    @test Pioneer._approx_block_bytes(numeric) == 4n + 4n + (8 + 1)n
+    # A protein-export-like block: strings, a missing-able string, and a per-row vector of peptide ids
+    protein = DataFrame(
+        protein = ["P$(i);Q$(i)" for i in 1:n],
+        file_name = fill("20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1", n),
+        species = Union{Missing, String}[isodd(i) ? "HUMAN" : missing for i in 1:n],
+        abundance = rand(Float32, n),
+        peptides = [Union{Missing, UInt32}[isodd(j) ? UInt32(j) : missing for j in 1:20] for _ in 1:n],
+    )
+    est, exact = Pioneer._approx_block_bytes(protein), Base.summarysize(protein)
+    @test 0.5exact <= est <= 2exact
+    @test Pioneer._approx_block_bytes(DataFrame()) == 0
+end

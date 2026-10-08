@@ -1031,7 +1031,7 @@ function writeProteinGroupsCSV(
                                         isempty(value) ? missing : value
                                     end
                                     part = select(part, long_columns)
-                                    part_bytes = Base.summarysize(part)
+                                    part_bytes = _approx_block_bytes(part)
                                     long_bytes + part_bytes > budget && flush_long!()
                                     if isempty(long)
                                         long = part

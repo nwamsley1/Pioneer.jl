@@ -366,12 +366,19 @@ end
 Hierarchical Merge Support (FD-safe staging)
 ==========================================================#
 
+# Each concurrent staging merge holds its own output batch (up to `batch_size` rows), so concurrency is capped.
+const MAX_CONCURRENT_STAGE_MERGES = 8
+
 """
     _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
 
 Merge `refs` in groups of `max_fanin` into temporary Arrow files.
-Returns a vector of FileReferences pointing to the staged temp files.
-Used internally to keep the number of simultaneously-open files bounded.
+Returns a vector of FileReferences pointing to the staged temp files, in group order.
+Used internally to keep the number of inputs per merge bounded.
+
+The groups are independent, so up to `MAX_CONCURRENT_STAGE_MERGES` of them are merged at once. The result is
+identical to merging them one after another: each staged file keeps its group's position, and ties within a merge
+are broken by input order.
 """
 function _stage_merge(
     refs::Vector{<:FileReference},
@@ -380,25 +387,25 @@ function _stage_merge(
     reverse::Union{Bool,Vector{Bool}},
     batch_size::Int
 )
-    started = last_progress = time()
-    n_groups = cld(length(refs), max_fanin)
-    rows_processed = 0
-    @debug_l1 "Staged merge starting: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups max_fanin=$max_fanin"
+    started = time()
+    groups = collect(Iterators.partition(refs, max_fanin))
+    n_groups = length(groups)
+    n_workers = min(n_groups, Threads.nthreads(), MAX_CONCURRENT_STAGE_MERGES)
+    @debug_l1 "Staged merge starting: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups max_fanin=$max_fanin workers=$n_workers"
     temp_dir = mktempdir()
-    staged_refs = similar(refs, 0)
-    for (i, batch) in enumerate(Iterators.partition(refs, max_fanin))
-        temp_path = joinpath(temp_dir, "stage_$i.arrow")
-        merged_ref = stream_sorted_merge(
-            collect(batch), temp_path, sort_keys...;
-            reverse, batch_size, max_fanin
-        )
-        push!(staged_refs, merged_ref)
-        rows_processed += row_count(merged_ref)
-        if time() - last_progress >= 60
-            @debug_l1 "Staged merge: keys=$(join(sort_keys, ',')) groups=$i/$n_groups rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
-            last_progress = time()
+    staged_refs = similar(refs, n_groups)
+    next_group = Threads.Atomic{Int}(1)
+    @sync for _ in 1:n_workers
+        Threads.@spawn while true
+            i = Threads.atomic_add!(next_group, 1)
+            i > n_groups && break
+            staged_refs[i] = stream_sorted_merge(
+                collect(groups[i]), joinpath(temp_dir, "stage_$i.arrow"), sort_keys...;
+                reverse, batch_size, max_fanin
+            )
         end
     end
+    rows_processed = sum(row_count, staged_refs; init = 0)
     @debug_l1 "Staged merge complete: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups rows=$rows_processed elapsed=$(round(time() - started, digits=2))s"
     return staged_refs
 end
