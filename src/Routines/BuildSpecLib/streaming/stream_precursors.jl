@@ -70,6 +70,15 @@ function decode_seq(c::SeqCode)
     return String(take!(io))
 end
 
+"Number of residues of a packed sequence."
+function seq_length(c::SeqCode)
+    for n in 1:SEQ_MAX_LENGTH
+        code = n <= 25 ? (c.hi >> (5 * (25 - n) + 3)) & 0x1f : (c.lo >> (5 * (50 - n) + 3)) & 0x1f
+        code == 0 && return n - 1
+    end
+    return SEQ_MAX_LENGTH
+end
+
 "I/L-folded code (I -> L), the uniqueness key of combine_shared_peptides and PeptideSequenceSet."
 function fold_seq(c::SeqCode)
     hi, lo = c.hi, c.lo
@@ -299,18 +308,32 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
     mod_names = unique!(vcat([m.r for m in mc.fixed], [m.r for m in mc.var]))
     name_id = Dict(n => UInt8(i) for (i, n) in enumerate(mod_names))
     mod_rank = UInt8.(invperm(sortperm(mod_names)))
-    mod_off = UInt32[1]; mod_pos = UInt8[]; mod_id = UInt8[]
-    for k in 1:U
-        variants, nf = mod_variants(decode_seq(peps.code[k]), mc)
-        n_fixed[k] = UInt8(nf)
-        var_offsets[k + 1] = var_offsets[k] + length(variants)
-        for v in variants
-            for m in v
-                push!(mod_pos, m.position); push!(mod_id, name_id[m.mod_name])
+    # variants per peptide chunk in parallel, concatenated in peptide order
+    pchunks = collect(Iterators.partition(1:U, max(1, cld(U, 16 * Threads.nthreads()))))
+    parts = Vector{Tuple{Vector{Int}, Vector{UInt8}, Vector{UInt8}}}(undef, length(pchunks))   # (mods per unit, pos, id)
+    nvariants = Vector{Int}(undef, U)
+    Threads.@threads :dynamic for ci in eachindex(pchunks)
+        per_unit = Int[]; cpos = UInt8[]; cid = UInt8[]
+        for k in pchunks[ci]
+            variants, nf = mod_variants(decode_seq(peps.code[k]), mc)
+            n_fixed[k] = UInt8(nf); nvariants[k] = length(variants)
+            for v in variants
+                for m in v
+                    push!(cpos, m.position); push!(cid, name_id[m.mod_name])
+                end
+                push!(per_unit, length(v))
             end
-            push!(mod_off, UInt32(length(mod_pos) + 1))
         end
+        parts[ci] = (per_unit, cpos, cid)
     end
+    for k in 1:U; var_offsets[k + 1] = var_offsets[k] + nvariants[k]; end
+    mod_pos = reduce(vcat, (x[2] for x in parts)); mod_id = reduce(vcat, (x[3] for x in parts))
+    mod_off = Vector{UInt32}(undef, var_offsets[end]); mod_off[1] = 1
+    f = 1
+    for x in parts, nm in x[1]
+        mod_off[f + 1] = mod_off[f] + nm; f += 1
+    end
+    parts = nothing; nvariants = nothing
     F = var_offsets[end] - 1
     unit_pep = Vector{UInt32}(undef, F)
     for k in 1:U, f in var_offsets[k]:(var_offsets[k + 1] - 1); unit_pep[f] = UInt32(k); end
@@ -359,16 +382,35 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
         entrap_folded = Set{SeqCode}(fold_seq(c) for c in entrap.code)
         taken_d(c) = in_targets(c) || c in entrap_folded || c in reserved
         empty!(reserved)
-        for (code, kind, idx) in groups
-            seq = decode_seq(code)
-            rng = sequence_rng(seq, seed, 1)
-            cand = _unique_shuffle!(ss, seq, decoy_method, rng, taken_d, 20)
-            cand === nothing && continue
-            d = push_derived!(decoy, encode_seq(cand), view(ss.new_positions, 1:length(seq)))
+        # every group's first candidate depends only on its own sequence's RNG stream: compute them in parallel
+        NG = length(groups)
+        pos_off = Vector{Int}(undef, NG + 1); pos_off[1] = 1
+        for gi in 1:NG; pos_off[gi + 1] = pos_off[gi] + seq_length(groups[gi][1]); end
+        cand0 = Vector{SeqCode}(undef, NG); cand0_pos = Vector{UInt8}(undef, pos_off[end] - 1)
+        Threads.@threads :dynamic for gis in collect(Iterators.partition(1:NG, 4096))
+            tss = new_shuffler()
+            for gi in gis
+                seq = decode_seq(groups[gi][1])
+                cand0[gi] = encode_seq(shuffle_sequence!(tss, seq; method = decoy_method, rng = sequence_rng(seq, seed, 1)))
+                copyto!(cand0_pos, pos_off[gi], tss.new_positions, 1, length(seq))
+            end
+        end
+        # accept in sorted order against everything reserved so far; a rejected first candidate is redrawn
+        # sequentially from a fresh stream (identical to drawing in order)
+        for (gi, (code, kind, idx)) in enumerate(groups)
+            if !taken_d(fold_seq(cand0[gi]))
+                d = push_derived!(decoy, cand0[gi], view(cand0_pos, pos_off[gi]:(pos_off[gi + 1] - 1)))
+            else
+                seq = decode_seq(code)
+                cand = _unique_shuffle!(ss, seq, decoy_method, sequence_rng(seq, seed, 1), taken_d, 20)
+                cand === nothing && continue
+                d = push_derived!(decoy, encode_seq(cand), view(ss.new_positions, 1:length(seq)))
+            end
             push!(reserved, fold_seq(decoy.code[d]))
             members = kind == 0 ? (var_offsets[idx]:(var_offsets[idx + 1] - 1)) : entrap_units_of[idx]
             for u in members; decoy_of_input[u] = UInt32(d); end
         end
+        cand0 = nothing; cand0_pos = nothing
     end
     return StreamUnits(peps, mc, var_offsets, unit_pep, n_fixed, entrap, entrap_pep, entrap_group,
                        eunit_target, eunit_seq, decoy, decoy_of_input, mod_off, mod_pos, mod_id, mod_names, mod_rank, F, G)
@@ -497,7 +539,7 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     t = _stream_phase("mods, entrapments, decoys", t)
 
     # per unit: sequence string helpers, mods strings and the Koina sequence are recomputed on demand
-    row_mz = zeros(Float32, NU * nz); present = falses(NU * nz)
+    row_mz = zeros(Float32, NU * nz); present = zeros(Bool, NU * nz)   # Bool, not BitVector: written by threads
     unit_irt = zeros(Float32, NU)
     mbuf = Tuple{UInt8, UInt8}[]; rev = UInt8[]
     mass_by_id = Float64[mod_to_mass[n] for n in units.mod_names]
@@ -510,31 +552,42 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
         for (u, rt) in zip(batch_units, rts); unit_irt[u] = rt; end
         empty!(batch_units); empty!(batch_seqs)
     end
-    # m/z of every (unit, charge), computed numerically in getMZ's summation order
-    for u in 1:NU
-        has_unit(units, u) || continue
-        mods, _ = unit_mods!(mbuf, rev, units, u)
-        mmass = 0.0
-        for (_, id) in mods; mmass += mass_by_id[id]; end
-        mass = residue_mass(unit_code(units, u)) + mmass
-        for (zi, z) in enumerate(charges)
-            mz = Float32((mass + PROTON * z + H2O) / z)
-            r = (u - 1) * nz + zi
-            row_mz[r] = mz
-            (mz >= prec_mz_min && mz <= prec_mz_max) && (present[r] = true)
+    # m/z of every (unit, charge), computed numerically in getMZ's summation order (threaded over unit ranges)
+    unit_chunks = collect(Iterators.partition(1:NU, max(1, cld(NU, 16 * Threads.nthreads()))))
+    Threads.@threads :dynamic for us in unit_chunks
+        tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
+        for u in us
+            has_unit(units, u) || continue
+            mods, _ = unit_mods!(tbuf, trev, units, u)
+            mmass = 0.0
+            for (_, id) in mods; mmass += mass_by_id[id]; end
+            mass = residue_mass(unit_code(units, u)) + mmass
+            for (zi, z) in enumerate(charges)
+                mz = Float32((mass + PROTON * z + H2O) / z)
+                r = (u - 1) * nz + zi
+                row_mz[r] = mz
+                (mz >= prec_mz_min && mz <= prec_mz_max) && (present[r] = true)
+            end
         end
     end
     t = _stream_phase("m/z filter", t)
-    # retention times: once per unit with at least one row in range
-    for u in 1:NU
-        has_unit(units, u) || continue
-        any(zi -> present[(u - 1) * nz + zi], 1:nz) || continue
-        seq = decode_seq(unit_code(units, u))
-        mods, _ = unit_mods!(mbuf, rev, units, u)
-        push!(batch_units, u); push!(batch_seqs, koina_sequence(seq, mods_string(seq, mods, names)))
-        length(batch_units) >= 1_000_000 && flush_rt!()
+    # retention times: once per unit with at least one row in range; Koina sequences built in parallel per batch
+    rt_units = Int[u for u in 1:NU if has_unit(units, u) && any(zi -> present[(u - 1) * nz + zi], 1:nz)]
+    for us in Iterators.partition(rt_units, 1_000_000)
+        seqs = Vector{String}(undef, length(us))
+        Threads.@threads :dynamic for js in collect(Iterators.partition(eachindex(us), 4096))
+            tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
+            for j in js
+                u = us[j]
+                seq = decode_seq(unit_code(units, u))
+                mods, _ = unit_mods!(tbuf, trev, units, u)
+                seqs[j] = koina_sequence(seq, mods_string(seq, mods, names))
+            end
+        end
+        append!(batch_units, us); append!(batch_seqs, seqs)
+        flush_rt!()
     end
-    flush_rt!()
+    rt_units = nothing
     t = _stream_phase("retention times", t)
 
     # pre-sort order (sequence, then input order, then charge) -> pair_id and entrapment_pair_id
@@ -650,13 +703,16 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
             missed_cleavages = Vector{UInt8}(undef, n), entrapment_pair_id = Vector{Union{Missing, UInt32}}(undef, n),
             irt = Vector{Float32}(undef, n), sulfur_count = Vector{UInt8}(undef, n),
             isotope_mods = Vector{Union{Missing, String}}(missing, n))
-        for (j, r) in enumerate(chunk)
+        Threads.@threads :dynamic for js in collect(Iterators.partition(1:n, 4096))
+          tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
+          for j in js
+            r = chunk[j]
             u = unit_of(r); zi = zi_of(r); k = unit_peptide(units, u)
             occ = peps.occ_offsets[k]:(peps.occ_offsets[k + 1] - 1)
             cols.proteome_identifiers[j] = join((peps.protein_proteome[peps.occ_protein[o]] for o in reverse(occ)), ';')
             cols.accession_number[j] = join((peps.protein_accession[peps.occ_protein[o]] for o in reverse(occ)), ';')
             seq = decode_seq(unit_code(units, u))
-            mods, nvar = unit_mods!(mbuf, rev, units, u)
+            mods, nvar = unit_mods!(tbuf, trev, units, u)
             ms = mods_string(seq, mods, names)
             cols.sequence[j] = seq
             cols.start_idx[j] = UInt32[peps.occ_start[o] for o in reverse(occ)]
@@ -676,6 +732,7 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
             cols.entrapment_pair_id[j] = cols.decoy[j] || epair_id[r] == 0 ? missing : epair_id[r]
             cols.irt[j] = unit_irt[u]
             cols.sulfur_count[j] = UInt8(count(c -> c == 'C' || c == 'M', seq))
+          end
         end
         return cols
     end
