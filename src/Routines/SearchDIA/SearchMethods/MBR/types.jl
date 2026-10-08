@@ -223,23 +223,46 @@ struct _MBRDonorLookup
     lowest_weights::NTuple{3, UInt32}
 end
 
-struct _MBRDonorIndex
-    entries::Dict{UInt32, Vector{_MBRDonorEntry}}
+"""
+    _MBRDonorStore
+
+Integrated donors grouped by precursor in one memory-mapped file. At experiment scale the donors
+outgrow memory (about 72 bytes per passing (precursor, run): ~46 GB at 12,800 runs), so they are
+read through file-backed pages the operating system can drop and reload, instead of private
+memory that has to be paged out. `ranges[pid]` locates that precursor's donors in `entries`, in
+the order an in-memory `Dict{UInt32, Vector{_MBRDonorEntry}}` would hold them.
+"""
+struct _MBRDonorStore
+    ranges::Dict{UInt32, UnitRange{Int}}
+    entries::Vector{_MBRDonorEntry}
+    path::String          # backing file; "" when there are no entries
+end
+
+const _MBRDonorEntries = Union{Dict{UInt32, Vector{_MBRDonorEntry}}, _MBRDonorStore}
+
+Base.get(store::_MBRDonorStore, pid::UInt32, default) =
+    (range = get(store.ranges, pid, nothing); range === nothing ? default : view(store.entries, range))
+Base.getindex(store::_MBRDonorStore, pid::UInt32) = view(store.entries, store.ranges[pid])
+Base.length(store::_MBRDonorStore) = length(store.ranges)
+Base.isempty(store::_MBRDonorStore) = isempty(store.ranges)
+Base.values(store::_MBRDonorStore) = (view(store.entries, range) for range in values(store.ranges))
+Base.pairs(store::_MBRDonorStore) = (pid => view(store.entries, range) for (pid, range) in store.ranges)
+
+struct _MBRDonorIndex{E<:_MBRDonorEntries}
+    entries::E
     lookups::Dict{UInt32, _MBRDonorLookup}
     file_ids::Vector{UInt32}
 end
 
-struct _MBRReceiverDonors
-    index::_MBRDonorIndex
+struct _MBRReceiverDonors{I<:_MBRDonorIndex}
+    index::I
     receiver_file::UInt32
     ranked_files::Vector{Tuple{Float32, UInt32}}
     equal_similarity::Bool
     finite_similarity::Bool
 end
 
-const _MBRDonorCollection = Union{
-    Dict{UInt32, Vector{_MBRDonorEntry}}, _MBRDonorIndex, _MBRReceiverDonors,
-}
+const _MBRDonorCollection = Union{_MBRDonorEntries, _MBRDonorIndex, _MBRReceiverDonors}
 
 Base.length(index::_MBRDonorIndex) = length(index.entries)
 Base.values(index::_MBRDonorIndex) = values(index.entries)

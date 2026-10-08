@@ -81,6 +81,84 @@ end
         @test getproperty.(index[UInt32(1)], :weight) == Float32[20, 60]
         @test getproperty.(index[UInt32(1)], :trace_prob) == Float32[0.9, 0.95]
         @test only(index[UInt32(2)]).ms_file_idx == 3
+        store_path = index.entries.path
+        @test isfile(store_path)
+        Pioneer.close_mbr_donor_store!(index)
+        @test !isfile(store_path)
         @test isempty(Pioneer.build_mbr_integrated_donor_dict(String[], 0.5f0; q_value_threshold=0.01f0).entries)
+    end
+end
+
+
+# The disk-backed store must hold exactly what the in-memory dictionary held: the same donors per
+# precursor, in the same order, with the same lookups, including runs split across files.
+@testset "Donor store matches the in-memory donor dictionary" begin
+    function write_donor_file(path, rng, pids, runs)
+        rows = [(pid, run) for pid in pids for run in runs if rand(rng) < 0.7]
+        append!(rows, rows[1:2:end])                       # repeated (precursor, run) rows
+        shuffle!(rng, rows)
+        n = length(rows)
+        table = DataFrame(precursor_idx=UInt32[r[1] for r in rows], ms_file_idx=UInt32[r[2] for r in rows],
+            trace_prob_prepass=rand(rng, Float32[0.4, 0.6, 0.8, 0.8, 0.95], n),
+            qval=rand(rng, Float32[0.001, 0.001, 0.2], n), global_qval=fill(0.001f0, n),
+            irt_pred=rand(rng, Float32, n))
+        table[!, Pioneer.MBR_INTEGRATED_WEIGHT_COLUMN] = rand(rng, Float32[NaN, 1, 2, 3, Inf], n)
+        table[!, Pioneer.MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN] = rand(rng, Float32, n)
+        table[!, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN] = rand(rng, Float32, n)
+        table[!, Pioneer.MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN] = rand(rng, UInt8, n)
+        table[!, Pioneer.MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN] = rand(rng, UInt16, n)
+        table[!, Pioneer.MBR_INTEGRATED_N_SCANS_COLUMN] = rand(rng, Float32, n)
+        for name in Pioneer.MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
+            table[!, name] = rand(rng, Float32, n)
+        end
+        Arrow.write(path, table)
+        return path
+    end
+    # The previous implementation: one dictionary across all files.
+    function in_memory(paths, floor, q)
+        dict = Dict{UInt32, Vector{Pioneer._MBRDonorEntry}}()
+        previous = Set{UInt32}()
+        for path in paths
+            tbl = Arrow.Table(read(path))
+            columns = (precursor_idx=tbl.precursor_idx, ms_file_idx=tbl.ms_file_idx,
+                trace_prob=tbl.trace_prob_prepass, qval=tbl.qval, global_qval=tbl.global_qval,
+                irt_pred=tbl.irt_pred, weight=getproperty(tbl, Pioneer.MBR_INTEGRATED_WEIGHT_COLUMN),
+                explained=getproperty(tbl, Pioneer.MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN),
+                irt_obs=getproperty(tbl, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN),
+                frag_mask=getproperty(tbl, Pioneer.MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN),
+                frag_rank=getproperty(tbl, Pioneer.MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN),
+                n_scans=getproperty(tbl, Pioneer.MBR_INTEGRATED_N_SCANS_COLUMN), im_obs=nothing)
+            frags = ntuple(rank -> getproperty(tbl, Pioneer.MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
+            Pioneer._collect_mbr_integrated_donors!(dict, previous, columns, frags, floor, q)
+        end
+        return dict
+    end
+    for (layout, files) in (("one run per file", [[r] for r in 1:12]),
+                            ("runs split across files", [[1, 2], [2, 3], [1, 4], [5], [3, 5, 6]]))
+        mktempdir() do directory
+            rng = MersenneTwister(hash(layout))
+            paths = [write_donor_file(joinpath(directory, "f$i.arrow"), rng, 1:300, runs)
+                     for (i, runs) in enumerate(files)]
+            expected = in_memory(paths, 0.5f0, 0.01f0)
+            index = Pioneer.build_mbr_integrated_donor_dict(paths, 0.5f0; q_value_threshold=0.01f0)
+            @test length(index) == length(expected)
+            @test all(collect(index[pid]) == donors for (pid, donors) in expected)
+            reference = Pioneer._MBRDonorIndex(expected)
+            @test keys(index.lookups) == keys(reference.lookups)
+            @test all(index.lookups[pid].file_order == reference.lookups[pid].file_order &&
+                      index.lookups[pid].top_scores == reference.lookups[pid].top_scores &&
+                      index.lookups[pid].lowest_weights == reference.lookups[pid].lowest_weights
+                      for pid in keys(reference.lookups))
+            @test index.file_ids == reference.file_ids
+            for receiver in UInt32.(0:7)
+                context = Pioneer._mbr_receiver_donors(index, receiver, nothing)
+                for pid in UInt32.(1:301)
+                    @test isequal(Pioneer._mbr_select_donor(context, pid, receiver, nothing),
+                                  Pioneer._mbr_select_donor(expected, pid, receiver, nothing))
+                end
+            end
+            Pioneer.close_mbr_donor_store!(index)
+            @test isempty(filter(f -> occursin("mbr_donor", f), readdir(directory)))
+        end
     end
 end
