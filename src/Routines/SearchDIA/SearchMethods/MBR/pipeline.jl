@@ -589,8 +589,10 @@ function _remap_mbr_scores!(
         end
         writeArrow(path, main)
     end
+    paths = String[file_path(ref) for ref in refs]
+    sidecar_index = index_sidecar_paths(paths)
     return PSMFileReference[
-        PSMFileReference(file_path(ref)) for ref in refs
+        PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in paths
     ]
 end
 
@@ -874,7 +876,11 @@ function finalize_postintegration_mbr!(
     )
 
     @debug_l1 "Post-integration MBR recovery merge complete: elapsed=$(round(time() - phase_started, digits=2))s"
-    refs = PSMFileReference[PSMFileReference(path) for path in file_paths]
+    # Recovery writers have finished; use a fresh snapshot of their sidecars.
+    sidecar_index = index_sidecar_paths(file_paths)
+    refs = PSMFileReference[
+        PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in file_paths
+    ]
     if remap_bounds === nothing
         phase_started = time()
         @debug_l1 "Post-integration MBR score remapping starting: files=$(length(refs))"

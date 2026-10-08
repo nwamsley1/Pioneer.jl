@@ -83,7 +83,8 @@ end
         frozen_qvalue = score ->
             Float32(score) >= 0.80f0 ? 0.005f0 : 0.10f0
 
-        Pioneer._remap_mbr_scores!(
+        Arrow.write(path * ".aux.sidecar.arrow", (aux=Float32[3, 4],))
+        refs = Pioneer._remap_mbr_scores!(
             Pioneer.PSMFileReference[
                 Pioneer.PSMFileReference(path),
             ],
@@ -93,6 +94,9 @@ end
             pre_mbr_qval_spline = frozen_qvalue,
         )
         remapped = DataFrame(Arrow.Table(path))
+        @test length(refs) == 1
+        @test Pioneer.load_with_sidecars(only(refs)).aux == Float32[3, 4]
+        @test Pioneer.has_column_anywhere(only(refs), :mbr_counterfactual_decoy_prec_prob)
         @test remapped.prec_prob[1] == 0.90f0
         @test remapped.prec_prob[2] < 0.80f0
         @test remapped.prec_prob[2] ≈ 0.40f0 atol = 1.0f-4

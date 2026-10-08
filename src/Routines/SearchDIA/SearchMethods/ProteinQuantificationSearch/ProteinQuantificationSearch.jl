@@ -214,13 +214,17 @@ function summarize_results!(
     # that yielded no PSMs after upstream filtering — they lack the columns
     # MaxLFQ expects).
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
     existing_passing_psm_paths = String[]
     existing_passing_psm_run_ids = UInt32[]
+    psm_refs = PSMFileReference[]
     for (file_idx, path) in indexed_paths
-        ref = PSMFileReference(path)
+        ref = PSMFileReference(path; sidecar_paths=sidecar_index[path])
         if row_count(ref) > 0
             push!(existing_passing_psm_paths, path)
             push!(existing_passing_psm_run_ids, UInt32(file_idx))
+            push!(psm_refs, ref)
         end
     end
 
@@ -231,8 +235,6 @@ function summarize_results!(
         @user_warn "No PSM files found for MaxLFQ analysis"
         return nothing
     end
-
-    psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
 
     if !params.params.output.write_decoys
         decoy_filter_pipeline = TransformPipeline() |>
