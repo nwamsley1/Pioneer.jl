@@ -212,6 +212,19 @@ function collect_peptides(codes::Vector{SeqCode}, prot::Vector{UInt32}, starts::
     return pep_code, pep_nte, occ_offsets, occ_protein, occ_start
 end
 
+"free[i] = !(xs[i] in sorted) for every i, via one parallel sort of xs and a merge with the sorted list."
+function not_in_sorted!(free::Vector{Bool}, xs::Vector{SeqCode}, sorted::Vector{SeqCode})
+    ix = Vector{Int}(undef, length(xs))
+    AcceleratedKernels.sortperm!(ix, xs)
+    j = 1; m = length(sorted)
+    for i in ix
+        x = xs[i]
+        while j <= m && isless(sorted[j], x); j += 1; end
+        free[i] = !(j <= m && sorted[j] == x)
+    end
+    return free
+end
+
 function stream_digest(proteins::Vector{FastaEntry}, regex, max_length::Int, min_length::Int, missed_cleavages::Int,
                        specificity::AbstractString, nterm_met_excision::Bool)
     max_length <= SEQ_MAX_LENGTH || error("streaming build supports peptides up to $SEQ_MAX_LENGTH residues")
@@ -472,8 +485,13 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
                 seq = decode_seq(groups[gi][1])
                 cand0[gi] = encode_seq(shuffle_sequence!(tss, seq; method = decoy_method, rng = sequence_rng(seq, seed, 1)))
                 copyto!(cand0_pos, pos_off[gi], tss.new_positions, 1, length(seq))
-                f0 = fold_seq(cand0[gi])
-                cand0_free[gi] = !(in_targets(f0) || f0 in entrap_folded)
+            end
+        end
+        # first candidates vs all targets / entrapments: a merge of sorted lists instead of a binary search each
+        not_in_sorted!(cand0_free, fold_all(cand0), target_folded)
+        if !isempty(entrap_folded)
+            Threads.@threads for gi in 1:NG
+                cand0_free[gi] && fold_seq(cand0[gi]) in entrap_folded && (cand0_free[gi] = false)
             end
         end
         @user_info @sprintf("Streaming build:   decoy groups + first candidates %.1f s", time() - t0); t0 = time()
