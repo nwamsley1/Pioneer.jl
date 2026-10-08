@@ -689,6 +689,7 @@ function assign_pair_ids!(pair_id::Vector{UInt32}, epair_id::Vector{UInt32}, pre
     end
     # entrapment_pair_id: without entrapments it numbers the target rows in pre-sort order, i.e. equals pair_id
     if s.G == 0
+        epair_id === pair_id && return nothing
         Threads.@threads for u in 1:s.F
             for zi in 1:nz; r = row(u, zi); present[r] && (epair_id[r] = pair_id[r]); end
         end
@@ -721,7 +722,12 @@ m/z within greedy 3-iRT blocks with equal m/z in full iRT order, i.e. in the blo
 function final_row_order(present::Vector{Bool}, unit_irt::Vector{Float32}, row_mz::Vector{Float32},
                          rank::Vector{UInt32}, unit_of_rank::Vector{UInt32}, nz::Int, rt_bin_tol::Float32)
     (nz <= 8 && length(unit_of_rank) < 2^29) || error("final sort key: $nz charges, $(length(unit_of_rank)) units")
-    rows = UInt32[r for r in eachindex(present) if present[r]]
+    rows = Vector{UInt32}(undef, count(present))
+    let i = 0
+        for r in eachindex(present)
+            present[r] && (rows[i += 1] = UInt32(r))
+        end
+    end
     n = length(rows)
     keys = Vector{UInt64}(undef, n)
     Threads.@threads for i in 1:n
@@ -932,6 +938,8 @@ function write_precursor_chunks(out_path::String, src::TableSource, rows::Vector
         for chunk in Iterators.partition(rows, chunk_rows)
             t_c = time(); cols = chunk_columns(src, chunk); t_build += time() - t_c
             t_c = time(); Arrow.write(writer, cols); t_arrow += time() - t_c
+            cols = nothing
+            GC.gc(false)          # the chunk's strings are young: collect them before the next chunk's pile up
         end
     finally
         close(writer)
@@ -1051,7 +1059,8 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     # pre-sort order (sequence, then input order, then charge) -> pair_id and entrapment_pair_id
     presort = presort_units(units, dp["add_decoys"] && get(dp, "decoy_method", "shuffle") != "diann_mutation")
     t = _stream_phase("pre-sort order", t)
-    pair_id = zeros(UInt32, NU * nz); epair_id = zeros(UInt32, NU * nz)
+    pair_id = zeros(UInt32, NU * nz)
+    epair_id = units.G == 0 ? pair_id : zeros(UInt32, NU * nz)     # without entrapments the two ids are equal
     assign_pair_ids!(pair_id, epair_id, presort, present, units, nz)
     presort = nothing
     t = _stream_phase("pair ids", t)
@@ -1060,6 +1069,7 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     rank, unit_of_rank = unit_ranks(units)
     @user_info @sprintf("Streaming build:   unit ranks %.2f s", time() - t)
     rows = final_row_order(present, unit_irt, row_mz, rank, unit_of_rank, nz, rt_bin_tol)
+    empty!(present); sizehint!(present, 0)                       # done with it (emptied, not rebound: captured above)
     rank = nothing; unit_of_rank = nothing
     t = _stream_phase("final sort", t)
 
