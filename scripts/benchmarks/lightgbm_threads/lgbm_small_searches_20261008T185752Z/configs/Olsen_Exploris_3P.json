@@ -1,0 +1,42 @@
+{
+  "paths": {
+    "ms_data": "/scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/ms/Olsen_Exploris_3P",
+    "library": "/storage3/fs1/d.goldfarb/Active/Automation/Pioneer/libraries/3P_May7-2026_bitvec_10.poin",
+    "results": "/scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P"
+  },
+  "output": {
+    "write_csv": false,
+    "write_decoys": false,
+    "delete_temp": false,
+    "plots_per_page": 12,
+    "write_qc_plots": false
+  },
+  "logging": {
+    "debug_console_level": 0,
+    "debug_file_level": 1
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": false,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  },
+  "proteinScoring": {
+    "write_qc_plots": false
+  }
+}

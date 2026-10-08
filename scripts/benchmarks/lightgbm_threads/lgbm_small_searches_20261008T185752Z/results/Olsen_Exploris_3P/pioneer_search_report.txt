@@ -1,0 +1,81 @@
+==========================================================================================
+Pioneer Search Log
+Version: 0.10.0
+Started: 2026-10-08T14:16:44.452
+Output Directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+==========================================================================================
+
+
+==========================================================================================
+Starting SearchDIA
+==========================================================================================
+[2026-10-08 14:16:44] Output directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+[2026-10-08 14:16:44] Loading Parameters...
+[2026-10-08 14:16:44] Loading Spectral Library...
+[2026-10-08 14:17:07] Initializing Search Context...
+[2026-10-08 14:17:07] Executing Parameter Tuning...
+[2026-10-08 14:17:28] Executing Quadrupole Tuning...
+[2026-10-08 14:17:40] Executing BitVec Calibration...
+[2026-10-08 14:17:41] Executing Main Search...
+[2026-10-08 14:18:08] Executing Precursor Scoring...
+[2026-10-08 14:18:36] Executing Huber Calibration...
+[2026-10-08 14:18:38] Executing Chromatogram Integration...
+[2026-10-08 14:18:43] Executing Protein Inference...
+[2026-10-08 14:18:49] Executing Protein Scoring...
+[2026-10-08 14:18:53] Executing Quantification & Output...
+
+======================================================================================================
+DIA Search Performance Report
+======================================================================================================
+
+Detailed Step Analysis (in execution order):
+------------------------------------------------------------------------------------------------------
+Step                           Time (s)     Mem Alloc (GB)   GC Time (s)  GC %     RSS Δ (GB)
+------------------------------------------------------------------------------------------------------
+Parameter Loading              0.08         0.00             0.00         0.0      -
+Spectral Library Loading       23.29        5.90             1.21         5.2      -
+Search Context Initialization  0.14         0.27             0.00         0.0      -
+Parameter Tuning               20.77        2.25             0.50         2.4      +0.47
+Quadrupole Tuning              11.32        1.29             0.22         1.9      +0.00
+BitVec Calibration             1.60         0.12             0.09         5.9      +0.00
+Main Search                    26.95        14.96            4.91         18.2     +3.53
+Precursor Scoring              28.30        3.57             6.66         23.5     +0.09
+Huber Calibration              1.65         0.45             0.06         3.9      +0.01
+Chromatogram Integration       4.62         0.81             2.95         63.9     +0.00
+Protein Inference              6.39         1.83             0.00         0.0      +0.00
+Protein Scoring                3.79         1.46             0.18         4.8      +0.00
+Quantification & Output        11.99        2.85             2.06         17.1     +0.00
+------------------------------------------------------------------------------------------------------
+TOTAL                          140.89       35.74            18.84        13.4
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------------------
+Total alloc (cumulative):   35.74 GB
+Working set (peak RSS):     11.61 GB
+System RAM:                 64.0 GB
+Largest RSS jump:           +3.53 GB during Main Search
+
+Runtime Summary:
+------------------------------------------------------------------------------------------------------
+Total Runtime: 2.35 min (140.89 s)
+Per Raw File:  46.96 s
+
+Results:
+------------------------------------------------------------------------------------------------------
+Precursor rows (long):      161015
+Protein-group rows (long):  21459
+Output directory:           /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+
+Per run (identified / quantified):
+------------------------------------------------------------------------------------------------------
+File                                                            Precursors          Protein groups
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            53639 / 53582             7171 / 7164
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            53254 / 53189             7109 / 7104
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            54122 / 54066             7179 / 7176
+
+======================================================================================================
+
+==========================================================================================
+⚠️  1 warnings were generated during the run
+Search completed at: 2026-10-08T14:19:05.415
+==========================================================================================

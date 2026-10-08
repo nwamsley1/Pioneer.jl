@@ -1,0 +1,16 @@
+{
+  "Julia_threads": 24,
+  "caller_thread": 1,
+  "job": "3370284",
+  "measured_repeats": 5,
+  "memory": "Process RSS high-water across cases and variants; Julia allocated bytes are cumulative, not native RSS.",
+  "native_threads": [
+    24,
+    48
+  ],
+  "prototype": "Instrument production _fit_pass1_booster; Pass-1 prediction uses classifier.num_threads instead of Julia count; all native calls serial startup thread.",
+  "scope": "Current-develop raw searches generate actual PSMs; timed paired Pass-1 trials on identical PSMs for 1-file and 3-file cohorts. No replicated observations or reduced training cap; no full-search 48-thread timing or Windows validation.",
+  "script_sha256": "8890fef34b3870d484de231abd20b960d74f8c64e4c5c56d2085195facfc82a0",
+  "source_commit": "cfb45759dccbbe209c9b83f46f4005d96117763b",
+  "utc": "2026-10-08T19:04:46.834"
+}

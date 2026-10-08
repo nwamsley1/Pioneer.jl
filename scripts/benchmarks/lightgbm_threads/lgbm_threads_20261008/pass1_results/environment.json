@@ -1,0 +1,11 @@
+{
+  "Julia_threads": 24,
+  "caller_thread": 1,
+  "job": "3369949",
+  "prototype": "Only process-local Pass-1 prediction override: cls.num_threads instead of Threads.nthreads(). Training thread counts supplied through existing lgbm_hp.",
+  "scope": "Actual two-file semi-supervised Pass-1 pool, both folds, full OOF/in-fold Float32 sidecars. No replicated training rows. No whole-search/Windows validation.",
+  "sha256": "5e8e5b03438a06df003738e92320e024a632270c03bf9294f916e811415b6587",
+  "source_input": "/scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_threads_20261008T174117Z/inputs",
+  "source_rows": 589057,
+  "utc": "2026-10-08T18:27:38.746"
+}

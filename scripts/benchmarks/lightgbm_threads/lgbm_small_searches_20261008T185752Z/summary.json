@@ -1,0 +1,314 @@
+[
+  {
+    "case": "Olsen_Exploris_3P_1file",
+    "paired_change_percent": [
+      2.3126550689903214,
+      3.7760197080161317,
+      4.170204891413287,
+      0.09225215736372583,
+      1.7038800265245957
+    ],
+    "median_paired_change_percent": 2.3126550689903214,
+    "variants": [
+      {
+        "threads": 24,
+        "trials": 5,
+        "files": 1,
+        "rows": 209427,
+        "features": 72,
+        "median_seconds": 15.545426666,
+        "min_seconds": 15.29344861,
+        "max_seconds": 15.677930374,
+        "median_fit_seconds": 7.846301743000001,
+        "median_prediction_seconds": 0.632225443,
+        "median_cpu_seconds": 195.7537769999999,
+        "median_gc_seconds": 6.767701617,
+        "median_allocated_bytes": 403998128,
+        "selected_iterations": [
+          3
+        ],
+        "target_counts_q01": [
+          54210
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          63947,
+          64516,
+          67574,
+          68309,
+          101333,
+          108094
+        ]
+      },
+      {
+        "threads": 48,
+        "trials": 5,
+        "files": 1,
+        "rows": 209427,
+        "features": 72,
+        "median_seconds": 15.931216752,
+        "min_seconds": 15.692393603,
+        "max_seconds": 16.019816263,
+        "median_fit_seconds": 8.490248736000002,
+        "median_prediction_seconds": 0.350705515,
+        "median_cpu_seconds": 402.87905599999976,
+        "median_gc_seconds": 6.689069013,
+        "median_allocated_bytes": 403998912,
+        "selected_iterations": [
+          3
+        ],
+        "target_counts_q01": [
+          54210
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          63947,
+          64516,
+          67574,
+          68309,
+          101333,
+          108094
+        ]
+      }
+    ]
+  },
+  {
+    "case": "Olsen_Exploris_3P_3file",
+    "paired_change_percent": [
+      0.007056521805814953,
+      2.0923281065336363,
+      2.703382586427927,
+      0.3222020722279506,
+      0.9172398476191335
+    ],
+    "median_paired_change_percent": 0.9172398476191335,
+    "variants": [
+      {
+        "threads": 24,
+        "trials": 5,
+        "files": 3,
+        "rows": 625152,
+        "features": 72,
+        "median_seconds": 22.968939436,
+        "min_seconds": 22.555329507,
+        "max_seconds": 24.490195702,
+        "median_fit_seconds": 13.23377641,
+        "median_prediction_seconds": 1.8842716940000002,
+        "median_cpu_seconds": 331.09567400000014,
+        "median_gc_seconds": 6.707330233,
+        "median_allocated_bytes": 1153035472,
+        "selected_iterations": [
+          3
+        ],
+        "target_counts_q01": [
+          164848
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          193986,
+          195295,
+          200946,
+          202653,
+          306069,
+          319083
+        ]
+      },
+      {
+        "threads": 48,
+        "trials": 5,
+        "files": 3,
+        "rows": 625152,
+        "features": 72,
+        "median_seconds": 23.589877745,
+        "min_seconds": 22.713198084,
+        "max_seconds": 24.491923858,
+        "median_fit_seconds": 14.938941596000001,
+        "median_prediction_seconds": 1.024986917,
+        "median_cpu_seconds": 689.102151000001,
+        "median_gc_seconds": 6.713650815,
+        "median_allocated_bytes": 1153036160,
+        "selected_iterations": [
+          3
+        ],
+        "target_counts_q01": [
+          164848
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          193986,
+          195295,
+          200946,
+          202653,
+          306069,
+          319083
+        ]
+      }
+    ]
+  },
+  {
+    "case": "SCP_Astral_250pg_3ms_1file",
+    "paired_change_percent": [
+      6.7141995976966795,
+      3.281567969569954,
+      2.3876343277827283,
+      2.876348559965547,
+      3.067491945146883
+    ],
+    "median_paired_change_percent": 3.067491945146883,
+    "variants": [
+      {
+        "threads": 24,
+        "trials": 5,
+        "files": 1,
+        "rows": 55038,
+        "features": 72,
+        "median_seconds": 9.600176203,
+        "min_seconds": 9.49422093,
+        "max_seconds": 9.628968026,
+        "median_fit_seconds": 2.1335843620000006,
+        "median_prediction_seconds": 0.12913603899999998,
+        "median_cpu_seconds": 59.865364,
+        "median_gc_seconds": 7.192015262,
+        "median_allocated_bytes": 109324144,
+        "selected_iterations": [
+          2
+        ],
+        "target_counts_q01": [
+          3940
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          12934,
+          13095,
+          15220,
+          15303,
+          25358,
+          29680
+        ]
+      },
+      {
+        "threads": 48,
+        "trials": 5,
+        "files": 1,
+        "rows": 55038,
+        "features": 72,
+        "median_seconds": 9.858872572,
+        "min_seconds": 9.767307817,
+        "max_seconds": 10.244751195,
+        "median_fit_seconds": 2.4573256199999998,
+        "median_prediction_seconds": 0.074375478,
+        "median_cpu_seconds": 124.90260000000012,
+        "median_gc_seconds": 7.188049643,
+        "median_allocated_bytes": 109324368,
+        "selected_iterations": [
+          2
+        ],
+        "target_counts_q01": [
+          3940
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          12934,
+          13095,
+          15220,
+          15303,
+          25358,
+          29680
+        ]
+      }
+    ]
+  },
+  {
+    "case": "SCP_Astral_250pg_3ms_3file",
+    "paired_change_percent": [
+      7.517092258867519,
+      -0.09676658438906305,
+      3.940339647525848,
+      4.184671624383518,
+      2.9741200057050055
+    ],
+    "median_paired_change_percent": 3.940339647525848,
+    "variants": [
+      {
+        "threads": 24,
+        "trials": 5,
+        "files": 3,
+        "rows": 168223,
+        "features": 72,
+        "median_seconds": 22.441345398,
+        "min_seconds": 21.783175377,
+        "max_seconds": 23.109653132,
+        "median_fit_seconds": 8.132001843,
+        "median_prediction_seconds": 0.7077339130000002,
+        "median_cpu_seconds": 212.32992000000013,
+        "median_gc_seconds": 13.14540009,
+        "median_allocated_bytes": 493706120,
+        "selected_iterations": [
+          5
+        ],
+        "target_counts_q01": [
+          12213
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          41204,
+          41626,
+          41682,
+          41698,
+          41713,
+          45779,
+          46210,
+          46269,
+          46352,
+          46402,
+          79762,
+          88461
+        ]
+      },
+      {
+        "threads": 48,
+        "trials": 5,
+        "files": 3,
+        "rows": 168223,
+        "features": 72,
+        "median_seconds": 23.380442011,
+        "min_seconds": 22.95237972,
+        "max_seconds": 23.64206461,
+        "median_fit_seconds": 9.221684676,
+        "median_prediction_seconds": 0.404748151,
+        "median_cpu_seconds": 445.8803539999999,
+        "median_gc_seconds": 13.19515917,
+        "median_allocated_bytes": 493711096,
+        "selected_iterations": [
+          5
+        ],
+        "target_counts_q01": [
+          12213
+        ],
+        "all_metrics_identical": true,
+        "all_sidecars_identical": true,
+        "fit_row_counts": [
+          41204,
+          41626,
+          41682,
+          41698,
+          41713,
+          45779,
+          46210,
+          46269,
+          46352,
+          46402,
+          79762,
+          88461
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+==========================================================================================
+Pioneer Search Log — Warnings
+Started: 2026-10-08T14:16:44.452
+==========================================================================================
+
+[2026-10-08 14:18:52] Removed 2 problematic features to prevent singular matrix @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/ProteinScoringSearch/feature_selection.jl:68

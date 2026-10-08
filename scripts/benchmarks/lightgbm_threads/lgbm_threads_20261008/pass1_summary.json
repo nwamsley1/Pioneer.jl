@@ -1,0 +1,35 @@
+[
+  {
+    "threads": 24,
+    "trials": 3,
+    "median_seconds": 17.166499155,
+    "min_seconds": 16.832152378,
+    "max_seconds": 17.198742279,
+    "median_cpu_seconds": 274.993332,
+    "median_gc_seconds": 3.23522694,
+    "median_allocated_bytes": 1047076016,
+    "all_sidecars_identical": true
+  },
+  {
+    "threads": 48,
+    "trials": 3,
+    "median_seconds": 17.232623176,
+    "min_seconds": 17.157977281,
+    "max_seconds": 17.292704618,
+    "median_cpu_seconds": 565.465523,
+    "median_gc_seconds": 3.237778884,
+    "median_allocated_bytes": 1047076888,
+    "all_sidecars_identical": true
+  },
+  {
+    "threads": 64,
+    "trials": 3,
+    "median_seconds": 19.286909652,
+    "min_seconds": 18.383139699,
+    "max_seconds": 20.283685763,
+    "median_cpu_seconds": 837.902679,
+    "median_gc_seconds": 3.591488088,
+    "median_allocated_bytes": 1047077688,
+    "all_sidecars_identical": true
+  }
+]

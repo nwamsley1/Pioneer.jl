@@ -1,0 +1,100 @@
+==========================================================================================
+Pioneer Search Log
+Version: 0.10.0
+Started: 2026-10-08T14:04:48.948
+Output Directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/SCP_Astral_250pg_3ms
+==========================================================================================
+
+[2026-10-08 14:04:48] [INFO] Pioneer logging system initialized
+
+==========================================================================================
+Starting SearchDIA
+==========================================================================================
+[2026-10-08 14:04:49] [INFO]
+Starting search at: 2026-10-08T14:04:49.038
+[2026-10-08 14:04:49] [INFO] Output directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/SCP_Astral_250pg_3ms
+[2026-10-08 14:04:49] [INFO] Loading Parameters...
+[2026-10-08 14:04:49] [INFO] Searching 3 MS files from /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/ms/SCP_Astral_250pg_3ms
+[2026-10-08 14:04:49] [INFO] Loading Spectral Library...
+[2026-10-08 14:05:10] [INFO] Initializing Search Context...
+[2026-10-08 14:05:11] [INFO] Library: 2328090 target precursors, 2328046 decoys (FDR scale factor: 1.0)
+[2026-10-08 14:05:11] [INFO] Executing Parameter Tuning...
+[2026-10-08 14:06:17] [INFO] Executing Quadrupole Tuning...
+[2026-10-08 14:06:27] [WARN] QuadTuning [20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT_3p4mz_FAIMS_test1_0p25ng_1]: only 230 PSMs collected (target=2200, fallback_min=1100); using SquareQuadModel fallback
+                        └ @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/QuadTuningSearch/QuadTuningSearch.jl:296
+[2026-10-08 14:06:28] [WARN] QuadTuning [20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT_3p4mz_FAIMS_test1_0p25ng_2]: only 203 PSMs collected (target=2200, fallback_min=1100); using SquareQuadModel fallback
+                        └ @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/QuadTuningSearch/QuadTuningSearch.jl:296
+[2026-10-08 14:06:29] [WARN] QuadTuning [20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT_3p4mz_FAIMS_test1_0p25ng_3]: only 217 PSMs collected (target=2200, fallback_min=1100); using SquareQuadModel fallback
+                        └ @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/QuadTuningSearch/QuadTuningSearch.jl:296
+[2026-10-08 14:06:29] [INFO] Executing BitVec Calibration...
+[2026-10-08 14:06:36] [INFO] Executing Main Search...
+[2026-10-08 14:07:09] [INFO] MainSearch passing PSMs: 168223 / 168223 precursors (100.0%) across 3 files
+[2026-10-08 14:07:09] [INFO] Executing Precursor Scoring...
+[2026-10-08 14:07:49] [INFO] Executing Huber Calibration...
+[2026-10-08 14:07:52] [INFO] Executing Chromatogram Integration...
+[2026-10-08 14:08:03] [INFO] Executing Protein Inference...
+[2026-10-08 14:08:14] [INFO] Executing Protein Scoring...
+[2026-10-08 14:08:31] [WARN] Removed 2 problematic features to prevent singular matrix
+                        └ @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/ProteinScoringSearch/feature_selection.jl:68
+[2026-10-08 14:08:38] [INFO] Executing Quantification & Output...
+[2026-10-08 14:08:47] [INFO] Writing precursor tables...
+[2026-10-08 14:08:57] [INFO] Performing sparsemaxlfq protein quantification...
+[2026-10-08 14:09:03] [INFO] Protein quantification: 1865 protein groups across 3 experiments
+[2026-10-08 14:09:03] [INFO] Writing protein group results...
+[2026-10-08 14:09:34] [INFO] Writing run summary...
+
+======================================================================================================
+DIA Search Performance Report
+======================================================================================================
+
+Detailed Step Analysis (in execution order):
+------------------------------------------------------------------------------------------------------
+Step                           Time (s)     Mem Alloc (GB)   GC Time (s)  GC %     RSS Δ (GB)
+------------------------------------------------------------------------------------------------------
+Parameter Loading              0.07         0.00             0.00         0.0      -
+Spectral Library Loading       21.53        4.46             0.98         4.6      -
+Search Context Initialization  1.15         0.32             0.47         40.6     -
+Parameter Tuning               65.80        10.32            2.73         4.1      +1.09
+Quadrupole Tuning              11.77        2.84             0.50         4.3      +0.27
+BitVec Calibration             6.93         1.06             0.06         0.8      +0.07
+Main Search                    33.48        8.67             2.95         8.8      +0.98
+Precursor Scoring              39.73        2.87             11.04        27.8     +0.20
+Huber Calibration              3.34         0.48             0.00         0.0      +0.27
+Chromatogram Integration       10.31        2.09             3.28         31.9     +0.61
+Protein Inference              11.34        2.09             0.00         0.0      +0.00
+Protein Scoring                23.67        3.05             0.52         2.2      +0.00
+Quantification & Output        57.95        5.80             3.16         5.5      +0.00
+------------------------------------------------------------------------------------------------------
+TOTAL                          287.08       44.05            25.70        9.0
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------------------
+Total alloc (cumulative):   44.05 GB
+Working set (peak RSS):     7.52 GB
+System RAM:                 64.0 GB
+Largest RSS jump:           +1.09 GB during Parameter Tuning
+
+Runtime Summary:
+------------------------------------------------------------------------------------------------------
+Total Runtime: 4.78 min (287.08 s)
+Per Raw File:  95.69 s
+
+Results:
+------------------------------------------------------------------------------------------------------
+Precursor rows (long):      11182
+Protein-group rows (long):  4156
+Output directory:           /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/SCP_Astral_250pg_3ms
+
+Per run (identified / quantified):
+------------------------------------------------------------------------------------------------------
+File                                                            Precursors          Protein groups
+20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT              3767 / 3005             1375 / 1097
+20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT              3652 / 2855             1390 / 1114
+20240109_OM_JW_Vanquish_uPAC_DIA_240k_100ms_3msIT              3763 / 3047             1391 / 1123
+
+======================================================================================================
+
+==========================================================================================
+⚠️  4 warnings were generated during the run
+Search completed at: 2026-10-08T14:09:39.358
+==========================================================================================

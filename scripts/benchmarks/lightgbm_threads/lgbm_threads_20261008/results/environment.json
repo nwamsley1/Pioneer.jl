@@ -1,0 +1,22 @@
+{
+  "Julia": "1.12.6",
+  "Julia_default_threads": 24,
+  "LightGBM_jl": "2.2.2",
+  "caller_julia_thread_id": 1,
+  "cpu_allowed_list": "0-63",
+  "cpu_seconds": "Linux process CPU time; includes all native threads; GC outside timed regions",
+  "execution": "All native calls sequential on startup Julia thread; Julia remains at 24; SLURM allocates 64 CPUs exclusively; no simultaneous model fits.",
+  "host": "c2-node-008",
+  "job": "3369734",
+  "memory": "Sys.maxrss is process high-water across configurations, not variant-isolated RSS",
+  "num_threads": [
+    16,
+    24,
+    32,
+    48,
+    64
+  ],
+  "parameters": "Pioneer production hyperparameters; seed 1776, deterministic=true; row-wise primary, col-wise exploratory",
+  "script_sha256": "f8775358db34837d8ec6da40ec203bbd20243865f34d9deeca061a1b59e371fa",
+  "utc": "2026-10-08T18:15:19.331"
+}

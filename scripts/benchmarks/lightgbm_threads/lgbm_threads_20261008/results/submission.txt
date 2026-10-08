@@ -1,0 +1,2 @@
+Excluded nodes: c2-node-005,c2-node-056,c2-node-056
+Julia: 24 workers; native LightGBM: 16/24/32/48/64; exclusive 64-CPU allocation.

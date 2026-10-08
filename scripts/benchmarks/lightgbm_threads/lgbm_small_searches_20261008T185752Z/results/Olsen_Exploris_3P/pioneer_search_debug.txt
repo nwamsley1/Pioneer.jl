@@ -1,0 +1,697 @@
+==========================================================================================
+Pioneer Search Log (Full Trace)
+Version: 0.10.0
+Started: 2026-10-08T14:16:44.452
+Output Directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+Julia Version: 1.12.6
+Threads: 24
+==========================================================================================
+
+[2026-10-08 14:16:44.452] [info] Pioneer logging system initialized
+
+==========================================================================================
+Starting SearchDIA
+==========================================================================================
+[2026-10-08 14:16:44.452] [info]
+Starting search at: 2026-10-08T14:16:44.452
+[2026-10-08 14:16:44.452] [info] Output directory: /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+[2026-10-08 14:16:44.452] [info] Loading Parameters...
+[2026-10-08 14:16:44.528] [info] Searching 3 MS files from /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/ms/Olsen_Exploris_3P
+[2026-10-08 14:16:44.528] [info] Loading Spectral Library...
+[2026-10-08 14:17:07.822] [info] Initializing Search Context...
+[2026-10-08 14:17:07.921] [info] Library: 3399638 target precursors, 3399585 decoys (FDR scale factor: 1.0)
+[2026-10-08 14:17:07.963] [info] Executing Parameter Tuning...
+[2026-10-08 14:17:08.091] [DEBUG1]   ParameterTuning: verify_mz_sorted OK (0.13s)
+[2026-10-08 14:17:08.094] [DEBUG1] Scanning-quad (ZT) [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1]: OFF
+[2026-10-08 14:17:08.094] [DEBUG1] ParameterTuning file 1 (20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1)
+[2026-10-08 14:17:08.396] [DEBUG1]   Wide scout (score≥8): 2000 scans, 1887 raw, 1566 PSMs at 1.0% FDR (767 precursors)
+[2026-10-08 14:17:08.396] [DEBUG1]   Wide scout summary: CONVERGED — converged at score≥8; 2000 of 60969 scans searched, 1566 PSMs from 767 precursors (target 1000, unit = rows), 0.28s
+[2026-10-08 14:17:08.396] [DEBUG1]   Wide scout: 2000 scans → 1566 PSMs (0.28s)
+[2026-10-08 14:17:08.745] [DEBUG1] Fitted ScoutCalibratedMassErrorModel:
+  m/z bias: robust linear: 0.46 + 3.12e-6×mz mDa (4 coeffs)
+  intensity bias: monotone-decreasing (40 coeffs)
+  MAD corrected: 0.55 mDa, q90: 2.59 mDa
+  tolerance: ±20.0 mDa (q90×3, floor 20 mDa)
+  n_fragments=3192
+[2026-10-08 14:17:09.907] [DEBUG1]   Collection (score≥8): 5000 scans, 12419 raw, 5470 PSMs at 1.0% FDR (3197 precursors, 851 removed by the 3/precursor cap)
+[2026-10-08 14:17:09.907] [DEBUG1]   Collection summary: CONVERGED — converged at score≥8; 5000 of 60969 scans searched, 5470 PSMs from 3197 precursors (target 1200, unit = rows after best-3/precursor cap), 1.04s
+[2026-10-08 14:17:09.907] [DEBUG1]   Collection: 5000 scans → 5470 PSMs (1.15s)
+[2026-10-08 14:17:10.515] [DEBUG1]   Tuning iRT tolerance for the main search: 0.71 (MAD 0.237 x 3)
+[2026-10-08 14:17:10.515] [DEBUG1]   RT model: 5470 PSMs
+[2026-10-08 14:17:13.123] [DEBUG1] Fitted IntensityMassErrorModel (bias Da, spread mDa):
+  m/z bias: binned regularized (λ=0.1, knots=24, bins=111) spline (96 coeffs)
+  intensity bias: monotone-decreasing spline (40 coeffs)
+  RT bias: binned regularized (λ=0.03, knots=48, bins=111) spline (192 coeffs)
+  spread: regularized spline (32 coeffs)
+  m/z spread correction (mDa): robust linear (Theil-Sen, bins=55) (12 coeffs; α=0.1857, β=0.00095, γ=0.0)
+  k=3.7811227, Da clamp (q99)=15.11 mDa, max observed=22.25 mDa, model max=33.89 mDa
+  MAD after correction: 0.71 mDa
+  n_fragments=11109
+[2026-10-08 14:17:13.138] [DEBUG1] Installed IntensityMassErrorModel for file 1
+[2026-10-08 14:17:13.138] [DEBUG1]   IntensityMassErrorModel: 11109 frags, k=1.96
+[2026-10-08 14:17:13.182] [DEBUG1]   MS1 model: bias=3.24 ppm, tol=±4.42 ppm (16078 residuals)
+[2026-10-08 14:17:14.205] [DEBUG1] NCE: 3195 precursors, 2 charges, 20 grid pts (0.43s); binned on precursor m/z
+[2026-10-08 14:17:19.922] [DEBUG1] Scanning-quad (ZT) [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2]: OFF
+[2026-10-08 14:17:19.923] [DEBUG1] ParameterTuning file 2 (20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2)
+[2026-10-08 14:17:20.122] [DEBUG1]   Wide scout (score≥8): 2000 scans, 1901 raw, 1560 PSMs at 1.0% FDR (762 precursors)
+[2026-10-08 14:17:20.122] [DEBUG1]   Wide scout summary: CONVERGED — converged at score≥8; 2000 of 60963 scans searched, 1560 PSMs from 762 precursors (target 1000, unit = rows), 0.19s
+[2026-10-08 14:17:20.122] [DEBUG1]   Wide scout: 2000 scans → 1560 PSMs (0.19s)
+[2026-10-08 14:17:20.168] [DEBUG1] Fitted ScoutCalibratedMassErrorModel:
+  m/z bias: robust linear: 0.51 + 3.04e-6×mz mDa (4 coeffs)
+  intensity bias: monotone-decreasing (40 coeffs)
+  MAD corrected: 0.53 mDa, q90: 2.4 mDa
+  tolerance: ±20.0 mDa (q90×3, floor 20 mDa)
+  n_fragments=3174
+[2026-10-08 14:17:20.549] [DEBUG1]   Collection (score≥8): 5000 scans, 12139 raw, 5367 PSMs at 1.0% FDR (3130 precursors, 831 removed by the 3/precursor cap)
+[2026-10-08 14:17:20.549] [DEBUG1]   Collection summary: CONVERGED — converged at score≥8; 5000 of 60963 scans searched, 5367 PSMs from 3130 precursors (target 1200, unit = rows after best-3/precursor cap), 0.38s
+[2026-10-08 14:17:20.549] [DEBUG1]   Collection: 5000 scans → 5367 PSMs (0.38s)
+[2026-10-08 14:17:20.992] [DEBUG1]   Tuning iRT tolerance for the main search: 0.699 (MAD 0.233 x 3)
+[2026-10-08 14:17:20.993] [DEBUG1]   RT model: 5367 PSMs
+[2026-10-08 14:17:21.135] [DEBUG1] Fitted IntensityMassErrorModel (bias Da, spread mDa):
+  m/z bias: binned regularized (λ=0.1, knots=24, bins=109) spline (96 coeffs)
+  intensity bias: monotone-decreasing spline (40 coeffs)
+  RT bias: binned regularized (λ=0.03, knots=48, bins=109) spline (192 coeffs)
+  spread: regularized spline (36 coeffs)
+  m/z spread correction (mDa): robust linear (Theil-Sen, bins=54) (12 coeffs; α=0.1393, β=0.001, γ=0.0)
+  k=3.8515806, Da clamp (q99)=14.85 mDa, max observed=22.11 mDa, model max=32.62 mDa
+  MAD after correction: 0.7 mDa
+  n_fragments=10900
+[2026-10-08 14:17:21.150] [DEBUG1] Installed IntensityMassErrorModel for file 2
+[2026-10-08 14:17:21.150] [DEBUG1]   IntensityMassErrorModel: 10900 frags, k=1.96
+[2026-10-08 14:17:21.179] [DEBUG1]   MS1 model: bias=3.33 ppm, tol=±4.61 ppm (15838 residuals)
+[2026-10-08 14:17:21.719] [DEBUG1] NCE: 3128 precursors, 2 charges, 20 grid pts (0.44s); binned on precursor m/z
+[2026-10-08 14:17:25.769] [DEBUG1] Scanning-quad (ZT) [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3]: OFF
+[2026-10-08 14:17:25.769] [DEBUG1] ParameterTuning file 3 (20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3)
+[2026-10-08 14:17:25.969] [DEBUG1]   Wide scout (score≥8): 2000 scans, 1899 raw, 1557 PSMs at 1.0% FDR (757 precursors)
+[2026-10-08 14:17:25.969] [DEBUG1]   Wide scout summary: CONVERGED — converged at score≥8; 2000 of 61000 scans searched, 1557 PSMs from 757 precursors (target 1000, unit = rows), 0.18s
+[2026-10-08 14:17:25.969] [DEBUG1]   Wide scout: 2000 scans → 1557 PSMs (0.18s)
+[2026-10-08 14:17:26.012] [DEBUG1] Fitted ScoutCalibratedMassErrorModel:
+  m/z bias: robust linear: 0.65 + 2.9e-6×mz mDa (4 coeffs)
+  intensity bias: monotone-decreasing (40 coeffs)
+  MAD corrected: 0.54 mDa, q90: 2.45 mDa
+  tolerance: ±20.0 mDa (q90×3, floor 20 mDa)
+  n_fragments=3133
+[2026-10-08 14:17:26.371] [DEBUG1]   Collection (score≥8): 5000 scans, 12135 raw, 5379 PSMs at 1.0% FDR (3137 precursors, 850 removed by the 3/precursor cap)
+[2026-10-08 14:17:26.371] [DEBUG1]   Collection summary: CONVERGED — converged at score≥8; 5000 of 61000 scans searched, 5379 PSMs from 3137 precursors (target 1200, unit = rows after best-3/precursor cap), 0.36s
+[2026-10-08 14:17:26.371] [DEBUG1]   Collection: 5000 scans → 5379 PSMs (0.36s)
+[2026-10-08 14:17:26.479] [DEBUG1]   Tuning iRT tolerance for the main search: 0.694 (MAD 0.231 x 3)
+[2026-10-08 14:17:26.479] [DEBUG1]   RT model: 5379 PSMs
+[2026-10-08 14:17:26.521] [DEBUG1] Fitted IntensityMassErrorModel (bias Da, spread mDa):
+  m/z bias: binned regularized (λ=0.1, knots=24, bins=109) spline (96 coeffs)
+  intensity bias: monotone-decreasing spline (40 coeffs)
+  RT bias: binned regularized (λ=0.03, knots=48, bins=109) spline (192 coeffs)
+  spread: regularized spline (32 coeffs)
+  m/z spread correction (mDa): robust linear (Theil-Sen, bins=54) (12 coeffs; α=0.1349, β=0.001, γ=0.0)
+  k=3.9289663, Da clamp (q99)=15.23 mDa, max observed=21.02 mDa, model max=39.74 mDa
+  MAD after correction: 0.7 mDa
+  n_fragments=10957
+[2026-10-08 14:17:26.521] [DEBUG1] Installed IntensityMassErrorModel for file 3
+[2026-10-08 14:17:26.521] [DEBUG1]   IntensityMassErrorModel: 10957 frags, k=1.96
+[2026-10-08 14:17:26.549] [DEBUG1]   MS1 model: bias=3.29 ppm, tol=±4.63 ppm (15813 residuals)
+[2026-10-08 14:17:26.733] [DEBUG1] NCE: 3135 precursors, 2 charges, 20 grid pts (0.08s); binned on precursor m/z
+[2026-10-08 14:17:28.594] [DEBUG1] Calibration QC rt: normal=3 suspicious=0 warning=0 failed=0 not_assessed=0
+[2026-10-08 14:17:28.692] [DEBUG1] Calibration QC ms2_mass: normal=3 suspicious=0 warning=0 failed=0 not_assessed=0
+[2026-10-08 14:17:28.692] [DEBUG1] Calibration QC ms1_mass: normal=3 suspicious=0 warning=0 failed=0 not_assessed=0
+[2026-10-08 14:17:28.734] [DEBUG1] Calibration QC nce: normal=3 suspicious=0 warning=0 failed=0 not_assessed=0
+[2026-10-08 14:17:28.734] [DEBUG1] Parameter Tuning Summary: 3 files, 3 converged, 0 fallback
+[2026-10-08 14:17:28.735] [info] Executing Quadrupole Tuning...
+[2026-10-08 14:17:33.545] [DEBUG1]   QuadTuning fit_quad_model: 5709 raw → 252 equal-count bins (bin_resolution=0.0625), x0 ∈ [-7.9, 7.66]
+[2026-10-08 14:17:35.606] [DEBUG1]   QuadTuning [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1]: 4962 PSMs, 5709 deconv pts, wall=6.85s; Razo LM: al=7.12 ar=7.4 bl=24.0 br=24.0
+[2026-10-08 14:17:37.636] [DEBUG1]   QuadTuning fit_quad_model: 5044 raw → 252 equal-count bins (bin_resolution=0.0625), x0 ∈ [-7.91, 7.66]
+[2026-10-08 14:17:38.507] [DEBUG1]   QuadTuning [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2]: 4398 PSMs, 5044 deconv pts, wall=2.88s; Razo LM: al=7.12 ar=7.42 bl=24.0 br=24.0
+[2026-10-08 14:17:39.561] [DEBUG1]   QuadTuning fit_quad_model: 5497 raw → 252 equal-count bins (bin_resolution=0.0625), x0 ∈ [-7.91, 7.66]
+[2026-10-08 14:17:39.987] [DEBUG1]   QuadTuning [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3]: 4786 PSMs, 5497 deconv pts, wall=1.48s; Razo LM: al=7.12 ar=7.45 bl=24.0 br=24.0
+[2026-10-08 14:17:40.050] [DEBUG1] Calibration QC quadrupole: normal=0 suspicious=3 warning=0 failed=0 not_assessed=0
+[2026-10-08 14:17:40.051] [info] Executing BitVec Calibration...
+[2026-10-08 14:17:40.780] [DEBUG1] BitVec: 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1 — 15094 scans, 13943439 counts, 141/256 pass (per-bin, min_excess=3.0%, 0.73s)
+[2026-10-08 14:17:41.395] [DEBUG1] BitVec: 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2 — 19750 scans, 13942223 counts, 152/256 pass (per-bin, min_excess=3.0%, 0.61s)
+[2026-10-08 14:17:41.635] [DEBUG1] BitVec: 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3 — 15856 scans, 14294211 counts, 143/256 pass (per-bin, min_excess=3.0%, 0.24s)
+[2026-10-08 14:17:41.646] [DEBUG1] BitVecCalibration global: 3 files, 42179873 total counts (21249787 target, 20930086 decoy)
+
+[2026-10-08 14:17:41.646] [DEBUG1]
+count_ones summary (global):
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=2: 28 patterns, 15984857 target, 15947288 decoy, 1/28 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=3: 56 patterns, 4113630 target, 4026452 decoy, 11/56 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=4: 70 patterns, 877140 target, 812854 decoy, 47/70 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=5: 56 patterns, 170174 target, 127210 decoy, 55/56 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=6: 28 patterns, 46797 target, 15031 decoy, 28/28 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=7: 8 patterns, 29188 target, 1197 decoy, 8/8 pass
+
+[2026-10-08 14:17:41.646] [DEBUG1]   k=8: 1 patterns, 28001 target, 54 decoy, 1/1 pass
+
+[2026-10-08 14:17:41.646] [info] Executing Main Search...
+[2026-10-08 14:17:41.776] [DEBUG1]   MainSearch: verify_mz_sorted OK (0.13s)
+[2026-10-08 14:17:42.612] [DEBUG1]   frag_index: parallel=0.62s, results=20962824
+[2026-10-08 14:17:45.372] [DEBUG1]   library_search breakdown: frag_index=0.8s  deconv=2.76s  vcat=0.0s  candidates=20962824
+[2026-10-08 14:17:45.381] [DEBUG1]   scan_competition (n_psms=3443146 n_scans=45382): runs=3.0ms  per_run_loop=6.0ms
+[2026-10-08 14:17:45.668] [DEBUG1]   MainSearch process_file! (file_idx=1, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1): 3443146 PSMs from deconv; library_search elapsed: 3.59s  scan_comp=9.0ms  ms1=0.08s  sort=211.0ms  n_cols=57
+[2026-10-08 14:17:46.636] [DEBUG1]   chrom-feature passes (n_psms=3443146): groups=0.1s  ms1_chrom=0.05s  frag_chrom=0.72s
+[2026-10-08 14:17:46.674] [DEBUG1]   LightGBM CV: fold0=1702093 fold1=1741053 PSMs; fit_folds=[1741053, 1702093] train=[250000, 250000]  MAX_TRAIN=250000
+[2026-10-08 14:17:47.776] [DEBUG1]   LightGBM timings: slice=0.02s fit=0.73s predict=0.35s
+[2026-10-08 14:17:47.820] [DEBUG1] MainSearch per-file LGBM feature gains (all 47):
+    frag_corr_strength                       29349
+    frag_corr_best_m0                        9149
+    frag_corr_effective_n                    5968
+    fitted_manhattan_distance                5422
+    gof                                      3829
+    ms1_isotope_dotp_m0_m1_m2                2316
+    n_scans                                  898
+    ms1_m0_m1_m2_window_fraction             706
+    fitted_hellinger                         559
+    total_ions                               514
+    ms1_m0_m1_m2_window_fraction_pc          439
+    ms1_m1_to_m0_ratio                       391
+    n_correlated_fragments_bitvec_rank       390
+    ms1_m0_intensity                         387
+    irt_error                                354
+    prec_mz                                  330
+    ms1_ms2_explained_delta_pc               303
+    frag_apex_dispersion_irt                 300
+    ms1_m0_mass_err_ppm                      295
+    ms1_weight_apex_to_m0_apex_irt           264
+    longest_y                                188
+    sequence_length                          160
+    log2_intensity_explained                 140
+    weight_rank_at_scan                      138
+    ms1_m1_to_m0_pred                        133
+    frag1_int                                131
+    delta_frame_peak_center                  129
+    y_count                                  112
+    ms1_ms2_explained_delta                  100
+    frag3_int                                99
+    err_norm                                 98
+    spectrum_peak_count                      95
+    ms1_m1_intensity                         86
+    frag5_int                                80
+    frag2_int                                76
+    top3_ms2_mass_error_mean                 75
+    poisson                                  73
+    weight                                   56
+    missed_cleavage                          51
+    log_by_ratio_m0                          50
+    weight_ratio_at_scan                     35
+    frag4_int                                34
+    frag6_int                                25
+    n_correlated_fragments                   13
+    frag8_int                                12
+    frag7_int                                8
+    Mox                                      0
+[2026-10-08 14:17:48.509] [DEBUG1]     apply (cv_fold dict, n=3443146): predict_loop=0.39s refresh=0.0s
+[2026-10-08 14:17:48.509] [DEBUG1]   iRT refine breakdown: qval+agg=0.18s fit=0.1s apply_psms=0.39s (n_psms=3443146  n_refinement=1292439  n_train_total=45761  n_tokens_per_fold=66,66)
+[2026-10-08 14:17:49.970] [DEBUG1]   iRT refinement (file_idx=1, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1): 45761 training precursors; reapply predict=0.37s best=1.09s
+[2026-10-08 14:17:50.113] [DEBUG1]   PEP filter (file_idx=1, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1): PEP > 0.99 drops 530917 targets + 551015 decoys (1292439 → 210507 best-per-precursor PSMs)
+[2026-10-08 14:17:50.129] [DEBUG1] RT spline fit: 45085 high-prob target PSMs (prob > 0.9), MAD=0.2, new iRT tol=0.8
+[2026-10-08 14:17:51.289] [DEBUG1]   MainSearch process_search_results! (file_idx=1, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1): 3443146 PSMs → 209427 precursors  total=5.62s
+    features=0.97s [prep=0.09s competition=0.0s ms1=0.88s]
+    lgbm=1.18s [train_cv=1.15s best_per_prec=0.04s]  pep_filter=0.14s
+    recal=0.04s  phase2=0.33s  fold_write+flanking=0.81s  overhead=2.15s
+[2026-10-08 14:17:52.088] [DEBUG1]   frag_index: parallel=0.49s, results=19023349
+[2026-10-08 14:17:53.602] [DEBUG1]   library_search breakdown: frag_index=0.76s  deconv=1.51s  vcat=0.0s  candidates=19023349
+[2026-10-08 14:17:53.610] [DEBUG1]   scan_competition (n_psms=3261231 n_scans=45277): runs=2.0ms  per_run_loop=5.0ms
+[2026-10-08 14:17:53.902] [DEBUG1]   MainSearch process_file! (file_idx=2, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2): 3261231 PSMs from deconv; library_search elapsed: 2.31s  scan_comp=8.0ms  ms1=0.1s  sort=196.0ms  n_cols=57
+[2026-10-08 14:17:54.789] [DEBUG1]   chrom-feature passes (n_psms=3261231): groups=0.1s  ms1_chrom=0.09s  frag_chrom=0.66s
+[2026-10-08 14:17:54.826] [DEBUG1]   LightGBM CV: fold0=1610783 fold1=1650448 PSMs; fit_folds=[1650448, 1610783] train=[250000, 250000]  MAX_TRAIN=250000
+[2026-10-08 14:17:55.892] [DEBUG1]   LightGBM timings: slice=0.01s fit=0.74s predict=0.31s
+[2026-10-08 14:17:56.156] [DEBUG1] MainSearch per-file LGBM feature gains (all 47):
+    frag_corr_strength                       30828
+    frag_corr_best_m0                        8576
+    frag_corr_effective_n                    7191
+    fitted_manhattan_distance                4822
+    gof                                      4810
+    ms1_isotope_dotp_m0_m1_m2                2121
+    ms1_m0_m1_m2_window_fraction             1645
+    n_scans                                  925
+    irt_error                                795
+    fitted_hellinger                         560
+    ms1_ms2_explained_delta_pc               529
+    ms1_m1_to_m0_ratio                       484
+    total_ions                               413
+    ms1_weight_apex_to_m0_apex_irt           280
+    ms1_m0_intensity                         274
+    ms1_m1_to_m0_pred                        223
+    ms1_m0_m1_m2_window_fraction_pc          213
+    frag_apex_dispersion_irt                 212
+    prec_mz                                  202
+    ms1_m0_mass_err_ppm                      188
+    delta_frame_peak_center                  179
+    sequence_length                          173
+    log_by_ratio_m0                          172
+    y_count                                  170
+    n_correlated_fragments                   159
+    ms1_m1_intensity                         153
+    n_correlated_fragments_bitvec_rank       151
+    missed_cleavage                          151
+    frag1_int                                142
+    spectrum_peak_count                      129
+    longest_y                                117
+    frag2_int                                106
+    ms1_ms2_explained_delta                  83
+    poisson                                  79
+    frag4_int                                66
+    weight                                   66
+    weight_ratio_at_scan                     63
+    err_norm                                 63
+    top3_ms2_mass_error_mean                 53
+    frag5_int                                47
+    frag6_int                                46
+    weight_rank_at_scan                      41
+    frag3_int                                35
+    frag8_int                                30
+    log2_intensity_explained                 21
+    Mox                                      20
+    frag7_int                                19
+[2026-10-08 14:17:56.499] [DEBUG1]     apply (cv_fold dict, n=3261231): predict_loop=0.06s refresh=0.0s
+[2026-10-08 14:17:56.499] [DEBUG1]   iRT refine breakdown: qval+agg=0.17s fit=0.1s apply_psms=0.07s (n_psms=3261231  n_refinement=1260286  n_train_total=45243  n_tokens_per_fold=66,66)
+[2026-10-08 14:17:57.882] [DEBUG1]   iRT refinement (file_idx=2, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2): 45243 training precursors; reapply predict=0.32s best=1.06s
+[2026-10-08 14:17:58.020] [DEBUG1]   PEP filter (file_idx=2, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2): PEP > 0.99 drops 521418 targets + 540304 decoys (1260286 → 198564 best-per-precursor PSMs)
+[2026-10-08 14:17:58.034] [DEBUG1] RT spline fit: 44952 high-prob target PSMs (prob > 0.9), MAD=0.198, new iRT tol=0.79
+[2026-10-08 14:17:59.164] [DEBUG1]   MainSearch process_search_results! (file_idx=2, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2): 3261231 PSMs → 197648 precursors  total=5.26s
+    features=0.89s [prep=0.04s competition=0.0s ms1=0.85s]
+    lgbm=1.37s [train_cv=1.11s best_per_prec=0.25s]  pep_filter=0.14s
+    recal=0.03s  phase2=0.25s  fold_write+flanking=0.86s  overhead=1.73s
+[2026-10-08 14:17:59.878] [DEBUG1]   frag_index: parallel=0.54s, results=25056709
+[2026-10-08 14:18:01.542] [DEBUG1]   library_search breakdown: frag_index=0.68s  deconv=1.66s  vcat=0.0s  candidates=25056709
+[2026-10-08 14:18:01.551] [DEBUG1]   scan_competition (n_psms=3825512 n_scans=45632): runs=3.0ms  per_run_loop=6.0ms
+[2026-10-08 14:18:01.859] [DEBUG1]   MainSearch process_file! (file_idx=3, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3): 3825512 PSMs from deconv; library_search elapsed: 2.38s  scan_comp=9.0ms  ms1=0.07s  sort=240.0ms  n_cols=57
+[2026-10-08 14:18:03.624] [DEBUG1]   chrom-feature passes (n_psms=3825512): groups=0.1s  ms1_chrom=0.06s  frag_chrom=0.79s
+[2026-10-08 14:18:03.719] [DEBUG1]   LightGBM CV: fold0=1889837 fold1=1935675 PSMs; fit_folds=[1935675, 1889837] train=[250000, 250000]  MAX_TRAIN=250000
+[2026-10-08 14:18:04.815] [DEBUG1]   LightGBM timings: slice=0.02s fit=0.72s predict=0.35s
+[2026-10-08 14:18:04.856] [DEBUG1] MainSearch per-file LGBM feature gains (all 47):
+    frag_corr_strength                       24845
+    frag_corr_best_m0                        7839
+    frag_corr_effective_n                    7827
+    gof                                      4201
+    fitted_manhattan_distance                3799
+    ms1_isotope_dotp_m0_m1_m2                1464
+    n_scans                                  1080
+    ms1_m0_m1_m2_window_fraction             1079
+    n_correlated_fragments                   1025
+    fitted_hellinger                         981
+    irt_error                                540
+    ms1_ms2_explained_delta_pc               452
+    ms1_m1_to_m0_ratio                       435
+    frag_apex_dispersion_irt                 275
+    total_ions                               257
+    longest_y                                250
+    n_correlated_fragments_bitvec_rank       247
+    ms1_m0_intensity                         244
+    ms1_weight_apex_to_m0_apex_irt           240
+    weight_rank_at_scan                      200
+    prec_mz                                  200
+    delta_frame_peak_center                  195
+    ms1_m1_to_m0_pred                        191
+    y_count                                  191
+    frag1_int                                172
+    spectrum_peak_count                      164
+    ms1_m0_mass_err_ppm                      151
+    sequence_length                          143
+    ms1_m0_m1_m2_window_fraction_pc          122
+    ms1_ms2_explained_delta                  116
+    log_by_ratio_m0                          109
+    frag5_int                                109
+    poisson                                  100
+    weight_ratio_at_scan                     97
+    frag3_int                                92
+    ms1_m1_intensity                         87
+    top3_ms2_mass_error_mean                 73
+    frag7_int                                73
+    frag2_int                                63
+    log2_intensity_explained                 53
+    Mox                                      52
+    frag4_int                                50
+    err_norm                                 42
+    missed_cleavage                          36
+    weight                                   34
+    frag6_int                                10
+    frag8_int                                9
+[2026-10-08 14:18:05.227] [DEBUG1]     apply (cv_fold dict, n=3825512): predict_loop=0.07s refresh=0.0s
+[2026-10-08 14:18:05.227] [DEBUG1]   iRT refine breakdown: qval+agg=0.19s fit=0.1s apply_psms=0.07s (n_psms=3825512  n_refinement=1396415  n_train_total=45577  n_tokens_per_fold=66,66)
+[2026-10-08 14:18:05.951] [DEBUG1]   iRT refinement (file_idx=3, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3): 45577 training precursors; reapply predict=0.39s best=0.33s
+[2026-10-08 14:18:06.104] [DEBUG1]   PEP filter (file_idx=3, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3): PEP > 0.99 drops 577832 targets + 599546 decoys (1396415 → 219037 best-per-precursor PSMs)
+[2026-10-08 14:18:06.118] [DEBUG1] RT spline fit: 45267 high-prob target PSMs (prob > 0.9), MAD=0.199, new iRT tol=0.8
+[2026-10-08 14:18:07.126] [DEBUG1]   MainSearch process_search_results! (file_idx=3, 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3): 3825512 PSMs → 218077 precursors  total=5.27s
+    features=1.76s [prep=0.82s competition=0.0s ms1=0.95s]
+    lgbm=1.23s [train_cv=1.2s best_per_prec=0.03s]  pep_filter=0.15s
+    recal=0.03s  phase2=0.29s  fold_write+flanking=0.7s  overhead=1.1s
+[2026-10-08 14:18:07.126] [DEBUG1] Calibration QC ion_mobility: normal=0 suspicious=0 warning=0 failed=0 not_assessed=3
+[2026-10-08 14:18:07.269] [DEBUG1] RT-binned tolerance (20 bins): RT 4.3-42.4, tol +/-0.359 to +/-0.366 min
+[2026-10-08 14:18:07.269] [DEBUG1] Prescore aggregation: file_reads=0.01s, loop=0.1s, combination+qvalues=0.03s, total=0.14s
+[2026-10-08 14:18:07.406] [DEBUG1] RT-binned tolerance (20 bins): RT 4.6-42.4, tol +/-0.359 to +/-0.366 min
+[2026-10-08 14:18:07.407] [DEBUG1] Prescore aggregation: file_reads=0.01s, loop=0.09s, combination+qvalues=0.03s, total=0.14s
+[2026-10-08 14:18:07.760] [DEBUG1]   20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1: 209427 / 209427 precursors kept (100.0%)
+[2026-10-08 14:18:08.307] [DEBUG1]   20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2: 197648 / 197648 precursors kept (100.0%)
+[2026-10-08 14:18:08.594] [DEBUG1]   20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3: 218077 / 218077 precursors kept (100.0%)
+[2026-10-08 14:18:08.594] [info] MainSearch passing PSMs: 625152 / 625152 precursors (100.0%) across 3 files
+[2026-10-08 14:18:08.594] [DEBUG1] MainSearch summarize: aggregation=0.28s, fold_write=1.19s, chrom_tol=0.0s, total=1.47s
+[2026-10-08 14:18:08.594] [info] Executing Precursor Scoring...
+[2026-10-08 14:18:08.599] [DEBUG1] Pass-1 metadata starting: files=6
+[2026-10-08 14:18:08.784] [DEBUG1] Pass-1 metadata complete: 0.18s
+[2026-10-08 14:18:08.784] [DEBUG1] Pass-1 OOM training:
+[2026-10-08 14:18:08.784] [DEBUG1]   rows: total=625152  fold0=319083  fold1=306069
+[2026-10-08 14:18:08.784] [DEBUG1]   fixed representative pool: k_per_fold=2500000
+[2026-10-08 14:18:08.784] [DEBUG1]   features in use: 72 / 84
+[2026-10-08 14:18:08.784] [DEBUG1] Pass-1 sample selection started: files=6 sample_fold0=319083 sample_fold1=306069
+[2026-10-08 14:18:08.801] [DEBUG1] Pass-1 sample selection: files=6/6
+[2026-10-08 14:18:08.804] [DEBUG1] Pass-1 sample selection complete: 0.02s
+[2026-10-08 14:18:08.804] [DEBUG1] Pass-1 sample gather started: files=6 rows=625152
+[2026-10-08 14:18:08.911] [DEBUG1] Pass-1 sample gather: files=6/6
+[2026-10-08 14:18:08.911] [DEBUG1] Pass-1 sample gather complete: 0.11s
+[2026-10-08 14:18:08.911] [DEBUG1] Pass-1 pool iter 1: fold 0 fit starting
+[2026-10-08 14:18:12.049] [DEBUG1] Pass-1 pool iter 1 fold 0 fit complete: 3.14s
+[2026-10-08 14:18:12.049] [DEBUG1] Pass-1 pool iter 1: fold 1 fit starting
+[2026-10-08 14:18:15.254] [DEBUG1] Pass-1 pool iter 1 fold 1 fit complete: 3.21s
+[2026-10-08 14:18:15.254] [DEBUG1] Pass-1 pool iter 1: OOF prediction starting; rows=625152
+[2026-10-08 14:18:15.625] [DEBUG1] Pass-1 pool iter 1 OOF prediction complete: 0.37s
+[2026-10-08 14:18:15.625] [DEBUG1] Pass-1 pool iter 1: q-value sorting and masks starting; rows=625152
+[2026-10-08 14:18:15.644] [DEBUG1] Score grouping in memory: rows=625152 budget_bytes=268435456
+[2026-10-08 14:18:15.761] [DEBUG1] Pass-1 pool iter 1 q-value sorting and masks complete: 0.14s
+[2026-10-08 14:18:15.761] [DEBUG1]   ScoringSearch semi-supervised iter 1 (Pass-1 training pool): train targets=408880 decoys=216272; pool_fold0=319083 pool_fold1=306069; pool q≤0.01 targets=159696 decoys=1596
+[2026-10-08 14:18:15.761] [DEBUG1] Pass-1 pool iter 2: fold 0 fit starting
+[2026-10-08 14:18:18.884] [DEBUG1] Pass-1 pool iter 2 fold 0 fit complete: 3.12s
+[2026-10-08 14:18:18.884] [DEBUG1] Pass-1 pool iter 2: fold 1 fit starting
+[2026-10-08 14:18:21.953] [DEBUG1] Pass-1 pool iter 2 fold 1 fit complete: 3.07s
+[2026-10-08 14:18:21.953] [DEBUG1] Pass-1 pool iter 2: OOF prediction starting; rows=625152
+[2026-10-08 14:18:22.324] [DEBUG1] Pass-1 pool iter 2 OOF prediction complete: 0.37s
+[2026-10-08 14:18:22.324] [DEBUG1] Pass-1 pool iter 2: q-value sorting and masks starting; rows=625152
+[2026-10-08 14:18:22.350] [DEBUG1] Score grouping in memory: rows=625152 budget_bytes=268435456
+[2026-10-08 14:18:22.460] [DEBUG1] Pass-1 pool iter 2 q-value sorting and masks complete: 0.14s
+[2026-10-08 14:18:22.460] [DEBUG1]   ScoringSearch semi-supervised iter 2 (Pass-1 training pool): train targets=178660 decoys=216272; pool_fold0=319083 pool_fold1=306069; pool q≤0.01 targets=164253 decoys=1642
+[2026-10-08 14:18:22.460] [DEBUG1] Pass-1 pool iter 3: fold 0 fit starting
+[2026-10-08 14:18:25.657] [DEBUG1] Pass-1 pool iter 3 fold 0 fit complete: 3.2s
+[2026-10-08 14:18:25.657] [DEBUG1] Pass-1 pool iter 3: fold 1 fit starting
+[2026-10-08 14:18:28.757] [DEBUG1] Pass-1 pool iter 3 fold 1 fit complete: 3.1s
+[2026-10-08 14:18:28.757] [DEBUG1] Pass-1 pool iter 3: OOF prediction starting; rows=625152
+[2026-10-08 14:18:29.133] [DEBUG1] Pass-1 pool iter 3 OOF prediction complete: 0.38s
+[2026-10-08 14:18:29.134] [DEBUG1] Pass-1 pool iter 3: q-value sorting and masks starting; rows=625152
+[2026-10-08 14:18:29.159] [DEBUG1] Score grouping in memory: rows=625152 budget_bytes=268435456
+[2026-10-08 14:18:29.266] [DEBUG1] Pass-1 pool iter 3 q-value sorting and masks complete: 0.13s
+[2026-10-08 14:18:29.266] [DEBUG1]   ScoringSearch semi-supervised iter 3 (Pass-1 training pool): train targets=181676 decoys=216272; pool_fold0=319083 pool_fold1=306069; pool q≤0.01 targets=164848 decoys=1648
+[2026-10-08 14:18:29.266] [DEBUG1]   ScoringSearch semi-supervised stopping (Pass-1 training pool): iter 3 pool targets=164848 did not improve by 1.0% over 164253; using iter 3 with pool targets=164848
+[2026-10-08 14:18:30.231] [DEBUG1] Pass-1 full-data prediction starting: files=6 rows=625152; selected_iter=3
+[2026-10-08 14:18:30.814] [DEBUG1] Pass-1 full-data prediction: files=6/6
+[2026-10-08 14:18:30.814] [DEBUG1] Pass-1 full-data prediction complete: 0.58s
+[2026-10-08 14:18:30.814] [DEBUG1] Pass-1 OOM elapsed: total=22.21s
+[2026-10-08 14:18:30.814] [DEBUG1] ScoringSearch Pass-1 LGBM feature gains (all 72):
+    smoothed_2d_shadow_hellinger             470214
+    fitted_manhattan_distance                140572
+    flanking_ms1_m0_candidate_fraction       121156
+    frag_apex_gt2x_flank_bitvec_rank         107935
+    irt_error                                55853
+    gof                                      37251
+    ms1_m0_peak_frag_intensity_fraction      28243
+    ms1_isotope_dotp_m0_m1_m2                25607
+    missed_cleavage                          18002
+    ms1_m1_to_m0_ratio                       15937
+    total_ions                               15243
+    ms1_m0_mass_err_ppm                      14214
+    ms1_m0_m1_m2_window_fraction             13861
+    ms1_ms2_explained_delta_pc               13615
+    ms1_m0_m1_m2_window_fraction_pc          12192
+    err_norm                                 11553
+    spectrum_peak_count                      10882
+    fitted_hellinger                         10642
+    top3_ms2_mass_error_mean                 9216
+    frag_apex_dispersion_irt                 8069
+    weight_rank_at_scan                      7805
+    ms1_m1_intensity                         7372
+    flanking_signal_support                  5888
+    ms1_ms2_explained_delta                  5546
+    frag1_smoothed_intensity                 5500
+    flanking_frag_candidate_fraction         5290
+    prec_mz                                  5124
+    ms1_m0_intensity                         4981
+    longest_y                                4379
+    ms1_m1_to_m0_pred                        4329
+    log_by_ratio_m0                          3758
+    precursor_fraction_transmitted           3465
+    frag2_smoothed_intensity                 2616
+    n_correlated_fragments_bitvec_rank       2348
+    flanking_frag_corr_mean                  2275
+    Mox                                      2205
+    log2_intensity_explained                 2199
+    y_count                                  2175
+    n_scans                                  2172
+    other_window_apex_delta_irt              1778
+    flanking_frag_corr_best_m0               1761
+    n_frags_detected_intersection_bitvec_rank 1616
+    scan_prec_mz_n_precursors                1510
+    frag3_smoothed_intensity                 1480
+    poisson                                  1480
+    charge                                   1450
+    sequence_length                          1309
+    weight_ratio_at_scan                     1280
+    ms1_m0_peak_n_precursors                 1165
+    flanking_frag_corr_strength              1099
+    weight                                   1066
+    frag4_smoothed_intensity                 960
+    flanking_ms1_frag_sum_corr               937
+    n_contiguous_scans                       831
+    other_window_weight_corr                 744
+    n_frags_detected_union_bitvec_rank       724
+    frag_corr_strength                       669
+    flanking_frag_corr_effective_n           604
+    frag5_smoothed_intensity                 584
+    frag_corr_best_m0                        550
+    ms1_weight_apex_to_m0_apex_irt           529
+    frag_corr_effective_n                    491
+    n_frags_detected_intersection            482
+    smoothness                               363
+    delta_frame_peak_center                  358
+    irt_fwhm                                 339
+    frag6_smoothed_intensity                 271
+    frag8_smoothed_intensity                 237
+    frag7_smoothed_intensity                 197
+    n_scans_other_windows                    135
+    n_frags_detected_union                   61
+    n_correlated_fragments                   43
+[2026-10-08 14:18:30.814] [DEBUG1] ScoringSearch Pass-1 scoring complete: 22.22s
+[2026-10-08 14:18:30.814] [DEBUG1] ScoringSearch prediction attachment and fold merge starting: runs=3
+[2026-10-08 14:18:30.820] [DEBUG1] ScoringSearch fold sidecar discovery complete: folds=6 elapsed=0.01s
+[2026-10-08 14:18:31.496] [DEBUG1] ScoringSearch prediction attachment and fold merge complete: runs=3 rows=625152 elapsed=0.68s read=0.02s attach=0.01s concatenate=0.16s write=0.48s
+[2026-10-08 14:18:31.496] [DEBUG1] ScoringSearch fold cleanup starting: files=12
+[2026-10-08 14:18:31.550] [DEBUG1] ScoringSearch fold cleanup complete: 0.05s
+[2026-10-08 14:18:31.550] [DEBUG1] ScoringSearch merged-file metadata starting: files=3
+[2026-10-08 14:18:31.571] [DEBUG1] ScoringSearch merged-file metadata complete: 0.02s
+[2026-10-08 14:18:31.571] [DEBUG1] Precursor probability aggregation starting: files=3
+[2026-10-08 14:18:31.775] [DEBUG1] Precursor probability aggregation complete: files=3 rows=625152 elapsed=0.2s
+[2026-10-08 14:18:31.775] [DEBUG1] Score calibration (preglobal_qval_sidecar, prec_prob) grouping starting: files=3
+[2026-10-08 14:18:31.813] [DEBUG1] Score grouping in memory: rows=625152 budget_bytes=268435456
+[2026-10-08 14:18:31.925] [DEBUG1] Score calibration grouped counts complete: groups=230576
+[2026-10-08 14:18:31.925] [DEBUG1] Score calibration PAVA expansion starting: groups=230576
+[2026-10-08 14:18:31.972] [DEBUG1] Score calibration reverse q-value scan starting: groups=230576
+[2026-10-08 14:18:32.026] [DEBUG1] Score calibration compaction starting: groups=230576
+[2026-10-08 14:18:32.058] [DEBUG1] Score calibration complete: knots=116312
+[2026-10-08 14:18:32.060] [DEBUG1] Score calibration (preglobal_qval_sidecar, prec_prob) complete: files=3 rows=625152 elapsed=0.28s
+[2026-10-08 14:18:32.076] [DEBUG1] Computing run similarity across 3 runs (precursor score floor = 0.8928)...
+[2026-10-08 14:18:32.315] [DEBUG1] Run similarity computation completed in 0.24 seconds
+[2026-10-08 14:18:32.315] [DEBUG1] Training global precursor scoring model...
+[2026-10-08 14:18:34.066] [DEBUG1] Score grouping in memory: rows=393734 budget_bytes=268435456
+[2026-10-08 14:18:34.100] [DEBUG1] Global precursor semi-supervised iteration 1: train targets=231821 decoys=161913; q≤.01 targets=60759 decoys=607
+[2026-10-08 14:18:34.554] [DEBUG1] Score grouping in memory: rows=393734 budget_bytes=268435456
+[2026-10-08 14:18:34.580] [DEBUG1] Global precursor semi-supervised iteration 2: train targets=67317 decoys=161913; q≤.01 targets=60784 decoys=606
+[2026-10-08 14:18:34.580] [DEBUG1] Global precursor semi-supervised stopping: iteration 2 did not improve q≤.01 targets by 1.0%; using iteration 2
+[2026-10-08 14:18:34.580] [DEBUG1] Global precursor LightGBM feature gains (summed across folds):
+    empirical_global_score                               1506213
+    mean_prec_prob                                       472155
+    top2_logodds_score                                   457381
+    top3_logodds_score                                   429621
+    top1_prec_prob                                       401558
+    n_prob_gt_0_5                                        89876
+    top2_prec_prob                                       23706
+    min_prec_prob                                        4237
+    top2_top3_gap                                        2497
+    top1_top2_gap                                        1028
+    median_prec_prob                                     470
+    std_prec_prob                                        338
+    top3_prec_prob                                       173
+    missing_run_similarity_mass_approx                   44
+    n_prob_gt_0_9                                        33
+    observed_run_centrality_mean                         22
+    n_prob_gt_0_99                                       18
+    observed_run_centrality_max                          0
+    n_passing_runs                                       0
+[2026-10-08 14:18:34.596] [DEBUG1] Score grouping in memory: rows=393734 budget_bytes=268435456
+[2026-10-08 14:18:34.639] [DEBUG1] Score grouping in memory: rows=393734 budget_bytes=268435456
+[2026-10-08 14:18:34.667] [DEBUG1] Global precursor score selection at global q≤0.01: LightGBM experiment-wide target IDs=161015, empirical experiment-wide target IDs=160146; selected lightgbm
+[2026-10-08 14:18:34.724] [DEBUG1] Global precursor scoring scored 393734 precursors with 19 features; selected lightgbm after semi-supervised iteration 2
+[2026-10-08 14:18:34.724] [DEBUG1] Global precursor q-values starting: precursors=393734
+[2026-10-08 14:18:34.773] [DEBUG1] Global precursor q-values complete: elapsed=0.05s
+[2026-10-08 14:18:34.773] [DEBUG1] Global precursor PEP starting: precursors=393734
+[2026-10-08 14:18:34.819] [DEBUG1] Global precursor PEP complete: elapsed=0.05s
+[2026-10-08 14:18:34.819] [DEBUG1] Precursor score annotation starting: files=3
+[2026-10-08 14:18:35.986] [DEBUG1] Precursor score annotation complete: rows=625152 elapsed=1.17s
+[2026-10-08 14:18:35.993] [DEBUG1] Initial precursor q-value filter starting: files=3
+[2026-10-08 14:18:36.323] [DEBUG1] Initial precursor q-value filter complete: files=3 rows=161959 elapsed=0.33s
+[2026-10-08 14:18:36.323] [DEBUG1] Score calibration (recalc_sidecar, prec_prob) grouping starting: files=3
+[2026-10-08 14:18:36.350] [DEBUG1] Score grouping in memory: rows=161959 budget_bytes=268435456
+[2026-10-08 14:18:36.378] [DEBUG1] Score calibration grouped counts complete: groups=58837
+[2026-10-08 14:18:36.378] [DEBUG1] Score calibration reverse q-value scan starting: groups=58837
+[2026-10-08 14:18:36.396] [DEBUG1] Score calibration compaction starting: groups=58837
+[2026-10-08 14:18:36.423] [DEBUG1] Score calibration complete: knots=1869
+[2026-10-08 14:18:36.425] [DEBUG1] Score calibration (recalc_sidecar, prec_prob) complete: files=3 rows=161959 elapsed=0.1s
+[2026-10-08 14:18:36.813] [DEBUG1]   RT index 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1: 53951 precursors (empirical RT) in 0.051s
+[2026-10-08 14:18:36.855] [DEBUG1]   RT index 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2: 53570 precursors (empirical RT) in 0.042s
+[2026-10-08 14:18:36.893] [DEBUG1]   RT index 20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3: 54438 precursors (empirical RT) in 0.038s
+[2026-10-08 14:18:36.893] [info] Executing Huber Calibration...
+[2026-10-08 14:18:36.906] [DEBUG1] Global Huber selection: winners=61358 files=3
+[2026-10-08 14:18:38.544] [DEBUG1] Global Huber delta calibration selected delta=8009.4995 from selected_psms=15002 evaluated_curves=15002 delta_evaluations=390052 accepted_curves=6971; retained_bins=25
+[2026-10-08 14:18:38.544] [info] Executing Chromatogram Integration...
+[2026-10-08 14:18:38.546] [DEBUG1] Chromatogram RHS extension: 3068 / 61358 precursors (max weight >= 1.8649668e9)
+[2026-10-08 14:18:39.173] [DEBUG1] [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_1] 58 / 53951 PSMs identified but not quantified (peak_area == 0)
+[2026-10-08 14:18:40.669] [DEBUG1] [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_2] 66 / 53570 PSMs identified but not quantified (peak_area == 0)
+[2026-10-08 14:18:42.126] [DEBUG1] [20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y40_30SPD_DIA_3] 57 / 54438 PSMs identified but not quantified (peak_area == 0)
+[2026-10-08 14:18:43.167] [info] Executing Protein Inference...
+[2026-10-08 14:18:47.570] [DEBUG1] Annotating passing PSM files with inferred protein groups and protein-quant flags (global)
+[2026-10-08 14:18:49.562] [info] Executing Protein Scoring...
+[2026-10-08 14:18:50.129] [DEBUG1] Building per-run protein group tables and protein scoring features
+[2026-10-08 14:18:52.074] [DEBUG1] Built 0 target-backed counterfactual shadow protein negatives
+[2026-10-08 14:18:52.091] [DEBUG1] Memory budget 2000.0 MB → max_protein_groups = 6355006
+[2026-10-08 14:18:52.098] [DEBUG1] Run-level protein training controls: counterfactual shadows=0
+[2026-10-08 14:18:52.135] [warn] Removed 2 problematic features to prevent singular matrix @ Pioneer /scratch2/fs1/d.goldfarb/n.t.wamsley/src/Pioneer_lgbm_threads_20261008T174117Z/src/Routines/SearchDIA/SearchMethods/ProteinScoringSearch/feature_selection.jl:68
+[2026-10-08 14:18:52.139] [DEBUG1] Protein LightGBM monotone constraints context=protein_lightgbm_multifold_fold_0: method=intermediate; nondecreasing features=ambiguous_pg_score, shared_peptide_coverage_logit, shared_coverage_log_ratio, peptide_coverage_logit, all_peptide_coverage_logit, any_common_peps, coverage_log_ratio, precursor_consensus_prefix_shape, shared_precursor_consensus_prefix_shape, single_non_mbr_prefix_shape; nonincreasing features=
+[2026-10-08 14:18:52.218] [DEBUG1] Protein LightGBM semi-supervised iter 1 context=protein_lightgbm_multifold_fold_0:
+    IDs at q≤0.01: targets=10846, decoys=108
+    current training: target positives=11379, mined target negatives=59, decoys=494, rows=11932
+    next training: target positives=10846, mined target negatives=118, decoys=494, dropped targets=474
+[2026-10-08 14:18:52.218] [DEBUG1] Protein LightGBM semi-supervised continuing context=protein_lightgbm_multifold_fold_0 after iter 1: established target-ID baseline=10846; fitting iter 2
+[2026-10-08 14:18:52.294] [DEBUG1] Protein LightGBM semi-supervised iter 2 context=protein_lightgbm_multifold_fold_0:
+    IDs at q≤0.01: targets=10827, decoys=108
+    current training: target positives=10846, mined target negatives=118, decoys=494, rows=11458
+    next training: target positives=10824, mined target negatives=148, decoys=494, dropped targets=466
+[2026-10-08 14:18:52.294] [DEBUG1] Protein LightGBM semi-supervised stopping context=protein_lightgbm_multifold_fold_0 after iter 2: q≤0.01 target IDs=10827 did not improve by 1.0% over 10846; using iter 1 with target IDs=10846
+[2026-10-08 14:18:52.294] [DEBUG1] Protein LightGBM monotone constraints context=protein_lightgbm_multifold_fold_1: method=intermediate; nondecreasing features=ambiguous_pg_score, shared_peptide_coverage_logit, shared_coverage_log_ratio, peptide_coverage_logit, all_peptide_coverage_logit, any_common_peps, coverage_log_ratio, precursor_consensus_prefix_shape, shared_precursor_consensus_prefix_shape, single_non_mbr_prefix_shape; nonincreasing features=
+[2026-10-08 14:18:52.368] [DEBUG1] Protein LightGBM semi-supervised iter 1 context=protein_lightgbm_multifold_fold_1:
+    IDs at q≤0.01: targets=11184, decoys=111
+    current training: target positives=11675, mined target negatives=49, decoys=440, rows=12164
+    next training: target positives=11183, mined target negatives=139, decoys=440, dropped targets=402
+[2026-10-08 14:18:52.368] [DEBUG1] Protein LightGBM semi-supervised continuing context=protein_lightgbm_multifold_fold_1 after iter 1: established target-ID baseline=11184; fitting iter 2
+[2026-10-08 14:18:52.443] [DEBUG1] Protein LightGBM semi-supervised iter 2 context=protein_lightgbm_multifold_fold_1:
+    IDs at q≤0.01: targets=11164, decoys=111
+    current training: target positives=11183, mined target negatives=139, decoys=440, rows=11762
+    next training: target positives=11159, mined target negatives=130, decoys=440, dropped targets=435
+[2026-10-08 14:18:52.443] [DEBUG1] Protein LightGBM semi-supervised stopping context=protein_lightgbm_multifold_fold_1 after iter 2: q≤0.01 target IDs=11164 did not improve by 1.0% over 11184; using iter 1 with target IDs=11184
+[2026-10-08 14:18:52.536] [DEBUG1] Score calibration (preglobal_pg_sidecar, pg_score) grouping starting: files=3
+[2026-10-08 14:18:52.552] [DEBUG1] Score grouping in memory: rows=24096 budget_bytes=268435456
+[2026-10-08 14:18:52.559] [DEBUG1] Score calibration grouped counts complete: groups=8383
+[2026-10-08 14:18:52.559] [DEBUG1] Score calibration PAVA expansion starting: groups=8383
+[2026-10-08 14:18:52.567] [DEBUG1] Score calibration reverse q-value scan starting: groups=8383
+[2026-10-08 14:18:52.573] [DEBUG1] Score calibration compaction starting: groups=8383
+[2026-10-08 14:18:52.582] [DEBUG1] Score calibration complete: knots=1326
+[2026-10-08 14:18:52.584] [DEBUG1] Score calibration (preglobal_pg_sidecar, pg_score) complete: files=3 rows=24096 elapsed=0.05s
+[2026-10-08 14:18:52.659] [DEBUG1] Training global protein scoring model...
+[2026-10-08 14:18:52.791] [DEBUG1] Score grouping in memory: rows=9049 budget_bytes=268435456
+[2026-10-08 14:18:52.796] [DEBUG1] Global protein semi-supervised iteration 1: train targets=8459 decoys=590; q≤.01 targets=7463 decoys=74
+[2026-10-08 14:18:52.913] [DEBUG1] Score grouping in memory: rows=9049 budget_bytes=268435456
+[2026-10-08 14:18:52.918] [DEBUG1] Global protein semi-supervised iteration 2: train targets=8061 decoys=590; q≤.01 targets=7471 decoys=74
+[2026-10-08 14:18:52.918] [DEBUG1] Global protein semi-supervised stopping: iteration 2 did not improve q≤.01 targets by 1.0%; using iteration 2
+[2026-10-08 14:18:52.918] [DEBUG1] Global protein LightGBM feature gains (summed across folds):
+    top3_logodds_score                                   67241
+    top1_pg_score                                        32780
+    top2_logodds_score                                   5105
+    empirical_global_score                               3786
+    top2_top3_gap                                        2558
+    min_pg_score                                         2483
+    std_pg_score                                         2428
+    top1_top2_gap                                        2319
+    median_pg_score                                      1502
+    global_all_peptide_coverage                          1340
+    mean_pg_score                                        1315
+    global_peptide_coverage                              1237
+    n_unique_peptides_observed                           948
+    observed_run_centrality_mean                         751
+    missing_run_similarity_mass_approx                   660
+    max_n_peptides_observed                              640
+    top2_pg_score                                        400
+    max_peptide_coverage                                 263
+    max_all_peptide_coverage                             189
+    top3_pg_score                                        115
+    n_score_gt_0_9                                       0
+    observed_run_centrality_max                          0
+    n_passing_runs                                       0
+    n_score_gt_0_5                                       0
+    n_score_gt_0_99                                      0
+[2026-10-08 14:18:52.928] [DEBUG1] Score grouping in memory: rows=9049 budget_bytes=268435456
+[2026-10-08 14:18:52.942] [DEBUG1] Score grouping in memory: rows=9049 budget_bytes=268435456
+[2026-10-08 14:18:52.950] [DEBUG1] Global protein score selection at global q≤0.01: LightGBM experiment-wide target IDs=21283, empirical experiment-wide target IDs=21459; selected empirical
+[2026-10-08 14:18:52.952] [DEBUG1] Global protein scoring scored 9049 protein groups with 25 features; selected empirical after semi-supervised iteration 2
+[2026-10-08 14:18:53.005] [DEBUG1] Score calibration (pg_recalc, pg_score) grouping starting: files=3
+[2026-10-08 14:18:53.027] [DEBUG1] Score grouping in memory: rows=21609 budget_bytes=268435456
+[2026-10-08 14:18:53.039] [DEBUG1] Score calibration grouped counts complete: groups=6460
+[2026-10-08 14:18:53.039] [DEBUG1] Score calibration reverse q-value scan starting: groups=6460
+[2026-10-08 14:18:53.045] [DEBUG1] Score calibration compaction starting: groups=6460
+[2026-10-08 14:18:53.055] [DEBUG1] Score calibration complete: knots=273
+[2026-10-08 14:18:53.056] [DEBUG1] Score calibration (pg_recalc, pg_score) complete: files=3 rows=21609 elapsed=0.05s
+[2026-10-08 14:18:53.353] [info] Executing Quantification & Output...
+[2026-10-08 14:18:54.444] [DEBUG1] Chunked merge: 5704 / 161015 rows had missing inferred_protein_group (shared peptides — filtered downstream by LFQ)
+[2026-10-08 14:18:54.454] [DEBUG1] Chunked merge: 1 chunk(s), 161015 total rows
+[2026-10-08 14:18:54.454] [info] Writing precursor tables...
+[2026-10-08 14:18:55.163] [info] Performing sparsemaxlfq protein quantification...
+[2026-10-08 14:18:55.510] [DEBUG1] Pipeline operation 'filter_by_multiple_thresholds(2 conditions, and)': rows 100064 -> 99091
+[2026-10-08 14:18:55.515] [DEBUG1] Pipeline operation 'filter_for_protein_quant': rows 99091 -> 99091
+[2026-10-08 14:18:55.670] [DEBUG1] Pipeline operation 'filter_by_multiple_thresholds(2 conditions, and)': rows 55247 -> 54515
+[2026-10-08 14:18:55.673] [DEBUG1] Pipeline operation 'filter_for_protein_quant': rows 54515 -> 54515
+[2026-10-08 14:18:56.246] [info] Protein quantification: 7522 protein groups across 3 experiments
+[2026-10-08 14:18:56.246] [info] Writing protein group results...
+[2026-10-08 14:18:57.010] [DEBUG1] Concatenating chunks to precursors_long.arrow...
+[2026-10-08 14:19:04.337] [info] Writing run summary...
+
+======================================================================================================
+DIA Search Performance Report
+======================================================================================================
+
+Detailed Step Analysis (in execution order):
+------------------------------------------------------------------------------------------------------
+Step                           Time (s)     Mem Alloc (GB)   GC Time (s)  GC %     RSS Δ (GB)
+------------------------------------------------------------------------------------------------------
+Parameter Loading              0.08         0.00             0.00         0.0      -
+Spectral Library Loading       23.29        5.90             1.21         5.2      -
+Search Context Initialization  0.14         0.27             0.00         0.0      -
+Parameter Tuning               20.77        2.25             0.50         2.4      +0.47
+Quadrupole Tuning              11.32        1.29             0.22         1.9      +0.00
+BitVec Calibration             1.60         0.12             0.09         5.9      +0.00
+Main Search                    26.95        14.96            4.91         18.2     +3.53
+Precursor Scoring              28.30        3.57             6.66         23.5     +0.09
+Huber Calibration              1.65         0.45             0.06         3.9      +0.01
+Chromatogram Integration       4.62         0.81             2.95         63.9     +0.00
+Protein Inference              6.39         1.83             0.00         0.0      +0.00
+Protein Scoring                3.79         1.46             0.18         4.8      +0.00
+Quantification & Output        11.99        2.85             2.06         17.1     +0.00
+------------------------------------------------------------------------------------------------------
+TOTAL                          140.89       35.74            18.84        13.4
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------------------
+Total alloc (cumulative):   35.74 GB
+Working set (peak RSS):     11.61 GB
+System RAM:                 64.0 GB
+Largest RSS jump:           +3.53 GB during Main Search
+
+Runtime Summary:
+------------------------------------------------------------------------------------------------------
+Total Runtime: 2.35 min (140.89 s)
+Per Raw File:  46.96 s
+
+Results:
+------------------------------------------------------------------------------------------------------
+Precursor rows (long):      161015
+Protein-group rows (long):  21459
+Output directory:           /scratch2/fs1/d.goldfarb/n.t.wamsley/runs/lgbm_small_searches_20261008T185752Z/seed/Olsen_Exploris_3P
+
+Per run (identified / quantified):
+------------------------------------------------------------------------------------------------------
+File                                                            Precursors          Protein groups
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            53639 / 53582             7171 / 7164
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            53254 / 53189             7109 / 7104
+20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E10H50Y            54122 / 54066             7179 / 7176
+
+======================================================================================================
+
+==========================================================================================
+Search completed at: 2026-10-08T14:19:05.425
+==========================================================================================
