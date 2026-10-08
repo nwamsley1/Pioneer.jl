@@ -962,6 +962,10 @@ function residue_mass(c::SeqCode)
 end
 const _RESIDUE_MASS = Float64[AA_to_mass[c] for c in SEQ_ALPHABET]
 
+"Whether build_precursor_table_streaming can build this library (not yet: ion mobility, isotope-label groups)."
+streaming_precursor_table_supported(params::AbstractDict) =
+    isempty(String(get(params["library_params"], "im_model", ""))) && isempty(get(params, "isotope_mod_groups", []))
+
 """
     build_precursor_table_streaming(params, prec_mz_min, prec_mz_max, out_path, proteins_out_path;
                                     chunk_rows = 2_000_000) -> out_path
@@ -975,7 +979,8 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
                                          chunk_rows::Int = 1_000_000, rt_bin_tol::Float32 = 3.0f0)
     t = time()
     dp = params["fasta_digest_params"]; lp = params["library_params"]
-    isempty(String(get(lp, "im_model", ""))) || error("streaming build does not support im_model yet")
+    streaming_precursor_table_supported(params) ||
+        error("streaming build does not support im_model or isotope_mod_groups yet")
     min_len, max_len = clamp_digest_length_to_model(get(lp, "prediction_model", "altimeter"),
                                                     dp["min_length"], dp["max_length"])
     # modification config, as prepare_chronologer_input reads it (mass strings: Float32 text, parsed as Float64)

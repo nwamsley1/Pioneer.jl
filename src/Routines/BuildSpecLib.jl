@@ -217,66 +217,82 @@ function _build_spec_lib(params_path::String)
 
             mz_to_ev_interp = missing
 
-            # Chronologer prediction workflow
-            @user_info "Preparing chronologer workflow..."
-            chrono_prep_timing = @timed begin
-                prepare_chronologer_input(params,
-                                        mz_to_ev_interp,
-                                        prec_mz_min,
-                                        prec_mz_max,
-                                        chronologer_in_path,
-                                        joinpath(lib_dir, "proteins_table.arrow"))
-                nothing
-            end
-            _record_stage!(timings, "Chronologer Preparation", chrono_prep_timing)
-
-            @user_info "Predicting retention times..."
-            rt_timing = @timed begin
-                predict_retention_times(chronologer_in_path, chronologer_out_path; rt_model = rt_model)
-                nothing
-            end
-            _record_stage!(timings, "Retention Time Prediction", rt_timing)
-
-            # Optional ion-mobility prediction appends `ccs` and
-            # `inv_ion_mobility` columns; it writes a new file, so track
-            # which file feeds parse_chronologer_output.
-            predictions_path = chronologer_out_path
+            iso_mod_to_mass = Dict{String, Float32}()
             im_model = String(get(_params.library_params, "im_model", ""))
-            if !isempty(im_model)
-                @user_info "Predicting ion mobility with $im_model..."
-                im_timing = @timed begin
-                    predictions_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt_im.arrow")
-                    predict_ion_mobility(chronologer_out_path, predictions_path, im_model)
+            if streaming_precursor_table_supported(params)
+                # Precursor table straight from the FASTA (digest, mods, entrapments, decoys, m/z filter, retention
+                # times, final order) without the in-memory Chronologer tables; same precursors.arrow.
+                @user_info "Building the precursor table..."
+                precursors_arrow_path = joinpath(lib_dir, "precursors.arrow")
+                raw_fragments_arrow_path = joinpath(lib_dir, "raw_fragments.arrow")
+                precursor_timing = @timed begin
+                    build_precursor_table_streaming(params, prec_mz_min, prec_mz_max, precursors_arrow_path,
+                                                    joinpath(lib_dir, "proteins_table.arrow"))
+                    safeRm(raw_fragments_arrow_path; force=true)
                     nothing
                 end
-                _record_stage!(timings, "Ion Mobility Prediction", im_timing)
+                _record_stage!(timings, "Precursor Table", precursor_timing)
+            else
+                # Chronologer prediction workflow
+                @user_info "Preparing chronologer workflow..."
+                chrono_prep_timing = @timed begin
+                    prepare_chronologer_input(params,
+                                            mz_to_ev_interp,
+                                            prec_mz_min,
+                                            prec_mz_max,
+                                            chronologer_in_path,
+                                            joinpath(lib_dir, "proteins_table.arrow"))
+                    nothing
+                end
+                _record_stage!(timings, "Chronologer Preparation", chrono_prep_timing)
+
+                @user_info "Predicting retention times..."
+                rt_timing = @timed begin
+                    predict_retention_times(chronologer_in_path, chronologer_out_path; rt_model = rt_model)
+                    nothing
+                end
+                _record_stage!(timings, "Retention Time Prediction", rt_timing)
+
+                # Optional ion-mobility prediction appends `ccs` and
+                # `inv_ion_mobility` columns; it writes a new file, so track
+                # which file feeds parse_chronologer_output.
+                predictions_path = chronologer_out_path
+                if !isempty(im_model)
+                    @user_info "Predicting ion mobility with $im_model..."
+                    im_timing = @timed begin
+                        predictions_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt_im.arrow")
+                        predict_ion_mobility(chronologer_out_path, predictions_path, im_model)
+                        nothing
+                    end
+                    _record_stage!(timings, "Ion Mobility Prediction", im_timing)
+                end
+                # Parse results and prepare for fragment prediction
+                parse_timing = @timed begin
+                    iso_mod_to_mass = Dict{String, Float32}()
+                    precursors_arrow_path = parse_chronologer_output(
+                        predictions_path,
+                        lib_dir,
+                        Dict{String,Int8}(),
+                        iso_mod_to_mass,
+                        params["isotope_mod_groups"],
+                        3.0f0  # rt_bin_tol for precursor sorting (matches fragment index)
+                    )
+                    #println("precursors_arrow_path $precursors_arrow_path")
+                    # Cleanup temporary files. Use safeRm (GC + retry + rename
+                    # fallback): on Windows the just-read Arrow files are still
+                    # mmap-locked, so a plain rm() throws EACCES (GC.gc() alone is
+                    # not enough to release the mapping).
+                    GC.gc()
+                    safeRm(chronologer_in_path; force=true)
+                    safeRm(chronologer_out_path; force=true)
+                    safeRm(predictions_path; force=true)
+                    dir, filename = splitdir(precursors_arrow_path)
+                    raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
+                    safeRm(raw_fragments_arrow_path; force=true)
+                    nothing
+                end
+                _record_stage!(timings, "Chronologer Output Processing", parse_timing)
             end
-            # Parse results and prepare for fragment prediction
-            parse_timing = @timed begin
-                iso_mod_to_mass = Dict{String, Float32}()
-                precursors_arrow_path = parse_chronologer_output(
-                    predictions_path,
-                    lib_dir,
-                    Dict{String,Int8}(),
-                    iso_mod_to_mass,
-                    params["isotope_mod_groups"],
-                    3.0f0  # rt_bin_tol for precursor sorting (matches fragment index)
-                )
-                #println("precursors_arrow_path $precursors_arrow_path")
-                # Cleanup temporary files. Use safeRm (GC + retry + rename
-                # fallback): on Windows the just-read Arrow files are still
-                # mmap-locked, so a plain rm() throws EACCES (GC.gc() alone is
-                # not enough to release the mapping).
-                GC.gc()
-                safeRm(chronologer_in_path; force=true)
-                safeRm(chronologer_out_path; force=true)
-                safeRm(predictions_path; force=true)
-                dir, filename = splitdir(precursors_arrow_path)
-                raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
-                safeRm(raw_fragments_arrow_path; force=true)
-                nothing
-            end
-            _record_stage!(timings, "Chronologer Output Processing", parse_timing)
 
             # Fragment-filter knobs. These are hardcoded for the Altimeter
             # spline path (the JSON's `library_params.max_frag_rank` etc. are
