@@ -102,5 +102,7 @@ jobs:
         run: julia --threads=4 --project=. -e 'using Pkg; Pkg.instantiate()'
       - name: Merge regression and handle tests (one thread)
         run: julia --threads=1 --project=. -e 'using Pioneer; include("test/utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl"); include("test/utils/FileOperations/streaming/test_persistent_merge_writer.jl")'
+      - name: Sidecar discovery and snapshot handle tests
+        run: julia --threads=1 --project=. -e 'include("test/utils/FileOperations/core/test_sidecar_index.jl")'
       - name: Merge regression and handle tests (four threads)
         run: julia --threads=4 --project=. -e 'using Pioneer; include("test/utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl"); include("test/utils/FileOperations/streaming/test_persistent_merge_writer.jl")'

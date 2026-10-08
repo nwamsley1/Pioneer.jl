@@ -92,13 +92,15 @@ function summarize_results!(
 )
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
     isempty(indexed_paths) && return nothing
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
 
     # Files with zero rows weren't annotated by ProteinInferenceSearch (the
     # pipeline short-circuits on empty inputs), so they lack the
     # `inferred_protein_group` column. Drop them here.
     passing_refs = PSMFileReference[]
     for (_, path) in indexed_paths
-        ref = PSMFileReference(path)
+        ref = PSMFileReference(path; sidecar_paths=sidecar_index[path])
         row_count(ref) > 0 && push!(passing_refs, ref)
     end
     isempty(passing_refs) && return nothing

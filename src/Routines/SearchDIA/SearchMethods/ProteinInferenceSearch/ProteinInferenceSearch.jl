@@ -90,7 +90,9 @@ function summarize_results!(
         return nothing
     end
 
-    passing_refs = [PSMFileReference(path) for (_, path) in indexed_paths]
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
+    passing_refs = [PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in paths]
     inference_summary = run_protein_inference!(search_context;
         passing_refs = passing_refs,
         global_inference = params.global_inference)
