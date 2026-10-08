@@ -23,10 +23,121 @@ sorting, writing, and file management with Windows compatibility.
 """
 
 using Arrow, DataFrames, Tables
+using Mmap: Mmap
 
 #==========================================================
 Arrow File Operations
 ==========================================================#
+
+"""
+    with_arrow_table(f, path)
+
+Memory-map `path`, call `f(Arrow.Table(...))`, and unmap the file before returning.
+
+`Arrow.Table(path)` releases its mapping only when the garbage collector finalizes it,
+and that can be much later than the table going out of scope: Arrow reads record batches
+on spawned tasks, and a worker thread keeps the last task it ran (with the batch, and so
+the mapped bytes) reachable until it runs another one. A dead temporary can also stay
+rooted in the calling function's frame until that function returns. Until then the file
+counts toward resident memory, keeps its disk space on Linux, and cannot be deleted or
+replaced on a network share. `f` must copy what it needs: its result must not reference
+the table's columns, which become invalid when the file is unmapped.
+"""
+function with_arrow_table(f, path::AbstractString)
+    bytes = Mmap.mmap(path)
+    try
+        return f(Arrow.Table(bytes))
+    finally
+        # Mmap attaches its unmap finalizer to the array's backing Memory.
+        Base.finalize(bytes.ref.mem)
+    end
+end
+
+"""
+    with_arrow_stream(f, path)
+
+Like `with_arrow_table`, for record-batch iteration: call `f(Arrow.Stream(...))` over a
+memory map of `path` and unmap the file before returning. Nothing that references a
+batch's columns may be used afterwards.
+"""
+function with_arrow_stream(f, path::AbstractString)
+    bytes = Mmap.mmap(path)
+    try
+        return f(Arrow.Stream(bytes))
+    finally
+        Base.finalize(bytes.ref.mem)
+    end
+end
+
+"""
+    with_arrow_tables(f)
+
+Call `f(open_table)`, where `open_table(path)` memory-maps `path` and returns its
+`Arrow.Table`, then unmap every file opened that way before returning. Use it when several
+tables must stay mapped together (for example while they are concatenated and written);
+as with `with_arrow_table`, nothing that references their columns may be used afterwards.
+"""
+function with_arrow_tables(f)
+    mapped = Vector{Vector{UInt8}}()
+    open_table = function (path::AbstractString)
+        bytes = Mmap.mmap(path)
+        push!(mapped, bytes)
+        return Arrow.Table(bytes)
+    end
+    try
+        return f(open_table)
+    finally
+        foreach(bytes -> Base.finalize(bytes.ref.mem), mapped)
+    end
+end
+
+"""
+    load_arrow_dataframe(path; cols = nothing) -> DataFrame
+
+Read `path` into a DataFrame that owns all of its memory, then unmap the file. Column types are
+those of `DataFrame(Tables.columntable(Arrow.Table(path)))`, or with `cols` those of
+`DataFrame([c => collect(Tables.getcolumn(tbl, c)) for c in cols])` (columns missing from the
+file are skipped), except that list columns, whose cells are views into the file, get their
+cells copied. Every column is checked before the file is unmapped; a column type that might
+still point into the file is an error rather than a read of released memory.
+"""
+function load_arrow_dataframe(path::AbstractString; cols = nothing)
+    return with_arrow_table(path) do tbl
+        df = cols === nothing ? DataFrame(Tables.columntable(tbl)) :
+            DataFrame([c => collect(Tables.getcolumn(tbl, c)) for c in cols if hasproperty(tbl, c)];
+                      copycols = false)
+        for name in names(df)
+            col = _owned_column(df[!, name])
+            _owns_memory(col) || error("load_arrow_dataframe: column $name of $path has type " *
+                                       "$(typeof(col)), which may still reference the mapped file")
+            df[!, name] = col
+        end
+        df
+    end
+end
+
+# List cells come back as views into the file; copy each into a Vector of the cell's element
+# type. A nested list keeps views in its copied cells, so `_owns_memory` rejects it.
+function _owned_column(col::AbstractVector)
+    S = nonmissingtype(eltype(col))
+    S <: AbstractVector || return col
+    C = Vector{eltype(S)}
+    out = Vector{S === eltype(col) ? C : Union{Missing, C}}(undef, length(col))
+    @inbounds for i in eachindex(col, out)
+        x = col[i]
+        out[i] = x === missing ? missing : C(x)
+    end
+    return out
+end
+
+_owned_eltype(T::Type) =
+    isbitstype(T) || T === String || T === Symbol ||
+    (T isa Union && all(_owned_eltype, Base.uniontypes(T))) ||
+    (T <: Vector && T !== Vector && _owned_eltype(eltype(T)))
+_owns_memory(col::Vector) = _owned_eltype(eltype(col))
+# PooledVector (dictionary-encoded columns): its own refs and pool.
+_owns_memory(col::AbstractVector) =
+    nameof(typeof(col)) === :PooledArray && col.refs isa Vector && _owns_memory(col.pool)
 
 """
     sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
@@ -189,8 +300,9 @@ function compute_sortperm(ref::FileReference, sort_keys::Symbol...;
     length(rev_vec) == length(sort_keys) ||
         error("Length of reverse vector ($(length(rev_vec))) must match number of sort keys ($(length(sort_keys)))")
 
-    tbl = Arrow.Table(file_path(ref))
-    key_cols = Any[collect(Tables.getcolumn(tbl, k)) for k in sort_keys]
+    key_cols = with_arrow_table(file_path(ref)) do tbl   # copied, then unmapped
+        Any[collect(Tables.getcolumn(tbl, k)) for k in sort_keys]
+    end
     n = isempty(key_cols) ? 0 : length(key_cols[1])
     perm = collect(Int32(1):Int32(n))
     nkeys = length(key_cols)
@@ -257,7 +369,7 @@ end
 # Internal: permute every column of an Arrow file in place. Used by the
 # FileReference and PSMFileReference apply_sortperm! methods.
 function _permute_arrow_file_inplace!(path::String, perm::AbstractVector{<:Integer})
-    df = DataFrame(Tables.columntable(Arrow.Table(path)))
+    df = load_arrow_dataframe(path)
     n = nrow(df)
     length(perm) == n ||
         error("perm length $(length(perm)) ≠ file row count $n for $path")
@@ -386,8 +498,7 @@ Get column names without loading the full dataset.
 """
 function column_names(ref::FileReference)
     validate_exists(ref)
-    table = Arrow.Table(file_path(ref))
-    return Symbol.(Tables.columnnames(table))
+    return with_arrow_table(table -> Symbol.(Tables.columnnames(table)), file_path(ref))
 end
 
 """

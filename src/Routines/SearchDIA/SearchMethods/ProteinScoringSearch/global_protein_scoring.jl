@@ -149,52 +149,54 @@ function _collect_global_protein_inputs(
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
-        table = Arrow.Table(file_path(ref))
-        @inbounds for row in eachindex(table.protein_name)
-            protein_name = UInt32(table.protein_name[row])
-            key = (
-                protein_name,
-                Bool(table.target[row]),
-                UInt8(table.entrap_id[row]),
-            )
-            protein_run_scores = get!(run_scores, key) do
-                GlobalProteinRunScore[]
-            end
-            push!(
-                protein_run_scores,
-                GlobalProteinRunScore(
-                    UInt32(table.file_idx[row]),
-                    Float32(table.pg_score[row]),
-                ),
-            )
+        # Values are copied into the dictionaries and sets, so the file is unmapped after.
+        with_arrow_table(file_path(ref)) do table
+            @inbounds for row in eachindex(table.protein_name)
+                protein_name = UInt32(table.protein_name[row])
+                key = (
+                    protein_name,
+                    Bool(table.target[row]),
+                    UInt8(table.entrap_id[row]),
+                )
+                protein_run_scores = get!(run_scores, key) do
+                    GlobalProteinRunScore[]
+                end
+                push!(
+                    protein_run_scores,
+                    GlobalProteinRunScore(
+                        UInt32(table.file_idx[row]),
+                        Float32(table.pg_score[row]),
+                    ),
+                )
 
-            protein_peptides = get!(observed_peptides, key) do
-                Set{UInt32}()
-            end
-            union!(protein_peptides, table.peptide_list[row])
+                protein_peptides = get!(observed_peptides, key) do
+                    Set{UInt32}()
+                end
+                union!(protein_peptides, table.peptide_list[row])
 
-            protein_common_peptides = get!(observed_common_peptides, key) do
-                Set{UInt32}()
-            end
-            common_peptide_list = hasproperty(table, :common_peptide_list) ?
-                table.common_peptide_list[row] : table.peptide_list[row]
-            union!(protein_common_peptides, common_peptide_list)
+                protein_common_peptides = get!(observed_common_peptides, key) do
+                    Set{UInt32}()
+                end
+                common_peptide_list = hasproperty(table, :common_peptide_list) ?
+                    table.common_peptide_list[row] : table.peptide_list[row]
+                union!(protein_common_peptides, common_peptide_list)
 
-            n_peptides = Int(table.n_peptides[row])
-            n_common_peptides = hasproperty(table, :n_common_peptides) ?
-                Int(table.n_common_peptides[row]) : n_peptides
-            max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
-            max_n_common_peptides[key] = max(
-                get(max_n_common_peptides, key, 0),
-                n_common_peptides
-            )
-            n_possible_unique_peptides[key] =
-                Int(table.n_possible_unique_peptides[row])
-            n_possible_common_unique_peptides[key] =
-                hasproperty(table, :n_possible_common_unique_peptides) ?
-                Int(table.n_possible_common_unique_peptides[row]) :
-                Int(table.n_possible_unique_peptides[row])
-            folds[key] = protein_to_cv_fold[protein_name].cv_fold
+                n_peptides = Int(table.n_peptides[row])
+                n_common_peptides = hasproperty(table, :n_common_peptides) ?
+                    Int(table.n_common_peptides[row]) : n_peptides
+                max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
+                max_n_common_peptides[key] = max(
+                    get(max_n_common_peptides, key, 0),
+                    n_common_peptides
+                )
+                n_possible_unique_peptides[key] =
+                    Int(table.n_possible_unique_peptides[row])
+                n_possible_common_unique_peptides[key] =
+                    hasproperty(table, :n_possible_common_unique_peptides) ?
+                    Int(table.n_possible_common_unique_peptides[row]) :
+                    Int(table.n_possible_unique_peptides[row])
+                folds[key] = protein_to_cv_fold[protein_name].cv_fold
+            end
         end
     end
 

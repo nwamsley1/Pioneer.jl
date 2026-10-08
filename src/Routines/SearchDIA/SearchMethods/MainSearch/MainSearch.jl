@@ -770,11 +770,10 @@ function summarize_results!(
                 continue
             end
 
-            # Load this fold's main search PSMs into in-memory DataFrame
-            # (Tables.columntable + DataFrame materializes columns off the
-            # Arrow mmap so the subsequent in-place writeArrow is safe on
-            # Windows — same pattern as ArrowOperations.jl:68).
-            tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+            # Load this fold's main search PSMs into an in-memory DataFrame and
+            # unmap the file, so the in-place writeArrow below can replace it
+            # (on a network share a still-mapped file cannot be deleted).
+            tbl = load_arrow_dataframe(psm_path)
             n_before = nrow(tbl)
             n_before_file += n_before
             n_total_precs += n_before

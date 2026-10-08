@@ -18,8 +18,11 @@
 """Build score calibration from Arrow record batches using bounded workspace."""
 function _score_calibration_from_arrow(path, score_col; kwargs...)
     build_score_calibration(; kwargs...) do emit
-        for table in Arrow.Stream(path)
-            _emit_score_arrays(emit, Tables.getcolumn(table, score_col), Tables.getcolumn(table, :target))
+        # Scores are emitted one by one, so the file is unmapped afterwards.
+        with_arrow_stream(path) do stream
+            for table in stream
+                _emit_score_arrays(emit, Tables.getcolumn(table, score_col), Tables.getcolumn(table, :target))
+            end
         end
     end
 end

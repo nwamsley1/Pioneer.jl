@@ -64,12 +64,22 @@ end
 
 Attach Pass-1 predictions while merging one run's folds in input order. Return
 the row count and source paths for cleanup after the combined file is written.
+The sources are unmapped before returning, so the caller can delete them at once
+(on a network share a still-mapped file cannot be deleted, and on Linux a deleted
+file keeps its disk space while mapped).
 """
 function _merge_scored_folds!(
     fold_paths::Vector{String},
     merged_path::String;
     sidecar_index = index_sidecar_paths(fold_paths),
 )
+    return with_arrow_tables() do open_table
+        _merge_scored_folds!(open_table, fold_paths, merged_path, sidecar_index)
+    end
+end
+
+function _merge_scored_folds!(open_table, fold_paths::Vector{String}, merged_path::String,
+                              sidecar_index)
     read_seconds = attach_seconds = 0.0
     fold_dfs = DataFrame[]
     cleanup_paths = String[]
@@ -78,10 +88,10 @@ function _merge_scored_folds!(
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing Pass-1 predictions for $path")
         read_started = time()
-        table = Arrow.Table(path)
+        table = open_table(path)
         ref = PSMFileReference(path; table, sidecar_paths=sidecar_index[path])
         main = DataFrame(table; copycols=false)
-        pass1 = Arrow.Table(pass1_path)
+        pass1 = open_table(pass1_path)
         read_seconds += time() - read_started
         attach_started = time()
         n = nrow(main)
@@ -100,7 +110,7 @@ function _merge_scored_folds!(
         attach_seconds += time() - attach_started
         for sidecar in ref.sidecars
             read_started = time()
-            table = Arrow.Table(sidecar.path)
+            table = open_table(sidecar.path)
             for name in sidecar.cols
                 hasproperty(main, name) && continue
                 main[!, name] = collect(Tables.getcolumn(table, name))

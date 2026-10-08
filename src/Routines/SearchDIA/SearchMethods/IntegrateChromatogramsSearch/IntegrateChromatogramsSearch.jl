@@ -229,7 +229,7 @@ function _filter_mbr_sidecars_by_rows!(
     for suffix in (PASS1_SIDECAR_SUFFIX, MBR_SIDECAR_SUFFIX)
         sidecar_path = main_path * suffix
         isfile(sidecar_path) || continue
-        sidecar = DataFrame(Tables.columntable(Arrow.Table(sidecar_path)))
+        sidecar = load_arrow_dataframe(sidecar_path)   # unmapped, so it can be replaced
         writeArrow(sidecar_path, sidecar[selected_rows, :])
     end
     return nothing
@@ -651,9 +651,7 @@ function summarize_results!(
         )
             (isempty(path) || !isfile(path)) && continue
             ref = get(ref_by_path, path, nothing)
-            psms = ref === nothing ?
-                DataFrame(Tables.columntable(Arrow.Table(path))) :
-                load_with_sidecars(ref)
+            psms = ref === nothing ? load_arrow_dataframe(path) : load_with_sidecars(ref)
             if ref !== nothing && summary.qval_deferred &&
                hasproperty(psms, MBR_QVAL_STAGED_COL)
                 # Bake the staged columns over the originals. They are staged under distinct names

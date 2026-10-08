@@ -79,37 +79,45 @@ it), the selected rows of its source table and sidecars. `cols` limits the colum
 """
 function load_staged_psms(path::String, cols::Union{Nothing, Vector{Symbol}} = nothing)
     selection_path = path * MBR_SELECTION_SUFFIX
-    if !isfile(selection_path)
-        tbl = Arrow.Table(path)
-        cols === nothing && return DataFrame(Tables.columntable(tbl))
-        return DataFrame([c => collect(Tables.getcolumn(tbl, c)) for c in cols if hasproperty(tbl, c)])
+    # Read and unmap: these files are replaced or deleted later in the run.
+    isfile(selection_path) || return load_arrow_dataframe(path; cols)
+    source_path, sidecar_list, rows = with_arrow_table(selection_path) do selection
+        metadata = Arrow.getmetadata(selection)
+        (String(metadata["source"]), String(metadata["sidecars"]), Int.(selection.source_row))
     end
-    selection = Arrow.Table(selection_path)
-    metadata = Arrow.getmetadata(selection)
-    sidecar_list = metadata["sidecars"]
-    source = PSMFileReference(metadata["source"];
+    source = PSMFileReference(source_path;
         sidecar_paths = isempty(sidecar_list) ? String[] : split(sidecar_list, '\n'))
-    rows = Int.(selection.source_row)
     return _selected_rows(source, rows, cols)
 end
 
 # The selected rows of the source table and its sidecars, gathered column by column from the
 # memory-mapped Arrow files: never the whole table (staging keeps 12-31% of rows). Columns follow
 # `load_with_sidecars` order (main table, then each sidecar's), restricted to `cols` when given.
+# Each file is unmapped once its rows are copied: these files are replaced or deleted later.
 function _selected_rows(source::PSMFileReference, rows::Vector{Int}, cols::Union{Nothing, Vector{Symbol}})
     df = DataFrame()
     wanted(c) = cols === nothing || c in cols
-    main = Arrow.Table(file_path(source))
-    for c in Tables.columnnames(main)
-        wanted(c) && (df[!, c] = Tables.getcolumn(main, c)[rows])
+    with_arrow_table(file_path(source)) do main
+        for c in Tables.columnnames(main)
+            wanted(c) && (df[!, c] = _selected_owned(main, c, rows, file_path(source)))
+        end
     end
     for s in source.sidecars
-        side = Arrow.Table(s.path)
-        for c in s.cols
-            wanted(c) && (df[!, c] = Tables.getcolumn(side, c)[rows])
+        with_arrow_table(s.path) do side
+            for c in s.cols
+                wanted(c) && (df[!, c] = _selected_owned(side, c, rows, s.path))
+            end
         end
     end
     return df
+end
+
+# Selected rows of one column, copied so they own their memory (list cells too).
+function _selected_owned(tbl, c::Symbol, rows::Vector{Int}, path::String)
+    values = _owned_column(Tables.getcolumn(tbl, c)[rows])
+    _owns_memory(values) || error("Column $c of $path has type $(typeof(values)), " *
+                                  "which may still reference the mapped file")
+    return values
 end
 
 """Remove the staged selection at `path` once the real table has been written there."""
@@ -166,7 +174,7 @@ function _stage_mbr_integration_inputs!(
         pass1_path = path * PASS1_SIDECAR_SUFFIX
         isfile(pass1_path) || error("Missing MBR Pass-1 sidecar at $pass1_path")
         decide = materialize_columns(candidate_ref, [:precursor_idx, :ms_file_idx, :qval, :global_qval])
-        pass1 = DataFrame(Tables.columntable(Arrow.Table(pass1_path)))
+        pass1 = load_arrow_dataframe(pass1_path)
         nrow(decide) == nrow(pass1) ||
             error("MBR Pass-1 sidecar row-count mismatch at $pass1_path")
 
@@ -307,7 +315,8 @@ function _write_mbr_recovery_sidecars_from_candidates!(
     cand_cf_idx    = candidates[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
     cursor = 0
     for (file_idx, path) in enumerate(file_paths)
-        main = Arrow.Table(path)
+        # Just the row identifiers, copied, so `path` is not left mapped (it is rewritten later).
+        main = load_arrow_dataframe(path; cols = [:precursor_idx, :scan_idx])
         n = n_rows[file_idx]
         length(main.precursor_idx) == n ||
             error("MBR recovery row-count mismatch at $path")
@@ -469,39 +478,41 @@ function _merge_mbr_recoveries!(
         recovery_path = path * RECOVERY_SIDECAR_SUFFIX
         isfile(recovery_path) ||
             error("Missing MBR recovery sidecar at $recovery_path")
-        main = DataFrame(Tables.columntable(Arrow.Table(path)))
-        recovery = Arrow.Table(recovery_path)
+        main = load_arrow_dataframe(path)   # unmapped: `path` is rewritten below
         n = nrow(main)
-        length(recovery.precursor_idx) == n ||
-            error("MBR recovery sidecar row-count mismatch at $recovery_path")
-        # Resolved once, not once per row -- see _assert_recovery_aligned.
-        _assert_recovery_aligned(main[!, :precursor_idx], main[!, :scan_idx],
-                                 recovery.precursor_idx, recovery.scan_idx, n, path)
+        # Every recovery column is copied into `main`, so the sidecar is unmapped afterwards.
+        with_arrow_table(recovery_path) do recovery
+            length(recovery.precursor_idx) == n ||
+                error("MBR recovery sidecar row-count mismatch at $recovery_path")
+            # Resolved once, not once per row -- see _assert_recovery_aligned.
+            _assert_recovery_aligned(main[!, :precursor_idx], main[!, :scan_idx],
+                                     recovery.precursor_idx, recovery.scan_idx, n, path)
 
-        main[!, :mbr_recovered] =
-            _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered)
-        main[!, :MBR_transfer_candidate] =
-            _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate)
-        main[!, :mbr_target_decoy_prob] =
-            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob)
-        main[!, :ftr_qval_true] =
-            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_qval_true)
-        main[!, :ftr_pep_true] =
-            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_pep_true)
-        main[!, :mbr_total_error_qval_true] =
-            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_qval_true)
-        main[!, :mbr_total_error_rate_true] =
-            _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_rate_true)
-        main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
-            _copy_sidecar_column!(
-                Vector{Float32}(undef, n),
-                Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN),
-            )
-        main[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
-            _copy_sidecar_column!(
-                Vector{UInt8}(undef, n),
-                Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN),
-            )
+            main[!, :mbr_recovered] =
+                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered)
+            main[!, :MBR_transfer_candidate] =
+                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate)
+            main[!, :mbr_target_decoy_prob] =
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob)
+            main[!, :ftr_qval_true] =
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_qval_true)
+            main[!, :ftr_pep_true] =
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_pep_true)
+            main[!, :mbr_total_error_qval_true] =
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_qval_true)
+            main[!, :mbr_total_error_rate_true] =
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_rate_true)
+            main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+                _copy_sidecar_column!(
+                    Vector{Float32}(undef, n),
+                    Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN),
+                )
+            main[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
+                _copy_sidecar_column!(
+                    Vector{UInt8}(undef, n),
+                    Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN),
+                )
+        end
 
         keep = _mbr_keep_mask(main[!, :qval], main[!, :global_qval],
                               main[!, :mbr_recovered], n, q_value_threshold)
@@ -558,7 +569,7 @@ function _remap_mbr_scores!(
 
     for ref in refs
         path = file_path(ref)
-        main = DataFrame(Tables.columntable(Arrow.Table(path)))
+        main = load_arrow_dataframe(path)   # unmapped: `path` is rewritten below
         hasproperty(main, :mbr_recovered) || continue
         has_counterfactual =
             hasproperty(main, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN)

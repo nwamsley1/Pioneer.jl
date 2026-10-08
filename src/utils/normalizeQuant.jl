@@ -212,7 +212,7 @@ function getPrecursorQuantConsensus(
 
     values_by_precursor = Dict{UInt32, Vector{Float32}}()
     for fpath in psms_paths
-        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        psms = load_arrow_dataframe(fpath)
         file_values = _file_precursor_log2_quant(
             psms,
             quant_col_name,
@@ -272,7 +272,7 @@ function getQuantSplines(psms_paths::Vector{String},
     min_rt, max_rt = typemax(Float32), typemin(Float32)
     min_bins = _min_bins_for_spline(spline_n_knots)
     for fpath in psms_paths
-        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        psms = load_arrow_dataframe(fpath)
         hasproperty(psms, :irt_obs) || throw(ArgumentError(
             "Matched-precursor quant normalization requires column irt_obs."
         ))
@@ -464,7 +464,7 @@ function getPairwiseQuantTree(
 
     run_anchors = Vector{Dict{UInt32, QuantRunAnchor}}(undef, length(psms_paths))
     for (position, fpath) in enumerate(psms_paths)
-        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        psms = load_arrow_dataframe(fpath)
         run_anchors[position] = _file_precursor_quant_anchors(
             psms,
             quant_col_name,
@@ -684,7 +684,7 @@ function applyNormalization!(
     corrections::Dictionary{String, Any}
 )
     for fpath in psms_paths
-        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        psms = load_arrow_dataframe(fpath)
         norm_quant_col = Symbol(string(quant_col) * "_normalized")
         # getQuantSplines skips files that cannot support a spline, so this key may
         # be absent. Emit the column unchanged rather than omitting it: downstream

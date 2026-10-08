@@ -119,20 +119,23 @@ end
 Estimate the maximum number of rows that fit in `memory_mb` given the schema of `sample_file`.
 """
 function estimate_max_rows(memory_mb::Float64, sample_file::String)
-    tbl = Arrow.Table(sample_file)
-    bytes_per_row = 0
-    for name in Tables.columnnames(tbl)
-        col = Tables.getcolumn(tbl, name)
-        T = eltype(col)
-        T_inner = Base.nonmissingtype(T)
-        if isbitstype(T_inner)
-            bytes_per_row += sizeof(T_inner)
-        else
-            bytes_per_row += 64  # conservative estimate for strings / non-bits types
+    # Only column types are needed; the file is unmapped afterwards.
+    bytes_per_row = with_arrow_table(sample_file) do tbl
+        total = 0
+        for name in Tables.columnnames(tbl)
+            col = Tables.getcolumn(tbl, name)
+            T = eltype(col)
+            T_inner = Base.nonmissingtype(T)
+            if isbitstype(T_inner)
+                total += sizeof(T_inner)
+            else
+                total += 64  # conservative estimate for strings / non-bits types
+            end
+            if T !== T_inner
+                total += 1  # missing indicator
+            end
         end
-        if T !== T_inner
-            bytes_per_row += 1  # missing indicator
-        end
+        total
     end
     bytes_per_row = max(bytes_per_row, 1)
     return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
@@ -354,10 +357,10 @@ function summarize_results!(
     merge_started = last_merge_log = time()
     sidecar_index = index_sidecar_paths(valid_fold_paths)
     @debug_l1 "ScoringSearch fold sidecar discovery complete: folds=$(length(valid_fold_paths)) elapsed=$(round(time() - merge_started, digits=2))s"
-    merge_read = merge_attach = merge_concatenate = merge_write = 0.0
+    merge_read = merge_attach = merge_concatenate = merge_write = merge_cleanup = 0.0
     merged_rows = 0
+    n_deleted = 0
     merged_psm_paths = String[]
-    fold_paths_to_delete = String[]
     for (run_number, (idx, base_path)) in enumerate(valid_file_data)
         merged_path = "$(base_path).arrow"
         merged = _merge_scored_folds!(
@@ -366,7 +369,12 @@ function summarize_results!(
         )
         if merged !== nothing
             push!(merged_psm_paths, merged_path)
-            append!(fold_paths_to_delete, merged.cleanup_paths)
+            # The merge unmapped its sources, so delete them now rather than after every
+            # run is merged: peak extra disk is one run's folds, not the whole experiment's.
+            cleanup_started = time()
+            foreach(safeRm, merged.cleanup_paths)
+            merge_cleanup += time() - cleanup_started
+            n_deleted += length(merged.cleanup_paths)
             merged_rows += merged.rows
             merge_read += merged.read_seconds
             merge_attach += merged.attach_seconds
@@ -387,14 +395,7 @@ function summarize_results!(
         "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
         "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
 
-    # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
-    @debug_l1 "ScoringSearch fold cleanup starting: files=$(length(fold_paths_to_delete))"
-    cleanup_started = time()
-    GC.gc(false)
-    for fpath in fold_paths_to_delete
-        safeRm(fpath)
-    end
-    @debug_l1 "ScoringSearch fold cleanup complete: $(round(time() - cleanup_started, digits = 2))s"
+    @debug_l1 "ScoringSearch fold cleanup complete: files=$n_deleted $(round(merge_cleanup, digits = 2))s"
 
     # Create references for second pass PSMs (now using merged files)
     @debug_l1 "ScoringSearch merged-file metadata starting: files=$(length(merged_psm_paths))"

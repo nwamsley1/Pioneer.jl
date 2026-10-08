@@ -541,11 +541,13 @@ function run_protein_inference!(
     unique_set = Set{Tuple{UInt32, UInt32, Bool, UInt8}}()
     for psm_ref in ProgressBar(passing_refs)
         exists(psm_ref) || continue
-        table = Arrow.Table(file_path(psm_ref))
-        :precursor_idx in Tables.columnnames(table) || continue
-        pidx = Tables.getcolumn(table, :precursor_idx)
-        @inbounds for i in eachindex(pidx)
-            push!(unique_set, _inference_key(inputs, pidx[i]))
+        # Only keys are kept, so the file is unmapped afterwards.
+        with_arrow_table(file_path(psm_ref)) do table
+            :precursor_idx in Tables.columnnames(table) || return nothing
+            pidx = Tables.getcolumn(table, :precursor_idx)
+            @inbounds for i in eachindex(pidx)
+                push!(unique_set, _inference_key(inputs, pidx[i]))
+            end
         end
     end
 
