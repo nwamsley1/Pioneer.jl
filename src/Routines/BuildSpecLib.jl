@@ -195,6 +195,9 @@ function _build_spec_lib(params_path::String)
         # existing files) they stay nothing and buildPionLib uses the disk path.
         detailed_frags = nothing
         pid_to_fid = nothing
+        # Spline models stream their fragments to detailed_fragments.bin during prediction and keep only the
+        # fragment-index selection (stream_spline_fragments); Prosit models still decode in memory.
+        index_selection = nothing
         if params["predict_fragments"]
             # Fragment prediction workflow
             @user_info "Starting fragment prediction workflow..."
@@ -358,15 +361,23 @@ function _build_spec_lib(params_path::String)
                         min_frag_intensity = const_min_frag_intensity,
                     )
                 end
-                predict_fragments(
-                    precursors_arrow_path,
-                    raw_fragments_arrow_path,
-                    koina_model_type,
-                    filter_ctx,
-                    24,     # max_koina_requests
-                    1000,   # max_koina_batch
-                    prediction_model
-                )
+                if koina_model_type isa SplineCoefficientModel
+                    index_selection, N_FRAGMENTS = stream_spline_fragments(
+                        precursors_arrow_path, lib_dir, koina_model_type, filter_ctx,
+                        get_altimeter_ion_dict(asset_path("ion_dictionary.txt")), frag_annotation_type,
+                        asset_path("immonium.txt"), Dict{String, Int8}(), iso_mod_to_mass;
+                        index_filters = (UInt8(4), UInt8(3), false))   # y_start_index, b_start_index, include_p_index
+                else
+                    predict_fragments(
+                        precursors_arrow_path,
+                        raw_fragments_arrow_path,
+                        koina_model_type,
+                        filter_ctx,
+                        24,     # max_koina_requests
+                        1000,   # max_koina_batch
+                        prediction_model
+                    )
+                end
                 nothing
             end
             _record_stage!(timings, "Fragment Prediction", frag_predict_timing)
@@ -375,51 +386,51 @@ function _build_spec_lib(params_path::String)
             process_timing = @timed begin
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
-                fragments_table = Arrow.Table(raw_fragments_arrow_path)
-                # Fused: decode raw_fragments directly into the final
-                # Vector{SplineCompactFrag or CompactFrag} + CSR, in memory, skipping
-                # the fragments_table.arrow re-encode/re-read. Handed to buildPionLib
-                # below without touching disk.
-                if koina_model_type isa InstrumentAgnosticModel
-                    # Prosit: scalar total-abundance intensities, string annotations,
-                    # NO spline knots (contrast Altimeter below).
-                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
-                        precursors_table,
-                        fragments_table,
-                        frag_annotation_type,
-                        asset_path("immonium.txt"),
-                        lib_dir,
-                        Dict{String, Int8}(),
-                        iso_mod_to_mass,
-                        koina_model_type
-                    )
-                else
-                    # Altimeter: record the spline knots (Arrow metadata) + decode via
-                    # the integer altimeter ion dictionary.
-                    meta = Arrow.getmetadata(fragments_table)
-                    spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
-                    serialize_to_jls(
-                        joinpath(lib_dir, "spline_knots.jls"),
-                        spl_knots
-                    )
-                    ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
-                    detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
-                        precursors_table,
-                        fragments_table,
-                        frag_annotation_type,
-                        ion_dictionary,
-                        asset_path("immonium.txt"),
-                        lib_dir,
-                        Dict{String, Int8}(),
-                        iso_mod_to_mass,
-                        koina_model_type
-                    )
+                if index_selection === nothing
+                    fragments_table = Arrow.Table(raw_fragments_arrow_path)
+                    # Fused: decode raw_fragments directly into the final
+                    # Vector{SplineCompactFrag or CompactFrag} + CSR, in memory, skipping
+                    # the fragments_table.arrow re-encode/re-read. Handed to buildPionLib
+                    # below without touching disk.
+                    if koina_model_type isa InstrumentAgnosticModel
+                        # Prosit: scalar total-abundance intensities, string annotations,
+                        # NO spline knots (contrast Altimeter below).
+                        detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
+                            precursors_table,
+                            fragments_table,
+                            frag_annotation_type,
+                            asset_path("immonium.txt"),
+                            lib_dir,
+                            Dict{String, Int8}(),
+                            iso_mod_to_mass,
+                            koina_model_type
+                        )
+                    else
+                        # Altimeter: record the spline knots (Arrow metadata) + decode via
+                        # the integer altimeter ion dictionary.
+                        meta = Arrow.getmetadata(fragments_table)
+                        spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
+                        serialize_to_jls(
+                            joinpath(lib_dir, "spline_knots.jls"),
+                            spl_knots
+                        )
+                        ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
+                        detailed_frags, pid_to_fid = build_detailed_frags_from_raw(
+                            precursors_table,
+                            fragments_table,
+                            frag_annotation_type,
+                            ion_dictionary,
+                            asset_path("immonium.txt"),
+                            lib_dir,
+                            Dict{String, Int8}(),
+                            iso_mod_to_mass,
+                            koina_model_type
+                        )
+                    end
+                    N_FRAGMENTS = length(fragments_table[:mz])
                 end
 
-
-
                 # Process precursor table
-                N_FRAGMENTS = length(fragments_table[:mz])
                 N_PRECURSORS = length(precursors_table[:mz])
                 N_DECOYS  = sum(precursors_table[:decoy])
                 N_TARGETS = N_PRECURSORS - N_DECOYS
@@ -496,7 +507,7 @@ function _build_spec_lib(params_path::String)
             # The fused path hands detailed_frags to buildPionLib in memory, so it
             # needs only the precursor/protein tables. The disk path (resume with
             # predict_fragments=false) still requires the fragment intermediates.
-            required_files = detailed_frags === nothing ?
+            required_files = detailed_frags === nothing && index_selection === nothing ?
                 ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"] :
                 ["precursors_table.arrow", "proteins_table.arrow"]
             if !all(isfile.(joinpath.(lib_dir, required_files)))
@@ -508,7 +519,16 @@ function _build_spec_lib(params_path::String)
 
         # Build final indices
         @user_info "Building final library indices..."
-        index_timing = @timed begin
+        index_timing = @timed if index_selection !== nothing
+            validate_fragment_index_filters(UInt8(4), const_y_start, UInt8(3), const_b_start, false, const_include_p)
+            write_fragment_indexes(lib_dir, index_selection, fragment_index_widths(_params.library_params),
+                                   frag_index_local_id_request(_params.library_params);
+                                   frag_bin_tol_ppm = Float32(get(_params.library_params, "frag_bin_tol_ppm", 0.0)),
+                                   frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
+                                   rt_bin_tol = 3.0f0)
+            index_selection = nothing
+            nothing
+        else
             buildPionLib(
                 lib_dir,
                 UInt8(4),       # y_start_index

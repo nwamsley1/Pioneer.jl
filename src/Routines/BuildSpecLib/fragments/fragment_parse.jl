@@ -720,7 +720,7 @@ function build_detailed_frags_from_raw(
         precursor_table[:sequence], precursor_table[:mods],
         precursor_table[:isotope_mods], precursor_table[:precursor_charge],
         ion_annotation_to_data_dict, mods_to_sulfur_diff, iso_mod_to_mass,
-        n_frags, n_precursors)
+        n_frags, n_precursors, 0)
 
     serialize_to_jls(joinpath(out_dir, "frag_name_to_idx.jls"), ion_dictionary)
     serialize_to_jls(joinpath(out_dir, "ion_annotations.jls"), ion_annotation_to_data_dict)
@@ -732,7 +732,9 @@ end
 # span capped at the precursor sulfur; isotope-mod m/z shift; ion flags) and
 # getDetailedFrags's per-precursor positional rank, emitting SplineCompactFrag at
 # detailed[fi] (1:1 with raw row fi). Builds the CSR prec_to_frag first-occurrence-
-# only + right-back-filled, identical to rebuild_prec_to_frag_index!.
+# only + right-back-filled, identical to rebuild_prec_to_frag_index!. With `pid_offset`, the fragments belong to
+# precursors pid_offset+1 : pid_offset+n_precursors (one batch of a streamed build) and prec_to_frag is batch-local
+# (entry pid - pid_offset); prec_id and the precursor columns stay global.
 function _fill_detailed_from_raw!(
     detailed::Vector{SplineCompactFrag{N, T}},
     prec_to_frag::Vector{UInt64},
@@ -741,7 +743,7 @@ function _fill_detailed_from_raw!(
     ion_dict::Dict{Int32, PioneerFragAnnotation},
     mods_to_sulfur_diff::Dict{String, Int8},
     iso_mod_to_mass::Dict{String, Float32},
-    n_frags::Int, n_precursors::Int) where {N, T}
+    n_frags::Int, n_precursors::Int, pid_offset::Int) where {N, T}
 
     seq_idx_to_sulfur  = zeros(UInt8, 255)
     seq_idx_to_iso_mod = zeros(Float32, 255)
@@ -756,8 +758,8 @@ function _fill_detailed_from_raw!(
         if pid != last_pid
             last_pid = pid
             rank = 0
-            if prec_to_frag[pid] == 0
-                prec_to_frag[pid] = UInt64(fi)
+            if prec_to_frag[pid - pid_offset] == 0
+                prec_to_frag[pid - pid_offset] = UInt64(fi)
             end
             fill!(seq_idx_to_sulfur, zero(UInt8))
             fill!(seq_idx_to_iso_mod, zero(Float32))

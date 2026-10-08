@@ -449,6 +449,7 @@ function importScripts()
     safe_include!(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_parse.jl"))
     safe_include!(joinpath(root_path, "streaming", "stream_precursors.jl"))
+    safe_include!(joinpath(root_path, "streaming", "stream_fragments.jl"))
 
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))

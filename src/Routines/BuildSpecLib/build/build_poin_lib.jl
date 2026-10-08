@@ -48,10 +48,20 @@ function write_fragment_indexes(spec_lib_path::AbstractString, temp_lib, widths,
                                 include_p_index::Bool = false, keep_entries = Dict{String, Any}[])
     sel = select_index_fragments(temp_lib; y_start_index = y_start_index, b_start_index = b_start_index,
                                  include_p_index = include_p_index)
+    write_fragment_indexes(spec_lib_path, sel, widths, id_type_request; frag_bin_tol_ppm = frag_bin_tol_ppm,
+                           frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_bin_tol, keep_entries = keep_entries)
+    return nothing
+end
+
+"The same from the index fragments already selected (`IndexFragSelection`, e.g. by a streamed fragment build)."
+function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSelection, widths,
+                                id_type_request::AbstractString;
+                                frag_bin_tol_ppm::Float32, frag_bin_tol_mda::Float32 = 2.0f0, rt_bin_tol::Float32,
+                                keep_entries = Dict{String, Any}[])
     entries = Dict{String, Any}[keep_entries...]
     for (j, w) in enumerate(widths)
         first = j == 1 && isempty(keep_entries)   # the library's first index takes the historical names
-        id_type = resolve_and_record_local_id_type(temp_lib, id_type_request, w, spec_lib_path; record = first)
+        id_type = resolve_and_record_local_id_type(sel.prec_mzs, id_type_request, w, spec_lib_path; record = first)
         main_file, presearch_file = fragment_index_files(w, first)
         for (file, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
             index = build_partitioned_index_from_selection(sel; partition_width = Float32(w),
@@ -129,9 +139,14 @@ Resolve the fragment-index local ID type of one partition width (`resolve_local_
 indexes agree, and log the choice. With `record`, also record it in the library's `config.json`
 (`library_params.frag_index_local_id_type_resolved`, `prec_partition_width_resolved`: the library's first index).
 """
-function resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real, spec_lib_path::AbstractString;
-                                          record::Bool = true)
-    id_type, n_over, n_bins = resolve_local_id_type(requested, getMz(getPrecursors(temp_lib)), partition_width)
+resolve_and_record_local_id_type(temp_lib, requested::AbstractString, partition_width::Real,
+                                 spec_lib_path::AbstractString; record::Bool = true) =
+    resolve_and_record_local_id_type(getMz(getPrecursors(temp_lib)), requested, partition_width, spec_lib_path;
+                                     record = record)
+
+function resolve_and_record_local_id_type(prec_mzs::AbstractVector{<:Real}, requested::AbstractString,
+                                          partition_width::Real, spec_lib_path::AbstractString; record::Bool = true)
+    id_type, n_over, n_bins = resolve_local_id_type(requested, prec_mzs, partition_width)
     why = requested == "auto" ?
         (n_over > 0 ? "$n_over of $n_bins $(partition_width)-Da bins exceed $MAX_LOCAL_PRECS precursors" :
                       "every $(partition_width)-Da bin fits in $MAX_LOCAL_PRECS precursors") : "set explicitly"

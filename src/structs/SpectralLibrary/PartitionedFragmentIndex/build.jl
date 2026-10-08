@@ -64,10 +64,14 @@ end
 Calls `f(rank, dfrag)` for precursor `pid`'s index fragments in rank order: its fragments that pass the index
 ion-type filters, at most 8 (the UInt8 rank bitmask). Returns how many it visited.
 """
-@inline function _visit_index_frags(f, frag_lookup, detailed_frags, pid, filt::Tuple{UInt8, UInt8, Bool})
+@inline _visit_index_frags(f, frag_lookup, detailed_frags, pid, filt::Tuple{UInt8, UInt8, Bool}) =
+    _visit_index_frags(f, detailed_frags, getPrecFragRange(frag_lookup, pid), filt)
+
+"The same over the fragments `detailed_frags[frag_range]` (one precursor's, in rank order)."
+@inline function _visit_index_frags(f, detailed_frags, frag_range::AbstractUnitRange, filt::Tuple{UInt8, UInt8, Bool})
     y_start_index, b_start_index, include_p_index = filt
     rank = 0
-    for fi in getPrecFragRange(frag_lookup, pid)
+    for fi in frag_range
         dfrag = detailed_frags[fi]
         # Apply fragment index ion-type filters
         if isY(dfrag)
