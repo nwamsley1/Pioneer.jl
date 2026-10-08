@@ -187,7 +187,14 @@ _GC_MARK_THREADS=$(( (_THREAD_COUNT + 1) / 2 ))
 if [ "$_GC_MARK_THREADS" -lt 1 ]; then
     _GC_MARK_THREADS=1
 fi
-export JULIA_NUM_GC_THREADS="${_GC_MARK_THREADS},1"
+# Library builds run without the concurrent sweep thread: with it, large builds intermittently crashed
+# (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
+if [[ "$SUBCOMMAND" == "predict" ]]; then
+    _GC_SWEEP_THREADS=0
+else
+    _GC_SWEEP_THREADS=1
+fi
+export JULIA_NUM_GC_THREADS="${_GC_MARK_THREADS},${_GC_SWEEP_THREADS}"
 
 # Check if subcommand was provided
 if [[ -z "$SUBCOMMAND" ]]; then

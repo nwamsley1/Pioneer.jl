@@ -184,7 +184,11 @@ if "%JULIA_NUM_THREADS%"=="auto" (
 )
 set /a _GC_MARK_THREADS=(_THREAD_COUNT + 1) / 2
 if %_GC_MARK_THREADS% LSS 1 set _GC_MARK_THREADS=1
-set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,1
+rem Library builds run without the concurrent sweep thread: with it, large builds intermittently crashed
+rem (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
+set _GC_SWEEP_THREADS=1
+if /I "%SUBCOMMAND%"=="predict" set _GC_SWEEP_THREADS=0
+set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,%_GC_SWEEP_THREADS%
 
 rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
