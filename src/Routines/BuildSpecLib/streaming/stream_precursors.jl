@@ -123,6 +123,25 @@ struct StreamPeptides
     protein_proteome::Vector{String}
 end
 
+"""
+    stable_sortperm(v) -> Vector{Int}
+
+sortperm(v; alg = stable) computed with a parallel sort: AcceleratedKernels.sortperm!, then each run of equal
+values put back in index order.
+"""
+function stable_sortperm(v::AbstractVector)
+    ix = Vector{Int}(undef, length(v))
+    AcceleratedKernels.sortperm!(ix, v)
+    i = 1; n = length(ix)
+    while i < n
+        j = i
+        while j < n && isequal(v[ix[j + 1]], v[ix[i]]); j += 1; end
+        j > i && sort!(view(ix, i:j))
+        i = j + 1
+    end
+    return ix
+end
+
 function stream_digest(proteins::Vector{FastaEntry}, regex, max_length::Int, min_length::Int, missed_cleavages::Int,
                        specificity::AbstractString, nterm_met_excision::Bool)
     max_length <= SEQ_MAX_LENGTH || error("streaming build supports peptides up to $SEQ_MAX_LENGTH residues")
@@ -150,7 +169,7 @@ function stream_digest(proteins::Vector{FastaEntry}, regex, max_length::Int, min
     n = length(codes)
     folded = Vector{SeqCode}(undef, n)
     Threads.@threads for i in 1:n; folded[i] = fold_seq(codes[i]); end
-    perm = sortperm(folded; alg = Base.Sort.DEFAULT_STABLE)     # runs of one folded sequence, encounter order kept
+    perm = stable_sortperm(folded)          # runs of one folded sequence, encounter order kept
     run_starts = Int[]
     for i in 1:n
         (i == 1 || folded[perm[i]] != folded[perm[i - 1]]) && push!(run_starts, i)
@@ -360,13 +379,14 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
     for k in 1:U, f in var_offsets[k]:(var_offsets[k + 1] - 1); unit_pep[f] = UInt32(k); end
     # only peptides with units take part in grouping (add_mods emitted nothing for the others)
     live = [k for k in 1:U if var_offsets[k + 1] > var_offsets[k]]
-    target_folded = sort!([fold_seq(peps.code[k]) for k in live])
+    target_folded = [fold_seq(peps.code[k]) for k in live]
+    AcceleratedKernels.sort!(target_folded)
     in_targets(c) = (r = searchsorted(target_folded, c); !isempty(r))
 
     # entrapments: groups = exact target sequences, sorted; each slot shuffled from the peptide's own RNG stream
     entrap = DerivedSeqs(); entrap_pep = UInt32[]; entrap_group = UInt8[]
     reserved = Set{SeqCode}()
-    sorted_live = sort(live, by = k -> peps.code[k])
+    sorted_live = live[stable_sortperm([peps.code[k] for k in live])]     # exact sequences are unique
     ss = new_shuffler()
     pep_entraps = [UInt32[] for _ in 1:(entrapment_r > 0 ? U : 0)]
     if entrapment_r > 0
@@ -400,28 +420,31 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
         groups = Tuple{SeqCode, Int, Int}[]        # (code, kind 0 = target peptide / 1 = entrapment, index)
         for k in live; push!(groups, (peps.code[k], 0, k)); end
         for e in eachindex(entrap.code); push!(groups, (entrap.code[e], 1, e)); end
-        sort!(groups, by = first)
+        groups = groups[stable_sortperm(first.(groups))]       # target / entrapment sequences are distinct
         entrap_folded = Set{SeqCode}(fold_seq(c) for c in entrap.code)
         taken_d(c) = in_targets(c) || c in entrap_folded || c in reserved
-        empty!(reserved)
+        empty!(reserved); sizehint!(reserved, length(groups))
         # every group's first candidate depends only on its own sequence's RNG stream: compute them in parallel
         NG = length(groups)
         pos_off = Vector{Int}(undef, NG + 1); pos_off[1] = 1
         for gi in 1:NG; pos_off[gi + 1] = pos_off[gi] + seq_length(groups[gi][1]); end
         cand0 = Vector{SeqCode}(undef, NG); cand0_pos = Vector{UInt8}(undef, pos_off[end] - 1)
+        cand0_free = Vector{Bool}(undef, NG)     # first candidate avoids every target and entrapment (order-free)
         Threads.@threads :dynamic for gis in collect(Iterators.partition(1:NG, 4096))
             tss = new_shuffler()
             for gi in gis
                 seq = decode_seq(groups[gi][1])
                 cand0[gi] = encode_seq(shuffle_sequence!(tss, seq; method = decoy_method, rng = sequence_rng(seq, seed, 1)))
                 copyto!(cand0_pos, pos_off[gi], tss.new_positions, 1, length(seq))
+                f0 = fold_seq(cand0[gi])
+                cand0_free[gi] = !(in_targets(f0) || f0 in entrap_folded)
             end
         end
         @user_info @sprintf("Streaming build:   decoy groups + first candidates %.1f s", time() - t0); t0 = time()
         # accept in sorted order against everything reserved so far; a rejected first candidate is redrawn
         # sequentially from a fresh stream (identical to drawing in order)
         for (gi, (code, kind, idx)) in enumerate(groups)
-            if !taken_d(fold_seq(cand0[gi]))
+            if cand0_free[gi] && !(fold_seq(cand0[gi]) in reserved)
                 d = push_derived!(decoy, cand0[gi], view(cand0_pos, pos_off[gi]:(pos_off[gi + 1] - 1)))
             else
                 seq = decode_seq(code)
@@ -433,7 +456,7 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
             members = kind == 0 ? (var_offsets[idx]:(var_offsets[idx + 1] - 1)) : entrap_units_of[idx]
             for u in members; decoy_of_input[u] = UInt32(d); end
         end
-        cand0 = nothing; cand0_pos = nothing
+        cand0 = nothing; cand0_pos = nothing; cand0_free = nothing
         @user_info @sprintf("Streaming build:   decoy accept %.1f s", time() - t0)
     end
     return StreamUnits(peps, mc, var_offsets, unit_pep, n_fixed, entrap, entrap_pep, entrap_group,
@@ -572,6 +595,88 @@ function assign_pair_ids!(pair_id::Vector{UInt32}, epair_id::Vector{UInt32}, pre
         end
     end
     return nothing
+end
+
+# ── final row order ───────────────────────────────────────────────────────────────────────────────────────────
+
+"Everything the final-order comparison needs (rows are (unit - 1) * nz + charge index)."
+struct RowOrder
+    units::StreamUnits
+    unit_irt::Vector{Float32}
+    nz::Int
+    mods_cache::Dict{Int, String}
+    mbuf::Vector{Tuple{UInt8, UInt8}}
+    rev::Vector{UInt8}
+end
+@inline row_unit(o::RowOrder, r::Integer) = (Int(r) - 1) ÷ o.nz + 1
+@inline row_zi(o::RowOrder, r::Integer) = (Int(r) - 1) % o.nz + 1
+
+function unit_mods_str(o::RowOrder, u::Int)
+    get!(o.mods_cache, u) do
+        seq = decode_seq(unit_code(o.units, u))
+        mods_string(seq, first(unit_mods!(o.mbuf, o.rev, o.units, u)), o.units.mod_names)
+    end
+end
+
+"parse_chronologer_output's tie order after iRT: (sequence, mods, charge, decoy, entrapment group)."
+function tie_less(o::RowOrder, a::UInt32, b::UInt32)
+    ua, ub = row_unit(o, a), row_unit(o, b)
+    ca, cb = unit_code(o.units, ua), unit_code(o.units, ub)
+    ca != cb && return isless(ca, cb)
+    if ua != ub
+        ma, mb = unit_mods_str(o, ua), unit_mods_str(o, ub)
+        ma != mb && return isless(ma, mb)
+    end
+    row_zi(o, a) != row_zi(o, b) && return row_zi(o, a) < row_zi(o, b)
+    da, db = is_decoy_unit(o.units, ua), is_decoy_unit(o.units, ub)
+    da != db && return isless(da, db)
+    return entrapment_group(o.units, ua) < entrapment_group(o.units, ub)
+end
+
+"Full iRT order: iRT, then tie_less."
+function irt_less(o::RowOrder, a::UInt32, b::UInt32)
+    ia, ib = o.unit_irt[row_unit(o, a)], o.unit_irt[row_unit(o, b)]
+    return isequal(ia, ib) ? tie_less(o, a, b) : isless(ia, ib)
+end
+
+"""
+Sort `rows` by a Float32 key (per unit when `per_unit`, else per row) with one parallel sort of
+(order-preserving key bits << 32 | row). Rows of one unit share a per-unit key and come out in charge order, which
+is what the full comparison gives; equal-key runs spanning several units are ordered by tie_less (iRT key) or
+irt_less (m/z key).
+"""
+function sort_rows_by_key!(rows::AbstractVector{UInt32}, o::RowOrder, key::Vector{Float32}, per_unit::Bool)
+    n = length(rows)
+    n <= 1 && return rows
+    keys = Vector{UInt64}(undef, n)
+    Threads.@threads for i in 1:n
+        r = rows[i]
+        k = per_unit ? key[row_unit(o, r)] : key[r]
+        keys[i] = (UInt64(_ordered_bits(k)) << 32) | UInt64(r)
+    end
+    AcceleratedKernels.sort!(keys)
+    Threads.@threads for i in 1:n; rows[i] = UInt32(keys[i] & 0xffffffff); end
+    i = 1
+    while i < n
+        hi = keys[i] >> 32
+        j = i
+        mixed = false
+        u = row_unit(o, rows[i])
+        while j < n && (keys[j + 1] >> 32) == hi
+            j += 1
+            mixed |= row_unit(o, rows[j]) != u
+        end
+        if mixed
+            lt = per_unit ? ((a, b) -> tie_less(o, a, b)) : ((a, b) -> irt_less(o, a, b))
+            if j == i + 1
+                lt(rows[j], rows[i]) && ((rows[i], rows[j]) = (rows[j], rows[i]))
+            else
+                sort!(view(rows, i:j); lt = lt)
+            end
+        end
+        i = j + 1
+    end
+    return rows
 end
 
 "Log a phase's time with the process peak RSS so far and the live heap after a full collection."
@@ -716,55 +821,11 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     rows = UInt32[r for r in 1:(NU * nz) if present[r]]
     unit_of(r) = (Int(r) - 1) ÷ nz + 1
     zi_of(r) = (Int(r) - 1) % nz + 1
-    mods_str_cache = Dict{Int, String}()
-    unit_mods_str(u) = get!(mods_str_cache, u) do
-        seq = decode_seq(unit_code(units, u))
-        mods_string(seq, first(unit_mods!(mbuf, rev, units, u)), names)
-    end
-    function tie_less(a, b)       # (sequence, mods, charge, decoy, entrapment group)
-        ua, ub = unit_of(a), unit_of(b)
-        ca, cb = unit_code(units, ua), unit_code(units, ub)
-        ca != cb && return isless(ca, cb)
-        if ua != ub
-            ma, mb = unit_mods_str(ua), unit_mods_str(ub)
-            ma != mb && return isless(ma, mb)
-        end
-        zi_of(a) != zi_of(b) && return zi_of(a) < zi_of(b)
-        da, db = is_decoy_unit(units, ua), is_decoy_unit(units, ub)
-        da != db && return isless(da, db)
-        return entrapment_group(units, ua) < entrapment_group(units, ub)
-    end
-    irt_lt(a, b) = (ia = unit_irt[unit_of(a)]; ib = unit_irt[unit_of(b)]; isequal(ia, ib) ? tie_less(a, b) : isless(ia, ib))
-    # sort by a numeric key: one parallel sort of (order-preserving key bits << 32 | row). Rows of one unit share
-    # its iRT and are then in charge order, which is what the full comparison gives; only equal-key runs that span
-    # several units still need the full comparison.
-    function sort_by_key!(rows_v, key_of, tie_lt)
-        n = length(rows_v)
-        n <= 1 && return rows_v
-        keys = Vector{UInt64}(undef, n)
-        Threads.@threads for i in 1:n
-            r = rows_v[i]
-            keys[i] = (UInt64(_ordered_bits(key_of(r))) << 32) | UInt64(r)
-        end
-        AcceleratedKernels.sort!(keys)
-        Threads.@threads for i in 1:n; rows_v[i] = UInt32(keys[i] & 0xffffffff); end
-        i = 1
-        while i < n
-            j = i
-            while j < n && (keys[j + 1] >> 32) == (keys[i] >> 32); j += 1; end
-            if j > i && any(m -> unit_of(rows_v[m]) != unit_of(rows_v[i]), (i + 1):j)
-                if j == i + 1
-                    tie_lt(rows_v[j], rows_v[i]) && ((rows_v[i], rows_v[j]) = (rows_v[j], rows_v[i]))
-                else
-                    sort!(view(rows_v, i:j); lt = tie_lt)
-                end
-            end
-            i = j + 1
-        end
-        return rows_v
-    end
-    sort_by_key!(rows, r -> unit_irt[unit_of(r)], tie_less)
-    # m/z within 3-iRT blocks (greedy, anchored on each block's first iRT); equal m/z -> irt_lt
+    order = RowOrder(units, unit_irt, nz, Dict{Int, String}(), Tuple{UInt8, UInt8}[], UInt8[])
+    t_s = time()
+    sort_rows_by_key!(rows, order, unit_irt, true)
+    @user_info @sprintf("Streaming build:   iRT sort %.2f s", time() - t_s); t_s = time()
+    # m/z within 3-iRT blocks (greedy, anchored on each block's first iRT); equal m/z -> full iRT order
     blocks = UnitRange{Int}[]
     start = 1; start_irt = unit_irt[unit_of(rows[1])]
     for i in 1:length(rows)
@@ -775,9 +836,9 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     end
     push!(blocks, start:length(rows))
     for blk in blocks
-        sort_by_key!(view(rows, blk), r -> row_mz[r], irt_lt)
+        sort_rows_by_key!(view(rows, blk), order, row_mz, false)
     end
-    empty!(mods_str_cache)
+    @user_info @sprintf("Streaming build:   %d iRT blocks, m/z sort %.2f s", length(blocks), time() - t_s)
     t = _stream_phase("final sort", t)
 
     # write in chunks
