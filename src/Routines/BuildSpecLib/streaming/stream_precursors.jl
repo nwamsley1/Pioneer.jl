@@ -44,6 +44,8 @@ struct SeqCode
     lo::UInt128
 end
 Base.isless(a::SeqCode, b::SeqCode) = a.hi < b.hi || (a.hi == b.hi && a.lo < b.lo)
+# The generic fallback hashes via objectid and UInt128 hashing allocates: hash the four 64-bit words.
+Base.hash(c::SeqCode, h::UInt) = hash(c.lo % UInt64, hash((c.lo >> 64) % UInt64, hash(c.hi % UInt64, hash((c.hi >> 64) % UInt64, h))))
 
 function encode_seq(s::AbstractString)
     hi = zero(UInt128); lo = zero(UInt128)
@@ -142,56 +144,90 @@ function stable_sortperm(v::AbstractVector)
     return ix
 end
 
+"Digest every protein (threaded over protein chunks), packed peptides concatenated in protein order."
+function digest_all(proteins::Vector{FastaEntry}, regex, max_length::Int, min_length::Int, missed_cleavages::Int,
+                    specificity::AbstractString, nterm_met_excision::Bool)
+    chunks = collect(Iterators.partition(eachindex(proteins), max(1, cld(length(proteins), 8 * Threads.nthreads()))))
+    parts = Vector{Tuple{Vector{SeqCode}, Vector{UInt32}, Vector{UInt32}, Vector{UInt8}}}(undef, length(chunks))
+    Threads.@threads :dynamic for ci in eachindex(chunks)
+        parts[ci] = _digest_chunk(proteins, chunks[ci], regex, max_length, min_length, missed_cleavages,
+                                  specificity, nterm_met_excision)
+    end
+    return reduce(vcat, (x[1] for x in parts)), reduce(vcat, (x[2] for x in parts)),
+           reduce(vcat, (x[3] for x in parts)), reduce(vcat, (x[4] for x in parts))
+end
+function _digest_chunk(proteins::Vector{FastaEntry}, ps::UnitRange{Int}, regex, max_length::Int, min_length::Int,
+                       missed_cleavages::Int, specificity::AbstractString, nterm_met_excision::Bool)
+    c_codes = SeqCode[]; c_prot = UInt32[]; c_starts = UInt32[]; c_nte = UInt8[]
+    for p in ps
+        seq = get_sequence(proteins[p])
+        bytes = codeunits(seq)
+        ends, st, termini = digest_sequence_ranges(seq, regex, max_length, min_length, missed_cleavages,
+                                                   specificity; nterm_met_excision = nterm_met_excision)
+        for (e, s0, t) in zip(ends, st, termini)
+            code = encode_range(bytes, Int(s0), Int(e))      # nothing = a residue outside VALID_AAS
+            code === nothing && continue
+            push!(c_codes, code); push!(c_prot, UInt32(p)); push!(c_starts, s0); push!(c_nte, t)
+        end
+    end
+    return (c_codes, c_prot, c_starts, c_nte)
+end
+
+"fold_seq of every code (threaded)."
+function fold_all(codes::Vector{SeqCode})
+    folded = Vector{SeqCode}(undef, length(codes))
+    Threads.@threads for i in eachindex(codes); folded[i] = fold_seq(codes[i]); end
+    return folded
+end
+
+"Start indices (into perm) of each run of equal folded codes, plus n + 1."
+function run_boundaries(folded::Vector{SeqCode}, perm::Vector{Int})
+    n = length(perm)
+    is_start = Vector{Bool}(undef, n)
+    Threads.@threads for i in 1:n
+        is_start[i] = i == 1 || folded[perm[i]] != folded[perm[i - 1]]
+    end
+    return push!(findall(is_start), n + 1)
+end
+
+"Per peptide (in combine order): first-seen code, max termini and its occurrences (encounter order), filled in parallel."
+function collect_peptides(codes::Vector{SeqCode}, prot::Vector{UInt32}, starts::Vector{UInt32}, nte::Vector{UInt8},
+                          perm::Vector{Int}, run_starts::Vector{Int}, order::Vector{Int})
+    n_runs = length(order); n = length(perm)
+    occ_offsets = Vector{Int}(undef, n_runs + 1); occ_offsets[1] = 1
+    for (k, r) in enumerate(order); occ_offsets[k + 1] = occ_offsets[k] + run_starts[r + 1] - run_starts[r]; end
+    pep_code = Vector{SeqCode}(undef, n_runs); pep_nte = Vector{UInt8}(undef, n_runs)
+    occ_protein = Vector{UInt32}(undef, n); occ_start = Vector{UInt32}(undef, n)
+    Threads.@threads for k in 1:n_runs
+        r = order[k]
+        o = occ_offsets[k] - 1
+        m = 0x00
+        for i in run_starts[r]:(run_starts[r + 1] - 1)
+            o += 1; occ_protein[o] = prot[perm[i]]; occ_start[o] = starts[perm[i]]
+            m = max(m, nte[perm[i]])
+        end
+        pep_code[k] = codes[perm[run_starts[r]]]
+        pep_nte[k] = m
+    end
+    return pep_code, pep_nte, occ_offsets, occ_protein, occ_start
+end
+
 function stream_digest(proteins::Vector{FastaEntry}, regex, max_length::Int, min_length::Int, missed_cleavages::Int,
                        specificity::AbstractString, nterm_met_excision::Bool)
     max_length <= SEQ_MAX_LENGTH || error("streaming build supports peptides up to $SEQ_MAX_LENGTH residues")
     # digest protein chunks in parallel; concatenating the chunks in order keeps the encounter order
-    chunks = collect(Iterators.partition(eachindex(proteins), max(1, cld(length(proteins), 8 * Threads.nthreads()))))
-    parts = Vector{Tuple{Vector{SeqCode}, Vector{UInt32}, Vector{UInt32}, Vector{UInt8}}}(undef, length(chunks))
-    Threads.@threads :dynamic for ci in eachindex(chunks)
-        c_codes = SeqCode[]; c_prot = UInt32[]; c_starts = UInt32[]; c_nte = UInt8[]
-        for p in chunks[ci]
-            seq = get_sequence(proteins[p])
-            bytes = codeunits(seq)
-            ends, st, termini = digest_sequence_ranges(seq, regex, max_length, min_length, missed_cleavages,
-                                                       specificity; nterm_met_excision = nterm_met_excision)
-            for (e, s0, t) in zip(ends, st, termini)
-                code = encode_range(bytes, Int(s0), Int(e))      # nothing = a residue outside VALID_AAS
-                code === nothing && continue
-                push!(c_codes, code); push!(c_prot, UInt32(p)); push!(c_starts, s0); push!(c_nte, t)
-            end
-        end
-        parts[ci] = (c_codes, c_prot, c_starts, c_nte)
-    end
-    codes = reduce(vcat, (x[1] for x in parts)); prot = reduce(vcat, (x[2] for x in parts))
-    starts = reduce(vcat, (x[3] for x in parts)); nte = reduce(vcat, (x[4] for x in parts))
-    parts = nothing
+    codes, prot, starts, nte = digest_all(proteins, regex, max_length, min_length, missed_cleavages, specificity,
+                                          nterm_met_excision)
     n = length(codes)
-    folded = Vector{SeqCode}(undef, n)
-    Threads.@threads for i in 1:n; folded[i] = fold_seq(codes[i]); end
+    folded = fold_all(codes)
     perm = stable_sortperm(folded)          # runs of one folded sequence, encounter order kept
-    run_starts = Int[]
-    for i in 1:n
-        (i == 1 || folded[perm[i]] != folded[perm[i - 1]]) && push!(run_starts, i)
-    end
-    push!(run_starts, n + 1)
-    folded = nothing
+    run_starts = run_boundaries(folded, perm)
     n_runs = length(run_starts) - 1
     first_occ = [perm[run_starts[r]] for r in 1:n_runs]          # encounter index of each run's first occurrence
-    order = sortperm(first_occ)                                   # combine_shared_peptides output order
-    pep_code = Vector{SeqCode}(undef, n_runs); pep_nte = Vector{UInt8}(undef, n_runs)
-    occ_offsets = Vector{Int}(undef, n_runs + 1); occ_offsets[1] = 1
-    occ_protein = Vector{UInt32}(undef, n); occ_start = Vector{UInt32}(undef, n)
-    o = 0
-    for (k, r) in enumerate(order)
-        rng = run_starts[r]:(run_starts[r + 1] - 1)
-        pep_code[k] = codes[perm[first(rng)]]
-        pep_nte[k] = maximum(i -> nte[perm[i]], rng)
-        for i in rng
-            o += 1; occ_protein[o] = prot[perm[i]]; occ_start[o] = starts[perm[i]]
-        end
-        occ_offsets[k + 1] = o + 1
-    end
+    order = Vector{Int}(undef, n_runs)                            # combine_shared_peptides output order
+    AcceleratedKernels.sortperm!(order, first_occ)                # first occurrences are distinct: no ties
+    pep_code, pep_nte, occ_offsets, occ_protein, occ_start = collect_peptides(codes, prot, starts, nte, perm,
+                                                                              run_starts, order)
     return StreamPeptides(pep_code, pep_nte, occ_offsets, occ_protein, occ_start,
         String[get_id(e) for e in proteins], String[get_proteome(e) for e in proteins])
 end
