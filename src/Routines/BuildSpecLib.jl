@@ -475,6 +475,8 @@ function _build_spec_lib(params_path::String)
                                    frag_bin_tol_mda = Float32(get(_params.library_params, "frag_bin_tol_mda", 2.0)),
                                    rt_bin_tol = 3.0f0)
             index_selection = nothing
+            GC.gc()
+            safeRm(joinpath(lib_dir, "index_selection.tmp"); force=true)   # the selection's memory-mapped fragments
             nothing
         else
             buildPionLib(

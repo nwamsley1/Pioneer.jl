@@ -28,14 +28,16 @@
 
 Writes `detailed_fragments.bin`, `spline_knots.jls`, `frag_name_to_idx.jls` and `ion_annotations.jls` to
 `lib_dir`, with the same contents as the in-memory path, and returns the fragment-index selection
-(`index_filters` = (y_start_index, b_start_index, include_p_index)) and the number of fragments.
+(`index_filters` = (y_start_index, b_start_index, include_p_index)) and the number of fragments. The selection's
+fragments are memory-mapped from `selection_path` (delete it once the indexes are built).
 """
 function stream_spline_fragments(precursors_path::String, lib_dir::String, model::SplineCoefficientModel,
                                  filter_ctx::SplineFragFilterCtx, ion_dictionary::Dict{Int32, String},
                                  annotation_type::FragAnnotation, immonium_path::String,
                                  mods_to_sulfur_diff::Dict{String, Int8}, iso_mod_to_mass::Dict{String, Float32};
                                  index_filters::Tuple{UInt8, UInt8, Bool}, batch_precs::Int = 1_000_000,
-                                 koina_batch::Int = 1000, concurrency::Int = 24)
+                                 koina_batch::Int = 1000, concurrency::Int = 24,
+                                 selection_path::String = joinpath(lib_dir, "index_selection.tmp"))
     prec = Arrow.Table(precursors_path)
     n_prec = length(prec.mz)
     # annotation lookup, as build_detailed_frags_from_raw builds it
@@ -48,8 +50,12 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     prec_mzs = Vector{Float32}(prec.mz)
     prec_irts = Vector{Float32}(prec.irt)
     cols = (prec.sequence, prec.mods, prec.isotope_mods, prec.precursor_charge)
-    sel_frags = SimpleFrag{Float32}[]
-    sel_offsets = Int[1]
+    sel_buf = SimpleFrag{Float32}[]                       # one batch's selection, appended to selection_path
+    sel_starts = Vector{Int}(undef, n_prec)
+    sel_counts = Vector{UInt8}(undef, n_prec)
+    sel_io = open(selection_path, "w")
+    sel_scratch = UInt8[]
+    n_sel = 0
     ranges = Vector{UInt64}(undef, n_prec + 1)
     bin_path = joinpath(lib_dir, "detailed_fragments.bin")
     writer = nothing
@@ -69,7 +75,11 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
         t_filter += time() - t; t = time()
         detailed, local_ranges = _decode_spline_batch(frags_df, cols, annotations, mods_to_sulfur_diff, iso_mod_to_mass,
                                                       hi - lo + 1, lo - 1)
-        _select_index_frags!(sel_frags, sel_offsets, detailed, local_ranges, lo - 1, prec_mzs, prec_irts, index_filters)
+        empty!(sel_buf)
+        _select_index_frags!(sel_buf, sel_starts, sel_counts, n_sel, detailed, local_ranges, lo - 1, prec_mzs,
+                             prec_irts, index_filters)
+        _write_packed!(sel_io, sel_scratch, sel_buf)
+        n_sel += length(sel_buf)
         sort_detailed_fragments_by_mz!(detailed, local_ranges)
         t_decode += time() - t; t = time()
         writer === nothing && (writer = DetailedFragsWriter{eltype(detailed)}(bin_path))
@@ -83,12 +93,14 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     writer === nothing && (writer = DetailedFragsWriter{SplineCompactFrag{4, Float32}}(bin_path))   # no precursors
     ranges[n_prec + 1] = UInt64(writer.n_frags + 1)
     finish_detailed_frags!(writer, ranges)
+    close(sel_io)
+    sel_frags = open(io -> Mmap.mmap(io, Vector{SimpleFrag{Float32}}, n_sel), selection_path, "r")
     serialize_to_jls(joinpath(lib_dir, "spline_knots.jls"), knots === nothing ? Float32[] : knots)
     serialize_to_jls(joinpath(lib_dir, "frag_name_to_idx.jls"), ion_dictionary)
     serialize_to_jls(joinpath(lib_dir, "ion_annotations.jls"), annotations)
     @user_info @sprintf("Streaming fragments: %d precursors, %d fragments (predict %.1f s, filter %.1f s, decode %.1f s, write %.1f s)",
                         n_prec, writer.n_frags, t_predict, t_filter, t_decode, t_write)
-    return IndexFragSelection(sel_frags, sel_offsets, prec_mzs), writer.n_frags
+    return IndexFragSelection(sel_frags, sel_starts, sel_counts, prec_mzs), writer.n_frags
 end
 
 "Number the predictions of each Koina batch (global precursor ids from `first_pid`) and filter them; one table."
@@ -129,16 +141,17 @@ function _decode_spline_batch(ann::AbstractVector, pids::AbstractVector, mzs::Ab
     return detailed, local_ranges
 end
 
-"Append the batch's fragment-index fragments (select_index_fragments's rule) to the selection."
-function _select_index_frags!(sel_frags::Vector{SimpleFrag{Float32}}, sel_offsets::Vector{Int},
-                              detailed::Vector{F}, local_ranges::Vector{UInt64}, pid_offset::Int,
+"Append the batch's fragment-index fragments (select_index_fragments's rule) to `sel_buf`; record each precursor's
+start (after the `n_before` fragments already written) and count."
+function _select_index_frags!(sel_buf::Vector{SimpleFrag{Float32}}, sel_starts::Vector{Int}, sel_counts::Vector{UInt8},
+                              n_before::Int, detailed::Vector{F}, local_ranges::Vector{UInt64}, pid_offset::Int,
                               prec_mzs::Vector{Float32}, prec_irts::Vector{Float32},
                               filt::Tuple{UInt8, UInt8, Bool}) where {F}
     for k in 1:(length(local_ranges) - 1)
         pid = pid_offset + k
-        push_frag = SelectionPush(sel_frags, UInt32(pid), prec_mzs[pid], prec_irts[pid])
-        n = _visit_index_frags(push_frag, detailed, Int(local_ranges[k]):(Int(local_ranges[k + 1]) - 1), filt)
-        push!(sel_offsets, sel_offsets[end] + n)
+        sel_starts[pid] = n_before + length(sel_buf) + 1
+        push_frag = SelectionPush(sel_buf, UInt32(pid), prec_mzs[pid], prec_irts[pid])
+        sel_counts[pid] = UInt8(_visit_index_frags(push_frag, detailed, Int(local_ranges[k]):(Int(local_ranges[k + 1]) - 1), filt))
     end
     return nothing
 end

@@ -133,7 +133,7 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
                             max_piece_bytes::Integer = 4_000_000_000)
     mkpath(dir)
     bins = initial_partitions(sel.prec_mzs, partition_width)
-    nfrag(pids) = sum(pid -> sel.offsets[pid + 1] - sel.offsets[pid], pids; init = 0)
+    nfrag(pids) = sum(pid -> n_index_frags(sel, pid), pids; init = 0)
     # upper bound: 8-byte fragments, 4-byte local->global ids, one 18-byte m/z bin per two fragments
     est(k) = 17 * nfrag(bins[k]) + 4 * length(bins[k])
 

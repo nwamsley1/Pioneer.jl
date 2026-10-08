@@ -93,11 +93,9 @@ function _write_packed!(io::IOStream, buf::Vector{UInt8}, frags::AbstractVector{
     end
     return nothing
 end
-@inline function _store_fields!(p::Ptr{UInt8}, x::T) where {T}
-    for i in 1:fieldcount(T)
-        unsafe_store!(Ptr{fieldtype(T, i)}(p + fieldoffset(T, i)), getfield(x, i))
-    end
-    return nothing
+@generated function _store_fields!(p::Ptr{UInt8}, x::T) where {T}
+    stores = [:(unsafe_store!(Ptr{$(fieldtype(T, i))}(p + $(Int(fieldoffset(T, i)))), getfield(x, $i))) for i in 1:fieldcount(T)]
+    return Expr(:block, stores..., :(return nothing))
 end
 
 function finish_detailed_frags!(w::DetailedFragsWriter{T}, ranges::AbstractVector{UInt64}) where {T}

@@ -50,13 +50,25 @@ Each precursor's fragment-index fragments: its first `max_rank` (8) fragments th
 in the library's rank order, as `SimpleFrag`s carrying the GLOBAL precursor id and the rank bitmask
 `1 << (rank-1)`. Independent of the partition width and of the RT binning, so one selection serves every index a
 library is built with (`build_partitioned_index_from_selection`). Precursor `pid`'s fragments are
-`frags[offsets[pid]:offsets[pid+1]-1]`.
+`frags[starts[pid] : starts[pid] + counts[pid] - 1]` (`index_frag_range`); `frags` may be memory-mapped, and a
+precursor's fragments need not follow the previous precursor's (a piece's can be gathered into their own file).
 """
 struct IndexFragSelection
     frags::Vector{SimpleFrag{Float32}}
-    offsets::Vector{Int}
+    starts::Vector{Int}
+    counts::Vector{UInt8}
     prec_mzs::Vector{Float32}
 end
+
+"A selection whose precursors' fragments are consecutive: precursor `pid`'s are `frags[offsets[pid]:offsets[pid+1]-1]`."
+function IndexFragSelection(frags::Vector{SimpleFrag{Float32}}, offsets::Vector{Int}, prec_mzs::Vector{Float32})
+    n = length(offsets) - 1
+    return IndexFragSelection(frags, offsets[1:n], UInt8[offsets[k + 1] - offsets[k] for k in 1:n], prec_mzs)
+end
+
+@inline index_frag_range(sel::IndexFragSelection, pid::Integer) =
+    sel.starts[pid]:(sel.starts[pid] + Int(sel.counts[pid]) - 1)
+@inline n_index_frags(sel::IndexFragSelection, pid::Integer) = Int(sel.counts[pid])
 
 """
     _visit_index_frags(f, frag_lookup, detailed_frags, pid, (y_start_index, b_start_index, include_p_index)) -> Int
@@ -243,10 +255,10 @@ function build_partitioned_index_from_selection(
         pids = final_partition_pids[k]
         l2g = Vector{UInt32}(pids)                   # local_id i → global prec_id
         n_local = id_type(length(l2g))
-        frags_k = Vector{SimpleFrag{Float32}}(undef, sum(pid -> sel.offsets[pid + 1] - sel.offsets[pid], pids; init = 0))
+        frags_k = Vector{SimpleFrag{Float32}}(undef, sum(pid -> n_index_frags(sel, pid), pids; init = 0))
         j = 0
         for (i, pid) in enumerate(pids)
-            for fi in sel.offsets[pid]:(sel.offsets[pid + 1] - 1)
+            for fi in index_frag_range(sel, pid)
                 f = sel.frags[fi]
                 frags_k[j += 1] = SimpleFrag{Float32}(f.mz, UInt32(i), f.prec_mz, f.prec_irt, f.prec_charge, f.score)
             end
