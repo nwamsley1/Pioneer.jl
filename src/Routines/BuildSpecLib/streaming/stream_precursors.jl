@@ -679,6 +679,143 @@ function sort_rows_by_key!(rows::AbstractVector{UInt32}, o::RowOrder, key::Vecto
     return rows
 end
 
+"m/z of every (unit, charge) row (getMZ's summation order) and whether it lies in [mz_min, mz_max]."
+function compute_mz!(row_mz::Vector{Float32}, present::Vector{Bool}, units::StreamUnits, mass_by_id::Vector{Float64},
+                     charges::Vector{UInt8}, mz_min::Float32, mz_max::Float32)
+    nz = length(charges); NU = n_units(units)
+    Threads.@threads :dynamic for us in collect(Iterators.partition(1:NU, max(1, cld(NU, 16 * Threads.nthreads()))))
+        _compute_mz_range!(row_mz, present, units, mass_by_id, charges, mz_min, mz_max, us, Tuple{UInt8, UInt8}[], UInt8[])
+    end
+    return nothing
+end
+function _compute_mz_range!(row_mz::Vector{Float32}, present::Vector{Bool}, units::StreamUnits,
+                            mass_by_id::Vector{Float64}, charges::Vector{UInt8}, mz_min::Float32, mz_max::Float32,
+                            us::UnitRange{Int}, tbuf::Vector{Tuple{UInt8, UInt8}}, trev::Vector{UInt8})
+    nz = length(charges)
+    for u in us
+        has_unit(units, u) || continue
+        mods, _ = unit_mods!(tbuf, trev, units, u)
+        mmass = 0.0
+        for (_, id) in mods; mmass += mass_by_id[id]; end
+        mass = residue_mass(unit_code(units, u)) + mmass
+        for (zi, z) in enumerate(charges)
+            mz = Float32((mass + PROTON * z + H2O) / z)
+            r = (u - 1) * nz + zi
+            row_mz[r] = mz
+            (mz >= mz_min && mz <= mz_max) && (present[r] = true)
+        end
+    end
+    return nothing
+end
+
+"Koina sequences of units `us`, built in parallel."
+function koina_sequences(units::StreamUnits, us::AbstractVector{Int})
+    seqs = Vector{String}(undef, length(us))
+    Threads.@threads :dynamic for js in collect(Iterators.partition(eachindex(us), 4096))
+        _koina_sequences_range!(seqs, units, us, js, Tuple{UInt8, UInt8}[], UInt8[])
+    end
+    return seqs
+end
+function _koina_sequences_range!(seqs::Vector{String}, units::StreamUnits, us::AbstractVector{Int}, js::UnitRange{Int},
+                                 tbuf::Vector{Tuple{UInt8, UInt8}}, trev::Vector{UInt8})
+    for j in js
+        u = us[j]
+        mods, _ = unit_mods!(tbuf, trev, units, u)
+        seqs[j] = koina_sequence(decode_seq(unit_code(units, u)), mods, units.mod_names)
+    end
+    return nothing
+end
+
+# ── output chunks ─────────────────────────────────────────────────────────────────────────────────────────────
+
+"What the precursor-table writer reads per row (rows are (unit - 1) * nz + charge index)."
+struct TableSource
+    units::StreamUnits
+    charges::Vector{UInt8}
+    row_mz::Vector{Float32}
+    unit_irt::Vector{Float32}
+    pair_id::Vector{UInt32}
+    epair_id::Vector{UInt32}
+    nz::Int
+    nce::Float32
+    cleavage::Union{Nothing, Regex}
+end
+
+"koina_sequence(seq, mods_string(seq, mods, names)) without building and re-parsing the mods string."
+function koina_sequence(seq::String, mods::Vector{Tuple{UInt8, UInt8}}, names::Vector{String})
+    isempty(mods) && return seq
+    order = sortperm(mods; by = first, alg = Base.Sort.DEFAULT_STABLE)   # residue order, stable for one residue
+    io = IOBuffer()
+    start = 1
+    for i in order
+        pos = Int(mods[i][1])
+        print(io, SubString(seq, start, pos), '[', uppercase(names[mods[i][2]]), ']')
+        start = pos + 1
+    end
+    print(io, SubString(seq, start, length(seq)))
+    return String(take!(io))
+end
+
+function _chunk_columns_alloc(n::Int, nce::Float32)
+    return (proteome_identifiers = Vector{String}(undef, n), accession_number = Vector{String}(undef, n),
+        sequence = Vector{String}(undef, n), start_idx = Vector{Vector{UInt32}}(undef, n),
+        mods = Vector{Union{Missing, String}}(undef, n), isotopic_mods = Vector{Union{Missing, String}}(missing, n),
+        num_variable_modifications = Vector{UInt8}(undef, n), precursor_charge = Vector{UInt8}(undef, n),
+        num_enzymatic_termini = Vector{UInt8}(undef, n), collision_energy = fill(nce, n), decoy = Vector{Bool}(undef, n),
+        entrapment_group_id = Vector{UInt8}(undef, n), base_target_id = Vector{UInt32}(undef, n),
+        base_pep_id = Vector{UInt32}(undef, n), pair_id = Vector{Union{Missing, UInt32}}(undef, n),
+        koina_sequence = Vector{String}(undef, n), mz = Vector{Float32}(undef, n), length = Vector{UInt8}(undef, n),
+        missed_cleavages = Vector{UInt8}(undef, n), entrapment_pair_id = Vector{Union{Missing, UInt32}}(undef, n),
+        irt = Vector{Float32}(undef, n), sulfur_count = Vector{UInt8}(undef, n),
+        isotope_mods = Vector{Union{Missing, String}}(missing, n))
+end
+
+"Fill output rows `js` of a chunk (one thread's share)."
+function _fill_rows!(cols::NamedTuple, src::TableSource, chunk::AbstractVector{UInt32}, js::UnitRange{Int},
+                     tbuf::Vector{Tuple{UInt8, UInt8}}, trev::Vector{UInt8})
+    units = src.units; peps = units.peps; names = units.mod_names
+    for j in js
+        r = chunk[j]
+        u = (Int(r) - 1) ÷ src.nz + 1; zi = (Int(r) - 1) % src.nz + 1
+        k = unit_peptide(units, u)
+        occ = peps.occ_offsets[k]:(peps.occ_offsets[k + 1] - 1)
+        cols.proteome_identifiers[j] = join((peps.protein_proteome[peps.occ_protein[o]] for o in reverse(occ)), ';')
+        cols.accession_number[j] = join((peps.protein_accession[peps.occ_protein[o]] for o in reverse(occ)), ';')
+        seq = decode_seq(unit_code(units, u))
+        mods, nvar = unit_mods!(tbuf, trev, units, u)
+        cols.sequence[j] = seq
+        cols.start_idx[j] = UInt32[peps.occ_start[o] for o in reverse(occ)]
+        cols.mods[j] = mods_string(seq, mods, names)
+        cols.num_variable_modifications[j] = UInt8(nvar)
+        cols.precursor_charge[j] = src.charges[zi]
+        cols.num_enzymatic_termini[j] = peps.nte[k]
+        decoy = is_decoy_unit(units, u)
+        cols.decoy[j] = decoy
+        cols.entrapment_group_id[j] = entrapment_group(units, u)
+        cols.base_target_id[j] = base_target_id(units, u)
+        cols.base_pep_id[j] = base_pep_id(units, u)
+        cols.pair_id[j] = src.pair_id[r]
+        cols.koina_sequence[j] = koina_sequence(seq, mods, names)
+        cols.mz[j] = src.row_mz[r]
+        cols.length[j] = UInt8(length(seq))
+        cols.missed_cleavages[j] = src.cleavage === nothing ? 0x00 : UInt8(count(src.cleavage, seq))
+        cols.entrapment_pair_id[j] = decoy || src.epair_id[r] == 0 ? missing : src.epair_id[r]
+        cols.irt[j] = src.unit_irt[u]
+        cols.sulfur_count[j] = UInt8(count(c -> c == 'C' || c == 'M', seq))
+    end
+    return nothing
+end
+
+"The output columns (the in-memory path's precursors.arrow schema) of rows `chunk`, built in parallel."
+function chunk_columns(src::TableSource, chunk::AbstractVector{UInt32})
+    n = length(chunk)
+    cols = _chunk_columns_alloc(n, src.nce)
+    Threads.@threads :dynamic for js in collect(Iterators.partition(1:n, 4096))
+        _fill_rows!(cols, src, chunk, js, Tuple{UInt8, UInt8}[], UInt8[])
+    end
+    return cols
+end
+
 "Log a phase's time with the process peak RSS so far and the live heap after a full collection."
 function _stream_phase(name::String, t0::Float64)
     GC.gc()
@@ -771,39 +908,13 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
         for (u, rt) in zip(batch_units, rts); unit_irt[u] = rt; end
         empty!(batch_units); empty!(batch_seqs)
     end
-    # m/z of every (unit, charge), computed numerically in getMZ's summation order (threaded over unit ranges)
-    unit_chunks = collect(Iterators.partition(1:NU, max(1, cld(NU, 16 * Threads.nthreads()))))
-    Threads.@threads :dynamic for us in unit_chunks
-        tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
-        for u in us
-            has_unit(units, u) || continue
-            mods, _ = unit_mods!(tbuf, trev, units, u)
-            mmass = 0.0
-            for (_, id) in mods; mmass += mass_by_id[id]; end
-            mass = residue_mass(unit_code(units, u)) + mmass
-            for (zi, z) in enumerate(charges)
-                mz = Float32((mass + PROTON * z + H2O) / z)
-                r = (u - 1) * nz + zi
-                row_mz[r] = mz
-                (mz >= prec_mz_min && mz <= prec_mz_max) && (present[r] = true)
-            end
-        end
-    end
+    # m/z of every (unit, charge), computed numerically in getMZ's summation order
+    compute_mz!(row_mz, present, units, mass_by_id, collect(charges), prec_mz_min, prec_mz_max)
     t = _stream_phase("m/z filter", t)
     # retention times: once per unit with at least one row in range; Koina sequences built in parallel per batch
     rt_units = Int[u for u in 1:NU if has_unit(units, u) && any(zi -> present[(u - 1) * nz + zi], 1:nz)]
     for us in Iterators.partition(rt_units, 1_000_000)
-        seqs = Vector{String}(undef, length(us))
-        Threads.@threads :dynamic for js in collect(Iterators.partition(eachindex(us), 4096))
-            tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
-            for j in js
-                u = us[j]
-                seq = decode_seq(unit_code(units, u))
-                mods, _ = unit_mods!(tbuf, trev, units, u)
-                seqs[j] = koina_sequence(seq, mods_string(seq, mods, names))
-            end
-        end
-        append!(batch_units, us); append!(batch_seqs, seqs)
+        append!(batch_units, us); append!(batch_seqs, koina_sequences(units, us))
         flush_rt!()
     end
     rt_units = nothing
@@ -847,55 +958,10 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     # One Arrow.write call per chunk: each call returns once its record batch is written, so one chunk's strings are
     # alive at a time (Arrow.write over a lazy partitioner processes later partitions in @async tasks, letting the
     # producer run ahead and every chunk accumulate).
-    function chunk_columns(chunk)
-        n = length(chunk)
-        cols = (proteome_identifiers = Vector{String}(undef, n), accession_number = Vector{String}(undef, n),
-            sequence = Vector{String}(undef, n), start_idx = Vector{Vector{UInt32}}(undef, n),
-            mods = Vector{Union{Missing, String}}(undef, n), isotopic_mods = Vector{Union{Missing, String}}(missing, n),
-            num_variable_modifications = Vector{UInt8}(undef, n), precursor_charge = Vector{UInt8}(undef, n),
-            num_enzymatic_termini = Vector{UInt8}(undef, n), collision_energy = fill(nce, n), decoy = Vector{Bool}(undef, n),
-            entrapment_group_id = Vector{UInt8}(undef, n), base_target_id = Vector{UInt32}(undef, n),
-            base_pep_id = Vector{UInt32}(undef, n), pair_id = Vector{Union{Missing, UInt32}}(undef, n),
-            koina_sequence = Vector{String}(undef, n), mz = Vector{Float32}(undef, n), length = Vector{UInt8}(undef, n),
-            missed_cleavages = Vector{UInt8}(undef, n), entrapment_pair_id = Vector{Union{Missing, UInt32}}(undef, n),
-            irt = Vector{Float32}(undef, n), sulfur_count = Vector{UInt8}(undef, n),
-            isotope_mods = Vector{Union{Missing, String}}(missing, n))
-        Threads.@threads :dynamic for js in collect(Iterators.partition(1:n, 4096))
-          tbuf = Tuple{UInt8, UInt8}[]; trev = UInt8[]
-          for j in js
-            r = chunk[j]
-            u = unit_of(r); zi = zi_of(r); k = unit_peptide(units, u)
-            occ = peps.occ_offsets[k]:(peps.occ_offsets[k + 1] - 1)
-            cols.proteome_identifiers[j] = join((peps.protein_proteome[peps.occ_protein[o]] for o in reverse(occ)), ';')
-            cols.accession_number[j] = join((peps.protein_accession[peps.occ_protein[o]] for o in reverse(occ)), ';')
-            seq = decode_seq(unit_code(units, u))
-            mods, nvar = unit_mods!(tbuf, trev, units, u)
-            ms = mods_string(seq, mods, names)
-            cols.sequence[j] = seq
-            cols.start_idx[j] = UInt32[peps.occ_start[o] for o in reverse(occ)]
-            cols.mods[j] = ms
-            cols.num_variable_modifications[j] = UInt8(nvar)
-            cols.precursor_charge[j] = charges[zi]
-            cols.num_enzymatic_termini[j] = peps.nte[k]
-            cols.decoy[j] = is_decoy_unit(units, u)
-            cols.entrapment_group_id[j] = entrapment_group(units, u)
-            cols.base_target_id[j] = base_target_id(units, u)
-            cols.base_pep_id[j] = base_pep_id(units, u)
-            cols.pair_id[j] = pair_id[r]
-            cols.koina_sequence[j] = koina_sequence(seq, ms)
-            cols.mz[j] = row_mz[r]
-            cols.length[j] = UInt8(length(seq))
-            cols.missed_cleavages[j] = cleavage === nothing ? 0x00 : UInt8(count(cleavage, seq))
-            cols.entrapment_pair_id[j] = cols.decoy[j] || epair_id[r] == 0 ? missing : epair_id[r]
-            cols.irt[j] = unit_irt[u]
-            cols.sulfur_count[j] = UInt8(count(c -> c == 'C' || c == 'M', seq))
-          end
-        end
-        return cols
-    end
+    src = TableSource(units, collect(charges), row_mz, unit_irt, pair_id, epair_id, nz, nce, cleavage)
     open(Arrow.Writer, out_path) do writer
         for chunk in Iterators.partition(rows, chunk_rows)
-            Arrow.write(writer, chunk_columns(chunk))
+            Arrow.write(writer, chunk_columns(src, chunk))
         end
     end
     t = _stream_phase("write", t)
