@@ -56,23 +56,10 @@ function predict_rt_koina(chronologer_table::DataFrame;
         "Unknown rt_model '$rt_model'. Valid: $(join(sort(collect(keys(RT_MODEL_CONFIGS))), ", "))")
     model = RetentionTimeModel(rt_model)
 
-    # Prepare batches
-    batches = prepare_koina_batch(
-        model,
-        chronologer_table,
-        batch_size=1000
-    )
+    results = koina_batch_results(model, chronologer_table, KOINA_URLS[rt_model]; batch_size = 1000)
 
-    # Make requests
-    results = make_koina_batch_requests(
-        batches,
-        KOINA_URLS[rt_model]
-    )
-    
-    # Parse results
     rt_predictions = Float32[]
-    for result in results
-        batch_result = parse_koina_batch(model, result)
+    for batch_result in results
         append!(rt_predictions, batch_result.fragments.rt)
     end
     

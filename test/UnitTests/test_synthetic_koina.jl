@@ -168,3 +168,28 @@ end
     @test batch_result.fragments.coefficients[2] == (2.0f0, 5.0f0)
     @test batch_result.fragments.coefficients[3] == (3.0f0, 6.0f0)
 end
+
+@testset "SyntheticKoinaClient — direct results equal the JSON round trip" begin
+    seqs = ["PEPTIDEK", " ACDEFGHIK ", "M[UNIMOD:35]PEPTIDER", "C[UNIMOD:4]AAAM[UNIMOD:35]K", "LLLLLLLLLLLLLLR"]
+    data = DataFrame(koina_sequence = seqs, precursor_charge = Int32[2, 3, 2, 1, 3])
+    for realistic in (true, false), batch_size in (2, 1000)
+        client = _SyntheticKoinaClient(n_frags_per_prec = 12, realistic_ions = realistic)
+        model = _SplineCoefficientModel("altimeter")
+        url = Pioneer.KOINA_URLS["altimeter"]
+        direct = _with_koina_client(() -> Pioneer.koina_batch_results(model, data, url; batch_size = batch_size), client)
+        json = _with_koina_client(() -> Pioneer.koina_batch_results_json(model, data, url, batch_size, 4), client)
+        @test length(direct) == length(json) == cld(length(seqs), batch_size)
+        for (d, j) in zip(direct, json)
+            @test d.fragments == j.fragments
+            @test names(d.fragments) == names(j.fragments)
+            @test d.frags_per_precursor == j.frags_per_precursor
+            @test d.extra_data == j.extra_data
+        end
+    end
+    rt_model = _RetentionTimeModel("chronologer")
+    rt_url = Pioneer.KOINA_URLS["chronologer"]
+    client = _SyntheticKoinaClient()
+    direct = _with_koina_client(() -> Pioneer.koina_batch_results(rt_model, data, rt_url; batch_size = 2), client)
+    json = _with_koina_client(() -> Pioneer.koina_batch_results_json(rt_model, data, rt_url, 2, 4), client)
+    @test [d.fragments.rt for d in direct] == [j.fragments.rt for j in json]
+end

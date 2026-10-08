@@ -199,19 +199,14 @@ function predict_fragments_batch(
     concurrent_koina_requests::Int,
     first_prec_idx::UInt32
 )::Tuple{DataFrame, Vector{Float32}}
-    json_batches = _bdiag!("prepare_koina_batch", @timed prepare_koina_batch(
-        model,
-        peptides_df,
-        batch_size=batch_size
-    ))
-
-    responses = _bdiag!("koina_request", @timed make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests))
+    results = _bdiag!("koina_batch_results", @timed koina_batch_results(model, peptides_df, KOINA_URLS[model.name];
+                                                                         batch_size = batch_size,
+                                                                         concurrency = concurrent_koina_requests))
 
     batch_dfs = []
     knot_vectors = []
 
-    for (i, response) in enumerate(responses)
-        batch_result = _bdiag!("parse_koina_batch", @timed parse_koina_batch(model, response))
+    for (i, batch_result) in enumerate(results)
         # Keep precursor_idx UInt32 (not Int64) — it is a precursor row index; the
         # +1-1 cancels. Halves this per-fragment column on disk (8 B -> 4 B).
         start_idx = first_prec_idx + UInt32((i-1) * batch_size)

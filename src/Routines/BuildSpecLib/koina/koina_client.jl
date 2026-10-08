@@ -331,10 +331,10 @@ function _synthetic_altimeter_response(client::SyntheticKoinaClient, sequences::
     mz = Vector{Float64}(undef, n_precs * F)
     annotations = Vector{Int32}(undef, n_precs * F)
 
-    ions = Tuple{Int32, Float64}[]
+    ws = SynthIonWorkspace(); ions = ws.sorted
     @inbounds for i in 1:n_precs
         seq = sequences[i]
-        client.realistic_ions && _synthetic_by_ions!(ions, seq)
+        client.realistic_ions && _synthetic_by_ions!(ws, seq)
         for j in 1:F
             if client.realistic_ions && !isempty(ions)
                 code, ion_mz = ions[mod1(j, length(ions))]
@@ -385,26 +385,145 @@ function _synthetic_ion_codes()
     return _SYNTH_ION_CODES[]
 end
 
+"Reusable buffers for _synthetic_by_ions!."
+struct SynthIonWorkspace
+    ions::Vector{Tuple{Int32, Float64}}
+    keys::Vector{UInt64}
+    perm::Vector{Int}
+    masses::Vector{Float64}
+    prefix::Vector{Float64}
+    sorted::Vector{Tuple{Int32, Float64}}
+end
+SynthIonWorkspace() = SynthIonWorkspace(Tuple{Int32, Float64}[], UInt64[], Int[], Float64[], Float64[], Tuple{Int32, Float64}[])
+
+# Ion code by (position, column): columns 1-4 = (y, z1), (b, z1), (y, z2), (b, z2); 0 = not in the dictionary.
+const _SYNTH_ION_TABLE = Ref{Matrix{Int32}}()
+function _synthetic_ion_table()
+    isassigned(_SYNTH_ION_TABLE) && return _SYNTH_ION_TABLE[]
+    codes = _synthetic_ion_codes()
+    t = zeros(Int32, 255, 4)
+    for pos in 1:255, z in 1:2, isy in (true, false)
+        name = string(isy ? 'y' : 'b', pos, z == 1 ? "" : "^$z")
+        t[pos, 2 * (z - 1) + (isy ? 1 : 2)] = get(codes, name, Int32(0))
+    end
+    return (_SYNTH_ION_TABLE[] = t)
+end
+
+# Residue mass by byte + 1 (AA_to_mass; 0.0 for anything else), built on first use (get_mz.jl loads after this file).
+const _SYNTH_RESIDUE_MASS = Ref{Vector{Float64}}()
+function _synthetic_residue_mass()
+    isassigned(_SYNTH_RESIDUE_MASS) && return _SYNTH_RESIDUE_MASS[]
+    m = zeros(Float64, 256)
+    for (c, v) in AA_to_mass
+        isascii(c) && (m[Int(c) + 1] = v)
+    end
+    return (_SYNTH_RESIDUE_MASS[] = m)
+end
+
 """
-    _synthetic_by_ions!(ions, koina_sequence) -> ions
+    _synthetic_by_ions!(ws, koina_sequence) -> ws.sorted
 
 The b/y ions (positions 1..L-1, charges 1-2) of a Koina-format peptide (`[...]` modification tags ignored) that the
-Altimeter ion dictionary contains, as (code, unmodified m/z), in a deterministic peptide-specific order.
+Altimeter ion dictionary contains, as (code, unmodified m/z), in a deterministic peptide-specific order
+(by hash((koina_sequence, code))).
 """
-function _synthetic_by_ions!(ions::Vector{Tuple{Int32, Float64}}, koina_sequence::AbstractString)
-    empty!(ions)
-    codes = _synthetic_ion_codes()
-    residues = replace(koina_sequence, r"\[[^\]]*\]" => "")
-    masses = [get(AA_to_mass, c, 0.0) for c in residues]
+function _synthetic_by_ions!(ws::SynthIonWorkspace, koina_sequence::String)
+    table = _synthetic_ion_table(); rmass = _synthetic_residue_mass()
+    masses = ws.masses; empty!(masses)
+    inside = false
+    for b in codeunits(koina_sequence)
+        if inside
+            inside = b != UInt8(']')
+        elseif b == UInt8('[')
+            inside = true
+        else
+            push!(masses, rmass[Int(b) + 1])
+        end
+    end
     L = length(masses)
-    prefix = cumsum(masses)
+    prefix = cumsum!(resize!(ws.prefix, L), masses)      # cumsum's (pairwise) summation order
+    ions = ws.ions; empty!(ions)
     for pos in 1:(L - 1), z in 1:2, isy in (true, false)
-        name = string(isy ? 'y' : 'b', pos, z == 1 ? "" : "^$z")
-        code = get(codes, name, nothing)
-        code === nothing && continue
+        code = pos <= 255 ? table[pos, 2 * (z - 1) + (isy ? 1 : 2)] : Int32(0)
+        code == 0 && continue
         m = isy ? prefix[L] - prefix[L - pos] + H2O : prefix[pos]
         push!(ions, (code, (m + z * PROTON) / z))
     end
-    sort!(ions, by = ion -> hash((koina_sequence, ion[1])))
-    return ions
+    keys = ws.keys; resize!(keys, length(ions))
+    for i in eachindex(ions); keys[i] = hash((koina_sequence, ions[i][1])); end
+    perm = ws.perm; resize!(perm, length(ions))
+    sortperm!(perm, keys; alg = Base.Sort.DEFAULT_STABLE)
+    sorted = ws.sorted; resize!(sorted, length(ions))
+    for i in eachindex(perm); sorted[i] = ions[perm[i]]; end
+    return sorted
+end
+
+# --- SyntheticKoinaClient: parsed results without the JSON round trip. ---
+# The same values the JSON path produces (koina_request -> parse_koina_batch), generated straight into typed
+# columns, batches in parallel. Requests the JSON mock would reject keep going through it (and fail the same way).
+
+function koina_batch_results(client::SyntheticKoinaClient, model::SplineCoefficientModel, data::DataFrame,
+                             model_url::String, batch_size::Int, concurrency::Int)
+    occursin(r"altimeter"i, model_url) ||
+        return koina_batch_results_json(model, data, model_url, batch_size, concurrency)
+    client.realistic_ions && (_synthetic_ion_table(); _synthetic_residue_mass())  # build the tables before the threads
+    return _synthetic_spline_results(client, data.koina_sequence, batch_size, Val(client.n_coef_per_frag))
+end
+
+function _synthetic_spline_results(client::SyntheticKoinaClient, seqs::AbstractVector{<:AbstractString},
+                                   batch_size::Int, ::Val{K}) where {K}
+    nb = cld(length(seqs), batch_size)
+    knots = Float32.(collect(range(0.0, 1.0; length = client.n_knots)))
+    results = Vector{KoinaBatchResult{Vector{Float32}}}(undef, nb)
+    Threads.@threads :dynamic for b in 1:nb
+        rows = ((b - 1) * batch_size + 1):min(b * batch_size, length(seqs))
+        results[b] = _synthetic_spline_batch(client, seqs, rows, knots, Val(K))
+    end
+    return results
+end
+
+"One batch of _synthetic_altimeter_response, as parse_koina_batch would return it."
+function _synthetic_spline_batch(client::SyntheticKoinaClient, seqs::AbstractVector{<:AbstractString},
+                                 rows::UnitRange{Int}, knots::Vector{Float32}, ::Val{K}) where {K}
+    F = client.n_frags_per_prec
+    n = length(rows)
+    mz = Vector{Float32}(undef, n * F)
+    annotation = Vector{Int32}(undef, n * F)
+    coefficients = Vector{NTuple{K, Float32}}(undef, n * F)
+    ws = SynthIonWorkspace(); ions = ws.sorted
+    for (i, r) in enumerate(rows)
+        seq = String(strip(seqs[r]))                         # prepare_koina_batch sends strip.(koina_sequence)
+        client.realistic_ions && _synthetic_by_ions!(ws, seq)
+        for j in 1:F
+            idx = (i - 1) * F + j
+            if client.realistic_ions && !isempty(ions)
+                code, ion_mz = ions[mod1(j, length(ions))]
+                mz[idx] = Float32(ion_mz); annotation[idx] = code
+            else
+                mz[idx] = Float32(100.0 + 1900.0 * _stable_unit(seq, 100 + j))
+                annotation[idx] = Int32((j - 1) % 256)
+            end
+            coefficients[idx] = ntuple(k -> _stable_unit(seq, 1000 + k * 1000 + j), Val(K))
+        end
+    end
+    df = DataFrame(mz = mz, annotation = annotation, coefficients = coefficients; copycols = false)
+    return KoinaBatchResult(df, Int64(F), copy(knots))
+end
+
+function koina_batch_results(client::SyntheticKoinaClient, model::RetentionTimeModel, data::DataFrame,
+                             model_url::String, batch_size::Int, concurrency::Int)
+    (occursin(r"chronologer"i, model_url) && RT_MODEL_CONFIGS[model.name].output == :rt) ||
+        return koina_batch_results_json(model, data, model_url, batch_size, concurrency)
+    return _synthetic_rt_results(data.koina_sequence, batch_size)
+end
+
+function _synthetic_rt_results(seqs::AbstractVector{<:AbstractString}, batch_size::Int)
+    nb = cld(length(seqs), batch_size)
+    results = Vector{KoinaBatchResult{Nothing}}(undef, nb)
+    Threads.@threads :dynamic for b in 1:nb
+        rows = ((b - 1) * batch_size + 1):min(b * batch_size, length(seqs))
+        rt = Float32[Float32(Float64(_stable_unit(String(strip(seqs[r])), 1)) * 200.0) for r in rows]
+        results[b] = KoinaBatchResult(DataFrame(rt = rt; copycols = false), 1, nothing)
+    end
+    return results
 end

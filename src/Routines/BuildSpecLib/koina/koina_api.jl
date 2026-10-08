@@ -117,3 +117,26 @@ function make_koina_batch_requests(json_vec::Vector{String},
     fetch.(tasks)                               # wait for all workers
     return results
 end
+
+
+"""
+    koina_batch_results(model, data, model_url; batch_size = 1000, concurrency = 24) -> Vector{KoinaBatchResult}
+
+Predictions for the rows of `data` from the active `AbstractKoinaClient`, one parsed result per `batch_size` rows.
+Clients that can produce parsed results directly (`SyntheticKoinaClient`) skip the JSON round trip; every other
+client goes through `prepare_koina_batch` -> `make_koina_batch_requests` -> `parse_koina_batch`.
+"""
+koina_batch_results(model::KoinaModelType, data::DataFrame, model_url::String;
+                    batch_size::Int = 1000, concurrency::Int = 24) =
+    koina_batch_results(current_koina_client(), model, data, model_url, batch_size, concurrency)
+
+koina_batch_results(::AbstractKoinaClient, model::KoinaModelType, data::DataFrame, model_url::String,
+                    batch_size::Int, concurrency::Int) =
+    koina_batch_results_json(model, data, model_url, batch_size, concurrency)
+
+function koina_batch_results_json(model::KoinaModelType, data::DataFrame, model_url::String,
+                                  batch_size::Int, concurrency::Int)
+    json_batches = prepare_koina_batch(model, data; batch_size = batch_size)
+    responses = make_koina_batch_requests(json_batches, model_url; concurrency = concurrency)
+    return [parse_koina_batch(model, response) for response in responses]
+end
