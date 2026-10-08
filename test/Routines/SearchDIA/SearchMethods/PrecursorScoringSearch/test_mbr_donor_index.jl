@@ -93,7 +93,7 @@ end
 # The disk-backed store must hold exactly what the in-memory dictionary held: the same donors per
 # precursor, in the same order, with the same lookups, including runs split across files.
 @testset "Donor store matches the in-memory donor dictionary" begin
-    function write_donor_file(path, rng, pids, runs)
+    function write_donor_file(path, rng, pids, runs; ion_mobility = false)
         rows = [(pid, run) for pid in pids for run in runs if rand(rng) < 0.7]
         append!(rows, rows[1:2:end])                       # repeated (precursor, run) rows
         shuffle!(rng, rows)
@@ -111,6 +111,7 @@ end
         for name in Pioneer.MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
             table[!, name] = rand(rng, Float32, n)
         end
+        ion_mobility && (table[!, :im_obs] = rand(rng, Float32, n))
         Arrow.write(path, table)
         return path
     end
@@ -127,20 +128,25 @@ end
                 irt_obs=getproperty(tbl, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN),
                 frag_mask=getproperty(tbl, Pioneer.MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN),
                 frag_rank=getproperty(tbl, Pioneer.MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN),
-                n_scans=getproperty(tbl, Pioneer.MBR_INTEGRATED_N_SCANS_COLUMN), im_obs=nothing)
+                n_scans=getproperty(tbl, Pioneer.MBR_INTEGRATED_N_SCANS_COLUMN),
+                im_obs=hasproperty(tbl, :im_obs) ? tbl.im_obs : nothing)
             frags = ntuple(rank -> getproperty(tbl, Pioneer.MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
             Pioneer._collect_mbr_integrated_donors!(dict, previous, columns, frags, floor, q)
         end
         return dict
     end
-    for (layout, files) in (("one run per file", [[r] for r in 1:12]),
-                            ("runs split across files", [[1, 2], [2, 3], [1, 4], [5], [3, 5, 6]]))
+    for (layout, files, ion_mobility) in (("one run per file", [[r] for r in 1:12], false),
+                                          ("runs split across files", [[1, 2], [2, 3], [1, 4], [5], [3, 5, 6]], false),
+                                          ("with ion mobility", [[r] for r in 1:6], true))
         mktempdir() do directory
             rng = MersenneTwister(hash(layout))
-            paths = [write_donor_file(joinpath(directory, "f$i.arrow"), rng, 1:300, runs)
+            paths = [write_donor_file(joinpath(directory, "f$i.arrow"), rng, 1:300, runs; ion_mobility)
                      for (i, runs) in enumerate(files)]
             expected = in_memory(paths, 0.5f0, 0.01f0)
             index = Pioneer.build_mbr_integrated_donor_dict(paths, 0.5f0; q_value_threshold=0.01f0)
+            # Compact records: 64 bytes without ion mobility, 68 with it (72 in memory).
+            @test eltype(index.entries.entries) ==
+                (ion_mobility ? Pioneer._MBRDonorRecordIM : Pioneer._MBRDonorRecord)
             @test length(index) == length(expected)
             @test all(collect(index[pid]) == donors for (pid, donors) in expected)
             reference = Pioneer._MBRDonorIndex(expected)

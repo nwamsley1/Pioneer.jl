@@ -224,29 +224,99 @@ struct _MBRDonorLookup
 end
 
 """
+    _MBRDonorRecord, _MBRDonorRecordIM
+
+A `_MBRDonorEntry` as stored on disk: without `precursor_idx`, which is the key of the group
+the record belongs to, and (`_MBRDonorRecord`, 64 bytes instead of 72) without `im_obs` when
+every donor's is exactly `0f0`, as on data without ion mobility. `_MBRDonorRecordIM` keeps it
+(68 bytes). Both convert back to the identical `_MBRDonorEntry`.
+"""
+struct _MBRDonorRecord
+    trace_prob::Float32
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_residual::Float32
+    irt_obs::Float32
+    n_scans::Float32
+    integrated_frag_sqrt::NTuple{8, Float32}
+    frag_corr_bitvec::UInt8
+    frag_corr_bitvec_rank::UInt16
+    ms_file_idx::UInt32
+end
+
+struct _MBRDonorRecordIM
+    trace_prob::Float32
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_residual::Float32
+    irt_obs::Float32
+    im_obs::Float32
+    n_scans::Float32
+    integrated_frag_sqrt::NTuple{8, Float32}
+    frag_corr_bitvec::UInt8
+    frag_corr_bitvec_rank::UInt16
+    ms_file_idx::UInt32
+end
+
+_MBRDonorRecord(d::_MBRDonorEntry) = _MBRDonorRecord(d.trace_prob, d.weight,
+    d.log2_intensity_explained, d.irt_residual, d.irt_obs, d.n_scans, d.integrated_frag_sqrt,
+    d.frag_corr_bitvec, d.frag_corr_bitvec_rank, d.ms_file_idx)
+_MBRDonorRecordIM(d::_MBRDonorEntry) = _MBRDonorRecordIM(d.trace_prob, d.weight,
+    d.log2_intensity_explained, d.irt_residual, d.irt_obs, d.im_obs, d.n_scans,
+    d.integrated_frag_sqrt, d.frag_corr_bitvec, d.frag_corr_bitvec_rank, d.ms_file_idx)
+@inline _MBRDonorEntry(r::_MBRDonorRecord, pid::UInt32) = _MBRDonorEntry(r.trace_prob, pid,
+    r.weight, r.log2_intensity_explained, r.irt_residual, r.irt_obs, 0.0f0, r.n_scans,
+    r.integrated_frag_sqrt, r.frag_corr_bitvec, r.frag_corr_bitvec_rank, r.ms_file_idx)
+@inline _MBRDonorEntry(r::_MBRDonorRecordIM, pid::UInt32) = _MBRDonorEntry(r.trace_prob, pid,
+    r.weight, r.log2_intensity_explained, r.irt_residual, r.irt_obs, r.im_obs, r.n_scans,
+    r.integrated_frag_sqrt, r.frag_corr_bitvec, r.frag_corr_bitvec_rank, r.ms_file_idx)
+
+"""
+    _MBRDonorGroup
+
+One precursor's donors in a `_MBRDonorStore`: a read-only vector of `_MBRDonorEntry`, rebuilt
+from the stored records on access.
+"""
+struct _MBRDonorGroup{R} <: AbstractVector{_MBRDonorEntry}
+    records::Vector{R}
+    first::Int            # records[first + i] is donor i
+    len::Int
+    pid::UInt32
+end
+Base.size(group::_MBRDonorGroup) = (group.len,)
+Base.IndexStyle(::Type{<:_MBRDonorGroup}) = IndexLinear()
+@inline function Base.getindex(group::_MBRDonorGroup, i::Int)
+    @boundscheck checkbounds(group, i)
+    return _MBRDonorEntry(@inbounds(group.records[group.first + i]), group.pid)
+end
+
+"""
     _MBRDonorStore
 
-Integrated donors grouped by precursor in one memory-mapped file. At experiment scale the donors
-outgrow memory (about 72 bytes per passing (precursor, run): ~46 GB at 12,800 runs), so they are
-read through file-backed pages the operating system can drop and reload, instead of private
-memory that has to be paged out. `ranges[pid]` locates that precursor's donors in `entries`, in
-the order an in-memory `Dict{UInt32, Vector{_MBRDonorEntry}}` would hold them.
+Integrated donors grouped by precursor in one memory-mapped file of compact records. At
+experiment scale the donors outgrow memory (one per passing (precursor, run): ~636 million at
+12,800 runs), so they are read through file-backed pages the operating system can drop and
+reload, instead of private memory that has to be paged out. `ranges[pid]` locates that
+precursor's donors in `entries`, in the order an in-memory
+`Dict{UInt32, Vector{_MBRDonorEntry}}` would hold them.
 """
-struct _MBRDonorStore
+struct _MBRDonorStore{R}
     ranges::Dict{UInt32, UnitRange{Int}}
-    entries::Vector{_MBRDonorEntry}
+    entries::Vector{R}
     path::String          # backing file; "" when there are no entries
 end
 
 const _MBRDonorEntries = Union{Dict{UInt32, Vector{_MBRDonorEntry}}, _MBRDonorStore}
 
+@inline _donor_group(store::_MBRDonorStore, pid::UInt32, range::UnitRange{Int}) =
+    _MBRDonorGroup(store.entries, first(range) - 1, length(range), pid)
 Base.get(store::_MBRDonorStore, pid::UInt32, default) =
-    (range = get(store.ranges, pid, nothing); range === nothing ? default : view(store.entries, range))
-Base.getindex(store::_MBRDonorStore, pid::UInt32) = view(store.entries, store.ranges[pid])
+    (range = get(store.ranges, pid, nothing); range === nothing ? default : _donor_group(store, pid, range))
+Base.getindex(store::_MBRDonorStore, pid::UInt32) = _donor_group(store, pid, store.ranges[pid])
 Base.length(store::_MBRDonorStore) = length(store.ranges)
 Base.isempty(store::_MBRDonorStore) = isempty(store.ranges)
-Base.values(store::_MBRDonorStore) = (view(store.entries, range) for range in values(store.ranges))
-Base.pairs(store::_MBRDonorStore) = (pid => view(store.entries, range) for (pid, range) in store.ranges)
+Base.values(store::_MBRDonorStore) = (_donor_group(store, pid, range) for (pid, range) in store.ranges)
+Base.pairs(store::_MBRDonorStore) = (pid => _donor_group(store, pid, range) for (pid, range) in store.ranges)
 
 struct _MBRDonorIndex{E<:_MBRDonorEntries}
     entries::E

@@ -297,6 +297,7 @@ function build_mbr_integrated_donor_dict(
     bucket_buffers = [_MBRDonorEntry[] for _ in 1:MBR_DONOR_STORE_BUCKETS]
     previous_files = Set{UInt32}()
     cross_path_files = false
+    all_im_zero = true        # then records omit im_obs (data without ion mobility)
     precursors_seen = Set{UInt32}()
     started = last_progress = time()
     rows_processed = 0
@@ -312,6 +313,7 @@ function build_mbr_integrated_donor_dict(
             union!(previous_files, file_ids)
             for (pid, donors) in file_donors
                 push!(precursors_seen, pid)
+                all_im_zero &= all(donor -> donor.im_obs === 0.0f0, donors)
                 append!(bucket_buffers[_mbr_donor_bucket(pid)], donors)
             end
             for (bucket, buffer) in enumerate(bucket_buffers)
@@ -329,8 +331,9 @@ function build_mbr_integrated_donor_dict(
     end
     store_started = time()
     @debug_l1 "Post-integration MBR donor store writing starting: precursors=$(length(precursors_seen))"
-    store = _write_mbr_donor_store(bucket_paths, store_dir, cross_path_files)
-    @debug_l1 "Post-integration MBR donor store writing complete: entries=$(length(store.entries)) bytes=$(length(store.entries) * sizeof(_MBRDonorEntry)) elapsed=$(round(time() - store_started, digits=2))s"
+    record_type = all_im_zero ? _MBRDonorRecord : _MBRDonorRecordIM
+    store = _write_mbr_donor_store(bucket_paths, store_dir, cross_path_files, record_type)
+    @debug_l1 "Post-integration MBR donor store writing complete: entries=$(length(store.entries)) bytes=$(length(store.entries) * sizeof(record_type)) elapsed=$(round(time() - store_started, digits=2))s"
     index_started = time()
     @debug_l1 "Post-integration MBR donor lookup construction starting: precursors=$(length(store))"
     index = _MBRDonorIndex(store)
@@ -382,11 +385,12 @@ function _collect_mbr_integrated_file_donors!(
         return length(tbl.precursor_idx)
 end
 
-# Group each bucket by precursor (stably, so first-appearance order is kept) and append the groups
-# to one store file, which is then memory-mapped. With `cross_path_files`, a run whose donors came
+# Group each bucket by precursor (stably, so first-appearance order is kept) and append the groups,
+# as `record_type` records, to one store file, which is then memory-mapped. With `cross_path_files`, a run whose donors came
 # from more than one file keeps one donor per (precursor, run): the first position, holding the
 # higher-scoring donor, as `_collect_mbr_integrated_donors!` does across files.
-function _write_mbr_donor_store(bucket_paths::Vector{String}, store_dir::String, cross_path_files::Bool)
+function _write_mbr_donor_store(bucket_paths::Vector{String}, store_dir::String, cross_path_files::Bool,
+                                record_type::Type{R}) where {R}
     store_path = tempname(store_dir) * ".mbr_donor_store"
     ranges = Dict{UInt32, UnitRange{Int}}()
     n = 0
@@ -406,7 +410,7 @@ function _write_mbr_donor_store(bucket_paths::Vector{String}, store_dir::String,
                     end
                     group = view(donors, first_row:last_row)
                     cross_path_files && (group = _mbr_merge_cross_file_donors(group))
-                    write(out, group)
+                    write(out, map(R, group))
                     ranges[pid] = (n + 1):(n + length(group))
                     n += length(group)
                     first_row = last_row + 1
@@ -417,9 +421,9 @@ function _write_mbr_donor_store(bucket_paths::Vector{String}, store_dir::String,
     end
     if n == 0
         rm(store_path)
-        return _MBRDonorStore(ranges, _MBRDonorEntry[], "")
+        return _MBRDonorStore(ranges, R[], "")
     end
-    entries = open(io -> Mmap.mmap(io, Vector{_MBRDonorEntry}, n), store_path, "r")
+    entries = open(io -> Mmap.mmap(io, Vector{R}, n), store_path, "r")
     return _MBRDonorStore(ranges, entries, store_path)
 end
 
@@ -445,7 +449,7 @@ Unmap and delete the store behind a donor index built by `build_mbr_integrated_d
 that refers to its entries may be used afterwards.
 """
 close_mbr_donor_store!(::_MBRDonorIndex) = nothing
-function close_mbr_donor_store!(index::_MBRDonorIndex{_MBRDonorStore})
+function close_mbr_donor_store!(index::_MBRDonorIndex{<:_MBRDonorStore})
     store = index.entries
     isempty(store.path) && return nothing
     Base.finalize(store.entries.ref.mem)   # Mmap attaches its unmap finalizer to the Memory
