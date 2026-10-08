@@ -321,6 +321,7 @@ end
 function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, entrapment_method::String,
                       add_decoys::Bool, decoy_method::String, seed::Int)
     U = length(peps.code)
+    t0 = time()
     # add_mods: variant counts per peptide (a peptide with no admissible variant emits no units)
     var_offsets = Vector{Int}(undef, U + 1); var_offsets[1] = 1
     n_fixed = Vector{UInt8}(undef, U)
@@ -353,6 +354,7 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
         mod_off[f + 1] = mod_off[f] + nm; f += 1
     end
     parts = nothing; nvariants = nothing
+    @user_info @sprintf("Streaming build:   mod variants %.1f s", time() - t0); t0 = time()
     F = var_offsets[end] - 1
     unit_pep = Vector{UInt32}(undef, F)
     for k in 1:U, f in var_offsets[k]:(var_offsets[k + 1] - 1); unit_pep[f] = UInt32(k); end
@@ -388,6 +390,7 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
         push!(eunit_target, UInt32(f)); push!(eunit_seq, e)
     end
     G = length(eunit_target)
+    @user_info @sprintf("Streaming build:   entrapments %.1f s", time() - t0); t0 = time()
 
     # decoys: groups = exact sequences of targets and entrapments, in sorted order; one decoy sequence per group
     decoy = DerivedSeqs(); decoy_of_input = zeros(UInt32, F + G)
@@ -414,6 +417,7 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
                 copyto!(cand0_pos, pos_off[gi], tss.new_positions, 1, length(seq))
             end
         end
+        @user_info @sprintf("Streaming build:   decoy groups + first candidates %.1f s", time() - t0); t0 = time()
         # accept in sorted order against everything reserved so far; a rejected first candidate is redrawn
         # sequentially from a fresh stream (identical to drawing in order)
         for (gi, (code, kind, idx)) in enumerate(groups)
@@ -430,6 +434,7 @@ function stream_units(peps::StreamPeptides, mc::ModConfig, entrapment_r::Int, en
             for u in members; decoy_of_input[u] = UInt32(d); end
         end
         cand0 = nothing; cand0_pos = nothing
+        @user_info @sprintf("Streaming build:   decoy accept %.1f s", time() - t0)
     end
     return StreamUnits(peps, mc, var_offsets, unit_pep, n_fixed, entrap, entrap_pep, entrap_group,
                        eunit_target, eunit_seq, decoy, decoy_of_input, mod_off, mod_pos, mod_id, mod_names, mod_rank, F, G)
@@ -576,6 +581,9 @@ function _stream_phase(name::String, t0::Float64)
                         name, time() - t0, peak_rss() / 1e9, Base.gc_live_bytes() / 1e9)
     return time()
 end
+
+"Float32 bits mapped so unsigned order = isless order (negatives below positives, -0.0 below 0.0, NaN last)."
+@inline _ordered_bits(x::Float32) = (u = reinterpret(UInt32, x); signbit(x) ? ~u : u | 0x80000000)
 
 "Residue mass sum of a packed sequence, in sequence order from 0.0 (getMass(sequence))."
 function residue_mass(c::SeqCode)
@@ -727,21 +735,30 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
         return entrapment_group(units, ua) < entrapment_group(units, ub)
     end
     irt_lt(a, b) = (ia = unit_irt[unit_of(a)]; ib = unit_irt[unit_of(b)]; isequal(ia, ib) ? tie_less(a, b) : isless(ia, ib))
-    # sort by a numeric key (parallel), then order runs of equal keys with the full comparison
+    # sort by a numeric key: one parallel sort of (order-preserving key bits << 32 | row). Rows of one unit share
+    # its iRT and are then in charge order, which is what the full comparison gives; only equal-key runs that span
+    # several units still need the full comparison.
     function sort_by_key!(rows_v, key_of, tie_lt)
         n = length(rows_v)
         n <= 1 && return rows_v
-        key = Vector{Float32}(undef, n)
-        Threads.@threads for i in 1:n; key[i] = key_of(rows_v[i]); end
-        ix = Vector{UInt32}(undef, n)
-        AcceleratedKernels.sortperm!(ix, key)
-        sorted_rows = rows_v[ix]; key = key[ix]; ix = nothing
-        copyto!(rows_v, sorted_rows); sorted_rows = nothing
+        keys = Vector{UInt64}(undef, n)
+        Threads.@threads for i in 1:n
+            r = rows_v[i]
+            keys[i] = (UInt64(_ordered_bits(key_of(r))) << 32) | UInt64(r)
+        end
+        AcceleratedKernels.sort!(keys)
+        Threads.@threads for i in 1:n; rows_v[i] = UInt32(keys[i] & 0xffffffff); end
         i = 1
         while i < n
             j = i
-            while j < n && isequal(key[j + 1], key[i]); j += 1; end
-            j > i && sort!(view(rows_v, i:j); lt = tie_lt)
+            while j < n && (keys[j + 1] >> 32) == (keys[i] >> 32); j += 1; end
+            if j > i && any(m -> unit_of(rows_v[m]) != unit_of(rows_v[i]), (i + 1):j)
+                if j == i + 1
+                    tie_lt(rows_v[j], rows_v[i]) && ((rows_v[i], rows_v[j]) = (rows_v[j], rows_v[i]))
+                else
+                    sort!(view(rows_v, i:j); lt = tie_lt)
+                end
+            end
             i = j + 1
         end
         return rows_v
