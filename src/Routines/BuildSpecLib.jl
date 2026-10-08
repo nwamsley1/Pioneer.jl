@@ -38,6 +38,20 @@ function main_BuildSpecLib(argv=ARGS)::Cint
 end
 
 """
+    gc_concurrent_sweep_enabled() -> Bool
+
+Whether this Julia process runs a concurrent GC sweep thread. `--gcthreads=N,M` shows up in
+`Base.JLOptions()`; when the flag is absent Julia reads `JULIA_NUM_GC_THREADS` instead.
+"""
+function gc_concurrent_sweep_enabled(; nmark::Integer = Base.JLOptions().nmarkthreads,
+                                      nsweep::Integer = Base.JLOptions().nsweepthreads,
+                                      env::AbstractDict = ENV)
+    nmark > 0 && return nsweep > 0
+    m = match(r",\s*(\d+)", get(env, "JULIA_NUM_GC_THREADS", ""))
+    return m !== nothing && parse(Int, m[1]) > 0
+end
+
+"""
     BuildSpecLib(params_path::String)
 
 Main function to build a spectral library from parameters. Executes a series of steps:
@@ -112,6 +126,14 @@ function BuildSpecLib(params_path::String)
         @user_print "Spectral Library Building Process"
         @user_print repeat("=", 90)
         @user_info "\nStarting library build at: $(Dates.now())"
+        # GC threads are fixed at startup, so this can only warn; the pioneer wrappers and the GUI
+        # launch library builds with `,0` already.
+        if gc_concurrent_sweep_enabled()
+            @user_warn "Julia is running with a concurrent GC sweep thread (--gcthreads=N,1 or " *
+                       "JULIA_NUM_GC_THREADS=N,1). Large library builds have crashed intermittently " *
+                       "(segmentation fault while building the fragment index) with it enabled; " *
+                       "relaunch with --gcthreads=N,0 if this build crashes."
+        end
         @user_info "Output directory: $lib_dir"
         @user_info "RNG seed: $build_seed"
 

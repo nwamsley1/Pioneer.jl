@@ -142,6 +142,15 @@ pub struct Spec {
     pub threads: u32,
 }
 
+/// `JULIA_NUM_GC_THREADS` for a job: `ceil(threads / 2)` mark threads, matching the
+/// `pioneer` wrapper, and one concurrent sweep thread -- except for BuildSpecLib, which
+/// runs without it: with it, large library builds intermittently crashed (SIGSEGV) in
+/// the threaded fragment-index builder, and it gives no measurable speedup.
+pub fn gc_threads_env(command: pioneer::Command, threads: u32) -> String {
+    let sweep = if matches!(command, pioneer::Command::BuildSpecLib) { 0 } else { 1 };
+    format!("{},{}", ((threads + 1) / 2).max(1), sweep)
+}
+
 /// Where the params file for a job is written.
 ///
 /// Kept after the run rather than deleted — it is the exact input Pioneer saw,
@@ -215,7 +224,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
         // which leaves GC threads defaulting to the full worker count.
         // Matches the `pioneer` wrapper's own formula, `(threads + 1) / 2`,
         // i.e. ceil rather than floor — so the GUI and the shell script agree.
-        let gc = format!("{},1", ((spec.threads + 1) / 2).max(1));
+        let gc = gc_threads_env(spec.command, spec.threads);
         envs.push(("JULIA_NUM_THREADS".into(), spec.threads.to_string()));
         envs.push(("JULIA_NUM_GC_THREADS".into(), gc.clone()));
         env_summary = format!(
@@ -575,6 +584,14 @@ impl LineSplitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_builds_run_without_the_concurrent_gc_sweep_thread() {
+        assert_eq!(gc_threads_env(pioneer::Command::BuildSpecLib, 12), "6,0");
+        assert_eq!(gc_threads_env(pioneer::Command::SearchDia, 12), "6,1");
+        assert_eq!(gc_threads_env(pioneer::Command::SearchDia, 1), "1,1");
+        assert_eq!(gc_threads_env(pioneer::Command::BuildSpecLib, 7), "4,0");
+    }
 
     /// Feed bytes through the splitter and apply the frontend's replace rule,
     /// returning what the log pane would end up showing.
