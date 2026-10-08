@@ -430,72 +430,20 @@ function _build_spec_lib(params_path::String)
                     N_FRAGMENTS = length(fragments_table[:mz])
                 end
 
-                # Process precursor table
-                N_PRECURSORS = length(precursors_table[:mz])
-                N_DECOYS  = sum(precursors_table[:decoy])
-                N_TARGETS = N_PRECURSORS - N_DECOYS
+                # Final precursor table (search-side names, partner and entrapment-target row indices)
                 fragments_table = nothing
-                # raw_fragments.arrow is fully consumed by parse_altimeter_fragments
-                # (process_spline_batch! decode + rebuild_prec_to_frag_index!); its
-                # mmap handle (fragments_table) is released just above. Delete it now —
-                # before the precursor DataFrame work + precursors_table.arrow write —
-                # so raw no longer coexists with fragments_table.arrow at the peak.
+                precursors_table = nothing
                 GC.gc()
                 safeRm(raw_fragments_arrow_path; force=true)
-                precursors_table = DataFrame(precursors_table)
-                rename!(precursors_table, [
-                    :accession_number => :accession_numbers,
-                    :precursor_charge => :prec_charge,
-                    :decoy => :is_decoy,
-                    :mods => :structural_mods
-                ])
-
-                # Convert types
-                precursors_table[!, :missed_cleavages] = UInt8.(precursors_table[!, :missed_cleavages])
-                precursors_table[!, :num_enzymatic_termini] = UInt8.(precursors_table[!, :num_enzymatic_termini])
-                precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
-                precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
-                precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
-                for col in (:ccs, :inv_ion_mobility)   # present only when im_model was set
-                    hasproperty(precursors_table, col) &&
-                        (precursors_table[!, col] = Float32.(precursors_table[!, col]))
-                end
-                precursors_table[!, :start_idx] =
-                    [UInt32.(collect(starts)) for starts in precursors_table[!, :start_idx]]
-                precursors_table[!, :num_variable_modifications] = UInt8.(
-                    precursors_table.num_variable_modifications
-                )
-
-                # Save processed precursor table
-                @debug_l1 "  Before add_pair_indices!: $(nrow(precursors_table)) precursors"
-                @debug_l1 "  Unique pair_ids available: $(length(unique(precursors_table.pair_id)))"
-                add_pair_indices!(precursors_table)  # Add partner indices AFTER all sorting is complete
-                partner_col = precursors_table.partner_precursor_idx
-                max_partner = all(ismissing, partner_col) ? 0 : Int64(maximum(skipmissing(partner_col)))
-                @debug_l1 "  After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))"
-                @debug_l1 "  Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")"
-
-                # Add entrapment target indices if entrapment_pair_id column exists AND entrapment is enabled
                 entrapment_r = get(params["fasta_digest_params"], "entrapment_r", 0)
-                if hasproperty(precursors_table, :entrapment_pair_id) && entrapment_r > 0
-                    @debug_l1 "  Adding entrapment target indices..."
-                    add_entrapment_indices!(precursors_table)
-                    ent_col = precursors_table.entrapment_target_idx
-                    max_entrap_target = all(ismissing, ent_col) ? 0 : Int64(maximum(skipmissing(ent_col)))
-                    @debug_l1 "  After add_entrapment_indices!: max entrapment_target_idx = $max_entrap_target"
-                    @debug_l1 "  Entrapment indices valid: $(max_entrap_target <= nrow(precursors_table) ? "✅ YES" : "❌ NO")"
-                end
-                Arrow.write(
-                    joinpath(lib_dir, "precursors_table.arrow"),
-                    precursors_table
-                )
+                N_PRECURSORS, N_DECOYS = finalize_precursor_table(precursors_arrow_path,
+                                                                  joinpath(lib_dir, "precursors_table.arrow");
+                                                                  entrapment_targets = entrapment_r > 0)
+                N_TARGETS = N_PRECURSORS - N_DECOYS
 
                 GC.gc()
-                # precursors.arrow is now fully materialized into precursors_table
-                # (DataFrame copy + Arrow.write above), so delete it before buildPionLib
-                # + File Verification. (raw_fragments.arrow was deleted earlier, right
-                # after parse_altimeter_fragments.) safeRm = GC + retry for the Windows
-                # mmap lock.
+                # precursors.arrow is now fully rewritten as precursors_table.arrow, so delete it before
+                # buildPionLib + File Verification. safeRm = GC + retry for the Windows mmap lock.
                 safeRm(precursors_arrow_path; force=true)
                 nothing
             end
