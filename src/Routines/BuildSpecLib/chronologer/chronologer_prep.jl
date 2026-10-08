@@ -496,6 +496,28 @@ function add_pair_indices!(df)
 end
 
 """
+    koina_sequence(sequence, mods_string) -> String
+
+The Koina / Chronologer input form of a precursor: `sequence` with `[MODNAME]` (uppercased mod name) after each
+modified residue, mods taken from a `getModString` string in residue order (stable for mods on one residue).
+"""
+function koina_sequence(seq::AbstractString, mods::Union{Missing, AbstractString})
+    ismissing(mods) && return String(seq)
+    parsed_mods = [x for x in parseMods(mods)]
+    sort!(parsed_mods, by = x->getModIndex(x.match))
+    chronologer_seq = ""
+    start_idx, stop_idx = 1, length(seq)
+    for mod in parsed_mods
+        stop_idx = getModIndex(mod.match)
+        chronologer_seq *= seq[start_idx:stop_idx]
+        chronologer_seq *= "["*uppercase(getModName(mod.match))*"]"
+        start_idx = stop_idx += one(UInt8)
+    end
+    chronologer_seq *= seq[start_idx:length(seq)]
+    return chronologer_seq
+end
+
+"""
     build_fasta_df(
         fasta_peptides::Vector{FastaEntry};
         mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
@@ -528,37 +550,6 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                            )
 
   
-    function getKoinaSeqs(
-        sequences::Vector{String},
-        mods::Vector{Union{Missing, String}},
-        mod_name_to_mass::Dict{String, String}
-        )   
-        mod_parse_regex = r"\(([0-9]+?),.*?,(.*?)\)"
-        mod_sequences = Vector{String}(undef, length(sequences))
-        for i in range(1, length(sequences))
-            seq = sequences[i]
-            if !ismissing(mods[i])
-                #parsed_mods = eachmatch(mod_parse_regex, mods[i])
-                parsed_mods = [x for x in parseMods(mods[i])]
-                sort!(parsed_mods, by = x->getModIndex(x.match))
-                chronologer_seq = ""
-                start_idx, stop_idx = 1, length(seq)
-                for mod in parsed_mods
-                    stop_idx = getModIndex(mod.match)#parse(UInt8, first(mod.captures))
-                    chronologer_seq *= seq[start_idx:stop_idx]
-                    #chronologer_seq *= "[+"*mod_name_to_mass[getModName(mod.match)]*"]"
-                    chronologer_seq *= "["*uppercase(getModName(mod.match))*"]"
-                    start_idx = stop_idx += one(UInt8)
-                end
-                chronologer_seq *= seq[start_idx:length(seq)]
-                mod_sequences[i] = chronologer_seq
-            else
-                mod_sequences[i] = seq
-            end
-    
-        end
-        return mod_sequences
-    end
     #Number of precursors to pre-allocate memory for
     prec_alloc_size = length(fasta_peptides)
 
@@ -628,11 +619,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          pair_id = _pair_id[1:n])
     )
 
-    seq_df[!,:koina_sequence] = getKoinaSeqs(
-                                                    seq_df[!,:sequence],
-                                                    seq_df[!,:mods],
-                                                    mod_to_mass_dict
-                                                    )
+    seq_df[!,:koina_sequence] = [koina_sequence(seq, mods) for (seq, mods) in zip(seq_df[!,:sequence], seq_df[!,:mods])]
     
     # NOTE: Pairing moved to after filtering to ensure valid partner_precursor_idx values
     # seq_df = add_charge_specific_partner_columns!(seq_df)
