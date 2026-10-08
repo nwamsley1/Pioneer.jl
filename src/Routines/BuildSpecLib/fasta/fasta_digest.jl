@@ -32,15 +32,15 @@ function normalize_digest_specificity(specificity::AbstractString)::String
     return normalized
 end
 
-function _digest_fully_specific_sequence(sequence::AbstractString,
-                                         regex::Regex,
-                                         max_length::Int,
-                                         min_length::Int,
-                                         missed_cleavages::Int,
-                                         nterm_met_excision::Bool
-                                        )::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
+function _digest_fully_specific_ranges(sequence::AbstractString,
+                                       regex::Regex,
+                                       max_length::Int,
+                                       min_length::Int,
+                                       missed_cleavages::Int,
+                                       nterm_met_excision::Bool
+                                      )::Tuple{Vector{UInt32}, Vector{UInt32}, Vector{UInt8}}
     
-    function add_peptide!(peptides::Vector{String},
+    function add_peptide!(peptides::Vector{UInt32},
                           starts::Vector{UInt32},
                           n::Int,
                           sequence::AbstractString,
@@ -55,7 +55,7 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
             previous_site = previous_sites[end - i + 1]
             if ((site - previous_site) >= min_length) && 
                 ((site - previous_site) <= max_length)
-                push!(peptides, String(@view sequence[previous_site+1:site]))
+                push!(peptides, UInt32(site))
                 push!(starts, UInt32(previous_site + 1))
             end
             # N-terminal Met excision: the initiator Met is usually removed in
@@ -64,7 +64,7 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
             # missed cleavage; the length window applies to the excised form.
             if nterm_met_excision && previous_site == 0 &&
                 ((site - 1) >= min_length) && ((site - 1) <= max_length)
-                push!(peptides, String(@view sequence[2:site]))
+                push!(peptides, UInt32(site))
                 push!(starts, UInt32(2))
             end
         end
@@ -76,7 +76,7 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
         return n + 1
     end
 
-    peptides = String[]
+    peptides = UInt32[]   # end index of each peptide; its start is in `starts`
     starts = Vector{UInt32}()
     previous_sites = zeros(Int, missed_cleavages + 1)
     previous_sites[1] = 0
@@ -129,6 +129,26 @@ function digest_sequence(sequence::AbstractString,
                          specificity::AbstractString;
                          nterm_met_excision::Bool = false
                         )::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
+    ends, starts, termini = digest_sequence_ranges(sequence, regex, max_length, min_length, missed_cleavages,
+                                                   specificity; nterm_met_excision = nterm_met_excision)
+    peptides = String[String(@view sequence[Int(s0):Int(e)]) for (s0, e) in zip(starts, ends)]
+    return peptides, starts, termini
+end
+
+"""
+    digest_sequence_ranges(sequence, regex, max_length, min_length, missed_cleavages, specificity;
+                           nterm_met_excision = false) -> (ends, starts, enzymatic_termini)
+
+`digest_sequence` without building strings: peptide i is `sequence[starts[i]:ends[i]]`, in the same order.
+"""
+function digest_sequence_ranges(sequence::AbstractString,
+                                regex::Union{Regex,Nothing},
+                                max_length::Int,
+                                min_length::Int,
+                                missed_cleavages::Int,
+                                specificity::AbstractString;
+                                nterm_met_excision::Bool = false
+                               )::Tuple{Vector{UInt32}, Vector{UInt32}, Vector{UInt8}}
     normalized = normalize_digest_specificity(specificity)
 
     if isnothing(regex) && normalized != "none"
@@ -139,12 +159,12 @@ function digest_sequence(sequence::AbstractString,
     end
 
     if normalized == "full"
-        return _digest_fully_specific_sequence(
+        return _digest_fully_specific_ranges(
             sequence, regex, max_length, min_length, missed_cleavages, nterm_met_excision
         )
     end
 
-    isempty(sequence) && return String[], UInt32[], UInt8[]
+    isempty(sequence) && return UInt32[], UInt32[], UInt8[]
 
     sequence_length = length(sequence)
     cleavage_mask = falses(sequence_length)
@@ -181,7 +201,7 @@ function digest_sequence(sequence::AbstractString,
         return before_end - before_start
     end
 
-    peptides = String[]
+    peptides = UInt32[]   # end index of each peptide; its start is in `starts`
     starts = UInt32[]
     enzymatic_termini = UInt8[]
 
@@ -192,7 +212,7 @@ function digest_sequence(sequence::AbstractString,
             return
         end
         end_enzymatic = end_is_enzymatic(end_idx)
-        push!(peptides, String(@view sequence[start_idx:end_idx]))
+        push!(peptides, UInt32(end_idx))
         push!(starts, UInt32(start_idx))
         push!(enzymatic_termini,
               UInt8(start_enzymatic ? 1 : 0) + UInt8(end_enzymatic ? 1 : 0))

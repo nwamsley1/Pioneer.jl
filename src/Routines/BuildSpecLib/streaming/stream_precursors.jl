@@ -60,6 +60,22 @@ function encode_seq(s::AbstractString)
     return SeqCode(hi, lo)
 end
 
+"Pack `bytes[a:b]` (ASCII residues); nothing if any residue is not one of the 20 standard amino acids (VALID_AAS)."
+function encode_range(bytes::AbstractVector{UInt8}, a::Int, b::Int)
+    hi = zero(UInt128); lo = zero(UInt128)
+    @inbounds for (n, i) in enumerate(a:b)
+        x = bytes[i]
+        code = x < 0x80 ? _SEQ_CODE[Int(x)] : 0x00
+        code == 0 && return nothing
+        if n <= 25
+            hi |= UInt128(code) << (5 * (25 - n) + 3)
+        else
+            lo |= UInt128(code) << (5 * (50 - n) + 3)
+        end
+    end
+    return SeqCode(hi, lo)
+end
+
 function decode_seq(c::SeqCode)
     io = IOBuffer()
     for n in 1:SEQ_MAX_LENGTH
@@ -116,11 +132,14 @@ function stream_digest(proteins::Vector{FastaEntry}, regex, max_length::Int, min
     Threads.@threads :dynamic for ci in eachindex(chunks)
         c_codes = SeqCode[]; c_prot = UInt32[]; c_starts = UInt32[]; c_nte = UInt8[]
         for p in chunks[ci]
-            peptides, st, termini = digest_sequence(get_sequence(proteins[p]), regex, max_length, min_length,
-                                                    missed_cleavages, specificity; nterm_met_excision = nterm_met_excision)
-            for (pep, s0, t) in zip(peptides, st, termini)
-                all(aa -> aa ∈ VALID_AAS, pep) || continue
-                push!(c_codes, encode_seq(pep)); push!(c_prot, UInt32(p)); push!(c_starts, UInt32(s0)); push!(c_nte, t)
+            seq = get_sequence(proteins[p])
+            bytes = codeunits(seq)
+            ends, st, termini = digest_sequence_ranges(seq, regex, max_length, min_length, missed_cleavages,
+                                                       specificity; nterm_met_excision = nterm_met_excision)
+            for (e, s0, t) in zip(ends, st, termini)
+                code = encode_range(bytes, Int(s0), Int(e))      # nothing = a residue outside VALID_AAS
+                code === nothing && continue
+                push!(c_codes, code); push!(c_prot, UInt32(p)); push!(c_starts, s0); push!(c_nte, t)
             end
         end
         parts[ci] = (c_codes, c_prot, c_starts, c_nte)
@@ -448,7 +467,9 @@ function presort_units(s::StreamUnits, has_decoy_step::Bool)
     for d in eachindex(s.decoy.code); d_off[d + 1] > d_off[d] && push!(keys, (UInt64(2) << 40) | UInt64(d)); end
     group_code(x) = (kind = x >> 40; i = Int(x & 0xffffffffff);
         kind == 0 ? s.peps.code[i] : kind == 1 ? s.entrap.code[i] : s.decoy.code[i])
-    sort!(keys, by = group_code)        # target / entrapment / decoy sequences are distinct: no ties
+    ix = Vector{UInt32}(undef, length(keys))  # target / entrapment / decoy sequences are distinct: no ties
+    AcceleratedKernels.sortperm!(ix, keys; by = group_code)
+    keys = keys[ix]; ix = nothing
     out = Vector{UInt32}(undef, 0); sizehint!(out, 2 * (s.F + s.G))
     for x in keys
         kind = x >> 40; i = Int(x & 0xffffffffff)
@@ -461,6 +482,91 @@ function presort_units(s::StreamUnits, has_decoy_step::Bool)
         end
     end
     return out
+end
+
+"""
+pair_id and entrapment_pair_id in the in-memory path's numbering (add_charge_specific_partner_columns! /
+add_entrapment_partner_columns! over the pre-sort row order), computed in parallel: per-chunk counts of the rows
+that take a new id, a prefix sum for each chunk's first id, then each chunk assigns its rows. A decoy row belongs to
+exactly one input unit, so the chunks write disjoint rows.
+"""
+function assign_pair_ids!(pair_id::Vector{UInt32}, epair_id::Vector{UInt32}, presort::Vector{UInt32},
+                          present::Vector{Bool}, s::StreamUnits, nz::Int)
+    row(u, zi) = (u - 1) * nz + zi
+    chunks = collect(Iterators.partition(eachindex(presort), max(1, cld(length(presort), 64 * Threads.nthreads()))))
+    function first_ids(counts)
+        firsts = Vector{UInt32}(undef, length(counts))
+        acc = UInt32(1)
+        for c in eachindex(counts); firsts[c] = acc; acc += counts[c]; end
+        return firsts, acc
+    end
+    # targets / entrapments (and their decoy partner) in pre-sort order
+    counts = zeros(UInt32, length(chunks))
+    Threads.@threads :dynamic for c in eachindex(chunks)
+        n = UInt32(0)
+        for i in chunks[c]
+            u = Int(presort[i]); is_decoy_unit(s, u) && continue
+            for zi in 1:nz; n += present[row(u, zi)]; end
+        end
+        counts[c] = n
+    end
+    firsts, next_id = first_ids(counts)
+    Threads.@threads :dynamic for c in eachindex(chunks)
+        id = firsts[c]
+        for i in chunks[c]
+            u = Int(presort[i]); is_decoy_unit(s, u) && continue
+            d = s.decoy_of_input[u]
+            for zi in 1:nz
+                r = row(u, zi); present[r] || continue
+                pair_id[r] = id
+                if d != 0
+                    dr = row(s.F + s.G + u, zi)
+                    present[dr] && (pair_id[dr] = id)
+                end
+                id += 1
+            end
+        end
+    end
+    # unpaired decoys, numbered after all targets, in pre-sort order
+    Threads.@threads :dynamic for c in eachindex(chunks)
+        n = UInt32(0)
+        for i in chunks[c]
+            u = Int(presort[i]); is_decoy_unit(s, u) || continue
+            for zi in 1:nz; r = row(u, zi); n += present[r] && pair_id[r] == 0; end
+        end
+        counts[c] = n
+    end
+    firsts, _ = first_ids(counts)
+    Threads.@threads :dynamic for c in eachindex(chunks)
+        id = firsts[c] + next_id - 1
+        for i in chunks[c]
+            u = Int(presort[i]); is_decoy_unit(s, u) || continue
+            for zi in 1:nz
+                r = row(u, zi)
+                (present[r] && pair_id[r] == 0) || continue
+                pair_id[r] = id; id += 1
+            end
+        end
+    end
+    # entrapment_pair_id: without entrapments it numbers the target rows in pre-sort order, i.e. equals pair_id
+    if s.G == 0
+        Threads.@threads for u in 1:s.F
+            for zi in 1:nz; r = row(u, zi); present[r] && (epair_id[r] = pair_id[r]); end
+        end
+    else
+        next_e = UInt32(1)
+        for u in Iterators.map(Int, presort), zi in 1:nz
+            r = row(u, zi)
+            (present[r] && !is_decoy_unit(s, u)) || continue
+            tr = row(unit_target(s, u), zi)          # the entrapment's group-0 target row (itself for targets)
+            present[tr] || continue
+            if epair_id[tr] == 0
+                epair_id[tr] = next_e; next_e += 1
+            end
+            epair_id[r] = epair_id[tr]
+        end
+    end
+    return nothing
 end
 
 "Log a phase's time with the process peak RSS so far and the live heap after a full collection."
@@ -592,36 +698,9 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
 
     # pre-sort order (sequence, then input order, then charge) -> pair_id and entrapment_pair_id
     presort = presort_units(units, dp["add_decoys"] && get(dp, "decoy_method", "shuffle") != "diann_mutation")
+    t = _stream_phase("pre-sort order", t)
     pair_id = zeros(UInt32, NU * nz); epair_id = zeros(UInt32, NU * nz)
-    next_pair = UInt32(1)
-    row_of(u, zi) = (u - 1) * nz + zi
-    for u in Iterators.map(Int, presort), zi in 1:nz
-        r = row_of(u, zi)
-        (present[r] && !is_decoy_unit(units, u)) || continue
-        pair_id[r] = next_pair
-        d = units.decoy_of_input[u]
-        if d != 0
-            dr = row_of(units.F + units.G + u, zi)
-            present[dr] && (pair_id[dr] = next_pair)
-        end
-        next_pair += 1
-    end
-    for u in Iterators.map(Int, presort), zi in 1:nz
-        r = row_of(u, zi)
-        (present[r] && is_decoy_unit(units, u) && pair_id[r] == 0) || continue
-        pair_id[r] = next_pair; next_pair += 1
-    end
-    next_e = UInt32(1)
-    for u in Iterators.map(Int, presort), zi in 1:nz
-        r = row_of(u, zi)
-        (present[r] && !is_decoy_unit(units, u)) || continue
-        tr = row_of(unit_target(units, u), zi)          # the entrapment's group-0 target row (itself for targets)
-        present[tr] || continue
-        if epair_id[tr] == 0
-            epair_id[tr] = next_e; next_e += 1
-        end
-        epair_id[r] = epair_id[tr]
-    end
+    assign_pair_ids!(pair_id, epair_id, presort, present, units, nz)
     presort = nothing
     t = _stream_phase("pair ids", t)
 
