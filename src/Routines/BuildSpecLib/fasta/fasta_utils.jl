@@ -130,7 +130,8 @@ function add_entrapment_sequences(
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
-    entrapment_method::String = "shuffle"
+    entrapment_method::String = "shuffle",
+    seed::Integer = 1844
 )::Vector{FastaEntry}
     
     # Pre-allocate output vector
@@ -252,6 +253,30 @@ function add_entrapment_sequences(
 end
 
 """
+    sequence_rng(sequence, seed, salt) -> Xoshiro
+
+Random stream for one base sequence's decoy (`salt = 1`) or entrapment (`salt = 2`) shuffles: seeded from the
+sequence's bytes (FNV-1a, stable across Julia versions), the build `seed` and `salt`. A peptide's shuffles then do
+not depend on the order sequences are processed in, so a streaming library build can reproduce them.
+"""
+function sequence_rng(sequence::AbstractString, seed::Integer, salt::Integer)
+    h = 0xcbf29ce484222325
+    for b in codeunits(sequence)
+        h = (h ⊻ UInt64(b)) * 0x00000100000001b3
+    end
+    # splitmix64 expands the 64-bit key into a well-mixed 256-bit Xoshiro state
+    x = h ⊻ (UInt64(seed) * 0x9e3779b97f4a7c15) ⊻ (UInt64(salt) << 56)
+    s = ntuple(4) do _
+        x += 0x9e3779b97f4a7c15
+        z = x
+        z = (z ⊻ (z >> 30)) * 0xbf58476d1ce4e5b9
+        z = (z ⊻ (z >> 27)) * 0x94d049bb133111eb
+        z ⊻ (z >> 31)
+    end
+    return Xoshiro(s...)
+end
+
+"""
     add_entrapment_sequences_grouped(
         target_fasta_entries::Vector{FastaEntry},
         entrapment_r::UInt8;
@@ -285,7 +310,8 @@ function add_entrapment_sequences_grouped(
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
-    entrapment_method::String = "shuffle"
+    entrapment_method::String = "shuffle",
+    seed::Integer = 1844
 )::Vector{FastaEntry}
 
     # Track existing sequences (I/L equivalence) including charges
@@ -323,7 +349,10 @@ function add_entrapment_sequences_grouped(
 
     exhausted_groups = 0
     sample_logged = 0
-    for (base_seq, idxs) in groups
+    # Sorted base sequences + per-sequence RNG: deterministic, independent of Dict order
+    for base_seq in sort!(collect(keys(groups)))
+        idxs = groups[base_seq]
+        rng = sequence_rng(base_seq, seed, 2)
         # Collect unique charges observed among variants (usually 0 at this stage)
         charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
@@ -334,7 +363,7 @@ function add_entrapment_sequences_grouped(
             n_shuffle_attempts = 0
 
             # Start with requested method
-            new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=entrapment_method)
+            new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=entrapment_method, rng=rng)
 
             # If duplicate: reverse may fall back to shuffle; shuffle keeps trying
             needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
@@ -344,7 +373,7 @@ function add_entrapment_sequences_grouped(
             end
 
             while needs_retry && n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
+                new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle", rng=rng)
                 needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
                 n_shuffle_attempts += 1
             end
@@ -475,8 +504,8 @@ function fillMovablePositions!(shuffle_sequence::ShuffleSeq)
     return nothing
 end
 
-function permuteNewPositions!(shuffle_sequence::ShuffleSeq)
-    perm = randperm(shuffle_sequence.n_movable)
+function permuteNewPositions!(shuffle_sequence::ShuffleSeq, rng::AbstractRNG = Random.default_rng())
+    perm = randperm(rng, shuffle_sequence.n_movable)
     # Update new_positions based on the permutation
     for (new_idx, old_idx) in enumerate(perm)
         # Update sequence 
@@ -511,7 +540,8 @@ end
 function shuffle_sequence!(
     shuffle_sequence::ShuffleSeq,
     sequence::String;
-    method::String = "shuffle"
+    method::String = "shuffle",
+    rng::AbstractRNG = Random.default_rng()
 )
     # Reset the sequence and positions
     resetSequence!(shuffle_sequence, sequence)
@@ -521,7 +551,7 @@ function shuffle_sequence!(
     
     # Apply the selected decoy generation method
     if method == "shuffle"
-        permuteNewPositions!(shuffle_sequence)
+        permuteNewPositions!(shuffle_sequence, rng)
     elseif method == "reverse"
         reverseMovablePositions!(shuffle_sequence)
     else
@@ -867,7 +897,8 @@ function add_decoy_sequences_grouped(
     target_fasta_entries::Vector{FastaEntry};
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
-    decoy_method::String = "shuffle"
+    decoy_method::String = "shuffle",
+    seed::Integer = 1844
 )::Vector{FastaEntry}
 
     # Track sequences (I/L equivalence) with charge awareness
@@ -904,13 +935,16 @@ function add_decoy_sequences_grouped(
 
     sample_logged = 0
     exhausted_groups = 0
-    for (base_seq, idxs) in groups
+    # Sorted base sequences + per-sequence RNG: deterministic, independent of Dict order
+    for base_seq in sort!(collect(keys(groups)))
+        idxs = groups[base_seq]
+        rng = sequence_rng(base_seq, seed, 1)
         # Unique charges across variants in this group
         charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
         # Generate a single decoy sequence for this base_seq
         n_shuffle_attempts = 0
-        decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=decoy_method)
+        decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=decoy_method, rng=rng)
 
         # Handle duplicates: reverse may fall back to shuffle; shuffle keeps trying
         needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
@@ -919,7 +953,7 @@ function add_decoy_sequences_grouped(
             fallback_to_shuffle_count += 1
         end
         while needs_retry && n_shuffle_attempts < max_shuffle_attempts
-            decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
+            decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle", rng=rng)
             needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
             n_shuffle_attempts += 1
         end

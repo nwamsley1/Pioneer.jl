@@ -114,9 +114,12 @@ function parse_chronologer_output(
     ########
     #Sort 
     #Need same sort order as fragment index.
-    #1) Sort entire data frame in ascending order of irt
-    #2) Within irt bins of identical width, sort by mz
-    sort!(precursors_df, :irt)
+    #1) Sort entire data frame in ascending order of irt (ties broken explicitly, so the order does not depend on
+    #   how earlier steps happened to order the rows)
+    #2) Within irt bins of identical width, sort by mz (ties broken by the step-1 keys)
+    IRT_SORT_KEYS = [:irt, :sequence, :mods, :precursor_charge, :decoy, :entrapment_group_id]
+    MZ_SORT_KEYS = [:mz, :irt, :sequence, :mods, :precursor_charge, :decoy, :entrapment_group_id]
+    sort!(precursors_df, IRT_SORT_KEYS)
     start_idx, stop_idx = 1, 1
     start_irt, stop_irt = first(precursors_df[!,:irt]), first(precursors_df[!,:irt])
 
@@ -130,12 +133,12 @@ function parse_chronologer_output(
         stop_irt = precursors_df[stop_idx,:irt]
         if ((stop_irt - start_irt) > rt_bin_tol) & (stop_idx > start_idx)
             stop_idx -= 1
-            sort!(@view(precursors_df[start_idx:stop_idx,:]), :mz)
+            sort!(@view(precursors_df[start_idx:stop_idx,:]), MZ_SORT_KEYS)
             start_idx = pid
             start_irt = precursors_df[pid,:irt]
         end
     end
-    sort!(@view(precursors_df[start_idx:end,:]),:mz)
+    sort!(@view(precursors_df[start_idx:end,:]), MZ_SORT_KEYS)
     
     # Write processed precursors to Arrow file
     precursors_arrow_path = joinpath(pion_lib_dir, "precursors.arrow")

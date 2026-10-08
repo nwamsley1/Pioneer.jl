@@ -209,7 +209,8 @@ function prepare_chronologer_input(
     fasta_entries = _bdiag!("chron_add_entrapment", @timed add_entrapment_sequences_grouped(
         fasta_entries,
         UInt8(_params.fasta_digest_params["entrapment_r"]);
-        entrapment_method = entrapment_method
+        entrapment_method = entrapment_method,
+        seed = Int(get(params, "seed", 1844))
     ))
 
     # Step 5: Assign base_target_id values for entrapment grouping
@@ -222,7 +223,8 @@ function prepare_chronologer_input(
         @user_info "Generating grouped decoy sequences (method=$decoy_method)"
         fasta_entries = _bdiag!("chron_add_decoy", @timed add_decoy_sequences_grouped(
             fasta_entries;
-            decoy_method = decoy_method
+            decoy_method = decoy_method,
+            seed = Int(get(params, "seed", 1844))
         ))
     end
         
