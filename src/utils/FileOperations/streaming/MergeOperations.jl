@@ -394,6 +394,8 @@ function _stage_merge(
     @debug_l1 "Staged merge starting: keys=$(join(sort_keys, ',')) files=$(length(refs)) groups=$n_groups max_fanin=$max_fanin workers=$n_workers"
     temp_dir = mktempdir()
     staged_refs = similar(refs, n_groups)
+    # Concurrent merges share the output-batch budget, so buffered rows stay what one serial merge would hold.
+    worker_batch_size = cld(batch_size, n_workers)
     next_group = Threads.Atomic{Int}(1)
     @sync for _ in 1:n_workers
         Threads.@spawn while true
@@ -401,7 +403,7 @@ function _stage_merge(
             i > n_groups && break
             staged_refs[i] = stream_sorted_merge(
                 collect(groups[i]), joinpath(temp_dir, "stage_$i.arrow"), sort_keys...;
-                reverse, batch_size, max_fanin
+                reverse, batch_size = worker_batch_size, max_fanin
             )
         end
     end
