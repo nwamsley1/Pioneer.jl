@@ -31,8 +31,7 @@ const ZT_SYNTH_INT_SCALE = 10.0
 "Library precursors to simulate: m/z, charge, iRT and their fragments (intensities at `nce`)."
 function _zt_synth_precursors(lib_dir::AbstractString, n::Int, nce::Real, rng::AbstractRNG)
     t = Arrow.Table(joinpath(lib_dir, "precursors_table.arrow"))
-    frags = Pioneer.deserialize_from_jls(joinpath(lib_dir, "detailed_fragments.jls"))
-    ranges = Pioneer.deserialize_from_jls(joinpath(lib_dir, "precursor_to_fragment_indices.jls"))
+    frags, ranges = Pioneer.load_detailed_frags_and_ranges(lib_dir)
     knots = Tuple(Float32.(Pioneer.deserialize_from_jls(joinpath(lib_dir, "spline_knots.jls"))))
     spline = Pioneer.prepare_spline_fractions(Float32(nce), knots)
     targets = shuffle!(rng, findall(!, t.is_decoy))[1:min(n, count(!, t.is_decoy))]

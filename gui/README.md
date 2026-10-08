@@ -94,7 +94,7 @@ All three are properties of the packaged distribution, not of this app:
   exists. `runner::Invocation` models the two shapes, and the Julia thread
   settings are skipped for it.
 - **A spectral library is a directory, not a file — and the extension is
-  `.poin`.** It holds `precursors_table.arrow`, `detailed_fragments.jls`, the
+  `.poin`.** It holds `precursors_table.arrow`, `detailed_fragments.bin` (`.jls` in older libraries), the
   fragment index tables and so on. Browse therefore opens a *folder* picker, and
   validation checks for those marker files: an empty folder named `lib.poin`
   passes an extension test and then fails deep inside Pioneer with

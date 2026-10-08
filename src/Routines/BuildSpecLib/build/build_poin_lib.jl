@@ -95,8 +95,8 @@ function add_fragment_indexes!(lib_path::AbstractString)
     widths = Tuple(w for w in FRAGMENT_INDEX_WIDTHS if !(w in have))
     isempty(widths) && return Float32[]
 
-    frags = deserialize_from_jls(joinpath(lib_path, "detailed_fragments.jls"))
-    pid_to_fid = deserialize_from_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"))
+    frags, pid_to_fid = load_detailed_frags_and_ranges(lib_path)
+    frags = copy(frags)                                               # re-sorted below; a .bin maps read-only
     Threads.@threads :static for k in 1:length(pid_to_fid)-1      # stored m/z-sorted -> rank order
         lo, hi = Int(pid_to_fid[k]), Int(pid_to_fid[k+1]) - 1
         lo < hi && sort!(view(frags, lo:hi), by = getRank, alg = InsertionSort)
@@ -257,8 +257,7 @@ Creates the following files in `spec_lib_path`:
 - presearch_f_index_fragments.arrow: Presearch fragment index
 - presearch_f_index_rt_bins.arrow: Presearch retention time bins
 - presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
-- detailed_fragments.jls: Detailed fragment information
-- precursor_to_fragment_indices.jls: Mapping of precursors to fragment indices
+- detailed_fragments.bin: fragments and the precursor -> fragment ranges (memory-mapped by SearchDIA)
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -374,15 +373,7 @@ function buildPionLib(spec_lib_path::String,
     # Sort detailed_frags by m/z within each precursor (run_fused! pre-condition).
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
 
-    serialize_to_jls(
-        joinpath(spec_lib_path, "detailed_fragments.jls"),
-        detailed_frags
-    )
-
-    serialize_to_jls(
-        joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
-        pid_to_fid
-    )
+    write_detailed_frags(joinpath(spec_lib_path, "detailed_fragments.bin"), detailed_frags, pid_to_fid)
 
     # Arrow tables can keep Windows file handles alive until GC runs.
     # Release references before BuildSpecLib removes the intermediate Arrow files.
@@ -453,8 +444,7 @@ function buildPionLib(spec_lib_path::String,
 
     sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
 
-    serialize_to_jls(joinpath(spec_lib_path, "detailed_fragments.jls"), detailed_frags)
-    serialize_to_jls(joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"), pid_to_fid)
+    write_detailed_frags(joinpath(spec_lib_path, "detailed_fragments.bin"), detailed_frags, pid_to_fid)
 
     detailed_frags = nothing
     pid_to_fid = nothing

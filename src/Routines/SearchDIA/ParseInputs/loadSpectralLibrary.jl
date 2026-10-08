@@ -116,19 +116,9 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # This message will be captured by the logging system when SearchDIA runs
     spec_lib = Dict{String, Any}()
 
-    # Load detailed fragments and convert to CompactFrag for the search pipeline
-    frag_path = joinpath(SPEC_LIB_DIR, "detailed_fragments")
-    raw_frags = if isfile(frag_path * ".jls")
-        deserialize_from_jls(frag_path * ".jls")
-    elseif isfile(frag_path * ".jld2")
-        @user_warn "Loading legacy JLD2 format for detailed_fragments. Consider rebuilding library."
-        jldopen(frag_path * ".jld2", "r") do file
-            read(file, "data")
-        end
-    else
-        error("Fragment file not found: $(frag_path).jls or $(frag_path).jld2")
-    end
-    # Convert to compact types for the search pipeline.
+    # Load detailed fragments (memory-mapped from detailed_fragments.bin, or a legacy .jls/.jld2) and convert
+    # legacy element types to the compact ones the search pipeline uses
+    raw_frags, prec_frag_ranges = load_detailed_frags_and_ranges(SPEC_LIB_DIR)
     detailed_frags = if eltype(raw_frags) <: DetailedFrag
         map(CompactFrag, raw_frags)
     elseif eltype(raw_frags) <: SplineDetailedFrag
@@ -137,16 +127,6 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
         raw_frags  # already compact
     else
         raw_frags  # unknown type — pass through
-    end
-
-    # Load precursor-to-fragment indices with backwards compatibility
-    prec_frag_ranges = if isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
-        deserialize_from_jls(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
-    elseif isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))
-        @user_warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
-        load(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))["pid_to_fid"]
-    else
-        error("precursor_to_fragment_indices file not found in $SPEC_LIB_DIR")
     end
 
     library_fragment_lookup_table = nothing

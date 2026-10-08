@@ -29,7 +29,7 @@ using Arrow
     end
 
     @test isdir(lib_path)
-    for f in ("config.json", "detailed_fragments.jls",
+    for f in ("config.json", "detailed_fragments.bin",
               "partitioned_fragment_index.jls",
               "presearch_partitioned_fragment_index.jls",
               "precursors_table.arrow", "proteins_table.arrow")

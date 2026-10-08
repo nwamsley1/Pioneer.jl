@@ -45,7 +45,7 @@ if !isdir(LIB_PATH)
     exit(1)
 end
 
-required = ["config.json", "detailed_fragments.jls", "partitioned_fragment_index.jls",
+required = ["config.json", "detailed_fragments.bin", "partitioned_fragment_index.jls",
             "presearch_partitioned_fragment_index.jls", "precursors_table.arrow",
             "proteins_table.arrow"]
 missing_files = [f for f in required if !isfile(joinpath(LIB_PATH, f))]

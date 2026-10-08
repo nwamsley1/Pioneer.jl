@@ -21,7 +21,7 @@ const _REPO_ROOT = abspath(joinpath(@__DIR__, "..", "..", ".."))
 # content-based `hash` (not randomized across processes).
 function _lib_content_fingerprint(lib::AbstractString)
     h = UInt(0)
-    for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.jls")
+    for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.bin")
         h = hash(read(joinpath(lib, f)), h)
     end
     for f in ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
@@ -120,7 +120,7 @@ end
         cfg32 = Pioneer.JSON.parsefile(joinpath(lib32, "config.json"))["library_params"]
         @test cfg32["frag_index_local_id_type_resolved"] == "UInt32" && cfg32["prec_partition_width_resolved"] == 10.0
         # the library payload does not depend on the index variant
-        for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.jls")
+        for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.bin")
             @test read(joinpath(lib16, f)) == read(joinpath(lib32, f))
         end
         for f in ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")

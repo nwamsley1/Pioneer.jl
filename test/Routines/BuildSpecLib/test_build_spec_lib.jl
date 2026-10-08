@@ -248,15 +248,12 @@ function verify_fragment_counts(
     precursors = Arrow.Table(precursors_file)
 
     # Load fragments from serialized files
-    fragments_file = joinpath(lib_dir, "detailed_fragments.jls")
-    indices_file = joinpath(lib_dir, "precursor_to_fragment_indices.jls")
-
-    if !isfile(fragments_file) || !isfile(indices_file)
+    if !isfile(joinpath(lib_dir, "detailed_fragments.bin"))
         @warn "Fragment files not found in $lib_dir"
         return false
     end
 
-    pid_to_fid = Pioneer.deserialize_from_jls(indices_file)
+    _, pid_to_fid = Pioneer.load_detailed_frags_and_ranges(lib_dir)
     all_valid = true
 
     for prec_idx in 1:length(precursors.sequence)

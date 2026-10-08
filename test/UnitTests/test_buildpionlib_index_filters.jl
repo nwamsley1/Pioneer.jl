@@ -89,7 +89,7 @@ using Pioneer: FragBoundModel, SplineCoefficientModel, buildPionLib, serialize_t
             SplineCoefficientModel("altimeter"),
         ) === nothing
 
-        detailed_frags = Pioneer.deserialize_from_jls(joinpath(test_dir, "detailed_fragments.jls"))
+        detailed_frags = first(Pioneer.load_detailed_frags_and_ranges(test_dir))
         @test length(detailed_frags) == 5
         @test sort(Float32[Pioneer.getMz(f) for f in detailed_frags]) == Float32[120.0, 140.0, 210.0, 230.0, 500.0]
 

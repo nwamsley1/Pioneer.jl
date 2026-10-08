@@ -296,10 +296,10 @@ end
         )
         
         @test spline_result === nothing
-        @test isfile(joinpath(spline_test_dir, "detailed_fragments.jls"))
+        @test isfile(joinpath(spline_test_dir, "detailed_fragments.bin"))
 
         # Verify spline fragments contain coefficients
-        spline_fragments_data = Pioneer.deserialize_from_jls(joinpath(spline_test_dir, "detailed_fragments.jls"))
+        spline_fragments_data = first(Pioneer.load_detailed_frags_and_ranges(spline_test_dir))
         @test spline_fragments_data isa Vector
         # buildPionLib serializes Compact (not Detailed) spline fragments —
         # `getDetailedFrags` returns Vector{SplineCompactFrag{N, T}}.
@@ -326,7 +326,7 @@ end
             "prec_to_frag.arrow",
             "precursors.arrow",
             "other_file.txt",  # This should not be removed
-            "detailed_fragments.jls"  # This should not be removed
+            "detailed_fragments.bin"  # This should not be removed
         ]
 
         for file in test_files
@@ -344,7 +344,7 @@ end
 
         # Files not in the removal list should remain
         @test isfile(joinpath(test_dir, "other_file.txt"))
-        @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
+        @test isfile(joinpath(test_dir, "detailed_fragments.bin"))
         
         # Clean up
         safe_rmdir(test_dir)

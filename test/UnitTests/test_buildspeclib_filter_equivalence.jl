@@ -62,8 +62,9 @@ import JSON
     # Since the indices are deterministic transforms of detailed_fragments
     # (by index-building code that §9 does not touch), pinning
     # detailed_fragments.jls bytes is sufficient to gate the §9 change.
-    @test read(joinpath(ref_dir, "detailed_fragments.jls")) ==
-          read(joinpath(lib_path, "detailed_fragments.jls"))
+    # (The library now stores detailed_fragments.bin; compare its fragments with the reference .jls.)
+    @test Pioneer.deserialize_from_jls(joinpath(ref_dir, "detailed_fragments.jls")) ==
+          first(Pioneer.load_detailed_frags_and_ranges(lib_path))
 
     # Cleanup
     safe_rmdir(out_dir)
