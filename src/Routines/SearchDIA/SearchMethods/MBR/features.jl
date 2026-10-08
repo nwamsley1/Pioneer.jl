@@ -280,7 +280,7 @@ end
 
 Collect the integrated donors of every file into a `_MBRDonorStore` and index it. Each file's
 donors are selected and deduplicated as before (`_collect_mbr_integrated_donors!`), then appended
-to one of `MBR_DONOR_STORE_BUCKETS` spill files by precursor. Each bucket is then grouped by
+to one of `_mbr_donor_bucket_count(file_paths)` spill files by precursor. Each bucket is then grouped by
 precursor in memory and written sequentially to one store file, which is memory-mapped: memory
 holds one bucket at a time, not every donor of the experiment. Donor order within a precursor is
 the order of first appearance across files, as in the in-memory dictionary, so selection is
@@ -292,9 +292,10 @@ function build_mbr_integrated_donor_dict(
     q_value_threshold::Float32,
     store_dir::String = isempty(file_paths) ? tempdir() : dirname(first(file_paths)),
 )
-    bucket_paths = [tempname(store_dir) * ".mbr_donor_bucket" for _ in 1:MBR_DONOR_STORE_BUCKETS]
+    n_buckets = _mbr_donor_bucket_count(file_paths)
+    bucket_paths = [tempname(store_dir) * ".mbr_donor_bucket" for _ in 1:n_buckets]
     bucket_ios = [open(path, "w") for path in bucket_paths]
-    bucket_buffers = [_MBRDonorEntry[] for _ in 1:MBR_DONOR_STORE_BUCKETS]
+    bucket_buffers = [_MBRDonorEntry[] for _ in 1:n_buckets]
     previous_files = Set{UInt32}()
     cross_path_files = false
     all_im_zero = true        # then records omit im_obs (data without ion mobility)
@@ -314,7 +315,7 @@ function build_mbr_integrated_donor_dict(
             for (pid, donors) in file_donors
                 push!(precursors_seen, pid)
                 all_im_zero &= all(donor -> donor.im_obs === 0.0f0, donors)
-                append!(bucket_buffers[_mbr_donor_bucket(pid)], donors)
+                append!(bucket_buffers[_mbr_donor_bucket(pid, n_buckets)], donors)
             end
             for (bucket, buffer) in enumerate(bucket_buffers)
                 isempty(buffer) && continue
@@ -330,7 +331,7 @@ function build_mbr_integrated_donor_dict(
         foreach(close, bucket_ios)
     end
     store_started = time()
-    @debug_l1 "Post-integration MBR donor store writing starting: precursors=$(length(precursors_seen))"
+    @debug_l1 "Post-integration MBR donor store writing starting: precursors=$(length(precursors_seen)) buckets=$n_buckets"
     record_type = all_im_zero ? _MBRDonorRecord : _MBRDonorRecordIM
     store = _write_mbr_donor_store(bucket_paths, store_dir, cross_path_files, record_type)
     @debug_l1 "Post-integration MBR donor store writing complete: entries=$(length(store.entries)) bytes=$(length(store.entries) * sizeof(record_type)) elapsed=$(round(time() - store_started, digits=2))s"
@@ -341,8 +342,15 @@ function build_mbr_integrated_donor_dict(
     return index
 end
 
-const MBR_DONOR_STORE_BUCKETS = 64
-_mbr_donor_bucket(pid::UInt32) = Int(pid % UInt32(MBR_DONOR_STORE_BUCKETS)) + 1
+# Target size of one spill bucket, which is read and sorted in memory while the store is written.
+const MBR_DONOR_BUCKET_BYTES = 512 * 2^20
+
+# Enough buckets that each stays near MBR_DONOR_BUCKET_BYTES. The input files bound the spill: a
+# donor is built from a subset of its row's columns (at least as wide as its 72-byte record), and
+# the files are uncompressed Arrow. Between 16 and 4096 buckets, each an open file while spilling.
+_mbr_donor_bucket_count(file_paths::Vector{String}) =
+    clamp(cld(sum(filesize, file_paths; init = 0), MBR_DONOR_BUCKET_BYTES), 16, 4096)
+_mbr_donor_bucket(pid::UInt32, n_buckets::Int) = Int(pid % UInt32(n_buckets)) + 1
 
 # One file's donors, selected and deduplicated exactly as in the in-memory dictionary. Returns rows read.
 function _collect_mbr_integrated_file_donors!(
