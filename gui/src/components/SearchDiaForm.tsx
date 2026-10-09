@@ -18,7 +18,7 @@ import { BROWSE, BROWSE_BLOCK, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
-import { fileStem } from '../lib/validate'
+import { fileStem, ltrPath } from '../lib/validate'
 import type { Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -121,12 +121,14 @@ function MsFileList({
   onAdd,
   onAddTdfs,
   onRemove,
+  onClear,
   onToggleBatch,
 }: {
   params: SearchParams
   onAdd: () => void
   onAddTdfs: () => void
   onRemove: (index: number) => void
+  onClear: () => void
   onToggleBatch: () => void
 }) {
   const files = params.msDataFiles
@@ -167,7 +169,7 @@ function MsFileList({
                     textAlign: 'left',
                   }}
                 >
-                  {f}
+                  {ltrPath(f)}
                 </div>
                 {batch && (
                   <div style={{ ...HINT, marginTop: 2 }}>
@@ -225,6 +227,17 @@ function MsFileList({
           </svg>
           Add .tdfs / .scxs
         </button>
+        {files.length > 1 && (
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onClear}
+            title="Remove every file from the list"
+            style={BROWSE_BLOCK}
+          >
+            Clear all
+          </button>
+        )}
         <span style={HINT}>
           {files.length
             ? batch
@@ -348,6 +361,7 @@ interface Props {
   onAddMsTdfs: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
+  onClearMsFiles: () => void
   /** Flip between one run per file and one run over the whole list. */
   onToggleMsBatch: () => void
   onOpenLoad: () => void
@@ -365,6 +379,7 @@ export function SearchDiaForm({
   onAddMsFiles,
   onAddMsTdfs,
   onRemoveMsFile,
+  onClearMsFiles,
   onToggleMsBatch,
   onOpenLoad,
   onGoToBuild,
@@ -407,6 +422,7 @@ export function SearchDiaForm({
                 onAdd={onAddMsFiles}
                 onAddTdfs={onAddMsTdfs}
                 onRemove={onRemoveMsFile}
+                onClear={onClearMsFiles}
                 onToggleBatch={onToggleMsBatch}
               />
             ) : (

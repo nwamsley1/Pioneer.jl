@@ -905,6 +905,28 @@ export default function App() {
       })
       .then(keep)
 
+    // A file in a multi-file job failed and the job carried on: record it and say
+    // so in the log. The drawer offers to stop the job from here.
+    backend
+      .onJobStepFailed(({ job_id, total, message }) => {
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === job_id
+              ? {
+                  ...j,
+                  stepFailures: [...(j.stepFailures ?? []), message],
+                  stepTotal: total,
+                  logLines: [
+                    ...j.logLines,
+                    { text: `WARNING: ${message} Continuing with the remaining files.`, stream: 'app' as const, transient: false },
+                  ],
+                }
+              : j,
+          ),
+        )
+      })
+      .then(keep)
+
     backend
       .onJobExit(({ job_id, success, cancelled, message }) => {
         setJobs((prev) =>
@@ -1125,6 +1147,10 @@ export default function App() {
     setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
   }
 
+  const clearMsFiles = () => {
+    setSearch((p) => ({ ...p, msDataFiles: [] }))
+  }
+
   const browseConvertInput = async () => {
     const picked = await backend.pickFolder(
       convert.format === 'mzml'
@@ -1159,6 +1185,10 @@ export default function App() {
 
   const removeConvertFile = (index: number) => {
     setConvert((p) => ({ ...p, inputFiles: p.inputFiles.filter((_, i) => i !== index) }))
+  }
+
+  const clearConvertFiles = () => {
+    setConvert((p) => ({ ...p, inputFiles: [] }))
   }
 
   const browseConvertOutput = async () => {
@@ -2073,6 +2103,7 @@ export default function App() {
                 onBrowseInput={browseConvertInput}
                 onAddFiles={addConvertFiles}
                 onRemoveFile={removeConvertFile}
+                onClearFiles={clearConvertFiles}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
               />
@@ -2101,6 +2132,7 @@ export default function App() {
                 onAddMsFiles={addMsFiles}
                 onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
+                onClearMsFiles={clearMsFiles}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}

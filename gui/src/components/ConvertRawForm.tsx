@@ -17,7 +17,7 @@ import { Toggle } from './Toggle'
 import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
 import { convertGroups, defaultConvertOutput, formatOfFile, type ConvertGroup } from '../lib/config'
 import type { ConvertFormat, ConvertParams } from '../lib/types'
-import { type Note } from '../lib/validate'
+import { ltrPath, type Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
   background: '#fff',
@@ -55,6 +55,7 @@ interface Props {
   onAddFiles: () => void
   /** Drop one file from the list, by index. */
   onRemoveFile: (index: number) => void
+  onClearFiles: () => void
   onBrowseOutput: () => void
   onToggleAdvanced: () => void
 }
@@ -97,12 +98,14 @@ function ConvertFileList({
   unreadable,
   onAdd,
   onRemove,
+  onClear,
 }: {
   files: string[]
   groups: ConvertGroup[]
   unreadable: string[]
   onAdd: () => void
   onRemove: (index: number) => void
+  onClear: () => void
 }) {
   const summary = groups
     .map((g) => `${g.files.length} ${g.format === 'raw' ? '.raw' : '.mzML'}`)
@@ -144,7 +147,7 @@ function ConvertFileList({
                   textAlign: 'left',
                 }}
               >
-                {f}
+                {ltrPath(f)}
               </div>
               <button
                 type="button"
@@ -190,6 +193,17 @@ function ConvertFileList({
           </svg>
           {files.length ? 'Add more files' : 'Choose files'}
         </button>
+        {files.length > 1 && (
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onClear}
+            title="Remove every file from the list"
+            style={BROWSE_BLOCK}
+          >
+            Clear all
+          </button>
+        )}
         <span style={{ fontSize: 11.5, color: '#98A2B3' }}>
           {unreadable.length
             ? `${unreadable.length} file${unreadable.length > 1 ? 's' : ''} neither converter reads.`
@@ -212,6 +226,7 @@ export function ConvertRawForm({
   onBrowseInput,
   onAddFiles,
   onRemoveFile,
+  onClearFiles,
   onBrowseOutput,
   onToggleAdvanced,
 }: Props) {
@@ -361,6 +376,7 @@ export function ConvertRawForm({
               unreadable={unreadable}
               onAdd={onAddFiles}
               onRemove={onRemoveFile}
+              onClear={onClearFiles}
             />
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
