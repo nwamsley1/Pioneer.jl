@@ -438,7 +438,8 @@ function _build_spec_lib(params_path::String)
                 entrapment_r = get(params["fasta_digest_params"], "entrapment_r", 0)
                 N_PRECURSORS, N_DECOYS = finalize_precursor_table(precursors_arrow_path,
                                                                   joinpath(lib_dir, "precursors_table.arrow");
-                                                                  entrapment_targets = entrapment_r > 0)
+                                                                  entrapment_targets = entrapment_r > 0,
+                                                                  isotope_mods = !isempty(params["isotope_mod_groups"]))
                 N_TARGETS = N_PRECURSORS - N_DECOYS
 
                 GC.gc()

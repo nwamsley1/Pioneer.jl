@@ -15,14 +15,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# precursors.arrow -> the library's precursors_table.arrow, one record batch at a time: the search-side column names,
-# partner_precursor_idx (add_pair_indices!) and, with entrapments, entrapment_target_idx (add_entrapment_indices!).
+# precursors.arrow -> the library's precursors_table.arrow: the search-side column names, partner_precursor_idx
+# (add_pair_indices!) and, with entrapments, entrapment_target_idx (add_entrapment_indices!). Columns nothing reads after
+# the build are left out: koina_sequence (Koina's input), collision_energy (the build NCE, kept in config.json), and the
+# isotope-mod columns of a library without isotope groups (always missing; readers treat an absent column as missing).
 
 const FINAL_PRECURSOR_NAMES = Dict(:accession_number => :accession_numbers, :precursor_charge => :prec_charge,
                                    :decoy => :is_decoy, :mods => :structural_mods)
 
 """
-    finalize_precursor_table(in_path, out_path; entrapment_targets) -> (n_precursors, n_decoys)
+    finalize_precursor_table(in_path, out_path; entrapment_targets, isotope_mods) -> (n_precursors, n_decoys)
 
 Write `out_path` from the sorted precursor table at `in_path` with the contents of the in-memory step (rename,
 `add_pair_indices!`, and `add_entrapment_indices!` when `entrapment_targets`). The output is ONE record batch, as the
@@ -30,10 +32,13 @@ library readers expect (a multi-batch table reads back as chunked columns, which
 Arrow.write streams it from the memory-mapped input columns, so only the two index columns are built in memory. Rows
 keep their order; the indices are row positions in it.
 """
-function finalize_precursor_table(in_path::String, out_path::String; entrapment_targets::Bool)
+function finalize_precursor_table(in_path::String, out_path::String; entrapment_targets::Bool, isotope_mods::Bool)
     t = Arrow.Table(in_path)
+    dropped = isotope_mods ? (:koina_sequence, :collision_energy) :
+                             (:koina_sequence, :collision_energy, :isotopic_mods, :isotope_mods)
     names = Symbol[]; cols = AbstractVector[]
     for (name, col) in zip(Tables.columnnames(t), Tables.columns(t))
+        name in dropped && continue
         push!(names, get(FINAL_PRECURSOR_NAMES, name, name)); push!(cols, col)
     end
     push!(names, :partner_precursor_idx)

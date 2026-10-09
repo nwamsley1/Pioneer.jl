@@ -176,7 +176,6 @@ getAccessionNumbers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UIn
 getSequence(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:sequence]
 getStructuralMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
 getCharge(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:prec_charge]
-getCollisionEnergy(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:collision_energy]
 getIsDecoy(lp::LibraryPrecursors)::Arrow.BoolVector{Bool} = lp.data[:is_decoy]
 getEntrapmentGroupId(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:entrapment_group_id]
 getMz(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:mz]
@@ -293,7 +292,16 @@ getCCS(lp::LibraryPrecursors) = hasproperty(lp.data, :ccs) ? lp.data[:ccs] : not
 getInvIonMobility(lp::LibraryPrecursors) =
     hasproperty(lp.data, :inv_ion_mobility) ? lp.data[:inv_ion_mobility] : nothing
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
-getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
+"Isotopic mods per precursor; all missing for libraries built without isotope groups, which leave the column out."
+getIsotopicMods(lp::LibraryPrecursors) = hasproperty(lp.data, :isotopic_mods) ?
+    lp.data[:isotopic_mods]::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} : AllMissingStrings(length(lp))
+
+"A read-only column of `n` missing strings."
+struct AllMissingStrings <: AbstractVector{Union{Missing, String}}
+    n::Int
+end
+Base.size(v::AllMissingStrings) = (v.n,)
+Base.getindex(v::AllMissingStrings, i::Int) = (@boundscheck checkbounds(v, i); missing)
 getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]
 
 # ============================================================================

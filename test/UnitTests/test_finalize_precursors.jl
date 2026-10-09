@@ -23,15 +23,22 @@ using Pioneer
     t = (accession_number = ["A", "B", "C", "D"], start_idx = [UInt32[1], UInt32[2, 3], UInt32[4], UInt32[5]],
          mods = Union{Missing, String}["", missing, "(1,M,Unimod:35)", ""], precursor_charge = UInt8[2, 2, 3, 3],
          decoy = [false, true, false, true], entrapment_group_id = UInt8[0, 0, 0, 0],
-         pair_id = Union{Missing, UInt32}[1, 1, 2, 3], entrapment_pair_id = Union{Missing, UInt32}[1, missing, 2, missing])
+         pair_id = Union{Missing, UInt32}[1, 1, 2, 3], entrapment_pair_id = Union{Missing, UInt32}[1, missing, 2, missing],
+         koina_sequence = ["A", "B", "M[UNIMOD:35]", "D"], collision_energy = fill(26f0, 4),
+         isotopic_mods = Union{Missing, String}[missing, missing, missing, missing],
+         isotope_mods = Union{Missing, String}[missing, missing, missing, missing])
     open(Arrow.Writer, in_path) do w
         Arrow.write(w, map(c -> c[1:2], t)); Arrow.write(w, map(c -> c[3:4], t))
     end
-    @test Pioneer.finalize_precursor_table(in_path, out_path; entrapment_targets = true) == (4, 2)
+    @test Pioneer.finalize_precursor_table(in_path, out_path; entrapment_targets = true, isotope_mods = false) == (4, 2)
     out = Arrow.Table(out_path)
     @test collect(propertynames(out)) == [:accession_numbers, :start_idx, :structural_mods, :prec_charge, :is_decoy,
                                           :entrapment_group_id, :pair_id, :entrapment_pair_id,
-                                          :partner_precursor_idx, :entrapment_target_idx]
+                                          :partner_precursor_idx, :entrapment_target_idx]   # build-only columns dropped
+    with_iso = joinpath(dir, "with_isotopes.arrow")
+    Pioneer.finalize_precursor_table(in_path, with_iso; entrapment_targets = false, isotope_mods = true)
+    @test collect(propertynames(Arrow.Table(with_iso))) == [:accession_numbers, :start_idx, :structural_mods, :prec_charge,
+        :is_decoy, :entrapment_group_id, :pair_id, :entrapment_pair_id, :isotopic_mods, :isotope_mods, :partner_precursor_idx]
     @test isequal(collect(out.partner_precursor_idx), [2, 1, missing, missing])
     @test isequal(collect(out.entrapment_target_idx), Union{Missing, UInt32}[1, missing, 3, missing])
     @test [collect(s) for s in out.start_idx] == [UInt32[1], UInt32[2, 3], UInt32[4], UInt32[5]]
