@@ -137,13 +137,16 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
     nfrag(pids) = sum(pid -> n_index_frags(sel, pid), pids; init = 0)
 
     pieces = IndexPiece[]
+    t_build = Ref(0.0); t_write = Ref(0.0)
     function build_group!(g::UnitRange{Int})
+        t0 = time()
         pids = reduce(vcat, bins[g]; init = UInt32[])
         I = first(resolve_local_id_type(id_type_request, view(sel.prec_mzs, pids), partition_width))
         idx = build_partitioned_index_from_selection(sel; partition_width = partition_width,
             frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_bin_tol,
             id_type = I, initial_partition_pids = [copy(bins[k]) for k in g])
         b = index_bytes(idx)
+        t_build[] += time() - t0
         if b > max_piece_bytes && length(g) > 1
             idx = nothing
             mid = first(g) + length(g) ÷ 2 - 1
@@ -152,7 +155,9 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
         end
         b > max_piece_bytes && @user_warn "Fragment index piece of one $(partition_width) Da bin is $(round(b / 1e9, digits = 2)) GB, over the $(round(max_piece_bytes / 1e9, digits = 2)) GB limit"
         file = @sprintf("piece_%03d.bin", length(pieces) + 1)
+        t0 = time()
         write_index_piece(joinpath(dir, file), idx)
+        t_write[] += time() - t0
         nonempty = filter(bd -> bd[1] <= bd[2], idx.partition_bounds)
         push!(pieces, IndexPiece(file,
             isempty(nonempty) ? Inf32 : minimum(first, nonempty), isempty(nonempty) ? -Inf32 : maximum(last, nonempty),
@@ -160,10 +165,12 @@ function build_index_pieces(sel::IndexFragSelection, dir::AbstractString;
         @debug_l1 "fragment index piece $(file): bins $(g), $(length(pids)) precursors, $(I), $(round(b / 1e9, digits = 2)) GB"
         return
     end
-    for g in groups
+    t_gc = @elapsed for g in groups
         build_group!(g)
         GC.gc()
     end
+    @user_info @sprintf("Fragment index %s: %d pieces, build %.1f s, write %.1f s, other (incl. GC) %.1f s",
+                        basename(dir), length(pieces), t_build[], t_write[], t_gc - t_build[] - t_write[])
 
     open(joinpath(dir, INDEX_PIECES_MANIFEST), "w") do io
         JSON.print(io, Dict{String, Any}("format_version" => 1, "partition_width_da" => partition_width,

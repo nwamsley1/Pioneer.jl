@@ -744,6 +744,22 @@ function _fill_detailed_from_raw!(
     mods_to_sulfur_diff::Dict{String, Int8},
     iso_mod_to_mass::Dict{String, Float32},
     n_frags::Int, n_precursors::Int, pid_offset::Int) where {N, T}
+    _decode_frag_range!(detailed, prec_to_frag, frag_ann, frag_pid, frag_mzs, coef_col, seqs, mods_col, iso_mod_col,
+                        charge_col, ion_dict, mods_to_sulfur_diff, iso_mod_to_mass, 1:n_frags, pid_offset)
+    _backfill_prec_to_frag!(prec_to_frag, n_frags, n_precursors)
+    return nothing
+end
+
+"The per-fragment decode of _fill_detailed_from_raw! over fragments `fis` (whole precursors: a range must not split one)."
+function _decode_frag_range!(
+    detailed::Vector{SplineCompactFrag{N, T}},
+    prec_to_frag::Vector{UInt64},
+    frag_ann, frag_pid, frag_mzs, coef_col,
+    seqs, mods_col, iso_mod_col, charge_col,
+    ion_dict::Dict{Int32, PioneerFragAnnotation},
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    fis::UnitRange{Int}, pid_offset::Int) where {N, T}
 
     seq_idx_to_sulfur  = zeros(UInt8, 255)
     seq_idx_to_iso_mod = zeros(Float32, 255)
@@ -753,7 +769,7 @@ function _fill_detailed_from_raw!(
     prec_charge = zero(UInt8)
     rank = 0
 
-    @inbounds for fi in 1:n_frags
+    @inbounds for fi in fis
         pid = frag_pid[fi]
         if pid != last_pid
             last_pid = pid
@@ -803,8 +819,12 @@ function _fill_detailed_from_raw!(
         )
     end
 
-    # CSR boundaries: final boundary + right-back-fill so empty precursors inherit
-    # the next non-empty start (identical to rebuild_prec_to_frag_index!).
+    return nothing
+end
+
+"CSR boundaries: final boundary + right-back-fill so empty precursors inherit the next non-empty start (identical to
+rebuild_prec_to_frag_index!)."
+function _backfill_prec_to_frag!(prec_to_frag::Vector{UInt64}, n_frags::Int, n_precursors::Int)
     prec_to_frag[end] = UInt64(n_frags + 1)
     next = prec_to_frag[end]
     for i in n_precursors:-1:1

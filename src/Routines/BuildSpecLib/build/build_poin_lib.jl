@@ -72,7 +72,9 @@ function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSel
             main_file, presearch_file = replace(main_file, ".jls" => "_pieces"), replace(presearch_file, ".jls" => "_pieces")
             bins_groups = index_piece_groups(sel, w, max_piece_bytes)
             spill_path = joinpath(spec_lib_path, "index_selection_w$(w).tmp")
-            sp = spill_index_selection(sel, bins_groups..., spill_path)
+            t_spill = @elapsed sp = spill_index_selection(sel, bins_groups..., spill_path)
+            @user_info @sprintf("Fragment index %.1f Da: %d pieces planned, selection spilled in %.1f s", w,
+                                length(bins_groups[2]), t_spill)
             for (dir, rt_tol) in ((main_file, rt_bin_tol), (presearch_file, typemax(Float32)))
                 build_index_pieces(sp, joinpath(spec_lib_path, dir); partition_width = Float32(w),
                     frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,

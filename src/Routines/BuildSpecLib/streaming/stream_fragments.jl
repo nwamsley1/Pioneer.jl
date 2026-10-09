@@ -80,7 +80,7 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
                              prec_irts, index_filters)
         _write_packed!(sel_io, sel_scratch, sel_buf)
         n_sel += length(sel_buf)
-        sort_detailed_fragments_by_mz!(detailed, local_ranges)
+        sort_by_mz_threaded!(detailed, local_ranges)
         t_decode += time() - t; t = time()
         writer === nothing && (writer = DetailedFragsWriter{eltype(detailed)}(bin_path))
         base = UInt64(writer.n_frags)
@@ -136,32 +136,84 @@ function _decode_spline_batch(ann::AbstractVector, pids::AbstractVector, mzs::Ab
     n_frags = length(mzs)
     detailed = Vector{SplineCompactFrag{N, T}}(undef, n_frags)
     local_ranges = zeros(UInt64, n_precs + 1)
-    _fill_detailed_from_raw!(detailed, local_ranges, ann, pids, mzs, coef, cols[1], cols[2], cols[3], cols[4],
-                             annotations, mods_to_sulfur_diff, iso_mod_to_mass, n_frags, n_precs, pid_offset)
+    # threads take whole precursors, so each writes its own fragments and its own precursors' range starts
+    Threads.@threads :dynamic for fis in precursor_aligned_ranges(pids, 8 * Threads.nthreads())
+        _decode_frag_range!(detailed, local_ranges, ann, pids, mzs, coef, cols[1], cols[2], cols[3], cols[4],
+                            annotations, mods_to_sulfur_diff, iso_mod_to_mass, fis, pid_offset)
+    end
+    _backfill_prec_to_frag!(local_ranges, n_frags, n_precs)
     return detailed, local_ranges
 end
 
-"Append the batch's fragment-index fragments (select_index_fragments's rule) to `sel_buf`; record each precursor's
-start (after the `n_before` fragments already written) and count."
+"About `n_parts` consecutive ranges covering `eachindex(pids)`, cut only where the precursor id changes."
+function precursor_aligned_ranges(pids::AbstractVector{UInt32}, n_parts::Int)
+    n = length(pids)
+    parts = UnitRange{Int}[]
+    lo = 1
+    step = max(1, cld(n, n_parts))
+    while lo <= n
+        hi = min(n, lo + step - 1)
+        while hi < n && pids[hi + 1] == pids[hi]; hi += 1; end
+        push!(parts, lo:hi)
+        lo = hi + 1
+    end
+    return parts
+end
+
+"sort_detailed_fragments_by_mz! over the batch's precursors, in parallel blocks of precursors."
+function sort_by_mz_threaded!(detailed::Vector{F}, local_ranges::Vector{UInt64}) where {F}
+    n = length(local_ranges) - 1
+    Threads.@threads :dynamic for ks in collect(Iterators.partition(1:n, 16384))
+        sort_detailed_fragments_by_mz!(detailed, view(local_ranges, first(ks):(last(ks) + 1)))
+    end
+    return detailed
+end
+
+"""
+Append the batch's fragment-index fragments (select_index_fragments's rule) to `sel_buf`, and record each precursor's
+start (after the `n_before` fragments already written) and count. Two parallel passes: count, then fill.
+"""
 function _select_index_frags!(sel_buf::Vector{SimpleFrag{Float32}}, sel_starts::Vector{Int}, sel_counts::Vector{UInt8},
                               n_before::Int, detailed::Vector{F}, local_ranges::Vector{UInt64}, pid_offset::Int,
                               prec_mzs::Vector{Float32}, prec_irts::Vector{Float32},
                               filt::Tuple{UInt8, UInt8, Bool}) where {F}
-    for k in 1:(length(local_ranges) - 1)
-        pid = pid_offset + k
-        sel_starts[pid] = n_before + length(sel_buf) + 1
-        push_frag = SelectionPush(sel_buf, UInt32(pid), prec_mzs[pid], prec_irts[pid])
-        sel_counts[pid] = UInt8(_visit_index_frags(push_frag, detailed, Int(local_ranges[k]):(Int(local_ranges[k + 1]) - 1), filt))
+    n = length(local_ranges) - 1
+    blocks = collect(Iterators.partition(1:n, 16384))
+    Threads.@threads :dynamic for ks in blocks
+        for k in ks
+            sel_counts[pid_offset + k] = UInt8(_visit_index_frags(NoSelection(), detailed,
+                Int(local_ranges[k]):(Int(local_ranges[k + 1]) - 1), filt))
+        end
+    end
+    base = length(sel_buf)
+    pos = base
+    for k in 1:n
+        sel_starts[pid_offset + k] = n_before + pos + 1
+        pos += sel_counts[pid_offset + k]
+    end
+    resize!(sel_buf, pos)
+    Threads.@threads :dynamic for ks in blocks
+        for k in ks
+            pid = pid_offset + k
+            put = SelectionPut(sel_buf, sel_starts[pid] - n_before - 1, UInt32(pid), prec_mzs[pid], prec_irts[pid])
+            _visit_index_frags(put, detailed, Int(local_ranges[k]):(Int(local_ranges[k + 1]) - 1), filt)
+        end
     end
     return nothing
 end
 
-"_visit_index_frags callback: one precursor's index fragment as select_index_fragments stores it."
-struct SelectionPush
-    sel_frags::Vector{SimpleFrag{Float32}}
+"_visit_index_frags callback that only counts."
+struct NoSelection end
+@inline (::NoSelection)(rank::Int, dfrag) = nothing
+
+"_visit_index_frags callback: store one precursor's index fragments (as select_index_fragments does) after `offset`."
+struct SelectionPut
+    sel_buf::Vector{SimpleFrag{Float32}}
+    offset::Int
     pid::UInt32
     prec_mz::Float32
     prec_irt::Float32
 end
-@inline (p::SelectionPush)(rank::Int, dfrag) =
-    push!(p.sel_frags, SimpleFrag{Float32}(getMz(dfrag), p.pid, p.prec_mz, p.prec_irt, UInt8(0), UInt8(1) << UInt8(rank - 1)))
+@inline (p::SelectionPut)(rank::Int, dfrag) =
+    (p.sel_buf[p.offset + rank] = SimpleFrag{Float32}(getMz(dfrag), p.pid, p.prec_mz, p.prec_irt, UInt8(0),
+                                                      UInt8(1) << UInt8(rank - 1)))

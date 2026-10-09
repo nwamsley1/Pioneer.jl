@@ -25,48 +25,29 @@ const FINAL_PRECURSOR_NAMES = Dict(:accession_number => :accession_numbers, :pre
     finalize_precursor_table(in_path, out_path; entrapment_targets) -> (n_precursors, n_decoys)
 
 Write `out_path` from the sorted precursor table at `in_path` with the contents of the in-memory step (rename,
-`add_pair_indices!`, and `add_entrapment_indices!` when `entrapment_targets`), streaming record batches. Rows keep
-their order; the indices are row positions in it.
+`add_pair_indices!`, and `add_entrapment_indices!` when `entrapment_targets`). The output is ONE record batch, as the
+library readers expect (a multi-batch table reads back as chunked columns, which the precursor getters do not accept);
+Arrow.write streams it from the memory-mapped input columns, so only the two index columns are built in memory. Rows
+keep their order; the indices are row positions in it.
 """
 function finalize_precursor_table(in_path::String, out_path::String; entrapment_targets::Bool)
     t = Arrow.Table(in_path)
-    pair_ids = t.pair_id
-    partner = pair_partners(pair_ids)
-    etarget = entrapment_targets && hasproperty(t, :entrapment_pair_id) ?
-        entrapment_target_rows(t.entrapment_pair_id, t.entrapment_group_id, t.decoy) : nothing
-    n_decoys = count(t.decoy)
-    n = length(pair_ids)
-    t = nothing
-    writer = open(Arrow.Writer, out_path)
-    try
-        row0 = 0
-        for batch in Arrow.Stream(in_path)
-            m = length(batch.pair_id)
-            Arrow.write(writer, _final_precursor_batch(batch, partner, etarget, row0))
-            row0 += m
-        end
-    finally
-        close(writer)
+    names = Symbol[]; cols = AbstractVector[]
+    for (name, col) in zip(Tables.columnnames(t), Tables.columns(t))
+        push!(names, get(FINAL_PRECURSOR_NAMES, name, name)); push!(cols, col)
     end
-    return n, n_decoys
+    push!(names, :partner_precursor_idx)
+    push!(cols, missing_if_zero(pair_partners(t.pair_id)))
+    if entrapment_targets && hasproperty(t, :entrapment_pair_id)
+        push!(names, :entrapment_target_idx)
+        push!(cols, missing_if_zero(entrapment_target_rows(t.entrapment_pair_id, t.entrapment_group_id, t.decoy)))
+    end
+    Arrow.write(out_path, NamedTuple{Tuple(names)}(Tuple(cols)))
+    return length(t.pair_id), count(t.decoy)
 end
 
-"One record batch in the final schema: renamed columns, materialized, then the index columns."
-function _final_precursor_batch(batch, partner::Vector{Int64}, etarget::Union{Nothing, Vector{UInt32}}, row0::Int)
-    names = Symbol[]; cols = AbstractVector[]
-    for (name, col) in zip(Tables.columnnames(batch), Tables.columns(batch))
-        push!(names, get(FINAL_PRECURSOR_NAMES, name, name))
-        push!(cols, name === :start_idx ? [UInt32.(collect(s)) for s in col] : collect(col))
-    end
-    m = length(first(cols))
-    push!(names, :partner_precursor_idx)
-    push!(cols, Union{Missing, Int64}[partner[row0 + i] == 0 ? missing : partner[row0 + i] for i in 1:m])
-    if etarget !== nothing
-        push!(names, :entrapment_target_idx)
-        push!(cols, Union{Missing, UInt32}[etarget[row0 + i] == 0 ? missing : etarget[row0 + i] for i in 1:m])
-    end
-    return NamedTuple{Tuple(names)}(Tuple(cols))
-end
+"Row indices with 0 = none, as the Union{Missing, T} column the in-memory step writes."
+missing_if_zero(v::Vector{T}) where {T} = Union{Missing, T}[x == 0 ? missing : x for x in v]
 
 """
     pair_partners(pair_ids) -> Vector{Int64}
