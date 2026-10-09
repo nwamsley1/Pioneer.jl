@@ -71,14 +71,15 @@ function prepare_chronologer_input(
         library_params = Dict{String, Any}(k => v for (k, v) in params["library_params"])
     )
 
-    # Narrow the requested digest window to what the prediction model accepts before
+    # Narrow the requested digest window to what the prediction models accept before
     # any FASTA is read, so the warning is emitted once rather than per file. Peptides
     # outside a model's range are rejected by Koina and would vanish from the library
     # with no log entry -- see clamp_digest_length_to_model.
     digest_min_length, digest_max_length = clamp_digest_length_to_model(
         get(_params.library_params, "prediction_model", "altimeter"),
         _params.fasta_digest_params["min_length"],
-        _params.fasta_digest_params["max_length"],
+        _params.fasta_digest_params["max_length"];
+        rt_model = get(_params.library_params, "rt_model", DEFAULT_RT_MODEL),
     )
 
     # Parse modification configurations

@@ -58,3 +58,33 @@
 
     @test !haskey(Pioneer.MODEL_CONFIGS, key)
 end
+
+@testset "Retention-time model peptide-length limits" begin
+    clamp(frag, lo, hi, rt) = Pioneer.clamp_digest_length_to_model(frag, lo, hi; rt_model = rt)
+
+    # Prosit 2024 iRT rejects 31-mers (probed against Koina). Paired with Altimeter,
+    # whose own ceiling is 40, the RT model is the binding limit: without it a
+    # 7-40 digest reached Koina and failed its batches (issue #267).
+    @test clamp("altimeter", 7, 40, "prosit_2024_irt_ptm") == (7, 30)
+    @test clamp("altimeter", 7, 30, "prosit_2024_irt_ptm") == (7, 30)
+
+    # Chronologer declares no limit, so Altimeter's 40 still applies.
+    @test clamp("altimeter", 7, 40, "chronologer") == (7, 40)
+    @test clamp("altimeter", 7, 41, "chronologer") == (7, 40)
+
+    # The iRT model accepts short peptides, so it never raises the minimum.
+    @test clamp("altimeter", 1, 20, "prosit_2024_irt_ptm") == (1, 20)
+
+    # Both models cap at 30: same answer as the fragment model alone.
+    @test clamp("prosit_2020_hcd", 7, 40, "prosit_2024_irt_ptm") == (7, 30)
+
+    # No RT model given, or an unknown one: the fragment model alone decides.
+    @test clamp("altimeter", 7, 40, nothing) == (7, 40)
+    @test clamp("altimeter", 7, 40, "not_a_model") == (7, 40)
+
+    # Nothing in the requested window that the RT model accepts.
+    @test_throws ErrorException clamp("altimeter", 35, 40, "prosit_2024_irt_ptm")
+
+    # Every RT model declares the field, so `get` never silently skips a typo.
+    @test all(haskey(cfg, :peptide_length) for cfg in values(Pioneer.RT_MODEL_CONFIGS))
+end
