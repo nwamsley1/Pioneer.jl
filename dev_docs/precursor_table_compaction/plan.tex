@@ -1,0 +1,244 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage{booktabs,tabularx,array,xcolor,enumitem,hyperref}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+\setlist{itemsep=2pt,topsep=3pt}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcolumntype{R}{>{\raggedleft\arraybackslash}X}
+\title{A compact precursor table for very large spectral libraries}
+\author{Pioneer.jl, branch \code{feat/immunopeptidomics}}
+\date{9 October 2026}
+
+\begin{document}
+\maketitle
+\sloppy
+
+\section*{Summary}
+The first full build of the human non-enzymatic 8--12mer library (299.6M precursors, charges 1--3, $\le$1 Met-ox)
+finished under a 32\,GB memory cap, and its \code{precursors\_table.arrow} is 34\,GB (113 bytes per precursor).
+Almost half of that is five string columns, much of it redundant, and two columns are never read. This plan
+proposes a second precursor-table schema (``v2''): sequences as packed 5-bit residue codes, modifications as compact
+(position, site, mod-name ID) entries, protein information moved to per-peptide side tables, and the unread columns
+dropped. The estimated precursor table plus side tables is about 16\,GB (\textbf{about half}).
+
+The disk saving is not the main reason to do this. When SearchDIA loads a library, \code{SetPrecursors} builds a
+\code{String} key for every precursor's accession set (to assign cross-validation folds by protein group), and the
+first output step ranks every sequence, mods string and accession string (\code{getPrecursorTextIds}). At 300M rows
+both materialize hundreds of millions of strings. With the IDs computed once at build time, both become a lookup.
+Older (v1) libraries keep loading unchanged, and SearchDIA's outputs keep the same text.
+
+\section{Where the 34\,GB goes}
+Measured per column on the final table of the 1\% human non-enzymatic mock library (2.96M rows, 121 bytes per row),
+scaled to 299.6M rows. The real 300M file is 113 bytes per row (34\,GB), so scaled figures are within about 7\%.
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{l r R l}
+\toprule
+Column & Bytes/row & At 300M & Content \\
+\midrule
+\code{koina\_sequence}        & 18.1 & 5.4\,GB & sequence with \code{[UNIMOD:x]} tags; input to Koina \\
+\code{sequence}               & 14.0 & 4.2\,GB & peptide string (incl.\ 4-byte offset) \\
+\code{accession\_numbers}     & 10.1 & 3.0\,GB & \code{;}-joined accessions, repeated on every row of a peptide \\
+\code{structural\_mods}       &  9.8 & 2.9\,GB & e.g.\ \code{(5,M,Unimod:35)}; \textbf{2,196 distinct} values at 1\% \\
+\code{proteome\_identifiers}  &  9.0 & 2.7\,GB & \code{;}-joined proteome names; 11 distinct at 1\% \\
+\code{start\_idx}             &  8.0 & 2.4\,GB & list of protein start positions \\
+\code{isotopic\_mods}, \code{isotope\_mods} & 8.2 & 2.4\,GB & always missing without isotope groups \\
+\code{partner\_precursor\_idx} &  8.1 & 2.4\,GB & decoy/target partner row, stored as \code{Int64} \\
+\code{collision\_energy}      &  4.0 & 1.2\,GB & the build's one NCE on every row \\
+6 numeric 4-byte columns      & 24.0 & 7.2\,GB & \code{mz}, \code{irt}, \code{pair\_id}, \code{entrapment\_pair\_id}, \code{base\_*\_id} \\
+8 one-byte columns            &  8.0 & 2.4\,GB & charge, decoy, length, \ldots \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Distinct values at 1\%: 1.03M sequences for 2.96M rows (2.9 rows per sequence: charges and decoys);
+615,808 \code{base\_pep\_id} (one per modified target form, shared by its decoy and entrapments), and
+\code{base\_pep\_id} determines \code{accession\_numbers} and \code{start\_idx} exactly (615,808 distinct pairs each).
+
+\section{Who reads each column}
+From \code{src/} (BuildSpecLib reads only its intermediate \code{precursors.arrow}, not the final table):
+\begin{itemize}
+\item \code{koina\_sequence}: no reader of the final table. Needed only during the build (Koina requests).
+\item \code{collision\_energy}: \textbf{no reader}. \code{getCollisionEnergy} is defined in
+  \code{structs/SpectralLibrary/precursors.jl} and never called. SearchDIA's intensities come from the
+  calibrated NCE model, not this column.
+\item \code{isotopic\_mods}, \code{isotope\_mods}: output text (\code{precursorText.jl}, \code{writeCSVTables.jl}),
+  protein quantification, text IDs.
+\item \code{sequence}: iRT refinement and MainSearch features (token counts), parameter tuning, chromatogram
+  integration, protein inference and quantification, output text, text IDs.
+\item \code{structural\_mods}: MainSearch features, iRT refinement, protein inference and quantification,
+  output text, variable-mod counting for old libraries, text IDs.
+\item \code{accession\_numbers}: \textbf{library load} (CV folds, \code{accession\_numbers\_to\_pid}), protein
+  inference, MaxLFQ, output text, text IDs.
+\item \code{proteome\_identifiers}: MaxLFQ, species IDs. \code{start\_idx}: output text only.
+\end{itemize}
+
+\paragraph{Collision energy.} Today BuildSpecLib writes one value (\code{nce\_params.nce}) on every row, and
+nothing reads it. A library could in principle carry different energies per precursor (an empirical library, or a
+build over several NCEs), so the column is not dropped for being constant: it is dropped because it has no reader.
+The build NCE stays in \code{config.json}. If a feature ever needs per-precursor energies, it comes back as a
+dictionary-encoded column (a handful of distinct values costs 1 byte per row).
+
+\paragraph{\code{partner\_precursor\_idx}.} A row position, which fits in \code{UInt32} (4 bytes instead of 8; readers
+convert on read). Optional, $-1.2$\,GB.
+
+\paragraph{\code{entrapment\_pair\_id}.} Left as is (1.2\,GB, and it only duplicates \code{pair\_id} in
+libraries without entrapments).
+
+\section{Proposed v2 schema}
+Sequences and mods are stored in compact binary forms that decode to today's strings on demand. Everything about a
+precursor's proteins is determined by its \code{base\_pep\_id} (measured: 615,808 distinct \code{base\_pep\_id},
+each with exactly one accession string and one start list), so it moves to a per-peptide side table and the precursor
+table keeps no protein columns at all. Side tables are separate Arrow files in the \code{.poin} directory (an Arrow file
+has one schema, so tables with different columns and row counts cannot share a file). IDs are the value's \emph{rank in
+\code{String} sort order}, the convention \code{PrecursorTextIds} already uses, so sorting IDs sorts the text.
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.2\linewidth} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{0.25\linewidth} r}
+\toprule
+v1 column & v2 & Side table & Est.\ at 300M \\
+\midrule
+\code{koina\_sequence} & dropped & --- & 0 \\
+\code{collision\_energy} & dropped & --- (NCE stays in \code{config.json}) & 0 \\
+\code{isotopic\_mods}, \code{isotope\_mods} & written only with isotope groups & --- & 0 \\
+\code{sequence} & packed 5-bit residues, variable length & --- & 3.1\,GB \\
+\code{structural\_mods} & one list of 2-byte entries (6-bit position, 2-bit site, 8-bit mod-name ID) &
+  \code{precursor\_mod\_names.arrow}: $\le$255 names & 1.4\,GB \\
+\code{accession\_numbers}, \code{proteome\_identifiers}, \code{start\_idx} & removed; looked up through
+  \code{base\_pep\_id} & \code{precursor\_peptides.arrow}: one row per \code{base\_pep\_id} ($\sim$62M) with
+  accession-set ID, proteome ID, start positions; \code{precursor\_accession\_sets.arrow}: distinct accession sets,
+  sorted, with member accession IDs; \code{precursor\_accessions.arrow}, \code{precursor\_proteomes.arrow}:
+  distinct names & 1.0\,GB \\
+\code{partner\_precursor\_idx} & \code{UInt32} (row positions) & --- & 1.2\,GB \\
+numeric and one-byte columns & unchanged & --- & 9.6\,GB \\
+\midrule
+\textbf{Total} & & & \textbf{$\approx$16\,GB} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection*{Sequences: packed residues}
+Every residue is one of 20 amino acids, so it fits in 5 bits (31 codes; room for U and O later). Codes are assigned in
+alphabetical order, starting at 1, and packed left-aligned with 0 as padding, so comparing two packed sequences byte by
+byte gives \code{String} order: sorting precursors by sequence, and the sequence ranks \code{PrecursorTextIds} needs,
+need no strings. Decoding to a \code{String} is a loop over at most 50 codes (the streaming builder already does this
+millions of times per second). Length, sulfur count and the other per-sequence features already have their own columns.
+
+\begin{center}\small
+\begin{tabular}{l r r}
+\toprule
+Bytes per precursor & Human 8--12mers & Yeast tryptic (7--34, mean 14) \\
+\midrule
+\code{String} (today, incl.\ 4-byte offset) & 14 & 18 \\
+ID into a table of distinct sequences & $\sim$8.9 & $\sim$10 \\
+Packed, fixed width per library ($\lceil 5\,L_{\max}/8\rceil$ bytes) & 8 & 22 \\
+\textbf{Packed, variable length} (4-byte offset + $\lceil 5L/8\rceil$) & \textbf{$\sim$10} & \textbf{$\sim$13} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Decision: variable length only.} A fixed width is set by the library's longest allowed peptide, so it saves
+2 bytes for 8--12mers but is larger than today's strings for tryptic libraries. Variable-length packing is smaller than
+strings for every library, with one format and one decoder. Stored as an Arrow binary column (\code{sequence\_packed}) of
+$\lceil 5L/8\rceil$ bytes; the length is the number of non-zero 5-bit codes (no residue has code 0), so no length byte is
+stored and byte order stays \code{String} order.
+
+\subsection*{Modifications: one list of compact entries}
+Measured: 0.39 mods per precursor (0.16 variable Met-ox, 0.23 fixed carbamidomethyl), 68\% of precursors have none, at
+most 8, and 2 distinct mod names (human 8--12mers; yeast tryptic is the same: 0.38 per precursor).
+
+\begin{center}\small
+\begin{tabular}{l r}
+\toprule
+Mods encoding (human 8--12mers) & Bytes per precursor \\
+\midrule
+\code{String} today, e.g.\ \code{(5,M,Unimod:35)} & 9.8 \\
+Three list columns: positions, residues, mod-name IDs & $\sim$13 \\
+\textbf{One list of 2-byte entries} (position, site, mod-name ID) & \textbf{$\sim$4.8} \\
+ID into a table of distinct mod combinations & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every Arrow list column stores a 4-byte offset per row, even for rows without mods, and two thirds of rows have
+none, so three separate list columns cost more than today's strings. One list with all three fields per entry shares
+a single offset. Each entry packs into a \code{UInt16}:
+\begin{itemize}
+\item 6 bits: position (1--63; the streaming builder's limit is 50 residues);
+\item 2 bits: site, \emph{residue} (the residue is \code{sequence[position]}, so it is not stored), \emph{N-term}
+  or \emph{C-term} (terminal mods are labelled \code{n} / \code{c} rather than with a residue, e.g.\ after decoy
+  shuffling);
+\item 8 bits: mod-name ID into \code{mod\_names} (Unimod name, mass), at most 255 names per library.
+\end{itemize}
+Entries are kept in today's order (position, then name), so decoding reproduces today's \code{structural\_mods}
+string exactly, and readers that regex-parse that string per precursor (MainSearch features, iRT refinement, protein
+inference) can use the entries directly. A table of distinct combinations would be smaller still, but its size depends
+on how many mods a library allows, and every reader would need an extra lookup.
+
+\subsection*{Protein information: side tables keyed by \code{base\_pep\_id}}
+\begin{itemize}
+\item \code{precursor\_peptides.arrow}, one row per \code{base\_pep\_id} (about 62M rows instead of 300M):
+  \code{accession\_set\_id::UInt32}, \code{proteome\_id::UInt16}, \code{start\_idx::List\{UInt32\}}.
+\item \code{precursor\_accession\_sets.arrow}: the distinct accession sets in sort order (their row is their ID),
+  each as text and as its sorted member accession IDs: what CV folds, protein groups and \code{PrecursorTextIds} need,
+  without splitting a string per precursor.
+\item \code{precursor\_accessions.arrow}, \code{precursor\_proteomes.arrow}, \code{precursor\_mod\_names.arrow}:
+  the distinct names (and each mod's mass).
+\end{itemize}
+
+\subsection*{Why not Arrow compression or dictionary encoding}
+\begin{itemize}
+\item Compressed columns cannot be memory-mapped;
+  SearchDIA would decompress the whole table into RAM. Arrow dictionary encoding would give the same per-row IDs with
+  the dictionary inside the file.
+\item But across record batches dictionary encoding relies on dictionary deltas, which are untested with Arrow.jl here,
+  and its IDs would not be sorted ranks. Explicit ID columns and side tables keep everything memory-mapped and under our
+  control.
+\end{itemize}
+
+\section{Search-time memory}
+Measure before and after on the 10\% (31M) and 100\% (300M) mock libraries: \code{loadSpectralLibrary} time and peak
+RSS, and \code{getPrecursorTextIds} time and peak RSS. Expected: the per-precursor \code{String} vector and the
+\code{Dictionary} over accession keys in \code{StandardLibraryPrecursors} disappear (CV folds become a per-set
+array indexed by \code{accession\_set\_id}), and text IDs become column reads.
+
+\section{Compatibility}
+\begin{itemize}
+\item The table carries a schema version in its Arrow metadata (\code{pioneer\_precursor\_schema = 2}); absent means v1.
+\item \code{LibraryPrecursors} gets a v2 implementation. The getters (\code{getSequence}, \code{getStructuralMods},
+  \code{getAccession\-Numbers}, \ldots) return read-only vectors that decode a packed sequence,
+  mod entries or an ID to today's string, so every existing reader keeps working; hot readers switch to the compact
+  forms.
+\item v1 libraries load through today's code, unchanged. SearchDIA outputs (CSV and Arrow) keep the same text columns.
+\item CV-fold assignment must give the same folds: it seeds once and draws per distinct accession set in
+  first-seen order, so the v2 path must draw in that same first-seen order, not ID order.
+\end{itemize}
+
+\section{Phases}
+Each phase must give identical SearchDIA results (precursors and protein groups, long and wide) on the E.\,coli
+integration library and on the 3P library with 3 Olsen Astral files (RIS), before moving on.
+\begin{enumerate}
+\item \textbf{Drop dead columns}: \code{koina\_sequence}, \code{collision\_energy}, and the isotope-mod columns
+  without isotope groups (readers treat an absent column as all missing). About $-9$\,GB.
+\item \textbf{v2 loading}: schema version, side-table loader, the v2 \code{LibraryPrecursors} and its getters, CV
+  folds and \code{PrecursorTextIds} from stored IDs; tested on v2 tables converted from v1 libraries.
+\item \textbf{v2 build}: the streaming builder writes packed sequences, mod entries, ID columns and side tables
+  directly (it already holds sequences as packed codes and mods as (position, mod ID) pairs, and has the distinct peptides
+  and protein sets in memory). About $-9$\,GB more.
+\item \textbf{Hot readers}: MainSearch features, iRT refinement and protein inference use packed sequences, mod
+  entries and IDs instead of parsing strings.
+  Timing measured per step.
+\item \textbf{Scale}: rebuild the 300M mock library; record table size, build time and peak memory, and library load
+  time and peak memory.
+\end{enumerate}
+
+\section{Decisions (9 October 2026)}
+\begin{enumerate}
+\item \code{collision\_energy} is dropped outright.
+\item Sequences use variable-length packing only; no fixed-width form.
+\item Side tables are separate Arrow files in the \code{.poin} directory.
+\end{enumerate}
+
+\end{document}
