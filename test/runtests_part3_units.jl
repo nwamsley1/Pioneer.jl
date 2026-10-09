@@ -68,6 +68,7 @@ include("./utils/FileOperations/core/test_sidecar_index.jl")
 include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 include("./utils/FileOperations/streaming/test_persistent_merge_writer.jl")
 include("./utils/FileOperations/streaming/test_merge_column_gather.jl")
+include("./utils/FileOperations/streaming/test_parallel_stage_merge.jl")
 include("./UnitTests/test_mbr_staged_selection.jl")
 include("./UnitTests/test_mbr_passed_sets.jl")
 

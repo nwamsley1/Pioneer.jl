@@ -29,8 +29,26 @@ end
 Base.close(store::DataFrameBlockStore) = store.io === nothing ? nothing : close(store.io)
 Base.flush(store::DataFrameBlockStore) = store.io === nothing ? nothing : flush(store.io)
 
+# Approximate in-memory size of a block, for the cache budget only. `Base.summarysize` walks every object through an
+# IdDict, which dominated protein export time (one call per protein group, each walking the per-run peptide vectors).
+# This is exact for isbits and isbits-union columns and one cheap pass for string and vector columns.
+_approx_block_bytes(block::DataFrame) = sum(_approx_column_bytes, eachcol(block); init = 0)
+function _approx_column_bytes(col::AbstractVector{T}) where {T}
+    isbitstype(T) && return sizeof(T) * length(col)
+    Base.isbitsunion(T) && return (Base.aligned_sizeof(T) + 1) * length(col)
+    bytes = sizeof(Ptr{Nothing}) * length(col)
+    for x in col
+        bytes += _approx_element_bytes(x)
+    end
+    return bytes
+end
+_approx_element_bytes(x::AbstractString) = ncodeunits(x)
+_approx_element_bytes(x::AbstractVector{T}) where {T} =
+    (isbitstype(T) || Base.isbitsunion(T) ? Base.aligned_sizeof(T) : sizeof(Ptr{Nothing})) * length(x)
+_approx_element_bytes(x) = isbits(x) ? sizeof(x) : sizeof(Ptr{Nothing})
+
 function _store_dataframe_block!(store::DataFrameBlockStore, block::DataFrame)
-    bytes = store.io === nothing ? Base.summarysize(block) : 0
+    bytes = store.io === nothing ? _approx_block_bytes(block) : 0
     if store.io === nothing && store.bytes + bytes > store.budget
         store.io = open(store.path, "w+")
         for saved in store.blocks
