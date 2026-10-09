@@ -319,6 +319,10 @@ function process_file!(
     # random sample fixes it. Shuffle in place (seeded per file for reproducibility).
     shuffle!(MersenneTwister(1_800_017 + total_ms2), scan_priority)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    # EXPERIMENT exp/bitvec-gated: PIONEER_BITVEC_GATED=1 calibrates on IM-gated candidates (ion-mobility data only;
+    # build_im_gate returns nothing otherwise, which leaves calibration unchanged).
+    im_gate = get(ENV, "PIONEER_BITVEC_GATED", "0") == "1" ?
+        build_im_gate(search_context, spectra, precursors, ms_file_idx) : nothing
 
     # Adaptive accumulation: collect scans until total counts ≥ 1M or all scans used
     file_tc = zeros(Int, 256)
@@ -335,7 +339,7 @@ function process_file!(
             scan_to_prec_idx, partitioned_index, spectra, batch_scans,
             Threads.nthreads(), params, qtm, mem, rt_to_irt, irt_tol, prec_mzs;
             pattern_accumulator=acc, precursor_irts=prec_irts,
-            scratch=getFragIndexScratch(search_context))
+            scratch=getFragIndexScratch(search_context), im_gate=im_gate)
 
         batch_tc, batch_dc = merge_accumulator(acc)
         file_tc .+= batch_tc
@@ -414,7 +418,7 @@ function process_file!(
     setBitVecFilter!(search_context, ms_file_idx, filter_table)
     n_pass = count(filter_table)
     elapsed = round(time() - t_start, digits=2)
-    @debug_l1 "BitVec: $file_name — $(prev) scans, $(total_counts) counts, $(n_pass)/256 pass ($mode, min_excess=$(round(min_excess_rate*100, digits=1))%, $(elapsed)s)"
+    @debug_l1 "BitVec: $file_name — $(prev) scans, $(total_counts) counts (targets $(sum(file_tc)), decoys $(sum(file_dc))), $(n_pass)/256 pass ($mode, min_excess=$(round(min_excess_rate*100, digits=1))%, gated=$(im_gate !== nothing), $(elapsed)s)"
 end
 
 function process_search_results!(

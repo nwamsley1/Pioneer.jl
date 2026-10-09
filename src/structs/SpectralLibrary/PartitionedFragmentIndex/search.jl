@@ -345,12 +345,15 @@ struct EmitToBuffer{F<:AbstractBitVecFilter, G<:Union{Nothing, ImGate}} <: FragI
 end
 
 """
-Emit to pattern accumulator for BitVecCalibration. Applies prec_mz + iRT filtering.
+Emit to pattern accumulator for BitVecCalibration. Applies prec_mz + iRT filtering, plus the ion-mobility gate when
+one is set, so the filter is calibrated on the same candidates it faces in the search (where EmitToBuffer applies
+the gate after it).
 """
-struct EmitToAccumulator{A<:PatternAccumulator, V<:AbstractVector{Float32}} <: FragIndexEmitStrategy
+struct EmitToAccumulator{A<:PatternAccumulator, V<:AbstractVector{Float32}, G<:Union{Nothing, ImGate}} <: FragIndexEmitStrategy
     acc::A
     precursor_irts::V               # concrete element/array type: avoids per-candidate boxing in emit_candidates!
     irt_tol::Float32
+    gate::G
 end
 
 """
@@ -404,6 +407,7 @@ end
         (pmz < prec_lo || pmz > prec_hi) && continue
         # iRT filter (precise per-precursor check)
         abs(prec_irts[global_pid] - scan_irt) > irt_tol && continue
+        passes_im_gate(s.gate, global_pid, scan_im) || continue
         accumulate!(acc, tid, global_pid, score)
     end
     return wp  # unchanged for accumulator mode
@@ -497,7 +501,7 @@ function searchFragmentIndexPartitionMajorHinted(
 
     # ── 4. Build emit strategy (compile-time dispatch) ─────────────────────
     emit_strategy = if pattern_accumulator !== nothing
-        EmitToAccumulator(pattern_accumulator, precursor_irts, Float32(irt_tol))
+        EmitToAccumulator(pattern_accumulator, precursor_irts, Float32(irt_tol), im_gate)
     else
         EmitToBuffer(score_filter, im_gate)
     end
