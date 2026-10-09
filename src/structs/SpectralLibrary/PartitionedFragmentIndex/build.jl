@@ -315,17 +315,14 @@ function _build_local_partition(
     frag_bin_tol_mda::Float32,
     rt_bin_tol::Float32,
 ) where {I<:Unsigned}
-    sort!(frag_ions, by = x -> getIRT(x))
+    scratch = similar(frag_ions)   # one sort buffer for every sort of this partition (each sort! would allocate its own)
+    sort!(frag_ions, by = x -> getIRT(x), scratch = scratch)
 
     n = length(frag_ions)
     local_fragments = Vector{local_fragment_type(I)}(undef, n)
-    rt_bins = Vector{FragIndexBin{Float32}}(undef, n)
-    soa = SoAFragBins{Float32}(
-        Vector{Float32}(undef, n),
-        Vector{Float32}(undef, n),
-        Vector{UInt32}(undef, n),
-        Vector{UInt32}(undef, n),
-    )
+    # bins are appended as they are found (sized per fragment, they cost 32 bytes per fragment in allocation)
+    rt_bins = FragIndexBin{Float32}[]
+    soa = SoAFragBins{Float32}(Float32[], Float32[], UInt32[], UInt32[])
     rt_bin_idx = 0
     frag_bin_idx = 0
 
@@ -337,13 +334,12 @@ function _build_local_partition(
         if (stop_irt - start_irt > rt_bin_tol) && (i > start_idx)
             stop_idx = i - 1
             stop_irt_val = getIRT(frag_ions[stop_idx])
-            sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> getMZ(x))
+            sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> getMZ(x), scratch = scratch)
             first_fb = frag_bin_idx + 1
             frag_bin_idx = _build_local_frag_bins!(local_fragments, soa,
-                frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm, frag_bin_tol_mda)
+                frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm, frag_bin_tol_mda, scratch)
             rt_bin_idx += 1
-            rt_bins[rt_bin_idx] = FragIndexBin{Float32}(
-                start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
+            push!(rt_bins, FragIndexBin{Float32}(start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx)))
             start_idx = i
             start_irt = getIRT(frag_ions[i])
         end
@@ -352,27 +348,22 @@ function _build_local_partition(
     # Last RT bin
     stop_idx = n
     stop_irt_val = getIRT(frag_ions[stop_idx])
-    sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> getMZ(x))
+    sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> getMZ(x), scratch = scratch)
     first_fb = frag_bin_idx + 1
     frag_bin_idx = _build_local_frag_bins!(local_fragments, soa,
-        frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm, frag_bin_tol_mda)
+        frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm, frag_bin_tol_mda, scratch)
     rt_bin_idx += 1
-    rt_bins[rt_bin_idx] = FragIndexBin{Float32}(
-        start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
+    push!(rt_bins, FragIndexBin{Float32}(start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx)))
 
-    # Resize SoA arrays to actual count + SIMD padding on highs
-    resize!(soa.lows, frag_bin_idx)
-    resize!(soa.highs, frag_bin_idx + 7)
-    for pad_i in (frag_bin_idx + 1):(frag_bin_idx + 7)
-        soa.highs[pad_i] = Float32(Inf)  # safe sentinel for SIMD _vload8
+    # SIMD padding on highs
+    for _ in 1:7
+        push!(soa.highs, Float32(Inf))  # safe sentinel for SIMD _vload8
     end
-    resize!(soa.first_bins, frag_bin_idx)
-    resize!(soa.last_bins, frag_bin_idx)
-    # resize! keeps the capacity (one slot per fragment); release it so a built index holds only what it uses
+    # push! grows capacity geometrically; release the excess so a built index holds only what it uses
     for v in (soa.lows, soa.highs, soa.first_bins, soa.last_bins)
         sizehint!(v, length(v); shrink = true)
     end
-    rb_final = rt_bins[1:rt_bin_idx]
+    rb_final = sizehint!(rt_bins, length(rt_bins); shrink = true)
     skip_hints = _compute_skip_hints(soa, rb_final)
 
     return local_partition_type(I){Float32}(
@@ -400,6 +391,7 @@ function _build_local_frag_bins!(
     start::Int, stop::Int,
     frag_bin_tol_ppm::Float32,
     frag_bin_tol_mda::Float32,
+    scratch::Vector{SimpleFrag{Float32}} = similar(frag_ions, 0),
 ) where {F<:AbstractLocalFragment}
     I = local_id_type(F)
     use_ppm = frag_bin_tol_ppm > 0.0f0
@@ -419,12 +411,10 @@ function _build_local_frag_bins!(
         if exceeds_tol && (i > start_idx)
             bin_stop = i - 1
             bin_stop_mz = getMZ(frag_ions[bin_stop])
-            sort!(@view(frag_ions[start_idx:bin_stop]), by = x -> getPrecMZ(x))
+            sort!(@view(frag_ions[start_idx:bin_stop]), by = x -> getPrecMZ(x), scratch = scratch)
             frag_bin_idx += 1
-            soa.lows[frag_bin_idx] = start_mz
-            soa.highs[frag_bin_idx] = bin_stop_mz
-            soa.first_bins[frag_bin_idx] = UInt32(start_idx)
-            soa.last_bins[frag_bin_idx] = UInt32(bin_stop)
+            push!(soa.lows, start_mz); push!(soa.highs, bin_stop_mz)
+            push!(soa.first_bins, UInt32(start_idx)); push!(soa.last_bins, UInt32(bin_stop))
             for idx in start_idx:bin_stop
                 sf = frag_ions[idx]
                 local_fragments[idx] = F(
@@ -437,12 +427,10 @@ function _build_local_frag_bins!(
 
     # Last frag bin
     stop_mz = getMZ(frag_ions[stop])
-    sort!(@view(frag_ions[start_idx:stop]), by = x -> getPrecMZ(x))
+    sort!(@view(frag_ions[start_idx:stop]), by = x -> getPrecMZ(x), scratch = scratch)
     frag_bin_idx += 1
-    soa.lows[frag_bin_idx] = start_mz
-    soa.highs[frag_bin_idx] = stop_mz
-    soa.first_bins[frag_bin_idx] = UInt32(start_idx)
-    soa.last_bins[frag_bin_idx] = UInt32(stop)
+    push!(soa.lows, start_mz); push!(soa.highs, stop_mz)
+    push!(soa.first_bins, UInt32(start_idx)); push!(soa.last_bins, UInt32(stop))
     for idx in start_idx:stop
         sf = frag_ions[idx]
         local_fragments[idx] = F(
