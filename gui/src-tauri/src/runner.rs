@@ -303,7 +303,13 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
             // again in the job's final status, which is not success while any
             // step failed.
             if multi && !was_cancelled && !st.success() {
-                let message = step_failure_message(index, steps.len(), &steps[index - 1], st.code());
+                let message = step_failure_message(
+                    index,
+                    steps.len(),
+                    &steps[index - 1],
+                    st.code(),
+                    exit_signal(&st),
+                );
                 let _ = app.emit(
                     "job-step-failed",
                     StepFailedEvent {
@@ -379,15 +385,51 @@ fn step_label(args: &[String]) -> Option<String> {
     })
 }
 
-fn step_failure_message(step: usize, total: usize, args: &[String], code: Option<i32>) -> String {
+fn step_failure_message(
+    step: usize,
+    total: usize,
+    args: &[String],
+    code: Option<i32>,
+    signal: Option<i32>,
+) -> String {
     let what = match step_label(args) {
         Some(l) => format!("Step {step} of {total} ({l})"),
         None => format!("Step {step} of {total}"),
     };
-    match code {
-        Some(c) => format!("{what} failed with exit code {c}."),
-        None => format!("{what} was terminated by a signal."),
+    match (code, signal) {
+        (Some(c), _) => format!("{what} failed with exit code {c}."),
+        // A crashing .NET or Julia process on macOS/Linux ends on a signal
+        // (SIGABRT for an unhandled exception), not an exit code.
+        (None, Some(sig)) => match signal_name(sig) {
+            Some(name) => format!("{what} crashed (signal {sig}, {name})."),
+            None => format!("{what} crashed (signal {sig})."),
+        },
+        (None, None) => format!("{what} was terminated by a signal."),
     }
+}
+
+/// The signal that ended a process, on unix.
+fn exit_signal(st: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        st.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = st;
+        None
+    }
+}
+
+fn signal_name(sig: i32) -> Option<&'static str> {
+    Some(match sig {
+        6 => "SIGABRT",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        15 => "SIGTERM",
+        _ => return None,
+    })
 }
 
 /// The final status of a sequence in which some steps failed.
@@ -732,10 +774,14 @@ mod tests {
             .iter().map(|s| s.to_string()).collect();
         assert_eq!(step_label(&args).as_deref(), Some("run6.raw"));
         assert_eq!(
-            step_failure_message(6, 117, &args, Some(-532462766)),
+            step_failure_message(6, 117, &args, Some(-532462766), None),
             "Step 6 of 117 (run6.raw) failed with exit code -532462766."
         );
-        assert_eq!(step_failure_message(2, 3, &[], None), "Step 2 of 3 was terminated by a signal.");
+        assert_eq!(
+            step_failure_message(2, 3, &args, None, Some(6)),
+            "Step 2 of 3 (run6.raw) crashed (signal 6, SIGABRT)."
+        );
+        assert_eq!(step_failure_message(2, 3, &[], None, None), "Step 2 of 3 was terminated by a signal.");
     }
 
     #[test]
