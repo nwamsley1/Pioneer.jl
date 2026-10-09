@@ -244,10 +244,10 @@ end
         (left_weight == right_weight && left.trace_prob < right.trace_prob)
 end
 
-function _MBRDonorIndex(entries::Dict{UInt32, Vector{_MBRDonorEntry}})
+function _MBRDonorIndex(entries::_MBRDonorEntries)
     lookups = Dict{UInt32, _MBRDonorLookup}()
     files = Set{UInt32}()
-    for (pid, donors) in entries
+    for (pid, donors) in pairs(entries)
         length(donors) <= typemax(UInt32) || error("Too many donor runs for precursor $pid")
         top = (UInt32(0), UInt32(0))
         lowest = (UInt32(0), UInt32(0), UInt32(0))
@@ -275,16 +275,88 @@ function _MBRDonorIndex(entries::Dict{UInt32, Vector{_MBRDonorEntry}})
     return _MBRDonorIndex(entries, lookups, sort!(collect(files)))
 end
 
+"""
+    build_mbr_integrated_donor_dict(file_paths, score_floor; q_value_threshold, store_dir)
+
+Collect the integrated donors of every file into a `_MBRDonorStore` and index it. Each file's
+donors are selected and deduplicated as before (`_collect_mbr_integrated_donors!`), then appended
+to one of `_mbr_donor_bucket_count(file_paths)` spill files by precursor. Each bucket is then grouped by
+precursor in memory and written sequentially to one store file, which is memory-mapped: memory
+holds one bucket at a time, not every donor of the experiment. Donor order within a precursor is
+the order of first appearance across files, as in the in-memory dictionary, so selection is
+unchanged. Call `close_mbr_donor_store!` when the index is no longer used.
+"""
 function build_mbr_integrated_donor_dict(
     file_paths::Vector{String},
     score_floor::Float32;
     q_value_threshold::Float32,
+    store_dir::String = isempty(file_paths) ? tempdir() : dirname(first(file_paths)),
 )
-    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    n_buckets = _mbr_donor_bucket_count(file_paths)
+    bucket_paths = [tempname(store_dir) * ".mbr_donor_bucket" for _ in 1:n_buckets]
+    bucket_ios = [open(path, "w") for path in bucket_paths]
+    bucket_buffers = [_MBRDonorEntry[] for _ in 1:n_buckets]
     previous_files = Set{UInt32}()
+    cross_path_files = false
+    all_im_zero = true        # then records omit im_obs (data without ion mobility)
+    precursors_seen = Set{UInt32}()
     started = last_progress = time()
     rows_processed = 0
-    for (file_position, path) in enumerate(file_paths)
+    try
+        for (file_position, path) in enumerate(file_paths)
+            file_donors = Dict{UInt32, Vector{_MBRDonorEntry}}()
+            file_ids = Set{UInt32}()
+            rows_processed += _collect_mbr_integrated_file_donors!(
+                file_donors, file_ids, path, score_floor, q_value_threshold,
+            )
+            # A run seen in an earlier file needs the cross-file replacement rule when grouping.
+            cross_path_files |= !isdisjoint(file_ids, previous_files)
+            union!(previous_files, file_ids)
+            for (pid, donors) in file_donors
+                push!(precursors_seen, pid)
+                all_im_zero &= all(donor -> donor.im_obs === 0.0f0, donors)
+                append!(bucket_buffers[_mbr_donor_bucket(pid, n_buckets)], donors)
+            end
+            for (bucket, buffer) in enumerate(bucket_buffers)
+                isempty(buffer) && continue
+                write(bucket_ios[bucket], buffer)
+                empty!(buffer)
+            end
+            if time() - last_progress >= 60
+                @debug_l1 "Post-integration MBR donor collection: files=$file_position/$(length(file_paths)) rows=$rows_processed precursors=$(length(precursors_seen)) elapsed=$(round(time() - started, digits=2))s"
+                last_progress = time()
+            end
+        end
+    finally
+        foreach(close, bucket_ios)
+    end
+    store_started = time()
+    @debug_l1 "Post-integration MBR donor store writing starting: precursors=$(length(precursors_seen)) buckets=$n_buckets"
+    record_type = all_im_zero ? _MBRDonorRecord : _MBRDonorRecordIM
+    store = _write_mbr_donor_store(bucket_paths, store_dir, cross_path_files, record_type)
+    @debug_l1 "Post-integration MBR donor store writing complete: entries=$(length(store.entries)) bytes=$(length(store.entries) * sizeof(record_type)) elapsed=$(round(time() - store_started, digits=2))s"
+    index_started = time()
+    @debug_l1 "Post-integration MBR donor lookup construction starting: precursors=$(length(store))"
+    index = _MBRDonorIndex(store)
+    @debug_l1 "Post-integration MBR donor lookup construction complete: elapsed=$(round(time() - index_started, digits=2))s"
+    return index
+end
+
+# Target size of one spill bucket, which is read and sorted in memory while the store is written.
+const MBR_DONOR_BUCKET_BYTES = 512 * 2^20
+
+# Enough buckets that each stays near MBR_DONOR_BUCKET_BYTES. The input files bound the spill: a
+# donor is built from a subset of its row's columns (at least as wide as its 72-byte record), and
+# the files are uncompressed Arrow. Between 16 and 4096 buckets, each an open file while spilling.
+_mbr_donor_bucket_count(file_paths::Vector{String}) =
+    clamp(cld(sum(filesize, file_paths; init = 0), MBR_DONOR_BUCKET_BYTES), 16, 4096)
+_mbr_donor_bucket(pid::UInt32, n_buckets::Int) = Int(pid % UInt32(n_buckets)) + 1
+
+# One file's donors, selected and deduplicated exactly as in the in-memory dictionary. Returns rows read.
+function _collect_mbr_integrated_file_donors!(
+    file_donors::Dict{UInt32, Vector{_MBRDonorEntry}}, file_ids::Set{UInt32},
+    path::String, score_floor::Float32, q_value_threshold::Float32,
+)
         tbl = Arrow.Table(path)
         required = (
             :precursor_idx, :ms_file_idx, :trace_prob_prepass, :qval, :global_qval,
@@ -313,19 +385,84 @@ function build_mbr_integrated_donor_dict(
         )
         frag_columns = ntuple(rank -> getproperty(tbl, MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS[rank]), 8)
         _collect_mbr_integrated_donors!(
-            donor_dict, previous_files, columns, frag_columns, score_floor, q_value_threshold,
+            file_donors, Set{UInt32}(), columns, frag_columns, score_floor, q_value_threshold,
         )
-        rows_processed += length(tbl.precursor_idx)
-        if time() - last_progress >= 60
-            @debug_l1 "Post-integration MBR donor collection: files=$file_position/$(length(file_paths)) rows=$rows_processed precursors=$(length(donor_dict)) elapsed=$(round(time() - started, digits=2))s"
-            last_progress = time()
+        for donors in values(file_donors), donor in donors
+            push!(file_ids, donor.ms_file_idx)
+        end
+        return length(tbl.precursor_idx)
+end
+
+# Group each bucket by precursor (stably, so first-appearance order is kept) and append the groups,
+# as `record_type` records, to one store file, which is then memory-mapped. With `cross_path_files`, a run whose donors came
+# from more than one file keeps one donor per (precursor, run): the first position, holding the
+# higher-scoring donor, as `_collect_mbr_integrated_donors!` does across files.
+function _write_mbr_donor_store(bucket_paths::Vector{String}, store_dir::String, cross_path_files::Bool,
+                                record_type::Type{R}) where {R}
+    store_path = tempname(store_dir) * ".mbr_donor_store"
+    ranges = Dict{UInt32, UnitRange{Int}}()
+    n = 0
+    open(store_path, "w") do out
+        for bucket_path in bucket_paths
+            count = div(filesize(bucket_path), sizeof(_MBRDonorEntry))
+            if count > 0
+                donors = Vector{_MBRDonorEntry}(undef, count)
+                read!(bucket_path, donors)
+                sort!(donors; by = donor -> donor.precursor_idx, alg = MergeSort)   # stable
+                first_row = 1
+                while first_row <= count
+                    pid = donors[first_row].precursor_idx
+                    last_row = first_row
+                    while last_row < count && donors[last_row + 1].precursor_idx == pid
+                        last_row += 1
+                    end
+                    group = view(donors, first_row:last_row)
+                    cross_path_files && (group = _mbr_merge_cross_file_donors(group))
+                    write(out, map(R, group))
+                    ranges[pid] = (n + 1):(n + length(group))
+                    n += length(group)
+                    first_row = last_row + 1
+                end
+            end
+            rm(bucket_path)
         end
     end
-    index_started = time()
-    @debug_l1 "Post-integration MBR donor lookup construction starting: precursors=$(length(donor_dict))"
-    index = _MBRDonorIndex(donor_dict)
-    @debug_l1 "Post-integration MBR donor lookup construction complete: elapsed=$(round(time() - index_started, digits=2))s"
-    return index
+    if n == 0
+        rm(store_path)
+        return _MBRDonorStore(ranges, R[], "")
+    end
+    entries = open(io -> Mmap.mmap(io, Vector{R}, n), store_path, "r")
+    return _MBRDonorStore(ranges, entries, store_path)
+end
+
+function _mbr_merge_cross_file_donors(group)
+    merged = _MBRDonorEntry[]
+    position = Dict{UInt32, Int}()
+    for donor in group
+        existing = get(position, donor.ms_file_idx, 0)
+        if existing == 0
+            push!(merged, donor)
+            position[donor.ms_file_idx] = length(merged)
+        elseif donor.trace_prob > merged[existing].trace_prob
+            merged[existing] = donor
+        end
+    end
+    return merged
+end
+
+"""
+    close_mbr_donor_store!(index)
+
+Unmap and delete the store behind a donor index built by `build_mbr_integrated_donor_dict`. Nothing
+that refers to its entries may be used afterwards.
+"""
+close_mbr_donor_store!(::_MBRDonorIndex) = nothing
+function close_mbr_donor_store!(index::_MBRDonorIndex{<:_MBRDonorStore})
+    store = index.entries
+    isempty(store.path) && return nothing
+    Base.finalize(store.entries.ref.mem)   # Mmap attaches its unmap finalizer to the Memory
+    safeRm(store.path)
+    return nothing
 end
 
 function _mbr_lod_thresholds(
@@ -378,7 +515,7 @@ function _mbr_lod_thresholds(
 end
 
 @inline function _mbr_donor_in_file(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorEntries,
     pid::UInt32,
     file_idx::UInt32,
 )
@@ -391,7 +528,7 @@ end
 end
 
 @inline function _mbr_select_donor(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorEntries,
     pid::UInt32,
     receiver_file::UInt32,
     atlas::Union{Nothing, RunSimilarityAtlas},
@@ -420,7 +557,7 @@ end
 end
 
 @inline function _mbr_top_scoring_donor(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorEntries,
     pid::UInt32,
     receiver_file::UInt32,
 )
@@ -440,7 +577,7 @@ end
 end
 
 @inline function _mbr_worst_alternate_donor(
-    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    donor_dict::_MBRDonorEntries,
     pid::UInt32,
     receiver_file::UInt32,
     best_donor::_MBRDonorEntry,
@@ -492,7 +629,7 @@ function _mbr_receiver_donors(index::_MBRDonorIndex, receiver_file::UInt32, atla
     return _MBRReceiverDonors(index, receiver_file, ranked, equal_similarity, finite_similarity)
 end
 
-_mbr_receiver_donors(donors::Dict{UInt32, Vector{_MBRDonorEntry}}, ::UInt32, atlas) = donors
+_mbr_receiver_donors(donors::_MBRDonorEntries, ::UInt32, atlas) = donors
 
 @inline function _mbr_donor_in_file(index::_MBRDonorIndex, pid::UInt32, file_idx::UInt32)
     entries = get(index.entries, pid, nothing)
