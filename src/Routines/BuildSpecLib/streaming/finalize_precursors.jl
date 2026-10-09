@@ -39,7 +39,10 @@ function finalize_precursor_table(in_path::String, out_path::String; entrapment_
     names = Symbol[]; cols = AbstractVector[]
     for (name, col) in zip(Tables.columnnames(t), Tables.columns(t))
         name in dropped && continue
-        push!(names, get(FINAL_PRECURSOR_NAMES, name, name)); push!(cols, col)
+        push!(names, get(FINAL_PRECURSOR_NAMES, name, name))
+        # list columns (packed sequences, mod entries, start positions) as one flat Arrow.List: Arrow's generic list
+        # writer collects every row first (OOM at 300M rows)
+        push!(cols, eltype(col) <: AbstractVector ? flat_list_column(col) : col)
     end
     push!(names, :partner_precursor_idx)
     push!(cols, missing_if_zero(pair_partners(t.pair_id)))

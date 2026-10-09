@@ -138,6 +138,39 @@ function decode_mods(entries::AbstractVector{UInt16}, packed::AbstractVector{UIn
     return String(take!(io))
 end
 
+# ── list columns from flat buffers ────────────────────────────────────────────────────────────────────────────────
+
+"""
+    arrow_list_column(data, offsets) -> Arrow.List
+
+A list column whose row `i` is `data[offsets[i]:offsets[i+1]-1]` (1-based `offsets`, length n + 1), built directly in
+Arrow's layout: Arrow.write writes an Arrow.List as it is, while any other vector of vectors goes through Arrow's
+ToList, which collects every row's element first (about 75 bytes per row).
+"""
+function arrow_list_column(data::Vector{T}, offsets::Vector{Int}) where {T}
+    n = length(offsets) - 1
+    total = offsets[end] - 1
+    O = total <= typemax(Int32) ? Int32 : Int64
+    zero_based = O[o - 1 for o in offsets]
+    values = Arrow.Primitive(T, UInt8[], Arrow.ValidityBitmap(UInt8[], 1, total, 0), data, total, nothing)
+    return Arrow.List{Vector{T}, O, typeof(values)}(UInt8[], Arrow.ValidityBitmap(UInt8[], 1, n, 0),
+                                                   Arrow.Offsets(UInt8[], zero_based), values, n, nothing)
+end
+
+"The rows of a vector of vectors (e.g. a multi-batch Arrow list column) as one flat Arrow.List."
+function flat_list_column(col::AbstractVector)
+    T = eltype(eltype(col))
+    offsets = Vector{Int}(undef, length(col) + 1); offsets[1] = 1
+    for (i, x) in enumerate(col)
+        offsets[i + 1] = offsets[i] + length(x)
+    end
+    data = Vector{T}(undef, offsets[end] - 1)
+    for (i, x) in enumerate(col)
+        copyto!(data, offsets[i], x, 1, length(x))
+    end
+    return arrow_list_column(data, offsets)
+end
+
 # ── lazy schema-1 columns over schema-2 data ──────────────────────────────────────────────────────────────────────
 
 "Sequences decoded from a packed column."

@@ -65,7 +65,8 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     for lo in 1:batch_precs:n_prec
         hi = min(lo + batch_precs - 1, n_prec)
         t = time()
-        input = DataFrame(koina_sequence = koina_seqs[lo:hi], precursor_charge = prec.precursor_charge[lo:hi])
+        input = DataFrame(koina_sequence = collect_threaded(koina_seqs, lo:hi),
+                          precursor_charge = prec.precursor_charge[lo:hi])
         results = koina_batch_results(model, input, KOINA_URLS[model.name]; batch_size = koina_batch,
                                       concurrency = concurrency)
         t_predict += time() - t; t = time()
@@ -116,6 +117,17 @@ function fragment_stage_text(prec::Arrow.Table, lib_dir::AbstractString)
     packed = prec.sequence_packed; entries = prec.mod_entries
     return (KoinaSequenceColumn(packed, entries, names), PackedSequenceColumn(packed),
             ModStringColumn(entries, packed, names), AllMissingStrings(length(packed)))
+end
+
+"`v[r]` materialized in parallel (decoding a compact column is per-row work)."
+function collect_threaded(v::AbstractVector{T}, r::UnitRange{Int}) where {T}
+    out = Vector{T}(undef, length(r))
+    Threads.@threads :dynamic for js in collect(Iterators.partition(eachindex(out), 16384))
+        for j in js
+            out[j] = v[r[j]]
+        end
+    end
+    return out
 end
 
 "Koina input sequences decoded from packed sequences and mod entries (koina_sequence of the streaming builder)."

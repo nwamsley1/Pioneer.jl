@@ -21,8 +21,8 @@
 """
     RaggedColumn(data, offsets)
 
-Row `i` is `view(data, offsets[i]:offsets[i+1]-1)`: a list column backed by one flat vector. Arrow writes it as a
-list column without materializing a vector per row.
+Row `i` is `view(data, offsets[i]:offsets[i+1]-1)`: the flat buffers of a list column while a chunk is filled (written
+as arrow_list_column(data, offsets)).
 """
 struct RaggedColumn{T} <: AbstractVector{SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}}
     data::Vector{T}
@@ -97,7 +97,9 @@ function chunk_columns_compact(src::TableSource, chunk::AbstractVector{UInt32})
     Threads.@threads :dynamic for js in parts
         _fill_compact_rows!(cols, src, chunk, js, Tuple{UInt8, UInt8}[], UInt8[])
     end
-    return cols
+    # list columns in Arrow's own layout (written as they are; see arrow_list_column)
+    return merge(cols, (sequence_packed = arrow_list_column(cols.sequence_packed.data, seq_off),
+                        mod_entries = arrow_list_column(cols.mod_entries.data, mod_off)))
 end
 
 "Row sizes (stored at j + 1, prefix-summed by the caller): packed sequence bytes and mod count."
@@ -202,7 +204,7 @@ function write_precursor_side_tables(lib_dir::AbstractString, units::StreamUnits
     end
     f = PRECURSOR_SIDE_FILES
     Arrow.write(joinpath(lib_dir, f.peptides), (accession_set_id = pep_set, proteome_id = pep_prot,
-                                                start_idx = RaggedColumn(starts, start_off)))
+                                                start_idx = arrow_list_column(starts, start_off)))
     Arrow.write(joinpath(lib_dir, f.accession_sets), (accession_numbers = sorted_sets,
         members = [sort!(unique!(UInt32[acc_id[a] for a in split(s, ';')])) for s in sorted_sets]))
     Arrow.write(joinpath(lib_dir, f.accessions), (accession = acc_names,))
