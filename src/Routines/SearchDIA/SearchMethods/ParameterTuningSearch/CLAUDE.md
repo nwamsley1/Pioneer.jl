@@ -18,6 +18,8 @@ The historical "3-phase bias-shift × multi-score × scan-scaling" iteration was
 ┌─────────────────────────────────────────────────────────┐
 │ Phase 1: Wide Scout (MS2)                               │
 │  Mass model: ±WIDE_SCOUT_TOL_PPM (100 ppm hardcoded)   │
+│  Unit-resolution files (arrow header mass_resolution, │
+│  written for ion-trap MS2): ±mass_resolution Th        │
 │  Target PSMs: WIDE_SCOUT_TARGET_PSMS                    │
 │  Initial scans: WIDE_SCOUT_INITIAL_SCANS                │
 │  Top-N peaks: TUNING_TOPN_PEAKS                         │
