@@ -134,7 +134,7 @@ function add_fragment_indexes!(lib_path::AbstractString)
         lo, hi = Int(pid_to_fid[k]), Int(pid_to_fid[k+1]) - 1
         lo < hi && sort!(view(frags, lo:hi), by = getRank, alg = InsertionSort)
     end
-    precursors = SetPrecursors(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
+    precursors = SetPrecursors(lib_path)
     proteins = SetProteins(Arrow.Table(joinpath(lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = if eltype(frags) <: SplineCompactFrag || eltype(frags) <: SplineDetailedFrag
@@ -390,8 +390,7 @@ function buildPionLib(spec_lib_path::String,
 
     # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
     # See sort_detailed_fragments_by_mz! for why the order matters.
-    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
-    temp_precursors = SetPrecursors(precursors_arrow)
+    temp_precursors = SetPrecursors(spec_lib_path)
     # Load spline knots for SplineFragmentLookup
     spl_knots = if isfile(joinpath(spec_lib_path, "spline_knots.jls"))
         deserialize_from_jls(joinpath(spec_lib_path, "spline_knots.jls"))
@@ -470,8 +469,7 @@ function buildPionLib(spec_lib_path::String,
               "(detailed_frags/pid_to_fid); Prosit resume-from-disk is not supported yet.")
     end
 
-    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
-    temp_precursors = SetPrecursors(precursors_arrow)
+    temp_precursors = SetPrecursors(spec_lib_path)
     temp_lookup = StandardFragmentLookup(detailed_frags, pid_to_fid)
     temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)

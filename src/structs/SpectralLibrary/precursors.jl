@@ -37,36 +37,42 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
     pid_to_cv_fold::Vector{UInt8}
     inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}}
     text_ids::Base.RefValue{Union{Nothing, PrecursorTextIds}}
+    side::Union{Nothing, PrecursorSideTables}        # schema-2 side tables (precursor_table_v2.jl); nothing for schema 1
     function StandardLibraryPrecursors(
         precursor_table::Arrow.Table,
-        inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}} = nothing
+        inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}} = nothing,
+        side::Union{Nothing, PrecursorSideTables} = nothing
     )
         try
-            n = length(precursor_table[:sequence])
+            schema = precursor_schema(precursor_table)
+            schema == 2 && side === nothing && throw(ArgumentError(
+                "a schema-2 precursor table needs its side tables: use SetPrecursors(library_directory)"))
+            n = length(precursor_table[schema == 2 ? :sequence_packed : :sequence])
             if inferred_num_variable_modifications !== nothing
                 length(inferred_num_variable_modifications) == n ||
                     throw(ArgumentError(
                         "inferred_num_variable_modifications must match the precursor table length"
                     ))
             end
-            accession_numbers = precursor_table[:accession_numbers]
-            accession_keys = String[_accession_key(accs) for accs in accession_numbers]
-
-            unique_proteins = unique(accession_keys)
-            accession_number_to_pgid = Dictionary(
-                unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))
-            )
-
-            # Assign CV folds by protein group (all precursors of a protein get the same fold)
-            pg_to_cv_fold = Dictionary{String, UInt8}()
+            # Assign CV folds by protein group (all precursors of a protein get the same fold): one draw per distinct
+            # accession string, in first-seen order. Schema 2 keys the same draws by accession-set ID.
             cv_folds = UInt8[0, 1]
-            Random.seed!(1776)
-            for pg in unique_proteins
-                insert!(pg_to_cv_fold, pg, rand(cv_folds))
-            end
             pid_to_cv_fold = Vector{UInt8}(undef, n)
-            for pid in range(1, n)
-                pid_to_cv_fold[pid] = pg_to_cv_fold[accession_keys[pid]]
+            accession_number_to_pgid = if side === nothing
+                accession_numbers = precursor_table[:accession_numbers]
+                accession_keys = String[_accession_key(accs) for accs in accession_numbers]
+                unique_proteins = unique(accession_keys)
+                pg_to_cv_fold = Dictionary{String, UInt8}()
+                Random.seed!(1776)
+                for pg in unique_proteins
+                    insert!(pg_to_cv_fold, pg, rand(cv_folds))
+                end
+                for pid in range(1, n)
+                    pid_to_cv_fold[pid] = pg_to_cv_fold[accession_keys[pid]]
+                end
+                Dictionary(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins))))
+            else
+                _cv_folds_by_set!(pid_to_cv_fold, precursor_table[:base_pep_id], side, cv_folds)
             end
             if length(keys(accession_number_to_pgid)) <= 1
                 # Only one (or zero) unique protein in the library — protein-grouped
@@ -84,13 +90,37 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                 accession_number_to_pgid,
                 pid_to_cv_fold,
                 inferred_num_variable_modifications,
-                Ref{Union{Nothing, PrecursorTextIds}}(nothing)
+                Ref{Union{Nothing, PrecursorTextIds}}(nothing),
+                side
             )
         catch e
             @user_warn "Failed to load precursor table"
             throw(e)
         end
     end
+end
+
+"""
+Schema-2 CV folds: one draw per accession set in the order its first precursor appears (the schema-1 order of
+distinct accession strings), so the folds equal schema 1's. Returns the accession string -> group ID map.
+"""
+function _cv_folds_by_set!(pid_to_cv_fold::Vector{UInt8}, base_pep_id::AbstractVector, side::PrecursorSideTables,
+                           cv_folds::Vector{UInt8})
+    fold = zeros(UInt8, length(side.accession_sets))
+    seen = falses(length(side.accession_sets))
+    order = UInt32[]
+    for b in base_pep_id
+        k = side.pep_accession_set[b]
+        seen[k] || (seen[k] = true; push!(order, k))
+    end
+    Random.seed!(1776)
+    for k in order
+        fold[k] = rand(cv_folds)
+    end
+    for (pid, b) in enumerate(base_pep_id)
+        pid_to_cv_fold[pid] = fold[side.pep_accession_set[b]]
+    end
+    return Dictionary(String[side.accession_sets[k] for k in order], range(one(UInt32), UInt32(length(order))))
 end
 
 _accession_key(accs::AbstractString) = String(accs)
@@ -144,7 +174,8 @@ end
 
 function SetPrecursors(
     precursor_table::Arrow.Table;
-    variable_mod_names::Union{Nothing, AbstractSet{String}} = nothing
+    variable_mod_names::Union{Nothing, AbstractSet{String}} = nothing,
+    side::Union{Nothing, PrecursorSideTables} = nothing
 )
     inferred_num_variable_modifications = if !hasproperty(
         precursor_table,
@@ -159,8 +190,16 @@ function SetPrecursors(
     end
     return StandardLibraryPrecursors(
         precursor_table,
-        inferred_num_variable_modifications
+        inferred_num_variable_modifications,
+        side
     )
+end
+
+"The precursors of the library in `lib_dir` (precursors_table.arrow and, for schema 2, its side tables)."
+function SetPrecursors(lib_dir::AbstractString; variable_mod_names::Union{Nothing, AbstractSet{String}} = nothing)
+    tbl = Arrow.Table(joinpath(lib_dir, "precursors_table.arrow"))
+    side = precursor_schema(tbl) == 2 ? load_precursor_side_tables(lib_dir) : nothing
+    return SetPrecursors(tbl; variable_mod_names = variable_mod_names, side = side)
 end
 
 Base.length(lp::LibraryPrecursors) = lp.n
@@ -171,17 +210,26 @@ Base.length(lp::LibraryPrecursors) = lp.n
 
 getCvFold(lp::LibraryPrecursors, precursor_idx::I) where {I<:Integer} = lp.pid_to_cv_fold[precursor_idx]
 getProteinGroupId(lp::LibraryPrecursors, accession_numbers::String)::UInt32 = lp.accession_numbers_to_pid[accession_numbers]
-getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:proteome_identifiers]
-getAccessionNumbers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:accession_numbers]
-getSequence(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:sequence]
-getStructuralMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
+# The text getters return the schema-1 columns; for a schema-2 library, columns that decode them on access.
+getProteomeIdentifiers(lp::LibraryPrecursors) = lp.side === nothing ?
+    lp.data[:proteome_identifiers]::Arrow.List{<:AbstractString, Int32, Vector{UInt8}} :
+    KeyedColumn(lp.data[:base_pep_id], KeyedColumn(lp.side.pep_proteome, lp.side.proteomes))
+getAccessionNumbers(lp::LibraryPrecursors) = lp.side === nothing ?
+    lp.data[:accession_numbers]::Arrow.List{String, Int32, Vector{UInt8}} :
+    KeyedColumn(lp.data[:base_pep_id], KeyedColumn(lp.side.pep_accession_set, lp.side.accession_sets))
+getSequence(lp::LibraryPrecursors) = lp.side === nothing ?
+    lp.data[:sequence]::Arrow.List{<:AbstractString, Int32, Vector{UInt8}} : PackedSequenceColumn(lp.data[:sequence_packed])
+getStructuralMods(lp::LibraryPrecursors) = lp.side === nothing ?
+    lp.data[:structural_mods]::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} :
+    ModStringColumn(lp.data[:mod_entries], lp.data[:sequence_packed], lp.side.mod_names)
 getCharge(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:prec_charge]
 getIsDecoy(lp::LibraryPrecursors)::Arrow.BoolVector{Bool} = lp.data[:is_decoy]
 getEntrapmentGroupId(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:entrapment_group_id]
 getMz(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:mz]
 getLength(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:length]
 getMissedCleavages(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:missed_cleavages]
-getStartIdx(lp::LibraryPrecursors) = lp.data[:start_idx]
+getStartIdx(lp::LibraryPrecursors) = lp.side === nothing ? lp.data[:start_idx] :
+    KeyedColumn(lp.data[:base_pep_id], lp.side.pep_starts)
 
 @inline _format_start_idx(start::Integer) = string(start)
 @inline _format_start_idx(starts) = join(starts, ';')

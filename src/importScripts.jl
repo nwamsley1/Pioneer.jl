@@ -125,6 +125,7 @@ function importScripts()
             "SpectralLibrary/fragment_types.jl",
             "SpectralLibrary/fragment_lookup.jl",
             "SpectralLibrary/detailed_fragments_bin.jl",
+            "SpectralLibrary/precursor_table_v2.jl",
             "SpectralLibrary/precursors.jl",
             "SpectralLibrary/proteins.jl",
             "SpectralLibrary/PartitionedFragmentIndex/types.jl",

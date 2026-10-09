@@ -165,7 +165,6 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     #library_fragment_lookup_table.prec_frag_ranges[end] = last_range
     spec_lib["f_det"] = library_fragment_lookup_table
 
-    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
     # Load the partitioned fragment indexes of the chosen width (choose_fragment_index)
@@ -186,12 +185,13 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     end
     output_schema_policy = OutputSchemaPolicy(build_config)
     variable_mod_names = _configured_variable_mod_names(build_config)
+    precursors = SetPrecursors(SPEC_LIB_DIR; variable_mod_names = variable_mod_names)   # + schema-2 side tables
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
         return FragmentIndexLibrary(
             presearch_partitioned_index,
             partitioned_index,
-            SetPrecursors(precursors; variable_mod_names = variable_mod_names),
+            precursors,
             SetProteins(proteins),
             spec_lib["f_det"],
             output_schema_policy
@@ -200,7 +200,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
         return SplineFragmentIndexLibrary(
             presearch_partitioned_index,
             partitioned_index,
-            SetPrecursors(precursors; variable_mod_names = variable_mod_names),
+            precursors,
             SetProteins(proteins),
             spec_lib["f_det"],
             output_schema_policy

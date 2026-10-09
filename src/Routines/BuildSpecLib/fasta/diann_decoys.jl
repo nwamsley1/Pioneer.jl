@@ -270,7 +270,7 @@ function apply_diann_decoy_style!(lib_path::String)
     serialize_to_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"), new_pid_to_fid)
 
     # Rebuild partitioned fragment indexes
-    temp_precursors = SetPrecursors(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
+    temp_precursors = SetPrecursors(lib_path)
     temp_proteins = SetProteins(Arrow.Table(joinpath(lib_path, "proteins_table.arrow")))
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     if F <: SplineCompactFrag || F <: SplineDetailedFrag
